@@ -15,8 +15,8 @@ Tests: `tests/unit/test_phone_*.py`, `tests/api/test_phone_routes.py`.
 
 ## Who Friday may contact
 
-The owner's instruction: start with his own cell, "unless I tell Friday
-explicitly to call someone else". That is enforced in `service.checkpoint`
+Friday contacts only the owner's own phone unless the owner explicitly tells it
+to contact someone else. That is enforced in `service.checkpoint`
 and `service._check_target`, not in a prompt:
 
 | Target | Text | Call |
@@ -50,7 +50,7 @@ all of this:
   (`action_gate.verify_claws`), and a signed receipt in `decision-bom.jsonl`
   (`tool: phone:<action>`). Either one failing holds the send.
 
-The owner's cell becomes the allowlist only after verification: he enters it
+The owner's cell becomes the allowlist only after verification: the owner enters it
 in Settings, and Friday texts or calls a one-time code to it. Five tries, ten
 minutes, five sends an hour. The call option works while carrier registration
 still blocks texts.

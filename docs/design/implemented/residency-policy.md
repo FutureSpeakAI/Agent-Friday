@@ -3,7 +3,7 @@
 > **Status:** implemented
 > **Last verified:** 2026-09-06
 > **Implementation:** `services/hardware_profile.py`, `services/residency_policy.py`, `services/residency_arbiter.py`, `services/residency_catalog.py`
-> **Supersedes / superseded by:** extended by [`headroom.md`](headroom.md); inherits [`decisions-2026-08.md`](../../decisions/2026-08-architecture-decisions.md) (D1–D10, notably D4 and D8) and [`residency-state-delta.md`](../../history/audits/residency-state-delta.md) (Phase 0)
+> **Supersedes / superseded by:** extended by [`headroom.md`](headroom.md); inherits [`decisions-2026-08.md`](../../decisions/2026-08-architecture-decisions.md) (D1–D10, notably D4 and D8) and the Phase 0 residency state delta
 > **Written:** 2026-08-14
 
 ## Implementation notes
@@ -273,7 +273,7 @@ For P1, from §1.2. Justification is in §5.1.
 | `sidekick` | `gemma4:e2b` | 166 tok/s at 1763 MiB — cheapest useful seat measured |
 | `embedder` | `qwen3-embedding:0.6b` | the only embedding model installed |
 | `stt` | faster-whisper (CPU) | already shipping, `services/local_voice.py` |
-| `tts` | Kokoro, Piper fallback (CPU) | RTF 0.472 both, `phase-a-report.md` §A8 |
+| `tts` | Kokoro, Piper fallback (CPU) | RTF 0.472 both (Phase A measurement) |
 | `image` | Z-Image Turbo FP8 / ComfyUI | the only local image backend |
 
 `gemma4:e4b` is bound to no seat on P1: at 3081 MiB and 99.93 tok/s it is strictly dominated by
@@ -303,7 +303,7 @@ data, each with a stable id so a refusal can cite one.
 
 ### 4.1 R8 — why disk is a residency resource on Windows
 
-Not an obvious rule, so its evidence is recorded. `phase-a-report.md` §A7 **VERIFIED** that free
+Not an obvious rule, so its evidence is recorded. Phase A **VERIFIED** that free
 disk fell from 27.7 GB to **7.0 GB** while a 29 GB model was resident, and recovered to 22.1 GB
 when it unloaded — `pagefile.sys` inflating under memory pressure. Phase 0 found the machine at
 **2.8 GB free** with the pagefile allocated at 31.9 GB. A RAM-headroom watcher that ignores this
@@ -558,7 +558,7 @@ seat that had to be delegated anyway must say so rather than claim a pin it does
 The llama-server column is why the `llama-cpp-brain` descriptor **mechanism** was preserved when
 the qwen3.6 brain was decommissioned during this audit: `routing/provider_descriptors.py` already
 classifies a loopback `base_url` as `local` and routes it through the openai-compatible adapter
-(**VERIFIED**, and proven end-to-end in `phase-a-report.md` §A7). The Arbiter spawns the process;
+(**VERIFIED**, and proven end-to-end in Phase A). The Arbiter spawns the process;
 the existing descriptor mechanism dispatches to it. No new dispatch path is required.
 
 ### 6.4 The headroom watchers

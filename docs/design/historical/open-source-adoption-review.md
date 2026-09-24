@@ -11,7 +11,7 @@
 A position paper, not a build spec; it touches no code. Its adopt / defer / keep calls are judgement, left exactly as argued. "No implementation" is the decided outcome — the paper's own conclusion is that five of the six problems are already solved in-tree and need wiring, schemas and one source of truth for prices, not a library — so do not re-flag this as unfinished work.
 Re-checked 2026-08-29 against v5.7.0: no claim was falsified by the intervening installer, vault-passphrase, onboarding and knowledge-graph work. `file:line` citations were spot-checked, not re-verified; treat a citation as naming the right file and claim, not necessarily the right line.
 Question asked: "should we search the open source marketplace and find popular solutions for these?" — six named problems.
-Inherits: [`workflow-run-forensics-2026-08-24.md`](../../history/audits/workflow-run-forensics-2026-08-24.md) (the incident that produced five of the six), [`switchyard-position.md`](switchyard-position.md) (the previous adopt/defer decision), [`residency-policy.md`](../implemented/residency-policy.md) (seats, Arbiter, R1-R10).
+Inherits: the 2026-08-24 workflow-run forensics (the incident that produced five of the six), [`switchyard-position.md`](switchyard-position.md) (the previous adopt/defer decision), [`residency-policy.md`](../implemented/residency-policy.md) (seats, Arbiter, R1-R10).
 
 ---
 

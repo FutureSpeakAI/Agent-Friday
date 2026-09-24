@@ -23,7 +23,7 @@ rollback or modify as first-class options. His own summary: *"I'm describing mor
 a connector button, I guess. I'm describing a grow button."*
 **Method:** STORM — multi-perspective questioning first, simulated disagreement at full
 strength second, cited synthesis third (§10). Ground truth (§2) was read from the codebase
-before any design was written, because the maintainer asked a direct empirical question and it is
+before any design was written, because the question is empirical and
 answerable by reading rather than reasoning.
 
 > **Status note, added 2026-08-29 after the maintainer's reframe.** This document now describes the
@@ -56,8 +56,8 @@ answerable by reading rather than reasoning.
   (§3.7). **§3 of this document explains why that containment answer does not transfer**,
   which is the single most important architectural fact here.
 - [`switchyard-position.md`](../historical/switchyard-position.md) — SW8, exact version pins.
-- [`../audits/caching-audit-2026-08-26.md`](../../history/audits/caching-audit-2026-08-26.md) — the
-  `max_iters=999`-with-no-spend-bound incident, and `_seal_or_block` as the one chokepoint.
+- The caching audit (2026-08-26) — the `max_iters=999`-with-no-spend-bound incident, and
+  `_seal_or_block` as the one chokepoint.
 - `KNOWN_ISSUES.md` §1 — the invisible-success failure class, which is this document's
   central adversary.
 
@@ -214,7 +214,7 @@ What it does not do, enumerated because each one is a requirement below:
 | no test run, before or after | nothing has ever established that the change works |
 | no syntax check | a malformed Python file is written and only discovered at the next restart, which is manual (C4) |
 | no confirmation gate in the API | `code_apply` is a plain POST. The only gate is that a human clicked a button in the UI |
-| whole-file replacement | any concurrent edit by another session is silently destroyed. The repo has three concurrent-session incidents on record (`project_concurrent_agents_autocommit`) |
+| whole-file replacement | any concurrent edit by another writer is silently destroyed. Concurrent writers have lost edits this way more than once |
 | no `@login_required` on any route in the blueprint | on a loopback-only install this changes nothing (`core/__init__.py:475-483` trusts loopback unconditionally), but with `FRIDAY_REMOTE_KEY` set, `/api/code/apply` is reachable **without** the key while decorated routes are not. Worth filing independently of this proposal |
 
 **Not a finding, checked and cleared:** `code_plan` passes `vault_control=_gated_vault_control()`
@@ -572,7 +572,7 @@ Two properties of that ordering are load-bearing and easy to lose:
 The maintainer is right that iteration count is the wrong dimension, and the repo has the receipt:
 the caching audit found `max_iters=999` with **no spend bound at all**, and the fix landed as
 a hard ceiling in `_seal_or_block` rather than a smaller iteration count
-(`caching-audit-2026-08-26.md` row 3, **DONE**). The existing chokepoint is exactly right and
+(caching audit row 3, **DONE**). The existing chokepoint is exactly right and
 already has the hook:
 
 ```python
@@ -952,7 +952,7 @@ Three separate exposures, three separate answers.
 
 ## 8. Rollback that is actually a rollback
 
-The maintainer asked three precise questions: what a rollback actually restores including data and
+Three precise questions apply: what a rollback actually restores including data and
 migrations; whether a rolled-back change can leave encrypted-secret migrations half-applied;
 and how someone who cannot read code decides. The first two are here; the third is §9.
 
@@ -1411,7 +1411,7 @@ Presented as open. None is resolved silently.
   percentile.
 - **Q7.** Where does the loop's model come from on a local-only install? A 4b–12b local model
   authoring code that will run in the trusted core is a materially different risk from Opus,
-  and `project_model_ladder_double_count` says the small-card seat is `qwen3:4b`. Should the
+  and the small-card seat is `qwen3:4b`. Should the
   grow button require a cloud seat or a large local one, and say so? Not resolved, and it
   interacts with Q4 (the same machines are affected).
 - **Q8.** Does a growth get to modify a *previous growth's* files, or only its own? Allowing it
@@ -1427,7 +1427,7 @@ Presented as open. None is resolved silently.
 
 ## 14. Where I think the framing has a problem
 
-Offered because the maintainer asked for it directly.
+Offered as a critique of the framing, not as a requirement.
 
 ### 14.1 "Until it all works as intended" has no referent, and it is the load-bearing phrase
 
@@ -1464,9 +1464,8 @@ the twelfth one. Twelve approved growths later, the app is a program nobody desi
 docs describe a codebase that no longer exists, the next growth's loop reasons from a stale
 map, and a regression cannot be attributed because five things changed this week.
 
-This is not speculative for this repo. `project_ui_build_divergence` (two UI sources that
-diverged), the diverged-install note (two installs that diverged) and
-`project_seat_binding_overwrites_cloud_picks` (two writers of one setting) are all the same
+This is not speculative for this repo. Two UI sources that diverged, two installs that
+diverged, and two writers of one setting are all the same
 shape, arrived at without any grow button at all.
 
 §9.5's caps and §8.4's dependency graph are the minimum. What is missing and probably needed:
@@ -1536,5 +1535,4 @@ independent by construction, which conflicts with them being useful.
 - `index.html` — 42,628 lines; `/api/code/plan` called at `:18271`.
 
 **Documents:** `docs/design/friday-builds-agents.md` (FA1–FA13, §3.1–§3.9),
-`docs/design/switchyard-position.md` (SW8), `docs/audits/caching-audit-2026-08-26.md`,
-`KNOWN_ISSUES.md` §1, `THREAT_MODEL.md`.
+`docs/design/switchyard-position.md` (SW8), `KNOWN_ISSUES.md` §1, `THREAT_MODEL.md`.

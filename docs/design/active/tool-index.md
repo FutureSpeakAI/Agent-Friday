@@ -465,18 +465,18 @@ argument survives as §3.3's **trigger**, not as today's build order.
 ### 5.2 The reliability engineer: "this is the fragile path, do not put a decision on it"
 
 *The tool path has broken three times in three days and every time it presented as model
-incapacity.* `docs/audits/symphony-live-2026-08-15.md:42-62` — `json.loads()` on an
+incapacity.* `json.loads()` on an
 already-parsed dict silently emptied every local tool call's arguments; **0/5 became
-15/15** once fixed. `residency-live-2026-08-15.md:47` — the `/api/chat` fallback dropped
-`tools` entirely, guaranteeing a false tool-calling failure. `residency-live-2026-08-15.md:54`
-— the seat was sized below the tool registry. `context-assembly.md:241` records the
+15/15** once fixed. The `/api/chat` fallback dropped
+`tools` entirely, guaranteeing a false tool-calling failure. The seat was sized below the
+tool registry. `context-assembly.md:241` records the
 standing rule: *"a model 'failing at tools' after any registry change is our plumbing
 until proven otherwise. Three-for-three so far."*
 
-*And the base rates are bad.* `model-suite-determination.md:65-93`: stock `gemma4:12b`,
+*And the base rates are bad.* Stock `gemma4:12b`,
 `qwen3.5:9b` and `gemma4:e2b` each **1/3** on tool use, and the failures are *refusals to
 use a tool the model was handed a schema for*, not malformed JSON.
-`residency-live-2026-08-15.md:64-77`: the same e2b gate scored **10/10, 8/10, 8/10,
+The same e2b gate scored **10/10, 8/10, 8/10,
 9/10** on one machine on one day — *"the gate is not reproducible, and that is a
 finding."* If a single tool decision on e2b is p≈0.8–0.9, **two sequential mandatory
 decisions are 0.64–0.81.** A required group hop converts one draw into two on the worst
@@ -765,8 +765,8 @@ to be hunted specifically.
    caught by name. This is the only method that detects "did something worse" directly,
    because it fixes the correct behaviour in advance instead of judging the output after.
 3. **The prose-substitution seam.** `services/tool_integrity.py:46` already exists
-   because a model narrated fake tool calls in prose rather than making them
-   (`inference-discovery.md:113`). That detector is repointed: a turn whose text asserts
+   because a model narrated fake tool calls in prose rather than making them.
+   That detector is repointed: a turn whose text asserts
    a capability (*"I've generated…"*, *"I've scheduled…"*) with **no matching successful
    tool receipt in-turn** is fabrication under `SEATS_AND_TRANSPARENCY_SPEC.md` A7 — and
    under the index it is *also* a candidate silent substitution. Cross-referencing A7
@@ -963,12 +963,9 @@ default, or do you want to be told when a connector arrives unclassified?
   The reasoning that survives intact is the *all-or-nothing per connector* rule — a half-
   loaded connector invites calls to the missing half. GT9 is what makes that safe rather
   than merely quiet: all-or-nothing **plus disclosure of which groups went**.
-- `docs/audits/symphony-live-2026-08-15.md:42-62`, `docs/audits/handoff-2026-08-16.md:240-242`
-  — the argument-dropping bug, 0/5 → 15/15. `docs/audits/residency-live-2026-08-15.md:47,54,64-77`
-  — the dropped `tools` retry, the seat sized below its registry, the non-reproducible
-  gate (10/10, 8/10, 8/10, 9/10). `docs/audits/model-suite-determination.md:65-93` — the
-  1-in-3 refusal rate. `docs/audits/inference-discovery.md:113` and
-  `services/tool_integrity.py:46` — prose-narrated fake tool calls. **The evidence base
+- The argument-dropping bug, 0/5 → 15/15; the dropped `tools` retry, the seat sized below
+  its registry, the non-reproducible gate (10/10, 8/10, 8/10, 9/10); the 1-in-3 refusal
+  rate; and `services/tool_integrity.py:46` — prose-narrated fake tool calls. **The evidence base
   for §5.2 and §6.4.**
 - [`docs/design/elevenlabs-voice.md`](elevenlabs-voice.md),
   [`docs/design/higgsfield-integration.md`](../historical/higgsfield-integration.md) — the audio and

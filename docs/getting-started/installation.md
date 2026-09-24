@@ -300,8 +300,8 @@ Ollama enables local model routing — required for vault access to private data
    smaller (7.2 GB against gemma3:4b's 3.3 GB download, but far lighter once
    loaded — 1.77 GiB VRAM measured) and keeps its tools.
 
-   To pull one by hand instead (the Gemma 4 family — Qwen was removed from
-   the ladder entirely on 2026-09-03, in favor of Gemma 4 as a placeholder
+   To pull one by hand instead (the Gemma 4 family — Qwen is not on the
+   ladder; Gemma 4 is the placeholder
    until FutureSpeak's own model ships):
 
 ```bash

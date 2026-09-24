@@ -1,9 +1,9 @@
 # The Laya union gate — shipped ON, with a switch
 
 **Status:** built, wired, **ON by default**, with an off/shadow/on control in
-Settings. Stephen's call, made with the eval below in hand: "land the code,
+Settings. The owner's call, made with the eval below in hand: "land the code,
 land the model, then turn it on." An earlier draft of this document said
-default-OFF; that was superseded the same day and the reversal is his to make.
+default-OFF; that was superseded the same day and the reversal is the owner's to make.
 **Written:** 2026-09-22
 **Supersedes nothing.** Extends `docs/design/active/laya-across-the-harness.md`,
 which ranked the harness's judgments and recommended the corpus work first.
@@ -12,8 +12,8 @@ which ranked the harness's judgments and recommended the corpus work first.
 
 ## What this is
 
-`dissent_gate.classify_severity` decides whether an action needs Stephen's
-sign-off. Since 2026-09-20 that includes sending mail as him. It is a scan for
+`dissent_gate.classify_severity` decides whether an action needs the owner's
+sign-off. Since 2026-09-20 that includes sending mail as the owner. It is a scan for
 ~40 substrings, and its own docstring records the failure it could not avoid:
 `spend` and `order ` are hard markers and also ordinary nouns, so "Analyze our
 spend trends" gated, and the fix was a hand-written regex for leading drafting
@@ -62,11 +62,11 @@ bad trade.
 **The set is adversarial by construction and 63% is not the keyword scan's
 real-world accuracy.** It deliberately includes five outward actions phrased
 with no marker word at all, which a substring scan cannot catch by design, plus
-every documented false-positive. On Stephen's actual traffic — mostly
+every documented false-positive. On the owner's actual traffic — mostly
 unambiguous — the incumbent does considerably better. The set locates the
 boundary; it does not measure the field.
 
-**The labels are mine, not Stephen's.** They encode the rule the gate already
+**The labels are mine, not the owner's.** They encode the rule the gate already
 claims to implement. Three genuinely arguable cases are marked and scored
 separately rather than being resolved by fiat.
 
@@ -100,7 +100,7 @@ remedy is a settings change.
 > value outside the label set, one that raises, and one that never loaded.
 
 It drives `approvals.classify(...)["gated"]` — **the seam, not the primitive.**
-What Stephen experiences is a card, and a card is the end of a chain running
+What the owner experiences is a card, and a card is the end of a chain running
 `union_backend → decide() → the policy table`, any link of which could drop an
 escalation while `union_backend` itself stayed correct.
 
@@ -232,7 +232,7 @@ download would become a thread per approval.
 
 ---
 
-## Can the model reach a machine that is not Stephen's?
+## Can the model reach a machine that is not the owner's?
 
 A feature that works only where the weights already happen to sit is not
 releasable, so this was checked rather than assumed. **It is not a blocker.**

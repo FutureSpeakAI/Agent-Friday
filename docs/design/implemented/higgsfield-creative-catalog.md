@@ -447,8 +447,7 @@ They pin, among others:
   to end. Mechanism and fix in §9.5. Image, video and 3D need nothing.
 - **No 3D viewer** (Q-C7): a picked 3D model writes a GLB to disk and nothing renders it.
 - **Cost is carried, not yet drawn.** Entries carry `credits`; the picker does not display
-  them yet — that is an `app.html` change, deliberately deferred while another session
-  holds that file.
+  them yet — that is an `app.html` change, deliberately deferred.
 - The wider suite carries **pre-existing failures, none caused by this work** — confirmed
   by running it at clean HEAD in a detached worktree and diffing the failure sets:
   17 failures at baseline (random order), 11 here (fixed order), and the second set is a

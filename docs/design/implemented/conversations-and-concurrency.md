@@ -103,7 +103,7 @@ thread-safe singleton. A second POST would have been served —
 §2.2–2.4. The hang is the symptom; the shared state is the disease.
 
 **Already landed in this tree** (**VERIFIED**, working-tree `index.html:34735-36109`,
-another session's in-flight work): an epoch-scoped guard (`chatEpoch`/`inFlightEpoch`), a
+concurrent in-flight work): an epoch-scoped guard (`chatEpoch`/`inFlightEpoch`), a
 15-minute stall release, and a flag reset on New Chat. That is a correct *mitigation* —
 it un-sticks the single conversation. It is not per-conversation state, and this spec's
 client work (§3.1) supersedes it; coordinate with whatever has landed at build time.

@@ -107,7 +107,7 @@ CSS, a note, an accent colour, density, a list of hidden selectors, and up to ei
 render a component, or create a workspace that did not already exist.**
 
 This is the gap between what is built and what was asked for. Today "vibe-code a
-workspace" means "restyle a workspace." Stephen is describing "build me a panel that
+workspace" means "restyle a workspace." The owner is describing "build me a panel that
 does a thing, then sell it." Those are different products, and everything from §4
 onward exists to close that distance.
 
@@ -499,7 +499,7 @@ agent-to-agent payment as a hook to leave room for, not a mechanism to build on.
 
 Obsidian's review queue broke in May 2026 because coding agents accelerated plugin
 creation faster than humans could review. For Friday that is not a risk to mitigate,
-it is the stated goal — Stephen's framing is that "unique agents will come up with
+it is the stated goal — the owner's framing is that "unique agents will come up with
 innovations that they can share."
 
 Three consequences, and they are the reason `authored_by_agent` is in the manifest:
@@ -533,7 +533,7 @@ creates no new security surface.
 - **Version timeline UI** over the history API that already exists: a scrubbable
   strip in the workspace's own window title bar and in the Dock settings tab,
   showing each snapshot's label and timestamp with the existing prose
-  ("state BEFORE: …"), a preview, and restore. Reachable from both places Stephen
+  ("state BEFORE: …"), a preview, and restore. Reachable from both places the owner
   named.
 - Keep `show_all_workspaces` working as the coarse switch it is; per-item settings
   layer over it.
@@ -573,7 +573,7 @@ version timeline along the bottom. It writes bundle files, not CSS patches.
 This is also where `code_engine._run_claude_terminal` needs a hard look before it is
 wired to anything community-facing — it currently spawns Claude Code with
 `--dangerously-skip-permissions` (`code_engine.py:44-86`), which is defensible for
-Stephen's own repos and not defensible as a path a shared workspace can influence.
+the owner's own repos and not defensible as a path a shared workspace can influence.
 
 ### Phase 4 — Sharing
 

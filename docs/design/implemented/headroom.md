@@ -11,7 +11,7 @@
 All six phases of §12 shipped (merged at `177f47b`): the read-only machine monitor, footprints and measured VRAM with the `verdicts()` measure job, the chain planner, the Settings surface, intrusion-response hooks from the monitor to the Arbiter, and the onboarding `starter_set` hook (HR15). Tests: `tests/unit/test_headroom_contract.py`, `tests/unit/test_headroom_surface_verdicts.py`, `tests/api/test_headroom_settings_surface.py`. Read everything marked PROPOSED below as built unless a note says otherwise.
 Not the same thing: the third-party `headroom-ai` package (context *compression*, `services/prompt_cache.py`) shares the word and nothing else; "0% saved" elsewhere refers to that package.
 Subject (the maintainer, 2026-09-04): *"maybe hardware-specific model fetching is a function we should add to the Friday desktop settings menu"* and *"we need to ensure the user's machine runs capably for at least surface level work while Friday does stuff with local models … headroom measurement is vital."*
-Inherits, and does not restate: [`residency-policy.md`](residency-policy.md) (HardwareProfile, CatalogEntry, `plan()`, R1–R11, fixtures P1–P6, the lease model); [`symphony-of-intelligence.md`](symphony-of-intelligence.md) §2.4–2.5; [`../audits/model-suite-determination.md`](../../history/audits/model-suite-determination.md) (a seat reads 1,229 MiB idle and 9,652 MiB exercised — measure under load); [`../audits/residency-implementation-report.md`](../../history/audits/residency-implementation-report.md) §7 (grant 37.96 s, release 47.98 s); [`../contracts/roles-and-model-identity.md`](../../reference/roles-and-model-identity.md); [`vault-first-onboarding.md`](vault-first-onboarding.md) §2.4 and Q-V9; `KNOWN_ISSUES.md` §1.
+Inherits, and does not restate: [`residency-policy.md`](residency-policy.md) (HardwareProfile, CatalogEntry, `plan()`, R1–R11, fixtures P1–P6, the lease model); [`symphony-of-intelligence.md`](symphony-of-intelligence.md) §2.4–2.5; the model-suite determination (a seat reads 1,229 MiB idle and 9,652 MiB exercised — measure under load); the residency implementation measurements (grant 37.96 s, release 47.98 s); [`../contracts/roles-and-model-identity.md`](../../reference/roles-and-model-identity.md); [`vault-first-onboarding.md`](vault-first-onboarding.md) §2.4 and Q-V9; `KNOWN_ISSUES.md` §1.
 Method: ground truth read from the codebase at `f000f07` first, evidence stated with provenance, simulated disagreement (§10), cited synthesis.
 
 ---
@@ -19,7 +19,7 @@ Method: ground truth read from the codebase at `f000f07` first, evidence stated 
 **Evidence registers**
 
 - **VERIFIED** — the cited file/line was read during this audit, 2026-09-04, at `f000f07`.
-- **MEASURED** — a number produced by a stated method, by a named prior session, in a cited
+- **MEASURED** — a number produced by a stated method, in a cited
   document or source comment. None were re-measured here.
 - **REPORTED** — a number relayed in the brief for this document from the maintainer's own week. Not
   in the tree, not re-measured. Used as design evidence, labelled as such every time.
@@ -178,7 +178,7 @@ resident set *plus the user's day*. R2 is necessary and not sufficient for R2 in
 - `model_plan` refuses the vault tier below **2 GiB** (**VERIFIED**, `model_plan.py`, the
   `vault_need` block).
 
-**MEASURED by another session, 2026-09-04 (memory `gotcha-test-suite-leaks-temp-homes`):** C:
+**MEASURED, 2026-09-04:** C:
 reached 0 bytes with 3,858 leaked `friday_test_home_*` directories while the live app ran, and
 the app went down. **INFERRED:** none of the three checks above would have seen it coming —
 none watches the system volume continuously, and the consumer was not a model. The contract in
@@ -191,7 +191,7 @@ there whatever `OLLAMA_MODELS` points at.
 |---|---|---|
 | **Image** | The seat is planned as `vram_mib: None, est_load_s: None` (`residency_policy.py:896–909`). `residency-policy.md` §5.1 says "~8000". `local_image.py:10–11` says "Z-Image's weights are ~14.5 GB against a 12282 MiB card, so the language seats must be out of VRAM before it loads." ComfyUI start 93 s warm / ~180 s cold, render 93 s at 1024² (`pause_forecast.py:61–62`, 2026-08-15). SD 3.5 Medium carries a `licence` string; Z-Image does not. | VERIFIED (the disagreement); MEASURED (the timings); **UNKNOWN** (resident VRAM under the lease — the check is one `nvidia-smi` sample mid-render under the Arbiter, recorded into `SEED_MEASUREMENTS` with the workflow named) |
 | **Video** | **No local video backend exists.** `creative_engine.py:853–865` dispatches video to Higgsfield only; no `ltx`, `wan`, `hunyuan` or `cogvideo` reference anywhere under `src/` outside the Higgsfield catalog names `flux_3_video`, `veo3`, `gemini_omni`. | **VERIFIED by absence** |
-| **Voice, CPU tier** | faster-whisper `small`, `device="cpu", compute_type="int8"` (`local_voice.py:330`); Piper `en_US-amy-medium`; Kokoro measured RTF 0.472, Piper RTF 0.472, whisper RTF 3.6 on a 5 s clip (`phase-a-report.md:332–334`). Planned as `_cpu_seat` with `vram_mib: 0` and no host-RAM figure (`residency_policy.py:1338–1341`). | VERIFIED; host RAM **UNKNOWN** (check: RSS delta of the server process across `WhisperASR.load()` and `PiperTTS.load()`) |
+| **Voice, CPU tier** | faster-whisper `small`, `device="cpu", compute_type="int8"` (`local_voice.py:330`); Piper `en_US-amy-medium`; Kokoro measured RTF 0.472, Piper RTF 0.472, whisper RTF 3.6 on a 5 s clip. Planned as `_cpu_seat` with `vram_mib: 0` and no host-RAM figure (`residency_policy.py:1338–1341`). | VERIFIED; host RAM **UNKNOWN** (check: RSS delta of the server process across `WhisperASR.load()` and `PiperTTS.load()`) |
 | **Voice, GPU tier** | NeMo requires torch-CUDA the venv lacks and `MIN_VRAM_GB = 4.0` free (`nemo_voice.py:69`). It decides readiness by asking the card directly; the Arbiter is not consulted and does not know the tier exists. | VERIFIED |
 
 **INFERRED:** the three modalities the chain needs are, respectively, *unmeasured*, *absent*,
@@ -217,7 +217,7 @@ Take the maintainer's sentence literally on P1 with the code as it stands:
 6. **Speak back.** Piper on CPU.
 
 Measured costs of the only lease cycle anyone has timed: **grant 37.96 s, release 47.98 s** for
-the heavy seat (`residency-implementation-report.md` §7). For the image lease: **93 s** start
+the heavy seat. For the image lease: **93 s** start
 warm, **~180 s** cold, **93 s** render, plus the brain's reload. **INFERRED:** one spoken
 request that produces one image costs roughly **four minutes** of wall-clock on P1 today, during
 which Friday can hear but cannot think, and nothing tells the user any of this until the
@@ -268,7 +268,7 @@ against them today; the check is to read that function for a threshold.
 | **Two ladders.** `$brainLadder` is `qwen3:4b / qwen3:8b / gemma4:12b / qwen3:14b / qwen3:32b` and `$localIsComfortable` tests `-ne 'qwen3:4b'` | `install.ps1:338–357` | The 2026-09-03 decision removed every Qwen row from `_BRAINS` (`model_plan.py`, the note above the tuple). The installer will name a model the app's planner no longer knows, then `friday models` will pick a Gemma. On an 8 GB card the installer's "floor rung" is a model that will not be installed | VERIFIED (the divergence); INFERRED (the effect) |
 | **The reserve the panel shows is not the reserve the planner uses** | `intelligence.py:587–591` → `gpu_headroom.display_at_risk()` | 1,024 drawn; ≥2,560 planned; 256 gated | VERIFIED, §2.2 |
 
-Also noted, out of scope, carried from memory `project_gpu_tenancy_port_8090_collision`:
+Also noted, out of scope:
 `PORT_BASE = 8090` is the port the Friday-Models eval server defaults to, and `boot()` evicts
 everything unconditionally before measuring the baseline (`residency_arbiter.py:1254–1258`,
 **VERIFIED**). The monitor in §4.3 is how Friday would *see* that tenant; moving the port is a
@@ -282,14 +282,13 @@ one-line change this document does not make.
 4070. It did not fail. Step time went from **~7 s to ~57 s**. The GPU drew **51 W of 200 W**
 while reporting **100 % utilisation** — cores stalled on memory — and the kernel logged repeated
 residency failures as Windows paged allocations in and out. **354 MiB** was the difference
-between working and thrashing. Separately (§2.4, MEASURED by another session), a disk filling to
+between working and thrashing. Separately (§2.4, MEASURED), a disk filling to
 zero crashed the live app outright.
 
 **The tree holds one prior instance of the same shape, MEASURED.** The `--n-cpu-moe` sweep on
 2026-08-15 found that at 16 CPU layers "throughput collapses from 21.6 to 5.5 tok/s while VRAM
 saturates (~11.8 GB of 12.28) and host RAM climbs to 31.6 GB of 31.9 — the allocator thrashes
-rather than erroring" (`phase-a-report.md:252`; restated at
-`residency-implementation-report.md:172`). It was handled then by backing off one step. Nothing
+rather than erroring." It was handled then by backing off one step. Nothing
 was built to notice the next one.
 
 Three design facts follow, and every later section is built on them.
@@ -406,7 +405,7 @@ numbers:
    smaller (§7, HR7). A wrong floor therefore costs a seat, not a screen.
 4. **Unknown never fits.** A model with no footprint is `unknown`, and a chain may not plan a
    stage into `unknown` (HR1). This is the 2026-08-18 "coerced to 0 MiB" bug
-   (`model-suite-determination` memory) written as a rule.
+   written as a rule.
 
 **INFERRED:** with these four, a machine on which every constant is wrong still ends in a state
 where Friday has refused or yielded too early, which is recoverable by the user in Settings,
@@ -461,8 +460,8 @@ Rules that make this honest rather than decorative:
 - **HR2** — no surface renders a single combined "compatible / incompatible". Three axes, or
   nothing. The one-word summary is permitted only as the *worst* of the three, with the axis
   named ("Degraded — RAM").
-- **HR16** — `licence` is shown and never enforced. The maintainer's standing rule: build the dial, he
-  points it (`feedback_content_policy_is_stephens_to_direct`). FLUX's output restriction is
+- **HR16** — `licence` is shown and never enforced. The standing rule: Friday builds the dial, the owner
+  points it. FLUX's output restriction is
   a `ready-but`, worded from the licence text, with the URL.
 - A `degraded` on *runs well* still offers the fetch, with the reason on the button. The user
   may want a slow LTX. What they may not get is a green tick and a surprise (D4).
@@ -533,7 +532,7 @@ Rules:
    docstring, VERIFIED). A chain whose brain stage reads vault-tier material offers no cloud
    alternative for that stage and says why before it starts. A cloud alternative for a *later*
    stage is still offered, because the image prompt is not the vault (the composites-inherit
-   rule from `project_news_egress_provenance` applies: if the prompt was derived from vault
+   rule applies: if the prompt was derived from vault
    material, the stage inherits the restriction — the planner asks the egress gate, it does not
    decide).
 
@@ -546,7 +545,7 @@ differ and the planner's is authoritative.
 
 **P1 — RTX 4070 12,282 / 32 GB DDR4 (the maintainer).** Available ≈ 12,282 − 1,024 − 2,560 =
 **8,698 MiB**. `gemma4:12b` at 32k (7,718) + `gemma4:e2b` (1,811) = 9,529 **does not fit under
-an honest reserve** (MEASURED, `model-suite-determination` memory, 2026-08-18). The honest
+an honest reserve** (MEASURED, 2026-08-18). The honest
 resident pair is `e4b` (3,081) + `e2b` (1,811) = 4,892, leaving 3,806.
 
 | Stage | Where | Retained | Transition before | Basis |
@@ -619,7 +618,7 @@ chosen by what is breached and what Friday is doing:
 | `breached` — VRAM slack gone | inside an image render | **D3.** Default proposed: notify and continue, because a render is bounded (~93 s) and cancelling loses it; cancel *only* if the display reserve itself is breached. |
 | **display reserve breached** | anything | Cancel any in-flight render (`local_image.request_cancel`), release every lease, evict leased seats. Keep the retained sidekick only if it still fits inside the reserve; otherwise it goes too. Say so, with the number. This is the 2026-08-17 monitor incident, and a lost picture is cheaper than a lost display. |
 | RAM available floor breached | anything | Same as VRAM slack, on the RAM row. Additionally refuse any new CPU service load (whisper, NeMo) until it clears. |
-| Disk system-volume floor breached | anything | Refuse every load and every fetch; release leases at the boundary (the pagefile shrinks when the resident set does — `phase-a-report` A7); surface a *problem* on THE MACHINE naming the volume. |
+| Disk system-volume floor breached | anything | Refuse every load and every fetch; release leases at the boundary (the pagefile shrinks when the resident set does — measured in Phase A); surface a *problem* on THE MACHINE naming the volume. |
 | thrash signature `breached` | holding a lease | Treat as VRAM slack breached. Also mark the model's footprint on this profile `degraded` with the sample attached, so `runs_well` reflects it next time (§5.2). |
 
 **The `yield` button** (§8.1) is the user asserting the last row's response without waiting
@@ -1080,8 +1079,7 @@ local_call}.py`; `routes/{intelligence, residency, work_plan, skills, platform, 
 `routing/ollama_manager.py`; `index.html` at the cited lines; `packaging/windows/install.ps1:318–400`;
 `scripts/ui_stage.py`; `tests/residency_fixtures.py`; `tests/golden/residency/`;
 `docs/design/{residency-policy, symphony-of-intelligence, vault-first-onboarding,
-grow-button}.md`; `docs/audits/{residency-implementation-report, model-suite-determination,
-decisions-2026-08, install-readiness-8gb-2026-08-25, phase-a-report}.md`;
+grow-button}.md`; `docs/decisions/2026-08-architecture-decisions.md`;
 `docs/contracts/roles-and-model-identity.md`; `KNOWN_ISSUES.md` §0–§1; the onboarding
 interview spec at `1c22361` in the `spec-onboarding` worktree.
 

@@ -51,7 +51,7 @@ file never appeared on the desktop.
 > capability whose dependency is missing is **absent from the registry**, not present
 > and broken.
 
-The maintainer asked for that position to be tested rather than agreed with. §5 tests it. Three
+That position is tested here rather than agreed with. §5 tests it. Three
 of its four clauses survive intact. The fourth — "each surface derives by explicit
 policy" — needs one amendment: the policy must be a *filter over the registry*, never a
 *second list*, because a second list is exactly what the voice surface already was.
@@ -356,7 +356,7 @@ the ordering. §9 item 2.
 
 ## 5. Filesystem access for a cloud model, given the egress gate
 
-This is the part the maintainer asked to be checked rather than assumed, and the code is
+This is the part to check rather than assume, and the code is
 already right — it just was not reachable from voice.
 
 **The shape is: the tool executes locally; only its result is tier-gated.** Concretely,
@@ -635,12 +635,12 @@ files and the mark inside it is not positioned. The file passed in isolation, wh
 should have retired the method rather than prompting a second estimate. The actual
 failures were in `test_residency_arbiter.py`, `test_ollama_manager.py`,
 `test_gate_harness_integrity.py` and `test_workspace_aliases.py` — ten of them, all
-pre-existing and all in other sessions' territory, and all named plainly by the summary
+pre-existing and all outside this change, and all named plainly by the summary
 line that was already on its way.
 
 **"Stage by name, not `git add -A`" — followed, and it did not prevent the thing it was
 meant to prevent.** Two commits in this sequence (`50b98ce`, and the earlier voice pair)
-carried another session's in-flight work in `routes/voice.py` along with mine. The rule
+carried concurrent in-flight work in `routes/voice.py` along with mine. The rule
 was followed literally each time: files were named individually, the tree was never
 swept. But `git add <path>` stages a **whole file**, so naming files prevents
 *cross-file* sweeps and does nothing at all about *within-file* ones — and

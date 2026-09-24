@@ -69,7 +69,7 @@ session before.
 - **Line endings:** `.gitattributes` is deliberately scoped, not repo-wide. Use
   `git diff -w` to see real changes; verify committed state with `git show HEAD:<path>`.
   Several files carry UTF-8 BOMs — do not "fix" encodings in passing.
-- **House test convention** (from `docs/audits/decisions-2026-08.md`): tests use **real
+- **House test convention** (from `docs/decisions/2026-08-architecture-decisions.md`): tests use **real
   provider response bodies with a fake transport** — capture Higgsfield's actual JSON
   shapes into fixtures; never invent simplified ones.
 

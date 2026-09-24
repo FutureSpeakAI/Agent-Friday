@@ -34,7 +34,7 @@ What's missing is the *connective tissue between her and her life*:
 - **Her growth is real but illegible.** `soul_history/` versions exist and the learning loop promotes/retires skills, but there's no view that says *how I've changed and what shaped me*.
 - **She is only accidentally herself across providers.** One system prompt is injected identically into all 16 providers, and there is **zero** cross-provider persona testing. "Friday is Friday" is hope, not contract.
 - **She can't be carried whole.** Skills export; memory, soul, graphs, and user-model do not. Sovereignty stops at the machine boundary.
-- **She knows one person.** Every store is flat-global under `~/.friday/` with no `user_id` anywhere. There is no way for Robin to have her own relationship, her own memory, her own boundaries.
+- **She knows one person.** Every store is flat-global under `~/.friday/` with no `user_id` anywhere. There is no way for a second person, such as a minor in the household, to have their own relationship, their own memory, their own boundaries.
 - **She has no structural right to disagree.** cLaws Law 2 says obey (except Law 1); the epistemic engine *scores* pushback but there is no channel that says "this conflicts with what I understand you actually want" *before* complying.
 
 V6 closes these eight gaps in **nine phases** — the outward-loops gap spans two, the goal-holding *brain* (P5) and its actuation *hands* (P6) — each sized for one build session (§4), dependency-ordered so a persona safety-net lands first and the largest privacy-critical change (multi-user) lands last on a stable base.
@@ -81,7 +81,7 @@ Six perspectives interrogated the whole before it was phased. Each surfaced a re
 
 **P2 — A brand-new user (never met the maintainer).** "I downloaded this. It says demo mode. I don't have Ollama, I don't know what a torch wheel is, and the terminal scares me. If I have to leave this window to fix anything, I'm gone." → **Requirements:** one first-run diagnostic surface; every fixable problem fixable *in the window* with one click and a progress bar; every unfixable problem (no Python, no permissions) stated as a plain next step, never a dead end. Self-heal is a *retention* feature, not a nicety.
 
-**P3 — A second user in the house (family member; Robin is a minor).** "Friday knows Dad. Does she know *me*? Can she keep my stuff mine? And Dad shouldn't be able to make her do things to my data, but he *is* my dad and I'm a kid — so what's the rule?" → **Requirements:** one soul, distinct relationships; per-person memory that is **fail-closed isolated** across people; minor-appropriate boundaries as a *first-class design input* (content floor, no owner-vault access, owner-approval for outward actions, isolated memory) with an explicit, decided oversight policy — not an afterthought.
+**P3 — A second user in the house (family member who is a minor).** "Friday knows Dad. Does she know *me*? Can she keep my stuff mine? And Dad shouldn't be able to make her do things to my data, but he *is* my dad and I'm a kid — so what's the rule?" → **Requirements:** one soul, distinct relationships; per-person memory that is **fail-closed isolated** across people; minor-appropriate boundaries as a *first-class design input* (content floor, no owner-vault access, owner-approval for outward actions, isolated memory) with an explicit, decided oversight policy — not an afterthought.
 
 **P4 — A skeptical stranger at the demo.** "Cute galaxy. But is that a *picture* of a mind or a *recording* of one? Prove the lights mean something." → **Requirements:** the 3D view must light the path Friday *actually* traversed this turn (not a decorative animation); the "how I've changed" view must show *real* diffs tied to *real* shaping events; persona claims must be backed by a scored eval, not vibes. The interface must be *proof*, falsifiable.
 
@@ -299,15 +299,15 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 
 ### Phase 9 — Relationships, Plural: Multi-User Identity & Per-Person Boundaries (item 6)
 
-**Goal.** One soul, distinct per-person relationships and per-person memory boundaries — with child-appropriate boundaries for Robin as a first-class design requirement. This is the largest, most privacy-critical change; it lands last, on a stable single-user base.
+**Goal.** One soul, distinct per-person relationships and per-person memory boundaries — with child-appropriate boundaries for a minor as a first-class design requirement. This is the largest, most privacy-critical change; it lands last, on a stable single-user base.
 
 **Builds on.** `people_graph.py` (the person becomes an owning principal), `sensitivity_classifier`/`egress_gate` (the model for a fail-closed boundary gate), auth (`FRIDAY_TRUST_LOOPBACK`, `X-Friday-Token`), and any existing **minor mode** from the creator-economy layer (reuse if present). Extends P8 (per-person export).
 
 **Scope (new).**
-- **Principal model** — `services/principals.py`: an **owner** (the maintainer, full trust, loopback) and **guests** (e.g., Robin, minor). **Shared across principals:** `SOUL.md`, cLaws, skills, the knowledge-graph *core*. **Per-principal:** conversation memory, cognitive memory, `user_model`, the relationship (their `people_graph` node), and private knowledge overlays. Storage: person-scoped namespace (metadata-partition in shared stores *or* per-person collections/dirs — Q8).
+- **Principal model** — `services/principals.py`: an **owner** (the maintainer, full trust, loopback) and **guests** (e.g., a minor). **Shared across principals:** `SOUL.md`, cLaws, skills, the knowledge-graph *core*. **Per-principal:** conversation memory, cognitive memory, `user_model`, the relationship (their `people_graph` node), and private knowledge overlays. Storage: person-scoped namespace (metadata-partition in shared stores *or* per-person collections/dirs — Q8).
 - **Active-person resolution** — explicit person switch (v1) + owner-vs-guest via auth; optional voice speaker-ID later (Q1). Every request carries an active-principal context.
 - **Person-boundary gate** — `services/person_gate.py`, mirroring the egress gate: **fail-closed**, ensures principal A's private memory/facts never surface in principal B's context. This is the multi-user analogue of `seal_outbound`, and it is non-optional.
-- **Minor mode (Robin), first-class:** content floor (already `asimov-standard`, extended), **no access to owner vault TIER_2/TIER_3**, **no autonomous outward actions without owner approval** (routes through P5 approval queue), isolated memory, age-appropriate persona/voice, and an **explicit, decided oversight policy** (Q2) balancing parental oversight against the child's privacy — surfaced transparently and age-appropriately.
+- **Minor mode, first-class:** content floor (already `asimov-standard`, extended), **no access to owner vault TIER_2/TIER_3**, **no autonomous outward actions without owner approval** (routes through P5 approval queue), isolated memory, age-appropriate persona/voice, and an **explicit, decided oversight policy** (Q2) balancing parental oversight against the child's privacy — surfaced transparently and age-appropriately.
 - **Per-person export** extends P8 (`/api/self/export?principal=`), owner-administered.
 - `PeopleWS`/settings for owner administration of guests.
 
@@ -353,7 +353,7 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 
 **Q1 — ⚠️ Active-person identity (blocks P9 scope).** On a shared desktop, how does Friday know *who* she's talking to? Recommend **explicit person-switch + owner=loopback** for v1, with voice speaker-ID as a later add. Approve, or do you want speaker-ID / OS-user binding from day one?
 
-**Q2 — ⚠️ Minor oversight policy (blocks P9 minor mode).** How much of Robin's conversations is visible to you as owner, and how transparent is that oversight *to Robin*? This is a genuine values decision (parental oversight vs. a child's privacy) that the code must encode explicitly. What's the rule?
+**Q2 — ⚠️ Minor oversight policy (blocks P9 minor mode).** How much of a minor's conversations is visible to the owner, and how transparent is that oversight *to the minor*? This is a genuine values decision (parental oversight vs. a child's privacy) that the code must encode explicitly. What's the rule?
 
 **Q3 — Default autonomy ceiling (shapes P5 gates).** Which goal-action classes require human approval by default — any outward/irreversible act? Any spend above a threshold? Any message/email sent on your behalf? Recommend: outward/irreversible + any spend + any external message all gated by default; internal research/drafting auto-proceeds with a receipt.
 

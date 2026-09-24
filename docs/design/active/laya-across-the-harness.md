@@ -1,6 +1,6 @@
 # Laya across the Friday harness
 
-**Status:** design, pending Stephen's go
+**Status:** design, pending the owner's go
 **Written:** 2026-09-22
 **Question asked:** "What else can Laya do across the Friday harness? I think this is
 a very good thing and maybe even a dependency for the Friday desktop's new installs
@@ -19,7 +19,7 @@ But Laya **as measured on this machine cannot take any of those decisions today*
 and the reason is not a tuning detail. On 40 real messages it put 39 under 0.5
 confidence and collapsed half of them into one lane. The model card says why: the
 published checkpoint is near-chance zero-shot and expects fine-tuning. Fine-tuning
-needs labelled examples of Stephen's decisions, and as of today there are none,
+needs labelled examples of the owner's decisions, and as of today there are none,
 because `~/.friday/decisions.jsonl` **does not exist on disk** — not one gate
 decision has been recorded yet.
 
@@ -124,7 +124,7 @@ asserts agreement — keep that discipline for each new question.
 
 Ship alongside it a **"why did Friday decide that?"** surface in the UI, reading
 `decisions.history()`. Its real job is not explanation. It is to make a wrong decision
-*cheap for Stephen to correct in one click* — which is what turns ordinary use into
+*cheap for the owner to correct in one click* — which is what turns ordinary use into
 labelled data, the same way `message_triage`'s reclassify button already does.
 
 **Done when:** a week of normal use yields a few hundred labelled rows.

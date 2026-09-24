@@ -11,10 +11,10 @@
 
 - **Nothing here is built.** This is a design document. No code was written, no test was run, and no model was loaded while writing it.
 - **A model training run held the GPU throughout authoring** (`train/train.py` under Friday-Models, ~12 GB VRAM, one CPU core saturated). Every finding below comes from reading files. No figure in §5 was measured on this machine; the ones that are measurements are other people's, cited as such. §5.6 makes the contention rule permanent rather than incidental.
-- **Feasibility and diagnosis were done in a prior session** (`local_feeb8bfe-4ad8-4e76-b59f-77bea49d91e0`). That transcript **could not be read** — no session-transcript tool exists in this session. Its conclusions are carried here as the maintainer restated them, tagged **INHERITED** (§1.2), and are *not* independently re-verified. Anything tagged **VERIFIED** was read from this tree today.
+- **Feasibility and diagnosis were done before this document was written.** Those conclusions are carried here as restated, tagged **INHERITED** (§1.2), and are *not* independently re-verified. Anything tagged **VERIFIED** was read from this tree today.
 - This document does **not** reopen whether native audio replaces speech-to-text. That is settled (§0.3) and specified as settled. The perspectives in §2 argue about *how the two modes coexist and when each is selected*; none of them gets to relitigate that both exist.
 
-**Evidence registers**, extending the provenance discipline `cloud-voice-providers.md` §5.3 applies to vendor figures rather than replacing it: **VERIFIED** (read from this tree or a primary source today) · **INHERITED** (established by the prior session, restated, not re-verified here). Only these two are used; a claim carrying neither is an argument, not a fact.
+**Evidence registers**, extending the provenance discipline `cloud-voice-providers.md` §5.3 applies to vendor figures rather than replacing it: **VERIFIED** (read from this tree or a primary source today) · **INHERITED** (established by earlier feasibility work, restated, not re-verified here). Only these two are used; a claim carrying neither is an argument, not a fact.
 
 ---
 
@@ -55,7 +55,7 @@ Where the two documents touch the same surface — tier selection, provider disc
 
 The reasoning, in one paragraph, because a maintainer who overrides this should be overriding an argument rather than a preference: Gemma 4 native audio is **worse at transcription than the pipeline Friday already has** — 13.15% word error rate against faster-whisper's 11.48%, degrading to roughly 41% against 16% on noisy audio (**INHERITED**). Dictation is an accuracy task. Replacing an 11.48% path with a 13.15% path makes dictation worse for every user, in exchange for a capability dictation does not use. What native audio actually buys is **audio-to-reasoning in a single pass** — prosody, tone, hesitation, emphasis, speaker intent: everything that is destroyed the moment speech becomes a string. That is a different job, and it deserves a different mode rather than a silent substitution inside the same one.
 
-**Stephen may override this.** If he does, the thing being traded away is dictation accuracy across the board, and the thing bought is that every voice turn carries prosody. §11 Q1 puts the question rather than assuming the answer.
+**The owner may override this.** If they do, the thing being traded away is dictation accuracy across the board, and the thing bought is that every voice turn carries prosody. §11 Q1 puts the question rather than assuming the answer.
 
 ### 0.4 The non-negotiable constraints (verbatim from `cloud-voice-providers.md` §1.0)
 
@@ -78,9 +78,9 @@ Two consequences specific to this document:
 |---|---|---|
 | V1 | Tier-1 has **two** asset roots, not one. `LOCAL_VOICE_DIR = friday_home() / "local_voice"` with `WHISPER_DIR`/`PIPER_DIR` beneath it is the default; but `WhisperASR._download_root()` and `PiperTTS._voice_path()` **prefer `voice_assets_dir()`** when OS mode is set. A configurable override therefore already exists and is undocumented | `local_voice.py:43, 71-73, 343-358, 413-430`; `paths.py` `voice_assets_dir()` |
 | V2 | **`~/.friday/local_voice/` does not exist on this machine.** With OS mode off — which it is here — no other root is consulted, so `models_ready()` returns False and `/api/voice/session-info` refuses the local engine | `local_voice.py:698-708`; directory listing |
-| V3 | The provisioned assets sit at `~/.friday/runtime/{whisper-models,piper-voices,venv-voice}` — 1.51 GB, 0.06 GB, 1.25 GB | `docs/history/audits/provisioning-report.md` §5, §6; directory listing |
+| V3 | The provisioned assets sit at `~/.friday/runtime/{whisper-models,piper-voices,venv-voice}` — 1.51 GB, 0.06 GB, 1.25 GB | provisioning audit; directory listing |
 | V4 | **No line in `src/` reads `~/.friday/runtime/piper-voices` or `~/.friday/runtime/whisper-models`.** `runtime/` is referenced only by the model/LLM subsystems (`core/__init__.py:711-722`, `paths.py:127-162`, `model_store.py`, `residency_arbiter.py`, …) — never by voice | recursive `Select-String` over `src/` |
-| V5 | The repo's own provisioning audit says so plainly: "**Nothing was wired into Friday.** This mission provisioned and proved an environment; it did not touch routing, `capability_routing`, or any repo source." | `provisioning-report.md:321` |
+| V5 | The repo's own provisioning audit says so plainly: "**Nothing was wired into Friday.** This mission provisioned and proved an environment; it did not touch routing, `capability_routing`, or any repo source." | provisioning audit |
 | V6 | **Even repointing the paths would not work.** The provisioned Piper voice is `en_US-lessac-medium`; the default is `DEFAULT_PIPER_VOICE = "en_US-amy-medium"`. The provisioned ASR model is `faster-whisper-large-v3-turbo` in **Hugging Face hub layout** (`models--…/blobs/snapshots/refs`); the default is `DEFAULT_WHISPER_MODEL = "small"` at a **flat `download_root`** | `local_voice.py`; directory listing |
 | V7 | `local_voice.py` and `nemo_voice.py` contain **no logging import, no logger, no handler.** Their entire diagnostic output is two bare `print()` calls | `local_voice.py:751`, `:764` |
 | V8 | Those prints land in `~/.friday/server_stderr.log` — **135,976 KB, unrotated** — while every other subsystem writes to `friday.log` with `RotatingFileHandler(maxBytes=10MB, backupCount=3)` | `core/__init__.py:857-877`; directory listing |
@@ -94,7 +94,7 @@ Two consequences specific to this document:
 | V14 | Ollama is a separate, live dependency reached at `http://localhost:11434` | `core/__init__.py:1874, 2490-2495, 2967`; `routing/ollama_manager.py` |
 | V15 | Tier-1 wheels ride `[all]`; the GPU group is deliberately excluded and opt-in | `pyproject.toml:44-121` |
 
-### 1.2 Carried from the prior session — **INHERITED** (restated, not re-verified here)
+### 1.2 Carried from earlier feasibility work — **INHERITED** (restated, not re-verified here)
 
 | # | Finding |
 |---|---|
@@ -105,11 +105,11 @@ Two consequences specific to this document:
 | I5 | Gemma 4 audio is **worse at transcription**: **13.15% WER vs faster-whisper's 11.48%**, degrading to roughly **41% vs 16%** on noisy audio |
 | I6 | Its actual advantage is **audio-to-reasoning in a single pass** — prosody, tone, speaker intent |
 
-**These are load-bearing and unverified in this session.** I3 in particular becomes a runtime check in §5.7 rather than a footnote, precisely because it is inherited: a stale-GGUF failure that is silent is indistinguishable from "native audio doesn't work," and that is the exact class of mystery §4.1 exists to end.
+**These are load-bearing and unverified in this document.** I3 in particular becomes a runtime check in §5.7 rather than a footnote, precisely because it is inherited: a stale-GGUF failure that is silent is indistinguishable from "native audio doesn't work," and that is the exact class of mystery §4.1 exists to end.
 
 ### 1.3 The historical record this document is downstream of
 
-`docs/history/audits/voice-mode.md` (2026-08-21) reached a verdict that has not been actioned:
+The 2026-08-21 voice-mode audit reached a verdict that has not been actioned:
 
 > **"Voice mode was not broken. Friday was running the wrong voice architecture."**
 
@@ -173,7 +173,7 @@ That reframes my job. I am not guarding a working path from a new feature; I am 
 
 **Opening position.** Count the axes honestly before adding one. Today: `voice_engine ∈ {local, local-gpu, gemini, auto}`, plus the cloud spec's provider selection within Tier 3, plus per-provider model tier. This document proposes adding a **listening mode**. That is a *fourth* axis, and the repo has already written down what happens when axes accumulate without anyone owning them: `docs/decisions/2026-09-04-five-dead-settings.md`.
 
-**The `auto` problem, which is not new and must be fixed here rather than inherited.** `voice-mode.md` §2.1 recorded that "**`\"auto\"` does not mean auto**" — that `auto` and `local` were the same branch, "a value that reads as 'pick whichever works' and behaves as 'always local, regardless.'" The current code (V10, `local_voice.py:599-621`) has since made `auto` mean "GPU if ready else CPU" — which is better, and is *still* not what the word promises, because it never considers whether the tier it picks can complete a turn (V12 checks that at a different layer). Adding a mode axis on top of a selector that already misrepresents itself compounds the debt. **Fix the selector or stop offering the word.**
+**The `auto` problem, which is not new and must be fixed here rather than inherited.** The 2026-08-21 voice-mode audit recorded that "**`\"auto\"` does not mean auto**" — that `auto` and `local` were the same branch, "a value that reads as 'pick whichever works' and behaves as 'always local, regardless.'" The current code (V10, `local_voice.py:599-621`) has since made `auto` mean "GPU if ready else CPU" — which is better, and is *still* not what the word promises, because it never considers whether the tier it picks can complete a turn (V12 checks that at a different layer). Adding a mode axis on top of a selector that already misrepresents itself compounds the debt. **Fix the selector or stop offering the word.**
 
 **Where the design gets this right.** Listening mode is a **mode on the voice role, not a provider**. It does not multiply with provider selection because it is only offered where the engine declares it (§5.4), which is data in `provider_registry.py`, not a branch in the selector. That is the same test the cloud spec set for itself — "adding provider three must be a registry entry … not a code change in the fallback state machine" — and this design passes it: adding the audio-in capability is a `capabilities` entry plus a readiness probe.
 
@@ -268,7 +268,7 @@ Deliberately **not** included: transcript text, audio, or any user content. The 
 
 **R0.3 — A readiness receipt.** Every `models_ready()` / `gpu_tier_ready()` / `_local_brain_ready()` evaluation that returns False logs **which** condition failed and **which path it checked**. The specific defect this catches is V2/V4: today a user sees "local voice unavailable" and the log does not say `~/.friday/local_voice/whisper does not exist`, which is the single sentence that would have ended this whole investigation months ago.
 
-**R0.4 — Silence is an outcome.** A turn that produces no audio and no error within its budget emits `outcome: timeout` with code `local_voice_turn_timeout` (§6.1). This is the direct answer to `voice-mode.md`'s "Silence is the one failure mode audio cannot express." The watchdog is specified in R2; R0 is the requirement that it be *recorded*.
+**R0.4 — Silence is an outcome.** A turn that produces no audio and no error within its budget emits `outcome: timeout` with code `local_voice_turn_timeout` (§6.1). This is the direct answer to the voice-mode audit's "Silence is the one failure mode audio cannot express." The watchdog is specified in R2; R0 is the requirement that it be *recorded*.
 
 **Acceptance.** Kill Friday mid-turn, then reconstruct from `friday.log` alone: which tier was preferred, which served, why it changed, where the time went, and whether the turn completed. If any of those five requires reading source code, R0 is not done.
 
@@ -299,11 +299,11 @@ That last point is the one that makes this not a one-line fix, and it is why the
 
 ### 4.3 R2 — Make Tier 1 able to complete a turn
 
-**Problem.** `voice-mode.md` §2.2: "**The check vouches for two thirds of the pipeline**" — `local_ok = eng.available()` covers ASR and TTS but never the brain, "a gate reasoning about the *form* of the thing (are the packages installed?) rather than its *meaning* (can this pipeline answer a question?)". Partially fixed since: `routes/voice.py:916-921` now requires a resident local brain seat (V12). The remainder is the hang: transcribes, emits `status: thinking`, never speaks, never errors, never times out.
+**Problem.** The 2026-08-21 voice-mode audit: "**The check vouches for two thirds of the pipeline**" — `local_ok = eng.available()` covers ASR and TTS but never the brain, "a gate reasoning about the *form* of the thing (are the packages installed?) rather than its *meaning* (can this pipeline answer a question?)". Partially fixed since: `routes/voice.py:916-921` now requires a resident local brain seat (V12). The remainder is the hang: transcribes, emits `status: thinking`, never speaks, never errors, never times out.
 
 **Specification.**
 
-- **R2.1 — `local_ok` means "can complete a turn."** Readiness is the conjunction of ASR loadable, TTS loadable, **and** a brain seat resident and reachable. A failure of the third conjunct specifically emits **`local_voice_brain_absent`** (§6.1) rather than the generic unavailability message — the whole point of R2.1 is that the three conditions stop being one undifferentiated boolean. V12 is the right shape; the change is that the same conjunction governs `/api/voice/setup/status` and the settings UI's availability display, so the three surfaces cannot disagree. `voice-mode.md` §2.2 records that `setup/status` "inherits the same optimism and reports `\"ready\": true`" — that is the specific inconsistency being closed.
+- **R2.1 — `local_ok` means "can complete a turn."** Readiness is the conjunction of ASR loadable, TTS loadable, **and** a brain seat resident and reachable. A failure of the third conjunct specifically emits **`local_voice_brain_absent`** (§6.1) rather than the generic unavailability message — the whole point of R2.1 is that the three conditions stop being one undifferentiated boolean. V12 is the right shape; the change is that the same conjunction governs `/api/voice/setup/status` and the settings UI's availability display, so the three surfaces cannot disagree. The voice-mode audit records that `setup/status` "inherits the same optimism and reports `\"ready\": true`" — that is the specific inconsistency being closed.
 - **R2.2 — A per-stage turn watchdog.** Each stage (ASR/audio-in, brain, TTS-first-chunk) has a budget. Exceeding it terminates the turn with `local_voice_turn_timeout`, names the stage in `detail`, emits the R0.2 receipt with `outcome: timeout`, and **speaks or displays a failure** rather than going quiet. Budgets are configuration with documented defaults, not constants buried in the module — because on a machine sharing a GPU with a training run the honest budget is different, and a user should be able to say so rather than experience it as a bug.
 - **R2.3 — A local self-test.** One command / one settings button that runs the §7.1 round trip and reports each stage's outcome and timing. The repo already contains the artifact of someone doing this by hand: `~/.friday/voice-selftest.wav`. Make it a supported path rather than a leftover.
 
@@ -320,13 +320,13 @@ That last point is the one that makes this not a one-line fix, and it is why the
 
 ### 4.5 R4 — `auto` means auto, or `auto` goes away
 
-**Problem.** P3's objection, and `voice-mode.md` §2.1's finding: "a value that reads as 'pick whichever works' and behaves as 'always local, regardless.'" Current behaviour (V10) is "GPU if `gpu_tier_ready()` else CPU" — better, and still not what the word promises, because neither branch consults R2.1 turn-readiness.
+**Problem.** P3's objection, and the voice-mode audit's finding: "a value that reads as 'pick whichever works' and behaves as 'always local, regardless.'" Current behaviour (V10) is "GPU if `gpu_tier_ready()` else CPU" — better, and still not what the word promises, because neither branch consults R2.1 turn-readiness.
 
 **The head-on conflict, stated rather than glossed.** `voice-system-spec.md` §7.2's `auto` row reads:
 
 > `auto` | Tier2 (if ready) → Tier1 → **(cloud only if key present AND not local-only)** → text-only
 
-So the authoritative spec **already permits `auto` to reach Tier 3**. `voice-mode.md` open item 1 leaves it genuinely open — "Either make it **probe cloud** when local cannot complete a turn, or remove the option." And `cloud-voice-providers.md` §6.3 is unambiguous that a *local failure* must surface and offer rather than promote to cloud. Those three cannot all be satisfied by the current row. **This document does not get to resolve that by writing a test.** It is put to the maintainer as §11 Q5, with the three candidates below, and whichever is chosen requires a corresponding edit to §7.2 (§10, row 11.2).
+So the authoritative spec **already permits `auto` to reach Tier 3**. The voice-mode audit's open item 1 leaves it genuinely open — "Either make it **probe cloud** when local cannot complete a turn, or remove the option." And `cloud-voice-providers.md` §6.3 is unambiguous that a *local failure* must surface and offer rather than promote to cloud. Those three cannot all be satisfied by the current row. **This document does not get to resolve that by writing a test.** It is put to the maintainer as §11 Q5, with the three candidates below, and whichever is chosen requires a corresponding edit to §7.2 (§10, row 11.2).
 
 | | Behaviour | Consequence |
 |---|---|---|
@@ -334,7 +334,7 @@ So the authoritative spec **already permits `auto` to reach Tier 3**. `voice-mod
 | **R4.2 — remove `auto`** | Three honest values: `local`, `local-gpu`, `gemini` (plus provider selection within Tier 3) | Smallest surface; P3's preference. Also requires a §7.2 edit — removing the row. |
 | **R4.3 — `auto` may offer cloud** | Keeps §7.2's row, but the cloud step becomes an **offer** the user accepts, never an automatic hop | Preserves the existing spec's intent while satisfying §6.3. Costs an interruption at the worst moment, which is precisely the trade §6.3 already made deliberately. |
 
-`test_resolve_engine_auto_never_cloud` (§7.1) is written for R4.1/R4.2 and **must not be added under R4.3** — it would encode one candidate as settled. **Inheriting the current behaviour unchanged is the one option that is not acceptable**, because whatever `auto` ends up meaning, it does not currently mean it. `voice-mode.md` open item 1: "The present behaviour is a setting that lies to the person who chose it."
+`test_resolve_engine_auto_never_cloud` (§7.1) is written for R4.1/R4.2 and **must not be added under R4.3** — it would encode one candidate as settled. **Inheriting the current behaviour unchanged is the one option that is not acceptable**, because whatever `auto` ends up meaning, it does not currently mean it. The voice-mode audit's open item 1: "The present behaviour is a setting that lies to the person who chose it."
 
 ---
 
@@ -557,11 +557,11 @@ Steps 6–8 are GPU-touching only at manual verification; the design, registry, 
 
 **Net: all three become more urgent, and 11.1 needs widening.** None of them is contradicted by this document. Additionally, the `elevenlabs-voice.md` amendment (cloud spec §11.4/11.5) is unaffected — this document touches no Tier-3 decision.
 
-One further note, offered rather than specified: `voice-mode.md` §5 item 8 recorded a live contradiction between the ElevenLabs decision (Gemini Live decided) and a local default in `routes/voice.py` — "Both are load-bearing and they cannot both be right." The cloud spec resolved the *documentation* side (Gemini Live is the Tier-3 default, Tier 1 is the product default, no conflict). **Both of item 8's citations have since rotted**: `routes/voice.py:497` is now `_voice_orb_start()`'s docstring, and `elevenlabs-voice.md` §6 has no numbered subsections, so "§6.2" resolves to nothing. The code side should be re-located and confirmed during R4 — and this is a small worked example of why R0.2's receipts matter more than line-number citations, which decay every refactor.
+One further note, offered rather than specified: the voice-mode audit recorded a live contradiction between the ElevenLabs decision (Gemini Live decided) and a local default in `routes/voice.py` — "Both are load-bearing and they cannot both be right." The cloud spec resolved the *documentation* side (Gemini Live is the Tier-3 default, Tier 1 is the product default, no conflict). **Both of item 8's citations have since rotted**: `routes/voice.py:497` is now `_voice_orb_start()`'s docstring, and `elevenlabs-voice.md` §6 has no numbered subsections, so "§6.2" resolves to nothing. The code side should be re-located and confirmed during R4 — and this is a small worked example of why R0.2's receipts matter more than line-number citations, which decay every refactor.
 
 ---
 
-## 11. Open questions — Stephen's calls, not engineering's
+## 11. Open questions — the owner's calls, not engineering's
 
 These are the ones a spec cannot settle. Each names the consequence of each answer, so that answering is a decision rather than a preference.
 
@@ -578,13 +578,13 @@ Isolation is safer (P2) and costs a second resident model on a machine already c
 R1.5 refuses to let the loader infer this from what happens to be on disk. It is a change to the registry and the Tier-1 default binding (`core/__init__.py:1655`), which means it is a decision about what Friday sounds like — and that is a product question wearing a filename.
 
 **Q5 — What does `auto` mean, and may it reach cloud?**
-This is not a tidy-up; it is a live three-way conflict between `voice-system-spec.md` §7.2 (which permits `auto` → cloud), `cloud-voice-providers.md` §6.3 (which forbids promoting to cloud on local failure without consent), and `voice-mode.md` open item 1 (which leaves it open). §4.5 lays out R4.1 (local-only), R4.2 (remove it), R4.3 (offer, never hop). Each requires a different edit to §7.2 and a different §7.1 test. **Answering this unblocks step 3 of §8**; leaving it open means shipping a setting that means something different from what the spec says it means.
+This is not a tidy-up; it is a live three-way conflict between `voice-system-spec.md` §7.2 (which permits `auto` → cloud), `cloud-voice-providers.md` §6.3 (which forbids promoting to cloud on local failure without consent), and the voice-mode audit's open item 1 (which leaves it open). §4.5 lays out R4.1 (local-only), R4.2 (remove it), R4.3 (offer, never hop). Each requires a different edit to §7.2 and a different §7.1 test. **Answering this unblocks step 3 of §8**; leaving it open means shipping a setting that means something different from what the spec says it means.
 
 **Q6 — Should `understand` mode be *offered* contextually, and if so on what trigger?**
 P4 lost the default (§2.4) but the concern survives: a mode nobody discovers is a mode nobody uses, and the build is then wasted. A contextual offer is possible — but every trigger anyone would propose (long utterance, detected emotion, ambiguity) is a form of content inspection driving a UI change, which sits uncomfortably beside C2's spirit even though it violates no letter of it. Specified conservatively as settings-only (§5.5) pending an answer.
 
 **Q7 — Do the inherited figures need independent verification before they carry design weight?**
-I1–I6 are the load-bearing facts of §5 and none was verified in this session (§1.2). I3 (the 2026-06-05 GGUF cutoff) is already converted into a runtime check that fails safe (§5.7). I5 (the WER figures) currently justifies the entire two-mode design — and if Q1 is ever revisited, it should be revisited against a measurement rather than a restatement.
+I1–I6 are the load-bearing facts of §5 and none was verified for this document (§1.2). I3 (the 2026-06-05 GGUF cutoff) is already converted into a runtime check that fails safe (§5.7). I5 (the WER figures) currently justifies the entire two-mode design — and if Q1 is ever revisited, it should be revisited against a measurement rather than a restatement.
 
 ---
 
@@ -595,9 +595,9 @@ I1–I6 are the load-bearing facts of §5 and none was verified in this session 
 - `docs/design/active/voice-system-spec.md` — §2 tier matrix, §7.1–7.4 preference/fallback, §7.3 transition-notice rule, §8 error taxonomy, §9 egress, §10 verification gate and CI matrix, §3 AC-ID convention (D-AC3)
 - `docs/design/active/cloud-voice-providers.md` — §1.0 constraints C1–C3, §3.1 capability keywords, §3.3 split-modality refusal, §4.3 selection-time disclosure, §4.4 the indicator, §6.3 surfaces-and-offers, §6.4 `voice_offline_no_cloud`, §11 the three unapplied edits
 - `docs/design/active/elevenlabs-voice.md` — decisions (A)(B)(C); §4.6 egress gap (referenced, not modified)
-- `docs/history/audits/voice-mode.md` (2026-08-21) — "running the wrong voice architecture"; the indefinite local-cascade hang; §2.1 `auto` semantics; §2.2 `local_ok` vouches for two thirds of the pipeline; §5 open items 1, 2, 3, 8
-- `docs/history/audits/provisioning-report.md` (2026-08-13) — §5 absolute paths (`runtime/whisper-models`, `runtime/piper-voices`, `runtime/venv-voice`), §6 disk, and line 321: "**Nothing was wired into Friday.**"
-- `docs/audits/voice-session-2026-08-25-triage-and-spec.md` — §4 the receipts contract and the consumer rule
+- The voice-mode audit (2026-08-21) — "running the wrong voice architecture"; the indefinite local-cascade hang; `auto` semantics; `local_ok` vouches for two thirds of the pipeline
+- The provisioning audit (2026-08-13) — the `runtime/whisper-models`, `runtime/piper-voices`, `runtime/venv-voice` paths, disk, and "**Nothing was wired into Friday.**"
+- The 2026-08-25 voice triage — the receipts contract and the consumer rule
 - `docs/user-guide/local-voice-gpu-tier.md` — Tier-2 interface contract, `MIN_VRAM_GB`, degradation promise, manual-test procedure
 - `docs/decisions/2026-09-04-five-dead-settings.md` — the failure mode a capability-gated control avoids
 - `docs/README.md` — status-header convention; "**Code beats documentation**"
@@ -612,4 +612,4 @@ I1–I6 are the load-bearing facts of §5 and none was verified in this session 
 - `pyproject.toml:44-121` (voice extras; Tier-1 rides `[all]`, GPU group excluded)
 - Filesystem, `%USERPROFILE%\.friday` — `local_voice/` absent; `runtime/piper-voices/en_US-lessac-medium.onnx`; `runtime/whisper-models/models--mobiuslabsgmbh--faster-whisper-large-v3-turbo/`; `models/nemo/` without checkpoints; `server_stderr.log` 135,976 KB
 
-**Inherited, not verified in this session** — prior session `local_feeb8bfe-4ad8-4e76-b59f-77bea49d91e0` (transcript unreadable here, §1.2): `llama-server` audio-in feasibility; Ollama audio instability; llama.cpp PR #24118 (2026-06-04) and the 2026-06-05 GGUF cutoff; Gemma 4 audio availability on E2B/E4B/12B, 16 kHz mono, 30 s ceiling; WER 13.15% vs 11.48% clean and ~41% vs ~16% noisy.
+**Inherited, not verified here** (§1.2): `llama-server` audio-in feasibility; Ollama audio instability; llama.cpp PR #24118 (2026-06-04) and the 2026-06-05 GGUF cutoff; Gemma 4 audio availability on E2B/E4B/12B, 16 kHz mono, 30 s ceiling; WER 13.15% vs 11.48% clean and ~41% vs ~16% noisy.

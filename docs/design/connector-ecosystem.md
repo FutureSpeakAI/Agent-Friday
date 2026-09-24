@@ -294,7 +294,7 @@ mechanism answerable in one vocabulary and nothing else moved.
 **Phase 2 — the liars.** Fix the verdict sites that answer a narrower question
 than they present: `routes/calendar.py:71`, `routes/news.py:153`,
 `PlatformAdapter.status`, `channels.manager.status`, `/api/health/full`'s bare
-record count. Each becomes a `Health` call. This is where Stephen stops being
+record count. Each becomes a `Health` call. This is where the owner stops being
 told Drive works.
 
 **Phase 3 — the protocol.** Adapters for all seven onto `Connector`. Still no
@@ -351,7 +351,7 @@ where we stop.
 Phases 1 and 2 are the ones that pay for themselves immediately: they are small,
 they are testable without touching credentials, and they end the specific class
 of failure that has cost the most this month. Phase 2 in particular fixes bugs
-Stephen is hitting today.
+the owner is hitting today.
 
 Phases 3–6 are the actual unification and can wait behind anything more urgent.
 

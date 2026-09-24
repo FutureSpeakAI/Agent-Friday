@@ -75,7 +75,7 @@ safety margin:
 * Under `redact`, the turn is assembled and sent, and the **egress gate is the
   only thing** standing between the user's finances and the network. It is a
   pattern matcher with three documented recall gaps
-  (`docs/audits/privacy-classifier-known-gaps-2026-08-25.md`), two of which are
+  ([`docs/security/threat-model.md`](../../security/threat-model.md)), two of which are
   demonstrated in the table above.
 
 The gate held on every vault-shaped sentence tested. The question is whether the

@@ -1,6 +1,6 @@
 # Voice mode: full diagnosis and repair spec
 
-Written 2026-09-10 from measurements on Stephen's machine (RTX 4070 12GB,
+Written 2026-09-10 from measurements on the owner's machine (RTX 4070 12GB,
 Windows 11, `~/.friday/friday.log`). Every number below was observed, not
 estimated. Implementer: keep it that way — if a claim here cannot be
 reproduced, fix the claim rather than coding to it.
@@ -15,9 +15,8 @@ reproduced, fix the claim rather than coding to it.
 | ASR | faster-whisper (cpu tier) / Nemotron streaming (gpu tier) | Gemini |
 | TTS | Piper (cpu) / NeMo FastPitch+HiFi-GAN or Kokoro (gpu) | Gemini |
 
-Stephen's standing requirement (2026-09-10): "local voice always needs to
-involve a model in the loop that can call tools and do research into the
-knowledge graph." The local path satisfies this. The cloud path structurally
+The standing requirement: local voice always involves a model in the loop
+that can call tools and do research in the knowledge graph. The local path satisfies this. The cloud path structurally
 cannot: its 16 declarations are `check_email`, `get_article_deep_dive`,
 `get_source_trust`, `navigate_workspace`, `open_path`, `open_url`,
 `query_calendar`, `read_file`, `screenshot`, `search_email`, `search_files`,
@@ -33,7 +32,7 @@ events per minute**, rising to **47 in the minute of a live voice session**
 `nvidia-smi`. This happens while the **cloud** engine is selected, when NeMo
 is not in the loop at all.
 
-This is the leading suspect for the skippy audio Stephen reported on Gemini
+This is the leading suspect for the skippy audio the owner reported on Gemini
 Live: process spawns and CUDA driver calls on the same thread budget as audio
 streaming. It is also why the log is unreadable — 12 identical warnings a
 minute drown everything else.
@@ -57,7 +56,7 @@ decision that could starve the display. Keep reporting both — the disagreement
 is real information — but never admit on the larger number. Acceptance: a test
 that feeds torch=11.5/nvidia-smi=2.0 and asserts refusal.
 
-### F3 — cloud voice cannot reach Stephen's context, and does not say so
+### F3 — cloud voice cannot reach the owner's context, and does not say so
 
 "It did successfully triage my emails and calendar, but then... utterly failing
 to reach my context." Both halves are explained by the 16-tool table above:
@@ -107,7 +106,7 @@ engine a session started now would get.
 ### F5 — cold model load is 40–56 seconds, paid on the first utterance
 
 Measured: 39.0s, 48.6s, 55.9s across three cold loads of `KokoroTTS`.
-Synthesis after that is fast. This is the "very, very slow" Stephen reported.
+Synthesis after that is fast. This is the "very, very slow" the owner reported.
 
 **Fix:** warm the selected local TTS engine when the Voice settings panel is
 opened or when voice mode is armed, not on the first spoken turn. Show a
@@ -117,7 +116,7 @@ arming begins speaking in under 3 seconds.
 ### F6 — mic audio egress is logged but not surfaced
 
 `egress ALLOW provider=google-gemini field=mic_audio tier=UNCLASSIFIABLE
-bytes=7294560 (live voice session closed)`. 7.3 MB of Stephen's microphone
+bytes=7294560 (live voice session closed)`. 7.3 MB of the owner's microphone
 audio went to Google in one session. The gate allowed it correctly and the
 receipt exists, but nothing told him at the time.
 

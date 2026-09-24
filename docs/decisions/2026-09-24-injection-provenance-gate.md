@@ -159,7 +159,7 @@ paying a bill to an account number read from a file, an address change taken
 from a document, inviting someone whose address came from a web page, a
 deletion right after reading a document.
 
-The 65 chat questions are the action policy doing what Stephen asked of it on
+The 65 chat questions are the action policy doing what the owner asked of it on
 2026-09-24: outward actions ask first.
 
 With Laya configured but not answering (as during its first minute after a

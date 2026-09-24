@@ -1207,5 +1207,4 @@ interesting one on the list.**
   (2 d 7 h). Pricing `2d8e2b3` present on `origin/main`.
 
 **Documents:** `docs/design/grow-button.md`, `docs/design/friday-builds-agents.md`,
-`docs/design/switchyard-position.md`, `docs/audits/caching-audit-2026-08-26.md`,
-`KNOWN_ISSUES.md` §1.
+`docs/design/switchyard-position.md`, `KNOWN_ISSUES.md` §1.

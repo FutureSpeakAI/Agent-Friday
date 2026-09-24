@@ -127,7 +127,7 @@ false; see §2.4 for the hardware floor.
 
 ### 1.5 `_existing_user()`
 
-The maintainer asked which steps consult it. **None do.** It is defined at
+Which steps consult it? **None do.** It is defined at
 `setup_wizard.py:368` and called exactly once, at `:1044`, as a whole-wizard
 gate in `main()`: if it returns true and `--force` was not passed, the wizard
 prints "Existing installation detected" and exits.
@@ -299,7 +299,7 @@ Nothing in §7 reuses any of these.
 
 | Claim | Where | Verdict |
 |---|---|---|
-| "Without Ollama: An egress gate redacts sensitive data before sending to cloud providers. **Your private information never leaves your device**, but redacted conversations may lose context." | `setup_wizard.py:456-460` (welcome panel) | **False as stated.** The gate is a keyword-and-pattern classifier with three documented recall gaps (`docs/audits/privacy-classifier-known-gaps-2026-08-25.md`) and a measured failure demonstrated in §11. "Never" is not a claim a pattern matcher can support. |
+| "Without Ollama: An egress gate redacts sensitive data before sending to cloud providers. **Your private information never leaves your device**, but redacted conversations may lose context." | `setup_wizard.py:456-460` (welcome panel) | **False as stated.** The gate is a keyword-and-pattern classifier with three documented recall gaps ([`docs/security/threat-model.md`](../../security/threat-model.md)) and a measured failure demonstrated in §11. "Never" is not a claim a pattern matcher can support. |
 | "Ollama detected — sensitive conversations stay entirely on your device. **Nothing leaves your machine.**" | `setup_wizard.py:449-453` (`_show_privacy_posture`) | **False.** Ollama being *installed* does not change routing. The wizard writes `mode: "cloud_only"` regardless (`:271`), because step 2 cannot return `ollama`. A user who installs Ollama on this advice gets a green panel and cloud routing. |
 | "A passphrase encrypts this data … so it cannot be read even if your disk is accessed by another user or process." | `setup_wizard.py:709-713` | **True of the ciphertext, defeated by the next prompt**, which writes the passphrase to `start.bat` in the clear (`:720`, `:993`). |
 | "A passphrase encrypts private data (finance, health, notes) at rest… Stored in your OS keychain — never on disk." | `index.html:30726` | **True on this path.** Also the only path that is. |
@@ -310,7 +310,7 @@ Nothing in §7 reuses any of these.
 
 ## 4. Question 2, answered — cloud-only is not feature-complete
 
-The maintainer asked me to check this before writing it. It does not hold. Here is the
+Checked before writing: it does not hold. Here is the
 list, and §11 has the transcript.
 
 **1. Vault-backed questions are refused, not degraded.** With the factory
@@ -388,7 +388,7 @@ teacher is Ms. Alvarez."` classifies **TIER_1** and is transmitted to Anthropic
 verbatim — a child's name, her schedule, and her teacher's name. `"She started
 sertraline 50mg last month."` also classifies **TIER_1** and is transmitted
 verbatim. Both are known gaps, recorded and deliberately not fixed
-(`docs/audits/privacy-classifier-known-gaps-2026-08-25.md`), for reasons that are
+([`docs/security/threat-model.md`](../../security/threat-model.md)), for reasons that are
 good ones: a `\d+\s?mg` regex fires on health journalism, and adding `dr\.` to the
 TIER-3 vocabulary re-breaks "Dr. Seuss".
 
@@ -1009,7 +1009,7 @@ against Anthropic, factory settings:
 | `What's the weather tomorrow?` | 1 | the sentence, verbatim |
 
 Rows 1 and 2 are §4. Rows 3 and 4 are §5. Rows 3 and 4 are known and deliberate
-(`docs/audits/privacy-classifier-known-gaps-2026-08-25.md`); this run confirms
+([`docs/security/threat-model.md`](../../security/threat-model.md)); this run confirms
 they are still live at `c60172a`.
 
 **4. The local-model ladder and the hardware floor.** Computed from
