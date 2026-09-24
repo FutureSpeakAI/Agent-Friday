@@ -3090,7 +3090,6 @@ def _detect_context_needs(message, workspace):
         'trust': {'trust'},
         'wiki': {'wiki'},
         'knowledge': {'wiki'},
-        'home': {'todos', 'personality'},
         'family': {'trust'},
         'futurespeak': {'career'},
         'code': set(),

@@ -95,8 +95,9 @@ _WS_TAB_ALIASES = {'wiki': ('knowledge', {'view': 'pages'})}
 
 #: Workspaces that used to exist. Their URLs may be bookmarked, linked from an
 #: old notification or sitting in someone's history, so they redirect rather than
-#: 404. `edition` (The Friday Edition, E0) was removed 2026-09-24 in favour of
-#: the briefings; its data is untouched at ~/.friday/edition.
+#: 404. `edition` (the former Friday Edition, not the News front page's
+#: editions) and `home` were both landing screens. Nothing deletes the data
+#: left at ~/.friday/edition.
 _RETIRED_WORKSPACES = {'edition': None, 'home': None}
 
 

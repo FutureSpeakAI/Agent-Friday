@@ -148,7 +148,6 @@ const FRIDAY_PANEL_CACHE_LINKED = {
 // server keeps its own cache behind these, so this also starts the slow
 // server-side work (git sweep, feed crawl) before anyone is waiting on it.
 const FRIDAY_PREFETCH_URLS = {
-  home: ['/api/countdowns', '/api/trust', '/api/personality', '/api/epistemic', '/api/memory/stats'],
   calendar: ['/api/calendar/today', '/api/calendar/week', '/api/calendar/tomorrow'],
   code: ['/api/repos/scan'],
   system: ['/api/system'],
@@ -164,7 +163,7 @@ function fridayPrefetchPanels() {
   return apiFetch('/api/workspace/predictions?top=4').then(r => r.json()).catch(() => ({})).then(d => {
     const predicted = (d && d.predictions || []).map(p => fridayWorkspaceId(p.workspace));
     // News last: its first build is a minute-long feed crawl.
-    const order = predicted.filter(w => w !== 'news').concat(['home', 'calendar', 'code', 'system', 'news']);
+    const order = predicted.filter(w => w !== 'news').concat(['calendar', 'code', 'system', 'news']);
     const urls = [];
     order.forEach(ws => (FRIDAY_PREFETCH_URLS[ws] || []).forEach(u => {
       if (urls.indexOf(u) < 0) urls.push(u);
@@ -17797,11 +17796,9 @@ function App(){
   const close=id=>{if(closeTimers.current[id])return;setClosingWins(p=>new Set(p).add(id));closeTimers.current[id]=setTimeout(()=>{delete closeTimers.current[id];setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});setClosingWins(p=>{const n=new Set(p);n.delete(id);return n})},foldMs())};
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
 
-  // Open Home once setup is confirmed done, so the desktop greets you with
-  // something rather than an empty scene. This used to open The Friday Edition;
-  // that workspace was removed 2026-09-24 and the briefings carry the morning
-  // read now.
-  // Nothing auto-opens; the desktop hero is the landing screen.
+  // NOTHING auto-opens. The desktop hero IS the landing screen: the greeting,
+  // the countdown ticker and START MY DAY. A workspace window must not cover
+  // it on launch.
 
   // ─── Camera Mode ────────────────────────────────────────────
   const[cameraOn,setCameraOn]=useState(false);

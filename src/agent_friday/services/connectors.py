@@ -77,7 +77,7 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "blurb": "Gmail + Calendar, read-only. Powers your morning briefing, "
                  "calendar, and unread-email signals.",
         "capabilities": ["gmail", "calendar"],
-        "workspaces": ["home", "messages", "calendar", "news"],
+        "workspaces": ["messages", "calendar", "news"],
         "setup_hint": "One-click — opens your browser to approve read-only "
                       "access. No tokens to copy/paste.",
         "docs_url": "https://console.cloud.google.com/apis/credentials",
@@ -93,7 +93,7 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "blurb": "Read channels, search messages, and post updates from your "
                  "workspace via the official Slack MCP server.",
         "capabilities": ["channels", "messages", "search"],
-        "workspaces": ["messages", "home"],
+        "workspaces": ["messages"],
         "mcp_server": "slack",
         "mcp_template": {
             "command": "npx",
@@ -118,7 +118,7 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "blurb": "Issues, pull requests, and repo search through the official "
                  "GitHub MCP server. Surfaces PRs awaiting your review.",
         "capabilities": ["issues", "pull_requests", "repos", "search"],
-        "workspaces": ["code", "career", "home"],
+        "workspaces": ["code", "career"],
         "mcp_server": "github",
         "mcp_template": {
             "command": "npx",
@@ -142,7 +142,7 @@ CONNECTOR_DEFS: dict[str, dict] = {
                  "hosted MCP server. Pulls your assigned issues into the "
                  "morning briefing.",
         "capabilities": ["issues", "projects", "cycles"],
-        "workspaces": ["code", "career", "home"],
+        "workspaces": ["code", "career"],
         "mcp_server": "linear",
         # Official remote (Streamable HTTP) server — OAuth in the browser,
         # no API key to paste.
@@ -160,7 +160,7 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "blurb": "Search and read your Notion workspace — notes, docs, and "
                  "databases — via Notion's official hosted MCP server.",
         "capabilities": ["pages", "databases", "search"],
-        "workspaces": ["knowledge", "content", "home"],
+        "workspaces": ["knowledge", "content"],
         "mcp_server": "notion",
         # Official remote (Streamable HTTP) server — OAuth in the browser,
         # no integration token to paste.
@@ -178,7 +178,7 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "blurb": "Read and post to your Discord servers via a Discord MCP "
                  "server. Useful for community and team channels.",
         "capabilities": ["channels", "messages"],
-        "workspaces": ["messages", "home"],
+        "workspaces": ["messages"],
         "mcp_server": "discord",
         "mcp_template": {
             "command": "npx",
