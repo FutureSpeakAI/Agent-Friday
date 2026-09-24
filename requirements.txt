@@ -6,7 +6,7 @@ google-api-python-client>=2.0     # live Gmail + Calendar reads (server.py _fetc
 google-auth-oauthlib>=1.0         # OAuth flow for /api/google/auth (read-only gmail + calendar scopes)
 cryptography>=44              # Sovereign Vault AES-256-GCM + Argon2id (vault_crypto.py)
 pynacl>=1.5                   # Ed25519 attestation keys — Integrity Manifest (proof_of_integrity.py) + Source Trust Federation (source_trust_federation.py); both degrade gracefully if absent
-rich>=13.0
+rich>=15.0.0
 colorama>=0.4
 pyautogui>=0.9
 pynput>=1.7                   # global Ctrl+Shift+Q kill-switch hotkey for Computer Control
@@ -14,7 +14,7 @@ beautifulsoup4>=4.12
 feedparser>=6.0              # RSS-based news fetcher in server.py (_rss_results) — replaces CAPTCHA-blocked DuckDuckGo scraping
 tzdata>=2024.1               # IANA tz database for zoneinfo on Windows (Front Page 7AM/6PM Central scheduler in server.py)
 requests>=2.31
-psutil>=5.9                   # hardware detection (RAM) for the onboarding Hardware step + /api/health/full (ollama_manager.detect_hardware); degrades to wmic/proc fallback if absent
+psutil>=7.2.2                   # hardware detection (RAM) for the onboarding Hardware step + /api/health/full (ollama_manager.detect_hardware); degrades to wmic/proc fallback if absent
 pyyaml>=6.0
 pdfplumber>=0.11            # PDF text extraction for /api/analyze-file. NOT OPTIONAL: the PDF branch of
                             # routes/core_routes.py::analyze_file has always been written as though this
@@ -39,7 +39,7 @@ piper-tts>=1.2                # Tier-1 LOCAL voice TTS (services/local_voice.py)
 onnxruntime>=1.17             # CPU inference backend for Piper TTS (+ optional Silero VAD endpointing). Pulled in by piper-tts; listed explicitly for the lite voice stack.
 pyttsx3>=2.90                 # last-resort offline TTS (Windows SAPI5) when both Gemini and Piper are unavailable — the bottom of the voice fallback chain
 pystray>=0.19                 # system tray icon (friday_tray.py) — the normal Windows launch path; without it the tray entry point dies on import
-pillow>=10.0                  # tray icon rendering (pystray dependency) + image handling
+pillow>=12.3.0                  # tray icon rendering (pystray dependency) + image handling
 
 # ── OPTIONAL: Layer 2 of the sensitivity classifier (Presidio NER) ────────────
 # NOT installed by default, and deliberately so. sensitivity_classifier.py has

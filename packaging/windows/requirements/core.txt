@@ -21,10 +21,10 @@ pyyaml>=6.0
 beautifulsoup4>=4.12
 feedparser>=6.0
 tzdata>=2024.1
-rich>=13.0
+rich>=15.0.0
 colorama>=0.4
 cryptography>=44
-psutil>=5.9
+psutil>=7.2.2
 anthropic>=0.40
 google-genai>=1.0
 
@@ -40,7 +40,7 @@ keyring>=24.0
 # Tray icon - the normal Windows launch path. friday_tray.py dies on import
 # without pystray, so for this installer it is core, not optional.
 pystray>=0.19
-pillow>=10.0
+pillow>=12.3.0
 
 # Global Ctrl+Shift+Q kill-switch for Computer Control.
 pynput>=1.7
