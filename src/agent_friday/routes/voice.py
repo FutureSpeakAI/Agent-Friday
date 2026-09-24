@@ -1226,8 +1226,18 @@ def _build_voice_system_prompt(settings=None, description=None):
     if idx >= 0:
         volatile = full_ctx[idx:]
         full_ctx = full_ctx[:idx]
-    return voice_prefix + full_ctx, {"is_local_brain": _is_local_brain,
-                                     "provider": _prov, "volatile": volatile}
+    # The action policy is appended after the clock, so the split above
+    # carried it into the user turn with the continuity and tone blocks after
+    # it. It is constant text: it goes last in the stable system prompt, where
+    # it costs the cache nothing, and the derived volatile tail is stripped of
+    # anything claiming authority over it.
+    from agent_friday.services.action_policy import (
+        ACTION_PERMISSION_POLICY, seal_system_prompt, strip_authority_overrides)
+    volatile = strip_authority_overrides(
+        volatile.replace(ACTION_PERMISSION_POLICY, ""), source="voice volatile context")
+    return (seal_system_prompt(voice_prefix + full_ctx, "local voice prompt"),
+            {"is_local_brain": _is_local_brain, "provider": _prov,
+             "volatile": volatile})
 
 
 def _voice_user_message(user_text, settings=None, volatile=None):
@@ -2323,6 +2333,11 @@ if sock is not None:
         sys_text = system_instruction
         if live_style:
             sys_text = f"Speaking style: {live_style}\n\n{sys_text}"
+        # Continuity, tone and the tool-surface note are appended after the
+        # context, so the action policy is re-placed last and derived text
+        # stripped of overrides before the gate sees the final instruction.
+        from agent_friday.services.action_policy import seal_system_prompt
+        sys_text = seal_system_prompt(sys_text, "Gemini Live prompt")
         # security-boundary.md §19 row 1: the egress gate, not just the
         # (possibly off) vault-assembly gate, stands between the assembled
         # context prompt and Google before it becomes system_instruction=.
