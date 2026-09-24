@@ -300,6 +300,16 @@ def _fresh_swr_cache():
 
 
 @pytest.fixture(autouse=True)
+def _fresh_warm_cache():
+    """A warm value (the model catalog above all) is built from the inputs of
+    whichever test built it first; each test gets one built from its own."""
+    wc = sys.modules.get("agent_friday.services.warm_cache")
+    if wc is not None:
+        wc.invalidate()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_local_seat_is_serving(monkeypatch):
     """By default, no local seat is serving.
 

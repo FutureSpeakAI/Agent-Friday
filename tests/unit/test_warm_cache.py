@@ -57,6 +57,35 @@ def test_it_survives_a_restart(tmp_path):
     assert calls == [], "it recomputed instead of reading the disk copy"
 
 
+def test_an_invalidated_value_is_recomputed_for_a_caller_that_waits():
+    """An input changed (a catalog refresh the user asked for): the next
+    caller that can wait gets a value built from it, not the old one."""
+    source = {"v": "old"}
+    wc.register("inv", lambda: source["v"], ttl_s=600)
+    assert wc.get("inv", compute_if_cold=True)["value"] == "old"
+    source["v"] = "new"
+    assert wc.get("inv", compute_if_cold=True)["value"] == "old", \
+        "precondition: inside its TTL the value is served as is"
+    wc.invalidate("inv")
+    assert wc.get("inv", compute_if_cold=True)["value"] == "new"
+    assert wc.get("inv")["stale"] is False
+
+
+def test_an_invalidated_value_is_still_served_to_a_caller_that_does_not_wait():
+    wc.register("inv2", lambda: time.sleep(5) or "late", ttl_s=600)
+    wc._ENTRIES["inv2"].value = "kept"
+    wc._ENTRIES["inv2"].fetched_at = time.time()
+    wc.invalidate("inv2")
+    t0 = time.time()
+    out = wc.get("inv2")
+    assert time.time() - t0 < 0.5
+    assert out["value"] == "kept" and out["stale"] is True
+
+
+def test_invalidating_an_unknown_name_is_harmless():
+    wc.invalidate("never-registered")
+
+
 def test_a_failing_refresh_never_clobbers_a_good_value():
     """Stale-while-revalidate: a bad refresh is less bad than no answer."""
     state = {"ok": True}

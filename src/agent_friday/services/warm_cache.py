@@ -59,6 +59,11 @@ class Entry:
     fetched_at: float = 0.0
     last_error: Optional[str] = None
     refreshing: bool = False
+    #: An input changed after this value was computed (see `invalidate`).
+    dirty: bool = False
+    #: Bumped by every invalidate(), so a refresh that was already running
+    #: when an input changed does not clear the flag for a value it did not see.
+    generation: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
@@ -67,7 +72,7 @@ class Entry:
 
     @property
     def is_stale(self) -> bool:
-        return self.age_s > self.ttl_s
+        return self.dirty or self.age_s > self.ttl_s
 
     @property
     def has_value(self) -> bool:
@@ -147,10 +152,13 @@ def refresh(name: str, blocking: bool = False) -> bool:
     with e.lock:
         e.refreshing = True
         try:
+            gen = e.generation
             v = e.fn()
             e.value = v
             e.fetched_at = time.time()
             e.last_error = None
+            if e.generation == gen:
+                e.dirty = False
             _save_to_disk(e)
             return True
         except Exception as ex:
@@ -172,7 +180,10 @@ def get(name: str, compute_if_cold: bool = False) -> dict:
     if e is None:
         return {"value": None, "ready": False, "age_s": None, "stale": True,
                 "refreshing": False, "error": f"no such cache: {name}"}
-    if not e.has_value and compute_if_cold:
+    if (not e.has_value or e.dirty) and compute_if_cold:
+        # Cold, or known to predate a change someone just made (a catalog
+        # refresh they asked for): serving the old value would show them
+        # their own action as not having happened.
         refresh(name, blocking=True)
     elif e.is_stale and not e.refreshing:
         # Serve now, refresh behind them.
@@ -182,6 +193,22 @@ def get(name: str, compute_if_cold: bool = False) -> dict:
             "age_s": round(e.age_s, 1) if e.has_value else None,
             "stale": e.is_stale, "refreshing": e.refreshing,
             "error": e.last_error}
+
+
+def invalidate(name: Optional[str] = None) -> None:
+    """Mark one entry (or every entry) out of date because an input changed.
+
+    The value is kept, so a caller that never waits still gets an answer and
+    a background refresh; a caller passing ``compute_if_cold=True`` gets a
+    recomputed value. Unknown names are ignored: the writer of an input does
+    not need to know whether anything has cached a view of it yet.
+    """
+    with _REG_LOCK:
+        entries = list(_ENTRIES.values()) if name is None else \
+            [e for e in (_ENTRIES.get(name),) if e is not None]
+    for e in entries:
+        e.generation += 1
+        e.dirty = True
 
 
 def start_warming() -> None:
