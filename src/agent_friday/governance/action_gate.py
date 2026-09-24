@@ -484,12 +484,23 @@ def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
     return Verdict("card", klass, why)
 
 
-def authorize_external(action: str, detail: dict, *, requested_by: str) -> Verdict:
-    """For executors that do not run as a tool call (federated compute jobs).
+def authorize_external(action: str, detail: dict, *, requested_by: str,
+                       title: Optional[str] = None, description: Optional[str] = None,
+                       action_description: Optional[str] = None,
+                       approval_id: Optional[str] = None) -> Verdict:
+    """For executors that do not run as a tool call (federated compute jobs,
+    mailbox changes Friday proposes on its own).
 
     Outward by definition. Returns allow only for an approved, unused card
     for exactly this action; otherwise raises (or re-reads) the card and
     returns card.
+
+    `title`, `description` and `action_description` say on the card, in
+    words, what will happen (default: the action's name and its detail).
+    `approval_id` is for a decision hook acting on the card it was just told
+    about: that exact card is used if it was raised for this very action and
+    detail, so a card raised again after an earlier one was used is still the
+    one that authorises. Nothing about the decision itself is relaxed by it.
     """
     from agent_friday.services import approvals as _ap
     try:
@@ -498,7 +509,16 @@ def authorize_external(action: str, detail: dict, *, requested_by: str) -> Verdi
             return Verdict("deny", OUTWARD, f"held: {integrity}")
         fp = hashlib.sha256(json.dumps({"a": action, "d": detail}, sort_keys=True,
                                        default=str).encode()).hexdigest()[:16]
-        rec = _ap.find_for_subject("external_action", f"{action}:{fp}", "governed_action")
+        rec = None
+        if approval_id:
+            named = _ap.get_approval(approval_id)
+            sid = str((named or {}).get("subject_id") or "")
+            if (named and named.get("kind") == "governed_action"
+                    and named.get("subject_type") == "external_action"
+                    and (sid == f"{action}:{fp}" or sid.startswith(f"{action}:{fp}:"))):
+                rec = named
+        if rec is None:
+            rec = _ap.find_for_subject("external_action", f"{action}:{fp}", "governed_action")
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
             _ap.mark_used(rec["approval_id"], requested_by)
             v = Verdict("allow", OUTWARD, "approved on a card")
@@ -509,9 +529,10 @@ def authorize_external(action: str, detail: dict, *, requested_by: str) -> Verdi
                 _ap.create_approval(
                     kind="governed_action", subject_type="external_action",
                     subject_id=f"{action}:{fp}" + (f":{uuid.uuid4().hex[:6]}" if rec else ""),
-                    title=f"Allow {action}", description=json.dumps(detail, default=str)[:600],
-                    action_description=action, force_gate=True, payload=detail,
-                    requested_by=requested_by)
+                    title=title or f"Allow {action}",
+                    description=description or json.dumps(detail, default=str)[:600],
+                    action_description=action_description or action, force_gate=True,
+                    payload=detail, requested_by=requested_by)
             v = Verdict("card", OUTWARD, "waiting for the owner's decision")
         _receipt({"tool": action, "class": OUTWARD, "decision": v.action,
                   "reason": v.reason, "surface": requested_by})

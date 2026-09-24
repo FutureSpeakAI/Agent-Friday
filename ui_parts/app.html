@@ -661,7 +661,9 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
               is worse than one that says nothing, because cloud and on-device
               are exactly the distinction someone dictating a private sentence
               cares about. */}
-          <button className="btn" onClick={toggleVoice}
+          <button aria-label={voiceOn?'Stop voice mode':((agentSettings.voice_engine||'local')==='gemini'
+              ?'Start voice mode — Gemini Live (cloud; your speech is sent to Google)'
+              :'Start voice mode — on-device voice (nothing leaves this machine)')} className="btn" onClick={toggleVoice}
             title={voiceOn?'Stop voice mode':((agentSettings.voice_engine||'local')==='gemini'
               ?'Start voice mode — Gemini Live (cloud; your speech is sent to Google)'
               :'Start voice mode — on-device voice (nothing leaves this machine)')}
@@ -672,7 +674,7 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
           </button>
           {/* Audio device quick-switcher */}
           <div style={{position:'relative',flexShrink:0,zIndex:1}}>
-            <button data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
+            <button aria-label={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()} data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
               title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()}
               style={{padding:'4px 7px',fontSize:13,color:audioDevicePopup?'#00d4ff':'#666',border:'1px solid '+(audioDevicePopup?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.1)'),background:audioDevicePopup?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.03)'}}>🎙</button>
             {audioDevicePopup&&<div ref={audioDevicePopupRef} style={{position:'absolute',bottom:'calc(100% + 8px)',left:0,width:226,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 0',zIndex:200,boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontSize:11,fontFamily:'Inter'}}>
@@ -774,11 +776,11 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   },[id]);
   return(<div className={'fwin'+(closing?' closing':'')} ref={fwinRef} style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
-      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button onClick={onClose}>×</button></div>
+      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
     </div>{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
       {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
       {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
-      {cust.note&&<div style={{background:'rgba(255,84,112,0.08)',border:'1px solid rgba(255,84,112,0.25)',borderRadius:8,padding:'7px 10px',marginBottom:10,fontSize:12,color:'#ffd0d8',display:'flex',gap:8,alignItems:'flex-start'}}><span style={{flexShrink:0}}>🛠️</span><div style={{flex:1,minWidth:0}}><FridayDoc text={cust.note} style={{margin:0}}/></div><button onClick={()=>openWsChat('remove the pinned note')} title="Ask Friday to remove this note" style={{background:'none',border:'none',color:'#ff8aa0',cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button></div>}
+      {cust.note&&<div style={{background:'rgba(255,84,112,0.08)',border:'1px solid rgba(255,84,112,0.25)',borderRadius:8,padding:'7px 10px',marginBottom:10,fontSize:12,color:'#ffd0d8',display:'flex',gap:8,alignItems:'flex-start'}}><span style={{flexShrink:0}}>🛠️</span><div style={{flex:1,minWidth:0}}><FridayDoc text={cust.note} style={{margin:0}}/></div><button aria-label="Ask Friday to remove this note" onClick={()=>openWsChat('remove the pinned note')} title="Ask Friday to remove this note" style={{background:'none',border:'none',color:'#ff8aa0',cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button></div>}
       {cust.actions&&cust.actions.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>{cust.actions.map((a,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>openWsChat(a.prompt)}>{a.label}</button>)}</div>}
       {children}
     </div></div>
@@ -836,7 +838,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
         <div style={{fontSize:10,color:'#8891a8'}}>Shape this workspace by talking to Friday</div>
       </div>
       <button onClick={()=>setShowVer(v=>!v)} title="Version history" style={{background:'none',border:'1px solid rgba(255,255,255,0.14)',borderRadius:6,color:'#aab',cursor:'pointer',fontSize:11,padding:'2px 7px'}}>🕘 {versions.length}</button>
-      <button onClick={onClose} title="Close" style={{background:'none',border:'none',color:'#9aa',cursor:'pointer',fontSize:18,lineHeight:1}}>×</button>
+      <button aria-label="Close" onClick={onClose} title="Close" style={{background:'none',border:'none',color:'#9aa',cursor:'pointer',fontSize:18,lineHeight:1}}>×</button>
     </div>
     {showVer&&<div style={{maxHeight:160,overflowY:'auto',borderBottom:'1px solid rgba(255,255,255,0.08)',padding:'6px 10px',background:'rgba(0,0,0,0.25)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
@@ -1011,7 +1013,7 @@ function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
   };
   if(opts.length===0)return null;
   return(<div ref={ref} style={{position:'relative',display:'inline-block'}}>
-    <button onClick={e=>{e.stopPropagation();setOpen(!open)}} style={{background:'none',border:'1px solid rgba(0,212,255,0.15)',borderRadius:4,padding:'2px 6px',cursor:'pointer',fontSize:12,color:status==='ok'?'#00ff80':status==='fail'?'#ff0080':'#00d4ff',transition:'color .2s'}} title="Send to...">{status==='ok'?'✓':status==='fail'?'✗':status==='sending'?'⏳':'📤'}</button>
+    <button aria-label="Send to..." onClick={e=>{e.stopPropagation();setOpen(!open)}} style={{background:'none',border:'1px solid rgba(0,212,255,0.15)',borderRadius:4,padding:'2px 6px',cursor:'pointer',fontSize:12,color:status==='ok'?'#00ff80':status==='fail'?'#ff0080':'#00d4ff',transition:'color .2s'}} title="Send to...">{status==='ok'?'✓':status==='fail'?'✗':status==='sending'?'⏳':'📤'}</button>
     {open&&<div style={{position:'absolute',right:0,top:'100%',marginTop:4,background:'rgba(10,10,18,0.95)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:6,padding:4,minWidth:160,zIndex:9999,backdropFilter:'blur(12px)',boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
       {opts.map((o,i)=><div key={i} onClick={()=>send(o.dest)} style={{padding:'6px 10px',fontSize:11,color:'#ccc',cursor:'pointer',borderRadius:4,display:'flex',alignItems:'center',gap:6,transition:'background .15s'}} onMouseOver={e=>e.currentTarget.style.background='rgba(0,212,255,0.08)'} onMouseOut={e=>e.currentTarget.style.background='transparent'}><span>{o.ico}</span><span>{o.label}</span></div>)}
     </div>}
@@ -2918,7 +2920,7 @@ function KnowledgeGraphWS(){
             S.startTour&&S.startTour()}}}
           style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:'pointer',background:touring?'rgba(255,80,120,0.15)':'transparent',color:touring?'#ff9db0':'#9dffc8'}}>{touring?'■ Stop tour':'▶ Tour'}</button>
       </div>}
-      <button className="btn" title="Rebuild the graph from the wiki" style={{fontSize:11,padding:'4px 9px'}} onClick={reindex}>↻</button>
+      <button aria-label="Rebuild the graph from the wiki" className="btn" title="Rebuild the graph from the wiki" style={{fontSize:11,padding:'4px 9px'}} onClick={reindex}>↻ Rebuild</button>
       {stats&&<span style={{fontSize:11,color:'#8fa8c8',fontFamily:'JetBrains Mono',whiteSpace:'nowrap'}}>
         ★ {stats.nodes} · ─ {stats.edges} · ☁ {stats.comms} · {fps} fps</span>}
     </div>
@@ -2956,7 +2958,7 @@ function KnowledgeGraphWS(){
       </div>
       {selected.type!=='soul'&&<button className="btn" style={{fontSize:11,padding:'4px 10px',color:'#00ff80',borderColor:'rgba(0,255,128,0.4)',whiteSpace:'nowrap'}}
         onClick={()=>openWikiPage(selected)}>📖 Open page</button>}
-      <button className="btn" style={{fontSize:11,padding:'4px 8px'}} onClick={()=>{setSelected(null);const S=kgRef.current;S.setHighlight&&S.setHighlight(null)}}>✕</button>
+      <button aria-label={'Clear the selection'} title={'Clear the selection'} className="btn" style={{fontSize:11,padding:'4px 8px'}} onClick={()=>{setSelected(null);const S=kgRef.current;S.setHighlight&&S.setHighlight(null)}}>✕</button>
     </div>}
   </div>);
 }
@@ -3220,7 +3222,7 @@ function FSProjectCard({p,onToast,onChanged}){
       {p.url&&<a className="btn" style={{fontSize:11,textDecoration:'none'}} href={p.url} target="_blank" rel="noopener">🌐 View Site</a>}
       {p.replit_url&&<button className="btn" style={{fontSize:11}} onClick={()=>window.open(p.replit_url,'_blank','noopener')}>⚡ Open in Replit</button>}
       {cloned&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>{setEditing(!editing);setExpanded(true)}}>✏️ Quick Edit</button>}
-      <button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setExpanded(!expanded)}>{expanded?'▴':'▾'}</button>
+      <button aria-label={expanded ? 'Show less' : 'Show more'} title={expanded ? 'Show less' : 'Show more'} className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setExpanded(!expanded)}>{expanded?'▴':'▾'}</button>
     </div>
     {editing&&cloned&&<div style={{borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:6}}>
       <textarea className="input" style={{width:'100%',height:54,resize:'vertical',fontSize:11}} value={instr} onChange={e=>setInstr(e.target.value)} placeholder={'Describe the change to '+p.name+'… (e.g. "update the hero headline")'}/>
@@ -3930,7 +3932,7 @@ function ProjectsPanel(){
         {(bible.characters||[]).map((c,i)=>(
           <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:6,padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
             <div style={{fontSize:12}}><strong style={{color:'#00d4ff'}}>{c.name}</strong>{c.visual_description?<span style={{color:'#bbb'}}> — {c.visual_description}</span>:''}{c.voice_profile?<span style={{color:'#888'}}> · 🎙 {c.voice_profile}</span>:''}</div>
-            <button className="btn" style={{fontSize:10,padding:'1px 6px'}} onClick={()=>rmChar(c.name)}>×</button>
+            <button aria-label={'Remove ' + c.name} title={'Remove ' + c.name} className="btn" style={{fontSize:10,padding:'1px 6px'}} onClick={()=>rmChar(c.name)}>×</button>
           </div>
         ))}
         <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:6}}>
@@ -3953,7 +3955,7 @@ function ProjectsPanel(){
       <div style={{display:'flex',gap:6}}>
         <input className="input" style={{flex:1}} value={topic} onChange={e=>setTopic(e.target.value)} placeholder="Topic / logline to seed the first stage…" onKeyDown={e=>e.key==='Enter'&&runPipeline()}/>
         <button className="btn btn-magenta" style={{fontSize:11}} disabled={busy} onClick={runPipeline}>{busy?'Starting…':'▶ Run'}</button>
-        <button className="btn" style={{fontSize:11}} onClick={loadRuns}>↻</button>
+        <button aria-label={'Refresh the list of runs'} title={'Refresh the list of runs'} className="btn" style={{fontSize:11}} onClick={loadRuns}>↻ Refresh</button>
       </div>
     </div>
     {runs.length>0&&(<div className="card">
@@ -4053,7 +4055,7 @@ function StudioPromptBar({onCreated}){
       {STUDIO_TYPES.map(x=>{const off=avail&&avail[x.id]&&avail[x.id].available===false;return(
         <button key={x.id} className={'btn '+(type===x.id?'':'btn-magenta')} style={{fontSize:11,opacity:off?0.6:1}} title={off?(avail[x.id].reason||'Unavailable'):('Create '+x.label.toLowerCase()+' — e.g. '+x.ph)} onClick={()=>{setType(x.id);setErr(null);setResult(null)}}>{x.ico} {x.label}{off?' ⚠':''}</button>);})}
       <div style={{flex:1}}/>
-      <button className="btn btn-magenta" style={{fontSize:12,padding:'4px 10px'}} title="Generation settings — model, style, aspect ratio, duration" onClick={()=>setShowOpts(!showOpts)}>⚙</button>
+      <button aria-label="Generation settings — model, style, aspect ratio, duration" className="btn btn-magenta" style={{fontSize:12,padding:'4px 10px'}} title="Generation settings — model, style, aspect ratio, duration" onClick={()=>setShowOpts(!showOpts)}>⚙</button>
       <button className="btn" disabled={busy||!prompt.trim()} onClick={go} style={{fontSize:12,fontWeight:700,padding:'5px 16px'}}>{busy?'Generating…':'✨ Generate'}</button>
     </div>
     {showOpts&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:10}}>
@@ -4677,7 +4679,7 @@ function CapabilityCardPanel(){
               style={{width:70,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.3)',borderRadius:5,padding:'3px 6px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:10}}/>
             <span style={{fontSize:9,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>mψ</span>
             <button className="settings-btn" style={{fontSize:9,padding:'2px 6px'}} onClick={()=>savePrice(c.type)}>Save</button>
-            <button className="settings-btn" style={{fontSize:9,padding:'2px 6px',opacity:0.6}} onClick={()=>setEditing(null)}>×</button>
+            <button aria-label={'Cancel editing'} title={'Cancel editing'} className="settings-btn" style={{fontSize:9,padding:'2px 6px',opacity:0.6}} onClick={()=>setEditing(null)}>×</button>
           </div>
         ):(
           <div style={{display:'flex',gap:5,alignItems:'center',flexShrink:0}}>
@@ -5187,7 +5189,7 @@ function WorkflowsWS(){
         </div>
         <button className="btn" disabled={busy===c.slug} onClick={()=>runChain(c.slug)}>{busy===c.slug?'Starting…':'▶ Run'}</button>
         <button className="btn" onClick={()=>setWatching(c.slug)}>Status</button>
-        <button className="btn" style={{color:'#ff5f7a'}} onClick={()=>deleteChain(c.slug)}>🗑</button>
+        <button aria-label={'Delete this workflow'} title={'Delete this workflow'} className="btn" style={{color:'#ff5f7a'}} onClick={()=>deleteChain(c.slug)}>🗑</button>
       </div>))}
       {!chains.length&&!showNew&&<div style={{color:'#888',padding:20,textAlign:'center'}}>No workflows yet. Build one — each step is a full agent run with all of Friday's tools.</div>}
       {runStatus&&(<div className="card" style={{padding:12,marginTop:10}}>
@@ -5234,7 +5236,7 @@ function WorkflowsWS(){
         </div>
         <button className="btn" style={s.enabled?{borderColor:'#2ecc71',color:'#2ecc71'}:{color:'#888'}} onClick={()=>toggleSched(s)}>{s.enabled?'On':'Off'}</button>
         <button className="btn" onClick={()=>runSched(s)}>▶ Now</button>
-        {s.source!=='builtin'&&<button className="btn" style={{color:'#ff5f7a'}} onClick={()=>deleteSched(s)}>🗑</button>}
+        {s.source!=='builtin'&&<button aria-label={'Delete this schedule'} title={'Delete this schedule'} className="btn" style={{color:'#ff5f7a'}} onClick={()=>deleteSched(s)}>🗑</button>}
       </div>))}
       {!schedules.length&&<div style={{color:'#888',padding:20,textAlign:'center'}}>No schedules yet.</div>}
     </div>)}
@@ -5435,7 +5437,7 @@ function SystemWS(){
     <div ref={apRef} className="card" style={{marginBottom:10,padding:10,border:'1px solid rgba(245,158,11,0.25)'}}>
       <div className="card-title" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <span>✋ Approvals{approvals.length>0&&<span style={{color:'#f59e0b',fontSize:11,marginLeft:6}}>({approvals.length} pending)</span>}</span>
-        <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={refreshApprovals}>↻</button>
+        <button aria-label={'Refresh approvals'} title={'Refresh approvals'} className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={refreshApprovals}>↻ Refresh</button>
       </div>
       {approvals.length===0
         ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>Nothing waiting on you. Actions Friday won't take on her own — connecting Google, gated goal steps, spend — show up here.</div>
@@ -5741,7 +5743,7 @@ function DevFiles(){
     </div>):(<div>
       {loading?<div style={{color:'#999',padding:20,textAlign:'center'}}>Loading…</div>:
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4}}>
-        {data&&data.parent!=null&&<button className="btn" style={{fontSize:11,textAlign:'left'}} onClick={()=>load(data.parent)}>📁 ..</button>}
+        {data&&data.parent!=null&&<button aria-label={'Up to the parent folder'} title={'Up to the parent folder'} className="btn" style={{fontSize:11,textAlign:'left'}} onClick={()=>load(data.parent)}>📁 ..</button>}
         {(data&&data.entries||[]).map((e,i)=><button key={i} className="btn" style={{fontSize:11,textAlign:'left',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}
           onClick={()=>e.dir?load(e.path):openFile(e.path)}>{e.dir?'📁':'📄'} {e.name}{!e.dir&&e.size?<span style={{color:'#666'}}> · {(e.size/1024).toFixed(e.size>10240?0:1)}k</span>:''}</button>)}
       </div>}
@@ -6277,25 +6279,25 @@ function NewsWS(){
   const streamItems=feed;
   // Reusable card-corner actions: Read Later (toggle) + Open in Background.
   const cardActions=(it)=>(<div className="src-actions">
-    <button className={'src-btn save'+(savedUrls[it.url]?' on':'')} title={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} onClick={e=>{e.stopPropagation();savedUrls[it.url]?removeLater(it.url):saveLater(it)}}>{savedUrls[it.url]?'🔖':'🏷'}</button>
-    <button className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
-    <button className="src-btn draft" title="Draft a LinkedIn post / blog response about this" onClick={e=>{e.stopPropagation();shareToDraft(it)}}>{shareBusy===it.url?'…':'✍️'}</button>
-    <button className={'src-btn note'+(annById[it.url]?' on':'')+(annotateFor===it.url?' active':'')} title={annById[it.url]?'Annotated — add another note':'Annotate'} onClick={e=>{e.stopPropagation();openAnnotate(it)}}>📝</button>
-    <button className="src-btn boost" title={'Boost '+it.source} onClick={e=>{e.stopPropagation();boostSource(it.source)}}>⭐</button>
-    <button className="src-btn ban" title={'Ban '+it.source} onClick={e=>{e.stopPropagation();banSource(it.source)}}>🚫</button>
+    <button aria-label={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} className={'src-btn save'+(savedUrls[it.url]?' on':'')} title={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} onClick={e=>{e.stopPropagation();savedUrls[it.url]?removeLater(it.url):saveLater(it)}}>{savedUrls[it.url]?'🔖':'🏷'}</button>
+    <button aria-label="Open in background tab" className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
+    <button aria-label="Draft a LinkedIn post / blog response about this" className="src-btn draft" title="Draft a LinkedIn post / blog response about this" onClick={e=>{e.stopPropagation();shareToDraft(it)}}>{shareBusy===it.url?'…':'✍️'}</button>
+    <button aria-label={annById[it.url]?'Annotated — add another note':'Annotate'} className={'src-btn note'+(annById[it.url]?' on':'')+(annotateFor===it.url?' active':'')} title={annById[it.url]?'Annotated — add another note':'Annotate'} onClick={e=>{e.stopPropagation();openAnnotate(it)}}>📝</button>
+    <button aria-label={'Boost '+it.source} className="src-btn boost" title={'Boost '+it.source} onClick={e=>{e.stopPropagation();boostSource(it.source)}}>⭐</button>
+    <button aria-label={'Ban '+it.source} className="src-btn ban" title={'Ban '+it.source} onClick={e=>{e.stopPropagation();banSource(it.source)}}>🚫</button>
   </div>);
 
   return(<div className="news-ws" style={{position:'relative'}}>
     {/* Front Page audio briefing — mini player bar */}
     {fpAudio&&<div className="fp-audio-bar">
-      <button className="fp-audio-btn" title={fpPlaying?'Pause':'Play'} onClick={toggleFpPlay} disabled={fpAudioLoading}>{fpAudioLoading?'⏳':(fpPlaying?'⏸':'▶')}</button>
+      <button aria-label={fpPlaying?'Pause':'Play'} className="fp-audio-btn" title={fpPlaying?'Pause':'Play'} onClick={toggleFpPlay} disabled={fpAudioLoading}>{fpAudioLoading?'⏳':(fpPlaying?'⏸':'▶')}</button>
       <span className="fp-audio-label">🔊 {fpAudioLoading?'Generating audio…':'Front Page briefing'}</span>
       <div className="fp-audio-track" onClick={e=>{const rect=e.currentTarget.getBoundingClientRect();seekFp((e.clientX-rect.left)/rect.width)}}>
         <div className="fp-audio-fill" style={{width:(Math.round(fpProgress*1000)/10)+'%'}}></div>
       </div>
       <span className="fp-audio-time">{_fmtDur(fpProgress*fpDuration)} / {_fmtDur(fpDuration)}</span>
       <div className="fp-audio-speed">{[1,1.5,2].map(s=><button key={s} className={'fp-spd'+(fpSpeed===s?' on':'')} onClick={()=>setFpRate(s)}>{s}x</button>)}</div>
-      <button className="fp-audio-btn close" title="Close player" onClick={closeFpAudio}>✕</button>
+      <button aria-label="Close player" className="fp-audio-btn close" title="Close player" onClick={closeFpAudio}>✕</button>
     </div>}
     {newsToast&&<div className="news-toast">{newsToast}</div>}
     {/* Live status strip — news-only. Gmail/Calendar are pulled by the briefing
@@ -6421,7 +6423,7 @@ function NewsWS(){
        {!feedMore&&!feedHasMore&&feed.length>0&&<div style={{textAlign:'center',color:'#667',fontSize:11,padding:'16px 0'}}>— end of archive ({feed.length.toLocaleString()} loaded) —</div>}
        </div>}
       {/* Back-to-top floating button (appears after the first page scrolls off) */}
-      {showTop&&<button className="btn" title="Back to top" onClick={()=>{if(feedTopRef.current)feedTopRef.current.scrollIntoView({behavior:'smooth',block:'start'})}} style={{position:'fixed',right:24,bottom:24,zIndex:50,borderRadius:'50%',width:44,height:44,fontSize:18,boxShadow:'0 4px 16px rgba(0,0,0,0.4)'}}>↑</button>}
+      {showTop&&<button aria-label="Back to top" className="btn" title="Back to top" onClick={()=>{if(feedTopRef.current)feedTopRef.current.scrollIntoView({behavior:'smooth',block:'start'})}} style={{position:'fixed',right:24,bottom:24,zIndex:50,borderRadius:'50%',width:44,height:44,fontSize:18,boxShadow:'0 4px 16px rgba(0,0,0,0.4)'}}>↑</button>}
     </div>}
 
     {/* ── FRONT PAGE TAB (AI-curated editorial) ── */}
@@ -6445,7 +6447,7 @@ function NewsWS(){
          {anchorReading&&<div className="fp-anchor-bar">
            <span className="fp-anchor-dot"></span>
            <span className="fp-anchor-label">🎙️ Now Reading: Front Page — speak any time to ask Friday about a story</span>
-           <button className="fp-audio-btn close" title="End the live anchor briefing" onClick={stopAnchorBriefing}>⏹</button>
+           <button aria-label="End the live anchor briefing" className="fp-audio-btn close" title="End the live anchor briefing" onClick={stopAnchorBriefing}>⏹</button>
          </div>}
          {fp.day_in_context&&<div className="fp-daycontext">
            <div className="fp-daycontext-head">📅 Your day in context</div>
@@ -6668,8 +6670,8 @@ function NewsWS(){
            <div className="news-cardtop">
              <span className="cat-chip">{it.category||it.source}</span>
              <div className="src-actions">
-               <button className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
-               <button className="src-btn ban" title="Remove from Read Later" onClick={e=>{e.stopPropagation();removeLater(it.url)}}>✕</button>
+               <button aria-label="Open in background tab" className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
+               <button aria-label="Remove from Read Later" className="src-btn ban" title="Remove from Read Later" onClick={e=>{e.stopPropagation();removeLater(it.url)}}>✕</button>
              </div>
            </div>
            <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
@@ -6694,8 +6696,8 @@ function NewsWS(){
            <div className="news-cardtop">
              <span className="cat-chip">📝 Note</span>
              <div className="src-actions">
-               {n.article_url&&<button className="src-btn bg" title="Open article" onClick={()=>openBg(n.article_url)}>⧉</button>}
-               <button className="src-btn ban" title="Delete notes for this article" onClick={()=>removeAnnotations(n.article_id||n.article_url)}>✕</button>
+               {n.article_url&&<button aria-label="Open article" className="src-btn bg" title="Open article" onClick={()=>openBg(n.article_url)}>⧉</button>}
+               <button aria-label="Delete notes for this article" className="src-btn ban" title="Delete notes for this article" onClick={()=>removeAnnotations(n.article_id||n.article_url)}>✕</button>
              </div>
            </div>
            <div className="news-snippet" style={{color:'#e0e4ee',fontStyle:'italic'}}>“{n.text}”</div>
@@ -6723,7 +6725,7 @@ function NewsWS(){
              <button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={e=>{e.stopPropagation();openBriefing(b)}}>Open full</button>
              <button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New tab</button>
              <TalkToFridayButton contentType="briefing" title={'Briefing '+b.date} summary={b.summary||''} style={{fontSize:10,padding:'2px 9px'}}/>
-             <button className="icon-btn" onClick={e=>{e.stopPropagation();setExpanded({...expanded,[b.date]:!isOpen})}}>{isOpen?'▴':'▾'}</button>
+             <button aria-label={isOpen ? 'Hide this briefing' : 'Show this briefing'} title={isOpen ? 'Hide this briefing' : 'Show this briefing'} className="icon-btn" onClick={e=>{e.stopPropagation();setExpanded({...expanded,[b.date]:!isOpen})}}>{isOpen?'▴':'▾'}</button>
            </div>
          </div>
          {isOpen?<BriefPreview b={b} onFull={()=>openBriefing(b)}/>:
@@ -6734,7 +6736,7 @@ function NewsWS(){
     {/* ── SLIDE-OVER PANELS ── */}
     {panel&&<div className="news-backdrop" onClick={()=>setPanel(null)}></div>}
     {panel==='sources'&&<div className="news-side">
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>🛡 MANAGE SOURCES</h3><button className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>🛡 MANAGE SOURCES</h3><button aria-label={'Close this panel'} title={'Close this panel'} className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
       <div style={{fontSize:10,color:'#777',marginBottom:8}}>Banned sources are excluded from the feed and every future briefing.</div>
       <div className="card-title" style={{marginTop:8}}>🚫 Banned ({sources.banned.length})</div>
       {sources.banned.length===0?<div style={{fontSize:11,color:'#777',marginBottom:10}}>None banned yet.</div>:
@@ -6747,12 +6749,12 @@ function NewsWS(){
       </div>
     </div>}
     {panel==='customize'&&prefs&&<div className="news-side">
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>⚙ CUSTOMIZE BRIEFING</h3><button className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>⚙ CUSTOMIZE BRIEFING</h3><button aria-label={'Close this panel'} title={'Close this panel'} className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
       <div className="card-title" style={{marginTop:8}}>Section order & visibility</div>
       {prefs.section_order.map((s,i)=><div key={s} className="reorder-row">
         <div style={{display:'flex',flexDirection:'column',gap:1}}>
-          <button className="icon-btn" style={{lineHeight:1,padding:0}} onClick={()=>moveSection(i,-1)} disabled={i===0}>▴</button>
-          <button className="icon-btn" style={{lineHeight:1,padding:0}} onClick={()=>moveSection(i,1)} disabled={i===prefs.section_order.length-1}>▾</button>
+          <button aria-label={'Move this section up'} title={'Move this section up'} className="icon-btn" style={{lineHeight:1,padding:0}} onClick={()=>moveSection(i,-1)} disabled={i===0}>▴</button>
+          <button aria-label={'Move this section down'} title={'Move this section down'} className="icon-btn" style={{lineHeight:1,padding:0}} onClick={()=>moveSection(i,1)} disabled={i===prefs.section_order.length-1}>▾</button>
         </div>
         <span style={{flex:1,fontSize:12,color:prefs.sections_enabled[s]?'#e0e4ee':'#666'}}>{s}</span>
         <span className={'toggle-pill '+(prefs.sections_enabled[s]?'on':'')} onClick={()=>toggleSection(s)}>{prefs.sections_enabled[s]?'Shown':'Hidden'}</span>
@@ -6765,7 +6767,7 @@ function NewsWS(){
       <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Now and the live feed.</div>
     </div>}
     {panel==='diet'&&<div className="news-side">
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>📊 YOUR MEDIA DIET</h3><button className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>📊 YOUR MEDIA DIET</h3><button aria-label={'Close this panel'} title={'Close this panel'} className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
       <div style={{fontSize:10,color:'#777',marginBottom:8}}>How you engage with the news — what you read, save, boost, and ban.</div>
       {dietLoading?<div style={{color:'#999',textAlign:'center',padding:24,fontSize:12}}>Loading…</div>:!diet?<div style={{fontSize:11,color:'#777'}}>No engagement data yet. Read, save, boost, or ban a few stories and your diet will fill in.</div>:<div>
         <div className="card-title" style={{marginTop:8}}>Articles read by category</div>
@@ -7660,7 +7662,7 @@ function ContactsWS(){
     <FridaySays text={contacts.length+' contacts tracked · search, research, and draft outreach.'}/>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
       <input className="input" style={{flex:1}} value={q} onChange={e=>setQ(e.target.value)} placeholder="Search contacts..."/>
-      <button className="btn" style={{fontSize:11}} onClick={loadList}>↻</button>
+      <button aria-label={'Refresh contacts'} title={'Refresh contacts'} className="btn" style={{fontSize:11}} onClick={loadList}>↻ Refresh</button>
     </div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
     {loading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading contacts...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>{q?'No matches':'No contacts yet'}</div>:
@@ -7797,7 +7799,7 @@ function ContentIdeasTab({onGraduate}){
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center',justifyContent:'space-between'}}>
       <div style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>{pipe?.total||0} total</div>
       <div style={{display:'flex',gap:4}}>
-        <button className="btn" style={{fontSize:11}} onClick={load}>↻</button>
+        <button aria-label={'Refresh ideas'} title={'Refresh ideas'} className="btn" style={{fontSize:11}} onClick={load}>↻ Refresh</button>
         <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={()=>setShowNew(!showNew)}>{showNew?'× Cancel':'+ Idea'}</button>
       </div>
     </div>
@@ -8112,9 +8114,9 @@ function ContentCalendarTab({onCompose,onEdit}){
   return(<div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6}}>{toast}</div>}
     <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8}}>
-      <button className="btn" style={{fontSize:11}} onClick={()=>nav(-1)}>‹</button>
+      <button aria-label={view === 'month' ? 'Previous month' : 'Previous week'} title={view === 'month' ? 'Previous month' : 'Previous week'} className="btn" style={{fontSize:11}} onClick={()=>nav(-1)}>‹</button>
       <span style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff',flex:1,textAlign:'center'}}>{hdr}</span>
-      <button className="btn" style={{fontSize:11}} onClick={()=>nav(1)}>›</button>
+      <button aria-label={view === 'month' ? 'Next month' : 'Next week'} title={view === 'month' ? 'Next month' : 'Next week'} className="btn" style={{fontSize:11}} onClick={()=>nav(1)}>›</button>
       <button className={'btn '+(view==='month'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('month')}>Month</button>
       <button className={'btn '+(view==='week'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('week')}>Week</button>
     </div>
@@ -8179,15 +8181,15 @@ function ContentQueueTab({onEdit}){
       </div>
       <Chip s={t.status||'PENDING'}/>
       <button className="btn" style={{fontSize:10,padding:'2px 7px'}} title="Publish this post immediately (still fully gated)" onClick={()=>post('/api/content/posts/'+(t.post_id||t.id)+'/publish-now',{},'🚀 Dispatched')}>▶ now</button>
-      <button className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px'}} title="Reschedule" onClick={()=>{const v=window.prompt('New time (YYYY-MM-DD HH:MM, your local time):');if(!v)return;const d=new Date(v.replace(' ','T'));if(isNaN(d)){flash('Could not parse that time');return}post('/api/content/posts/'+(t.post_id||t.id)+'/schedule',{publish_at:d.toISOString()},'📅 Rescheduled')}}>↺</button>
-      <button className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px',color:'#ff8aa0'}} title="Cancel this target" onClick={()=>post('/api/content/posts/'+(t.post_id||t.id)+'/cancel',{target_id:t.id},'Cancelled')}>✕</button>
+      <button aria-label="Reschedule" className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px'}} title="Reschedule" onClick={()=>{const v=window.prompt('New time (YYYY-MM-DD HH:MM, your local time):');if(!v)return;const d=new Date(v.replace(' ','T'));if(isNaN(d)){flash('Could not parse that time');return}post('/api/content/posts/'+(t.post_id||t.id)+'/schedule',{publish_at:d.toISOString()},'📅 Rescheduled')}}>↺</button>
+      <button aria-label="Cancel this target" className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px',color:'#ff8aa0'}} title="Cancel this target" onClick={()=>post('/api/content/posts/'+(t.post_id||t.id)+'/cancel',{target_id:t.id},'Cancelled')}>✕</button>
     </div>)};
   return(<div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6}}>{toast}</div>}
     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
       <span style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>{upcoming.length} queued · {held.length} held</span>
       <div style={{flex:1}}/>
-      <button className="btn" style={{fontSize:10}} onClick={load}>↻</button>
+      <button aria-label={'Refresh the queue'} title={'Refresh the queue'} className="btn" style={{fontSize:10}} onClick={load}>↻ Refresh</button>
       <button className={'btn '+(paused?'':'btn-magenta')} style={{fontSize:11,color:paused?'#f59e0b':undefined}} title="Global kill switch — nothing publishes anywhere while paused" onClick={pauseAll}>{paused?'⏸ Paused — resume':'⏸ Pause all'}</button>
     </div>
     {held.length>0&&<div style={{border:'1px solid rgba(245,158,11,0.4)',borderRadius:8,padding:8,marginBottom:10,background:'rgba(245,158,11,0.05)'}}>
@@ -8303,7 +8305,7 @@ function ContentAnalyticsTab(){
               <span style={{color:m.color,whiteSpace:'nowrap'}}>{m.ico} {m.label}</span>
               <span style={{flex:1,fontFamily:'JetBrains Mono',color:'#8891a8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{M.slice(0,5).map(k=>k+' '+(mm[k]==null?'—':cpFmtN(mm[k]))).join(' · ')}</span>
               {t.post_url&&<a href={t.post_url} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>↗</a>}
-              {t.id&&<button className="btn" style={{fontSize:9,padding:'1px 6px'}} title="Manual metrics refresh (budget-aware)" onClick={()=>{fetch('/api/content/analytics/refresh/'+t.id,{method:'POST'}).then(()=>openDrill(drill.id)).catch(()=>{})}}>↻</button>}
+              {t.id&&<button aria-label="Manual metrics refresh (budget-aware)" className="btn" style={{fontSize:9,padding:'1px 6px'}} title="Manual metrics refresh (budget-aware)" onClick={()=>{fetch('/api/content/analytics/refresh/'+t.id,{method:'POST'}).then(()=>openDrill(drill.id)).catch(()=>{})}}>↻</button>}
             </div>);})}
         </div>);})()}
     </div>}
@@ -8633,9 +8635,9 @@ function CameraMode({source,intervalSec,onClose,frameRef,setSendIndicator,facing
       onMouseDown={e=>{setDragging(true);dragOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y}}}>
     {refKey==='screen'?<video ref={screenVideoRef} muted playsInline/>:<video ref={webcamVideoRef} muted playsInline/>}
     <span className="cam-label">{label}</span>
-    {refKey==='webcam'&&onChangeFacing&&<button className="cam-close" style={{right:30,padding:'1px 6px'}} title="Flip camera"
+    {refKey==='webcam'&&onChangeFacing&&<button aria-label="Flip camera" className="cam-close" style={{right:30,padding:'1px 6px'}} title="Flip camera"
       onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onChangeFacing()}}>⇄</button>}
-    <button className="cam-close" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onClose()}} title="Stop camera">×</button>
+    <button aria-label="Stop camera" className="cam-close" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onClose()}} title="Stop camera">×</button>
     <span className="cam-active"><span className="pulse"/>LIVE</span>
     {err&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.7)',color:'#ff4d6a',fontSize:11,fontFamily:'JetBrains Mono'}}>{err}</div>}
   </div>);
@@ -10893,7 +10895,7 @@ function TaskTray({tasks,onCancel,onView}){
   return(<div className="task-tray">
     <div className="task-tray-header">
       <span>{running>0?`${running}/${total} TASKS · LIVE`:`${total} TASKS`}{stalledN>0?` · ${stalledN} STALLED`:''}{interruptedN>0?` · ${interruptedN} INTERRUPTED`:''}</span>
-      <button className="task-card-btn" style={{padding:'1px 6px'}} onClick={()=>setCollapsed(true)} title="Collapse">_</button>
+      <button aria-label="Collapse" className="task-card-btn" style={{padding:'1px 6px'}} onClick={()=>setCollapsed(true)} title="Collapse">_</button>
     </div>
     {sorted.slice(0,8).map(t=><TaskCard key={t.task_id} task={t}
       expanded={!!expanded[t.task_id]}
@@ -11799,7 +11801,7 @@ function SettingsTabWork(){
           <span style={{fontSize:9,color:cm.c,fontFamily:'JetBrains Mono',width:64,flexShrink:0}}>{cm.label}</span>
           <span style={{flex:1,fontSize:11,color:'rgba(255,255,255,0.75)',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.title}</span>
           <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',flexShrink:0}}>{(EXEC_META[it.disposition]||{}).label}</span>
-          <button onClick={()=>{apiFetch('/api/work/queue/'+it.id,{method:'DELETE'}).then(load)}}
+          <button aria-label={'Remove from the queue'} title={'Remove from the queue'} onClick={()=>{apiFetch('/api/work/queue/'+it.id,{method:'DELETE'}).then(load)}}
             style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:12,flexShrink:0}}>×</button>
         </div>;
       })}
@@ -12732,9 +12734,9 @@ function DockSettingsPanel(){
                 workspace in question": open the workspace with its history
                 already showing, rather than a second copy of the panel that
                 could drift from the one in FWin. */}
-            <button style={_mini} title={'Earlier versions of '+w.label} onClick={()=>{try{window.__fridayOpenHistoryFor=id;window.fridayOpenWorkspace&&window.fridayOpenWorkspace({workspace:id});window.dispatchEvent(new CustomEvent('friday:open-ws-history',{detail:{workspace:id}}))}catch(e){}}}>🕒</button>
-            <button style={_mini} disabled={idx===0} onClick={()=>move(id,-1)} title="Move up">↑</button>
-            <button style={_mini} disabled={idx===shape.ids.length-1} onClick={()=>move(id,1)} title="Move down">↓</button>
+            <button aria-label={'Earlier versions of '+w.label} style={_mini} title={'Earlier versions of '+w.label} onClick={()=>{try{window.__fridayOpenHistoryFor=id;window.fridayOpenWorkspace&&window.fridayOpenWorkspace({workspace:id});window.dispatchEvent(new CustomEvent('friday:open-ws-history',{detail:{workspace:id}}))}catch(e){}}}>🕒</button>
+            <button aria-label="Move up" style={_mini} disabled={idx===0} onClick={()=>move(id,-1)} title="Move up">↑</button>
+            <button aria-label="Move down" style={_mini} disabled={idx===shape.ids.length-1} onClick={()=>move(id,1)} title="Move down">↓</button>
           </div>);
       })}
     </div>);
@@ -12868,7 +12870,7 @@ function GoogleAccountsPanel(){
     <div style={{display:'flex',gap:8,marginTop:8,alignItems:'center'}}>
       <input className="input" style={{flex:1,fontSize:12}} value={label} onChange={e=>setLabel(e.target.value)} placeholder="Label (e.g. Personal, Work)"/>
       <button className="settings-btn" style={{padding:'6px 14px',color:'#00d4ff',fontSize:12,whiteSpace:'nowrap'}} onClick={addAccount} disabled={loading}>{loading?'…':'+ Add Account'}</button>
-      <button className="settings-btn" style={{padding:'6px 10px'}} onClick={refresh} title="Refresh">↻</button>
+      <button aria-label="Refresh" className="settings-btn" style={{padding:'6px 10px'}} onClick={refresh} title="Refresh">↻ Refresh</button>
     </div>
     {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:8}}>{msg}</div>}
   </div>;
@@ -14995,7 +14997,7 @@ function StandaloneApprovals(){
   return(<>
     <button className={'ws-tab-ask'+(items.length?'':' none')} data-testid="ws-tab-approvals" onClick={()=>setOpen(v=>!v)} title={items.length?'Friday is waiting for your approval':'Nothing is waiting for your approval'}>{items.length?'✋ '+items.length+' waiting for you':'✋ No approvals waiting'}</button>
     {open&&<div className="ws-tab-drawer" role="dialog" aria-label="Approvals">
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><b style={{color:'#ffd699'}}>Waiting for your approval</b><button className="ws-tab-link" onClick={()=>setOpen(false)}>✕</button></div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><b style={{color:'#ffd699'}}>Waiting for your approval</b><button aria-label={'Close'} title={'Close'} className="ws-tab-link" onClick={()=>setOpen(false)}>✕</button></div>
       {!items.length&&<div style={{color:'#7f93ad',fontSize:12}}>Nothing is waiting.</div>}
       {items.map(a=><div key={a.approval_id} className="ws-tab-card">
         <div style={{fontWeight:700,color:'#fff',marginBottom:4}}>{a.title}</div>
@@ -17415,7 +17417,7 @@ function App(){
         <FridayChatInput value={promptText} onChange={setPromptText} onSend={sendPrompt} maxHeight={120}
           placeholder="Ask Friday anything..."
           style={{width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}/>
-        <button onClick={()=>{if(promptText.trim())sendPrompt();else toggleVoice()}}
+        <button aria-label={promptText.trim()?'Send message':(voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)')} onClick={()=>{if(promptText.trim())sendPrompt();else toggleVoice()}}
           title={promptText.trim()?'Send message':(voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)')}
           style={{width:40,height:40,borderRadius:'50%',
             background:(voiceOn&&!promptText.trim())?'rgba(62,255,161,0.20)':'rgba(0,212,255,0.18)',
@@ -17446,7 +17448,7 @@ function App(){
     {cameraOn&&cameraControlsOpen&&<div className="camera-control-panel">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>CAMERA MODE</span>
-        <button onClick={()=>setCameraControlsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:13}}>&#x2715;</button>
+        <button aria-label={'Close camera controls'} title={'Close camera controls'} onClick={()=>setCameraControlsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:13}}>&#x2715;</button>
       </div>
       <div style={{fontSize:11,color:'rgba(255,255,255,0.8)',marginTop:4}}>Source</div>
       <div className="row">
@@ -17493,7 +17495,7 @@ function App(){
           {(taskMeta&&taskMeta.model||threadOrb.model)&&<span title={'Model running this process'+(taskMeta&&taskMeta.linked_task_id?' · task '+taskMeta.linked_task_id:'')} style={{fontSize:8,fontFamily:'JetBrains Mono',color:'#00d4ff',border:'1px solid rgba(0,212,255,0.3)',borderRadius:3,padding:'0 4px',marginRight:6,whiteSpace:'nowrap',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis'}}>{(taskMeta&&taskMeta.model)||threadOrb.model}</span>}
           <span className={`thread-status-badge ${threadOrb.status||'running'}`}>{threadOrb.status||'RUNNING'}</span>
           <span className="thread-elapsed">{taskMeta&&taskMeta.elapsed!=null?taskMeta.elapsed+'s':''}</span>
-          <button className="thread-close" onClick={()=>setThreadOrb(null)}>✕</button>
+          <button aria-label={'Close this process panel'} title={'Close this process panel'} className="thread-close" onClick={()=>setThreadOrb(null)}>✕</button>
         </div>
         <div className="thread-body" ref={threadBodyRef}>
           {/* Real-time activity log from the task endpoint (preferred). */}
@@ -17545,7 +17547,7 @@ function App(){
           <option value="reasoning_trace">reasoning traces</option>
         </select>}
         {activityTab==='activity'?<input value={activityFilter} onChange={e=>setActivityFilter(e.target.value)} placeholder="filter…" style={{flex:1,minWidth:0,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:4,color:'#ccc',fontSize:9,fontFamily:'JetBrains Mono',padding:'2px 6px',outline:'none'}}/>:<span style={{flex:1}}/>}
-        <button onClick={()=>setActivityOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:12}}>✕</button>
+        <button aria-label={'Close activity'} title={'Close activity'} onClick={()=>setActivityOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:12}}>✕</button>
       </div>
       {activityTab==='traces'?<TracesViewer/>:<div style={{flex:1,overflowY:'auto',padding:'6px 10px'}}>
         {(()=>{
@@ -17624,7 +17626,7 @@ function App(){
         {failedProcs.slice(0,8).map(p=><div key={p.id} style={{display:'flex',alignItems:'center',gap:7,padding:'3px 0',fontSize:10,color:'rgba(255,255,255,0.7)'}}>
           <span aria-hidden="true">⚠</span>
           <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.label||p.name}>{p.label||p.name||'Task'}</span>
-          <button onClick={()=>dismissProc(p.id)} title="Dismiss this failure"
+          <button aria-label="Dismiss this failure" onClick={()=>dismissProc(p.id)} title="Dismiss this failure"
             style={{background:'none',border:'none',color:'rgba(255,255,255,0.35)',cursor:'pointer',fontSize:11,padding:'0 2px'}}>✕</button>
         </div>)}
       </div>}
@@ -17720,7 +17722,7 @@ function App(){
               </div>
               {hasDetail&&<span aria-hidden="true" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>{isExpanded?'▾':'▸'}</span>}
               {!hasDetail&&tgt&&<span aria-hidden="true" title={notifTargetLabel(tgt)} style={{fontSize:12,color:'#00d4ff',marginTop:1}}>{tgt.url&&!tgt.workspace?'↗':'→'}</span>}
-              {n.id&&<button onClick={e=>{e.stopPropagation();clearNotif(n.id)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Dismiss">&#x2715;</button>}
+              {n.id&&<button aria-label="Dismiss" onClick={e=>{e.stopPropagation();clearNotif(n.id)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Dismiss">&#x2715;</button>}
             </div>
             {isExpanded&&hasDetail&&<FridayDoc compact text={n.detail||n.body||n.message} style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)'}}/>}
             {isExpanded&&tgt&&!isCreationNotif&&<div style={{marginTop:8,display:'flex',justifyContent:'flex-end'}}>
@@ -17785,7 +17787,7 @@ function App(){
     {quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
-        <button onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
+        <button aria-label={'Close quick draft'} title={'Close quick draft'} onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
       </div>
       <div style={{display:'flex',gap:3,marginBottom:8,flexWrap:'wrap'}}>
         {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(qdMode===m.id?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setQdMode(m.id)}>{m.ico} {m.label}</button>)}

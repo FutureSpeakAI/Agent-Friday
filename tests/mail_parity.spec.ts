@@ -256,3 +256,32 @@ test('Snooze says what it is and offers Gmail’s choices', async ({ page }) => 
   for (const want of ['Later today', 'Tomorrow morning', 'This weekend', 'Next week', 'Pick date & time']) expect(items).toContain(want);
   await page.keyboard.press('Escape');
 });
+
+test('moving Messages into its own tab keeps the folder and the open conversation', async ({ page, context }) => {
+  await open(page, '/');
+  await page.waitForSelector('.dock-btn[data-ws="messages"]', { timeout: 90000 });
+  await page.locator('.dock-btn[data-ws="messages"]').evaluate(el => (el as HTMLElement).click());
+  const win = page.locator('.fwin:has([data-ws-tab="messages"])');
+  await expect(win).toHaveCount(1);
+  await win.locator('.fm-row').first().waitFor({ timeout: 90000 });
+  // a folder other than the default, then a conversation in it
+  const side = win.locator('.fm-side');
+  if (!(await side.isVisible())) await win.locator('button', { hasText: 'Folders' }).first().click();
+  await side.locator('button', { hasText: 'All Mail' }).click();
+  await expect(win.locator('.fm-listhead')).toContainText('All Mail');
+  const row = win.locator('.fm-row').first();
+  await row.waitFor({ timeout: 60000 });
+  const subject = (await row.locator('.fm-subj').textContent() || '').trim();
+  await row.click();
+  await expect(win.locator('.fm-thread')).toBeVisible();
+  const asked = context.waitForEvent('request', r => r.resourceType() === 'document' && r.url().includes('/w/messages'));
+  const [tab] = await Promise.all([context.waitForEvent('page'), win.locator('[data-ws-tab="messages"]').click()]);
+  const url = new URL((await asked).url());
+  expect(url.searchParams.get('folder')).toBeTruthy();
+  expect(url.searchParams.get('thread_id')).toBeTruthy();
+  await expect(page.locator('.fwin:has([data-ws-tab="messages"])')).toHaveCount(0);   // folded into the dock
+  await tab.waitForSelector('[data-standalone="messages"] .fm-listhead', { timeout: 90000 });
+  await expect(tab.locator('.fm-listhead')).toContainText('All Mail');
+  await expect(tab.locator('.fm-thread')).toBeVisible({ timeout: 60000 });
+  if (subject) await expect(tab.locator('.fm-thread')).toContainText(subject.slice(0, 30));
+});
