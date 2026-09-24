@@ -123,6 +123,45 @@ def test_the_routing_screen_can_actually_return_a_local_mode():
         assert isinstance(m, str) and m
 
 
+def _route_local_only_with_nothing_local(monkeypatch):
+    import agent_friday.routing.ollama_manager as ollama_manager
+    import agent_friday.services.model_store as model_store
+    from agent_friday.routing.model_router import ModelRouter
+
+    class _NoOllama:
+        def is_available(self):
+            return False
+
+        def list_models(self):
+            return []
+
+    monkeypatch.setattr(ollama_manager, "get_manager", lambda *a, **kw: _NoOllama())
+    monkeypatch.setattr(model_store, "available", lambda: {})
+    return ModelRouter(config={"mode": "local_only"}).route(
+        [{"role": "user", "content": "what should I have for dinner?"}],
+        task_context={"has_tools": True})
+
+
+def test_the_local_only_choice_describes_the_refusal_the_router_makes(monkeypatch):
+    """The router refuses a local_only turn with nothing local serving and
+    offers the cloud as a choice; the first-run screen must say that, not
+    that she falls back to the cloud."""
+    result = _route_local_only_with_nothing_local(monkeypatch)
+    assert result["refuse"] is True and result.get("offer_cloud_switch") is True
+
+    detail = flat(dict((m, d) for m, _l, d in oc.ROUTING_CHOICES)["local_only"])
+    assert "falls back" not in detail and "fall back" not in detail
+    assert "refuse" in detail
+    assert "cloud" in detail and "ask" in detail
+
+
+def test_the_local_only_refusal_names_the_models_tab(monkeypatch):
+    """The Settings tab that loads a local model is labelled Models."""
+    warning = _route_local_only_with_nothing_local(monkeypatch)["warning"]
+    assert "Intelligence" not in warning
+    assert "Models" in warning
+
+
 def test_the_cloud_screen_says_the_map_loses_its_semantic_layer_by_default():
     """FACT-FIX 1, revised 2026-09-03. Tier B used to pin extraction to a
     local model unconditionally and produce nothing without one, silently --

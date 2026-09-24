@@ -126,9 +126,9 @@ ROUTING_CHOICES = (
      "Friday thinks at Anthropic. Fastest to set up, and the sharpest answers."),
     ("local_only",
      "On this computer only",
-     "This computer for everything. If she can't reach a local model, she"
-     " currently falls back to the cloud rather than refuse — a stricter,"
-     " fails-closed mode is being considered."),
+     "This computer for everything. If no local model is running, she"
+     " refuses the message and asks whether to answer it in the cloud"
+     " instead. Nothing goes to the cloud unless you say yes."),
     ("local_preferred",
      "Both",
      "This computer by default, the cloud when it would clearly help."),

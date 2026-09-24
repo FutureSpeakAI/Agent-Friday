@@ -30,10 +30,6 @@ you hit something that is not here, please open an issue.
 
 ## 2. Open defects
 
-- **The first-run routing screen describes `local_only` wrongly.** It says
-  Friday falls back to the cloud when no local model is available. The router
-  refuses the turn instead and offers to answer it in the cloud. The refusal
-  message also names the "Intelligence tab", which is now **Models**.
 - **The tray assumes port 3000.** If `FRIDAY_PORT` is set, or 3000 was busy and
   the server took the next free port, the tray's health check, "Open Friday
   Desktop" and push-to-transcribe cannot reach the server.

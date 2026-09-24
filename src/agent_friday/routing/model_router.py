@@ -953,8 +953,8 @@ class ModelRouter:
                 "offer_cloud_switch": True,
                 "task_type": task_type,
                 "warning": ("Local-only mode is on, but no local model is "
-                           "serving right now. Load one on the Intelligence "
-                           "tab, or answer this turn in the cloud."),
+                           "serving right now. Load one in Settings > "
+                           "Models, or answer this turn in the cloud."),
                 "reason": "local_only mode — no local seat available",
             }
 
