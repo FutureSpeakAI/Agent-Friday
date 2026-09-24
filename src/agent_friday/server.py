@@ -119,7 +119,7 @@ ROUTE_MODULES = [
     'google', 'google_accounts', 'hooks', 'insights', 'intelligence', 'jobs', 'knowledge_graph',
     'learning', 'liveness', 'memory_proposals', 'messages',
     'news', 'notifications', 'orchestrator', 'ownership',
-    'persona', 'platform', 'privacy_consent', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos',
+    'persona', 'phone', 'platform', 'privacy_consent', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos',
     'work_plan',
     'updates', 'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
     'workspace_studio', 'workspace_undo',
@@ -155,6 +155,7 @@ ROUTE_LABELS = {
     'content_pipeline': 'Content pipeline',
     'scheduler': 'Scheduler',
     'notifications': 'Notifications',
+    'phone': 'Phone',
 }
 
 # Populated by _discover_and_register_blueprints; consumed by the policy

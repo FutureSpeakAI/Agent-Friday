@@ -1,0 +1,29 @@
+# Cloudflare named tunnel for Friday's phone ingress: a TEMPLATE.
+#
+# This tunnel reaches ONE thing: the phone ingress on 127.0.0.1:3011, which
+# serves Twilio's webhook paths and nothing else (src/agent_friday/phone/
+# ingress.py). It must never point at Friday's own port 3000. A tunnel to 3000
+# published the whole API once; see the locality rule in core/__init__.py.
+#
+# Two layers, so neither carries the boundary alone:
+#   1. here, only /twilio/<known path> is forwarded; everything else is 404
+#      at Cloudflare's edge and never reaches this machine;
+#   2. the ingress itself has no other routes, and checks Twilio's signature,
+#      the account, replays and rate limits on every request.
+#
+# Copy to %USERPROFILE%\.cloudflared\phone-tunnel.yml, replace the two
+# placeholders, then:  cloudflared tunnel --config <that file> run
+# (docs/design/active/phone-twilio.md has the full steps, including the
+# dashboard route that needs no config file at all).
+
+tunnel: <TUNNEL-UUID>
+credentials-file: C:\Users\<you>\.cloudflared\<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: phone.<your-domain>
+    path: ^/twilio/(sms|sms-status|voice|voice-done|recording|call-status|media)$
+    service: http://127.0.0.1:3011
+    originRequest:
+      connectTimeout: 10s
+      noTLSVerify: false
+  - service: http_status:404

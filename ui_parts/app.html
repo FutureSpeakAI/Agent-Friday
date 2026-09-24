@@ -10684,6 +10684,153 @@ function SettingsTabConnectors({s,save}){
     </StSection>
   </div>;
 }
+// ── Settings → Phone (Twilio). Off by default. Secrets go in, never come back:
+// the server reports "stored"/"missing"/"unreadable" for each one. Every
+// route behind this tab is refused unless the request comes from this computer.
+function SettingsTabPhone(){
+  const [st,setSt]=useState(null);
+  const [msg,setMsg]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [d,setD]=useState({});
+  const set=(k,v)=>setD(p=>({...p,[k]:v}));
+  const refresh=useCallback(()=>{
+    apiFetch('/api/phone/status').then(r=>r.json()).then(j=>{ if(j&&j.ok) setSt(j); else setMsg('✗ '+((j&&j.error)||'Phone status unavailable')); })
+      .catch(()=>setMsg('✗ Could not reach the server.'));
+  },[]);
+  useEffect(()=>{ refresh(); const t=setInterval(refresh,15000); return ()=>clearInterval(t); },[refresh]);
+  const call=(url,body,ok,method)=>{
+    setBusy(true); setMsg('');
+    return apiFetch(url,{method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})
+      .then(r=>r.json()).then(j=>{ setMsg(j.ok?'✓ '+(ok||'Saved'):'✗ '+(j.error||'Failed')); refresh(); return j; })
+      .catch(()=>setMsg('✗ Could not reach the server.')).finally(()=>setBusy(false));
+  };
+  const patch=(p,ok)=>call('/api/phone/config',{patch:p},ok);
+  const saveSecret=(name,key,ok)=>{ const v=(d[key]||'').trim(); if(!v) return; call('/api/phone/secret',{name,value:v},ok).then(()=>set(key,'')); };
+  if(!st) return <StSection title="PHONE"><div style={{fontSize:11,color:'rgba(255,255,255,0.45)'}}>{msg||'Loading…'}</div></StSection>;
+  const c=st.config||{}, num=st.number, pr=st.prices, costs=st.costs||{}, log=st.log||[];
+  const secretLabel=v=>v==='stored'?'✓ stored in the vault on this computer':v==='unreadable'?'✗ stored but will not decrypt — enter it again':'not set';
+  const IS={flex:1,minWidth:0};
+  const row={display:'flex',gap:8,alignItems:'center'};
+  const note={fontSize:11,color:'rgba(255,255,255,0.45)',lineHeight:1.55,marginTop:6};
+  const cap=(k)=>num&&num.capabilities?(num.capabilities[k]?'✓ '+k.toUpperCase():'✗ '+k.toUpperCase()+' off'):'';
+  const usd=v=>v==null?'—':'$'+Number(v).toFixed(4);
+  const ready=c.api_key_secret==='stored'&&c.account_sid&&c.api_key_sid&&c.phone_number;
+  return (
+    <div>
+      {msg&&<div style={{fontSize:11,fontFamily:'JetBrains Mono',marginBottom:12,color:msg[0]==='✓'?'#00ff80':'#ff6b8a'}}>{msg}</div>}
+      <StSection title="PHONE">
+        <StToggle label="Phone line" value={!!c.enabled} onChange={()=>patch({enabled:!c.enabled},c.enabled?'Phone switched off':'Phone switched on')}
+          desc="Off by default. When off, nothing listens for Twilio and Friday sends nothing."/>
+        <div style={note}>{st.ingress&&st.ingress.running?('Listening for Twilio on 127.0.0.1:'+st.ingress.port+' (only the phone webhooks; nothing else of Friday is reachable there).'):
+          (c.enabled?'Not listening yet: the auth token is needed before the webhook listener starts.':'Not listening.')}</div>
+      </StSection>
+      <StSection title="TWILIO ACCOUNT">
+        <StRow label="Account SID" desc="Starts with AC. An identifier, not a secret.">
+          <div style={row}><input className="input" style={IS} placeholder={c.account_sid||'AC…'} value={d.account_sid||''} onChange={e=>set('account_sid',e.target.value)}/>
+            <button className="settings-btn" disabled={busy||!d.account_sid} onClick={()=>patch({account_sid:d.account_sid.trim()}).then(()=>set('account_sid',''))}>Save</button></div>
+        </StRow>
+        <StRow label="API key SID" desc="Starts with SK. Console → Account → API keys & tokens.">
+          <div style={row}><input className="input" style={IS} placeholder={c.api_key_sid||'SK…'} value={d.api_key_sid||''} onChange={e=>set('api_key_sid',e.target.value)}/>
+            <button className="settings-btn" disabled={busy||!d.api_key_sid} onClick={()=>patch({api_key_sid:d.api_key_sid.trim()}).then(()=>set('api_key_sid',''))}>Save</button></div>
+        </StRow>
+        <StRow label="API key secret" desc={'Used for everything Friday sends. Status: '+secretLabel(c.api_key_secret)}>
+          <div style={row}><input className="input" style={IS} type="password" autoComplete="off" placeholder={c.api_key_secret==='stored'?'Saved — paste a new one to replace it':'Paste the secret shown once when the key was made'} value={d.key_secret||''} onChange={e=>set('key_secret',e.target.value)}/>
+            <button className="settings-btn" disabled={busy||!d.key_secret} onClick={()=>saveSecret('api_key_secret','key_secret','API key secret stored')}>Save</button></div>
+        </StRow>
+        <StRow label="Auth token" desc={'Twilio signs every webhook with the account auth token, not the API key, so Friday needs it to check that a text or call really came from Twilio. Status: '+secretLabel(c.auth_token)}>
+          <div style={row}><input className="input" style={IS} type="password" autoComplete="off" placeholder={c.auth_token==='stored'?'Saved — paste a new one to replace it':'Console → Account → API keys & tokens → Auth token'} value={d.auth_token||''} onChange={e=>set('auth_token',e.target.value)}/>
+            <button className="settings-btn" disabled={busy||!d.auth_token} onClick={()=>saveSecret('auth_token','auth_token','Auth token stored')}>Save</button></div>
+        </StRow>
+        <StRow label="Friday's number">
+          <div style={row}><input className="input" style={IS} placeholder={c.phone_number||'+1…'} value={d.phone_number||''} onChange={e=>set('phone_number',e.target.value)}/>
+            <button className="settings-btn" disabled={busy||!d.phone_number} onClick={()=>patch({phone_number:d.phone_number}).then(()=>set('phone_number',''))}>Save</button></div>
+        </StRow>
+      </StSection>
+      <StSection title="YOUR CELL">
+        <StRow label="Your cell number" desc="The only number Friday will text or call without you naming another one. A one-time code proves it is yours.">
+          <div style={row}><input className="input" style={IS} placeholder={c.owner_cell||'+1…'} value={d.owner_cell||''} onChange={e=>set('owner_cell',e.target.value)}/>
+            <button className="settings-btn" disabled={busy||!d.owner_cell} onClick={()=>patch({owner_cell:d.owner_cell}).then(()=>set('owner_cell',''))}>Save</button></div>
+        </StRow>
+        <div style={{fontSize:12,fontFamily:'JetBrains Mono',color:c.owner_cell_verified?'#00ff80':'#ffb347',marginBottom:10}}>
+          {c.owner_cell?(c.owner_cell_verified?'✓ Verified: '+c.owner_cell:'Not verified yet: '+c.owner_cell):'No cell entered'}</div>
+        {c.owner_cell&&!c.owner_cell_verified&&<div>
+          <div style={row}>
+            <button className="settings-btn" disabled={busy||!ready||!c.enabled} onClick={()=>call('/api/phone/verify/start',{method:'sms'},'Code texted to your cell')}>Text me a code</button>
+            <button className="settings-btn" disabled={busy||!ready||!c.enabled} onClick={()=>call('/api/phone/verify/start',{method:'call'},'Calling your cell with the code')}>Call me with a code</button>
+          </div>
+          <div style={note}>{!c.enabled?'Switch the phone on first. ':''}{!ready?'Enter the account SID, API key and secret, and Friday’s number first. ':''}While carrier registration is pending, a text may be filtered; the call works either way.</div>
+          {st.verification_pending&&<div style={{...row,marginTop:8}}><input className="input" style={IS} inputMode="numeric" maxLength={6} placeholder="6-digit code" value={d.code||''} onChange={e=>set('code',e.target.value)}/>
+            <button className="settings-btn" disabled={busy||!d.code} onClick={()=>call('/api/phone/verify/confirm',{code:d.code},'Your cell is verified').then(()=>set('code',''))}>Confirm</button></div>}
+        </div>}
+      </StSection>
+      <StSection title="THE NUMBER">
+        <div style={row}>
+          <button className="settings-btn" disabled={busy||!ready} onClick={()=>call('/api/phone/check-number',{},'Checked with Twilio')}>Check SMS and voice with Twilio</button>
+        </div>
+        {num&&<div style={{fontSize:12,fontFamily:'JetBrains Mono',marginTop:8,color:'rgba(255,255,255,0.8)'}}>
+          {cap('sms')} · {cap('voice')} · {cap('mms')}
+          <div style={note}>Checked {new Date(num.checked_at*1000).toLocaleString()}. Texts go to: {(num.webhooks&&num.webhooks.sms)||'nowhere set'}. Calls go to: {(num.webhooks&&num.webhooks.voice)||'nowhere set'}.</div></div>}
+        <StRow label="Public address of the phone tunnel" desc="The https:// hostname your Cloudflare tunnel serves. It must reach only the phone listener, never Friday itself.">
+          <div style={row}><input className="input" style={IS} placeholder={c.public_base_url||'https://phone.example.com'} value={d.public_base_url||''} onChange={e=>set('public_base_url',e.target.value)}/>
+            <button className="settings-btn" disabled={busy||!d.public_base_url} onClick={()=>patch({public_base_url:d.public_base_url}).then(()=>set('public_base_url',''))}>Save</button></div>
+        </StRow>
+        <button className="settings-btn" disabled={busy||!ready||!c.public_base_url} onClick={()=>call('/api/phone/point-webhooks',{},'The number now points at Friday')}>Point the number at Friday</button>
+        <div style={note}>Changes the number's SMS and voice webhooks in Twilio to {c.public_base_url||'the address above'}/twilio/…</div>
+      </StSection>
+      <StSection title="TEXTING REGISTRATION (A2P 10DLC)">
+        <StRow label="Status" desc="US carriers filter or block texts from numbers whose registration is not approved. Calls are not affected.">
+          <select className="input" value={c.a2p_10dlc_status||'unknown'} onChange={e=>patch({a2p_10dlc_status:e.target.value})}>
+            {['unknown','not_started','submitted','in_review','approved','rejected'].map(v=><option key={v} value={v}>{v.replace('_',' ')}</option>)}
+          </select>
+        </StRow>
+        {c.a2p_10dlc_status!=='approved'&&<div style={{...note,color:'#ffb347'}}>Registration is {String(c.a2p_10dlc_status).replace('_',' ')}: texts may be filtered or blocked until carriers approve it. A blocked text shows in the log below as undelivered.</div>}
+      </StSection>
+      <StSection title="WHO FRIDAY MAY CONTACT">
+        <div style={{fontSize:12,color:'rgba(255,255,255,0.78)',lineHeight:1.6}}>
+          <div>✓ {c.owner_cell_verified?c.owner_cell:'your cell, once verified'}: alerts, approval codes and replies, within {c.owner_sms_per_hour} texts an hour and {c.owner_sms_per_day} a day.</div>
+          <div>• Anyone else: only when you type their number in your message, and only after you approve a card for that exact text or call.</div>
+          <div>• Every call, including to you, waits for your approval. Calls to anyone else start by saying Friday is an AI assistant.</div>
+          <div>• Nothing that arrives by phone can make Friday contact anyone. A text from your number is still treated as unverified and can only get answers, not actions.</div>
+        </div>
+      </StSection>
+      <StSection title="BEHAVIOUR">
+        <StToggle label="Answer my texts" value={!!c.sms_conversation} onChange={()=>patch({sms_conversation:!c.sms_conversation})} desc="Texts from your verified cell get a reply. Read-only: Friday can look things up but not act."/>
+        <StToggle label="Approve by text" value={!!c.sms_approvals} onChange={()=>patch({sms_approvals:!c.sms_approvals})} desc="Pending approvals are texted to you with a one-time code. Reply YES or NO with the code; a bare yes does nothing. Weaker than the app: anyone holding your phone or number can answer. Five wrong codes switch it off."/>
+        <StToggle label="Voicemail" value={!!c.voicemail} onChange={()=>patch({voicemail:!c.voicemail})} desc="Callers hear the greeting and can leave a message. It is transcribed on this computer, then deleted from Twilio."/>
+        <StToggle label="Live calls from your cell (early)" value={!!c.live_calls} onChange={()=>patch({live_calls:!c.live_calls})} desc="Talk with Friday in its own voice. Needs local voice ready; falls back to voicemail when it is not. Not yet tested on a real call."/>
+        <StToggle label="Ask Twilio to forget" value={!!c.redact_after_delivery} onChange={()=>patch({redact_after_delivery:!c.redact_after_delivery})} desc="Blank message bodies at Twilio once delivered and delete voicemail recordings once transcribed."/>
+        <StRow label="Greeting" desc="Said to every caller. Keep the part saying Friday is an AI.">
+          <div style={row}><input className="input" style={IS} placeholder={c.greeting} value={d.greeting||''} onChange={e=>set('greeting',e.target.value)}/>
+            <button className="settings-btn" disabled={busy||!d.greeting} onClick={()=>patch({greeting:d.greeting}).then(()=>set('greeting',''))}>Save</button></div>
+        </StRow>
+      </StSection>
+      <StSection title="COSTS">
+        <div style={{fontSize:12,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.8)'}}>
+          To date: ${Number(costs.total_usd||0).toFixed(4)}{costs.unpriced?' (+'+costs.unpriced+' not priced by Twilio yet)':''}
+          {Object.entries(costs.by_channel||{}).map(([k,v])=><div key={k} style={{color:'rgba(255,255,255,0.55)'}}>{k}: {v.count} · ${Number(v.usd).toFixed(4)}{k==='voice'?' · '+Math.round((v.units||0)/60)+' min':''}</div>)}
+        </div>
+        <div style={{...note,marginTop:10}}>Current US rates: text out {usd(pr&&pr.sms_outbound_usd)} · text in {usd(pr&&pr.sms_inbound_usd)} per segment · calls out {usd(pr&&pr.voice_outbound_per_min_usd)} · in {usd(pr&&pr.voice_inbound_per_min_usd)} per minute. Carrier fees are extra. Also counted under Cost &amp; Usage as "phone".</div>
+        <button className="settings-btn" style={{marginTop:8}} disabled={busy||!ready} onClick={()=>call('/api/phone/refresh-prices',{},'Rates read from Twilio')}>Read current rates</button>
+      </StSection>
+      <StSection title="TEST">
+        <button className="settings-btn" disabled={busy||!c.owner_cell_verified||!c.enabled} onClick={()=>call('/api/phone/test-sms',{},'Test text queued: approve it in Approvals to send it')}>Send one test text to my cell</button>
+        <div style={note}>Creates an approval card; nothing is sent until you approve it.</div>
+      </StSection>
+      <StSection title="CALL AND TEXT LOG">
+        {log.length===0?<div style={note}>Nothing yet.</div>:
+        <div style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{log.map(r=>
+          <div key={r.id} style={{display:'grid',gridTemplateColumns:'130px 70px 110px 1fr 70px',gap:8,padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.75)'}}>
+            <span>{new Date(r.at*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+            <span>{r.channel} {r.direction==='in'?'←':'→'}</span><span>{r.party}</span>
+            <span style={{color:'rgba(255,255,255,0.5)'}}>{r.status}{r.detail?' · '+r.detail:''}</span><span>{usd(r.price_usd)}</span></div>)}</div>}
+      </StSection>
+      <StSection title="WHAT TWILIO CAN STILL SEE">
+        <div style={note}>Twilio carries every text and call, so it sees the numbers, times, durations, and message text while a text is in flight. With "Ask Twilio to forget" on, bodies are blanked and recordings deleted afterwards, but the records (numbers, times, prices) stay in your Twilio account. Friday never asks Twilio to record calls or transcribe them. The carriers see the same in-flight content.</div>
+      </StSection>
+    </div>
+  );
+}
+
 function SettingsTabAbout(){
   const[h,setH]=useState(null);
   const[evo,setEvo]=useState(null);
@@ -10810,6 +10957,8 @@ function SettingsWS(){
     window.addEventListener('friday:settings-tab',h);
     return()=>window.removeEventListener('friday:settings-tab',h);
   },[]);
+  // A notification's target ({workspace:'settings', tab}) lands on that tab.
+  useNavTarget('settings',t=>{if(t&&t.tab)setTab(t.tab);});
   const{s,save,msg}=useSettings();
   const TABS=[
     {id:'general',label:'General',ico:'⚡️'},
@@ -10827,6 +10976,7 @@ function SettingsWS(){
     {id:'economy',label:'Economy',ico:'💎'},
     {id:'orchestrator',label:'Orchestrator',ico:'⚙️'},
     {id:'connectors',label:'Connectors',ico:'🔌'},
+    {id:'phone',label:'Phone',ico:'📞'},
     {id:'about',label:'About',ico:'ℹ️'},
   ];
   return (
@@ -10854,6 +11004,7 @@ function SettingsWS(){
         {tab==='economy'&&<SettingsTabEconomy/>}
         {tab==='orchestrator'&&<SettingsTabOrchestrator/>}
         {tab==='connectors'&&<SettingsTabConnectors s={s} save={save}/>}
+        {tab==='phone'&&<SettingsTabPhone/>}
         {tab==='about'&&<SettingsTabAbout/>}
       </div>
     </div>
