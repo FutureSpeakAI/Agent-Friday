@@ -1298,20 +1298,25 @@ def api_intelligence():
         pass
 
     # ── Contract level (§8.3 item 4) ──────────────────────────────────────────
-    # D1 (the full working/away/yield Contract) is not decided -- this is
-    # NOT that. It is only the idle timer `work_queue` already tracks, shown
-    # next to a "yield" button that POSTs to /api/machine/level. That route
-    # is a stub today (no Phase 5 handler exists yet in this tree): it is
-    # honest about that in its own response rather than pretending to act.
+    # D1 was ANSWERED 2026-09-24 (see docs/design/implemented/headroom.md §13):
+    # "I need my machine" releases the machine. `services/stand_down.py` unloads
+    # the local models, pauses every scheduled job through the one gate in
+    # `scheduler._run_task`, and persists across a restart. So `levels_enforced`
+    # is now true, and the UI no longer carries a "(not yet enforced)" caveat.
     try:
         from agent_friday.services import work_queue as wq
+        from agent_friday.services import stand_down as _sd
+        _down = _sd.is_stood_down()
         machine["contract"] = {
-            "level": "working",  # the only level anything enforces today
-            "levels_enforced": False,
+            "level": "yield" if _down else "working",
+            "levels_enforced": True,
+            "stood_down": _down,
+            "stand_down_reason": _sd.reason() if _down else "",
             "idle_s": wq.idle_seconds(),
         }
     except Exception:
-        machine["contract"] = {"level": "working", "levels_enforced": False,
+        machine["contract"] = {"level": "working", "levels_enforced": True,
+                               "stood_down": False, "stand_down_reason": "",
                                "idle_s": None}
 
     # ── LOCAL MODELS ON THIS MACHINE (§8.2, §12 Phase 4 item 1) ──────────────

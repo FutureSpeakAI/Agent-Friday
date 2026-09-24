@@ -547,8 +547,30 @@ def _orb_model_for(rec) -> str:
             or core.ANTHROPIC_MODEL_DEFAULT)
 
 
+class StoodDown(RuntimeError):
+    """The user asked for the machine, so background work does not run.
+
+    A distinct type so the run is recorded as a SKIP with a reason rather than a
+    failure: nothing is broken, it is simply not Friday's turn. Raised rather
+    than returning None so no caller can mistake it for a completed run -- a
+    silently-dropped scheduled run is the invisible-success defect this codebase
+    keeps rediscovering.
+    """
+
+
 def _run_task(rec):
     """Execute a schedule's task and return its result (may raise)."""
+    # The single gate. Every scheduled job -- builtin and agent_prompt -- comes
+    # through here, so "pause all background and scheduled jobs" is one check
+    # rather than a flag each job has to remember to read.
+    try:
+        from agent_friday.services import stand_down as _sd
+        if _sd.is_stood_down():
+            raise StoodDown(_sd.reason() or "Friday is stood down.")
+    except StoodDown:
+        raise
+    except Exception:
+        pass                      # never block the roster on our own bug
     task = rec.get("task") or {}
     kind = task.get("kind", "builtin")
     if kind == "builtin":
