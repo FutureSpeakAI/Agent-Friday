@@ -7158,6 +7158,11 @@ def _taint_title(name, inp):
         return "Save something into Friday's memory"
     if name == "spawn_task":
         return f"Start a background task: {_short_txt(inp.get('name') or inp.get('description'))}"
+    if name.startswith("mcp_") and name.count("_") >= 2:
+        # A connector action in words: "mcp_travel_reserve_hotel" ->
+        # "Use the travel connector to reserve hotel".
+        _server, _action = name[4:].split("_", 1)
+        return f"Use the {_server} connector to {_action.replace('_', ' ')}"
     return f"Let Friday run ‘{name}’"
 
 
