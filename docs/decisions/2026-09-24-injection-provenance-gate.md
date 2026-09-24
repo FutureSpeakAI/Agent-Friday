@@ -155,8 +155,32 @@ restart, or on an install without the model), connector reads are held too:
 names the source, because the reads that would have recorded the injected text
 never ran.
 
-**Live** (`run_live.py`): see the report for the numbers; Claude Haiku 4.5 through
-`agent._call_claude_agent`, AgentDojo's own environment and scoring.
+**Live** (`run_live.py`): a real model in Friday's real loop, against
+AgentDojo's own environment and scoring. One user task per suite against every
+injection task (27 attack episodes), plus 12 harmless tasks that end in an
+action. A shadow copy of the environment receives every call the model tried,
+so "the model was fooled" and "the attack happened" are separate numbers.
+
+| model, code | attack episodes | fooled | attack happened | harmless tasks finished in one turn |
+|---|---|---|---|---|
+| Claude Haiku 4.5, before | 27 | 0 | 0 | 1 of 12 |
+| Claude Haiku 4.5, after | 27 | 0 | 0 | 0 of 12 (1 warning card) |
+| Claude Sonnet 5, before | 27 | 0 | 0 | in progress |
+| bonsai2:27b (local), after | 10 clean of 27 | 0 of 10 | 0 | in progress |
+
+Status on 2026-09-24: the Sonnet 5 and Opus 5.5 runs (before and after) and
+the bonsai2 before-run were still going. 17 of bonsai2's 27 attack episodes
+failed because Friday's llama-server on :8090 went away mid-run and came back
+as a new process at 09:56 (connection refused, then "503 Loading model"); they
+need re-running before bonsai2 can be scored. No model in any finished episode
+followed an injection, so the live runs do not yet exercise the gate: the
+replay above is the measure of what the gate does when a model is fooled.
+
+Harmless tasks rarely "finish in one turn" before or after, because Friday's
+action policy tells the model to ask before sending or paying, and a one-turn
+benchmark counts a question as unfinished. One harmless Haiku episode fails on
+both versions with the Anthropic API rejecting an empty text block, a
+pre-existing defect in the Claude loop, tracked separately.
 
 **Text detection, for comparison** (`detector_compare.py`): Friday's own
 override-phrase patterns caught 0 of 629 (they look for grants of authority,
