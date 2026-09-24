@@ -3,106 +3,212 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.13.0**
+> **Note:** Pre-1.0 releases have been archived. Current release: **5.13.0**;
+> 5.14.0 is in preparation.
 >
 > Entries for 5.7.0 and 5.8.1 are not recorded here — those releases were
 > tagged without a changelog entry.
 
 ---
 
-## [Unreleased]
+## [5.14.0] - unreleased
 
-### Models
+Everything since the 5.13.0 tag. The plain-language summary is in
+[RELEASE_NOTES.md](RELEASE_NOTES.md).
 
-- **Claude Opus 5.5 added, and it takes the Opus tier.** Verified against the
-  published model and pricing pages on 2026-09-22: API id `claude-opus-5-5`,
-  1M context, 128K max output, adaptive thinking, vision and tools,
-  **$4 / $20 per MTok**. It supersedes Opus 5 on capability while costing
-  *less* ($5 / $25), so it leads the Opus entries in the picker and comes
-  before Opus 5 in the router's own fallback chain.
-- **Nobody's saved choice moved.** `default_cloud_model` and the shipped
-  `reasoning` / `subagent` seats remain Claude Sonnet 5. Promoting Opus 5.5
-  there would have doubled the cost of every unrouted cloud turn without
-  anyone asking. Opus 5 stays listed and priced -- a model already selected
-  does not vanish underneath the person who selected it.
-- **Cache reads are no longer billed at a flat tenth.** Opus 5.5 reads cache
-  at 0.05x its input rate ($0.20 per MTok), not the standard 0.1x. The meter
-  now carries a per-model multiplier. This is not a rounding detail: the
-  4.09M-token turn audited on 2026-09-22 was 96.4% cache reads, so this
-  multiplier decides most of the bill.
-- **Fast mode** for Opus 5.5 is priced at $8 / $40, distinct from Opus 5's
-  $10 / $50. Nothing in Friday requests fast mode today; the meter is correct
-  in advance so the first caller cannot silently under-bill.
+### Added
 
-### Fixed
+- **Approvals for every outward action.** One fail-closed checkpoint
+  (`governance/action_gate.py`) now sits in front of every tool call from
+  every surface: chat, voice, scheduled jobs, background tasks and phone.
+  Internal work (reading, drafting, working inside Friday's own folders)
+  runs. Anything that reaches outside the machine or changes something you
+  own waits for you: a yes in chat during a conversation, an approval card
+  otherwise, or a scoped, expiring grant you set up for a scheduled job.
+  Each decision writes a signed receipt.
+- **Provenance on approval cards.** When a recipient, link, account number,
+  path, command or memory write came from something Friday read (an email, a
+  web page, a document) rather than from you, the card says where it came
+  from, and a chat yes does not satisfy it.
+- **Grants screen** in Settings > Privacy & Approvals: choose which outward
+  actions a scheduled job may take on its own, for 1, 7 or 30 days and a set
+  number of uses; revoke at any time.
+- **Second opinion on decisions.** An optional local judgment model (Laya)
+  can add an approval card the keyword rules would have missed. It can only
+  ever add a card, never remove one. Off / Shadow / On in Settings > Privacy
+  & Approvals.
+- **Phone (off by default).** SMS, voicemail and, experimentally, live calls
+  over your own Twilio account. Friday may contact only your verified cell on
+  its own; any other number needs your own message naming it plus an
+  approval card. Every call waits for a card. Twilio's webhooks are served by
+  a separate listener on `127.0.0.1:3011` that holds nothing but those paths.
+- **Documents.** Friday creates and edits real `.docx`, `.xlsx` and `.pptx`
+  files on this computer through a pinned OfficeCLI binary, and checks the
+  result before saying it is done. Editing a document Friday did not make
+  waits for your decision.
+- **Messages with Gmail parity.** Accounts, real search, threads with safe
+  HTML, attachments, labels, drafts, send-later and undo-send, archive, star,
+  read state and Delete (to Gmail's Trash, with undo) synced to Gmail for
+  accounts reconnected with sending. Replies thread and carry formatting and
+  attachments. Every message you send is approved on its own card.
+- **Knowledge workspace.** The wiki's pages and the knowledge galaxy are one
+  workspace with Graph, Split and Pages views, a shared search, and new
+  galaxy arrangements (rings, sphere, spiral, star map) and a guided tour.
+- **Local voice and push-to-transcribe.** On-device speech recognition and
+  speech now use the GPU when there is one, load before the first spoken
+  turn, and explain what to do when they are not ready. Hold **Alt+T**
+  anywhere in Windows, speak, and release: the local transcript is typed into
+  the window that had focus. The key is configurable in Settings > Voice &
+  Tracking.
+- **A local address.** Optionally open Friday at `https://agent.<name>` on
+  this PC instead of `http://localhost:3000`, with a certificate authority
+  Friday creates for that one name. Each system change (hosts file,
+  certificate trust) is a button you press and Windows confirms.
+- **Reasoning traces.** Each model call's reasoning, tool calls and results
+  are traced live, nested under the turn that started them, and archived
+  encrypted and hash-chained. The Ledger opens any past trace. Available to
+  the local user only.
+- **Opt-in update check.** First-run setup now asks whether Friday may look
+  for a new version once a week. The request goes to GitHub's public
+  releases list and carries nothing about you. It only notifies; nothing
+  downloads or installs on its own. Unanswered means off.
+- **Workspaces in their own browser tabs**, a chat sidebar with every thread
+  grouped into projects, undockable chat windows, a stop button for a running
+  chat turn, and a Shift+Enter newline.
+- **Responsive desktop.** The dock wraps at any width, and a very small
+  window becomes a floating widget.
+- **Task resume.** A task interrupted by a crash can be resumed from where
+  it stopped, instead of only re-run from the prompt.
+- **Keyless local web search** (wigolo) is tried first, before any keyed
+  search provider.
+- **Hard spending cap.** An optional second cap that refuses further cloud
+  calls once a period's spend reaches the limit. The alert-only budget stays
+  the default. Local models are never affected.
+- **Claude Opus 5.5** in the model picker ($4 / $20 per million tokens).
+  Saved model choices and the shipped seats are unchanged.
+- 3D views for Code, News, Contacts, Trust, Messages, Calendar and the model
+  library; a 3D file browser in Studio; head-coupled perspective when
+  tracking is on.
 
-- **Claude Fable 5.1 was billing at exactly $0.00.** It is in the live
-  /v1/models list, so the picker already offered it, but it was in none of
-  the price tables -- so `price_for` fell through to the provider blended
-  rate, found no row there either, and returned 0/0. The most expensive
-  model in the lineup ($10 / $50) was metered as if it were running
-  on-device for free, and `services/pricing.py` reported it as unknown.
-  Now priced, with the 0.025x cache-read multiplier its page specifies,
-  and listed explicitly rather than only arriving through discovery.
-  This is the same defect as the canonical-Haiku-id zero fixed earlier;
-  it was found while adding Opus 5.5, not looked for.
+### Changed
 
-- **Claude Sonnet 5 was metered 50% too high, in all three price tables.**
-  The rows said $3 / $15; the published page states the $2 / $10 launch price
-  is now the standard price and the scheduled rise to $3 / $15 will not
-  happen. Sonnet 5 is what `default_cloud_model` points at, so this was the
-  most-billed row in the table. Corrected in `cost_meter.PRICING`, in
-  `routing.model_router.CLOUD_COST_PER_1K`, and in the anthropic provider's
-  `cost_per_1k` (the rate the picker displays).
-  **Expect reported Sonnet 5 spend to drop by about a third** -- the earlier
-  figures were overstated, not the new ones understated. Historical rows in
-  `costs.db` keep the cost recorded at the time and are not rewritten.
-- The configuration guide still listed Opus 4.8 / 4.7 / 4.6 and Sonnet 4.6 as
-  pickable. They were removed from the shipped registry some time ago; the
-  guide now names what is actually offered.
+- **Settings has eight task-shaped tabs**: General, Models, Accounts & Keys,
+  Privacy & Approvals, Appearance & 3D, Voice & Tracking, Spending and
+  Advanced, plus About. One control per setting; features on hold are not
+  shown.
+- **Scheduled jobs run on the local seat by default.** The four costly
+  built-in jobs are pinned to the local model, and a job marked local-only
+  skips a run rather than escalating to the cloud. Daily creation runs once
+  a day while you are away from the computer (09:00-23:00 by default).
+- **The local seat gets the same round budget as the cloud seat.** Real
+  limits replace an arbitrary cap of 50 rounds.
+- **The token ceiling is advisory.** It warns instead of killing a turn
+  mid-flight.
+- **Friday says which model answered** on every chat surface, and announces
+  a tool only once the checkpoint lets it run.
+- **The action permission policy ends every system prompt** and cannot be
+  overridden by anything assembled before it, including voice context.
+- Tools are sent to the model as an index with schemas loaded on demand,
+  instead of the full schema of every tool on every turn.
+- "I need my machine" in Settings > Models now releases the GPU.
+- Scheduled jobs' grants belong to that schedule's runs only.
+- Calendar create/update, scheduling a social post, package installs,
+  interactive sessions and every connector action that is not a read are
+  classified outward and ask first.
 - **The background task's quality evaluator runs again, on a local seat
-  only.** It had never run: it imported `_vault_local_only` from
-  `agent_friday.core`, where that name does not exist, and failed closed on
-  every task. It no longer makes a cloud call at all. It grades on the local
-  model that is actually serving (the same resolution `local_only` schedules
-  use); with none serving it is skipped, and the task journal's `evaluate`
-  decision records why. A background task never adds a paid call for its
-  grade.
-
-
-The sections below come from the hardening pass of 2026-09-06, after the
-5.13.0 tag. Verified defects only, each with a regression test.
+  only.** It grades on the local model that is actually serving and never
+  makes a cloud call; with no local seat serving it is skipped, and the task
+  journal records why.
 
 ### Security
 
-- **Eleven outbound paths carried user or model text past the egress gate**
-  while the threat model promised the gate ran before every cloud call: the
-  HTTP worker adapter (prompt to any caller-chosen URL), kie.ai (fail-open on
-  a gate error), Veo and Omni video prompts, Lyria music prompt/lyrics,
-  calendar `annotate_events`, Google Tasks title/notes, publisher alt text
-  and link cards, Higgsfield when the gate attribute was absent, both
-  outbound federation routes, and the `/api/chat/send` vision path (which
-  also ignored Local only and wrote no ledger row). All gated, fail-closed.
-- **Recorded unrestricted-cloud consent made the boot self-test read the gate
-  as broken**, after which the router refused every cloud send. An
-  unrestricted install lost cloud entirely on its next restart. The self-test
-  now recognises the recorded consent and the boot banner says so.
-
-### Release engineering
-
-- **The installer build refuses a payload that is not the committed tree.**
-  The 5.12.0 and 5.13.0 zips were built from a working tree and carried
-  ~290 files that existed only on the build machine.
+- **A proxied request is never treated as the local user.** A request that
+  arrives through a tunnel or reverse proxy must log in; only Friday's own
+  loopback proxy for the local address is local.
+- **Governance bypasses closed**: voice tools that called their handlers
+  directly, `run_command` reaching Friday's own local API, `correct_wiki`
+  rewriting state files, `write_file` into files Friday loads as
+  instructions, federated compute jobs running on a self-reported trust
+  score. `tests/unit/test_every_action_is_governed.py` fails on any tool or
+  call site that can run without the checkpoint.
+- **Signing keys are stable.** The governance key is never replaced by
+  accident and nothing signs with a per-boot key; the file-grants ledger
+  signs with its own persistent key.
+- **Friday's own keystore** holds the root key for credentials at rest, so
+  credential encryption no longer depends on which of several passphrase
+  sources answered first. A standing credential sweep reports secrets stored
+  outside it.
+- **Eleven outbound paths now pass the egress gate**: the HTTP worker
+  adapter, kie.ai, Veo and Omni video prompts, Lyria music prompts, calendar
+  annotations, Google Tasks, publisher alt text and link cards, Higgsfield,
+  both outbound federation routes, and the `/api/chat/send` vision path.
+- A seat declared local-only cannot be pointed at a paid cloud API.
+- Recorded unrestricted-cloud consent no longer makes the boot self-test
+  read the egress gate as broken.
+- Worker scripts no longer inherit the server's environment; Firecrawl
+  queries and scrape URLs are gated in-module.
+- **Pre-commit scanner** catches more credential shapes (Twilio, Google
+  OAuth, Hugging Face, Groq, xAI, Perplexity, fine-grained GitHub tokens,
+  JWTs, encrypted private keys), phone numbers and home paths; it masks
+  findings and fails closed on its own errors.
+- A read-only observer credential lets an orchestrator read a task's journal
+  without owner access.
 
 ### Fixed
 
-- Task-record states INTERRUPTED, STOPPED and STALLED were rendered in black
-  on the dark panel.
-- KNOWN_ISSUES entries verified against the tree: the image-sampling
-  progress bar and the cancel-before-lease race were already fixed in
-  `4dccabb` (2026-08-16) and are removed; Telegram/Discord sealing is
-  verified and now guarded by a test; the ffmpeg build question is answered
-  (GPLv3) under Licensing.
+- A yes in chat approves the exact action it was asked about and no other,
+  and a question already answered is not asked again; a second ask becomes
+  an approval card instead of a loop.
+- An approved email passes the integrity check and writes a signed receipt.
+- A live phone call gets the same gated prompt and egress gate as a text.
+- Rewritten post text needs a card before it is published.
+- The Gmail search query is actually sent to Gmail; an account that fails to
+  load no longer shows "0 unread".
+- The Calendar panel sends Google a time with an offset, so it reads events.
+- A recorded Google outage expires instead of becoming permanent.
+- A long chat turn is no longer released as dead on a timer; a running turn
+  is never shown as a connection error.
+- The Claude tool loop never sends an empty text block.
+- One unlucky import at boot no longer disables local voice or the judgment
+  gate until restart.
+- A routine launched from the desktop actually starts.
+- Seat promotion and boot reconciliation, which never ran, now run; a seat
+  asks before spilling to the cloud.
+- The model picker sees the model that is actually running.
+- Claude Sonnet 5 is metered at $2 / $10 per million tokens (it was metered
+  at $3 / $15), and Claude Fable 5.1 is priced (it was metered at $0).
+  Cache reads use each model's own multiplier. Historical cost rows are not
+  rewritten.
+- The installer build refuses a payload that is not the committed tree.
+- Task states Interrupted, Stopped and Stalled are readable on the dark
+  panel.
+
+### Removed
+
+- **The Friday Edition** and the **Home** workspace. The desktop is the
+  landing screen; the briefings carry the morning read.
+- **The Lessac Piper voice** is no longer offered: its training data is
+  licensed for non-commercial research only. An install that already chose
+  it keeps loading it.
+- **`mouseinfo` (GPL-3.0)** is no longer built or installed by the Windows
+  installer.
+
+### Licensing
+
+- `NOTICE` lists what ships in the repository and the installer archive, the
+  copyleft packages the default installation brings in, and each model's
+  license. `THIRD_PARTY_LICENSES.md` lists every component with version,
+  delivery and license.
+
+### Landing for 5.14.0 (to be confirmed at release)
+
+Work in progress on other branches at the time of writing. Confirm each item
+is on `main` before tagging, and delete any that is not.
+
+- PDF form fill, signing and OCR.
+- Interview scheduling.
+- Safety fixes from the crew-0 review.
+- Dead-code removal.
 
 ---
 
