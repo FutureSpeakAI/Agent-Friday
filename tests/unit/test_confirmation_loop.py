@@ -291,6 +291,26 @@ class TestTwoSurfacesOneDay:
         assert _allowed(_gate("navigate", {"workspace": "code"}, yes)), (
             "the action the user actually approved was refused")
 
+    def test_the_newest_question_wins_when_both_were_asked_in_one_clock_tick(
+            self, monkeypatch):
+        """Windows' wall clock advances in ~15 ms steps, so two questions asked
+        back to back can carry the same timestamp. Ordering by that timestamp
+        then picks the OLDER question on a tie, and the yes meant for the
+        front page's navigate authorises the chat tab's file write."""
+        import time as _t
+        monkeypatch.setattr(_t, "time", lambda: 1758500000.0)
+        chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {})
+        _gate("write_file", {"path": "brief.md"}, chat)
+        front = agent.prepare_confirmation_ctx(SID, "switch to code", {})
+        _gate("navigate", {"workspace": "code"}, front)
+
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {})   # meant: navigate
+        assert yes.get("confirm_granted_tool") == "navigate"
+        assert not _allowed(_gate("write_file", {"path": "brief.md"}, yes)), (
+            "a yes intended for the front page's navigate authorised the chat "
+            "tab's file write")
+        assert _allowed(_gate("navigate", {"workspace": "code"}, yes))
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  4. THE THINGS THAT MUST NOT HAVE CHANGED
