@@ -78,7 +78,7 @@
     const now = new Date(), out = [];
     const later = now.getHours() < 17 ? at(now, 18) : new Date(now.getTime() + 3 * 3600e3);
     out.push(['Later today', later]);
-    const tmr = new Date(now); tmr.setDate(now.getDate() + 1); out.push(['Tomorrow', at(tmr, 8)]);
+    const tmr = new Date(now); tmr.setDate(now.getDate() + 1); out.push(['Tomorrow morning', at(tmr, 8)]);
     const sat = new Date(now); sat.setDate(now.getDate() + ((6 - now.getDay() + 7) % 7 || 7)); out.push(['This weekend', at(sat, 8)]);
     const mon = new Date(now); mon.setDate(now.getDate() + ((1 - now.getDay() + 7) % 7 || 7)); out.push(['Next week', at(mon, 8)]);
     return out;
@@ -96,7 +96,9 @@
     const st = document.createElement('style');
     st.id = 'fm-style';
     st.textContent = `
-      .fm { display:flex; flex-direction:column; gap:8px; font-family: Inter, sans-serif; color:#dbe6f5; }
+      .fm { display:flex; flex-direction:column; gap:8px; font-family: Inter, sans-serif; color:#dbe6f5; container-type:inline-size; }
+      /* The panes take the height of the frame (a tab or a window; see "Filling the frame"), not a guess from the viewport */
+      .fm.ws-fill { min-height:460px; }
       .fm select { color-scheme: dark; }
       .fm select option, .fm select optgroup { background-color:#0b1220; color:#e6f0ff; }
       .fm-bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
@@ -113,15 +115,20 @@
       .fm-banner.err { background:rgba(239,68,68,0.10); border:1px solid rgba(239,68,68,0.45); color:#ffb4b4; }
       .fm-banner.warn { background:rgba(245,158,11,0.10); border:1px solid rgba(245,158,11,0.45); color:#ffd699; }
       .fm-banner.info { background:rgba(0,212,255,0.07); border:1px solid rgba(0,212,255,0.3); color:#aee9ff; }
-      .fm-main { display:flex; gap:10px; min-height:0; }
-      .fm-side { flex:0 0 170px; display:flex; flex-direction:column; gap:1px; max-height:calc(100vh - 300px); overflow:auto; font-size:12px; }
+      .fm-main { position:relative; display:flex; gap:10px; min-height:0; flex:1 1 auto; }
+      .fm-side { flex:0 0 188px; display:flex; flex-direction:column; gap:1px; min-height:0; overflow:auto; font-size:12px; }
+      .fm-mid .fm-side, .fm-narrow .fm-side { position:absolute; z-index:20; top:0; bottom:0; left:0; width:230px; padding-top:6px;
+        background:rgba(6,10,18,0.98); border:1px solid rgba(0,212,255,0.25); border-radius:10px; box-shadow:10px 0 34px rgba(0,0,0,0.55); }
+      .fm-side-close { justify-content:flex-end; color:#8fa6c4 !important; font-size:11px !important; }
       .fm-side button { display:flex; gap:8px; align-items:center; text-align:left; background:transparent; border:0; border-radius:0 999px 999px 0; color:#b8c7dc; padding:6px 10px; cursor:pointer; font-size:12px; }
       .fm-side button:hover { background:rgba(0,212,255,0.06); color:#e6f4ff; }
       .fm-side button.on { background:rgba(0,212,255,0.14); color:#e6f9ff; font-weight:700; }
       .fm-side .h { font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:#5f7896; padding:10px 10px 4px; }
-      .fm-listwrap { flex:1 1 42%; min-width:320px; display:flex; flex-direction:column; border:1px solid rgba(0,212,255,0.12); border-radius:10px; overflow:hidden; }
+      .fm-listwrap { flex:1 1 38%; min-width:300px; min-height:0; display:flex; flex-direction:column; border:1px solid rgba(0,212,255,0.12); border-radius:10px; overflow:hidden; }
       .fm-listhead { display:flex; gap:8px; align-items:center; padding:6px 10px; border-bottom:1px solid rgba(255,255,255,0.06); font-size:11px; color:#8fa6c4; background:rgba(255,255,255,0.015); }
-      .fm-list { flex:1; max-height:calc(100vh - 360px); overflow:auto; }
+      .fm-list { flex:1 1 auto; min-height:0; overflow:auto; }
+      .fm-narrow .fm-listwrap { min-width:0; }
+      .fm-narrow.fm-reading .fm-listwrap { display:none; }
       .fm-row { position:relative; display:grid; grid-template-columns: 22px 10px minmax(90px,170px) 1fr auto; gap:8px; align-items:center; padding:8px 10px;
         border-bottom:1px solid rgba(255,255,255,0.05); cursor:pointer; font-size:12px; }
       .fm-row:hover { background:rgba(0,212,255,0.05); }
@@ -143,7 +150,12 @@
       .fm-act.danger:hover { border-color:#ef4444; background:rgba(239,68,68,0.18); }
       .fm-badge { font-size:9px; padding:1px 6px; border-radius:999px; border:1px solid; margin-right:5px; }
       .fm-lab { font-size:9px; padding:1px 6px; border-radius:4px; background:rgba(255,255,255,0.08); color:#cfe3ff; margin-right:5px; }
-      .fm-thread { flex:1 1 58%; min-width:360px; max-height:calc(100vh - 330px); overflow:auto; border:1px solid rgba(0,212,255,0.12); border-radius:10px; padding:12px; }
+      .fm-thread { flex:1 1 62%; min-width:0; min-height:0; overflow:auto; border:1px solid rgba(0,212,255,0.12); border-radius:10px; padding:12px; }
+      .fm-reading-empty { display:flex; align-items:center; justify-content:center; }
+      /* until a conversation is open, the list has the larger share */
+      .fm:not(.fm-reading) .fm-listwrap { flex-basis:58%; }
+      .fm:not(.fm-reading) .fm-thread { flex-basis:42%; }
+      .fm-reading-hint { text-align:center; color:#7f93ad; font-size:13px; max-width:340px; }
       .fm-msg { border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:10px; margin-bottom:10px; background:rgba(255,255,255,0.02); }
       .fm-hdr { font-size:11px; color:#8fa6c4; line-height:1.6; display:flex; gap:8px; align-items:flex-start; }
       .fm-hdr b { color:#e6f0ff; }
@@ -540,11 +552,11 @@
         fwd.map((a, i) => h('label', { key: a.attachment_id, className: 'fm-att' }, h('input', { type: 'checkbox', checked: a.keep, onChange: e => setFwd(x => x.map((y, j) => j === i ? Object.assign({}, y, { keep: e.target.checked }) : y)) }), '📎 ' + a.filename))),
       h('div', { className: 'fm-tools' },
         [['B', 'bold', 'Bold'], ['I', 'italic', 'Italic'], ['U', 'underline', 'Underline']].map(([l, c, t]) => h('button', { key: c, className: 'fm-tool', title: t, onMouseDown: e => { e.preventDefault(); cmd(c); }, style: { fontWeight: c === 'bold' ? 800 : 400, fontStyle: c === 'italic' ? 'italic' : 'normal', textDecoration: c === 'underline' ? 'underline' : 'none' } }, l)),
-        h('button', { className: 'fm-tool', title: 'Bulleted list', onMouseDown: e => { e.preventDefault(); cmd('insertUnorderedList'); } }, '•≡'),
-        h('button', { className: 'fm-tool', title: 'Numbered list', onMouseDown: e => { e.preventDefault(); cmd('insertOrderedList'); } }, '1≡'),
-        h('button', { className: 'fm-tool', title: 'Link', onMouseDown: e => { e.preventDefault(); const u = window.prompt('Link address'); if (u && /^(https?:|mailto:)/i.test(u)) cmd('createLink', u); } }, '🔗'),
+        h('button', { "aria-label": 'Bulleted list',  className: 'fm-tool', title: 'Bulleted list', onMouseDown: e => { e.preventDefault(); cmd('insertUnorderedList'); } }, '•≡'),
+        h('button', { "aria-label": 'Numbered list',  className: 'fm-tool', title: 'Numbered list', onMouseDown: e => { e.preventDefault(); cmd('insertOrderedList'); } }, '1≡'),
+        h('button', { "aria-label": 'Link',  className: 'fm-tool', title: 'Link', onMouseDown: e => { e.preventDefault(); const u = window.prompt('Link address'); if (u && /^(https?:|mailto:)/i.test(u)) cmd('createLink', u); } }, '🔗'),
         h('button', { className: 'fm-tool', title: 'Remove formatting', onMouseDown: e => { e.preventDefault(); cmd('removeFormat'); } }, 'Tx'),
-        h('button', { className: 'fm-tool', title: 'Attach files', onClick: () => fileRef.current && fileRef.current.click() }, '📎'),
+        h('button', { "aria-label": 'Attach files',  className: 'fm-tool', title: 'Attach files', onClick: () => fileRef.current && fileRef.current.click() }, '📎'),
         h('input', { ref: fileRef, type: 'file', multiple: true, style: { display: 'none' }, onChange: e => { upload(e.target.files); e.target.value = ''; } }),
         h('span', { style: { flex: 1 } }),
         state && h('span', { style: { fontSize: 11, color: state.status === 'sent' ? '#7df0b0' : state.status === 'refused' || state.status === 'denied' || state.status === 'failed' ? '#ffb4b4' : '#ffd699', marginRight: 6 } }, state.message),
@@ -617,7 +629,9 @@
     const [dialog, setDialog] = useState(null);
     const [busyIds, setBusyIds] = useState(() => new Set());
     const [sideOpen, setSideOpen] = useState(() => store.get('fm_side', null));
-    const [wide, setWide] = useState(true);
+    // wide: folders | list | reading pane; mid: the folders become a drawer;
+    // narrow (a small window, a phone): one pane at a time
+    const [layout, setLayout] = useState('wide');
     const undoStack = useRef([]);
     const boxRef = useRef(null), searchRef = useRef(null), listRef = useRef(null), starRef = useRef(0);
 
@@ -626,11 +640,13 @@
     // the folders go down the side when there is room for them
     useEffect(() => {
       const el = boxRef.current; if (!el || !window.ResizeObserver) return;
-      const ro = new ResizeObserver(() => setWide(el.offsetWidth >= 980));
+      const ro = new ResizeObserver(() => { const w = el.offsetWidth; setLayout(w >= 1100 ? 'wide' : w >= 720 ? 'mid' : 'narrow'); });
       ro.observe(el);
       return () => ro.disconnect();
     }, []);
-    const showSide = sideOpen == null ? wide : sideOpen;
+    // wide: shown unless hidden (remembered); otherwise a drawer, opened on request
+    const showSide = layout === 'wide' ? sideOpen !== false : sideOpen === true;
+    const pickFolder = f => { setFolder(f); setOpen(null); if (layout !== 'wide') setSideOpen(null); };
 
     const seq = useRef(0);
     const load = useCallback((q, f) => {
@@ -1016,7 +1032,7 @@
         ArrowDown: () => { setFocus(f => Math.min(shown.length - 1, f + 1)); },
         ArrowUp: () => { setFocus(f => Math.max(0, f - 1)); },
         o: () => openThread(cur), Enter: () => openThread(cur),
-        u: () => setOpen(null), Escape: () => { if (help) setHelp(false); else if (preview) setPreview(null); else if (sel.size) setSel(new Set()); else setOpen(null); },
+        u: () => setOpen(null), Escape: () => { if (help) setHelp(false); else if (preview) setPreview(null); else if (layout !== 'wide' && sideOpen === true) setSideOpen(null); else if (sel.size) setSel(new Set()); else setOpen(null); },
         x: () => cur && toggleSel(cur),
         '*': () => { starRef.current = Date.now(); say('Select: a all · n none · r read · u unread · s starred'); },
         e: () => act(targets(), inTrash ? 'untrash' : 'archive'), y: () => act(targets(), 'archive'),
@@ -1090,10 +1106,11 @@
     useEffect(() => { if (headRef.current) headRef.current.indeterminate = someChecked && !allChecked; }, [someChecked, allChecked]);
     const bulk = selected();
     const sideLabels = allLabelNames();
-    return h('div', { className: 'fm', ref: boxRef, tabIndex: 0, onKeyDown: onKey, style: { outline: 'none' } },
+    return h('div', { className: 'fm ws-fill fm-' + layout + (open ? ' fm-reading' : ''), ref: boxRef, tabIndex: 0, onKeyDown: onKey, style: { outline: 'none' } },
       // row 1: accounts, search, actions
       h('div', { className: 'fm-bar' },
-        h('button', { className: 'btn fm-btn', onClick: () => { const v = !showSide; setSideOpen(v); store.set('fm_side', v); }, title: showSide ? 'Hide folders' : 'Show folders and labels', 'aria-pressed': showSide }, '☰'),
+        h('button', { className: 'btn fm-btn', onClick: () => { if (layout === 'wide') { const v = showSide ? false : null; setSideOpen(v); store.set('fm_side', v); } else setSideOpen(showSide ? null : true); },
+          title: showSide ? 'Hide the folders and labels' : 'Show the folders and labels', 'aria-label': showSide ? 'Hide the folders and labels' : 'Show the folders and labels', 'aria-pressed': showSide }, '☰ Folders'),
         h('span', { className: 'fm-chip' + (acct === 'all' ? ' on' : ''), onClick: () => setAcct('all') }, '📬 All accounts',
           data && !data.search_failed && h('span', { className: 'fm-count' }, all.filter(m => m.unread).length + ' unread')),
         accounts.map(a => h('span', { key: a.id, className: 'fm-chip' + (acct === a.id ? ' on' : ''), onClick: () => setAcct(a.id), title: a.email + (a.mail && a.mail.modify ? '' : ' — read-only in Gmail') },
@@ -1104,9 +1121,9 @@
         h('input', { ref: searchRef, className: 'fm-search', value: qInput, placeholder: 'Search mail — Gmail search: from:ada is:unread has:attachment newer_than:7d …  (press /)',
           'aria-label': 'Search mail', onChange: e => setQInput(e.target.value), onKeyDown: e => { if (e.key === 'Enter') setQuery(qInput.trim()); } }),
         query && h('button', { className: 'btn fm-btn', onClick: () => { setQInput(''); setQuery(''); } }, '✕ Clear search'),
-        h('button', { className: 'btn fm-btn', onClick: () => load(query, folder), title: 'Refresh (g)' }, '↻'),
+        h('button', { className: 'btn fm-btn', onClick: () => load(query, folder), title: 'Read your mail again (g)', 'aria-label': 'Refresh' }, '↻ Refresh'),
         h('button', { className: 'btn fm-btn', onClick: () => setCompose({ mode: 'new' }), style: { borderColor: '#00d4ff', color: '#00d4ff' }, title: 'Compose (c)' }, '✎ Compose'),
-        h('button', { className: 'btn fm-btn', onClick: () => setHelp(true), title: 'Keyboard shortcuts (?)' }, '⌨')),
+        h('button', { className: 'btn fm-btn', onClick: () => setHelp(true), title: 'Keyboard shortcuts (?)', 'aria-label': 'Keyboard shortcuts' }, '⌨ Shortcuts')),
       // search chips
       h('div', { className: 'fm-bar', role: 'group', 'aria-label': 'Search chips' },
         SEARCH_CHIPS.map(([tok, lbl]) => h('span', { key: tok, className: 'fm-chip sm' + (searchToks.includes(tok) ? ' on' : ''), role: 'switch', 'aria-checked': searchToks.includes(tok), onClick: () => toggleChip(tok), title: tok }, lbl))),
@@ -1147,10 +1164,11 @@
       // folders, list, thread
       h('div', { className: 'fm-main' },
         showSide && h('nav', { className: 'fm-side', 'aria-label': 'Folders and labels' },
-          FOLDERS.map(([id, ico, lbl, tip]) => h('button', { key: id || 'priority', className: folder === id || (id === 'inbox' && folder.indexOf('category:') === 0) ? 'on' : '', title: tip || lbl, onClick: () => { setFolder(id); setOpen(null); } },
+          layout !== 'wide' && h('button', { className: 'fm-side-close', onClick: () => setSideOpen(null), 'aria-label': 'Close the folders' }, '✕ Close'),
+          FOLDERS.map(([id, ico, lbl, tip]) => h('button', { key: id || 'priority', className: folder === id || (id === 'inbox' && folder.indexOf('category:') === 0) ? 'on' : '', title: tip || lbl, onClick: () => pickFolder(id) },
             h('span', null, ico), lbl, id === '' && stats && stats.actionable ? h('span', { className: 'fm-count', style: { marginLeft: 'auto' } }, stats.actionable) : null)),
           sideLabels.length > 0 && h('div', { className: 'h' }, 'Labels'),
-          sideLabels.map(n => h('button', { key: n, className: folder === 'label:' + n ? 'on' : '', onClick: () => { setFolder('label:' + n); setOpen(null); } }, h('span', null, '🏷'), n))),
+          sideLabels.map(n => h('button', { key: n, className: folder === 'label:' + n ? 'on' : '', onClick: () => pickFolder('label:' + n) }, h('span', null, '🏷'), n))),
         h('div', { className: 'fm-listwrap' },
           h('div', { className: 'fm-listhead' },
             h('input', { ref: headRef, type: 'checkbox', checked: allChecked, onChange: () => setSel(allChecked ? new Set() : new Set(shown.map(m => m.id))), 'aria-label': 'Select all shown', title: 'Select all shown (* a)' }),
@@ -1161,14 +1179,14 @@
             failed ? h('div', { style: { padding: 20, color: '#ff9a9a', fontSize: 12 } }, 'No list: the read failed (see above).')
               : shown.length ? shown.map(Row)
                 : data && !loading ? h('div', { style: { padding: 20, color: '#7f93ad', fontSize: 12 } }, query ? 'Gmail found nothing for that search.' : folder ? 'Nothing in ' + folderName(folder) + '.' : 'Nothing here.') : null)),
-        open && h('div', { className: 'fm-thread' },
-          h('div', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between' } },
+        (open || layout !== 'narrow') && h('div', { className: 'fm-thread' + (open ? '' : ' fm-reading-empty') },
+          open ? h(React.Fragment, null, h('div', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between' } },
             h('div', null,
               h('div', { style: { fontSize: 15, fontWeight: 700, color: '#fff' } }, open.card.subject),
               h('div', { style: { fontSize: 11, color: '#8fa6c4', marginTop: 2 } },
                 h('span', { className: 'fm-dot', style: { background: open.card.account_color, marginRight: 5 } }), open.card.account_label + ' · ' + laneLabel(open.card.lane),
                 (open.card.labels || []).map(id => labelName(open.card.account_id, id)).filter(Boolean).map(n => h('span', { key: n, className: 'fm-lab', style: { marginLeft: 6 } }, n)))),
-            h('button', { className: 'btn fm-btn', onClick: () => setOpen(null), 'aria-label': 'Close thread' }, '✕')),
+            h('button', { className: 'btn fm-btn', onClick: () => setOpen(null), title: layout === 'narrow' ? 'Back to the list (u)' : 'Close the conversation (u)', 'aria-label': layout === 'narrow' ? 'Back to the list' : 'Close the conversation' }, layout === 'narrow' ? '← Back to the list' : '✕ Close')),
           h('div', { className: 'fm-bar', style: { margin: '8px 0' }, role: 'toolbar', 'aria-label': 'Conversation actions' },
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('reply'), title: 'r' }, '↩ Reply'),
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('replyAll'), title: 'a' }, '↩↩ Reply all'),
@@ -1209,11 +1227,11 @@
               (msg.attachments || []).length > 0 && h('div', { className: 'fm-atts' }, msg.attachments.map(a => h('span', { key: a.attachment_id, style: { display: 'inline-flex', gap: 4 } },
                 (/^image\/(png|jpe?g|gif|webp)$/.test(a.mime) || a.mime === 'application/pdf') && h('button', { className: 'fm-att', onClick: () => setPreview(a) }, '👁 ' + a.filename),
                 h('a', { className: 'fm-att', href: a.url + '&dl=1', download: a.filename, title: 'Download' }, '⬇ ' + (/^image|pdf/.test(a.mime) ? '' : a.filename + ' ') + '· ' + Math.max(1, Math.round((a.size || 0) / 1024)) + ' KB')))));
-          }))),
+          })) : h('div', { className: 'fm-reading-hint' }, h('div', { style: { fontSize: 30, marginBottom: 8 } }, '✉'), 'Choose a conversation to read it here.', h('div', { style: { marginTop: 6, fontSize: 11, color: '#5f7896' } }, 'j / k move · o or Enter opens · right-click a row for every action')))),
       compose && h(Composer, { key: compose.mode + (compose.thread_id || '') + (compose.subject || ''), init: compose, accounts, canSend, onClose: () => setCompose(null), say }),
       preview && h('div', { className: 'fm-preview', onClick: () => setPreview(null) },
         h('div', { style: { display: 'flex', justifyContent: 'space-between', padding: 10, fontSize: 12 } }, preview.filename,
-          h('span', null, h('a', { className: 'fm-att', href: preview.url, download: preview.filename, onClick: e => e.stopPropagation() }, '⬇ Download'), ' ', h('button', { className: 'btn fm-btn' }, '✕'))),
+          h('span', null, h('a', { className: 'fm-att', href: preview.url, download: preview.filename, onClick: e => e.stopPropagation() }, '⬇ Download'), ' ', h('button', { className: 'btn fm-btn', 'aria-label': 'Close the preview', title: 'Close the preview (Esc)' }, '✕ Close'))),
         /^image\//.test(preview.mime) ? h('img', { src: preview.url, alt: preview.filename }) : h('iframe', { src: preview.url, title: preview.filename })),
       menu && h(Menu, { menu, onClose: () => setMenu(null) }),
       dialog && dialog.kind === 'unsub' && h(Dialog, { title: 'Unsubscribe?', onClose: () => setDialog(null) },
