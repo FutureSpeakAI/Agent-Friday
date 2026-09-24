@@ -202,3 +202,57 @@ test.describe('changes (stand-in Gmail only)', () => {
     await expect(page.locator('[data-testid="f3-triage"]')).toHaveCount(0);
   });
 });
+
+test('three panes fill the frame when there is room; a narrow frame shows one pane at a time', async ({ page }) => {
+  const box = (sel: string) => page.evaluate((sel: string) => {
+    const e = document.querySelector(sel) as HTMLElement | null;
+    if (!e || getComputedStyle(e).display === 'none') return null;
+    const b = e.getBoundingClientRect();
+    return { l: Math.round(b.left), r: Math.round(b.right), b: Math.round(b.bottom), w: Math.round(b.width) };
+  }, sel);
+  for (const [w, h, mode] of [[1920, 1080, 'wide'], [1366, 768, 'wide'], [1024, 768, 'mid'], [600, 820, 'narrow']] as const) {
+    await page.setViewportSize({ width: w, height: h });
+    await open(page);
+    await page.locator('.fm-row').first().waitFor({ timeout: 90000 });
+    await page.waitForTimeout(500);
+    expect(await page.locator('.fm').getAttribute('class'), `${w}×${h}`).toContain('fm-' + mode);
+    const side = await box('.fm-side'), list = await box('.fm-listwrap'), read = await box('.fm-thread');
+    if (mode === 'wide') {
+      expect(side && list && read, `${w}×${h}: folders, list and reading pane`).toBeTruthy();
+      expect(side!.r).toBeLessThanOrEqual(list!.l);
+      expect(list!.r).toBeLessThanOrEqual(read!.l);
+      for (const b of [side!, list!, read!]) expect(h - b.b, `${w}×${h}: a pane stops short of the bottom`).toBeLessThanOrEqual(40);
+      await expect(page.locator('.fm-reading-hint')).toContainText('Choose a conversation');
+    }
+    if (mode === 'mid') {
+      expect(side, 'the folders are a drawer here').toBeNull();
+      expect(list && read && list.r <= read.l).toBeTruthy();
+      await page.locator('button', { hasText: 'Folders' }).first().click();
+      await expect(page.locator('.fm-side')).toBeVisible();
+      await page.locator('.fm-side .fm-side-close').click();
+      await expect(page.locator('.fm-side')).toHaveCount(0);
+    }
+    if (mode === 'narrow') {
+      expect(side).toBeNull();
+      expect(read, 'no empty reading pane beside a narrow list').toBeNull();
+      await page.locator('.fm-row').first().click();
+      await expect(page.locator('.fm-thread')).toBeVisible();
+      expect(await box('.fm-listwrap'), 'the list steps aside while reading').toBeNull();
+      await page.locator('.fm-thread button', { hasText: 'Back to the list' }).click();
+      await expect(page.locator('.fm-listwrap')).toBeVisible();
+    }
+  }
+});
+
+test('Snooze says what it is and offers Gmail’s choices', async ({ page }) => {
+  await open(page);
+  const row = page.locator('.fm-row').first();
+  await row.waitFor({ timeout: 90000 });
+  await row.click();
+  const btn = page.locator('.fm-thread button', { hasText: 'Snooze' });
+  await expect(btn).toBeVisible();
+  await btn.click();
+  const items = (await page.locator('.fm-menu .it').allInnerTexts()).join(' | ');
+  for (const want of ['Later today', 'Tomorrow morning', 'This weekend', 'Next week', 'Pick date & time']) expect(items).toContain(want);
+  await page.keyboard.press('Escape');
+});
