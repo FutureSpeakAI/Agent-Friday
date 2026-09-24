@@ -25,7 +25,28 @@ from __future__ import annotations
 
 # Screen order. Screens 1, 2 and 4 are new; 3 replaces the old provider screen;
 # 3b is shown only when 3 chose cloud.
-SCREEN_ORDER = ("collects", "vault", "routing", "cloud_ack", "third_party")
+SCREEN_ORDER = ("collects", "vault", "routing", "cloud_ack", "third_party", "updates")
+
+
+# The only request Friday would make on its own schedule. It is asked, not
+# assumed: nothing is sent until the owner answers "check".
+UPDATES_TITLE = "Checking for new versions"
+
+UPDATES = """\
+Friday can look for a newer version about once a week. It asks GitHub for the
+list of published releases. The request carries no account, no key and nothing
+about you or what you do with Friday; GitHub sees the address it came from, as
+it would for any web page. If a newer version exists, Friday tells you. Nothing
+downloads or installs on its own - updating means running the new installer,
+when you choose to."""
+
+UPDATES_CHOICES = (
+    ("on", "Check once a week",
+     "Friday tells you when a newer version is published."),
+    ("off", "Don't check",
+     "Friday never asks. You can switch this on later in Settings, or look at "
+     "the releases page yourself."),
+)
 
 
 COLLECTS_TITLE = "Before anything else"
@@ -251,6 +272,10 @@ def screen(name: str) -> dict:
         return {"title": THIRD_PARTY_TITLE,
                 "blocks": [THIRD_PARTY_INTRO, THIRD_PARTY_TRAVEL,
                            THIRD_PARTY_FORGET]}
+    if name == "updates":
+        return {"title": UPDATES_TITLE, "blocks": [UPDATES],
+                "choices": [{"value": v, "label": lbl, "detail": det}
+                            for v, lbl, det in UPDATES_CHOICES]}
     raise ValueError("unknown onboarding screen: %r" % (name,))
 
 

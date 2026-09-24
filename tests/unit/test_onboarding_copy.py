@@ -203,3 +203,19 @@ def test_the_delete_path_copy_names_where_the_button_actually_is():
     tp = screen_text("third_party")
     assert "open contacts, choose someone, and forget" in tp
     assert "settings - contacts" not in tp
+
+
+def test_the_updates_screen_offers_both_answers_and_promises_only_what_is_true():
+    scr = oc.screen("updates")
+    assert {c["value"] for c in scr["choices"]} == {"on", "off"}
+    text = flat(" ".join(scr["blocks"]))
+    # No download path exists (routes/updates.py): the screen must not imply one.
+    assert "nothing downloads or installs on its own" in text
+    # The request is a plain GET with no identifying headers (update_check._HEADERS).
+    from agent_friday.services import update_check as uc
+    assert set(uc._HEADERS) == {"Accept"}
+    assert "carries no account" in text
+
+
+def test_the_updates_question_is_the_last_first_run_screen():
+    assert oc.SCREEN_ORDER[-1] == "updates"

@@ -83,3 +83,13 @@ def test_check_now_is_forced_past_the_weekly_floor(client, monkeypatch):
     r = client.post('/api/updates/check')
     assert r.status_code == 200
     assert seen["force"] is True, "Check now respected the weekly floor"
+
+
+def test_the_first_run_answer_is_recorded_and_nothing_else_is_accepted(client, tmp_path, monkeypatch):
+    from agent_friday import core
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    r = client.post('/api/onboarding/acks', json={"updates_choice": "on"})
+    assert r.status_code == 200
+    assert json.loads((tmp_path / "onboarding.json").read_text())["updates_choice"] == "on"
+    client.post('/api/onboarding/acks', json={"updates_choice": "sometimes"})
+    assert json.loads((tmp_path / "onboarding.json").read_text())["updates_choice"] == "on"

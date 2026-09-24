@@ -283,6 +283,18 @@ LOCAL_ONLY_BY_DEFAULT = {
 }
 
 
+def _default_enabled(meta) -> bool:
+    """A builtin's seed state. `default_enabled` may be a callable, for a job
+    whose default is the owner's own answer rather than a constant."""
+    want = meta.get("default_enabled", True)
+    if callable(want):
+        try:
+            return bool(want())
+        except Exception:
+            return False
+    return bool(want)
+
+
 def register_builtin_task(ref, fn, *, label, default_trigger="daily",
                           default_spec=None, notify="on_complete",
                           weekday_only=None, default_enabled=True):
@@ -1002,7 +1014,7 @@ def _seed_and_reconcile():
                 # Most builtins seed on; a few (the content publisher) are
                 # maintenance for a feature the owner may never touch, and a
                 # job nobody asked for should not run by default.
-                "enabled": meta.get("default_enabled", True),
+                "enabled": _default_enabled(meta),
                 "notify": meta["notify"],
             }, source="builtin")
             recs.append(rec)
@@ -1235,12 +1247,14 @@ def _register_default_builtin_tasks():
     # whose wifi is flaky. run_update_check() therefore never raises either.
     try:
         from agent_friday.services.update_check import (
-            run_update_check, SCHEDULE_REF as _UPD_REF, SCHEDULE_LABEL as _UPD_LABEL,
+            run_update_check, initial_enabled as _upd_initial,
+            SCHEDULE_REF as _UPD_REF, SCHEDULE_LABEL as _UPD_LABEL,
             TICK_MINUTES as _UPD_TICK)
+        # Off until the owner answers the first-run question with "check".
         register_builtin_task(_UPD_REF, run_update_check,
                               label=_UPD_LABEL, default_trigger="interval",
                               default_spec={"every_minutes": _UPD_TICK},
-                              notify="silent", default_enabled=True)
+                              notify="silent", default_enabled=_upd_initial)
     except Exception as e:
         print(f"  [scheduler] update_check unavailable: {e}")
 

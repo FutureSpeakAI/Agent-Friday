@@ -38086,6 +38086,7 @@ function ConsentFlow({ onDone }) {
   const [pass, setPass] = React.useState('');
   const [pass2, setPass2] = React.useState('');
   const [mode, setMode] = React.useState('');
+  const [upd, setUpd] = React.useState('');
   const [err, setErr] = React.useState('');
   const [saving, setSaving] = React.useState(false);
 
@@ -38115,6 +38116,15 @@ function ConsentFlow({ onDone }) {
     if (s.name === 'collects') ack({ collects_ack: true });
     if (s.name === 'cloud_ack') ack({ cloud_ack: true });
     if (s.name === 'third_party') ack({ third_party_ack: true });
+    if (s.name === 'updates') {
+      // Nothing is sent until the answer is "check". The schedule already
+      // exists (seeded off), so the answer is written to it directly too.
+      ack({ updates_choice: upd });
+      fetch('/api/updates/enabled', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: upd === 'on' })
+      }).catch(() => {});
+    }
     if (last) { onDone({ vault_passphrase: pass, routing_mode: mode || 'cloud_only' }); return; }
     setI(i + 1);
   };
@@ -38199,6 +38209,24 @@ function ConsentFlow({ onDone }) {
           style: { fontSize: 12, color: '#9aa5b1', marginTop: 3 }
         }, c.detail)))),
 
+    s.name === 'updates' && React.createElement('div', {
+      role: 'radiogroup', 'aria-label': s.title, style: { marginBottom: 18 }
+    },
+      (s.choices || []).map(c => React.createElement('div', {
+        key: c.value, role: 'radio', tabIndex: 0, 'aria-checked': upd === c.value,
+        onClick: () => setUpd(c.value),
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setUpd(c.value); } },
+        style: {
+          padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
+          border: '1px solid ' + (upd === c.value ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
+          background: upd === c.value ? 'rgba(0,212,255,0.08)' : 'transparent'
+        }
+      },
+        React.createElement('div', { style: { fontWeight: 600, color: '#fff' } }, c.label),
+        React.createElement('div', {
+          style: { fontSize: 12, color: '#9aa5b1', marginTop: 3 }
+        }, c.detail)))),
+
     React.createElement('div', { style: { display: 'flex', gap: 10, marginTop: 8 } },
       s.name === 'vault'
         ? React.createElement(React.Fragment, null,
@@ -38219,7 +38247,7 @@ function ConsentFlow({ onDone }) {
           : React.createElement('button', {
               className: 'btn',
               onClick: advance,
-              disabled: s.name === 'routing' && !mode
+              disabled: (s.name === 'routing' && !mode) || (s.name === 'updates' && !upd)
             }, s.name === 'third_party' ? 'I understand' : 'Continue'))));
 }
 

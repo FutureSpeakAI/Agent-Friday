@@ -538,19 +538,30 @@ def test_update_check_does_not_touch_the_model_egress_gate(monkeypatch):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  ON BY DEFAULT, AND VISIBLE
+#  ASKED, NEVER ASSUMED
 # ═════════════════════════════════════════════════════════════════════════════
+#
+# The weekly check is the only request Friday would make on its own schedule.
+# It starts only after the owner answers "check" to the first-run question
+# (onboarding.json updates_choice). Unanswered means off.
 
-def test_scheduler_registers_the_check_enabled_by_default():
+def _answer(tmp_path, monkeypatch, choice):
+    monkeypatch.setattr(uc, "FRIDAY_DIR", tmp_path)
+    if choice is not None:
+        (tmp_path / "onboarding.json").write_text(
+            json.dumps({"updates_choice": choice}), encoding="utf-8")
+
+
+def test_scheduler_registers_the_check_seeded_from_the_owners_answer():
     from agent_friday.services import scheduler as sched
 
     sched._register_default_builtin_tasks()
 
     assert uc.SCHEDULE_REF in sched.BUILTIN_TASKS, (
-        "the update check is not in the built-in roster, so no install gets it"
+        "the update check is not in the built-in roster, so nobody can turn it on"
     )
     meta = sched.BUILTIN_TASKS[uc.SCHEDULE_REF]
-    assert meta["default_enabled"] is True, "the maintainer asked for on by default"
+    assert meta["default_enabled"] is uc.initial_enabled
     assert meta["notify"] == "silent", (
         "a non-silent schedule pushes 'Update check — complete' every week, and "
         "pushes a failure notification every time the network is down"
@@ -568,16 +579,14 @@ def test_seeding_gives_the_schedule_a_stable_id():
     assert uc.SCHEDULE_REF in sched.BUILTIN_TASKS
 
 
-def test_a_fresh_install_actually_gets_an_enabled_schedule(tmp_path, monkeypatch):
-    """Registration is not delivery.
-
-    `BUILTIN_TASKS` only says the task EXISTS. What reaches a user's machine is
-    whatever `_seed_and_reconcile` writes into schedules.json, and that is what
-    the Settings toggle reads and what the tick loop dispatches. Asserting the
-    roster and stopping there would pass while every install got nothing.
-    """
+@pytest.mark.parametrize("choice, enabled", [(None, False), ("off", False), ("on", True)])
+def test_a_fresh_install_seeds_the_schedule_from_the_answer(tmp_path, monkeypatch, choice, enabled):
+    """Registration is not delivery: what reaches a machine is what
+    `_seed_and_reconcile` writes into schedules.json, which the toggle reads
+    and the tick loop dispatches."""
     from agent_friday.services import scheduler as sched
 
+    _answer(tmp_path, monkeypatch, choice)
     store = tmp_path / "schedules.json"
     monkeypatch.setattr(sched, "SCHEDULES_FILE", store)
 
@@ -585,56 +594,42 @@ def test_a_fresh_install_actually_gets_an_enabled_schedule(tmp_path, monkeypatch
     sched._seed_and_reconcile()
 
     seeded = {r["id"]: r for r in json.loads(store.read_text(encoding="utf-8"))}
-    assert uc.SCHEDULE_ID in seeded, (
-        "a fresh install seeds no update-check schedule, so the weekly check "
-        "never runs and the Settings toggle controls nothing"
-    )
+    assert uc.SCHEDULE_ID in seeded, "no schedule seeded, so the toggle controls nothing"
     rec = seeded[uc.SCHEDULE_ID]
-    assert rec["enabled"] is True, "the maintainer asked for on by default"
+    assert rec["enabled"] is enabled, (choice, rec["enabled"])
     assert rec["trigger"] == "interval"
     assert rec["spec"]["every_minutes"] == uc.TICK_MINUTES
     assert rec["notify"] == "silent"
     assert rec["task"] == {"kind": "builtin", "ref": uc.SCHEDULE_REF}
 
 
-def test_an_existing_install_is_opted_in_on_upgrade(tmp_path, monkeypatch):
-    """THE DECISION MADE ON STEPHEN'S BEHALF, pinned so it cannot drift silently.
-
-    The maintainer asked for on-by-default for NEW installations. `_seed_and_reconcile`
-    also adds newly-registered built-ins to installs that predate them, so
-    people who already installed get it switched on too. Nobody asked for that.
-
-    It is documented in CHANGELOG.md under a heading inviting him to overrule
-    it. If the answer becomes "off for existing installs", this test is where
-    that decision gets recorded — flip the assertion and pass
-    default_enabled=False through a seeding path that can tell the two apart.
-    """
+def test_an_existing_schedule_keeps_the_owners_setting(tmp_path, monkeypatch):
+    """Reconcile adds missing builtins; it never rewrites one that exists. An
+    install that already has the check keeps whatever its owner chose."""
     from agent_friday.services import scheduler as sched
 
+    _answer(tmp_path, monkeypatch, None)
     store = tmp_path / "schedules.json"
     monkeypatch.setattr(sched, "SCHEDULES_FILE", store)
-
-    # An install that predates the update check: it already has other builtins.
-    store.write_text(json.dumps([{
-        "id": "sch_daily_creation",
-        "name": "Daily creation",
-        "trigger": "daily",
-        "spec": {"hour": 8, "minute": 0},
-        "task": {"kind": "builtin", "ref": "daily_creation"},
-        "enabled": True,
-        "notify": "on_complete",
-    }]), encoding="utf-8")
-
     sched._register_default_builtin_tasks()
     sched._seed_and_reconcile()
+    recs = json.loads(store.read_text(encoding="utf-8"))
+    for r in recs:
+        if r["id"] == uc.SCHEDULE_ID:
+            r["enabled"] = True
+    store.write_text(json.dumps(recs), encoding="utf-8")
 
+    sched._seed_and_reconcile()
     seeded = {r["id"]: r for r in json.loads(store.read_text(encoding="utf-8"))}
-    assert "sch_daily_creation" in seeded, "reconcile clobbered an existing schedule"
-    assert uc.SCHEDULE_ID in seeded
-    assert seeded[uc.SCHEDULE_ID]["enabled"] is True, (
-        "This is the flagged decision. If it is reversed, reverse it HERE and "
-        "in CHANGELOG.md, not by quietly editing the seeding default."
-    )
+    assert seeded[uc.SCHEDULE_ID]["enabled"] is True
+
+
+def test_unanswered_reads_as_off(tmp_path, monkeypatch):
+    _answer(tmp_path, monkeypatch, None)
+    assert uc.initial_enabled() is False
+    (tmp_path / "onboarding.json").write_text("not json", encoding="utf-8")
+    assert uc.initial_enabled() is False
+
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(pytest.main([__file__, "-v"]))

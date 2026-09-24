@@ -880,6 +880,8 @@ def api_onboarding_acks():
     for k in ("collects_ack", "cloud_ack", "third_party_ack", "vault_skipped"):
         if k in data:
             state[k] = bool(data[k])
+    if data.get("updates_choice") in ("on", "off"):
+        state["updates_choice"] = data["updates_choice"]
     state["updated"] = datetime.now(timezone.utc).isoformat()
     try:
         core.FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
