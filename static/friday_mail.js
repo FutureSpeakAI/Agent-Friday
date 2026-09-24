@@ -58,6 +58,8 @@
     st.id = 'fm-style';
     st.textContent = `
       .fm { display:flex; flex-direction:column; gap:8px; font-family: Inter, sans-serif; color:#dbe6f5; }
+      /* The panes take the height of the frame (a tab or a window), not a guess from the viewport */
+      .fm.ws-fill { min-height:420px; }
       .fm-bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
       .fm-chip { display:inline-flex; gap:6px; align-items:center; padding:5px 10px; border-radius:999px; font-size:11px; cursor:pointer;
         border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.03); color:#b8c7dc; user-select:none; }
@@ -71,8 +73,8 @@
       .fm-banner.err { background:rgba(239,68,68,0.10); border:1px solid rgba(239,68,68,0.45); color:#ffb4b4; }
       .fm-banner.warn { background:rgba(245,158,11,0.10); border:1px solid rgba(245,158,11,0.45); color:#ffd699; }
       .fm-banner.info { background:rgba(0,212,255,0.07); border:1px solid rgba(0,212,255,0.3); color:#aee9ff; }
-      .fm-main { display:flex; gap:10px; min-height:0; }
-      .fm-list { flex:1 1 42%; min-width:300px; max-height:calc(100vh - 330px); overflow:auto; border:1px solid rgba(0,212,255,0.12); border-radius:10px; }
+      .fm-main { display:flex; gap:10px; min-height:0; flex:1 1 auto; }
+      .fm-list { flex:1 1 42%; min-width:300px; min-height:0; overflow:auto; border:1px solid rgba(0,212,255,0.12); border-radius:10px; }
       .fm-row { display:grid; grid-template-columns: 22px 10px minmax(90px,170px) 1fr auto; gap:8px; align-items:center; padding:8px 10px;
         border-bottom:1px solid rgba(255,255,255,0.05); cursor:pointer; font-size:12px; }
       .fm-row:hover { background:rgba(0,212,255,0.05); }
@@ -84,7 +86,7 @@
       .fm-subj { color:#dbe6f5; } .fm-snip { color:#7f93ad; }
       .fm-when { color:#7f93ad; font-size:11px; white-space:nowrap; font-family:'JetBrains Mono',monospace; }
       .fm-badge { font-size:9px; padding:1px 6px; border-radius:999px; border:1px solid; margin-right:5px; }
-      .fm-thread { flex:1 1 58%; min-width:360px; max-height:calc(100vh - 330px); overflow:auto; border:1px solid rgba(0,212,255,0.12); border-radius:10px; padding:12px; }
+      .fm-thread { flex:1 1 58%; min-width:360px; min-height:0; overflow:auto; border:1px solid rgba(0,212,255,0.12); border-radius:10px; padding:12px; }
       .fm-msg { border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:10px; margin-bottom:10px; background:rgba(255,255,255,0.02); }
       .fm-hdr { font-size:11px; color:#8fa6c4; line-height:1.6; }
       .fm-hdr b { color:#e6f0ff; }
@@ -628,7 +630,7 @@
     };
 
     const T = open && open.res;
-    return h('div', { className: 'fm', ref: boxRef, tabIndex: 0, onKeyDown: onKey, style: { outline: 'none' } },
+    return h('div', { className: 'fm ws-fill', ref: boxRef, tabIndex: 0, onKeyDown: onKey, style: { outline: 'none' } },
       // row 1: accounts, search, actions
       h('div', { className: 'fm-bar' },
         h('span', { className: 'fm-chip' + (acct === 'all' ? ' on' : ''), onClick: () => setAcct('all') }, '📬 All accounts',

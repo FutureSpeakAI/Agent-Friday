@@ -503,11 +503,25 @@ window.addEventListener('DOMContentLoaded',function(){
         html.ws-standalone #hand-cursor,
         html.ws-standalone #state-indicator,
         html.ws-standalone #chrome-orb-exit { display: none !important; }
-        html.ws-standalone body { background: #070b14; overflow: auto; }
-        .ws-tab { min-height: 100vh; display: flex; flex-direction: column; color: #dbe6f5; }
-        .ws-tab-head { position: sticky; top: 0; z-index: 60; display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+        /* The tab is exactly the window: a fixed header over one scrolling
+           body. The React layer (#ui-root) is fixed to the viewport, so a tab
+           that grew taller than the window could never be scrolled; the body
+           scrolls instead, and the workspace fills it. */
+        html.ws-standalone body { background: #070b14; overflow: hidden; }
+        html.ws-standalone #ui-inner { height: 100% !important; }
+        .ws-tab { height: 100%; display: flex; flex-direction: column; overflow: hidden; color: #dbe6f5; }
+        .ws-tab-head { flex: none; position: relative; z-index: 60; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
+            padding: 7px 16px; min-height: 44px; box-sizing: border-box;
             background: rgba(6,10,18,0.96); border-bottom: 1px solid rgba(0,212,255,0.18); backdrop-filter: blur(6px); }
-        .ws-tab-mark { font-family: Orbitron, Inter, sans-serif; font-size: 12px; letter-spacing: .14em; color: #00d4ff; text-decoration: none; white-space: nowrap; }
+        /* the desktop's own wordmark, as on its top bar */
+        .ws-tab-brand { display: flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
+        .ws-tab-mark { font-family: 'Orbitron', monospace; font-weight: 900; font-size: 15px; letter-spacing: 0.06em; color: #00d4ff;
+            text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); }
+        .ws-tab-by { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: rgba(255,255,255,0.72); letter-spacing: 0.04em; margin-left: 4px; }
+        .ws-tab-fs { font-family: 'Orbitron', monospace; font-weight: 900; font-size: 15px; letter-spacing: 0.06em; color: #f59e0b;
+            text-decoration: none; text-shadow: 0 0 14px rgba(245,158,11,0.55); transition: color .2s, text-shadow .2s; }
+        .ws-tab-fs:hover { color: #fbbf24; text-shadow: 0 0 18px rgba(245,158,11,0.85); }
+        .ws-tab-sep { color: rgba(255,255,255,0.28); font-size: 13px; user-select: none; }
         .ws-tab-name { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: #fff; }
         .ws-tab-name img { width: 20px; height: 20px; }
         .ws-tab-sp { flex: 1; }
@@ -515,7 +529,36 @@ window.addEventListener('DOMContentLoaded',function(){
         .ws-tab-link:hover { border-color: #00d4ff; color: #e6f9ff; }
         .ws-tab-ask { font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(245,158,11,0.6); background: rgba(245,158,11,0.12); color: #ffd699; }
         .ws-tab-ask.none { border-color: rgba(255,255,255,0.12); background: transparent; color: #7f93ad; }
-        .ws-tab-body { flex: 1; padding: 14px 18px 24px; min-height: 0; }
+        .ws-tab-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column;
+            padding: 14px 18px 24px; box-sizing: border-box; }
+        /* the workspace fills the tab; a longer one scrolls with it */
+        .ws-tab-body > * { flex: 1 0 auto; min-width: 0; }
+        /* Filling the frame. A workspace that lays out panes of its own (Mail)
+           marks its root .ws-fill, and a workspace showing its 3D view
+           (.f3-host.on) wants the same: each is given the whole height of the
+           frame it is in, a tab or a desktop window, instead of sizing itself
+           from the viewport. Every other workspace keeps its natural height and
+           scrolls with its frame. */
+        .ws-tab-body > .ws-fill, .ws-tab-body > .f3-host.on,
+        .ws-tab-body > .f3-host:has(> .f3-content > .ws-fill) { flex: 1 1 auto; min-height: 0; }
+        .fwin-body:has(> .ws-custom-root > .ws-fill), .fwin-body:has(> .ws-custom-root > .f3-host.on),
+        .fwin-body:has(> .ws-custom-root > .f3-host > .f3-content > .ws-fill) { display: flex; flex-direction: column; }
+        .ws-custom-root:has(> .ws-fill), .ws-custom-root:has(> .f3-host.on),
+        .ws-custom-root:has(> .f3-host > .f3-content > .ws-fill) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        .ws-custom-root > .ws-fill, .ws-custom-root > .f3-host.on,
+        .ws-custom-root > .f3-host:has(> .f3-content > .ws-fill) { flex: 1 1 auto; min-height: 0; }
+        .f3-host:has(> .f3-content > .ws-fill) > .f3-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        .f3-content > .ws-fill { flex: 1 1 auto; min-height: 0; }
+        .ws-tab-body::-webkit-scrollbar { width: 12px; height: 12px; }
+        .ws-tab-body::-webkit-scrollbar-track { background: rgba(255,255,255,0.025); }
+        .ws-tab-body::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.3); border-radius: 8px; border: 3px solid #070b14; }
+        .ws-tab-body::-webkit-scrollbar-thumb:hover { background: rgba(0,212,255,0.55); }
+        @media (max-width: 640px) {
+            .ws-tab-head { padding: 6px 10px; }
+            .ws-tab-mark, .ws-tab-fs { font-size: 13px; }
+            .ws-tab-sep { display: none; }
+            .ws-tab-body { padding: 10px 10px 18px; }
+        }
         .ws-tab-drawer { position: fixed; top: 48px; right: 14px; width: min(460px, 94vw); max-height: 78vh; overflow: auto; z-index: 70;
             background: rgba(8,12,22,0.98); border: 1px solid rgba(245,158,11,0.45); border-radius: 12px; padding: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
         .ws-tab-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; padding: 10px; margin-bottom: 10px; background: rgba(255,255,255,0.02); }
@@ -2069,7 +2112,9 @@ window.addEventListener('DOMContentLoaded',function(){
            NEWS WORKSPACE — magazine layout, source trust, status strip
            ═══════════════════════════════════════════════════════════ */
         /* Category accent colors — tech=cyan, politics=amber, local=green, business=purple */
-        .news-ws { --c-tech:#00d4ff; --c-politics:#f59e0b; --c-local:#00ff80; --c-business:#a78bfa; --c-science:#2dd4bf; --c-media:#f472b6; }
+        .news-ws { --c-tech:#00d4ff; --c-politics:#f59e0b; --c-local:#00ff80; --c-business:#a78bfa; --c-science:#2dd4bf; --c-media:#f472b6;
+            container-type: inline-size; container-name: news; }
+        .news-ws img { max-width: 100%; height: auto; }
 
         /* Live status strip */
         .status-strip { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
@@ -2088,7 +2133,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* News toolbar */
         .news-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin-bottom:10px; }
-        .news-tabs { display:flex; gap:4px; }
+        .news-tabs { display:flex; flex-wrap:wrap; gap:4px; }
 
         /* Generate-now progress animation */
         .gen-progress {
@@ -2107,12 +2152,15 @@ window.addEventListener('DOMContentLoaded',function(){
         .gen-step.active { color:#00d4ff; background:rgba(0,212,255,0.12); }
         .gen-step.done { color:#00ff80; background:rgba(0,255,128,0.1); }
 
-        /* Masonry feed (CSS columns) */
-        .news-masonry { column-count:3; column-gap:12px; }
-        @media (max-width:1100px){ .news-masonry { column-count:2; } }
-        @media (max-width:640px){ .news-masonry { column-count:1; } }
+        /* Cards: a grid with as many columns as the frame holds — one on a
+           phone, up to five on a wide screen — measured against the workspace
+           itself, so a narrow desktop window and a whole tab each get the
+           right number. The lead card spans two columns once there are three. */
+        .news-masonry { display:grid; gap:12px; align-items:start;
+            grid-template-columns:repeat(auto-fill, minmax(min(100%, max(290px, calc((100% - 48px) / 5))), 1fr)); }
+        @container news (min-width: 900px) { .news-masonry > .news-card.feature { grid-column: span 2; } }
         .news-card {
-            break-inside:avoid; display:inline-block; width:100%; margin:0 0 12px;
+            display:block; min-width:0; margin:0; overflow-wrap:anywhere;
             background:rgba(10,14,26,0.75); backdrop-filter:blur(16px) saturate(1.2);
             -webkit-backdrop-filter:blur(16px) saturate(1.2);
             border:1px solid rgba(255,255,255,0.06);
@@ -2295,12 +2343,13 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .deepdive-meta { margin-top:6px; font-size:9px; color:#667; text-align:right; }
         /* Trending clusters strip */
-        .cluster-strip { margin-bottom:14px; }
+        .cluster-strip { margin-bottom:14px; display:grid; gap:9px; grid-template-columns:repeat(auto-fill, minmax(min(100%, 360px), 1fr)); align-items:start; }
+        .cluster-strip > .cluster-strip-head { grid-column:1 / -1; margin-bottom:0; }
         .cluster-strip-head {
             font-family:'Orbitron',monospace; font-size:11px; color:#ffae5b; letter-spacing:0.05em; margin-bottom:8px;
         }
         .cluster-card {
-            border-radius:10px; padding:11px 13px; margin-bottom:9px;
+            border-radius:10px; padding:11px 13px; margin-bottom:0; min-width:0; overflow-wrap:anywhere;
             background:rgba(255,174,91,0.05); border:1px solid rgba(255,174,91,0.20); border-left:3px solid #ffae5b;
         }
         .cluster-cardtop { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
@@ -2428,7 +2477,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .fp-lead.cat-science { --accent:var(--c-science); --glow:rgba(45,212,191,0.18); }
         .fp-lead.cat-media { --accent:var(--c-media); --glow:rgba(244,114,182,0.18); }
         .fp-lead-headline {
-            font-size:26px; font-weight:700; line-height:1.18; color:#f4f6fa; cursor:pointer;
+            overflow-wrap:anywhere; font-size:clamp(19px, 2.4cqi, 30px); font-weight:700; line-height:1.18; color:#f4f6fa; cursor:pointer;
             margin:6px 0 10px; transition:color 0.15s;
         }
         .fp-lead-headline:hover { color:var(--accent, #00d4ff); }
@@ -26111,6 +26160,7 @@ function NewsWS() {
   }, "\uD83D\uDEE1 Trust")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
+      flexWrap: 'wrap',
       gap: 4
     }
   }, /*#__PURE__*/React.createElement("button", {
@@ -44179,9 +44229,14 @@ function StandaloneApprovals() {
 // way back to the desktop, and the workspace full-tab. The tab's title and
 // favicon name the workspace, so a row of Friday tabs can be told apart.
 function StandaloneShell({ ws, children }) {
+  // The desktop's wordmark shows the agent's own name when it has been renamed.
+  const [agentName, setAgentName] = useState('AGENT FRIDAY');
+  useEffect(() => {
+    fetch('/api/settings').then(r => r.json()).then(d => { const n = ((d && (d.settings || d)) || {}).agent_name; if (n) setAgentName(n); }).catch(() => {});
+  }, []);
   useEffect(() => {
     const pending = window.__fridayPendingApprovals;
-    document.title = ws.label + ' \u2014 Friday';
+    document.title = ws.label + ' \u00B7 Agent Friday';
     const iconUrl = ws.id === 'workflows' ? null : '/assets/icons/' + ws.id + '.svg';
     const emojiIcon = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">' + (ws.ico || '\u25A3') + '</text></svg>');
     document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l => l.parentNode.removeChild(l));
@@ -44194,7 +44249,11 @@ function StandaloneShell({ ws, children }) {
   }, [ws.id]);
   return /*#__PURE__*/React.createElement("div", { className: 'ws-tab', "data-standalone": ws.id },
     /*#__PURE__*/React.createElement("header", { className: 'ws-tab-head' },
-      /*#__PURE__*/React.createElement("a", { className: 'ws-tab-mark', href: '/', title: 'Friday desktop' }, 'FRIDAY'),
+      /*#__PURE__*/React.createElement("div", { className: 'ws-tab-brand' },
+        /*#__PURE__*/React.createElement("a", { className: 'ws-tab-mark', href: '/', title: 'Back to the Friday desktop' }, agentName),
+        /*#__PURE__*/React.createElement("span", { className: 'ws-tab-by' }, 'by'),
+        /*#__PURE__*/React.createElement("a", { className: 'ws-tab-fs', href: 'https://futurespeak.ai/agent-friday-live', target: '_blank', rel: 'noopener noreferrer' }, 'FutureSpeak.AI')),
+      /*#__PURE__*/React.createElement("span", { className: 'ws-tab-sep', "aria-hidden": "true" }, '|'),
       /*#__PURE__*/React.createElement("div", { className: 'ws-tab-name' },
         ws.id !== 'workflows' && /*#__PURE__*/React.createElement("img", { src: '/assets/icons/' + ws.id + '.svg', alt: '', onError: e => { e.target.style.display = 'none'; } }),
         /*#__PURE__*/React.createElement("span", null, ws.label)),

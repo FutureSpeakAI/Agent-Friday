@@ -2107,6 +2107,8 @@
     const [noGL, setNoGL] = useState(false);
     const [stageH, setStageH] = useState(0);
     const [full, setFull] = useState(false);
+    // fill: take the height of the frame it sits in (a tab, a window) rather than guess from the viewport
+    const fill = !!props.fill;
     const [dazzle, setDazzle] = useState('full');
     const stageRef = useRef(null);
     const itemsRef = useRef([]); itemsRef.current = items;
@@ -2392,7 +2394,8 @@
     const chip = (on, onClick, label, color, title) => h('button', { key: label, className: 'btn' + (on ? '' : ' btn-magenta'), onClick, title, style: Object.assign({}, BTN, color && on ? { borderColor: color, color } : null) }, label);
 
     const skip = () => { const e = engRef.current; if (e && e.isAnimating()) e.skipFx(); };
-    return h('div', { ref: boxRef, tabIndex: 0, onKeyDown: e => { skip(); onKey(e); }, onPointerDownCapture: skip, style: full ? { outline: 'none', display: 'flex', flexDirection: 'column', height: '100vh', padding: 10, boxSizing: 'border-box', background: '#02040a' } : { outline: 'none' } },
+    return h('div', { ref: boxRef, tabIndex: 0, onKeyDown: e => { skip(); onKey(e); }, onPointerDownCapture: skip, style: full ? { outline: 'none', display: 'flex', flexDirection: 'column', height: '100vh', padding: 10, boxSizing: 'border-box', background: '#02040a' }
+      : fill ? { outline: 'none', display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 } : { outline: 'none' } },
       // toolbar
       h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 } },
         h('select', { value: root, onChange: e => { setPath(''); setRoot(e.target.value); }, 'aria-label': 'Folder', style: { background: '#0b1220', color: '#cfe3ff', border: '1px solid #24406a', borderRadius: 6, padding: '5px 6px', fontSize: 12, minHeight: 30 } },
@@ -2413,7 +2416,7 @@
       h('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 6 } },
         Object.keys(CATS).filter(k => counts[k]).map(k => chip(!!cats[k], () => setCats(c => Object.assign({}, c, { [k]: !c[k] })), CATS[k].ico + ' ' + CATS[k].label + ' ' + counts[k], hex(CATS[k].color), 'Show only ' + CATS[k].label.toLowerCase()))),
       // stage
-      h('div', { ref: stageRef, style: { position: 'relative', height: full ? 'auto' : stageH ? stageH : 'calc(100vh - 300px)', flex: full ? '1 1 auto' : undefined, minHeight: 340, borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(80,140,220,0.25)', background: '#03060d' } },
+      h('div', { ref: stageRef, style: { position: 'relative', height: full || fill ? 'auto' : stageH ? stageH : 'calc(100vh - 300px)', flex: full || fill ? '1 1 auto' : undefined, minHeight: 340, borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(80,140,220,0.25)', background: '#03060d' } },
         h('div', { ref: mountRef, style: { position: 'absolute', inset: 0 } }),
         noGL && h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ab' } }, '3D is unavailable in this browser.'),
         (loading || err) && h('div', { style: { position: 'absolute', top: 12, left: 12, padding: '6px 10px', borderRadius: 6, background: PANEL_BG, color: err ? '#ff8a8a' : '#9fd0ff', fontSize: 12 } }, err || 'Scanning…'),
