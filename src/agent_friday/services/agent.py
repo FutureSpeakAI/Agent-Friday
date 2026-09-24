@@ -466,23 +466,12 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
 # Tells the model the social contract the confirmation gate enforces mechanically:
 # ask before acting, confirm, do, report. Keeping it in the prompt means the model
 # asks naturally on the FIRST attempt instead of being bounced by the gate.
-ACTION_PERMISSION_POLICY = (
-    "=== ACTION PERMISSION POLICY (REQUIRED) ===\n"
-    "Before you take any real-world action on the user's computer — opening a URL "
-    "in the browser, launching an app, switching the on-screen workspace, opening "
-    "a folder, or creating a file — you MUST ask permission first and wait for the "
-    "user to agree. Ask a short yes/no question (e.g. \"Would you like me to open "
-    "that in your browser?\" / \"I can switch to the News workspace — shall I?\"). "
-    "Only after the user says yes do you perform the action. While the action runs, "
-    "do not narrate over it. When it succeeds, confirm plainly what you did (e.g. "
-    "\"Done — I've opened the Reuters article in your browser.\"). If it fails, say "
-    "so honestly (\"That didn't work — the link looks broken.\") and offer another "
-    "approach. Only open URLs that came from real data (a news item, a saved "
-    "source) — never a link you reconstructed from memory. Exceptions where you do "
-    "NOT need to ask: an action the user explicitly requested in their CURRENT "
-    "message (e.g. they just said \"open news\"), and simply showing a notification. "
-    "Never surprise the user with an action they did not approve.\n"
-    "==========================================="
+# The policy text moved to `services.action_policy` so that
+# `model_router._get_friday_system_prompt` can append it to every prompt without
+# importing this module (agent.py imports model_router, so the other direction
+# would be a cycle). Re-exported here because call sites import it from agent.
+from agent_friday.services.action_policy import (  # noqa: E402
+    ACTION_PERMISSION_POLICY,
 )
 
 
