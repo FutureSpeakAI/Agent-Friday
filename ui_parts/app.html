@@ -9652,6 +9652,65 @@ function VoiceSetupWizard({onClose}){
 // from /api/health/full -> local_voice.running, which is null until something
 // is actually loaded. Two separate lines on purpose: conflating them is how a
 // user ends up certain they are hearing Kokoro while Piper speaks.
+// ── Settings → Voice → Push-to-transcribe ────────────────────────────────
+// Hold the key anywhere in Windows, speak, release, and the local transcript
+// is pasted into whatever window had focus. The copy here says exactly what
+// the keyboard hook does, because detecting a HELD key requires a low-level
+// hook and such a hook is necessarily handed every key in the system.
+function PushToTranscribeRows({s,save}){
+  const [draft,setDraft]=useState(null);
+  const on=s.push_to_transcribe!==false;
+  const hotkey=s.push_to_transcribe_hotkey||'alt+t';
+  const pretty=k=>k.split('+').map(p=>p.length===1?p.toUpperCase():p.charAt(0).toUpperCase()+p.slice(1)).join('+');
+  return <>
+    <StRow label="Push-to-Transcribe" desc="Hold the key, say a sentence, let go. It is transcribed on this machine and typed into whatever window you were looking at — any application, not just Friday. A quick tap is passed through to that application, so the key keeps working where it already did. Press Esc while it is listening to throw the recording away.">
+      <div>
+        <button className={`settings-btn ${on?'active':''}`} style={{fontSize:12,padding:'7px 14px'}}
+          onClick={()=>save({push_to_transcribe:!on})}>{on?`On everywhere — hold ${pretty(hotkey)}`:'Off'}</button>
+        <div style={{fontSize:11,opacity:0.75,marginTop:8,lineHeight:1.5}}>
+          {on?'Turning this off removes the keyboard hook completely.':'Nothing is watching the keyboard while this is off.'}
+        </div>
+      </div>
+    </StRow>
+    {on&&<StRow label="Shortcut" desc="Alt+F is deliberately not offered — it opens the browser menu on Windows.">
+      <div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {['alt+t','ctrl+shift+space','ctrl+alt+d','alt+grave'].map(k=>(
+            <button key={k} className={`settings-btn ${hotkey===k?'active':''}`} style={{fontSize:11,padding:'5px 10px'}}
+              onClick={()=>save({push_to_transcribe_hotkey:k})}>{pretty(k)}</button>
+          ))}
+        </div>
+        <input className="input" style={{width:'100%',marginTop:8,fontFamily:'JetBrains Mono',fontSize:12}}
+          value={draft===null?hotkey:draft} placeholder="alt+t"
+          onChange={e=>setDraft(e.target.value)}
+          onBlur={()=>{if(draft&&draft!==hotkey)save({push_to_transcribe_hotkey:draft.trim().toLowerCase()});setDraft(null);}}/>
+        <div style={{fontSize:11,opacity:0.7,marginTop:6}}>
+          Modifiers plus one key, e.g. <code>ctrl+shift+space</code>. A shortcut Friday cannot honour is refused rather than quietly replaced with a different one.
+        </div>
+      </div>
+    </StRow>}
+    {on&&<StRow label="Hold before it listens" desc="Shorter reacts sooner; longer makes it harder to start a recording by accident when you meant the application's own shortcut.">
+      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {[[100,'100 ms'],[150,'150 ms (default)'],[250,'250 ms'],[400,'400 ms']].map(([v,l])=>(
+          <button key={v} className={`settings-btn ${(s.push_to_transcribe_hold_ms||150)===v?'active':''}`}
+            style={{fontSize:11,padding:'5px 10px'}} onClick={()=>save({push_to_transcribe_hold_ms:v})}>{l}</button>
+        ))}
+      </div>
+    </StRow>}
+    {on&&<StRow label="What the keyboard hook sees">
+      <div style={{fontSize:11,opacity:0.8,lineHeight:1.6}}>
+        <div>Noticing that a key is being <i>held</i> needs a low-level keyboard hook, and Windows hands such a hook every key in the system. So rather than claim it cannot see your typing, here is what it does with it:</div>
+        <ul style={{margin:'6px 0 0 16px',padding:0}}>
+          <li>It compares one number against your shortcut and returns. Every other key leaves before any code that could record, count or classify it.</li>
+          <li>Nothing is written to a file, a log, or any buffer that outlives the keypress. There is no keystroke history here.</li>
+          <li>Your speech is transcribed by a model on this machine. No audio and no transcript is sent anywhere.</li>
+          <li>The recording is discarded as soon as it has been transcribed.</li>
+          <li>Turning Push-to-Transcribe off removes the hook entirely.</li>
+        </ul>
+      </div>
+    </StRow>}
+  </>;
+}
 function TtsEngineRows({s,save,mc}){
   const[live,setLive]=useState(null);
   const[liveErr,setLiveErr]=useState('');
@@ -9743,6 +9802,7 @@ function SettingsTabVoice({s,save}){
         </select>
       </StRow>}
       {((s.voice_engine||'local')!=='gemini')&&<TtsEngineRows s={s} save={save} mc={mc}/>}
+      <PushToTranscribeRows s={s} save={save}/>
       {((s.voice_engine||'local')!=='gemini')&&(s.local_voice_tts_engine||'piper')==='piper'&&<StRow label="Local TTS Voice (Piper)" desc="On-device voice used by the local engines.">
         <select className="input" style={{width:'100%'}} value={s.local_voice_tts_voice||'en_US-amy-medium'} onChange={e=>save({local_voice_tts_voice:e.target.value})}>
           {[['en_US-amy-medium','Amy \u2014 US English (medium)'],['en_US-lessac-medium','Lessac \u2014 US English (medium)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
