@@ -631,7 +631,8 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                  # house to the label. Local is the normal case; marking it
                  # marks everything.
                  temperature=None, orb_label=None, orb_icon='⚡',
-                 tools=None, pii_lookup=None, session_ctx=None, max_iters=50,
+                 tools=None, pii_lookup=None, session_ctx=None,
+                 max_iters=None,
                  catalogue_all=None):
     """Call a local Ollama model. Returns (text, tool_trace).
 
@@ -1179,7 +1180,8 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
 
 def _call_openai(messages, system=None, model=None, max_tokens=4096,
                  temperature=None, orb_label=None, orb_icon='☁️',
-                 tools=None, pii_lookup=None, session_ctx=None, max_iters=50,
+                 tools=None, pii_lookup=None, session_ctx=None,
+                 max_iters=None,
                  provider=None, fallback_models=None, stream=None,
                  on_delta=None, catalogue_all=None):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).

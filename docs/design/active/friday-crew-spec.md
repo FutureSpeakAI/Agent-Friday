@@ -1,5 +1,11 @@
 # Friday Crew — Teach, Delegate, and the Second Computer
-> **Status note (2026-09-24):** every citation of `services/edition_engine.py`
+> **Status note (2026-09-24):** `max_steps` in the scope example below is now
+> **200**, not 25. The 25 came from the same era as the local chat loop's
+> 50-round cap and was raised to parity with real limits in its place (loop
+> detection, a wall clock, a per-turn token ceiling) — see
+> `services/turn_budget.py`. A scope may still set its own lower figure.
+>
+> Every citation of `services/edition_engine.py`
 > below is to a module that has since been **removed**. The Friday Edition
 > workspace was eliminated at Stephen's request in favour of the briefings; its
 > data remains at `~/.friday/edition`. The patterns this spec borrows from it —
@@ -203,7 +209,7 @@ meta:
   observed_tools: [search_email, read_file, write_file]
   slots: { period: "this week" }
   derived_from: { step1: [ev_003, ev_004], … }
-  scope: { allowed_tools: [...], max_ring: 2, max_steps: 25, time_budget_s: 900 }
+  scope: { allowed_tools: [...], max_ring: 2, max_steps: 200, time_budget_s: 900 }
 ```
 
 Lifecycle (vocabulary borrowed from `goals.py`, enforcement from `approvals.py`):
