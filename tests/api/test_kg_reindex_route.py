@@ -71,16 +71,23 @@ def test_reindex_tier_b_sync_reports_no_local_model_as_a_normal_response(
     assert "crashed" not in d
 
 
-def test_query_route_modes(client, seeded_wiki, patch_app):
+def test_query_route_modes(client, seeded_wiki, patch_app, monkeypatch, tmp_path):
     patch_app("_generate_text", lambda *a, **k: "stub answer")
+    # A pinned local answer calls the local runtime directly; never the real one.
+    patch_app("_call_ollama", lambda *a, **k: ("stub answer", []))
     # structural (explicit)
     r = client.post("/api/knowledge-graph/query",
                     json={"question": "list all pages about research",
                           "mode": "structural"})
     assert r.status_code == 200
     assert r.get_json()["mode"] == "structural"
-    # auto-routed (no Tier B index in this test home → structural)
+    # auto-routed with no Tier B index -> structural. The graph store is
+    # emptied for this: the Tier B reindex test in this file writes one into
+    # the shared test home, and auto-routing would then (correctly) go local.
+    from agent_friday.services.knowledge_graph import store as kg_store
+    monkeypatch.setattr(kg_store, "KG_DIR", tmp_path / "empty-graph")
     r = client.post("/api/knowledge-graph/query",
                     json={"question": "tell me about graphrag"})
     assert r.status_code == 200
     assert r.get_json()["status"] == "ok"
+    assert r.get_json()["mode"] == "structural"
