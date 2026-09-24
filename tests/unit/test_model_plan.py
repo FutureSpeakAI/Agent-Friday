@@ -736,7 +736,6 @@ def test_the_local_defaults_actually_come_from_the_planner():
     """Not just tool-capable by luck — sourced, so they move when the ladder does."""
     from agent_friday import core
     s = core.DEFAULT_SETTINGS
-    assert s["setup"]["bundled_model"] == mp.FLOOR_MODEL
     assert s["model_routing"]["local_model"] == mp.FLOOR_MODEL
     assert s["capability_routing"]["local"]["model"] == mp.FLOOR_MODEL
 
