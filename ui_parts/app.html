@@ -6582,6 +6582,7 @@ function SystemWS(){
         :approvals.map(a=><div key={a.approval_id} className="card" style={{marginBottom:6,padding:8}}>
             <div style={{fontSize:12,color:'#ddd'}}>{a.title}</div>
             {a.action_description&&<div style={{fontSize:11,color:'#999',marginTop:2}}>{a.action_description}</div>}
+            <ApprovalPagePreview a={a}/>
             <ApprovalProvenance p={a.provenance}/>
             <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginTop:4}}>{a.kind} · {a.policy_class}{a.expires_at?' · expires '+new Date(a.expires_at*1000).toLocaleString():''}</div>
             <div style={{display:'flex',gap:6,marginTop:6}}>
@@ -14435,6 +14436,129 @@ function SettingsTabConnectors({
     }
   }), c.name || c.id)))));
 }
+// ── Settings → Accounts & Keys → Signing. The signature image and the signing
+// certificate are secrets: they go in, and only whether each is stored comes
+// back. Every route behind this is refused unless the request comes from this
+// computer. Friday signs only on an approval card (services/pdf_signing.py).
+function SettingsTabSigning() {
+  const [st, setSt] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [pass, setPass] = useState('');
+  const certRef = useRef(null);
+  const refresh = useCallback(() => {
+    apiFetch('/api/documents/signing/status').then(r => r.json()).then(j => {
+      if (j && j.ok) setSt(j);else setMsg('✗ ' + (j && j.error || 'Signing status unavailable'));
+    }).catch(() => setMsg('✗ Could not reach the server.'));
+  }, []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+  const send = (url, body, ok, method) => {
+    setBusy(true);
+    setMsg('');
+    return apiFetch(url, {
+      method: method || 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body || {})
+    }).then(r => r.json()).then(j => {
+      setMsg(j.ok ? '✓ ' + ok : '✗ ' + (j.error || 'Failed'));
+      if (j.ok) setSt(j);
+    }).catch(() => setMsg('✗ Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const readB64 = f => new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result || '').split(',').pop());
+    r.onerror = rej;
+    r.readAsDataURL(f);
+  });
+  const pickImage = e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (f) readB64(f).then(b => send('/api/documents/signing/image', {
+      image_b64: b
+    }, 'Signature image saved'));
+  };
+  const saveCert = () => {
+    const f = certRef.current && certRef.current.files && certRef.current.files[0];
+    if (!f) {
+      setMsg('✗ Choose a .p12 or .pfx file first.');
+      return;
+    }
+    readB64(f).then(b => send('/api/documents/signing/certificate', {
+      certificate_b64: b,
+      passphrase: pass
+    }, 'Certificate saved')).then(() => {
+      setPass('');
+      if (certRef.current) certRef.current.value = '';
+    });
+  };
+  const label = v => v === 'stored' ? '✓ stored in the vault on this computer' : v === 'unreadable' ? '✗ stored but will not decrypt — set it again' : 'not set';
+  const cert = st && st.certificate || {};
+  const row = {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    flexWrap: 'wrap'
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    id: "settings-signing"
+  }, msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 12,
+      color: msg[0] === '✓' ? '#00ff80' : '#ff6b8a'
+    }
+  }, msg), /*#__PURE__*/React.createElement(StSection, {
+    title: "SIGNING PDFS",
+    desc: "Friday never signs on her own: every signature waits for your approval on a card that shows the page and where the signature goes."
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Signature image",
+    desc: 'A picture of your signature, stamped onto a page. Status: ' + label(st && st.signature_image)
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: "image/png,image/jpeg",
+    "aria-label": "Choose a signature image",
+    disabled: busy,
+    onChange: pickImage
+  }), st && st.signature_image !== 'missing' && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy,
+    onClick: () => send('/api/documents/signing/image', null, 'Signature image removed', 'DELETE')
+  }, "Remove"))), /*#__PURE__*/React.createElement(StRow, {
+    label: "Signing certificate",
+    desc: 'A .p12 / .pfx file with your certificate and private key, for real digital signatures. Status: ' + label(cert.state) + (cert.subject ? ' — ' + cert.subject + (cert.expired ? ' (EXPIRED)' : '') : '')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: ".p12,.pfx",
+    ref: certRef,
+    "aria-label": "Choose a certificate file",
+    disabled: busy
+  }), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "password",
+    autoComplete: "off",
+    placeholder: "Certificate passphrase",
+    "aria-label": "Certificate passphrase",
+    value: pass,
+    onChange: e => setPass(e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy,
+    onClick: saveCert
+  }, "Save"), cert.state && cert.state !== 'missing' && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy,
+    onClick: () => send('/api/documents/signing/certificate', null, 'Certificate removed', 'DELETE')
+  }, "Remove")))));
+}
 // ── Settings → Accounts & Keys → Phone (Twilio). Off by default. Secrets go in, never come back:
 // the server reports "stored"/"missing"/"unreadable" for each one. Every
 // route behind this tab is refused unless the request comes from this computer.
@@ -15894,7 +16018,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
@@ -16114,6 +16238,14 @@ function fridayRestoreTabScroll(frac){
 window.fridayTabOrigin=fridayTabOrigin;
 window.fridayWorkspaceTabUrl=fridayWorkspaceTabUrl;
 window.fridayOpenWorkspaceTab=fridayOpenWorkspaceTab;
+// A card that signs a document shows the page being signed, with the
+// signature box outlined (services/pdf_signing.py renders it). Only Friday's
+// own preview folder is ever shown.
+function ApprovalPagePreview({a}){
+  const u=a&&a.payload&&a.payload.preview_url;
+  if(typeof u!=='string'||!u.startsWith('/api/creations/forms/previews/'))return null;
+  return <img src={u} alt="The page to be signed, with the signature box outlined in red" data-testid="approval-page-preview" style={{display:'block',maxWidth:'100%',maxHeight:320,marginTop:6,background:'#fff',border:'1px solid rgba(255,255,255,0.2)'}}/>;
+}
 // Where an approval card's details came from (services/taint.py). A detail
 // Friday found in something it read -- an email, a web page, a document --
 // rather than in anything the user typed is named here, above the buttons.
@@ -16146,6 +16278,7 @@ function StandaloneApprovals(){
       {items.map(a=><div key={a.approval_id} className="ws-tab-card">
         <div style={{fontWeight:700,color:'#fff',marginBottom:4}}>{a.title}</div>
         {a.action_description&&<div style={{whiteSpace:'pre-wrap',fontSize:12,color:'#b8c7dc',maxHeight:220,overflow:'auto'}}>{a.action_description}</div>}
+        <ApprovalPagePreview a={a}/>
         <ApprovalProvenance p={a.provenance}/>
         <div style={{display:'flex',gap:8,marginTop:8}}>
           <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#22c55e',color:'#86efac'}} onClick={()=>decide(a.approval_id,'approve')}>{busy===a.approval_id?'…':'Approve'}</button>

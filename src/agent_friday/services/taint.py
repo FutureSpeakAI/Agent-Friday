@@ -435,7 +435,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
 
 #: Tools that create their own approval card. A flag on these goes ON that
 #: card instead of raising a second one.
-SELF_CARDING = {"draft_email", "call_by_phone"}
+SELF_CARDING = {"draft_email", "call_by_phone", "sign_pdf"}
 
 #: Roles judged by overlap of word runs rather than exact match.
 FREE_TEXT_ROLES = {"command", "instruction", "memory_write", "publish_body"}

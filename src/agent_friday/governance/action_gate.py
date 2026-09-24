@@ -128,11 +128,14 @@ OUTWARD_TOOLS = frozenset({
     # Phone (agent_friday/phone): a text reaches a person the moment it is
     # sent; a call only ever raises its own card (SELF_GATED below).
     "text_by_phone", "call_by_phone",
+    # A signature binds the owner. The tool only raises a card naming the
+    # file, page and placement; services/pdf_signing signs on approval.
+    "sign_pdf",
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
 #: action itself (draft_email only queues; gmail_send sends on approval).
-SELF_GATED = frozenset({"draft_email", "call_by_phone"})
+SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf"})
 
 #: Friday's own tools that stay inside: reading, searching, drafting, local
 #: files the confirmation gate already asks about, memory writes the taint
@@ -164,12 +167,13 @@ INTERNAL_TOOLS = frozenset({
     # hold marker for that series and no attendees, and nobody is notified,
     # so it undoes Friday's own earlier work and reaches no one.
     "find_free_slots", "release_holds",
+    "list_pdf_fields",              # reads a form's fields
 })
 
 #: Classified by argument: run_command by its command, content_create_post by
-#: whether it schedules, write_file by where it writes.
+#: whether it schedules, write_file and fill_pdf_form by where they write.
 BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
-                         "write_file"})
+                         "write_file", "fill_pdf_form"})
 
 _READ_VERBS = ("get", "list", "search", "read", "fetch", "query", "find", "check",
                "lookup", "describe", "show", "view", "count", "status", "explore",
@@ -352,6 +356,14 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
             return OUTWARD, f"the office command could not be classified ({e})"
     if tool_name == "write_file":
         return classify_write(a.get("path"))
+    if tool_name == "fill_pdf_form":
+        # A new file in Friday's output folder is internal; replacing a file
+        # or writing anywhere else is outward; over the source is refused.
+        try:
+            from agent_friday.services import pdf_forms as _pf
+            return _pf.classify(a)
+        except Exception as e:
+            return OUTWARD, f"the form fill could not be classified ({e})"
     if tool_name == "content_create_post":
         if a.get("publish_at") or a.get("optimal_time"):
             return OUTWARD, "it schedules a post to go out"
