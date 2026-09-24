@@ -97,6 +97,9 @@ def main():
     ap.add_argument("--max-iters", type=int, default=12)
     ap.add_argument("--only", default="", help="attacks|benign")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--rerun-failed", default="",
+                    help="an earlier results file: keep its clean episodes and "
+                         "re-run only the ones the seat's transport failed")
     ap.add_argument("--local-endpoint", default="",
                     help="an already-running OpenAI-compatible local seat, e.g. "
                          "http://127.0.0.1:8090/v1 for bonsai2:27b. The run uses "
@@ -180,8 +183,7 @@ def main():
     if opts.limit:
         episodes = episodes[: opts.limit]
 
-    rows = []
-    for n, (suite, uid, iid) in enumerate(episodes):
+    def run_episode(n, suite, uid, iid):
         approvals._write_store([])
         agent._PENDING_CONFIRMATIONS.clear()
         agent._hooks.reset_rate_limiter()
@@ -277,6 +279,28 @@ def main():
                "reply": (text or "")[:600],
                "trace": [{"tool": t.get("name"), "input": t.get("input"),
                           "result": str(t.get("result"))[:400]} for t in (trace or [])][:15]}
+        return row
+
+    prior = {}
+    if opts.rerun_failed:
+        for r in json.load(open(opts.rerun_failed, encoding="utf-8"))["episodes"]:
+            prior[(r["suite"], r["user_task"], r["injection_task"])] = r
+
+    rows = []
+    for n, (suite, uid, iid) in enumerate(episodes):
+        old = prior.get((suite, uid, iid))
+        if old is not None and not _transport_failure(old.get("error")):
+            rows.append(old)          # a clean episode from the earlier run
+            continue
+        for attempt in range(1, 5):
+            if opts.local_endpoint:
+                _wait_for_seat(opts.local_endpoint)
+            row = run_episode(n, suite, uid, iid)
+            if not (opts.local_endpoint and _transport_failure(row["error"])):
+                break
+            print("  seat unavailable mid-episode, retrying (%d/4): %s"
+                  % (attempt, row["error"][:120]), flush=True)
+        row["attempts"] = attempt
         rows.append(row)
         with open(opts.out + ".partial", "w", encoding="utf-8") as f:
             json.dump({"episodes": rows}, f, indent=1)
@@ -310,6 +334,35 @@ def main():
     with open(opts.out, "w", encoding="utf-8") as f:
         json.dump({"score": score, "episodes": rows}, f, indent=1)
     print(json.dumps(score, indent=1))
+
+
+def _transport_failure(err) -> bool:
+    """The seat was not there, not the model misbehaving: re-run, don't score."""
+    e = str(err or "")
+    return any(k in e for k in ("ConnectionError", "Loading model", "503 Service Unavailable",
+                                "ChunkedEncodingError", "ConnectionResetError",
+                                "Max retries exceeded"))
+
+
+def _wait_for_seat(endpoint, timeout=1800):
+    """Wait until the local seat answers /health, as it does once loaded.
+
+    Friday's server restarting reloads its seats; an episode started into that
+    window fails on transport and says nothing about the model.
+    """
+    import urllib.request
+    base = endpoint.rstrip("/")
+    base = base[:-3] if base.endswith("/v1") else base
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            with urllib.request.urlopen(base + "/health", timeout=5) as r:
+                if r.status == 200 and b"ok" in r.read():
+                    return True
+        except Exception:
+            pass
+        time.sleep(10)
+    return False
 
 
 def _injection_ids(py, suite):
