@@ -769,6 +769,44 @@ _PROVIDER_OFF_SIGNS = (
 )
 
 
+#: How long a recorded provider-side refusal may be PRESENTED AS CURRENT.
+#:
+#: The record itself is kept indefinitely -- enabling an API is a console act, so
+#: the condition is sticky -- but a reading has an age, and past this one it is
+#: history rather than a measurement. Observed 2026-09-24: Drive reported "not
+#: activated" long after Stephen had activated it, and only corrected itself when
+#: something happened to call Drive. A verdict that can be revised only by the
+#: call it discourages cannot self-correct.
+#:
+#: The asymmetry decides the direction. If the service really is still off, the
+#: cost of expiring is one failed call whose error re-records the condition
+#: immediately. If it has been fixed, the cost of NOT expiring is a capability
+#: disabled indefinitely for no reason. Ten minutes is short enough that a user
+#: who flips the switch and comes back sees it work, and long enough that a
+#: genuinely disabled API is not retried on every render.
+_PROVIDER_OFF_TTL_S = 600.0
+
+
+def _verdict_age_s(at) -> float | None:
+    """Seconds since an ISO timestamp, or None when it cannot be read.
+
+    None means "I do not know how old this is", which is deliberately NOT
+    treated as fresh: records written before the TTL existed carry no `at`, and
+    showing an undated refusal as the current state is the exact claim being
+    fixed here.
+    """
+    if not at:
+        return None
+    try:
+        from datetime import datetime, timezone
+        when = datetime.fromisoformat(str(at))
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - when).total_seconds())
+    except Exception:
+        return None
+
+
 def _load_service_state() -> dict:
     try:
         return json.loads(_SERVICE_STATE_FILE.read_text(encoding="utf-8")) or {}
@@ -838,12 +876,27 @@ def service_health(service: str):
         return worst
     cur = (_load_service_state().get(service) or {})
     if cur.get("blocked"):
-        return _ch.Health(
-            state=_ch.DEGRADED, source="google_accounts",
-            source_state="provider-off", action="enable_api",
+        age = _verdict_age_s(cur.get("at"))
+        if age is not None and age <= _PROVIDER_OFF_TTL_S:
+            return _ch.Health(
+                state=_ch.DEGRADED, source="google_accounts",
+                source_state="provider-off", action="enable_api",
+                detail=str(cur.get("detail") or ""),
+                summary="Your Google account is connected, but %s is switched "
+                        "off at Google for this project" % service)
+        # Older than the TTL, or undated: this is a memory, not a reading. Say
+        # so and let the service be used, because the next real call is what
+        # settles it -- `note_service_result` records the outcome either way.
+        import dataclasses as _dc
+        seen = cur.get("at") or "an unknown time"
+        return _dc.replace(
+            worst, verified=False, stale=True,
+            source="google_accounts", source_state="provider-off-unconfirmed",
             detail=str(cur.get("detail") or ""),
-            summary="Your Google account is connected, but %s is switched off "
-                    "at Google for this project" % service)
+            summary="Your Google account is connected. %s was switched off at "
+                    "Google when last seen (%s) and has not been re-checked "
+                    "since, so it may already be on -- the next call will "
+                    "settle it." % (service, seen))
     return worst
 
 
