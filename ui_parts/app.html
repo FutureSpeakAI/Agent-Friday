@@ -10045,7 +10045,8 @@ function SettingsTabPrivacy({s,save}){
           {[{l:'Status',v:vaultStatus.locked?'LOCKED':'UNLOCKED',c:vaultStatus.locked?'#f59e0b':'#00ff80'},{l:'Encryption',v:vaultStatus.encryption||'None',c:vaultStatus.encryption==='AES-256-GCM'?'#00ff80':'#f59e0b'},{l:'Entries',v:vaultStatus.entry_count??'—',c:'#00d4ff'}].map(x=><div key={x.l}><div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:3}}>{x.l}</div><div style={{fontFamily:'Orbitron',fontSize:12,color:x.c}}>{x.v}</div></div>)}
         </div>
       </div>}
-      {!armed&&<div style={{padding:'12px 14px',background:'rgba(245,158,11,0.06)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:8,marginBottom:14}}>
+      {!vaultStatus&&<div style={{fontSize:12,color:'var(--st-dim)',marginBottom:14}}>Reading the vault’s status…</div>}
+      {vaultStatus&&!armed&&<div style={{padding:'12px 14px',background:'rgba(245,158,11,0.06)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:8,marginBottom:14}}>
         <div style={{fontSize:11,color:'rgba(255,210,140,0.9)',marginBottom:8,lineHeight:1.6}}>Your vault is <b>not encrypted at rest</b>. Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain, with an encrypted on-disk backup only this account can read — never sent anywhere).</div>
         <div style={{display:'flex',gap:6}}>
           <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Vault passphrase (min 6 chars)" className="input" style={{flex:1}}/>
@@ -10119,14 +10120,14 @@ function ApprovalScannerPanel({s,save}){
   const opts=[
     {k:'off',l:'Off',d:'The keyword scan alone decides. This is how Friday behaved before Laya.'},
     {k:'shadow',l:'Shadow',d:'The keyword scan still decides. Laya scores the same actions alongside it and both answers are logged — no verdict changes.'},
-    {k:'on',l:'On',d:'Both scanners vote. An action waits for you when EITHER says it should — so this can add approval cards, never remove one.'}
+    {k:'on',l:'On',d:'Both scanners vote. An action waits for you when either says it should — so this can add approval cards, never remove one.'}
   ];
   const cur=opts.find(o=>o.k===mode);
   const laya=(st&&st.laya)||{};
   const degraded=!!(st&&st.degraded);
   return <div>
     <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:10,lineHeight:1.6}}>
-      Before Friday sends mail as you, spends money, or does something it cannot undo, a scanner decides whether to stop and ask. Adding a second opinion can only ever raise MORE approval cards — the keyword scan is still one of the two votes, so turning this on cannot let something through that it would have caught.
+      Before Friday sends mail as you, spends money, or does something it cannot undo, a scanner decides whether to stop and ask. Adding a second opinion can only ever raise more approval cards — the keyword scan is still one of the two votes, so turning this on cannot let something through that it would have caught.
     </div>
     <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
       {opts.map(o=>(
@@ -11080,9 +11081,9 @@ function SettingsTabAbout(){
   const fmtUp=sec=>{if(!sec)return'—';const hh=Math.floor(sec/3600),mm=Math.floor((sec%3600)/60);return hh>0?`${hh}h ${mm}m`:`${mm}m`;};
   return <div>
     <div style={{textAlign:'center',padding:'24px 16px 20px',background:'linear-gradient(135deg,rgba(245,158,11,0.05),rgba(0,212,255,0.03))',borderRadius:10,border:'1px solid rgba(245,158,11,0.1)',marginBottom:24}}>
-      <div style={{fontFamily:'Orbitron',fontSize:22,color:'#f59e0b',letterSpacing:'.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 20px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
+      <div className="st-brand" style={{fontFamily:'Orbitron',fontSize:22,color:'#f59e0b',letterSpacing:'.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 20px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
       <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>{'v'+(h?.version||'5.0.0')} · Desktop OS · Sovereign AI</div>
-      <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'.2em'}}>BY FUTURESPEAK.AI</div>
+      <div className="st-brand" style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',letterSpacing:'.2em'}}>BY FUTURESPEAK.AI</div>
     </div>
     <StSection title="System">
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
@@ -11532,7 +11533,7 @@ function SettingsTabCosts() {
       fontSize: 10,
       color: dim
     }, mono)
-  }, loaded ? 'No spend recorded yet.' : 'Loading...')), !!pts.length && /*#__PURE__*/React.createElement("div", {
+  }, loaded ? (costSummary && costSummary.total_usd > 0 ? 'No day-by-day figures for this period.' : 'No spend recorded yet.') : 'Loading…')), !!pts.length && /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       display: 'flex',
       justifyContent: 'space-between',
