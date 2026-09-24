@@ -287,7 +287,8 @@ ECHO_TOOLS = {"draft_email", "create_calendar_event", "update_calendar_event",
               "create_task", "update_task", "complete_task", "delete_task",
               "learn_skill", "correct_wiki", "propose_wiki_update", "navigate",
               "switch_model", "spawn_task", "open_url", "open_path",
-              "revert_workspace", "create_workflow"}
+              "revert_workspace", "create_workflow",
+              "hold_slots", "book_slot", "release_holds"}
 
 
 def note_tool_output(key: str, tool_name: str, tool_input: Optional[dict], result: Any):
@@ -406,6 +407,11 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "draft_email": {"to": "recipient", "cc": "recipient", "bcc": "recipient",
                     "body": "message_body"},
     "create_calendar_event": {"attendees": "recipient", "description": "message_body"},
+    "book_slot": {"attendees": "recipient", "description": "message_body"},
+    # Holds invite nobody; their slots are times Friday computed.
+    "hold_slots": {},
+    "release_holds": {},
+    "find_free_slots": {},
     "text_by_phone": {"to": "recipient", "body": "message_body"},
     "call_by_phone": {"to": "recipient", "message": "message_body"},
     "browse_web": {"url": "fetch_url"},

@@ -560,6 +560,37 @@ CLAUDE_TOOLS = [
     {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "find_free_slots", "description": "Find meeting times that are free on EVERY connected calendar (all Google accounts), inside the user's working hours and time zone, with minimum notice and a buffer around existing events. Read-only. Use it for 'can we talk next week?': offer the returned slots. To reply by email, put the slot labels into draft_email (that raises an approval card; nothing is sent until the user approves). If the result lists 'unreadable' calendars, say those calendars were not checked.",
+     "input_schema": {"type": "object", "properties": {
+         "duration_minutes": {"type": "integer", "description": "Meeting length. Default 30."},
+         "window_start": {"type": "string", "description": "Earliest day or time, ISO 8601 (e.g. 2026-10-05). Default now."},
+         "window_end": {"type": "string", "description": "Last day (inclusive) or time, ISO 8601. Default a week after window_start."},
+         "count": {"type": "integer", "description": "How many slots to offer. Default 3."},
+         "min_notice_hours": {"type": "number", "description": "No slot sooner than this. Default from settings."},
+         "buffer_minutes": {"type": "integer", "description": "Clear time kept before and after existing events. Default from settings."}}}},
+    {"name": "hold_slots", "description": "Place tentative 'Hold: <title>' events on the user's OWN calendar for the slots being offered, so those times stay free while the other person chooses. Holds invite nobody and notify nobody. Returns a series_id; keep it for book_slot. Needs the user's go-ahead.",
+     "input_schema": {"type": "object", "properties": {
+         "title": {"type": "string", "description": "What the meeting is, e.g. 'Call with Dana'."},
+         "slots": {"type": "array", "items": {"type": "object", "properties": {
+             "start": {"type": "string"}, "end": {"type": "string"}}, "required": ["start", "end"]},
+             "description": "The slots from find_free_slots (start and end)."},
+         "account_id": {"type": "string", "description": "Which connected Google account's calendar holds them (id, email or label). Required when more than one account can write; the tool will say so and list them."}},
+      "required": ["title", "slots"]}},
+    {"name": "book_slot", "description": "Book the time the other person picked: turns that hold into the real event, sends the invitation to the attendees, and releases the other holds of the series. Sending an invitation reaches another person, so it needs the user's approval.",
+     "input_schema": {"type": "object", "properties": {
+         "series_id": {"type": "string", "description": "The series_id hold_slots returned."},
+         "hold_event_id": {"type": "string", "description": "The id of the hold to book. Or give start instead."},
+         "start": {"type": "string", "description": "Start time of the hold to book, ISO 8601, when hold_event_id is not known."},
+         "title": {"type": "string"},
+         "attendees": {"type": "array", "items": {"type": "string"}, "description": "Email addresses to invite."},
+         "description": {"type": "string"}, "location": {"type": "string"},
+         "account_id": {"type": "string", "description": "The same account the holds were placed on."}},
+      "required": ["series_id", "title"]}},
+    {"name": "release_holds", "description": "Remove the remaining holds of a series (for example when the other person declined). Only events Friday itself marked as holds of that series are removed; anything else is left alone.",
+     "input_schema": {"type": "object", "properties": {
+         "series_id": {"type": "string"},
+         "account_id": {"type": "string", "description": "The same account the holds were placed on."}},
+      "required": ["series_id"]}},
     {"name": "query_calendar", "description": "Check the user's Google Calendar (today's & tomorrow's events). Built-in Google integration. If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to walk the user through it; do NOT say you lack calendar access.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "search_email", "description": "Search and read the user's recent Gmail across every connected account (built-in read-only Google integration). The query is sent to Gmail's own search, so its operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes and OR. An empty query returns recent unread. If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to set it up; do NOT say you can't access Gmail. If the result has search_failed or error, the search did NOT run — report that failure; never describe it as zero results.",
@@ -1179,6 +1210,57 @@ def _tool_find_calendar_events(inp):
     if not q:
         return "find_calendar_events error: 'query' is required."
     return _calendar_write_summary(cw.find_events(q), "search your calendar")
+
+
+def _opt_str(inp, key):
+    return (str((inp or {}).get(key) or "")).strip() or None
+
+
+def _tool_find_free_slots(inp):
+    """Free times across every connected calendar. Read-only."""
+    from agent_friday.services import scheduling as sch
+    inp = inp or {}
+    res = sch.find_free_slots(
+        duration_minutes=inp.get("duration_minutes") or 30,
+        window_start=_opt_str(inp, "window_start"),
+        window_end=_opt_str(inp, "window_end"),
+        count=inp.get("count") or 3,
+        min_notice_hours=inp.get("min_notice_hours"),
+        buffer_minutes=inp.get("buffer_minutes"))
+    return _calendar_write_summary(res, "find free times")
+
+
+def _tool_hold_slots(inp):
+    """Tentative holds on the owner's own calendar. Outward (action_gate)."""
+    from agent_friday.services import scheduling as sch
+    inp = inp or {}
+    res = sch.hold_slots(title=(inp.get("title") or "").strip(),
+                         slots=inp.get("slots"),
+                         account_id=_opt_str(inp, "account_id"))
+    return _calendar_write_summary(res, "hold those times")
+
+
+def _tool_book_slot(inp):
+    """Hold -> real event with invitations; releases the rest. Outward."""
+    from agent_friday.services import scheduling as sch
+    inp = inp or {}
+    res = sch.book_slot(series_id=_opt_str(inp, "series_id"),
+                        title=(inp.get("title") or "").strip(),
+                        hold_event_id=_opt_str(inp, "hold_event_id"),
+                        start=_opt_str(inp, "start"),
+                        attendees=inp.get("attendees") or None,
+                        description=(inp.get("description") or "").strip(),
+                        location=(inp.get("location") or "").strip(),
+                        account_id=_opt_str(inp, "account_id"))
+    return _calendar_write_summary(res, "book that time")
+
+
+def _tool_release_holds(inp):
+    """Remove Friday's own marked holds of one series."""
+    from agent_friday.services import scheduling as sch
+    res = sch.release_holds(series_id=_opt_str(inp, "series_id"),
+                            account_id=_opt_str(inp, "account_id"))
+    return _calendar_write_summary(res, "release those holds")
 
 
 def _tool_revert_workspace(inp):
@@ -4986,6 +5068,10 @@ CLAUDE_TOOL_HANDLERS = {
     "create_calendar_event": _tool_create_calendar_event,
     "update_calendar_event": _tool_update_calendar_event,
     "find_calendar_events": _tool_find_calendar_events,
+    "find_free_slots": _tool_find_free_slots,
+    "hold_slots": _tool_hold_slots,
+    "book_slot": _tool_book_slot,
+    "release_holds": _tool_release_holds,
     "search_email": _tool_search_email,
     "search_drive": _tool_search_drive,
     "read_doc": _tool_read_doc,
@@ -5364,6 +5450,10 @@ TOOL_RINGS: dict[str, int] = {
     "annotate_calendar_events": 2,
     "create_calendar_event":    2,
     "update_calendar_event":    2,
+    "find_free_slots":          2,   # free/busy read from Google (network)
+    "hold_slots":               2,
+    "book_slot":                2,
+    "release_holds":            2,
     "correct_wiki":         1,
     "learn_skill":          1,
     # Ring 2 — NETWORK (external calls; requires authenticated session)
@@ -7379,6 +7469,10 @@ def _taint_title(name, inp):
     inp = inp or {}
     if name == "create_calendar_event":
         return f"Create calendar event “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
+    if name == "book_slot":
+        return f"Book “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
+    if name == "hold_slots":
+        return f"Hold {len(inp.get('slots') or [])} time(s) on your calendar for “{_short_txt(inp.get('title'))}”"
     if name in ("browse_web", "open_url"):
         return f"Open {_short_txt(inp.get('url'))}"
     if name == "write_file":

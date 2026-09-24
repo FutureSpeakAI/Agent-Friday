@@ -498,6 +498,14 @@ REVIEWED_SINKS = {
         "the update_calendar_event tool, which is outward",
     ("services/calendar_write.py", "annotate_events"):
         "the annotate_calendar_events tool, which is outward",
+    ("services/scheduling.py", "hold_slots"):
+        "the hold_slots tool, which is outward; own calendar, no attendees",
+    ("services/scheduling.py", "book_slot"):
+        "the book_slot tool, which is outward (it sends invitations)",
+    ("services/scheduling.py", "_release"):
+        "deletes only events re-read with Friday's active hold marker for "
+        "the series and no attendees; reached from book_slot (outward) and "
+        "release_holds (internal: it undoes Friday's own holds)",
     ("routes/calendar.py", "api_calendar_quick_add"):
         "the owner's click in the calendar",
     ("services/publisher.py", "_run_target"):
