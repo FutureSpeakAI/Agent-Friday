@@ -297,3 +297,66 @@ def _fresh_swr_cache():
     swr_cache.invalidate("")
     yield
     swr_cache.invalidate("")
+
+
+def _settings_file() -> Path:
+    """The settings.json the app reads: core's own path once core is loaded."""
+    core = sys.modules.get("agent_friday.core")
+    if core is not None and getattr(core, "SETTINGS_FILE", None):
+        return Path(core.SETTINGS_FILE)
+    from agent_friday.paths import friday_home
+    return friday_home() / "settings.json"
+
+
+def _put_back(path: Path, before: bytes | None) -> None:
+    """Restore `path` to `before` (None: absent). Atomic, with a short retry
+    for a Windows reader holding the file open; raises if it cannot."""
+    for _delay in (0, 0.05, 0.1, 0.2):
+        if _delay:
+            time.sleep(_delay)
+        try:
+            if before is None:
+                path.unlink(missing_ok=True)
+            elif not path.exists() or path.read_bytes() != before:
+                tmp = path.with_name(path.name + ".restore")
+                tmp.write_bytes(before)
+                os.replace(tmp, path)
+            return
+        except OSError as e:
+            err = e
+    raise RuntimeError(
+        "could not restore %s after this test file (%s); every later file in "
+        "this process would inherit the settings it left" % (path, err))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _settings_do_not_outlive_their_file():
+    """Each test file leaves settings.json as it found it.
+
+    Every test in one process shares one temp home, so a settings write made
+    through the app (POST /api/settings, _save_settings) otherwise stays in
+    force for every later file on the same xdist worker. A seat pick is the
+    costly case: the router reads capability_routing.reasoning on every
+    route() and treats any model other than the factory one as the user's
+    binding, so a file that seats claude-opus-5-5 routes the next file's
+    ModelRouter tests to it. Which files share a worker is up to --dist
+    loadfile, so a leak like that moves whenever a file is added
+    (tests/unit/test_settings_do_not_leak_between_files.py runs the pair in
+    one process).
+
+    The bytes, or the file's absence, are put back when the test file
+    finishes, and the settings cache is dropped so the next read comes off
+    disk.
+    """
+    path = _settings_file()
+    try:
+        before = path.read_bytes()
+    except FileNotFoundError:
+        before = None
+    yield
+    try:
+        _put_back(path, before)
+    finally:
+        core = sys.modules.get("agent_friday.core")
+        if core is not None:
+            core._invalidate_settings_cache()
