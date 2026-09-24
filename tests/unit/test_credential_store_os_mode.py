@@ -20,6 +20,13 @@ Each test verifies filesystem state literally (not just that an exception was
 raised), per the PR-5 acceptance criteria: a raise that still leaves a
 plaintext file on disk would defeat the entire point.
 
+Friday's own keystore (services/keystore.py) is now the first tier, above
+all three of these. The legacy vault -> DPAPI -> plaintext chain is reached
+only when the keystore is unavailable, so every test of that chain makes the
+keystore unavailable explicitly (`_no_keystore`). The keystore tier has its
+own tests at the bottom: it encrypts under OS mode, and a LOCKED keystore
+fails closed rather than dropping to a weaker tier.
+
 Only synthetic, fake test values are used — never a real secret.
 """
 from __future__ import annotations
@@ -29,6 +36,7 @@ import sys
 import pytest
 
 from agent_friday.services import credential_store as cs
+from agent_friday.services import keystore as ks
 from agent_friday.privacy import vault_crypto as vc
 
 
@@ -62,20 +70,34 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "keyring", None)
     vp.reset_cache()
 
+    # The keystore keeps its root key under the test home, never a shared one.
+    monkeypatch.setattr(ks, "KEYSTORE_PATH", home / "security" / "keystore.json")
+    ks._reset_cache_for_tests()
+
     cs._VAULT_KEY = None
     cs._VAULT_KEY_READY = False
     cs._WARNED_PLAINTEXT = False
     yield home
+    ks._reset_cache_for_tests()
     vp.reset_cache()
     cs._VAULT_KEY = None
     cs._VAULT_KEY_READY = False
     cs._WARNED_PLAINTEXT = False
 
 
+def _no_keystore(monkeypatch):
+    """Make Friday's keystore unavailable (not locked), so protect() takes the
+    legacy vault -> DPAPI -> plaintext chain."""
+    def _unavailable(data):
+        raise RuntimeError("keystore unavailable in this test")
+    monkeypatch.setattr(ks, "encrypt", _unavailable)
+
+
 def _no_dpapi(monkeypatch):
-    """Force the 'no DPAPI available' branch regardless of host OS, so the
-    fail-closed / plaintext-fallthrough paths are exercised deterministically
-    on any machine running the suite (including this Windows dev box)."""
+    """Force the 'no keystore, no DPAPI available' branch regardless of host
+    OS, so the fail-closed / plaintext-fallthrough paths are exercised
+    deterministically on any machine running the suite."""
+    _no_keystore(monkeypatch)
     monkeypatch.setattr(cs, "_dpapi_available", lambda: False)
     monkeypatch.setattr(cs, "_dpapi", lambda data, encrypt: None)
 
@@ -193,3 +215,36 @@ class TestWindowsDefaultBehaviorUnchanged:
         cs.protect(b"secret-two")
         captured = capsys.readouterr()
         assert captured.err.count("WARNING") == 1
+
+
+# ── The keystore tier ───────────────────────────────────────────────────────
+
+class TestKeystoreTier:
+    def test_os_mode_with_a_keystore_encrypts_and_never_writes_plaintext(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("FRIDAY_OS_MODE", "1")
+        monkeypatch.setattr(cs, "_dpapi_available", lambda: False)
+        monkeypatch.setattr(cs, "_dpapi", lambda data, encrypt: None)
+
+        target = tmp_path / "creds" / "google_token.json"
+        method = cs.write_secret(target, b'{"fake": "not-a-real-token"}')
+
+        assert method == "keystore"
+        on_disk = target.read_bytes()
+        assert on_disk.startswith(ks.MAGIC)
+        assert b"not-a-real-token" not in on_disk
+        assert cs.read_secret(target) == b'{"fake": "not-a-real-token"}'
+
+    def test_a_locked_keystore_fails_closed_and_writes_nothing(self, monkeypatch, tmp_path):
+        """A locked keystore is not a reason to drop to a weaker tier, even
+        when a vault key or DPAPI would have worked."""
+        monkeypatch.setenv("FRIDAY_PASSWORD", "correct-horse-battery-staple-TEST")
+
+        def _locked(data):
+            raise ks.KeystoreLocked("locked in this test")
+        monkeypatch.setattr(ks, "encrypt", _locked)
+
+        target = tmp_path / "creds" / "google_token.json"
+        with pytest.raises(ks.KeystoreLocked):
+            cs.write_secret(target, b"a-fake-oauth-token-not-real")
+        assert not target.exists()
+        assert not target.parent.exists()

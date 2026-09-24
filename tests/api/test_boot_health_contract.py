@@ -128,13 +128,24 @@ def test_credential_store_check_healthy_round_trip():
     assert "round trip" in detail
 
 
+def _no_keystore(monkeypatch):
+    """Friday's keystore is the first tier; make it unavailable (not locked)
+    so protect() reaches the legacy chain and its OS-mode refusal."""
+    from agent_friday.services import keystore as ks
+
+    def _unavailable(data):
+        raise RuntimeError("keystore unavailable in this test")
+    monkeypatch.setattr(ks, "encrypt", _unavailable)
+
+
 def test_credential_store_check_fails_closed_under_os_mode_no_vault_no_dpapi(monkeypatch):
-    """The real PR-5 fail-closed path: FRIDAY_OS_MODE on, no vault key
-    derivable, no DPAPI available -> credential_store.protect() raises
-    instead of writing plaintext. This exercises the ACTUAL subsystem code,
-    not a stand-in.
+    """The real PR-5 fail-closed path: FRIDAY_OS_MODE on, no keystore, no
+    vault key derivable, no DPAPI available -> credential_store.protect()
+    raises instead of writing plaintext. This exercises the ACTUAL subsystem
+    code, not a stand-in.
     """
     from agent_friday.services import credential_store as cs
+    _no_keystore(monkeypatch)
 
     # protect() tries _vault_key() then _dpapi(data, encrypt=True) directly —
     # NOT _dpapi_available() (that name is only consulted by
@@ -153,6 +164,7 @@ def test_credential_store_check_fails_closed_under_os_mode_no_vault_no_dpapi(mon
 
 def test_broken_credential_store_flips_boot_critical_ok_via_route(client, monkeypatch):
     from agent_friday.services import credential_store as cs
+    _no_keystore(monkeypatch)
     monkeypatch.setattr(cs, "is_os_mode", lambda: True)
     monkeypatch.setattr(cs, "_vault_key", lambda: None)
     monkeypatch.setattr(cs, "_dpapi", lambda *a, **k: None)
