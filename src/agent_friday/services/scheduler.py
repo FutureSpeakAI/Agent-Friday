@@ -783,11 +783,12 @@ def _run_task(rec):
             tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
                               description=f"scheduled:{rec.get('id')}",
                               orb_icon="⏰", tools=task.get("tools"),
-                              model=_model)
+                              model=_model, schedule_id=rec.get("id"))
     else:
         tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
                           description=f"scheduled:{rec.get('id')}", orb_icon="⏰",
-                          tools=task.get("tools"), model=_model)
+                          tools=task.get("tools"), model=_model,
+                          schedule_id=rec.get("id"))
     # Link the scheduler's process orb to the spawned task so the notification
     # detail panel can stream the task's live log.
     orb_id = rec.get("_orb_id")
