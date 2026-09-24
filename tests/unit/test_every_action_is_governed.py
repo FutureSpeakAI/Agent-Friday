@@ -323,3 +323,17 @@ def test_a_connector_write_with_a_read_sounding_word_is_outward(monkeypatch):
     assert g.classify("mcp_bank_update_user_info", {})[0] == g.OUTWARD
     assert g.classify("mcp_slack_send_status", {})[0] == g.OUTWARD
     assert g.classify("mcp_bank_get_balance", {})[0] == g.INTERNAL
+
+
+def test_a_held_action_is_not_announced_as_happening(monkeypatch):
+    """The tray narrates a tool as it starts. An action waiting on a card is
+    not starting, so it must not be narrated as if it were."""
+    from agent_friday.services import model_router as mr
+    said = []
+    monkeypatch.setattr(mr, "announce_tool", lambda name, args=None: said.append(name))
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "create_calendar_event", lambda inp: "ok")
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "search_wiki", lambda inp: "ok")
+    bg = {"authenticated": True, "is_background_task": True, "task_id": "t-announce"}
+    agent._execute_tool("create_calendar_event", {"title": "x"}, session_ctx=bg)
+    agent._execute_tool("search_wiki", {"query": "x"}, session_ctx=bg)
+    assert said == ["search_wiki"]

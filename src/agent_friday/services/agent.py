@@ -6732,6 +6732,16 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
         return verdict.reason
 
+    # Say what is about to happen BEFORE it happens, and only once it will
+    # happen: derived from the tool actually being invoked, after every gate
+    # has allowed it, so the narration cannot describe work that is not
+    # occurring -- including an action waiting on an approval card.
+    try:
+        from agent_friday.services.model_router import announce_tool
+        announce_tool(name, ctx.input)
+    except Exception:
+        pass
+
     try:
         # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
         # tool that spawns background work had no way to say where that work
@@ -8326,14 +8336,9 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 # the resume path knows it is in that window instead of
                 # assuming it is not.
                 _resume_mark(session_ctx, tu.name, tu.id)
-                # Say what is about to happen BEFORE it happens. Derived from the
-                # tool actually being invoked, so it cannot describe work that is
-                # not occurring.
-                try:
-                    from agent_friday.services.model_router import announce_tool
-                    announce_tool(tu.name, tu.input)
-                except Exception:
-                    pass
+                # The "about to do this" narration is announced inside
+                # _execute_tool, once the governance check has let the call
+                # through: a held action is not work that is happening.
                 result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
                 # Cleared on the SUCCESS path only, deliberately not in a
                 # `finally`. If _execute_tool raised, the tool's side effect is
@@ -8826,14 +8831,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                             pass
 
             _task_log_tool(session_ctx, tname, targs)
-            # Say what is about to happen BEFORE it happens. Derived from the
-            # tool actually being invoked, so it cannot describe work that is
-            # not occurring.
-            try:
-                from agent_friday.services.model_router import announce_tool
-                announce_tool(tname, targs)
-            except Exception:
-                pass
+            # Narration is announced inside _execute_tool, after the governance
+            # check allows the call (see _call_claude_agent).
             result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                    session_ctx=session_ctx)
             _tool_ms = int((_time.time() - _t_tool) * 1000)
