@@ -49,8 +49,12 @@ def test_stream_announces_the_trace_before_any_token_and_the_payload_names_it(cl
     monkeypatch.setattr(chat_routes, "chat", chat_routes._traced_turn(_fake_turn()))
     res = client.post("/api/chat/stream", json={"message": "hi there"})
     frames = _frames(res.get_data(as_text=True))
-    assert "trace_id" in frames[0] and len(frames[0]) == 1
-    tid = frames[0]["trace_id"]
+    # The trace id arrives before any token (the stream's 'started' frame,
+    # from the keepalive work, may precede it; both come before text).
+    i_trace = next(i for i, f in enumerate(frames) if set(f) == {"trace_id"})
+    i_delta = next((i for i, f in enumerate(frames) if "delta" in f), len(frames))
+    assert i_trace < i_delta
+    tid = frames[i_trace]["trace_id"]
     payload = [f for f in frames if f.get("done")][0]["payload"]
     assert payload["trace_id"] == tid
     assert payload["reasoning_sources"] == ["full reasoning (local)"]
