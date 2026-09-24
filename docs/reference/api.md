@@ -518,7 +518,7 @@ Read a specific career report.
 List tracked job opportunities.
 
 ### `POST /api/jobs/apply`
-Placeholder — returns a stub response (`{ "status": "placeholder", "message": "Would apply to: ..." }`); no application workflow is executed yet.
+Friday does not submit job applications. Returns `{ "status": "not_submitted", "submitted": false, "message": ... }` saying so. `POST /api/pipeline/jobs/<job_id>/apply` prepares the materials (status `prepared` or `blocked`, `submitted: false`); the owner submits.
 
 ---
 

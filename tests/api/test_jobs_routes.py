@@ -55,15 +55,16 @@ def test_scan_without_listings_uses_stub_fetcher(client):
     assert "url" in data  # LinkedIn search URL still built from config
 
 
-def test_apply_dry_run_is_default_and_safe(client):
+def test_apply_prepares_and_never_submits(client):
     _seed_scan(client)
     jobs = client.get("/api/pipeline/jobs").get_json()["jobs"]
     job_id = jobs[0]["job_id"]
 
-    resp = client.post(f"/api/pipeline/jobs/{job_id}/apply", json={})
+    resp = client.post(f"/api/pipeline/jobs/{job_id}/apply", json={"dry_run": False})
     assert resp.status_code == 200
     result = resp.get_json()
-    assert result["status"] in ("dry_run", "blocked")  # never submits by default
+    assert result["status"] in ("prepared", "blocked")
+    assert result["submitted"] is False
     assert result["application_id"]
     assert result["cover_letter"]
     assert "submit_result" in result and not result["submit_result"].get("submitted")

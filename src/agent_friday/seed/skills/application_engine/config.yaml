@@ -91,8 +91,9 @@ ats:
       email: "input[name='email']"
       cover_letter: "textarea[name='coverLetter']"
 
+# Not read by the engine: it prepares applications and never submits them.
 submission:
-  auto_apply: false                   # user flips this on per-job
+  auto_apply: false
   auto_apply_confidence: 0.90
   require_confirmation_above_usd: 300000
   delay_between_applications_seconds: 90
