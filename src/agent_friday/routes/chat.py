@@ -1121,9 +1121,10 @@ def chat():
         # below like the rest of _extra_system.
         _extra_system += _build_session_continuity_block()
         _extra_system += _build_emotional_tone_block()
-        # Ask-first action policy — the model asks before acting; the gate in
-        # _execute_tool enforces it mechanically if the model forgets.
-        _extra_system += "\n\n" + ACTION_PERMISSION_POLICY
+        # The ask-first action policy is appended by
+        # `_get_friday_system_prompt` for every caller, so it is not added here:
+        # a second copy in one prompt reads as a diff rather than as emphasis.
+        # The gate in _execute_tool still enforces it if the model forgets.
         if cite_sources:
             _extra_system += CITATION_INSTRUCTIONS
 
@@ -2140,8 +2141,8 @@ def chat_send():
             # Prepend user-configured agent personality + response prefs + cLaws
             personality = _load_agent_personality()
             prompt = _settings_system_prefix(settings, personality) + (prompt or '')
-            # Ask-first action policy (enforced by the gate in _execute_tool).
-            prompt = prompt + "\n\n" + ACTION_PERMISSION_POLICY
+            # The action policy comes from `_get_friday_system_prompt`, which
+            # built `prompt`; it is not appended twice.
             # Cross-session memory: recall relevant past exchanges + carry
             # forward the last session summary + adapt tone from the
             # accumulated arc. Rebuilt per provider along with everything
