@@ -7060,14 +7060,23 @@ function ConversationWindow({
       }, /*#__PURE__*/React.createElement("div", {
         style: {
           maxWidth: '86%', padding: '7px 10px', borderRadius: 10,
-          fontSize: 12.5, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+          fontSize: 12.5, lineHeight: 1.5,
+          // The user's own words are not markdown; Friday's are.
+          whiteSpace: m.role === 'user' ? 'pre-wrap' : 'normal',
           wordBreak: 'break-word',
           background: m.role === 'user' ? 'rgba(0,212,255,0.12)'
                       : m.role === 'system' ? 'rgba(255,140,66,0.10)'
                       : 'rgba(255,255,255,0.045)',
           color: m.role === 'system' ? '#ffb27d' : '#dfe7f2'
         }
-      }, m.text))),
+      }, m.role === 'user' ? m.text : /*#__PURE__*/React.createElement(FridayDoc, {
+        // Friday replies in markdown. This window used to print the raw string,
+        // so bold and lists arrived as literal asterisks. FridayDoc is the one
+        // renderer every other surface uses.
+        text: m.text || '',
+        compact: true,
+        style: { margin: 0 }
+      })))),
       loading && /*#__PURE__*/React.createElement("div", {
         style: { color: '#00d4ff', fontSize: 11, padding: '6px 2px' }
       }, "Friday is thinking…"),
