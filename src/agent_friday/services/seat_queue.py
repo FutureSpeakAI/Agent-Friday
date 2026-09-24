@@ -6,8 +6,8 @@ the HTTP layer with no status, and the user had to cancel them by hand. This
 module gives the queue an honest, inspectable status: a second local task does
 not start — it waits, and the user can see *why* and *how long*.
 
-Pure functions over dicts, matching the style of task_watchdog.py /
-task_receipts.py. No I/O, no threading, no imports of agent.py.
+Pure functions over dicts, matching the style of task_watchdog.py.
+No I/O, no threading, no imports of agent.py.
 
 Required API (all pure, importable without side effects):
 

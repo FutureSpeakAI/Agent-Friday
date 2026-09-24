@@ -54,7 +54,7 @@ tests/
     test_source_trust_graph.py  test_source_trust_federation.py
     test_skillopt_engine.py  test_dynamic_rings.py
     test_notifications.py  test_notifications_engine.py  test_voice_personality.py
-    test_liquid_ui.py  test_skill_registry.py  test_context_compressor.py
+    test_skill_registry.py  test_context_compressor.py
     test_people_graph.py  test_cognitive_memory.py  test_proof_of_integrity.py
     test_context_pruner.py  test_conversation_memory.py
   api/                        # Flask test_client; imports server once
@@ -103,9 +103,6 @@ documented (and, where reproducible, guarded by a test).
    recomputation. Worth a focused review given Friday's "sovereign / tamper-
    evident" positioning.
 5. **`datetime.utcnow()` deprecation** across many modules (epistemic, cognitive,
-   skillopt, liquid_ui, notifications_engine, …) — deprecated in 3.12+, removed
+   skillopt, notifications_engine, …) — deprecated in 3.12+, removed
    in a future Python. A mechanical `datetime.now(datetime.UTC)` sweep.
-6. **`liquid_ui` minor issues** — `re.split(..., 1)` passes `maxsplit`
-   positionally (deprecated); `classify_complexity("")` scores `0.005` instead of
-   `0.0` (harmless — still the `trivial` tier).
 ```

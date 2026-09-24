@@ -30,12 +30,9 @@ of two keys composite_score() ignores. Deliberately NOT copied into
 user_satisfaction/completeness too: _success_score() has no information
 about either of those dimensions, and claiming it does would fabricate
 false precision. This makes the metric-mismatch fix a net improvement
-rather than "count a bad signal for more": production's only other
-composite_score producer, src/agent_friday/ui/liquid_ui.py's
-_record_usage_to_skillopt(), already uses the correct accuracy/
-user_satisfaction/completeness keys against three independently-derived
-signals -- skill_capture.py was simply not following the convention its
-own sibling caller uses correctly.
+rather than "count a bad signal for more": composite_score() reads the
+accuracy/user_satisfaction/completeness keys, and a producer that writes
+anything else is invisible to it.
 
 CORRECTION (F75, the maintainer's direct ruling, 2026-09-05): claim (b) itself
 is now partially fixed too -- not with the real task-verification design

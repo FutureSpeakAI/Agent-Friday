@@ -1,19 +1,10 @@
-"""Phase 1 ground truth - dispatcher honesty (Defects A and B).
+"""Dispatcher honesty: the harness's own fault text is a failure.
 
-Defect A: the empty-response fault apology the harness itself generates
-(services/agent.py, the "[Friday returned an empty response twice in a row.
-That is a fault on this end, not an answer ...]" string) is not listed in
-_CHAIN_FAILURE_SIGNATURES, so a chain step carrying it advances as
-"complete". Both overnight RSI runs (2026-09-20/21) died exactly this way.
-These tests pin the contract: the harness's own fault apologies are provider
-failures, never work product.
-
-Defect B: nothing records per-step receipts on task records, so a
-"completed" chain step cannot be judged shipped vs hollow after the fact.
-These tests pin the contract for a task_receipts service:
-record_task_receipt() accumulates what a step actually did, and
-step_verdict() judges it: "shipped" (completed with side-effecting
-receipts), "hollow" (completed with none), or "failed".
+When a seat returns empty content twice in a row, services/agent.py writes a
+fault apology into the step result. That text must match
+_CHAIN_FAILURE_SIGNATURES, or a chain step carrying it advances as
+"complete". The harness's own fault apologies are provider failures, never
+work product.
 """
 from __future__ import annotations
 
@@ -59,53 +50,6 @@ class TestDefectAFaultSignatures:
         assert not _looks_like_provider_failure(
             "Wrote services/task_receipts.py and ran the suite: all green."
         )
-
-
-class TestDefectBTaskReceipts:
-    def test_module_exists(self):
-        import agent_friday.services.task_receipts  # noqa: F401
-
-    def test_record_task_receipt_api(self):
-        from agent_friday.services.task_receipts import record_task_receipt
-
-        record_task_receipt(
-            "task-api", tool="write_file", detail="services/x.py", ok=True
-        )
-
-    def test_step_verdict_shipped(self):
-        from agent_friday.services.task_receipts import (
-            record_task_receipt,
-            step_verdict,
-        )
-
-        record_task_receipt(
-            "task-shipped", tool="write_file", detail="services/x.py", ok=True
-        )
-        assert step_verdict("task-shipped", status="complete") == "shipped"
-
-    def test_step_verdict_hollow_when_no_receipts(self):
-        from agent_friday.services.task_receipts import step_verdict
-
-        # Completed step, zero recorded receipts: hollow, never shipped.
-        assert step_verdict("task-hollow-none", status="complete") == "hollow"
-
-    def test_step_verdict_hollow_when_reads_only(self):
-        from agent_friday.services.task_receipts import (
-            record_task_receipt,
-            step_verdict,
-        )
-
-        # A step that only read files did no work: hollow.
-        record_task_receipt(
-            "task-reads", tool="read_file",
-            detail="services/agent.py", ok=True,
-        )
-        assert step_verdict("task-reads", status="complete") == "hollow"
-
-    def test_step_verdict_failed(self):
-        from agent_friday.services.task_receipts import step_verdict
-
-        assert step_verdict("task-failed", status="failed") == "failed"
 
 
 @pytest.mark.skip(

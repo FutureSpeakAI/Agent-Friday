@@ -355,38 +355,6 @@ def _validate_gemini(key: str):
         return None, f"Could not connect ({type(e).__name__})"
 
 
-def _test_key(label: str, key: str, validator, required: bool = True) -> str:
-    """Ask for a key, validate it immediately, loop until valid or skipped."""
-    while True:
-        key = Prompt.ask(
-            f"  [cyan]{label}[/cyan]",
-            password=True,
-            default=key or "",
-        )
-        if not key:
-            if not required or Confirm.ask(
-                f"  [yellow]No key entered. Skip {label}?[/yellow]", default=not required
-            ):
-                return ""
-            continue
-
-        with console.status(f"  Validating {label}...", spinner="dots"):
-            ok, msg = validator(key)
-
-        if ok is True:
-            console.print(f"  [green]✓ {msg}[/green]")
-            return key
-        elif ok is False:
-            console.print(f"  [red]✗ {msg}[/red]")
-            if Confirm.ask("  Try a different key?", default=True):
-                key = ""
-                continue
-            return key  # user insists — keep it anyway
-        else:
-            console.print(f"  [yellow]? {msg}  (key saved anyway)[/yellow]")
-            return key
-
-
 # ── Step helpers ──────────────────────────────────────────────────
 
 def _pause(msg: str = "  Press Enter to continue..."):
@@ -633,54 +601,13 @@ def step_name(total: int, existing: str) -> str:
     return name.strip().upper() or "AGENT FRIDAY"
 
 
-def _ollama_available() -> bool:
-    """Quick check for a running Ollama instance."""
-    try:
-        import requests as _r
-        return _r.get("http://localhost:11434/api/tags", timeout=2).ok
-    except Exception:
-        return False
-
-
-def _show_privacy_posture():
-    """Display the current privacy posture based on Ollama availability."""
-    if _ollama_available():
-        console.print(Panel(
-            "[bold green]Full local privacy[/bold green]\n"
-            "Ollama detected — sensitive conversations stay entirely on your device.\n"
-            "Nothing leaves your machine.",
-            title="Privacy Posture", border_style="green", padding=(0, 2),
-        ))
-    else:
-        console.print(Panel(
-            "[bold yellow]Egress-gate privacy[/bold yellow]\n"
-            "No Ollama detected. An egress gate redacts sensitive data before\n"
-            "cloud calls — your private information never leaves your device, but\n"
-            "redacted conversations may lose context.\n\n"
-            "Install Ollama for full local privacy:\n"
-            "  Windows: [bold]winget install Ollama.Ollama[/bold]\n"
-            "  macOS:   [bold]brew install ollama[/bold]",
-            title="Privacy Posture", border_style="yellow", padding=(0, 2),
-        ))
-    console.print()
-
-
 def step_routing(total: int, step: int, existing_mode: str) -> str:
     """Screen 3 -- where your words go. Returns a model_routing MODE.
 
-    This replaces `step_provider` and `_show_privacy_posture`, both of which
-    were unfixable as they stood:
-
-      * step_provider could not return a local mode at all. Options 2 and 3
-        printed "coming in v5" and returned "anthropic", so `_routing_block_for`
-        always wrote mode: cloud_only. A user who wanted a local-first install
-        had to finish setup, open Friday, and change it in Settings.
-      * _show_privacy_posture told anyone with Ollama installed that "nothing
-        leaves your machine". Installing Ollama does not change routing. The
-        wizard wrote cloud_only underneath that green panel.
-
-    The mode IS the answer here, which is why this screen writes it directly
-    rather than inferring it from a provider name.
+    The mode is the answer here, which is why this screen writes it directly
+    rather than inferring it from a provider name. Every mode, local ones
+    included, is always offered; having Ollama installed does not change
+    routing, so the screen never implies that it does.
     """
     from agent_friday.services import onboarding_copy as _oc
     scr = _say_screen("routing", total, step)
@@ -729,36 +656,6 @@ def step_routing(total: int, step: int, existing_mode: str) -> str:
         except ValueError:
             pass
         console.print(f"  [red]Enter a number from 1 to {len(choices)}.[/red]")
-
-
-def step_provider(total: int, existing_provider: str) -> str:
-    _clear()
-    _header(2, total, "LLM PROVIDER")
-    _show_privacy_posture()
-    console.print("  Choose your primary AI provider.\n")
-
-    for i, p in enumerate(PROVIDERS):
-        num = f"[bold cyan]{i + 1}[/bold cyan]"
-        name = f"[bold white]{p['name']}[/bold white]"
-        star = " [bold magenta]← RECOMMENDED[/bold magenta]" if p.get("tag") == "RECOMMENDED" else ""
-        coming = " [dim](coming soon)[/dim]" if p.get("tag") == "COMING SOON" else ""
-        console.print(f"  {num}.  {name}{star}{coming}")
-        console.print(f"       [dim]{p['desc']}[/dim]")
-        console.print()
-
-    while True:
-        choice = Prompt.ask("  [cyan]Provider (1–3)[/cyan]", default="1")
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(PROVIDERS):
-                p = PROVIDERS[idx]
-                if p.get("tag") == "COMING SOON":
-                    console.print(f"  [yellow]{p['name']} support is coming in v5.0. Defaulting to Anthropic.[/yellow]")
-                    return "anthropic"
-                return p["id"]
-        except ValueError:
-            pass
-        console.print("  [red]Enter 1, 2, or 3.[/red]")
 
 
 def step_model(total: int, provider_id: str, existing_model: str) -> str:
@@ -936,33 +833,6 @@ def _store_validated_key(provider: str, label: str, existing: str,
         console.print(f"  [red]x {smsg}[/red]")
         if not Confirm.ask("  Try again?", default=True):
             return ""
-
-
-def step_api_keys(total: int, existing_anthro: str, existing_gemini: str) -> tuple[str, str]:
-    _clear()
-    _header(5, total, "API KEYS")
-    console.print(
-        "  Keys are stored in [bold]~/.friday/config.yaml[/bold] — only on your machine.\n"
-        "  They are never transmitted to any third party by Friday.\n"
-    )
-    console.print(Rule(style="dim"))
-    console.print()
-
-    # Anthropic
-    console.print("  [bold]Anthropic API Key[/bold]  [dim](required for chat)[/dim]")
-    console.print("  [dim]Get yours at: console.anthropic.com[/dim]\n")
-    anthro = _test_key("Anthropic key (sk-ant-...)", existing_anthro, _validate_anthropic, required=True)
-
-    console.print()
-    console.print(Rule(style="dim"))
-    console.print()
-
-    # Gemini
-    console.print("  [bold]Google Gemini API Key[/bold]  [dim](optional — enables voice, images, music)[/dim]")
-    console.print("  [dim]Get yours at: aistudio.google.com/app/apikey[/dim]\n")
-    gemini = _test_key("Gemini key (AIza...)", existing_gemini, _validate_gemini, required=False)
-
-    return anthro, gemini
 
 
 VAULT_DIR = FRIDAY_DIR / "vault"
@@ -1727,14 +1597,9 @@ def main():
         config.setdefault("preferred_scene_index", 0)
         config.setdefault("connectors", {})
 
-    # The routing answer has to reach the thing that routes a turn.
-    #
-    # It never could before: this was derived from `provider`, and step_provider
-    # could only ever return "anthropic" (options 2 and 3 printed "coming in
-    # v5"), so _routing_block_for wrote mode: cloud_only on every install ever
-    # made by this wizard -- underneath a welcome screen promising the user's
-    # private information never left the device. The mode is now a question the
-    # user actually answered, on screen 3.
+    # The routing answer has to reach the thing that routes a turn: the mode
+    # is the one the user chose on the routing screen, not one inferred from
+    # a provider name.
     _routing = _routing_block_for(
         config.get("provider") or "anthropic",
         (existing.get("model_routing") or {}),
