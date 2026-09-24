@@ -32,6 +32,7 @@ import asyncio
 import re
 import html
 import calendar
+import itertools
 import time as _time
 import hashlib as _hashlib
 import hmac as _hmac
@@ -7485,6 +7486,11 @@ TOOL_REQUIRES_CONFIRMATION = _ALWAYS_CONFIRM
 # affirmative grants it (see prepare_confirmation_ctx).
 _PENDING_CONFIRMATIONS: dict[str, dict] = {}
 _PENDING_LOCK = threading.Lock()
+#: Ask order. "The question most recently asked" is decided by this counter,
+#: never by the wall clock: Windows' clock advances in ~15 ms steps, so two
+#: questions asked back to back can share a timestamp, and a tie resolved
+#: toward the older one lets a yes grant the wrong action.
+_PENDING_SEQ = itertools.count(1)
 
 #: Tokens that mean yes. Matched at the START of a message (after optional
 #: filler) or at its END — see `_is_affirmative` for why both.
@@ -7629,11 +7635,13 @@ def _record_pending_confirmation(session_id, name, tool_input, *, turn=None):
         entry = bucket.get(fp)
         if entry is None:
             entry = {"tool": name, "input": tool_input, "ts": _time.time(),
+                     "seq": next(_PENDING_SEQ),
                      "asks": 1, "turn": turn, "granted": False}
             bucket[fp] = entry
         else:
             entry["input"] = tool_input
             entry["ts"] = _time.time()
+            entry["seq"] = next(_PENDING_SEQ)
             if turn is None or entry.get("turn") != turn:
                 entry["asks"] = int(entry.get("asks") or 0) + 1
                 entry["turn"] = turn
@@ -7704,7 +7712,7 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
         # It is not a session-wide permission slip: the gate below re-derives
         # the fingerprint of whatever the model actually tries next and will
         # refuse to spend this grant on a different action.
-        newest = max(bucket.items(), key=lambda kv: kv[1].get("ts") or 0)
+        newest = max(bucket.items(), key=lambda kv: kv[1].get("seq") or 0)
         fp, entry = newest
         with _PENDING_LOCK:
             live = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fp)
