@@ -206,3 +206,51 @@ class TestSingleAccountPkceVerifierPersists:
         resp = client.get("/api/google/auth/callback?state=some-state&code=fake-code")
         assert resp.status_code == 400
         assert capture_fetch_token["verifiers"] == []
+
+
+class TestSingleAccountAcrossAddresses:
+    """Begun on https://agent.<name>, finished on http://localhost:<port>.
+
+    The return trip is pinned to localhost (Google accepts only that for a
+    Desktop client), so the callback lands on a different address from the one
+    the sign-in began on, and the browser sends it none of that address's
+    cookies. The pending record kept on the server, keyed by the `state`
+    Google carries back, is what lets it finish -- once, and only once.
+    """
+
+    def test_a_sign_in_begun_on_the_named_address_finishes_on_localhost(
+            self, app, monkeypatch, capture_fetch_token):
+        from urllib.parse import parse_qs, urlparse
+        monkeypatch.setattr(routes_g, "_google_client_config",
+                            lambda: (_FAKE_WEB_CLIENT, "test"))
+        monkeypatch.setattr(routes_g, "_write_google_token", lambda creds: True)
+        generated = []
+        real_authorization_url = Flow.authorization_url
+
+        def spy_authorization_url(self, *a, **kw):
+            result = real_authorization_url(self, *a, **kw)
+            generated.append(self.code_verifier)
+            return result
+
+        monkeypatch.setattr(Flow, "authorization_url", spy_authorization_url)
+
+        begun = app.test_client()                     # the agent.friday tab
+        start = begun.get("/api/google/auth", headers={"Host": "agent.friday"})
+        assert start.status_code == 200, start.get_data(as_text=True)
+        state = parse_qs(urlparse(start.get_json()["auth_url"]).query)["state"][0]
+
+        finished = app.test_client()                  # localhost: no agent.friday cookies
+        cb = finished.get(f"/api/google/auth/callback?state={state}&code=fake-code")
+        assert cb.status_code == 200, cb.get_data(as_text=True)
+        assert capture_fetch_token["verifiers"] == [generated[0]]
+
+        replay = app.test_client().get(f"/api/google/auth/callback?state={state}&code=fake-code")
+        assert replay.status_code == 400
+        assert capture_fetch_token["verifiers"] == [generated[0]]
+
+    def test_an_unknown_state_still_fails_honestly(self, app, monkeypatch, capture_fetch_token):
+        monkeypatch.setattr(routes_g, "_google_client_config",
+                            lambda: (_FAKE_WEB_CLIENT, "test"))
+        r = app.test_client().get("/api/google/auth/callback?state=never-issued&code=x")
+        assert r.status_code == 400
+        assert capture_fetch_token["verifiers"] == []

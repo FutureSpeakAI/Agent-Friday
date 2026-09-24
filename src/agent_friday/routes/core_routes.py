@@ -113,6 +113,19 @@ def serve_workspace_tab(ws_id):
         'document.documentElement.classList.add("ws-standalone");</script>')
 
 
+def _local_address_script() -> str:
+    """Friday's own address on this PC, as far as it is PROVEN to reach this
+    process (services/local_address.page_info; never blocks). The page opens
+    workspace tabs there when it is itself on bare localhost."""
+    try:
+        from agent_friday.services import local_address as _la
+        info = _la.page_info()
+    except Exception:
+        info = {}
+    data = json.dumps(info).replace('<', '\\u003c')
+    return f'<script>window.__FRIDAY_LOCAL_ADDRESS__={data};</script>'
+
+
 def _serve_index(extra_head: str = ''):
     try:
         with open('index.html', encoding='utf-8') as _f:
@@ -121,7 +134,7 @@ def _serve_index(extra_head: str = ''):
             f'<script>window.__FRIDAY_API_TOKEN="{core._current_api_token()}";</script>'  # pragma: allowlist secret
         )
         # Inject early in <head> so the token is available before any fetch calls.
-        _html = _html.replace('<head>', f'<head>\n{_token_script}{extra_head}', 1)
+        _html = _html.replace('<head>', f'<head>\n{_token_script}{_local_address_script()}{extra_head}', 1)
         return Response(_html, content_type='text/html')
     except FileNotFoundError:
         return ("index.html not found. It is tracked in git — restore it with "
