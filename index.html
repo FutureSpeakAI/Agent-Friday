@@ -28320,9 +28320,14 @@ function fridayInvalidateModelCatalog() {
    exactly the fields it read before streaming existed. */
 async function fridayChatTurn(body, onDelta) {
   const SEP = String.fromCharCode(10) + String.fromCharCode(10);
-  let got = false;
+  let got = false;          // any BYTES arrived (a delta, or a keepalive)
+  let started = false;      // the server said the turn is underway
+  let turnId = null;
   try {
-    const r = await fetch('/api/chat/stream', {
+    // apiFetch, not fetch: this used to be the one call in the neighbourhood
+    // that sent no X-Friday-Token, so a request that was not auto-authenticated
+    // as local got a 401 and surfaced as "connection error".
+    const r = await apiFetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -28340,26 +28345,94 @@ async function fridayChatTurn(body, onDelta) {
       while ((i = buf.indexOf(SEP)) !== -1) {
         const frame = buf.slice(0, i);
         buf = buf.slice(i + SEP.length);
-        if (frame.indexOf('data:') !== 0) continue;   // ": open" keepalive
+        if (frame.indexOf('data:') !== 0) continue;   // ": open" / ": ping"
         let ev;
         try { ev = JSON.parse(frame.slice(5).trim()); } catch (_) { continue; }
+        if (ev.started) { started = true; turnId = ev.turn_id || null; continue; }
         if (typeof ev.delta === 'string') { if (onDelta) onDelta(ev.delta); continue; }
+        if (ev.tool && onDelta) {
+          // Live tool progress, shown as its own line so the user can see what
+          // Friday is doing while it does it.
+          onDelta((ev.tool.note || ev.tool.label || '') + String.fromCharCode(10));
+          continue;
+        }
         if (ev.error) errMsg = ev.error;
         if (ev.done) { sawDone = true; payload = ev.payload; }
       }
     }
     if (payload) return payload;
+    // The stream ended without a payload. If the turn was UNDERWAY, it is still
+    // running server-side -- poll it rather than run it again.
+    if (started && turnId) {
+      const recovered = await fridayResumeTurn(turnId);
+      if (recovered) return recovered;
+    }
     throw new Error(errMsg || (sawDone ? 'stream finished with no payload'
-                                       : 'stream ended early'));
+                                       : 'Friday is still working on this — the '
+                                         + 'connection dropped, not the turn.'));
   } catch (e) {
+    // NEVER re-send a turn that started. Re-POSTing ran it twice and billed it
+    // twice: on 2026-09-24 a dropped stream during bonsai2's silent reasoning
+    // phase produced a "connection error" AND a second execution the user could
+    // watch. `got` alone was the wrong test, because a silent turn produces no
+    // bytes at all until its first token.
+    if (started && turnId) {
+      try {
+        const recovered = await fridayResumeTurn(turnId);
+        if (recovered) return recovered;
+      } catch (_) { /* fall through to the honest error */ }
+      throw new Error('Friday is still working on this — the connection dropped, '
+                      + 'not the turn. It will appear when it finishes.');
+    }
     if (got) throw e;          // half a turn already happened — do not repeat it
-    const r = await fetch('/api/chat', {
+    const r = await apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     return await r.json();
   }
+}
+
+/* Poll a turn that was underway when its stream died.
+   Recovery, not repetition: the turn is running on the server and will persist
+   its own reply, so the only question is whether this tab can still see it. */
+async function fridayResumeTurn(turnId, totalMs) {
+  /* Wait while the turn is alive, then read its reply out of history.
+     `/api/chat/turn/<id>/liveness` answers {turn_id, state, alive} with state in
+     working | quiet | gone -- it carries NO payload, because the turn persists
+     its own reply. So the shape is: wait for 'gone', then ask history what
+     landed. That is recovery; re-POSTing the turn was repetition. */
+  const deadline = Date.now() + (totalMs || 240000);
+  let everAlive = false;
+  while (Date.now() < deadline) {
+    await new Promise(res => setTimeout(res, 2000));
+    let d = null;
+    try {
+      const r = await apiFetch('/api/chat/turn/' + encodeURIComponent(turnId)
+                               + '/liveness');
+      if (!r.ok) continue;
+      d = await r.json();
+    } catch (_) { continue; }
+    if (!d) continue;
+    if (d.alive) { everAlive = true; continue; }      // working or quiet
+    // 'gone': finished, or never registered. Either way, history decides.
+    if (!everAlive && d.state === 'gone') return null;
+    break;
+  }
+  try {
+    const r = await apiFetch('/api/chat/history');
+    if (!r.ok) return null;
+    const h = await r.json();
+    const msgs = (h && (h.messages || h.history)) || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i] && msgs[i].role === 'friday' && (msgs[i].text || '').trim()) {
+        return { status: 'ok', response: msgs[i].text, model: msgs[i].model,
+                 seat: msgs[i].seat, recovered: true };
+      }
+    }
+  } catch (_) { /* fall through */ }
+  return null;
 }
 
 function useModelCatalog() {

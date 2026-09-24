@@ -890,6 +890,54 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
 #: the transport publishes to it, and chat() is not modified at all.
 DELTA_SINK = _contextvars.ContextVar("friday_delta_sink", default=None)
 
+#: Live TOOL progress, same mechanism as DELTA_SINK.
+#:
+#: Stephen, 2026-09-24: "It'd be best if the model responded before executing tool
+#: calls though, that way the user knows that it's going to do that work for them."
+#: Two halves, because either alone is unreliable: the prompt ASKS the model to
+#: say what it is about to do (see TOOL_INTENT_POLICY), and this sink narrates the
+#: call itself when the model said nothing. The narration is generated FROM the
+#: actual tool being invoked, so it can never describe work that is not happening.
+TOOL_SINK = _contextvars.ContextVar("friday_tool_sink", default=None)
+
+#: Plain-language narration per tool. Only tools that are genuinely slow or
+#: surprising need one -- narrating a clipboard write is noise.
+_TOOL_NARRATION = {
+    "query_calendar": "Checking your calendar",
+    "search_email": "Looking through your inbox",
+    "draft_email": "Drafting that email",
+    "search_web": "Searching the web",
+    "browse_web": "Reading that page",
+    "search_news": "Pulling the latest news",
+    "read_file": "Reading that file",
+    "search_files": "Looking for that file",
+    "write_file": "Writing that file",
+    "annotate_calendar_events": "Updating your calendar entries",
+    "query_trust_graph": "Checking what I know about them",
+    "open_url": "Opening that in your browser",
+    "run_command": "Running that command",
+}
+
+
+def announce_tool(name, args=None):
+    """Tell the UI which tool is starting. Never raises, never invents.
+
+    `note` is derived from the tool NAME, so a narration cannot claim work that
+    is not being done -- the honesty rule this codebase applies to every other
+    progress claim.
+    """
+    try:
+        sink = TOOL_SINK.get()
+        if not sink:
+            return
+        label = str(name or "").strip()
+        note = _TOOL_NARRATION.get(label)
+        sink({"name": label, "label": label,
+              "note": (note + "\u2026") if note else ""})
+    except Exception:
+        pass
+
+
 #: Where a completion's `timings` go (llama-server's per-request
 #: `prompt_n` / `predicted_n` / per-token ms), same mechanism as DELTA_SINK.
 #: The voice session sets it to record `prefill_tokens` in the turn receipt
@@ -1133,7 +1181,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
     # around.
     try:
         from agent_friday.services.local_only_guard import refuse_if_active
-        refuse_if_active(str(provider or "openai"), str(model or ""))
+        refuse_if_active(provider if provider else "openai", str(model or ""))
     except ImportError:
         pass
     import requests
@@ -2729,6 +2777,14 @@ FRIDAY_SYSTEM_PROMPT = (
     "Calendar. Instead, say the integration is set up and just needs a one-time connection, and OFFER to "
     "walk them through it (they authorize at /api/google/auth, or via Settings -> Connectors; you can "
     "open_url that page for them). Only report an actual failure if a tool fails for some other reason.\n\n"
+    "== SAY WHAT YOU ARE ABOUT TO DO ==\n"
+    "Before your FIRST tool call in a turn, write one short line saying what "
+    "you are about to do - 'Let me check your calendar and inbox for today.' - "
+    "then call the tools. The user is watching a blank panel while a local "
+    "model reasons and a tool runs; one line tells them the work is happening "
+    "FOR them rather than not happening at all. One line, not a paragraph, and "
+    "only about calls you are actually about to make: describing work you then "
+    "do not do is the same fabrication the rule below forbids.\n\n"
     "== HONEST DEGRADATION (applies to every model, every provider) ==\n"
     "If a tool fails, times out, returns an error, or isn't available, SAY SO AND STOP — do not guess, "
     "estimate, or describe what the result probably would have been. A real tool call is invisible to the "

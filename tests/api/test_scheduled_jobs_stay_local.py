@@ -195,3 +195,56 @@ def test_the_four_jobs_ship_local_only(sid):
     defaults = getattr(scheduler, "LOCAL_ONLY_BY_DEFAULT", None)
     assert defaults is not None, "no LOCAL_ONLY_BY_DEFAULT declaration exists"
     assert sid in defaults, "%s does not default to local-only" % sid
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A descriptor dict must not be mistaken for a cloud provider.
+# ─────────────────────────────────────────────────────────────────────────────
+
+LOCAL_DESCRIPTORS = [
+    {"name": "arbiter-local", "classification": "local"},
+    {"name": "ollama-local", "classification": "local"},
+    {"name": "llama-cpp-local"},
+    {"id": "local", "classification": "local"},
+]
+
+
+@pytest.mark.parametrize("desc", LOCAL_DESCRIPTORS)
+def test_a_local_descriptor_dict_is_allowed(desc):
+    """`_call_openai` takes `provider` as EITHER a registry name or a full
+    descriptor dict. The first version of the guard did `str(provider or ...)`,
+    which stringified the dict, so Friday's OWN LOCAL SEAT read as cloud and was
+    refused. Seen live within half an hour of shipping:
+
+        refused a cloud call inside a local-only run: Daily creation is
+        local-only, so it will not call {'name': 'arbiter-local', ...}
+
+    A guard that blocks the thing it exists to permit is worse than no guard.
+    """
+    from agent_friday.services import local_only_guard as g
+    with g.local_only("Daily creation"):
+        g.refuse_if_active(desc, "bonsai2:27b")      # must NOT raise
+
+
+@pytest.mark.parametrize("desc", [
+    {"name": "openrouter", "classification": "cloud"},
+    {"name": "anthropic"},
+    {"id": "openai"},
+])
+def test_a_cloud_descriptor_dict_is_still_refused(desc):
+    from agent_friday.services import local_only_guard as g
+    with g.local_only("Daily creation"):
+        with pytest.raises(g.CloudRefused):
+            g.refuse_if_active(desc, "some-model")
+
+
+def test_the_refusal_names_the_provider_not_a_dict_dump():
+    """The live message read '...will not call {'name': 'arbiter-local', ...}',
+    which is both wrong and unreadable."""
+    from agent_friday.services import local_only_guard as g
+    with g.local_only("Daily creation"):
+        with pytest.raises(g.CloudRefused) as exc:
+            g.refuse_if_active({"name": "anthropic"}, "claude-opus-5-5")
+    msg = str(exc.value)
+    assert "anthropic" in msg
+    assert "{" not in msg, "the refusal dumped a dict: %r" % msg

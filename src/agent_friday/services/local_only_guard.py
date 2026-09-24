@@ -85,21 +85,43 @@ class local_only:
         return False
 
 
-def refuse_if_active(provider: str, model: str = "") -> None:
+def provider_name_of(provider) -> str:
+    """The provider's NAME, whether it arrived as a string or a descriptor dict.
+
+    `_call_openai` takes `provider` as EITHER a registry name or a full
+    descriptor dict (the multi-provider path). An early version of this guard did
+    `str(provider or "openai")`, which stringified the whole dict -- so
+    `{'name': 'arbiter-local', 'classification': 'local', ...}` did not match any
+    local name and the guard refused Friday's OWN LOCAL SEAT. Observed live
+    within half an hour of shipping: "Daily creation is local-only, so it will not
+    call {'name': 'arbiter-local', ...}". A guard that blocks the thing it is
+    supposed to permit is worse than no guard.
+    """
+    if isinstance(provider, dict):
+        return str(provider.get("name") or provider.get("id") or "").strip()
+    return str(provider or "").strip()
+
+
+def refuse_if_active(provider, model: str = "") -> None:
     """Raise when a cloud call is attempted inside a local-only run.
 
-    Called from the cloud transports. `provider` is whatever the transport calls
-    itself, so an unknown name is treated as cloud -- fail-closed, since the cost
-    of being wrong in the other direction is a bill nobody chose.
+    Called from the cloud transports. `provider` may be a name or a descriptor
+    dict. An unknown name is treated as cloud -- fail-closed, since the cost of
+    being wrong the other way is a bill nobody chose.
     """
     if not is_active():
         return
+    name = provider_name_of(provider)
     try:
         from agent_friday.services.seat_policy import is_local_provider_name
-        if is_local_provider_name(provider):
+        if is_local_provider_name(name):
+            return
+        # A descriptor can also declare itself local outright.
+        if isinstance(provider, dict) and                 str(provider.get("classification") or "").lower() == "local":
             return
     except Exception:
         pass
+    provider = name or provider
     msg = ("%s is local-only, so it will not call %s%s. It waits for the local "
            "seat and skips with a reason rather than spending money nobody "
            "chose." % (label(), provider or "a cloud provider",
