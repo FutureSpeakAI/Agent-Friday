@@ -1,6 +1,6 @@
 """One read-only view behind both model surfaces.
 
-The top-bar quick switch and Settings → Intelligence used to assemble
+The top-bar quick switch and Settings → Models used to assemble
 themselves from whatever each happened to fetch, which is how the same model
 ended up listed twice with the selected dot on both copies, and how an
 automatic-speech-recognition model ended up offered as the orchestrator.

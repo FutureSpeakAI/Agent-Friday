@@ -105,7 +105,7 @@ Friday can talk with no cloud key at all through a model on your own machine.
 Nothing is bundled: the installer sizes a local model to your graphics card and
 downloads one, or, on a small card, recommends a cloud key instead and
 downloads nothing. Every model the planner offers calls tools natively. You can
-change your mind at any time in **Settings → Intelligence**.
+change your mind at any time in **Settings → Models**.
 
 Cloud keys — Anthropic for sharper reasoning, Gemini for voice and creative
 work, OpenRouter for hundreds of models through one key — are optional and are

@@ -3,8 +3,8 @@
 
 ui_parts/app.html is a hand-maintained mirror of index.html that nothing
 builds from automatically. It is missing several components index.html has
-(ConsentFlow, SettingsTabCosts, ConversationBar, QuickSwitch,
-SettingsTabIntelligence among them) and that gap is expected to keep
+(ConsentFlow, ConversationBar, QuickSwitch, SettingsTabIntelligence
+among them) and that gap is expected to keep
 widening — the mirror is kept only for history, per its own header note and
 src/agent_friday/ui/build_ui.py's docstring.
 
@@ -42,7 +42,6 @@ _BUILD_UI = _REPO_ROOT / "src" / "agent_friday" / "ui" / "build_ui.py"
 
 _HIGH_SEVERITY_MISSING = (
     "ConsentFlow",
-    "SettingsTabCosts",
     "ConversationBar",
     "QuickSwitch",
     "SettingsTabIntelligence",

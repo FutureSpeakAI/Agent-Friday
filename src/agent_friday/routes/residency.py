@@ -45,7 +45,7 @@ def status():
         })
 
     # Recomputed if stale (Arbiter.PLAN_MAX_AGE_S). Every consumer of this
-    # route -- including Settings -> Intelligence, which labels the refusals
+    # route -- including Settings -> Models, which labels the refusals
     # "right now" -- was reading the plan built at boot.
     plan = arb.plan_fresh() or {}
     seats = {}

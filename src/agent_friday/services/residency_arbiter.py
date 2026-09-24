@@ -1674,7 +1674,7 @@ class Arbiter:
         """The plan, recomputed if it has gone stale. Never raises.
 
         `self.plan` is computed once at boot and then only on an explicit
-        replan or a seat change. Settings -> Intelligence rendered that snapshot
+        replan or a seat change. Settings -> Models rendered that snapshot
         under the heading "WHAT WILL NOT FIT RIGHT NOW", which was false in the
         way that matters: measured on the reference machine, the panel showed
         refusals computed at boot against a card with ~10 GB free, while the card had

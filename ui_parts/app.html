@@ -1,5 +1,5 @@
 
-<!-- NOTE (2026-08-18): the model quick switch and Settings -> Intelligence were
+<!-- NOTE (2026-08-18): the model quick switch and Settings -> Models were
      rebuilt in index.html, which is the file the server actually serves. This
      file is a hand-maintained JSX mirror that nothing builds from and nothing
      reads; mirroring 560 lines of new components here by hand would create a
@@ -10751,8 +10751,8 @@ function ModelBrowser({save}){
               {m.note}{m.note&&m.licence?' · ':''}{m.licence&&<span style={{color:'#ffb347'}}>{m.licence}</span>}
             </div>}
           </div>
-          <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use as orchestrator (main brain)" onClick={()=>useAs('orchestrator_model',m.id)}>Orchestrator</button>
-          <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use as sub-agent model" onClick={()=>useAs('subagent_model',m.id)}>Subagent</button>
+          <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use for everyday conversation (the main model)" onClick={()=>useAs('orchestrator_model',m.id)}>Use for chat</button>
+          <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use for sub-tasks Friday hands off to a helper" onClick={()=>useAs('subagent_model',m.id)}>Use for sub-tasks</button>
           {(m.modalities||[]).includes('image')&&<button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use as image generation model" onClick={()=>useAs('creative_model',m.id)}>Image</button>}
           {(m.modalities||[]).includes('video')&&<button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use as video generation model" onClick={()=>useAsVideo(m)}>Video</button>}
         </div>
@@ -10787,10 +10787,6 @@ function SettingsTabProviders({s,save}){
       {disabled.length>0&&<div style={{fontSize:10,color:'rgba(255,255,255,0.3)',fontFamily:'JetBrains Mono',margin:'14px 0 8px',letterSpacing:'.08em'}}>Available to enable</div>}
       {disabled.map(p=><ProviderRow key={p.name} prov={p} onChanged={refresh}/>)}
       <div style={{fontSize:10,color:'rgba(255,255,255,0.28)',fontFamily:'JetBrains Mono',marginTop:10}}>● healthy · ◐ needs attention · ○ disabled. The dot reflects measured response time and error rate.</div>
-    </StSection>
-    <StSection title="Model browser">
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed.</div>
-      {with3DModels(<ModelBrowser save={save}/>)}
     </StSection>
   </div>;
 }
@@ -10871,32 +10867,36 @@ function SettingsTabConnectors({
       color: 'rgba(255,255,255,0.38)',
       fontSize: 12
     }
-  }, "No connectors available."), connectors.map((c, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
+  }, "No connectors available."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: 6
+    }
+  }, connectors.map((c, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    title: c.connected ? 'Connected' : 'Not connected',
+    style: {
+      display: 'inline-flex',
       alignItems: 'center',
-      padding: '8px 12px',
-      background: 'rgba(255,255,255,0.03)',
-      borderRadius: 6,
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: 'rgba(255,255,255,0.85)',
+      gap: 6,
+      padding: '4px 10px',
+      borderRadius: 12,
       fontSize: 12,
-      fontFamily: 'JetBrains Mono'
+      fontFamily: 'var(--st-font)',
+      background: c.connected ? 'rgba(0,255,128,0.08)' : 'rgba(255,255,255,0.03)',
+      border: '1px solid ' + (c.connected ? 'rgba(0,255,128,0.3)' : 'rgba(255,255,255,0.08)'),
+      color: c.connected ? 'var(--st-text)' : 'var(--st-dim)'
     }
-  }, c.name || c.id), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true",
     style: {
-      fontSize: 10,
-      padding: '2px 8px',
-      borderRadius: 4,
-      background: c.connected ? 'rgba(0,255,128,0.1)' : 'rgba(255,255,255,0.04)',
-      color: c.connected ? '#00ff80' : '#555'
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      background: c.connected ? '#00ff80' : 'rgba(255,255,255,0.25)'
     }
-  }, c.connected ? 'on' : 'off')))));
+  }), c.name || c.id)))));
 }
 function SettingsTabAbout(){
   const[h,setH]=useState(null);
@@ -11725,8 +11725,8 @@ function SettingsWS() {
     sub: 'Her name, her personality, and which workspaces the dock offers.'
   }, {
     id: 'intelligence',
-    label: 'Intelligence',
-    sub: 'Which model does each job, and whether it runs here or in the cloud.'
+    label: 'Models',
+    sub: 'Which model does each job, and whether it runs on this machine or in the cloud.'
   }, {
     // Spend keys and the accounts Friday may use sit together: both are
     // things a person connects once and then forgets about.
@@ -11862,10 +11862,15 @@ function SettingsWS() {
   }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabModels, {
+  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabModels, {
     s: s,
     save: save
-  }), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  }), /*#__PURE__*/React.createElement(StSection, {
+    title: "Model browser",
+    desc: "Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed. Keys are added in Accounts & Keys."
+  }, with3DModels(/*#__PURE__*/React.createElement(ModelBrowser, {
+    save: save
+  })))), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(SettingsTabConnectors, {
@@ -14589,7 +14594,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
              silently answering from the cloud — offer the explicit choice
              to switch instead of a dead end. */}
           {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
-            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Intelligence directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
+            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
             {m.role==='user'?'You':'Friday'} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}

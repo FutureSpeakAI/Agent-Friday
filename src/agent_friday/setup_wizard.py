@@ -305,7 +305,7 @@ def _routing_block_for(provider_id: str, existing: dict,
 
     An answer already on disk is left alone unless the provider changed in
     THIS run. Setup is not the only place mode can be set -- Settings ->
-    Intelligence writes it too -- and recomputing a value the user has
+    Models writes it too -- and recomputing a value the user has
     already chosen, on every run, is the shape of a seat-binding defect
     (a stale value re-stamping the user's pick). Changing the provider
     answer, though, IS an instruction.

@@ -4,7 +4,7 @@ Settings grew one tab per feature until it had thirteen, with the same control
 reachable from several of them and developer diagnostics mixed in with what
 every user needs. The structure is now fixed by what a user is trying to do:
 
-    General · Intelligence · Accounts & Keys · Privacy & Approvals ·
+    General · Models · Accounts & Keys · Privacy & Approvals ·
     Appearance & 3D · Voice & Tracking · Spending · Advanced   (+ About)
 
 These tests hold that shape in BOTH UI files (index.html is served;
@@ -37,7 +37,7 @@ CORE = ROOT / "src" / "agent_friday" / "core" / "__init__.py"
 
 EXPECTED_TABS = [
     ("general", "General"),
-    ("intelligence", "Intelligence"),
+    ("intelligence", "Models"),
     ("accounts", "Accounts & Keys"),
     ("privacy", "Privacy & Approvals"),
     ("appearance", "Appearance & 3D"),
@@ -163,3 +163,34 @@ def test_settings_shell_sets_its_own_text_colour(path):
     body = _settings_ws(path.read_text(encoding="utf-8"))
     assert re.search(r'className: "st-root",\s*style: \{[^}]*color: \'var\(--st-text\)\'', body), (
         "%s: the Settings shell does not set a text colour" % path.name)
+
+
+def _fn(src: str, name: str) -> str:
+    start = src.index("function %s(" % name)
+    return src[start:src.index("\nfunction ", start + 10)]
+
+
+def test_models_tab_receives_the_settings_it_uses():
+    """The tab rendered the OpenRouter spend dial with `s` and `save` while
+    declaring no parameters, so any job set to openrouter/auto threw a
+    ReferenceError and blanked the tab."""
+    src = INDEX.read_text(encoding="utf-8")
+    sig = re.search(r"function SettingsTabIntelligence\(([^)]*)\)", src).group(1)
+    assert "s" in re.findall(r"\w+", sig) and "save" in re.findall(r"\w+", sig), sig
+
+
+def test_models_are_chosen_on_the_models_tab_only():
+    src = INDEX.read_text(encoding="utf-8")
+    assert "ModelBrowser" in _fn(src, "SettingsTabIntelligence")
+    providers = _fn(src, "SettingsTabProviders")
+    assert "ModelBrowser" not in providers and "AutoRouterControls" not in providers, (
+        "Accounts & Keys is for keys; the model browser and the router's "
+        "spend dial belong with the jobs they choose models for")
+
+
+def test_machine_and_provider_diagnostics_live_in_advanced():
+    src = INDEX.read_text(encoding="utf-8")
+    tab = _fn(src, "SettingsTabIntelligence")
+    for gone in ("E(Bar,", "E(WeightsRows", "I need my machine", "(d.providers || [])"):
+        assert gone not in tab, "%s is still on the Models tab" % gone
+    assert "IntelligenceDiagnostics" in _fn(src, "SettingsTabAdvanced")

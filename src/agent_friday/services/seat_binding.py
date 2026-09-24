@@ -226,7 +226,7 @@ def propose(plan: dict, settings: dict) -> dict:
     # So the choice survives exactly until the next boot, every time.
     #
     # Concretely (docs/history/audits/workflow-run-forensics-2026-08-24.md
-    # §2.2): with Opus 5 assigned in Settings -> Intelligence, the plan's own
+    # §2.2): with Opus 5 assigned in Settings -> Models, the plan's own
     # `heavy = gen[0]` picked the largest GGUF on disk and the boot log
     # recorded "seat binding applied: heavy_hitter->gemma4:26b" -- a model
     # 16.95 GB on disk, on a 12 GB card, that no live endpoint was serving.
