@@ -354,7 +354,8 @@ def test_the_background_task_worker_enters_the_unattended_mark():
     """Otherwise the cap is dead code: scheduled work would inherit 999."""
     import inspect
     from agent_friday.services import agent as ag
-    src = inspect.getsource(ag._task_worker)
+    # The reasoning-trace work wraps the worker; its body is the untraced one.
+    src = inspect.getsource(getattr(ag, "_task_worker_untraced", ag._task_worker))
     assert "unattended()" in src, (
         "the background task worker does not mark its run unattended, so "
         "scheduled jobs would inherit the interactive round budget")
