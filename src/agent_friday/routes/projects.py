@@ -4,6 +4,11 @@ Routes — Creative Project Manager + Series Bible.
 CRUD over creative projects and their Series Bible (characters, locations,
 continuity, style guide, asset gallery). Backed by services/creative_memory.
 
+These live under /api/creative/projects. /api/projects belongs to the chat
+sidebar's projects (routes/conversations.py), a different store; Flask serves
+whichever blueprint registered a URL first, so two features on one URL means
+one of them silently answers for the other.
+
 By convention here, mutation endpoints return HTTP 200 with the status in the
 body (matching the creative-generation routes) so the UI gets a uniform
 envelope; genuine server faults still surface as 500.
@@ -22,7 +27,7 @@ def _err(e, code=500):
 
 
 # ═══ PROJECTS ════════════════════════════════════════════════════
-@projects_bp.route('/api/projects', methods=['GET'])
+@projects_bp.route('/api/creative/projects', methods=['GET'])
 def projects_list():
     try:
         return jsonify({"status": "ok", "projects": cm.list_projects(),
@@ -31,7 +36,7 @@ def projects_list():
         return _err(e)
 
 
-@projects_bp.route('/api/projects', methods=['POST'])
+@projects_bp.route('/api/creative/projects', methods=['POST'])
 def projects_create():
     data = request.get_json(silent=True) or {}
     name = (data.get('name') or '').strip()
@@ -47,7 +52,7 @@ def projects_create():
         return _err(e)
 
 
-@projects_bp.route('/api/projects/active', methods=['GET'])
+@projects_bp.route('/api/creative/projects/active', methods=['GET'])
 def projects_active():
     try:
         return jsonify({"status": "ok", "project": cm.get_active_project(),
@@ -56,7 +61,7 @@ def projects_active():
         return _err(e)
 
 
-@projects_bp.route('/api/projects/<pid>', methods=['GET'])
+@projects_bp.route('/api/creative/projects/<pid>', methods=['GET'])
 def projects_get(pid):
     try:
         bible = cm.get_project(pid)
@@ -67,7 +72,7 @@ def projects_get(pid):
         return _err(e)
 
 
-@projects_bp.route('/api/projects/<pid>', methods=['PATCH', 'POST'])
+@projects_bp.route('/api/creative/projects/<pid>', methods=['PATCH', 'POST'])
 def projects_update(pid):
     data = request.get_json(silent=True) or {}
     try:
@@ -79,7 +84,7 @@ def projects_update(pid):
         return _err(e)
 
 
-@projects_bp.route('/api/projects/<pid>', methods=['DELETE'])
+@projects_bp.route('/api/creative/projects/<pid>', methods=['DELETE'])
 def projects_delete(pid):
     try:
         return jsonify({"status": "ok", "deleted": cm.delete_project(pid)})
@@ -87,7 +92,7 @@ def projects_delete(pid):
         return _err(e)
 
 
-@projects_bp.route('/api/projects/<pid>/activate', methods=['POST'])
+@projects_bp.route('/api/creative/projects/<pid>/activate', methods=['POST'])
 def projects_activate(pid):
     try:
         if not cm.get_project(pid):
@@ -99,7 +104,7 @@ def projects_activate(pid):
 
 
 # ═══ CHARACTERS ══════════════════════════════════════════════════
-@projects_bp.route('/api/projects/<pid>/characters', methods=['POST'])
+@projects_bp.route('/api/creative/projects/<pid>/characters', methods=['POST'])
 def character_add(pid):
     data = request.get_json(silent=True) or {}
     try:
@@ -116,7 +121,7 @@ def character_add(pid):
         return _err(e)
 
 
-@projects_bp.route('/api/projects/<pid>/characters/<name>', methods=['DELETE'])
+@projects_bp.route('/api/creative/projects/<pid>/characters/<name>', methods=['DELETE'])
 def character_remove(pid, name):
     try:
         return jsonify({"status": "ok", "removed": cm.remove_character(pid, name)})
@@ -125,7 +130,7 @@ def character_remove(pid, name):
 
 
 # ═══ LOCATIONS ═══════════════════════════════════════════════════
-@projects_bp.route('/api/projects/<pid>/locations', methods=['POST'])
+@projects_bp.route('/api/creative/projects/<pid>/locations', methods=['POST'])
 def location_add(pid):
     data = request.get_json(silent=True) or {}
     try:
@@ -140,7 +145,7 @@ def location_add(pid):
         return _err(e)
 
 
-@projects_bp.route('/api/projects/<pid>/locations/<name>', methods=['DELETE'])
+@projects_bp.route('/api/creative/projects/<pid>/locations/<name>', methods=['DELETE'])
 def location_remove(pid, name):
     try:
         return jsonify({"status": "ok", "removed": cm.remove_location(pid, name)})
@@ -149,7 +154,7 @@ def location_remove(pid, name):
 
 
 # ═══ CONTINUITY ══════════════════════════════════════════════════
-@projects_bp.route('/api/projects/<pid>/continuity', methods=['POST'])
+@projects_bp.route('/api/creative/projects/<pid>/continuity', methods=['POST'])
 def continuity_add(pid):
     data = request.get_json(silent=True) or {}
     try:
@@ -163,7 +168,7 @@ def continuity_add(pid):
         return _err(e)
 
 
-@projects_bp.route('/api/projects/<pid>/continuity', methods=['GET'])
+@projects_bp.route('/api/creative/projects/<pid>/continuity', methods=['GET'])
 def continuity_list(pid):
     try:
         return jsonify({"status": "ok", "continuity": cm.list_continuity(pid)})
@@ -172,7 +177,7 @@ def continuity_list(pid):
 
 
 # ═══ STYLE GUIDE + ASSETS ════════════════════════════════════════
-@projects_bp.route('/api/projects/<pid>/style', methods=['PUT', 'POST'])
+@projects_bp.route('/api/creative/projects/<pid>/style', methods=['PUT', 'POST'])
 def style_set(pid):
     data = request.get_json(silent=True) or {}
     try:
@@ -185,7 +190,7 @@ def style_set(pid):
         return _err(e)
 
 
-@projects_bp.route('/api/projects/<pid>/assets', methods=['GET'])
+@projects_bp.route('/api/creative/projects/<pid>/assets', methods=['GET'])
 def assets_list(pid):
     try:
         return jsonify({"status": "ok", "assets": cm.list_assets(pid)})

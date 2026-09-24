@@ -17395,7 +17395,7 @@ function ProductionPanel({
 // ── Studio › Creative Project Manager ──────────────────────────────────────
 // Per-project Series Bible (cast/locations/continuity/style) + multi-stage
 // creative pipelines with milestone progress and checkpoint resume. Wired to
-// /api/projects/* and /api/pipelines/*. Characters added here propagate their
+// /api/creative/projects/* and /api/pipelines/*. Characters added here propagate their
 // visual description into every downstream generation.
 function ProjectsPanel() {
   const [projects, setProjects] = useState([]);
@@ -17411,10 +17411,10 @@ function ProjectsPanel() {
   const [topic, setTopic] = useState('');
   const [runs, setRuns] = useState([]);
   const [busy, setBusy] = useState(false);
-  const loadProjects = () => fetch('/api/projects').then(r => r.json()).then(d => {
+  const loadProjects = () => fetch('/api/creative/projects').then(r => r.json()).then(d => {
     setProjects(d.projects || []);
   }).catch(() => {});
-  const loadActive = () => fetch('/api/projects/active').then(r => r.json()).then(d => {
+  const loadActive = () => fetch('/api/creative/projects/active').then(r => r.json()).then(d => {
     setActiveId(d.active_id || '');
     setBible(d.project || null);
   }).catch(() => {});
@@ -17427,7 +17427,7 @@ function ProjectsPanel() {
   }, []);
   const createProject = async () => {
     if (!name.trim()) return;
-    await fetch('/api/projects', {
+    await fetch('/api/creative/projects', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -17442,13 +17442,13 @@ function ProjectsPanel() {
     loadActive();
   };
   const activate = async id => {
-    await fetch('/api/projects/' + id + '/activate', {
+    await fetch('/api/creative/projects/' + id + '/activate', {
       method: 'POST'
     });
     loadActive();
   };
   const delProject = async id => {
-    await fetch('/api/projects/' + id, {
+    await fetch('/api/creative/projects/' + id, {
       method: 'DELETE'
     });
     loadProjects();
@@ -17456,7 +17456,7 @@ function ProjectsPanel() {
   };
   const addChar = async () => {
     if (!activeId || !cName.trim()) return;
-    await fetch('/api/projects/' + activeId + '/characters', {
+    await fetch('/api/creative/projects/' + activeId + '/characters', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -17473,7 +17473,7 @@ function ProjectsPanel() {
     loadActive();
   };
   const rmChar = async nm => {
-    await fetch('/api/projects/' + activeId + '/characters/' + encodeURIComponent(nm), {
+    await fetch('/api/creative/projects/' + activeId + '/characters/' + encodeURIComponent(nm), {
       method: 'DELETE'
     });
     loadActive();
