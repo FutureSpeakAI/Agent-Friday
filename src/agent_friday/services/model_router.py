@@ -565,7 +565,8 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
         "restart the server."
     )
 
-@_functools.wraps(_generate_text_untraced)
+# Keeps its own name and docstring; __wrapped__ carries the real signature.
+@_functools.wraps(_generate_text_untraced, assigned=("__module__", "__annotations__"))
 def _generate_text(*args, **kwargs):
     """`_generate_text_untraced` under a reasoning trace.
 
