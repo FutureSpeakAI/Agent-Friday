@@ -315,3 +315,10 @@ def test_writing_fridays_own_state_is_outward(tmp_path, monkeypatch):
 def test_run_command_refuses_the_local_api_even_if_reached():
     out = agent._tool_run_command({"command": "Invoke-RestMethod http://127.0.0.1:3000/api/approvals"})
     assert "not run" in out
+
+
+def test_a_connector_write_with_a_read_sounding_word_is_outward():
+    from agent_friday.governance import action_gate as g
+    assert g.classify("mcp_bank_update_user_info", {})[0] == g.OUTWARD
+    assert g.classify("mcp_slack_send_status", {})[0] == g.OUTWARD
+    assert g.classify("mcp_bank_get_balance", {})[0] == g.INTERNAL

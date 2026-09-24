@@ -291,8 +291,11 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
         # Connector tools: a read verb in the name AND the union gate agreeing
         # it is internal. Either one saying otherwise makes it outward, and so
         # does the union gate being unable to answer.
+        # The tool's own first word after the server name must be the read
+        # verb. Anywhere in the name is not enough: "update_user_info" ends
+        # in a read-sounding word and writes your bank profile.
         parts = low[4:].split("_")
-        verb_read = any(p in _READ_VERBS for p in parts[1:] or parts)
+        verb_read = len(parts) > 1 and parts[1] in _READ_VERBS
         if not verb_read:
             return OUTWARD, "a connector tool that is not a read"
         if _laya_down():
