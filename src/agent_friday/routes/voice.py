@@ -1483,7 +1483,11 @@ def voice_transcribe():
 
     raw = request.get_data() or b""
     rate = ASR_RATE
-    if request.is_json or raw[:1] == b"{":
+    # Decided by the declared content type alone. Sniffing for a leading "{"
+    # would misread raw PCM whose first byte happens to be 0x7B, which is one
+    # sample value in 256 — a corrupt transcript roughly every 256 dictations.
+    ctype = (request.content_type or "").lower()
+    if "json" in ctype:
         try:
             body = request.get_json(force=True, silent=True) or {}
         except Exception:
