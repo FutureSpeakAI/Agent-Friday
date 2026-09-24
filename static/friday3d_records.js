@@ -407,7 +407,13 @@
       .f3-search { flex:1 1 150px; min-width:120px; background:#0b1220; color:#e6f0ff; border:1px solid #24406a; border-radius:7px; padding:6px 9px; font-size:12px; min-height:30px; }
       .f3-search:focus { outline:none; border-color:#00d4ff; }
       .f3-tool { font-size:11px; padding:5px 10px; min-height:30px; }
-      .f3-stage { position:relative; height:calc(100vh - 322px); min-height:380px; border-radius:12px; overflow:hidden; border:1px solid rgba(80,140,220,0.25); background:#000103; }
+      /* The 3D view fills the height its frame gives it (a tab, or a desktop
+         window; see "Filling the frame" in index.html), not a guess from the
+         viewport. */
+      .f3-host { display:flex; flex-direction:column; min-width:0; }
+      .f3-host > .f3-content { min-width:0; }
+      .f3 { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+      .f3-stage { position:relative; flex:1 1 auto; height:auto; min-height:380px; border-radius:12px; overflow:hidden; border:1px solid rgba(80,140,220,0.25); background:#000103; }
       .f3-glass { position:absolute; background:rgba(4,8,16,0.82); border:1px solid rgba(80,140,220,0.25); border-radius:9px; color:#dbe8fa; font-size:11px; }
       /* The legend sits above the scene, never over it, so it cannot hide a
          group's heading in any view. */
@@ -801,12 +807,12 @@
     // The engine's GPU set-up starts while the pointer is still on the way
     // to the button, not after the click.
     const warm = () => { if (source !== 'code') prefetch(source); if (F.prewarm) setTimeout(F.prewarm, 0); };
-    return h(React.Fragment, null,
-      h('div', { style: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6, marginBottom: on ? 6 : 4 } },
+    return h('div', { className: 'f3-host' + (on ? ' on' : '') },
+      h('div', { style: { display: 'flex', flex: 'none', justifyContent: 'flex-end', alignItems: 'center', gap: 6, marginBottom: on ? 6 : 4 } },
         on && h('span', { style: { fontFamily: 'Orbitron, Inter, sans-serif', fontSize: 10, letterSpacing: '.12em', color: '#00d4ff', marginRight: 'auto' } }, '🧊 ' + String(src.label).toUpperCase() + ' IN 3D'),
         h('button', { className: 'btn' + (on ? '' : ' btn-magenta'), style: { fontSize: 11, padding: '4px 9px' }, onPointerEnter: on ? undefined : warm, onFocus: on ? undefined : warm, onClick: () => set(!on), title: on ? 'Back to the normal view' : 'See this workspace in 3D' }, on ? '✕ Close 3D' : '🧊 View in 3D')),
-      on && (source === 'code' ? h(window.Files3DPanel, { root: 'projects', path: '', view: 'city' }) : h(Records3DPanel, { source, onClose: () => set(false) })),
-      h('div', { style: on ? { display: 'none' } : null }, children));
+      on && (source === 'code' ? h(window.Files3DPanel, { root: 'projects', path: '', view: 'city', fill: true }) : h(Records3DPanel, { source, onClose: () => set(false) })),
+      h('div', { className: 'f3-content', style: on ? { display: 'none' } : null }, children));
   }
 
   // Someone who uses 3D gets the engine built while the app is idle, so even

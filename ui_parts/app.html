@@ -6442,7 +6442,7 @@ function NewsWS(){
         <button className={'btn '+(tab==='editorial'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('editorial');loadEditorial()}}>🖋 Editorial</button>
         <button className={'btn '+(tab==='trust'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('trust');loadTrust()}}>🛡 Trust</button>
       </div>
-      <div style={{display:'flex',gap:4}}>
+      <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('sources');loadSources()}}>🛡 Manage Sources</button>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('customize');loadPrefs()}}>⚙ Customize</button>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('diet');loadDiet()}}>📊 Your Media Diet</button>
@@ -11137,8 +11137,11 @@ function StandaloneApprovals(){
   </>);
 }
 function StandaloneShell({ws,children}){
+  // The desktop's wordmark shows the agent's own name when it has been renamed.
+  const[agentName,setAgentName]=useState('AGENT FRIDAY');
+  useEffect(()=>{fetch('/api/settings').then(r=>r.json()).then(d=>{const n=((d&&(d.settings||d))||{}).agent_name;if(n)setAgentName(n)}).catch(()=>{})},[]);
   useEffect(()=>{
-    document.title=ws.label+' — Friday';
+    document.title=ws.label+' · Agent Friday';
     const iconUrl=ws.id==='workflows'?null:'/assets/icons/'+ws.id+'.svg';
     const emojiIcon='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">'+(ws.ico||'▣')+'</text></svg>');
     document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l=>l.parentNode.removeChild(l));
@@ -11146,7 +11149,8 @@ function StandaloneShell({ws,children}){
   },[ws.id]);
   return(<div className="ws-tab" data-standalone={ws.id}>
     <header className="ws-tab-head">
-      <a className="ws-tab-mark" href="/" title="Friday desktop">FRIDAY</a>
+      <div className="ws-tab-brand"><a className="ws-tab-mark" href="/" title="Back to the Friday desktop">{agentName}</a><span className="ws-tab-by">by</span><a className="ws-tab-fs" href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer">FutureSpeak.AI</a></div>
+      <span className="ws-tab-sep" aria-hidden="true">|</span>
       <div className="ws-tab-name">{ws.id!=='workflows'&&<img src={'/assets/icons/'+ws.id+'.svg'} alt="" onError={e=>{e.target.style.display='none'}}/>}<span>{ws.label}</span></div>
       <span className="ws-tab-sp"/>
       <StandaloneApprovals/>
