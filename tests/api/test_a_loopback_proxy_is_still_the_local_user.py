@@ -1,0 +1,181 @@
+"""Friday's own loopback proxy is still the local user; a tunnel is not.
+
+Regression found 2026-09-24, minutes after the tunnel fix shipped. Stephen:
+"I'm being presented with an authentication screen when loading Agent Friday. I
+have not set a username or password so this is not correct."
+
+He browses `https://agent.friday`, which is Friday's OWN presentation proxy:
+`ops/Caddyfile`, `bind 127.0.0.1 ::1`, `reverse_proxy 127.0.0.1:3000`. Caddy adds
+`X-Forwarded-For: 127.0.0.1`, `X-Forwarded-Proto: https` and
+`X-Forwarded-Host: agent.friday`. The tunnel fix treated the mere PRESENCE of a
+forwarding header as proof of remoteness, so his own machine started asking him
+for a password that only exists because a launcher sets `FRIDAY_PASSWORD`.
+
+Measured live before this fix: `https://agent.friday/` -> 302 to /login and
+`https://agent.friday/api/health` -> 401, while `http://127.0.0.1:3000/` -> 200.
+
+The distinction that actually matters is not "was this forwarded" but "was it
+forwarded from somewhere on this machine". So a forwarded request is local only
+when ALL of these hold:
+
+  * the immediate peer is loopback (the proxy is running here), AND
+  * no CDN/tunnel header is present -- any `CF-*` still means remote, AND
+  * every claimed client address in the chain is itself loopback, AND
+  * the forwarded host, if given, is a local alias rather than a public name.
+
+That keeps the hole shut. cloudflared cannot satisfy it: Cloudflare's edge sets
+`CF-Connecting-IP` and appends the real client IP to `X-Forwarded-For`, and the
+client cannot strip either. Two independent checks, not one.
+
+The previously-pinned case "a spoofed `X-Forwarded-For: 127.0.0.1` is treated
+exactly like any other" is deliberately changed here -- see
+`test_proxied_requests_are_never_local.py`, updated in the same commit. A spoof is
+now defeated by the CF check and the whole-chain check rather than by refusing
+every loopback claim, because refusing them all locked the user out of his own
+machine.
+"""
+
+import pytest
+
+import agent_friday.core as core
+
+
+#: Exactly what Caddy sends for `https://agent.friday`, verified against the
+#: running proxy.
+CADDY = {
+    "X-Forwarded-For": "127.0.0.1",
+    "X-Forwarded-Proto": "https",
+    "X-Forwarded-Host": "agent.friday",
+}
+
+#: The shape of a cloudflared quick tunnel: CF-* headers the client cannot
+#: remove, plus a real public address in the chain.
+CLOUDFLARED = {
+    "CF-Connecting-IP": "203.0.113.9",
+    "CF-Ray": "0000000000000000-LHR",
+    "CF-Visitor": '{"scheme":"https"}',
+    "X-Forwarded-For": "203.0.113.9",
+    "X-Forwarded-Proto": "https",
+    "X-Forwarded-Host": "random-words-1234.trycloudflare.com",
+}
+
+LOCAL_PROXY_SHAPES = [
+    pytest.param(CADDY, id="caddy-https-agent.friday"),
+    pytest.param({"X-Forwarded-For": "127.0.0.1"}, id="xff-loopback-only"),
+    pytest.param({"X-Forwarded-For": "::1"}, id="xff-ipv6-loopback"),
+    pytest.param({"X-Forwarded-For": "127.0.0.1, ::1"}, id="xff-chain-all-loopback"),
+    pytest.param({"X-Real-IP": "127.0.0.1"}, id="x-real-ip-loopback"),
+    pytest.param({"Forwarded": "for=127.0.0.1;proto=https;host=agent.friday"},
+                 id="rfc7239-loopback"),
+    pytest.param({"X-Forwarded-For": "127.0.0.1",
+                  "X-Forwarded-Host": "localhost:3000"}, id="xff-host-localhost"),
+]
+
+REMOTE_SHAPES = [
+    pytest.param(CLOUDFLARED, id="cloudflared-quick-tunnel"),
+    pytest.param({"CF-Connecting-IP": "203.0.113.9",
+                  "X-Forwarded-For": "127.0.0.1"},
+                 id="cf-header-with-spoofed-loopback-chain"),
+    pytest.param({"Cf-Some-Future-Header": "x",
+                  "X-Forwarded-For": "127.0.0.1"},
+                 id="unknown-cf-header-still-remote"),
+    pytest.param({"X-Forwarded-For": "127.0.0.1, 203.0.113.9"},
+                 id="loopback-then-public-in-chain"),
+    pytest.param({"X-Forwarded-For": "203.0.113.9, 127.0.0.1"},
+                 id="public-then-loopback-in-chain"),
+    pytest.param({"X-Forwarded-For": "10.0.0.5"}, id="private-lan-address"),
+    pytest.param({"X-Forwarded-For": "127.0.0.1",
+                  "X-Forwarded-Host": "abc.trycloudflare.com"},
+                 id="loopback-chain-but-public-forwarded-host"),
+    pytest.param({"Forwarded": "for=203.0.113.9;proto=https"},
+                 id="rfc7239-public"),
+    pytest.param({"True-Client-IP": "203.0.113.9"}, id="true-client-ip-public"),
+]
+
+
+def _ctx(app, headers=None, peer="127.0.0.1"):
+    """A request context whose peer is loopback, which is the whole point.
+
+    `test_request_context` leaves REMOTE_ADDR unset, so without `environ_base`
+    every case would be "not local" because the address was None, and the remote
+    cases would pass for entirely the wrong reason.
+    """
+    return app.test_request_context(
+        "/api/residency/status", headers=headers or {},
+        environ_base={"REMOTE_ADDR": peer})
+
+
+@pytest.fixture
+def flask_app():
+    from agent_friday.server import app
+    return app
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The regression: Friday's own proxy must read as local.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("headers", LOCAL_PROXY_SHAPES)
+def test_a_loopback_proxy_is_the_local_user(flask_app, headers):
+    with _ctx(flask_app, headers):
+        assert core._is_local_request() is True, (
+            "%s was treated as remote, which is what put a login screen in "
+            "front of Stephen on his own machine" % headers)
+        assert core._loopback_trusted() is True
+
+
+def test_the_local_user_is_not_asked_to_log_in_through_his_own_proxy(
+        flask_app, client):
+    """End to end through the real decorator, with a FRESH client so no session
+    cookie can answer for locality."""
+    fresh = flask_app.test_client()
+    r = fresh.get("/api/residency/status", headers=CADDY,
+                  environ_base={"REMOTE_ADDR": "127.0.0.1"})
+    assert r.status_code == 200, (
+        "a request through agent.friday got HTTP %s; measured 401 live before "
+        "this fix" % r.status_code)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The hole stays shut.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("headers", REMOTE_SHAPES)
+def test_a_tunnelled_or_foreign_request_is_never_local(flask_app, headers):
+    with _ctx(flask_app, headers):
+        assert core._is_local_request() is False, (
+            "%s was treated as the local user" % headers)
+        assert core._loopback_trusted() is False
+
+
+@pytest.mark.parametrize("headers", REMOTE_SHAPES)
+def test_a_tunnelled_request_is_challenged_end_to_end(flask_app, headers):
+    """A fresh client per request, which is what a remote caller is."""
+    fresh = flask_app.test_client()
+    r = fresh.get("/api/residency/status", headers=headers,
+                  environ_base={"REMOTE_ADDR": "127.0.0.1"})
+    assert r.status_code in (401, 403), (
+        "%s was served protected data (HTTP %s)" % (headers, r.status_code))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The pre-existing rules this must not lose.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_a_plain_loopback_request_is_still_local(flask_app):
+    with _ctx(flask_app):
+        assert core._is_local_request() is True
+
+
+def test_a_non_loopback_peer_is_never_local(flask_app):
+    """Even with a perfectly loopback-looking forwarded chain: if the proxy
+    itself is not on this machine, none of it is trustworthy."""
+    with _ctx(flask_app, CADDY, peer="203.0.113.9"):
+        assert core._is_local_request() is False
+
+
+def test_the_trust_switch_still_forces_a_login(monkeypatch, flask_app):
+    monkeypatch.setattr(core, "FRIDAY_TRUST_LOOPBACK", False)
+    with _ctx(flask_app, CADDY):
+        assert core._is_local_request() is True      # still local...
+        assert core._loopback_trusted() is False     # ...but not auto-trusted
