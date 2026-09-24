@@ -287,9 +287,17 @@ class TestRingGating:
         called = []
         monkeypatch.setattr(isess, "spawn",
                             lambda **kw: called.append(kw) or {"session_id": "sid-ok", "status": "running"})
+        # Starting a session runs code: outward to the governance check, so
+        # unattended work needs a grant scoped to it.
+        from agent_friday.governance import action_gate
+        ctx = {"authenticated": True, "is_background_task": True, "task_id": "t-sess"}
+        agent_mod._execute_tool("spawn_interactive_session",
+                                {"command": "cmd.exe /c echo hi"}, session_ctx=ctx)
+        assert called == [], "a session started with no decision behind it"
+        action_gate.create_grant(tools=["spawn_interactive_session"], scope="t-sess",
+                                 expires_in_seconds=60)
         out = agent_mod._execute_tool(
-            "spawn_interactive_session", {"command": "cmd.exe /c echo hi"},
-            session_ctx={"authenticated": True, "is_background_task": True})
+            "spawn_interactive_session", {"command": "cmd.exe /c echo hi"}, session_ctx=ctx)
         assert called == [{"command": "cmd.exe /c echo hi", "cwd": None}]
         assert json.loads(out)["session_id"] == "sid-ok"
 
