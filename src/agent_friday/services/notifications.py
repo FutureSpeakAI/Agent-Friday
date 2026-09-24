@@ -95,7 +95,9 @@ def _compute_derived_notifications():
                 "derived": True,
             })
 
-    # Proposed todos awaiting approval
+    # Proposed todos awaiting approval. The todo notifications carry no
+    # target: todos have no workspace window, and a target naming one that
+    # does not exist opens an empty window.
     todos = _load_todos()
     proposed = [t for t in todos if t.get('status') == 'proposed']
     if proposed:
@@ -108,7 +110,6 @@ def _compute_derived_notifications():
             "read": False, "dismissed": False,
             "source": "tasks",
             "created_at": datetime.now().strftime('%Y-%m-%d'),
-            "target": {"workspace": "home"},
             "derived": True,
         })
 
@@ -131,7 +132,6 @@ def _compute_derived_notifications():
             "read": False, "dismissed": False,
             "source": "tasks",
             "created_at": datetime.now().strftime('%Y-%m-%d'),
-            "target": {"workspace": "home"},
             "derived": True,
         })
     return derived

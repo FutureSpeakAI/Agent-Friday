@@ -1720,13 +1720,11 @@ window.addEventListener('DOMContentLoaded',function(){
            and everything else gets out of its way in a fixed order — first the
            decoration, then the group labels, then the dock's own depth.
 
-           What forced this: the dock is a single centred row of 22 buttons,
-           about 1450px of them. Between 769px and that width nothing handled
-           the overflow, so the row was simply CLIPPED at both ends. Measured at
-           1024px the buttons ran from -253 to 1276, which put Edition, Home,
-           News, Messages, Workflows, System and Settings — Settings — off the
-           screen with no way to reach them. Below 769px a scrollable strip
-           already saved it, so the bug lived only in the middle, which is
+           Why: the dock is a single centred row of about 22 buttons, some
+           1450px wide. Between 769px and that width nothing else handles the
+           overflow, so without this the row is clipped at both ends and the
+           buttons there (Settings among them) cannot be reached. Below 769px a
+           scrollable strip handles it; this covers the middle, which is
            exactly the size a window gets dragged to.
 
            The dock WRAPS rather than scrolls. A row you have to swipe hides
@@ -1785,9 +1783,8 @@ window.addEventListener('DOMContentLoaded',function(){
             }
         }
 
-        /* A floating window must never hang off the edge at ANY width. At 860px
-           the Edition panel was measured 78px past the right edge; it is a
-           dragged, absolutely-positioned box, so nothing was stopping it. */
+        /* A floating window must never hang off the edge at ANY width. It is
+           a dragged, absolutely-positioned box, so nothing else stops it. */
         .fwin {
             max-width: 100vw;
             max-height: 100vh;
@@ -5852,7 +5849,6 @@ const FRIDAY_PANEL_CACHE_LINKED = {
 // server keeps its own cache behind these, so this also starts the slow
 // server-side work (git sweep, feed crawl) before anyone is waiting on it.
 const FRIDAY_PREFETCH_URLS = {
-  home: ['/api/countdowns', '/api/trust', '/api/personality', '/api/epistemic', '/api/memory/stats'],
   calendar: ['/api/calendar/today', '/api/calendar/week', '/api/calendar/tomorrow'],
   code: ['/api/repos/scan'],
   system: ['/api/system'],
@@ -5868,7 +5864,7 @@ function fridayPrefetchPanels() {
   return apiFetch('/api/workspace/predictions?top=4').then(r => r.json()).catch(() => ({})).then(d => {
     const predicted = (d && d.predictions || []).map(p => fridayWorkspaceId(p.workspace));
     // News last: its first build is a minute-long feed crawl.
-    const order = predicted.filter(w => w !== 'news').concat(['home', 'calendar', 'code', 'system', 'news']);
+    const order = predicted.filter(w => w !== 'news').concat(['calendar', 'code', 'system', 'news']);
     const urls = [];
     order.forEach(ws => (FRIDAY_PREFETCH_URLS[ws] || []).forEach(u => {
       if (urls.indexOf(u) < 0) urls.push(u);
@@ -50387,9 +50383,8 @@ function App() {
   }, [openConvWin]);
 
   // NOTHING auto-opens. The desktop hero IS the landing screen: the greeting,
-  // the countdown ticker and START MY DAY. The Friday Edition opened here until
-  // 2026-09-24, then Home did; both are gone, and a workspace window covering
-  // the hero on every launch is what was complained about in each case.
+  // the countdown ticker and START MY DAY. A workspace window must not cover
+  // it on launch.
 
   // ─── Camera Mode ────────────────────────────────────────────
   const [cameraOn, setCameraOn] = useState(false);
@@ -52860,7 +52855,7 @@ function App() {
     src: `assets/icons/${w.id}.svg`,
     alt: w.label,
     // A local 404 can error BEFORE React attaches onError, so the fallback
-    // never fired and the dock showed a broken-image glyph (edition.svg).
+    // never fired and the dock showed a broken-image glyph.
     // The ref runs at mount, after the load already settled,
     // and catches what the event missed.
     ref: el => {

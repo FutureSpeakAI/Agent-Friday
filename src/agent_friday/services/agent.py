@@ -664,11 +664,11 @@ CLAUDE_TOOLS = [
                       "properties": {"model": {"type": "string",
                                                "description": "The model the user named, in their words."}},
                       "required": ["model"]}},
-    {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: home, career, knowledge (the wiki's pages and its graph), studio, trust, system, news, draft, code, finance, health, contacts, content, messages, calendar, family, futurespeak.",
+    {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: career, knowledge (the wiki's pages and its graph), studio, trust, system, news, draft, code, finance, health, contacts, content, messages, calendar, family, futurespeak.",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "revert_workspace", "description": "Undo a change Friday made to one of the user's workspaces. Use whenever the user says 'roll that back', 'undo that', 'put it back', or 'restore my workspace to how it was this morning'. Modes: 'undo' (the most recent change), 'as_of' (the state at a time — pass when), 'version' (a specific version_id from the history), 'reset' (back to baseline). Every undo is itself snapshotted, so an undo can be undone. Call list_workspace_history first if you need to see what changed.",
      "input_schema": {"type": "object", "properties": {
-         "workspace": {"type": "string", "description": "Workspace id, e.g. 'studio', 'news', 'home'."},
+         "workspace": {"type": "string", "description": "Workspace id, e.g. 'studio', 'news', 'calendar'."},
          "mode": {"type": "string", "enum": ["undo", "as_of", "version", "reset"], "description": "Default 'undo'."},
          "when": {"type": "string", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
          "version_id": {"type": "string", "description": "For mode 'version'."}},
@@ -2459,12 +2459,10 @@ def _maybe_handle_open_intent(message):
 # navigation (a structured action the client executes) instead of text that only
 # claims it will. Keep keys lowercase and singular-ish; the resolver normalizes.
 _WORKSPACE_ALIASES = {
-    # 'home' and its synonyms are GONE, not retargeted. The Home workspace was
-    # removed 2026-09-24 and the desktop hero is the landing screen, so there is
-    # no window for "take me home" to open -- closing the open windows is what
-    # that means now, and that is not an alias's job. An alias pointing at a
-    # workspace that does not exist is the drift `test_workspace_aliases` exists
-    # to catch.
+    # There is no 'home' alias: the desktop is the landing screen and has no
+    # window, so "take me home" means closing the open windows, which is not an
+    # alias's job. An alias pointing at a workspace that does not exist is the
+    # drift `test_workspace_aliases` exists to catch.
     'career': 'career', 'jobs': 'career', 'job search': 'career',
     'job pipeline': 'career', 'careers': 'career', 'job': 'career', 'work': 'career',
     # The wiki's pages and the knowledge graph are one workspace, Knowledge.
@@ -2510,7 +2508,7 @@ _WORKSPACE_ALIASES = {
 
 # Display labels for the confirmation message (a few don't title-case cleanly).
 _WORKSPACE_LABELS = {
-    'home': 'Home', 'career': 'Career', 'knowledge': 'Knowledge', 'studio': 'Studio',
+    'career': 'Career', 'knowledge': 'Knowledge', 'studio': 'Studio',
     'trust': 'Trust', 'system': 'System', 'news': 'News', 'draft': 'Draft',
     'code': 'Code', 'finance': 'Finance', 'health': 'Health',
     'contacts': 'Contacts', 'content': 'Content', 'messages': 'Messages',

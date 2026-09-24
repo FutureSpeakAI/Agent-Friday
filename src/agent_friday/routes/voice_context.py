@@ -62,7 +62,7 @@ voice_context_bp = Blueprint('voice_context', __name__)
 
 
 WORKSPACE_VOICE_LABELS = {
-    'home': 'Home', 'news': 'News', 'calendar': 'Calendar',
+    'news': 'News', 'calendar': 'Calendar',
     'messages': 'Comms Center', 'career': 'Career', 'futurespeak': 'FutureSpeak',
     'knowledge': 'Knowledge', 'trust': 'Trust', 'finance': 'Finance', 'health': 'Health',
     'family': 'Family', 'contacts': 'Contacts',
@@ -166,7 +166,6 @@ def _vc_trust():
 # Per-workspace data builders. Anything not listed falls through to a generic
 # prompt (the Live session still has full vault/wiki context for that domain).
 _VOICE_CONTEXT_BUILDERS = {
-    'home': lambda: "\n\n".join(filter(None, [_vc_calendar(), _vc_tasks(), _vc_news(3)])),
     'news': lambda: _vc_news(8),
     'calendar': _vc_calendar,
     'messages': _vc_messages,
