@@ -1,6 +1,6 @@
 ﻿"""Routes for cost metering + budgets (Part D).
 
-Read endpoints back the Settings → Cost & Usage dashboard; the budget POST is
+Read endpoints back the Settings → Spending dashboard; the budget POST is
 authenticated. Spend itself is recorded at the model-call sites via
 services.cost_meter.
 """

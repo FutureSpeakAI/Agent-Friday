@@ -688,6 +688,33 @@ window.addEventListener('DOMContentLoaded',function(){
         .settings-btn:hover { background: rgba(255,255,255,0.08); color: #fff; border-color: rgba(255,255,255,0.22); }
         .settings-btn.active { color: #00d4ff; border-color: rgba(0,212,255,0.5); background: rgba(0,212,255,0.12); box-shadow: 0 0 10px rgba(0,212,255,0.15); }
         .settings-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        /* Settings pane tokens. Every Settings tab reads these instead of
+           hard-coding its own greys, so the pane has one type scale and one
+           palette. */
+        .st-root {
+            --st-accent: #00d4ff; --st-accent-soft: rgba(0,212,255,0.12);
+            --st-text: rgba(255,255,255,0.86); --st-label: rgba(255,255,255,0.78);
+            --st-dim: rgba(255,255,255,0.46); --st-faint: rgba(255,255,255,0.3);
+            --st-line: rgba(255,255,255,0.06); --st-warn: #f59e0b; --st-danger: #ff6b8a;
+            --st-ok: #00ff80; --st-font: 'Inter', system-ui, sans-serif;
+            --st-mono: 'JetBrains Mono', monospace;
+        }
+        .st-switch { all: unset; box-sizing: border-box; display: flex; width: 100%;
+            justify-content: space-between; align-items: center; gap: 12px; cursor: pointer;
+            padding: 9px 0; border-bottom: 1px solid var(--st-line, rgba(255,255,255,0.06)); }
+        .st-switch:focus-visible { outline: 1px solid var(--st-accent, #00d4ff); outline-offset: 2px; border-radius: 4px; }
+        .st-rail-btn { all: unset; box-sizing: border-box; display: block; width: 100%; cursor: pointer;
+            padding: 8px 16px; font-family: var(--st-font); font-size: 12.5px; color: rgba(255,255,255,0.58);
+            border-left: 2px solid transparent; transition: color .15s, background .15s; }
+        .st-rail-btn:hover { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.03); }
+        .st-rail-btn.on { color: var(--st-accent); background: rgba(0,212,255,0.07); border-left-color: var(--st-accent); }
+        .st-rail-btn:focus-visible { outline: 1px solid var(--st-accent); outline-offset: -2px; }
+        button.toggle-pill { font-family: inherit; }
+        .st-root .settings-btn { font-family: var(--st-font); letter-spacing: 0; }
+        /* The Settings shell fills its window, so the section rail stays put
+           and only the content pane scrolls. */
+        .fwin-body:has(> .ws-custom-root > .st-root) { overflow: hidden; }
+        .fwin-body > .ws-custom-root:has(> .st-root) { height: 100%; }
         .settings-toggle {
             display: flex; justify-content: space-between; align-items: center;
             padding: 8px 0; cursor: pointer;
@@ -5886,7 +5913,7 @@ function ConnectorDot({
   const s = map[wsId];
   if (!s || s === 'off') return null;
   const col = s === 'connected' ? '#00ff80' : s === 'connecting' ? '#f59e0b' : '#ff5470';
-  const tip = s === 'connected' ? 'Live data source connected' : s === 'connecting' ? 'Connecting data source…' : 'Data source error — check Settings → Connectors';
+  const tip = s === 'connected' ? 'Live data source connected' : s === 'connecting' ? 'Connecting data source…' : 'Data source error — check Settings → Accounts & Keys';
   return /*#__PURE__*/React.createElement("span", {
     title: tip,
     style: {
@@ -6025,7 +6052,7 @@ function FWin({
   const openWsChat = seed => window.fridayOpenWorkspaceChat && window.fridayOpenWorkspaceChat(id, title, emoji, seed);
   // The history overlay is local to THIS window rather than App-level, so two
   // open workspaces each get their own and closing one does not close the other.
-  // Settings → Dock opens a workspace WITH its history showing by setting the
+  // Settings → Appearance & 3D opens a workspace WITH its history showing by setting the
   // one-shot flag below, rather than carrying a second copy of the panel that
   // could drift from this one.
   const [histOpen, setHistOpen] = useState(false);
@@ -15892,7 +15919,7 @@ function StudioPromptBar({
       whiteSpace: 'nowrap'
     },
     onClick: openProviders
-  }, "Open Settings \u2192 Providers")), busy && /*#__PURE__*/React.createElement("div", {
+  }, "Open Settings \u2192 Accounts & Keys")), busy && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10
     }
@@ -15971,7 +15998,7 @@ function StudioPromptBar({
       whiteSpace: 'nowrap'
     },
     onClick: openProviders
-  }, "Open Settings \u2192 Providers")) : /*#__PURE__*/React.createElement("div", {
+  }, "Open Settings \u2192 Accounts & Keys")) : /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
       padding: '8px 10px',
@@ -35213,6 +35240,10 @@ function useSettings() {
     reload: load
   };
 }
+// ── Settings building blocks ────────────────────────────────────────────────
+// Every Settings tab is assembled from these, so a label, a helper line, a
+// switch and a section heading look the same wherever they appear. Colours
+// and fonts come from the .st-root tokens in the stylesheet.
 function StRow({
   label,
   children,
@@ -35220,57 +35251,71 @@ function StRow({
 }) {
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      marginBottom: 14
+      marginBottom: 16
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.75)',
-      marginBottom: desc ? 2 : 6,
-      fontFamily: 'JetBrains Mono'
+      fontSize: 12.5,
+      color: 'var(--st-label)',
+      marginBottom: desc ? 2 : 7,
+      fontFamily: 'var(--st-font)',
+      fontWeight: 500
     }
   }, label), desc && /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.38)',
-      marginBottom: 6,
-      lineHeight: 1.5
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 7,
+      lineHeight: 1.5,
+      fontFamily: 'var(--st-font)'
     }
   }, desc), children);
 }
+// A real button with role="switch", so it is reachable and operable from the
+// keyboard and announced as on/off.
 function StToggle({
   label,
   value,
   onChange,
-  desc
+  desc,
+  disabled
 }) {
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 8
-    }
-  }, /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    role: "switch",
+    "aria-checked": !!value,
+    disabled: !!disabled,
+    className: "st-switch",
     onClick: onChange,
     style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      cursor: 'pointer',
-      padding: '8px 0',
-      borderBottom: '1px solid rgba(255,255,255,0.04)'
+      marginBottom: 4,
+      opacity: disabled ? 0.45 : 1,
+      cursor: disabled ? 'not-allowed' : 'pointer'
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.78)',
-      fontFamily: 'JetBrains Mono'
+      display: 'block',
+      minWidth: 0
     }
-  }, label), desc && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.38)',
-      marginTop: 2
+      display: 'block',
+      fontSize: 12.5,
+      color: 'var(--st-label)',
+      fontFamily: 'var(--st-font)',
+      fontWeight: 500
     }
-  }, desc)), /*#__PURE__*/React.createElement("div", {
+  }, label), desc && /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'block',
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginTop: 2,
+      lineHeight: 1.5,
+      fontFamily: 'var(--st-font)'
+    }
+  }, desc)), /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true",
     style: {
       width: 34,
       height: 18,
@@ -35278,10 +35323,9 @@ function StToggle({
       background: value ? 'linear-gradient(90deg,#0097b2,#00d4ff)' : 'rgba(255,255,255,0.1)',
       position: 'relative',
       transition: 'background .2s',
-      flexShrink: 0,
-      marginLeft: 12
+      flexShrink: 0
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", {
     style: {
       position: 'absolute',
       top: 2,
@@ -35293,27 +35337,141 @@ function StToggle({
       transition: 'left .2s',
       boxShadow: '0 1px 4px rgba(0,0,0,0.4)'
     }
-  }))));
+  })));
 }
 function StSection({
   title,
+  desc,
   children
 }) {
+  return /*#__PURE__*/React.createElement("section", {
+    style: {
+      marginBottom: 30
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      margin: 0,
+      fontFamily: 'var(--st-font)',
+      fontSize: 13,
+      fontWeight: 600,
+      color: 'var(--st-accent)',
+      letterSpacing: '.01em',
+      paddingBottom: 7,
+      marginBottom: desc ? 6 : 14,
+      borderBottom: '1px solid rgba(0,212,255,0.12)'
+    }
+  }, title), desc && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      lineHeight: 1.55,
+      marginBottom: 14,
+      fontFamily: 'var(--st-font)'
+    }
+  }, desc), children);
+}
+// A labelled range. It applies live while it moves and saves when the change
+// is finished -- pointer up, a key released, or focus leaving -- so a change
+// made from the keyboard is saved as well as one made with the mouse.
+function StSlider({
+  label,
+  desc,
+  value,
+  min,
+  max,
+  step,
+  fmt,
+  onLive,
+  onCommit
+}) {
+  const v = typeof value === 'number' && !isNaN(value) ? value : min;
+  const done = e => onCommit && onCommit(parseFloat(e.target.value));
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      marginBottom: 26
+      marginBottom: 14
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: '#00d4ff',
-      letterSpacing: '.15em',
-      marginBottom: 14,
-      paddingBottom: 6,
-      borderBottom: '1px solid rgba(0,212,255,0.1)'
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      gap: 12
     }
-  }, title), children);
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--st-label)',
+      fontFamily: 'var(--st-font)',
+      fontWeight: 500
+    }
+  }, label), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-accent)',
+      fontFamily: 'var(--st-mono)'
+    }
+  }, (fmt || (x => x.toFixed(2)))(v))), /*#__PURE__*/React.createElement("input", {
+    type: "range",
+    "aria-label": typeof label === 'string' ? label : undefined,
+    min: min,
+    max: max,
+    step: step,
+    value: v,
+    style: {
+      width: '100%',
+      marginTop: 5,
+      accentColor: '#00d4ff'
+    },
+    onChange: e => onLive && onLive(parseFloat(e.target.value)),
+    onPointerUp: done,
+    onKeyUp: done,
+    onBlur: done,
+    onTouchEnd: done
+  }), desc && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginTop: 3,
+      lineHeight: 1.5,
+      fontFamily: 'var(--st-font)'
+    }
+  }, desc));
+}
+// StSlider bound to one saved value: moves locally, saves once when released.
+function StSavedSlider({
+  value,
+  onSave,
+  ...rest
+}) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return /*#__PURE__*/React.createElement(StSlider, Object.assign({}, rest, {
+    value: v,
+    onLive: setV,
+    onCommit: x => {
+      if (x !== value) onSave(x);
+    }
+  }));
+}
+// A native select dressed in the pane's tokens.
+function StSelect({
+  value,
+  onChange,
+  children,
+  ariaLabel,
+  style
+}) {
+  return /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    "aria-label": ariaLabel,
+    value: value,
+    onChange: onChange,
+    style: Object.assign({
+      width: '100%',
+      fontFamily: 'var(--st-font)',
+      fontSize: 12.5
+    }, style || {})
+  }, children);
 }
 function CcGrantPanel({
   enabled
@@ -35461,11 +35619,13 @@ function SettingsTabGeneral({
   save
 }) {
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
-    title: "IDENTITY"
+    title: "Identity"
   }, /*#__PURE__*/React.createElement(StRow, {
-    label: "Agent Name"
+    label: "Name",
+    desc: "What Friday calls herself in chat and voice."
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
+    "aria-label": "Name",
     style: {
       width: '100%'
     },
@@ -35474,15 +35634,16 @@ function SettingsTabGeneral({
     onBlur: e => save({
       agent_name: e.target.value
     }),
-    placeholder: "Agent Friday"
+    placeholder: "Friday"
   })), /*#__PURE__*/React.createElement(StRow, {
     label: "Personality",
-    desc: "How Friday presents herself."
+    desc: "How Friday presents herself. Saved when you click away."
   }, /*#__PURE__*/React.createElement("textarea", {
     className: "input",
+    "aria-label": "Personality",
     style: {
       width: '100%',
-      height: 80,
+      height: 96,
       resize: 'vertical'
     },
     defaultValue: s.personality || '',
@@ -35492,86 +35653,14 @@ function SettingsTabGeneral({
     }),
     placeholder: "Describe Friday's personality..."
   }))), /*#__PURE__*/React.createElement(StSection, {
-    title: "APPEARANCE"
+    title: "Workspaces"
   }, /*#__PURE__*/React.createElement(StToggle, {
-    label: "Show All Workspaces",
+    label: "Show all workspaces",
     value: s.show_all_workspaces !== false,
     onChange: () => save({
       show_all_workspaces: !(s.show_all_workspaces !== false)
     }),
-    desc: "Show all workspace icons in the dock."
-  }), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Compact Mode",
-    value: !!s.compact_mode,
-    onChange: () => save({
-      compact_mode: !s.compact_mode
-    }),
-    desc: "Reduce padding and element sizes."
-  }), /*#__PURE__*/React.createElement(StRow, {
-    label: "3D Dazzle (every 3D view)"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "range",
-    min: 0,
-    max: 2,
-    step: 1,
-    "aria-label": "3D Dazzle",
-    value: ['off', 'subtle', 'full'].indexOf(s.studio_dazzle || 'full'),
-    onChange: e => {
-      const v = ['off', 'subtle', 'full'][+e.target.value];
-      save({
-        studio_dazzle: v
-      });
-      window.dispatchEvent(new CustomEvent('friday-dazzle', {
-        detail: v
-      }));
-    },
-    style: {
-      flex: 1,
-      accentColor: '#00d4ff'
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 10,
-      letterSpacing: '.12em',
-      color: '#00d4ff',
-      minWidth: 52
-    }
-  }, (s.studio_dazzle || 'full').toUpperCase())))), /*#__PURE__*/React.createElement(StSection, {
-    title: "STARTUP"
-  }, /*#__PURE__*/React.createElement(StRow, {
-    label: "Startup Workspace"
-  }, /*#__PURE__*/React.createElement("select", {
-    className: "input",
-    style: {
-      width: '100%'
-    },
-    value: s.startup_workspace || '',
-    onChange: e => save({
-      startup_workspace: e.target.value
-    })
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "None"), WS.map(w => /*#__PURE__*/React.createElement("option", {
-    key: w.id,
-    value: w.id
-  }, w.ico, " ", w.label)))), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Auto-open Chat on Launch",
-    value: !!s.auto_open_chat,
-    onChange: () => save({
-      auto_open_chat: !s.auto_open_chat
-    })
-  })), /*#__PURE__*/React.createElement(StSection, {
-    title: "TRACKING"
-  }, /*#__PURE__*/React.createElement(TrackingPanel, {
-    s: s,
-    save: save
+    desc: "Offer every workspace in the dock. Off shows the everyday set. Once you arrange the dock yourself in Appearance & 3D, your arrangement wins."
   })));
 }
 // ── Work: what Friday intends to do, and the choice she is asking for ────────
@@ -38718,7 +38807,7 @@ function VoiceModePicker({ s, save, mc }) {
         ['Mode', 'Speech-to-speech: Gemini hears, thinks and speaks in one hop, with barge-in and native prosody.'],
         ['What leaves this machine', 'Your microphone audio and the session context, after the privacy gate. Questions about your own notes, memory or knowledge graph are answered by Friday’s local model through ask_friday; only the sealed answer is relayed.'],
         ['Retention', 'Subject to Google’s API data terms for the Live API.'],
-        ['Cost', 'Metered per session in Settings → Costs; the byte receipt is shown after each session.']
+        ['Cost', 'Metered per session in Settings → Spending; the byte receipt is shown after each session.']
       ] });
       return;
     }
@@ -38754,11 +38843,9 @@ function SettingsTabVoice({
 }) {
   const [showWizard, setShowWizard] = useState(false);
   const mc = useModelCatalog();
-  const engineIcon = {
-    'local': '🔒 ',
-    'local-gpu': '⚡ ',
-    'gemini': '☁ '
-  };
+  // Several options only reach the Gemini Live session; showing them in a
+  // local mode would offer switches that change nothing.
+  const gem = (s.voice_engine || 'local') === 'gemini';
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -38771,17 +38858,17 @@ function SettingsTabVoice({
       fontSize: 11
     },
     onClick: () => setShowWizard(w => !w)
-  }, "\uD83C\uDF99 ", showWizard ? 'Hide' : 'Voice Setup Wizard')), showWizard && /*#__PURE__*/React.createElement(VoiceSetupWizard, {
+  }, showWizard ? 'Hide voice setup' : 'Voice setup')), showWizard && /*#__PURE__*/React.createElement(VoiceSetupWizard, {
     onClose: () => setShowWizard(false)
   }), /*#__PURE__*/React.createElement(StSection, {
-    title: "VOICE ENGINE"
+    title: "Voice engine"
   }, /*#__PURE__*/React.createElement(VoiceModePicker, {
     s: s,
     save: save,
     mc: mc
   }), (s.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement(StRow, {
-    label: "Gemini Live Model",
-    desc: "Real-time speech-to-speech model for the cloud engine."
+    label: "Gemini Live model",
+    desc: "The speech-to-speech model the cloud engine uses."
   }, /*#__PURE__*/React.createElement("select", {
     className: "input",
     style: {
@@ -38800,7 +38887,7 @@ function SettingsTabVoice({
     value: m.id,
     disabled: m.available === false
   }, (m.label || m.id) + (m.available === false ? ' — ' + (m.hint || 'unavailable') : ''))))), (s.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement(StRow, {
-    label: "TTS Voice (Gemini)"
+    label: "Gemini voice"
   }, /*#__PURE__*/React.createElement("select", {
     className: "input",
     style: {
@@ -38817,8 +38904,8 @@ function SettingsTabVoice({
     save: save,
     mc: mc
   }), (s.voice_engine || 'local') !== 'gemini' && (s.local_voice_tts_engine || 'piper') === 'piper' && /*#__PURE__*/React.createElement(StRow, {
-    label: "Local TTS Voice (Piper)",
-    desc: "On-device voice used by the local engines."
+    label: "Piper voice",
+    desc: "The on-device voice the local engines speak with."
   }, /*#__PURE__*/React.createElement("select", {
     className: "input",
     style: {
@@ -38832,10 +38919,10 @@ function SettingsTabVoice({
     key: v,
     value: v
   }, l))))), /*#__PURE__*/React.createElement(StSection, {
-    title: "AUDIO"
-  }, /*#__PURE__*/React.createElement(StRow, {
-    label: "Interruption Mode",
-    desc: "Barge-in (default): talk over Friday and she stops instantly (native Gemini interruption; best with headphones/AirPods). No interruption: for open speakers where echo makes her cut herself off \u2014 use Esc or clear talk-over to interrupt instead."
+    title: "Listening"
+  }, gem && /*#__PURE__*/React.createElement(StRow, {
+    label: "Interrupting Friday",
+    desc: "Talk over her and she stops, which works best with headphones. On open speakers her own voice can echo back and cut her off; choose no interruption there and press Esc to stop her instead."
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -38844,11 +38931,11 @@ function SettingsTabVoice({
     }
   }, [{
     k: 'auto',
-    l: '🎧 Barge-in (default)',
+    l: 'Talk over her (default)',
     match: ['auto', 'speaker', 'headphones', 'headphone', 'barge', 'barge-in', 'bargein', '']
   }, {
     k: 'no-barge',
-    l: '🔊 No interruption (open speakers)',
+    l: 'No interruption (open speakers)',
     match: ['no-barge', 'no_barge', 'nobarge', 'speaker-safe', 'speaker_safe', 'none', 'off']
   }].map(o => /*#__PURE__*/React.createElement("button", {
     key: o.k,
@@ -38859,93 +38946,77 @@ function SettingsTabVoice({
     style: {
       fontSize: 11
     }
-  }, o.l)))), /*#__PURE__*/React.createElement(StRow, {
-    label: "VAD Silence Threshold"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "range",
-    min: "300",
-    max: "2000",
-    step: "100",
-    style: {
-      flex: 1
-    },
+  }, o.l)))), !gem && /*#__PURE__*/React.createElement(StSavedSlider, {
+    label: "Pause before Friday replies",
+    desc: "How long a silence counts as the end of what you said. Longer suits slow speech; shorter feels snappier.",
     value: s.voice_silence_ms ?? 800,
-    onChange: e => save({
-      voice_silence_ms: parseInt(e.target.value)
+    min: 300,
+    max: 2000,
+    step: 100,
+    fmt: v => Math.round(v) + ' ms',
+    onSave: v => save({
+      voice_silence_ms: Math.round(v)
     })
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 12,
-      color: '#00d4ff',
-      minWidth: 50
-    }
-  }, s.voice_silence_ms ?? 800, "ms")))), /*#__PURE__*/React.createElement(StSection, {
-    title: "ADVANCED"
+  })), gem && /*#__PURE__*/React.createElement(StSection, {
+    title: "Gemini Live options",
+    desc: "These apply only to the Gemini Live session."
   }, /*#__PURE__*/React.createElement(StToggle, {
-    label: "Affective Dialog",
+    label: "Expressive speech",
     value: !!s.voice_affective,
     onChange: () => save({
       voice_affective: !s.voice_affective
     }),
-    desc: "Emotional expressiveness (2.5 native-audio models, v1alpha)."
+    desc: "Lets the voice carry emotion. Only some Gemini voice models support it."
   }), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Proactive Audio",
+    label: "Friday may speak first",
     value: !!s.voice_proactive,
     onChange: () => save({
       voice_proactive: !s.voice_proactive
     }),
-    desc: "Friday initiates follow-up questions."
+    desc: "She can ask a follow-up question without waiting to be spoken to."
   }), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Context Compression",
+    label: "Keep long sessions going",
     value: s.voice_context_compression !== false,
     onChange: () => save({
       voice_context_compression: s.voice_context_compression === false
     }),
-    desc: "Keeps hours-long sessions alive by sliding the context window (prunes only the oldest turns). On by default \u2014 off removes the ~15-min session cap."
+    desc: "Drops the oldest turns as a session grows so it can run for hours. Off, a session ends after about 15 minutes."
   }), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Voice Tools",
+    label: "Use tools while talking",
     value: s.voice_tools !== false,
     onChange: () => save({
       voice_tools: s.voice_tools === false
     }),
-    desc: "Allow tool calls during voice sessions."
-  }), /*#__PURE__*/React.createElement(StRow, {
-    label: "Voice Temperature"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "range",
-    min: "0",
-    max: "2",
-    step: "0.05",
-    style: {
-      flex: 1
-    },
+    desc: "Lets Friday call her tools mid-conversation."
+  }), /*#__PURE__*/React.createElement(StSavedSlider, {
+    label: /*#__PURE__*/React.createElement("span", null, "Variety", s.voice_temperature != null && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: () => save({
+        voice_temperature: null
+      }),
+      style: {
+        marginLeft: 10,
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        color: 'var(--st-accent)',
+        cursor: 'pointer',
+        fontSize: 11.5,
+        textDecoration: 'underline'
+      }
+    }, "use the model default")),
+    desc: "How much the wording varies from one reply to the next. Unset uses the model's own default.",
     value: s.voice_temperature ?? 1.0,
-    onChange: e => save({
-      voice_temperature: parseFloat(e.target.value)
+    min: 0,
+    max: 2,
+    step: 0.05,
+    fmt: v => s.voice_temperature == null ? 'model default' : v.toFixed(2),
+    onSave: v => save({
+      voice_temperature: v
     })
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 12,
-      color: '#00d4ff',
-      minWidth: 32
-    }
-  }, (s.voice_temperature ?? 1.0).toFixed(2)))), /*#__PURE__*/React.createElement(StRow, {
-    label: "Custom Speaking Style",
-    desc: "Prepended as 'Speaking style: ...'"
+  }), /*#__PURE__*/React.createElement(StRow, {
+    label: "Speaking style",
+    desc: "A few words on how she should sound. Saved when you click away."
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
@@ -38958,7 +39029,8 @@ function SettingsTabVoice({
     }),
     placeholder: "e.g. warm, concise, news anchor"
   })), /*#__PURE__*/React.createElement(StRow, {
-    label: "Language (BCP-47)"
+    label: "Language",
+    desc: "A language code such as en-US or fr-FR. Leave blank for Gemini's default."
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
@@ -39079,7 +39151,7 @@ function SettingsTabPrivacy({
   };
   const armed = vaultStatus && vaultStatus.encryption === 'AES-256-GCM';
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
-    title: "SOVEREIGN VAULT"
+    title: "Vault"
   }, vaultStatus && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '12px 14px',
@@ -39158,7 +39230,7 @@ function SettingsTabPrivacy({
     },
     disabled: armBusy,
     onClick: armPassphrase
-  }, armBusy ? 'Arming…' : 'Encrypt Vault')), armMsg && /*#__PURE__*/React.createElement("div", {
+  }, armBusy ? 'Encrypting…' : 'Encrypt vault')), armMsg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: armMsg[0] === '✓' ? '#00ff80' : '#ff6b8a',
@@ -39190,96 +39262,68 @@ function SettingsTabPrivacy({
         vault_local_only: (s.model_routing || {}).vault_local_only === false
       }
     }),
-    desc: "Vault-tier notes (finance, health, legal, private) are stripped from cloud prompts, and questions that touch them run on the local model. Everything else follows the routing mode on the Intelligence tab. When no local model is serving, turning this on makes vault questions refuse rather than leak."
+    desc: "Vault-tier notes (finance, health, legal, private) are stripped from cloud prompts, and questions that touch them run on the local model. Everything else follows the routing mode in Intelligence. When no local model is serving, turning this on makes vault questions refuse rather than leak."
   })), /*#__PURE__*/React.createElement(StSection, {
-    title: "CLOUD CONSENT"
+    title: "Cloud consent"
   }, /*#__PURE__*/React.createElement(PrivacyCloudConsent, null), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 10.5,
-      color: 'rgba(255,255,255,0.4)',
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
       marginTop: 10,
-      lineHeight: 1.6,
-      fontFamily: 'JetBrains Mono'
+      lineHeight: 1.6
     }
-  }, "Egress mode: ", /*#__PURE__*/React.createElement("b", {
-    style: { color: 'rgba(255,255,255,0.75)' }
-  }, s.egress_mode || 'audit'), " \u2014 every cloud send is written to the egress ledger with its tier and what was stripped. The old \"Unrestricted Cloud\" switch was removed on 2026-09-17: it wrote a flag the code only reads when no consent is recorded, so it could not change anything.")), /*#__PURE__*/React.createElement(StSection, {
-    title: "WIKI SECTIONS KEPT OFF THE CLOUD"
+  }, "The privacy gate keeps a local log of what it removed or withheld from cloud sends.")), /*#__PURE__*/React.createElement(StSection, {
+    title: "Wiki sections kept off the cloud"
   }, /*#__PURE__*/React.createElement(WikiEncryptedSections, {
     s: s,
     save: save
   })), /*#__PURE__*/React.createElement(StSection, {
-    title: "YOUR DATA"
+    title: "What needs your sign-off"
+  }, /*#__PURE__*/React.createElement(ApprovalScannerPanel, {
+    s: s,
+    save: save
+  })), /*#__PURE__*/React.createElement(StSection, {
+    title: "Computer control"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      marginBottom: 12,
+      color: 'rgba(255,200,200,0.7)',
+      marginBottom: 10,
       lineHeight: 1.6
     }
-  }, "Everything Friday knows lives on this device. Take it with you, or erase it completely \u2014 no server copy exists."), /*#__PURE__*/React.createElement("button", {
-    className: "settings-btn",
-    style: {
-      width: '100%',
-      fontSize: 12,
-      marginBottom: 10
-    },
-    onClick: () => window.open('/api/data/export', '_blank')
-  }, "\u2913 Export all my data (ZIP)"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,180,180,0.75)',
-      marginBottom: 6,
-      lineHeight: 1.6
-    }
-  }, "Permanently delete ALL local data \u2014 vault, wiki, memory, chat, credentials, identity. This cannot be undone. Type ", /*#__PURE__*/React.createElement("b", null, "ERASE"), " to confirm."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    value: eraseConfirm,
-    onChange: e => setEraseConfirm(e.target.value),
-    placeholder: "Type ERASE",
-    className: "input",
-    style: {
-      flex: 1
-    }
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "settings-btn",
-    style: {
-      fontSize: 12,
-      whiteSpace: 'nowrap',
-      borderColor: eraseConfirm === 'ERASE' ? 'rgba(255,0,80,0.5)' : undefined,
-      color: eraseConfirm === 'ERASE' ? '#ff6b8a' : undefined
-    },
-    disabled: eraseConfirm !== 'ERASE',
-    onClick: eraseAll
-  }, "Erase Everything")), eraseMsg && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: eraseMsg[0] === '✓' ? '#00ff80' : '#ff6b8a',
-      marginTop: 8,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, eraseMsg)), /*#__PURE__*/React.createElement(StSection, {
-    title: "CONTEXT LOGGING"
+  }, "High risk. Lets Friday move the mouse, click, type and take screenshots. It needs both this switch and a grant below; once granted, the grant lasts across restarts until you revoke it."), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Allow computer control",
+    value: !!s.computer_control_enabled,
+    onChange: () => save({
+      computer_control_enabled: !s.computer_control_enabled
+    })
+  }), /*#__PURE__*/React.createElement(CcGrantPanel, {
+    enabled: !!s.computer_control_enabled
+  })), /*#__PURE__*/React.createElement(StSection, {
+    title: "Knowledge indexing"
+  }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
+    s: s,
+    save: save,
+    part: "privacy"
+  })), /*#__PURE__*/React.createElement(StSection, {
+    title: "Conversation logging"
   }, /*#__PURE__*/React.createElement(StToggle, {
-    label: "Full Context Logging",
+    label: "Log conversations and tool use",
     value: !!s.context_logging_enabled,
     onChange: () => save({
       context_logging_enabled: !s.context_logging_enabled
     }),
-    desc: "Append-only log of chats, tool calls, file reads. Stored locally."
+    desc: "An append-only record of chats, tool calls and file reads, kept on this machine."
   }), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Go Off Record",
+    label: "Go off the record",
     value: !!s.off_record,
     onChange: () => save({
       off_record: !s.off_record
     }),
-    desc: "Disable logging until you turn this back on."
+    desc: "Pause the log until you turn this back off."
   }), /*#__PURE__*/React.createElement(StRow, {
-    label: "Retention Period"
+    label: "Keep the log for",
+    desc: "Older entries are deleted automatically."
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -39318,29 +39362,61 @@ function SettingsTabPrivacy({
       marginTop: 6
     },
     onClick: () => window.open('/api/context/export', '_blank')
-  }, "\u2913 Export My Data (ZIP)")), /*#__PURE__*/React.createElement(StSection, {
-    title: "WHAT NEEDS YOUR SIGN-OFF"
-  }, /*#__PURE__*/React.createElement(ApprovalScannerPanel, {
-    s: s,
-    save: save
-  })), /*#__PURE__*/React.createElement(StSection, {
-    title: "COMPUTER CONTROL"
+  }, "Export conversation log (ZIP)")), /*#__PURE__*/React.createElement(StSection, {
+    title: "Your data"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
-      color: 'rgba(255,200,200,0.7)',
-      marginBottom: 10,
+      color: 'rgba(255,255,255,0.4)',
+      marginBottom: 12,
       lineHeight: 1.6
     }
-  }, "High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Once granted, permission persists across restarts until you revoke it."), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Enable Computer Control",
-    value: !!s.computer_control_enabled,
-    onChange: () => save({
-      computer_control_enabled: !s.computer_control_enabled
-    })
-  }), /*#__PURE__*/React.createElement(CcGrantPanel, {
-    enabled: !!s.computer_control_enabled
-  })));
+  }, "Everything Friday knows lives on this device. Take it with you, or erase it completely \u2014 no server copy exists."), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      width: '100%',
+      fontSize: 12,
+      marginBottom: 10
+    },
+    onClick: () => window.open('/api/data/export', '_blank')
+  }, "Export all my data (ZIP)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,180,180,0.75)',
+      marginBottom: 6,
+      lineHeight: 1.6
+    }
+  }, "Permanently delete ALL local data \u2014 vault, wiki, memory, chat, credentials, identity. This cannot be undone. Type ", /*#__PURE__*/React.createElement("b", null, "ERASE"), " to confirm."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: eraseConfirm,
+    onChange: e => setEraseConfirm(e.target.value),
+    placeholder: "Type ERASE",
+    className: "input",
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      whiteSpace: 'nowrap',
+      borderColor: eraseConfirm === 'ERASE' ? 'rgba(255,0,80,0.5)' : undefined,
+      color: eraseConfirm === 'ERASE' ? '#ff6b8a' : undefined
+    },
+    disabled: eraseConfirm !== 'ERASE',
+    onClick: eraseAll
+  }, "Erase everything")), eraseMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: eraseMsg[0] === '✓' ? '#00ff80' : '#ff6b8a',
+      marginTop: 8,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, eraseMsg)));
 }
 // WHICH SCANNER DECIDES WHETHER AN ACTION NEEDS HIS SIGN-OFF.
 //
@@ -39467,64 +39543,14 @@ function ApprovalScannerPanel({
 // and is persisted on release. Tracking is the one settings group you
 // cannot evaluate by reading it — you have to move your head and see —
 // so a value that only took effect after a save would be untunable.
-function TrackingSlider({
-  label,
-  desc,
-  value,
-  min,
-  max,
-  step,
-  fmt,
-  onLive,
-  onCommit
-}) {
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'baseline'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.78)',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, label), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, (fmt || (v => v.toFixed(2)))(value))), /*#__PURE__*/React.createElement("input", {
-    type: "range",
-    min: min,
-    max: max,
-    step: step,
-    value: value,
-    style: {
-      width: '100%',
-      marginTop: 4
-    },
-    onChange: e => onLive(parseFloat(e.target.value)),
-    onMouseUp: e => onCommit(parseFloat(e.target.value)),
-    onTouchEnd: e => onCommit(parseFloat(e.target.value))
-  }), desc && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10.5,
-      color: 'rgba(255,255,255,0.36)',
-      marginTop: 2,
-      lineHeight: 1.5
-    }
-  }, desc));
-}
+const TrackingSlider = StSlider;
+// `part` picks which slice of the tracking settings to show: the camera
+// controls live in Voice & Tracking, the dock's depth in Appearance & 3D, and
+// the debug overlay in Advanced. All three edit the one `tracking` object.
 function TrackingPanel({
   s,
-  save
+  save,
+  part
 }) {
   const TK = typeof window !== 'undefined' ? window.FridayTracking : null;
   const defaults = TK ? TK.DEFAULTS : {};
@@ -39563,51 +39589,38 @@ function TrackingPanel({
       [key]: v
     })
   });
+  const sub = t => /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: 'var(--st-text)',
+      margin: '18px 0 10px'
+    }
+  }, t);
+  if (part === 'dock') return sl('dock_depth', 'Dock depth', 'How far the dock stands out of the screen: the floor it stands on, how far the icons rise off it, and how much a button swells as the pointer nears. 0 gives the flat dock.', 0, 2, 0.05);
+  if (part === 'debug') return /*#__PURE__*/React.createElement(StToggle, {
+    label: "Tracking debug overlay",
+    value: !!cfg.debug_overlay,
+    onChange: () => commit({
+      debug_overlay: !cfg.debug_overlay
+    }),
+    desc: "Draws the tracked head position, the filter lag, the active region and the cursor path on screen."
+  });
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.45)',
-      marginBottom: 12,
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 6,
       lineHeight: 1.6
     }
-  }, "Head tracking moves the view like a window onto the scene — lean and the depth shifts. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: '#00d4ff',
-      letterSpacing: '.12em',
-      margin: '4px 0 10px'
-    }
-  }, "HEAD / PARALLAX"), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the perspective. Driven by how large your face reads to the camera.', 0, 2.5, 0.05), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. This is a One Euro filter, so low values are still calm when you hold still.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: '#00d4ff',
-      letterSpacing: '.12em',
-      margin: '18px 0 10px'
-    }
-  }, "DOCK"), sl('dock_depth', 'Dock depth', 'How far the dock stands out of the screen \u2014 the floor it stands on, how far the icons rise off it, and how much a button swells as the pointer nears. 0 gives back the flat dock.', 0, 2, 0.05), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: '#00d4ff',
-      letterSpacing: '.12em',
-      margin: '18px 0 10px'
-    }
-  }, "HAND CURSOR"), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. SMALLER means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: '#00d4ff',
-      letterSpacing: '.12em',
-      margin: '18px 0 10px'
-    }
-  }, "CLICKING"), /*#__PURE__*/React.createElement("div", {
+  }, "Head tracking moves the view like a window onto the scene: lean and the depth shifts. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the perspective.', 0, 2.5, 0.05), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Click method",
     style: {
       display: 'flex',
       gap: 6,
       flexWrap: 'wrap',
-      marginBottom: 8
+      marginBottom: 10
     }
   }, [{
     k: 'pinch',
@@ -39617,76 +39630,74 @@ function TrackingPanel({
     l: 'Dwell (hover to click)'
   }].map(o => /*#__PURE__*/React.createElement("button", {
     key: o.k,
+    type: "button",
+    role: "radio",
+    "aria-checked": cfg.click_method === o.k,
     className: `settings-btn ${cfg.click_method === o.k ? 'active' : ''}`,
     style: {
-      fontSize: 11
+      fontSize: 12,
+      fontFamily: 'var(--st-font)'
     },
     onClick: () => commit({
       click_method: o.k
     })
-  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two is what stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), /*#__PURE__*/React.createElement("div", {
+  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: '#00d4ff',
-      letterSpacing: '.12em',
-      margin: '18px 0 10px'
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 10,
+      lineHeight: 1.6
     }
-  }, "TUNING"), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Debug overlay",
-    value: !!cfg.debug_overlay,
-    onChange: () => commit({
-      debug_overlay: !cfg.debug_overlay
-    }),
-    desc: "Draws the tracked head position, the filter lag, the active region and the cursor path on screen."
-  }), /*#__PURE__*/React.createElement("div", {
+  }, "Calibrate tells the depth effect what normal distance looks like for you and your camera. Sit where you usually sit, then press it."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      gap: 8,
-      marginTop: 10
+      gap: 8
     }
   }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "settings-btn",
     style: {
-      flex: 1,
-      fontSize: 12
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      padding: '7px 14px'
     },
     onClick: () => {
       const TKx = window.FridayTracking;
       const w = typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
       const got = TKx ? TKx.calibrate(w) : null;
-      setCalib(got ? 'Set from your current distance.' : 'No face seen — turn the hologram on and look at the camera.');
+      setCalib(got ? 'Set from your current distance.' : 'No face seen. Turn the hologram on and look at the camera.');
       setTimeout(() => setCalib(null), 4000);
     }
-  }, "◎ Calibrate distance"), /*#__PURE__*/React.createElement("button", {
+  }, "Calibrate distance"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "settings-btn",
     style: {
-      flex: 1,
-      fontSize: 12
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      padding: '7px 14px'
     },
     onClick: () => {
-      const next = Object.assign({}, defaults);
+      // Resets the camera dials only; the dock's depth and the debug overlay
+      // belong to other tabs and keep their values.
+      const next = Object.assign({}, defaults, {
+        dock_depth: cfg.dock_depth,
+        debug_overlay: cfg.debug_overlay
+      });
       setCfg(next);
       if (TK) TK.apply(next);
       save({
         tracking: next
       });
     }
-  }, "↺ Reset to defaults")), calib && /*#__PURE__*/React.createElement("div", {
+  }, "Reset tracking to defaults")), calib && /*#__PURE__*/React.createElement("div", {
+    role: "status",
     style: {
-      fontSize: 10.5,
-      color: '#00d4ff',
-      marginTop: 6,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, calib), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10.5,
-      color: 'rgba(255,255,255,0.34)',
+      fontSize: 11.5,
+      color: 'var(--st-accent)',
       marginTop: 8,
-      lineHeight: 1.6
+      fontFamily: 'var(--st-mono)'
     }
-  }, "Calibrate tells the depth effect what “normal distance” looks like for you and your camera. Sit where you usually sit, then press it."));
+  }, calib));
 }
 function SettingsTabFederation() {
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -39696,12 +39707,12 @@ function SettingsTabFederation() {
       marginBottom: 20,
       lineHeight: 1.6
     }
-  }, "Ed25519 identity + X25519/ChaCha20-Poly1305 transport. Connect with other Friday instances on the federation network."), /*#__PURE__*/React.createElement(FederationPanel, null), /*#__PURE__*/React.createElement("div", {
+  }, "Connect with other Friday instances. Each instance has its own signed identity, and messages between them are encrypted end to end."), /*#__PURE__*/React.createElement(FederationPanel, null), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 24
     }
   }, /*#__PURE__*/React.createElement(StSection, {
-    title: "DEFEDERATION"
+    title: "Blocking instances"
   }, /*#__PURE__*/React.createElement(DefederationPanel, null))));
 }
 function SettingsTabEconomy() {
@@ -39712,12 +39723,12 @@ function SettingsTabEconomy() {
       marginBottom: 20,
       lineHeight: 1.6
     }
-  }, "Positron (\u03A8) economy: earn by contributing compute, spend on orchestrated tasks. Q-score = reputation charge."), /*#__PURE__*/React.createElement(WalletPanel, null), /*#__PURE__*/React.createElement("div", {
+  }, "Earn credits by contributing compute and spend them on orchestrated tasks. Your score reflects how the network rates your contributions."), /*#__PURE__*/React.createElement(WalletPanel, null), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 24
     }
   }, /*#__PURE__*/React.createElement(StSection, {
-    title: "WORKSPACE BUDGETS"
+    title: "Workspace budgets"
   }, /*#__PURE__*/React.createElement(OrchestratorBudgetPanel, null))));
 }
 // -- Account state: the STORE's verdict, never the record's existence -------
@@ -40378,7 +40389,7 @@ function GoogleAccountsPanel() {
     }
   }, msg));
 }
-// ─── Settings → Providers — the model-agnostic provider layer (P1/P2) ───
+// ─── Settings → Accounts & Keys — the model-agnostic provider layer (P1/P2) ───
 // Lists every registered provider with live health (status dot + p50 latency),
 // catalog size, spend today, encrypted key management, Test Connection, model
 // list refresh, enable/disable, and remove/revert. Add Provider works from the
@@ -41265,7 +41276,7 @@ function ModelBrowser({
   }, "Video")))));
 }
 /* ── AutoRouterControls ────────────────────────────────────────────────────
-   "Let Friday decide" — one component, rendered in Settings → Providers AND
+   "Let Friday decide" — one component, rendered in Settings → Accounts & Keys AND
    inline under the model selector when the Auto Router is the chosen model.
    Picking the router in one tab and its spend dial in another is how a
    feature ends up feeling unfinished. */
@@ -41304,7 +41315,7 @@ function AutoRouterControls({ s, save, orReady, compact }) {
       border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6,
       padding: '8px 10px', marginBottom: 12, lineHeight: 1.5
     }
-  }, "Needs an OpenRouter key — add one in Settings → Providers.");
+  }, "Needs an OpenRouter key — add one in Settings → Accounts & Keys.");
 
   const tierRow = React.createElement(StRow, {
     label: "COST PRIORITY",
@@ -41324,7 +41335,7 @@ function AutoRouterControls({ s, save, orReady, compact }) {
   },
     React.createElement("div", { style: { marginBottom: 6 } },
       React.createElement("span", { style: { color: 'rgba(255,255,255,0.6)' } }, "You still see who answered."),
-      " Every reply is labelled with the model that actually served it, and Cost & Usage bills that model by name — never a single \"auto\" bucket."),
+      " Every reply is labelled with the model that actually served it, and Spending bills that model by name — never a single \"auto\" bucket."),
     React.createElement("div", null,
       React.createElement("span", { style: { color: '#f59e0b' } }, "Where your prompt goes:"),
       " auto routing hands the turn to a provider you did not choose yourself. Model and privacy restrictions set on your OpenRouter account still apply, and the egress gate still runs."));
@@ -41338,7 +41349,7 @@ function AutoRouterControls({ s, save, orReady, compact }) {
       }
     }, body);
   }
-  return React.createElement(StSection, { title: "LET FRIDAY DECIDE" }, body);
+  return React.createElement(StSection, { title: "Let Friday decide" }, body);
 }
 
 function SettingsTabProviders({
@@ -41370,7 +41381,7 @@ function SettingsTabProviders({
     save: save,
     orReady: orReady
   }), /*#__PURE__*/React.createElement(StSection, {
-    title: "MODEL PROVIDERS"
+    title: "Model providers"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -41385,7 +41396,7 @@ function SettingsTabProviders({
       lineHeight: 1.5,
       paddingRight: 12
     }
-  }, "Friday is model-agnostic: OpenRouter, Hugging Face, Groq, DeepSeek, a LAN vLLM box \u2014 add a key and its models appear in every picker. Keys are encrypted on-device; every cloud provider passes the egress gate."), /*#__PURE__*/React.createElement("button", {
+  }, "Add a key and that provider's models appear in every model picker: OpenRouter, Hugging Face, Groq, DeepSeek or a model server on your own network. Keys are encrypted on this machine, and every cloud call passes the privacy gate."), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 12,
@@ -41393,7 +41404,7 @@ function SettingsTabProviders({
       whiteSpace: 'nowrap'
     },
     onClick: () => setAdding(v => !v)
-  }, adding ? '✕ Close' : '＋ Add Provider')), adding && /*#__PURE__*/React.createElement(AddProviderForm, {
+  }, adding ? 'Close' : 'Add provider')), adding && /*#__PURE__*/React.createElement(AddProviderForm, {
     templates: templates,
     onCancel: () => setAdding(false),
     onDone: () => {
@@ -41427,7 +41438,7 @@ function SettingsTabProviders({
       margin: '14px 0 8px',
       letterSpacing: '.08em'
     }
-  }, "AVAILABLE \u2014 ONE CLICK TO ENABLE"), disabled.map(p => /*#__PURE__*/React.createElement(ProviderRow, {
+  }, "Available to enable"), disabled.map(p => /*#__PURE__*/React.createElement(ProviderRow, {
     key: p.name,
     prov: p,
     onChanged: refresh
@@ -41438,8 +41449,8 @@ function SettingsTabProviders({
       fontFamily: 'JetBrains Mono',
       marginTop: 10
     }
-  }, "\u25CF healthy \xB7 \u25D0 needs attention \xB7 \u25CB disabled \u2014 dot color is measured health (p50 latency / error rate / circuit breaker)")), /*#__PURE__*/React.createElement(StSection, {
-    title: "MODEL BROWSER"
+  }, "\u25CF healthy \xB7 \u25D0 needs attention \xB7 \u25CB disabled. The dot reflects measured response time and error rate.")), /*#__PURE__*/React.createElement(StSection, {
+    title: "Model browser"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
@@ -41447,39 +41458,39 @@ function SettingsTabProviders({
       marginBottom: 10,
       lineHeight: 1.5
     }
-  }, "Search every connected provider's catalog \u2014 including OpenRouter's full list once its model list has been refreshed."), /*#__PURE__*/with3DModels(/*#__PURE__*/React.createElement(ModelBrowser, {
+  }, "Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed."), /*#__PURE__*/with3DModels(/*#__PURE__*/React.createElement(ModelBrowser, {
     save: save
   }))));
 }
+// `part` splits the panel: Google accounts are something every user
+// connects (Accounts & Keys); the MCP server list and the platform connector
+// inventory are diagnostics (Advanced).
 function SettingsTabConnectors({
   s,
-  save
+  save,
+  part
 }) {
   const [mcpServers, setMcpServers] = useState([]);
   const [connectors, setConnectors] = useState([]);
   useEffect(() => {
+    if (part === 'accounts') return;
     apiFetch('/api/mcp/servers').then(r => r.json()).then(d => setMcpServers(d.servers || [])).catch(() => {});
     apiFetch('/api/connectors').then(r => r.json()).then(d => setConnectors(Array.isArray(d) ? d : d.connectors || [])).catch(() => {});
-  }, []);
+  }, [part]);
+  if (part === 'accounts') return /*#__PURE__*/React.createElement(StSection, {
+    title: "Google accounts",
+    desc: "Connect one or more Google accounts for mail, calendar and files. Their tokens are encrypted on this machine and never sent to a cloud model."
+  }, /*#__PURE__*/React.createElement(GoogleAccountsPanel, null));
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
-    title: "GOOGLE ACCOUNTS"
+    title: "MCP servers"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      marginBottom: 12,
-      lineHeight: 1.5
-    }
-  }, "Connect multiple Google accounts. Tokens are encrypted on-device with DPAPI \u2014 never sent to cloud."), /*#__PURE__*/React.createElement(GoogleAccountsPanel, null)), /*#__PURE__*/React.createElement(StSection, {
-    title: "MCP SERVERS"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
       marginBottom: 10,
       lineHeight: 1.5
     }
-  }, "Model Context Protocol servers extend Friday's tool surface. Config: ", /*#__PURE__*/React.createElement("code", {
+  }, "Model Context Protocol servers add tools Friday can call. Configured in ", /*#__PURE__*/React.createElement("code", {
     style: {
       color: '#00d4ff'
     }
@@ -41521,13 +41532,14 @@ function SettingsTabConnectors({
       fontFamily: 'JetBrains Mono'
     }
   }, srv.enabled !== false ? 'active' : 'off')))), /*#__PURE__*/React.createElement(StSection, {
-    title: "PLATFORM CONNECTORS"
+    title: "Platform connectors",
+    desc: "Every connector this build knows about and whether it is connected."
   }, connectors.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       color: 'rgba(255,255,255,0.38)',
       fontSize: 12
     }
-  }, "No connectors available."), connectors.slice(0, 12).map((c, i) => /*#__PURE__*/React.createElement("div", {
+  }, "No connectors available."), connectors.map((c, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: {
       display: 'flex',
@@ -41637,7 +41649,7 @@ function SettingsTabAbout() {
       letterSpacing: '.2em'
     }
   }, "BY FUTURESPEAK.AI")), /*#__PURE__*/React.createElement(StSection, {
-    title: "UPDATES"
+    title: "Updates"
   }, vt.disagreement ? /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '10px 12px',
@@ -41724,7 +41736,7 @@ function SettingsTabAbout() {
       fontFamily: 'JetBrains Mono'
     }
   }, upd && upd.current_version ? "You are running " + upd.current_version + (upd.last_checked_at ? " \u2014 up to date as of the last check." : ".") : "Version unknown \u2014 run `friday status` for details.")), /*#__PURE__*/React.createElement(StSection, {
-    title: "SYSTEM HEALTH"
+    title: "System"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
@@ -41733,7 +41745,7 @@ function SettingsTabAbout() {
       marginBottom: 16
     }
   }, [{
-    l: 'Evolution Day',
+    l: 'Evolution day',
     v: evo?.day ?? '—',
     c: '#00d4ff'
   }, {
@@ -41745,15 +41757,15 @@ function SettingsTabAbout() {
     v: h?.mood || '—',
     c: '#a855f7'
   }, {
-    l: 'Creations Today',
+    l: 'Creations today',
     v: h?.creations_today ?? '—',
     c: '#f59e0b'
   }, {
-    l: 'Memory Entries',
+    l: 'Memory entries',
     v: h?.memory_entries ?? '—',
     c: '#00d4ff'
   }, {
-    l: 'Vault Entries',
+    l: 'Vault entries',
     v: h?.vault_count ?? '—',
     c: '#22c55e'
   }].map(x => /*#__PURE__*/React.createElement("div", {
@@ -41777,56 +41789,8 @@ function SettingsTabAbout() {
       fontSize: 14,
       color: x.c
     }
-  }, x.v)))), h?.models && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.35)',
-      marginBottom: 6,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "Active Models"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexWrap: 'wrap',
-      gap: 6
-    }
-  }, h.models.map((m, i) => /*#__PURE__*/React.createElement("span", {
-    key: i,
-    className: "model-pill",
-    style: {
-      fontSize: 11
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: `dot ${m.active ? 'active' : 'idle'}`
-  }), m.name))))), /*#__PURE__*/React.createElement(StSection, {
-    title: "PERSONALITY MATURITY"
-  }, evo && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '10px 14px',
-      background: 'rgba(255,255,255,0.02)',
-      borderRadius: 8,
-      border: '1px solid rgba(255,255,255,0.04)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.55)',
-      fontFamily: 'JetBrains Mono',
-      lineHeight: 1.6
-    }
-  }, evo.structure || 'No evolution data yet.'), evo.structure_index !== undefined && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8,
-      fontFamily: 'Orbitron',
-      fontSize: 12,
-      color: '#a855f7'
-    }
-  }, "Structure Index: ", evo.structure_index))), /*#__PURE__*/React.createElement(StSection, {
-    title: "LINKS"
+  }, x.v))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Links"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -41834,7 +41798,7 @@ function SettingsTabAbout() {
       flexWrap: 'wrap'
     }
   }, /*#__PURE__*/React.createElement("a", {
-    href: "https://github.com/FutureSpeak-AI/friday-desktop",
+    href: "https://github.com/FutureSpeakAI/Agent-Friday",
     target: "_blank",
     rel: "noopener noreferrer",
     className: "settings-btn",
@@ -41845,19 +41809,14 @@ function SettingsTabAbout() {
   }, "GitHub"), /*#__PURE__*/React.createElement("a", {
     href: "https://github.com/FutureSpeakAI/Agent-Friday/blob/main/docs/security/threat-model.md",
     target: "_blank",
+    rel: "noopener noreferrer",
     className: "settings-btn",
     style: {
       fontSize: 12,
       textDecoration: 'none'
     }
-  }, "Threat Model"), /*#__PURE__*/React.createElement("button", {
-    className: "settings-btn",
-    style: {
-      fontSize: 12
-    },
-    onClick: () => window.open('/api/context/export', '_blank')
-  }, "\u2913 Export Data"))), /*#__PURE__*/React.createElement(StSection, {
-    title: "ACKNOWLEDGMENTS"
+  }, "Threat model"))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Acknowledgments"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
@@ -41875,19 +41834,28 @@ function SettingsTabAbout() {
     }
   }, "Headroom"), " by Tejas Chopra \u2014 Apache 2.0.")));
 }
-function SettingsTabKnowledge({
+// Knowledge graph settings, shown where each belongs: where semantic
+// indexing runs is an egress decision (Privacy & Approvals), how the galaxy
+// groups pages is a look (Appearance & 3D), and what gets indexed and when is
+// housekeeping (Advanced).
+function KnowledgeSettings({
   s,
-  save
+  save,
+  part
 }) {
   const kg0 = s.knowledge_graph || {};
-  // Defensive normalization: settings.json can still carry the legacy
-  // values ("local_only"/"gated_cloud") until this specific key is next saved
-  // -- the backend migrates them on every read (kg_settings()), but this GET
-  // /api/settings response is the raw file, so the dropdown does the same
-  // translation rather than rendering blank against an <option> that no
-  // longer exists.
-  const _modeMap = { local_only: 'local', gated_cloud: 'cloud' };
-  const kg = { ...kg0, indexing_mode: _modeMap[kg0.indexing_mode] || kg0.indexing_mode || 'local' };
+  // settings.json can still carry the legacy values ("local_only" /
+  // "gated_cloud") until this key is next saved. The backend migrates them on
+  // every read (kg_settings()), but GET /api/settings returns the raw file, so
+  // the control does the same translation rather than rendering blank.
+  const _modeMap = {
+    local_only: 'local',
+    gated_cloud: 'cloud'
+  };
+  const kg = {
+    ...kg0,
+    indexing_mode: _modeMap[kg0.indexing_mode] || kg0.indexing_mode || 'local'
+  };
   const src = kg.index_sources || {
     wiki: true,
     conversations: true,
@@ -41926,152 +41894,108 @@ function SettingsTabKnowledge({
         })
       });
       const d = await r.json();
-      setNote(tier === 'A' ? `Rebuilt: ${d.entities || 0} nodes, ${d.relationships || 0} links` : d.status === 'started' ? 'Semantic index running in the background — watch the Knowledge workspace.' : d.message || d.status);
+      setNote(tier === 'A' ? `Rebuilt: ${d.entities || 0} nodes, ${d.relationships || 0} links` : d.status === 'started' ? 'Semantic index running in the background. Progress shows in the Knowledge workspace.' : d.message || d.status);
     } catch (e) {
       setNote('Reindex failed');
     }
     setBusy(false);
   };
-  const row = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '9px 0',
-    borderBottom: '1px solid rgba(255,255,255,0.04)'
-  };
-  const lbl = {
-    fontSize: 12,
-    color: '#ccc'
-  };
-  const sub = {
-    fontSize: 11,
-    color: '#778',
-    marginTop: 2
-  };
-  const sel = {
-    background: 'rgba(0,0,0,0.4)',
-    border: '1px solid rgba(0,212,255,0.25)',
-    borderRadius: 5,
-    color: '#ddd',
-    fontSize: 12,
-    padding: '4px 8px'
-  };
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      maxWidth: 620
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 14,
-      color: '#c996ff',
-      marginBottom: 4
-    }
-  }, "\uD83C\uDF0C KNOWLEDGE GRAPH"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#889',
-      marginBottom: 14
-    }
-  }, "Friday's second brain: the wiki as a linked galaxy plus an LLM-extracted semantic layer. The wiki markdown is always the source of truth \u2014 the graph is derived and can be rebuilt at any time."), /*#__PURE__*/React.createElement("div", {
-    style: row
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: lbl
-  }, "Semantic indexing"), /*#__PURE__*/React.createElement("div", {
-    style: sub
-  }, "Where Tier-B LLM extraction runs. Local: runs on the local seat on this machine and nothing leaves; it cannot run while no local model is serving. Cloud: sends wiki, memory and conversation text to the cloud model under your recorded cloud consent (see Privacy & Security), which decides whether that text is redacted by tier or sent untouched.")), /*#__PURE__*/React.createElement("select", {
-    style: sel,
+  if (part === 'privacy') return /*#__PURE__*/React.createElement(StRow, {
+    label: "Where knowledge indexing runs",
+    desc: "Friday reads your wiki, memories and conversations to link facts into the knowledge graph. Local keeps that text on this machine, and cannot run while no local model is serving. Cloud sends it to the cloud model under your cloud consent above."
+  }, /*#__PURE__*/React.createElement(StSelect, {
+    ariaLabel: "Where knowledge indexing runs",
     value: kg.indexing_mode || 'local',
     onChange: e => patch({
       indexing_mode: e.target.value
-    })
+    }),
+    style: {
+      maxWidth: 320
+    }
   }, /*#__PURE__*/React.createElement("option", {
     value: "local"
-  }, "Local (private, default)"), /*#__PURE__*/React.createElement("option", {
+  }, "On this machine (private, default)"), /*#__PURE__*/React.createElement("option", {
     value: "cloud"
-  }, "Cloud (frontier models)"))), /*#__PURE__*/React.createElement("div", {
-    style: {...sub, marginTop: -6, marginBottom: 9}
-  }, "Setting: ", /*#__PURE__*/React.createElement("b", {
-    style: {color: kg.indexing_mode === 'cloud' ? '#ff9f43' : '#4ade80'}
-  }, kg.indexing_mode === 'cloud' ? 'CLOUD' : 'LOCAL'), " \u2014 what the last pass actually used is shown in the indexing log below, not here."), /*#__PURE__*/React.createElement("div", {
-    style: row
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: lbl
-  }, "Nightly reindex"), /*#__PURE__*/React.createElement("div", {
-    style: sub
-  }, "03:30, right after memory dreaming, so new facts join the galaxy.")), /*#__PURE__*/React.createElement("input", {
-    type: "checkbox",
-    checked: kg.nightly_reindex !== false,
-    onChange: e => patch({
-      nightly_reindex: e.target.checked
-    })
-  })), /*#__PURE__*/React.createElement("div", {
-    style: row
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: lbl
-  }, "Constellation grouping"), /*#__PURE__*/React.createElement("div", {
-    style: sub
-  }, "How pages cluster: by wiki section, by link structure, or automatic.")), /*#__PURE__*/React.createElement("select", {
-    style: sel,
+  }, "In the cloud (frontier models)")));
+  if (part === 'appearance') return /*#__PURE__*/React.createElement(StRow, {
+    label: "Constellation grouping",
+    desc: "How pages cluster in the knowledge galaxy: by wiki section, by how they link, or chosen automatically."
+  }, /*#__PURE__*/React.createElement(StSelect, {
+    ariaLabel: "Constellation grouping",
     value: kg.community_mode || 'auto',
     onChange: e => patch({
       community_mode: e.target.value
-    })
+    }),
+    style: {
+      maxWidth: 320
+    }
   }, /*#__PURE__*/React.createElement("option", {
     value: "auto"
-  }, "Auto"), /*#__PURE__*/React.createElement("option", {
+  }, "Automatic"), /*#__PURE__*/React.createElement("option", {
     value: "section"
   }, "Wiki sections"), /*#__PURE__*/React.createElement("option", {
     value: "links"
-  }, "Link structure"))), /*#__PURE__*/React.createElement("div", {
+  }, "Link structure")));
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
-      ...row,
-      borderBottom: 'none'
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      lineHeight: 1.55,
+      marginBottom: 10
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: lbl
-  }, "Index sources"), /*#__PURE__*/React.createElement("div", {
+  }, "The wiki is always the source of truth; the graph is derived from it and can be rebuilt at any time. Where indexing runs is set in Privacy & Approvals."), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Reindex nightly",
+    value: kg.nightly_reindex !== false,
+    onChange: () => patch({
+      nightly_reindex: kg.nightly_reindex === false
+    }),
+    desc: "At 03:30, right after memory consolidation, so new facts join the graph."
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
-      gap: 14
+      fontSize: 12.5,
+      fontWeight: 500,
+      color: 'var(--st-label)',
+      margin: '14px 0 2px'
     }
-  }, [['wiki', 'Wiki'], ['soul', 'SOUL.md'], ['conversations', 'Conversations'], ['cognitive', 'Memories']].map(([k, label]) => /*#__PURE__*/React.createElement("label", {
+  }, "Sources to index"), [['wiki', 'Wiki'], ['soul', 'SOUL.md'], ['conversations', 'Conversations'], ['cognitive', 'Memories']].map(([k, label]) => /*#__PURE__*/React.createElement(StToggle, {
     key: k,
-    style: {
-      fontSize: 11,
-      color: '#aab',
-      display: 'flex',
-      gap: 5,
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "checkbox",
-    checked: src[k] !== false,
-    onChange: e => patchSrc(k, e.target.checked)
-  }), label)))), /*#__PURE__*/React.createElement("div", {
+    label: label,
+    value: src[k] !== false,
+    onChange: () => patchSrc(k, src[k] === false)
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
-      marginTop: 16,
-      alignItems: 'center'
+      marginTop: 14,
+      alignItems: 'center',
+      flexWrap: 'wrap'
     }
   }, /*#__PURE__*/React.createElement("button", {
-    className: "btn",
+    type: "button",
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      padding: '7px 14px'
+    },
     disabled: busy,
     onClick: () => reindex('A')
-  }, "\u21BB Rebuild structure"), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    disabled: busy,
+  }, "Rebuild structure"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
     style: {
-      color: '#c996ff',
-      borderColor: 'rgba(170,120,255,0.4)'
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      padding: '7px 14px'
     },
+    disabled: busy,
     onClick: () => reindex('B')
-  }, "\uD83E\uDDE0 Run semantic index"), note && /*#__PURE__*/React.createElement("span", {
+  }, "Run semantic index"), note && /*#__PURE__*/React.createElement("span", {
+    role: "status",
     style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      fontFamily: 'JetBrains Mono'
+      fontSize: 11.5,
+      color: 'var(--st-accent)',
+      fontFamily: 'var(--st-mono)'
     }
   }, note)));
 }
@@ -42253,19 +42177,22 @@ function SettingsTabCosts() {
   const peak = Math.max.apply(null, [1].concat(pts.map(p => p.usd || 0)));
 
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
-    title: "SPEND"
+    title: "Spend"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
       marginBottom: 12
     }
-  }, [['today', 'Today'], ['7d', 'Last 7 days'], ['month', 'This month']].map(([r, label]) => /*#__PURE__*/React.createElement("span", {
+  }, [['today', 'Today'], ['7d', 'Last 7 days'], ['month', 'This month']].map(([r, label]) => /*#__PURE__*/React.createElement("button", {
+    type: "button",
     key: r,
+    "aria-pressed": costRange === r,
     onClick: () => setCostRange(r),
     style: Object.assign({
       cursor: 'pointer',
-      fontSize: 10,
+      background: 'none',
+      fontSize: 11,
       padding: '4px 10px',
       borderRadius: 5,
       border: '1px solid ' + (costRange === r ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.1)'),
@@ -42343,7 +42270,7 @@ function SettingsTabCosts() {
       marginTop: 5
     }, mono)
   }, /*#__PURE__*/React.createElement("span", null, pts[0].date), /*#__PURE__*/React.createElement("span", null, "daily, peak ", usd(peak)), /*#__PURE__*/React.createElement("span", null, pts[pts.length - 1].date))), /*#__PURE__*/React.createElement(StSection, {
-    title: "BY MODEL"
+    title: "By model"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       fontSize: 10,
@@ -42352,7 +42279,7 @@ function SettingsTabCosts() {
       lineHeight: 1.5
     }, mono)
   }, "Which model the money went to. Local models meter at $0."), breakdown(s && s.by_model)), /*#__PURE__*/React.createElement(StSection, {
-    title: "PROMPT CACHE"
+    title: "Prompt cache"
   }, s && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -42385,13 +42312,13 @@ function SettingsTabCosts() {
       lineHeight: 1.5
     }, mono)
   }, "The share of input tokens served from cache at 0.1x. A rate near zero over a busy range means the prefix is being broken upstream, not that caching is unavailable."))), /*#__PURE__*/React.createElement(StSection, {
-    title: "BY PROVIDER"
+    title: "By provider"
   }, breakdown(s && s.by_provider)), /*#__PURE__*/React.createElement(StSection, {
-    title: "BY KIND"
+    title: "By kind"
   }, breakdown(s && s.by_kind)), /*#__PURE__*/React.createElement(StSection, {
-    title: "BY WORKSPACE"
+    title: "By workspace"
   }, breakdown(s && s.by_workspace)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
-    title: "SCHEDULED JOBS (THIS MONTH)"
+    title: "Scheduled jobs this month"
   }, (costSched || []).map(r => /*#__PURE__*/React.createElement("div", {
     key: r.schedule_id,
     style: Object.assign({
@@ -42414,7 +42341,7 @@ function SettingsTabCosts() {
       marginLeft: 10
     }
   }, usd(r.usd))))), /*#__PURE__*/React.createElement(StSection, {
-    title: "BUDGET ALERTS"
+    title: "Budget alerts"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       fontSize: 10,
@@ -42429,7 +42356,9 @@ function SettingsTabCosts() {
       gap: 10,
       marginBottom: 10
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !!costBudget.daily_enabled,
     className: 'toggle-pill ' + (costBudget.daily_enabled ? 'on' : ''),
     onClick: () => saveBudget({
       daily_enabled: !costBudget.daily_enabled
@@ -42444,7 +42373,10 @@ function SettingsTabCosts() {
     min: "0",
     step: "0.5",
     value: costBudget.daily,
-    onChange: e => saveBudget({
+    onChange: e => setCostBudget(b => Object.assign({}, b, {
+      daily: parseFloat(e.target.value) || 0
+    })),
+    onBlur: e => saveBudget({
       daily: parseFloat(e.target.value) || 0
     }),
     style: Object.assign({
@@ -42462,7 +42394,9 @@ function SettingsTabCosts() {
       alignItems: 'center',
       gap: 10
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !!costBudget.monthly_enabled,
     className: 'toggle-pill ' + (costBudget.monthly_enabled ? 'on' : ''),
     onClick: () => saveBudget({
       monthly_enabled: !costBudget.monthly_enabled
@@ -42477,7 +42411,10 @@ function SettingsTabCosts() {
     min: "0",
     step: "1",
     value: costBudget.monthly,
-    onChange: e => saveBudget({
+    onChange: e => setCostBudget(b => Object.assign({}, b, {
+      monthly: parseFloat(e.target.value) || 0
+    })),
+    onBlur: e => saveBudget({
       monthly: parseFloat(e.target.value) || 0
     }),
     style: Object.assign({
@@ -42497,7 +42434,7 @@ function SettingsTabCosts() {
       lineHeight: 1.5
     }, mono)
   }, "Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.")), /*#__PURE__*/React.createElement(StSection, {
-    title: "HARD STOP"
+    title: "Hard stop"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       fontSize: 10,
@@ -42528,7 +42465,9 @@ function SettingsTabCosts() {
       gap: 10,
       marginBottom: 10
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !!costBudget.hard_stop_daily_enabled,
     className: 'toggle-pill ' + (costBudget.hard_stop_daily_enabled ? 'on' : ''),
     onClick: () => saveBudget({
       hard_stop_daily_enabled: !costBudget.hard_stop_daily_enabled
@@ -42543,7 +42482,10 @@ function SettingsTabCosts() {
     min: "0",
     step: "0.5",
     value: costBudget.hard_stop_daily,
-    onChange: e => saveBudget({
+    onChange: e => setCostBudget(b => Object.assign({}, b, {
+      hard_stop_daily: parseFloat(e.target.value) || 0
+    })),
+    onBlur: e => saveBudget({
       hard_stop_daily: parseFloat(e.target.value) || 0
     }),
     style: Object.assign({
@@ -42561,7 +42503,9 @@ function SettingsTabCosts() {
       alignItems: 'center',
       gap: 10
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !!costBudget.hard_stop_monthly_enabled,
     className: 'toggle-pill ' + (costBudget.hard_stop_monthly_enabled ? 'on' : ''),
     onClick: () => saveBudget({
       hard_stop_monthly_enabled: !costBudget.hard_stop_monthly_enabled
@@ -42576,7 +42520,10 @@ function SettingsTabCosts() {
     min: "0",
     step: "1",
     value: costBudget.hard_stop_monthly,
-    onChange: e => saveBudget({
+    onChange: e => setCostBudget(b => Object.assign({}, b, {
+      hard_stop_monthly: parseFloat(e.target.value) || 0
+    })),
+    onBlur: e => saveBudget({
       hard_stop_monthly: parseFloat(e.target.value) || 0
     }),
     style: Object.assign({
@@ -42615,19 +42562,50 @@ function SettingsTabCosts() {
     }, mono)
   }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")));
 }
+// Federation and Economy are on hold: the V6 wholeness spec says they must
+// not surface. Their panels, routes and data are untouched; setting this to
+// true puts both back in the Settings rail.
+const SETTINGS_SHOW_HELD_FEATURES = false;
+// Tab ids that earlier layouts used, from buttons, events and
+// window.__fridaySettingsTab all over the app. Each lands on the tab that now
+// holds that content, never on a blank pane.
+const SETTINGS_TAB_ALIASES = {
+  providers: 'accounts',
+  connectors: 'accounts',
+  dock: 'appearance',
+  knowledge: 'advanced',
+  work: 'advanced',
+  models: 'intelligence',
+  federation: 'general',
+  economy: 'general'
+};
+const SETTINGS_HELD_TABS = [{
+  id: 'federation',
+  label: 'Federation',
+  sub: 'Other Friday instances this one can talk to.'
+}, {
+  id: 'economy',
+  label: 'Economy',
+  sub: 'The compute-credit wallet and workspace budgets.'
+}];
+function settingsTabId(t) {
+  if (!t) return 'general';
+  if (SETTINGS_SHOW_HELD_FEATURES && (t === 'federation' || t === 'economy')) return t;
+  return SETTINGS_TAB_ALIASES[t] || t;
+}
 function SettingsWS() {
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
-  // Settings straight onto Providers. The global covers a window that is
-  // about to MOUNT (set before open); the event covers one already mounted.
+  // Settings straight onto Accounts & Keys. The global covers a window that
+  // is about to MOUNT (set before open); the event covers one already mounted.
   const [tab, setTab] = useState(() => {
     const t = window.__fridaySettingsTab;
     window.__fridaySettingsTab = null;
-    return t || 'general';
+    return settingsTabId(t);
   });
   useEffect(() => {
     const h = e => {
       const t = e && e.detail && e.detail.tab;
-      if (t) setTab(t);
+      if (t) setTab(settingsTabId(t));
       window.__fridaySettingsTab = null;
     };
     window.addEventListener('friday:settings-tab', h);
@@ -42638,166 +42616,262 @@ function SettingsWS() {
     save,
     msg
   } = useSettings();
+  // Two edits, always. An entry here with no branch in the render chain below
+  // gives a rail item that selects a blank pane; a branch with no entry here
+  // gives a panel nothing can reach. `sub` is the one line under the heading.
   const TABS = [{
     id: 'general',
     label: 'General',
-    ico: '⚡️'
-  }, {
-    // Two edits, always. An entry here with no branch in the render chain
-    // below gives a rail item that selects a blank pane; a branch with no
-    // entry here gives a panel nothing can reach, which is exactly how
-    // SettingsTabProviders sat complete and unreferenced (see below).
-    id: 'dock',
-    label: 'Dock',
-    ico: '\u{1F39B}️'
+    sub: 'Her name, her personality, and which workspaces the dock offers.'
   }, {
     id: 'intelligence',
     label: 'Intelligence',
-    ico: '🧠'
+    sub: 'Which model does each job, and whether it runs here or in the cloud.'
   }, {
-    // SettingsTabProviders has existed and worked since the provider registry
-    // landed: it lists every provider, takes a key straight from the person
-    // sitting there, and POSTs it to /api/providers/<name>/key. It had no
-    // entry in this array and no branch in the render chain below, so nothing
-    // could reach it. A complete feature, unreferenced.
-    //
-    // Maintainer ruling: "It appears there is no way to add API keys in
-    // Friday's settings menu." The panel exists; it must be reachable from
-    // here, because a user cannot add a key by editing files the way the
-    // author can.
-    id: 'providers',
-    label: 'Providers',
-    ico: '\u{1F511}'
-  }, {
-    // Spend sits next to the keys that incur it. This entry must never be
-    // dropped: without it the panel's fetches run into nothing.
-    id: 'costs',
-    label: 'Cost & Usage',
-    ico: '\u{1F4B0}'
-  }, {
-    id: 'work',
-    label: 'Work',
-    ico: '\u{1F4CB}'
-  }, {
-    id: 'voice',
-    label: 'Voice',
-    ico: '🎤'
+    // Spend keys and the accounts Friday may use sit together: both are
+    // things a person connects once and then forgets about.
+    id: 'accounts',
+    label: 'Accounts & Keys',
+    sub: 'Model provider keys, Google accounts and tool servers.'
   }, {
     id: 'privacy',
-    label: 'Privacy & Security',
-    ico: '🔒'
+    label: 'Privacy & Approvals',
+    sub: 'What may leave this machine, what needs your sign-off, and your data.'
   }, {
-    id: 'knowledge',
-    label: 'Knowledge Graph',
-    ico: '🌌'
+    id: 'appearance',
+    label: 'Appearance & 3D',
+    sub: 'The dock, its depth, and how much the 3D views move and glow.'
   }, {
-    id: 'federation',
-    label: 'Federation',
-    ico: '🌐'
+    id: 'voice',
+    label: 'Voice & Tracking',
+    sub: 'How Friday listens and speaks, and how the camera follows your head and hand.'
   }, {
-    id: 'economy',
-    label: 'Economy',
-    ico: '💎'
+    // This entry must never be dropped: without it the Spending panel's
+    // fetches run into nothing and budget alerts cannot be armed.
+    id: 'costs',
+    label: 'Spending',
+    sub: 'What cloud models have cost, and the limits you set.'
   }, {
-    id: 'connectors',
-    label: 'Connectors',
-    ico: '🔌'
-  }, {
+    id: 'advanced',
+    label: 'Advanced',
+    sub: 'Rarely needed controls and diagnostics. Nothing here is required for everyday use.'
+  }].concat(SETTINGS_SHOW_HELD_FEATURES ? SETTINGS_HELD_TABS : []).concat([{
     id: 'about',
     label: 'About',
-    ico: 'ℹ️'
-  }];
+    sub: 'Version, updates and credits.'
+  }]);
+  const cur = TABS.filter(t => t.id === tab)[0] || TABS[0];
+  const ok = msg && msg.indexOf('Error') !== 0;
   return /*#__PURE__*/React.createElement("div", {
+    className: "st-root",
     style: {
       display: 'flex',
       height: '100%',
-      minHeight: 0
+      minHeight: 0,
+      fontFamily: 'var(--st-font)'
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("nav", {
+    "aria-label": "Settings sections",
     style: {
-      width: 168,
-      borderRight: '1px solid rgba(255,255,255,0.05)',
-      padding: '14px 0',
+      width: 184,
+      borderRight: '1px solid var(--st-line)',
+      padding: '16px 0',
       flexShrink: 0,
       overflowY: 'auto',
-      background: 'rgba(0,0,0,0.15)'
+      background: 'rgba(0,0,0,0.15)',
+      display: 'flex',
+      flexDirection: 'column'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: 'rgba(255,255,255,0.22)',
-      padding: '0 14px',
-      marginBottom: 12,
-      letterSpacing: '.15em'
-    }
-  }, "SETTINGS"), TABS.map(t => /*#__PURE__*/React.createElement("button", {
-    key: t.id,
-    onClick: () => setTab(t.id),
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      width: '100%',
-      padding: '9px 14px',
-      background: tab === t.id ? 'rgba(0,212,255,0.07)' : 'none',
-      border: 'none',
-      borderLeft: `3px solid ${tab === t.id ? '#00d4ff' : 'transparent'}`,
-      color: tab === t.id ? '#00d4ff' : 'rgba(255,255,255,0.52)',
-      cursor: 'pointer',
-      textAlign: 'left',
-      fontSize: 12,
-      transition: 'all .15s'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 13,
-      width: 18,
-      textAlign: 'center',
-      flexShrink: 0
-    }
-  }, t.ico), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono'
-    }
-  }, t.label))), msg && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '10px 14px',
       fontSize: 11,
-      color: '#00ff80',
-      fontFamily: 'JetBrains Mono'
+      fontWeight: 600,
+      color: 'var(--st-faint)',
+      padding: '0 16px',
+      marginBottom: 10,
+      letterSpacing: '.06em'
     }
-  }, msg)), /*#__PURE__*/React.createElement("div", {
+  }, "Settings"), TABS.map(t => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: t.id
+  }, t.id === 'about' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minHeight: 12,
+      borderBottom: '1px solid var(--st-line)',
+      margin: '0 16px 8px'
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: 'st-rail-btn' + (tab === t.id ? ' on' : ''),
+    "aria-current": tab === t.id ? 'page' : undefined,
+    onClick: () => setTab(t.id)
+  }, t.label)))), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       overflowY: 'auto',
-      padding: '24px 26px',
       minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("header", {
+    style: {
+      position: 'sticky',
+      top: 0,
+      zIndex: 2,
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 16,
+      padding: '20px 28px 14px',
+      background: 'rgb(9,13,24)',
+      borderBottom: '1px solid var(--st-line)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      margin: 0,
+      fontSize: 17,
+      fontWeight: 600,
+      color: 'var(--st-text)'
+    }
+  }, cur.label), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--st-dim)',
+      marginTop: 3,
+      lineHeight: 1.5
+    }
+  }, cur.sub)), /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-live": "polite",
+    style: {
+      minWidth: 70,
+      textAlign: 'right',
+      fontSize: 11.5,
+      fontFamily: 'var(--st-mono)',
+      color: ok ? 'var(--st-ok)' : 'var(--st-danger)',
+      paddingTop: 3
+    }
+  }, msg || '')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 28px 40px',
+      maxWidth: 860
     }
   }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'dock' && /*#__PURE__*/React.createElement(StSection, {
-    title: "Dock"
-  }, /*#__PURE__*/React.createElement(DockSettingsPanel, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
+  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
     s: s,
     save: save
-  }), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  }), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
-  }), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
+  }), /*#__PURE__*/React.createElement(SettingsTabConnectors, {
+    s: s,
+    save: save,
+    part: "accounts"
+  })), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
-  }), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
     s: s,
     save: save
-  }), tab === 'knowledge' && /*#__PURE__*/React.createElement(SettingsTabKnowledge, {
+  }), tab === 'voice' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabVoice, {
     s: s,
     save: save
-  }), tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), false, tab === 'connectors' && /*#__PURE__*/React.createElement(SettingsTabConnectors, {
+  }), /*#__PURE__*/React.createElement(StSection, {
+    title: "Head and hand tracking"
+  }, /*#__PURE__*/React.createElement(TrackingPanel, {
+    s: s,
+    save: save,
+    part: "main"
+  }))), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'advanced' && /*#__PURE__*/React.createElement(SettingsTabAdvanced, {
     s: s,
     save: save
-  }), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null)));
+  }), SETTINGS_SHOW_HELD_FEATURES && tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), SETTINGS_SHOW_HELD_FEATURES && tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null))));
+}
+// Appearance & 3D: the dock, how far it stands out, and the 3D effects.
+function SettingsTabAppearance({
+  s,
+  save
+}) {
+  const dz = ['off', 'subtle', 'full'];
+  const cur = s.studio_dazzle || 'full';
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+    title: "Dock",
+    desc: "Which workspaces the dock shows, and in what order."
+  }, /*#__PURE__*/React.createElement(DockSettingsPanel, null), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 18
+    }
+  }, /*#__PURE__*/React.createElement(TrackingPanel, {
+    s: s,
+    save: save,
+    part: "dock"
+  }))), /*#__PURE__*/React.createElement(StSection, {
+    title: "3D effects"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "3D dazzle",
+    desc: "Glow, particles and motion in every 3D view. Subtle keeps the depth and drops most of the sparkle; off is the calmest and lightest on the graphics card."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "3D dazzle",
+    style: {
+      display: 'flex',
+      gap: 6
+    }
+  }, dz.map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "aria-checked": cur === v,
+    className: 'settings-btn' + (cur === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 16px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        studio_dazzle: v
+      });
+      window.dispatchEvent(new CustomEvent('friday-dazzle', {
+        detail: v
+      }));
+    }
+  }, v.charAt(0).toUpperCase() + v.slice(1)))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Knowledge graph"
+  }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
+    s: s,
+    save: save,
+    part: "appearance"
+  })));
+}
+// Advanced: controls a person rarely needs, and the diagnostics a developer
+// reaches for. Moved here rather than deleted, so nothing is lost.
+function SettingsTabAdvanced({
+  s,
+  save
+}) {
+  // SettingsTabWork brings its own "Proposed work" and "Queue" sections.
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsTabWork, null), /*#__PURE__*/React.createElement(StSection, {
+    title: "Knowledge graph indexing"
+  }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
+    s: s,
+    save: save,
+    part: "advanced"
+  })), /*#__PURE__*/React.createElement(SettingsTabConnectors, {
+    s: s,
+    save: save,
+    part: "advanced"
+  }), /*#__PURE__*/React.createElement(StSection, {
+    title: "Tracking diagnostics"
+  }, /*#__PURE__*/React.createElement(TrackingPanel, {
+    s: s,
+    save: save,
+    part: "debug"
+  })));
 }
 
 // ── AE-0: the resource strip ────────────────────────────────────────────────
@@ -43182,11 +43256,6 @@ function App() {
   };
   const topBarTimer = useRef(null);
   const dockTimer = useRef(null);
-  const [stPers, setStPers] = useState(null);
-  const [stEpi, setStEpi] = useState(null);
-  const [stEvo, setStEvo] = useState(null);
-  const [stHealth, setStHealth] = useState(null);
-  const [stSycoMsg, setStSycoMsg] = useState('');
   // Real connection-health for the top-bar dot. Polled every 15s.
   const [connHealth, setConnHealth] = useState('unknown'); // 'ok' | 'degraded' | 'down' | 'unknown'
   // Per-provider inference liveness from a real probe — otherwise the seat
@@ -43309,9 +43378,9 @@ function App() {
     voice_style_prompt: '',
     voice_temperature: null,
     voice_max_tokens: 0,
-    voice_affective: false,
-    voice_proactive: false,
-    voice_context_compression: false,
+    voice_affective: true,
+    voice_proactive: true,
+    voice_context_compression: true,
     agent_name: 'AGENT FRIDAY',
     orchestrator_model: 'claude-opus-4-8',
     subagent_model: 'claude-sonnet-4-6',
@@ -43326,319 +43395,19 @@ function App() {
     dock_custom: { order: [], hidden: [] }
   };
   const [agentSettings, setAgentSettings] = useState(DEFAULT_AGENT_SETTINGS);
-  const [agentPersonality, setAgentPersonality] = useState('');
-  const [personalityDraft, setPersonalityDraft] = useState('');
-  const [lawsOpen, setLawsOpen] = useState(false);
-  const [openSections, setOpenSections] = useState({
-    audio: true,
-    ai_model: false,
-    providers: false,
-    services: false,
-    hardware: false,
-    distribution: false,
-    advanced: false,
-    appearance: false,
-    security: false,
-    about: false,
-    voice_advanced: false,
-    personality: false,
-    intel: false,
-    visual: false,
-    camera: false,
-    privacy: false,
-    computer_control: false,
-    costs: false,
-    hooks: false,
-    federation: false,
-    defederation: false,
-    content_policies: false,
-    moderation: false,
-    orchestrator: false,
-    orchestrator_budgets: false,
-    capability_card: false,
-    work_log: false
-  });
-  const toggleSection = k => setOpenSections(s => ({
-    ...s,
-    [k]: !s[k]
-  }));
   // Mic / Speaker test state (used by the Audio & Voice section).
   const [micTestActive, setMicTestActive] = useState(false);
   const [micTestLevel, setMicTestLevel] = useState(0);
   const [micTestMsg, setMicTestMsg] = useState('');
   const [speakerTestActive, setSpeakerTestActive] = useState(false);
   const [speakerTestMsg, setSpeakerTestMsg] = useState('');
-  // Full Gemini-TTS voice catalogue (30 voices). Source:
-  // https://docs.cloud.google.com/text-to-speech/docs/gemini-tts#voice_options
-  // Style descriptors sourced from the AI Studio voice picker — used for both
-  // briefing TTS readback and Live API voice. Sorted female, then male.
-  const TTS_VOICES = [{
-    id: 'Achernar',
-    label: 'Achernar — soft female'
-  }, {
-    id: 'Aoede',
-    label: 'Aoede — breezy female (default)'
-  }, {
-    id: 'Autonoe',
-    label: 'Autonoe — bright female'
-  }, {
-    id: 'Callirrhoe',
-    label: 'Callirrhoe — easy-going female'
-  }, {
-    id: 'Despina',
-    label: 'Despina — smooth female'
-  }, {
-    id: 'Erinome',
-    label: 'Erinome — clear female'
-  }, {
-    id: 'Gacrux',
-    label: 'Gacrux — mature female'
-  }, {
-    id: 'Kore',
-    label: 'Kore — firm female'
-  }, {
-    id: 'Laomedeia',
-    label: 'Laomedeia — upbeat female'
-  }, {
-    id: 'Leda',
-    label: 'Leda — youthful female'
-  }, {
-    id: 'Pulcherrima',
-    label: 'Pulcherrima — forward female'
-  }, {
-    id: 'Sulafat',
-    label: 'Sulafat — warm female'
-  }, {
-    id: 'Vindemiatrix',
-    label: 'Vindemiatrix — gentle female'
-  }, {
-    id: 'Zephyr',
-    label: 'Zephyr — bright female'
-  }, {
-    id: 'Achird',
-    label: 'Achird — friendly male'
-  }, {
-    id: 'Algenib',
-    label: 'Algenib — gravelly male'
-  }, {
-    id: 'Algieba',
-    label: 'Algieba — smooth male'
-  }, {
-    id: 'Alnilam',
-    label: 'Alnilam — firm male'
-  }, {
-    id: 'Charon',
-    label: 'Charon — informative male'
-  }, {
-    id: 'Enceladus',
-    label: 'Enceladus — breathy male'
-  }, {
-    id: 'Fenrir',
-    label: 'Fenrir — excitable male'
-  }, {
-    id: 'Iapetus',
-    label: 'Iapetus — clear male'
-  }, {
-    id: 'Orus',
-    label: 'Orus — firm male'
-  }, {
-    id: 'Puck',
-    label: 'Puck — upbeat male'
-  }, {
-    id: 'Rasalgethi',
-    label: 'Rasalgethi — informative male'
-  }, {
-    id: 'Sadachbia',
-    label: 'Sadachbia — lively male'
-  }, {
-    id: 'Sadaltager',
-    label: 'Sadaltager — knowledgeable male'
-  }, {
-    id: 'Schedar',
-    label: 'Schedar — even male'
-  }, {
-    id: 'Umbriel',
-    label: 'Umbriel — easy-going male'
-  }, {
-    id: 'Zubenelgenubi',
-    label: 'Zubenelgenubi — casual male'
-  }];
-  // BCP-47 language codes Gemini-TTS supports. Blank = server default (en-US).
-  const VOICE_LANGUAGES = [{
-    id: '',
-    label: 'Default (en-US)'
-  }, {
-    id: 'en-US',
-    label: 'English (United States)'
-  }, {
-    id: 'en-GB',
-    label: 'English (United Kingdom)'
-  }, {
-    id: 'en-AU',
-    label: 'English (Australia)'
-  }, {
-    id: 'en-IN',
-    label: 'English (India)'
-  }, {
-    id: 'es-US',
-    label: 'Spanish (United States)'
-  }, {
-    id: 'es-ES',
-    label: 'Spanish (Spain)'
-  }, {
-    id: 'fr-FR',
-    label: 'French (France)'
-  }, {
-    id: 'fr-CA',
-    label: 'French (Canada)'
-  }, {
-    id: 'de-DE',
-    label: 'German (Germany)'
-  }, {
-    id: 'it-IT',
-    label: 'Italian (Italy)'
-  }, {
-    id: 'pt-BR',
-    label: 'Portuguese (Brazil)'
-  }, {
-    id: 'ja-JP',
-    label: 'Japanese (Japan)'
-  }, {
-    id: 'ko-KR',
-    label: 'Korean (Korea)'
-  }, {
-    id: 'zh-CN',
-    label: 'Chinese (Mandarin, Simplified)'
-  }, {
-    id: 'hi-IN',
-    label: 'Hindi (India)'
-  }, {
-    id: 'ar-XA',
-    label: 'Arabic'
-  }, {
-    id: 'nl-NL',
-    label: 'Dutch (Netherlands)'
-  }, {
-    id: 'pl-PL',
-    label: 'Polish (Poland)'
-  }, {
-    id: 'ru-RU',
-    label: 'Russian (Russia)'
-  }, {
-    id: 'tr-TR',
-    label: 'Turkish (Turkey)'
-  }, {
-    id: 'vi-VN',
-    label: 'Vietnamese (Vietnam)'
-  }, {
-    id: 'th-TH',
-    label: 'Thai (Thailand)'
-  }, {
-    id: 'id-ID',
-    label: 'Indonesian (Indonesia)'
-  }];
-  // Gemini-TTS bracketed markup tags — inserted inline in text (briefing/TTS
-  // path) or appended to the style prompt to bias delivery.
-  const VOICE_MARKUP_TAGS = [{
-    tag: '[whispering]',
-    desc: 'whispered delivery'
-  }, {
-    tag: '[shouting]',
-    desc: 'shouted / loud'
-  }, {
-    tag: '[laughing]',
-    desc: 'inject laughter'
-  }, {
-    tag: '[sigh]',
-    desc: 'audible sigh'
-  }, {
-    tag: '[uhm]',
-    desc: 'natural hesitation'
-  }, {
-    tag: '[sarcasm]',
-    desc: 'sarcastic tone'
-  }, {
-    tag: '[robotic]',
-    desc: 'flat / robotic'
-  }, {
-    tag: '[extremely fast]',
-    desc: 'rushed pacing'
-  }, {
-    tag: '[short pause]',
-    desc: 'brief pause'
-  }, {
-    tag: '[medium pause]',
-    desc: 'medium pause'
-  }, {
-    tag: '[long pause]',
-    desc: 'long pause'
-  }];
-  // Style-prompt presets — quick starting points the user can edit.
-  const VOICE_STYLE_PRESETS = [{
-    id: '',
-    label: 'Off (use defaults)'
-  }, {
-    id: 'Speak warmly and conversationally, like a trusted colleague — natural pacing, no robotic flatness',
-    label: 'Warm & conversational'
-  }, {
-    id: 'Speak with calm authority and clear diction, like a seasoned news anchor delivering an evening briefing',
-    label: 'News anchor'
-  }, {
-    id: 'Speak briskly and energetically, like an upbeat host introducing a topic with enthusiasm',
-    label: 'Upbeat host'
-  }, {
-    id: 'Speak softly and slowly, with measured pauses and a contemplative tone, like reading a bedtime story',
-    label: 'Soft & measured'
-  }, {
-    id: 'Speak with dry wit and understated humor, occasional well-placed pauses for effect',
-    label: 'Dry & witty'
-  }, {
-    id: 'Speak with technical precision and even pacing — no fluff, no filler, no emotional inflection',
-    label: 'Technical & precise'
-  }];
-  const [ttsPreviewBusy, setTtsPreviewBusy] = useState(false);
-  const previewVoice = async voiceId => {
-    if (ttsPreviewBusy) return;
-    setTtsPreviewBusy(true);
-    try {
-      const r = await fetch('/api/voice/tts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          text: "Hey boss, this is what I sound like.",
-          voice: voiceId,
-          style: 'chat'
-        })
-      });
-      if (r.ok) {
-        const b = await r.blob();
-        const u = URL.createObjectURL(b);
-        const a = new Audio(u);
-        a.onended = () => URL.revokeObjectURL(u);
-        a.play();
-      }
-    } catch (e) {
-      console.error('Voice preview failed', e);
-    }
-    setTtsPreviewBusy(false);
-  };
   const [settingsSaveMsg, setSettingsSaveMsg] = useState('');
   const refreshSettingsData = () => {
-    fetch('/api/personality').then(r => r.json()).then(setStPers).catch(() => {});
-    fetch('/api/epistemic').then(r => r.json()).then(setStEpi).catch(() => {});
-    fetch('/api/evolution').then(r => r.json()).then(setStEvo).catch(() => {});
-    fetch('/api/health').then(r => r.json()).then(setStHealth).catch(() => {});
     fetch('/api/settings').then(r => r.json()).then(d => {
       if (d && d.settings) setAgentSettings({
         ...DEFAULT_AGENT_SETTINGS,
         ...d.settings
       });
-      if (typeof d?.personality === 'string') {
-        setAgentPersonality(d.personality);
-        setPersonalityDraft(d.personality);
-      }
     }).catch(() => {});
   };
   useEffect(() => {
@@ -43652,298 +43421,8 @@ function App() {
         ...s,
         ...d.settings
       }));
-      if (typeof d?.personality === 'string') {
-        setAgentPersonality(d.personality);
-        setPersonalityDraft(d.personality);
-      }
     }).catch(() => {});
   }, []);
-  // ── MCP connectors state ──
-  const [mcpStatus, setMcpStatus] = useState({
-    available: false,
-    servers: {}
-  });
-  const [mcpConfigText, setMcpConfigText] = useState('');
-  const [mcpEditing, setMcpEditing] = useState(false);
-  const [mcpMsg, setMcpMsg] = useState('');
-  const refreshMcp = () => {
-    fetch('/api/mcp/status').then(r => r.json()).then(d => setMcpStatus(d || {
-      available: false,
-      servers: {}
-    })).catch(() => {});
-    fetch('/api/mcp/servers').then(r => r.json()).then(d => {
-      if (d && d.config && !mcpEditing) setMcpConfigText(JSON.stringify(d.config, null, 2));
-    }).catch(() => {});
-  };
-  useEffect(() => {
-    if (settingsOpen) {
-      refreshMcp();
-      const id = setInterval(refreshMcp, 5000);
-      return () => clearInterval(id);
-    }
-  }, [settingsOpen, mcpEditing]);
-  const mcpRestart = async name => {
-    setMcpMsg('Restarting ' + name + '…');
-    try {
-      await fetch('/api/mcp/restart', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name
-        })
-      });
-    } catch (e) {}
-    setTimeout(refreshMcp, 900);
-    setMcpMsg('');
-  };
-  const mcpReload = async () => {
-    setMcpMsg('Reloading all connectors…');
-    try {
-      await fetch('/api/mcp/reload', {
-        method: 'POST'
-      });
-    } catch (e) {}
-    setTimeout(refreshMcp, 1200);
-    setTimeout(() => setMcpMsg(''), 2000);
-  };
-  const mcpSaveConfig = async () => {
-    let cfg;
-    try {
-      cfg = JSON.parse(mcpConfigText);
-    } catch (e) {
-      setMcpMsg('Invalid JSON — fix and retry');
-      setTimeout(() => setMcpMsg(''), 3000);
-      return;
-    }
-    setMcpMsg('Saving + reloading…');
-    try {
-      const r = await fetch('/api/mcp/servers', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          config: cfg
-        })
-      });
-      const d = await r.json();
-      setMcpMsg(d.status === 'ok' ? 'Saved — reconnecting' : d.message || 'Save failed');
-    } catch (e) {
-      setMcpMsg('Save failed');
-    }
-    setMcpEditing(false);
-    setTimeout(refreshMcp, 1300);
-    setTimeout(() => setMcpMsg(''), 3000);
-  };
-  // ── One-click Connectors state ──
-  const [connectors, setConnectors] = useState([]);
-  const [connHubHealth, setConnHubHealth] = useState(null);
-  const [connForms, setConnForms] = useState({}); // key -> {FIELD:value}
-  const [connOpen, setConnOpen] = useState({}); // key -> bool (credential form expanded)
-  const [connMsg, setConnMsg] = useState({}); // key -> status message
-  const refreshConnectors = () => {
-    fetch('/api/connectors').then(r => r.json()).then(d => {
-      if (d && d.connectors) {
-        setConnectors(d.connectors);
-        setConnHubHealth(d.health || null);
-      }
-    }).catch(() => {});
-  };
-  useEffect(() => {
-    if (settingsOpen) {
-      refreshConnectors();
-      const id = setInterval(refreshConnectors, 5000);
-      return () => clearInterval(id);
-    }
-  }, [settingsOpen]);
-  const setConnField = (key, fkey, val) => setConnForms(f => ({
-    ...f,
-    [key]: {
-      ...(f[key] || {}),
-      [fkey]: val
-    }
-  }));
-  const connConnect = async c => {
-    // OAuth (no fields) connects immediately; MCP connectors need their fields.
-    if (c.fields && c.fields.length && !connOpen[c.key]) {
-      setConnOpen(o => ({
-        ...o,
-        [c.key]: true
-      }));
-      return;
-    }
-    setConnMsg(m => ({
-      ...m,
-      [c.key]: 'Connecting…'
-    }));
-    try {
-      const r = await fetch('/api/connectors/' + c.key + '/connect', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(connForms[c.key] || {})
-      });
-      const d = await r.json();
-      setConnMsg(m => ({
-        ...m,
-        [c.key]: d.message || (d.status === 'ok' ? 'Connecting…' : 'Failed')
-      }));
-      if (c.kind === 'oauth' && d.auth_url) {
-        window.open(d.auth_url, '_blank', 'noopener');
-      }
-      if (d.ok !== false) setConnOpen(o => ({
-        ...o,
-        [c.key]: false
-      }));
-    } catch (e) {
-      setConnMsg(m => ({
-        ...m,
-        [c.key]: 'Connect failed'
-      }));
-    }
-    setTimeout(refreshConnectors, 1500);
-    setTimeout(() => setConnMsg(m => {
-      const n = {
-        ...m
-      };
-      delete n[c.key];
-      return n;
-    }), 6000);
-  };
-  const connDisconnect = async c => {
-    setConnMsg(m => ({
-      ...m,
-      [c.key]: 'Disconnecting…'
-    }));
-    try {
-      const r = await fetch('/api/connectors/' + c.key + '/disconnect', {
-        method: 'POST'
-      });
-      const d = await r.json();
-      setConnMsg(m => ({
-        ...m,
-        [c.key]: d.message || 'Disconnected'
-      }));
-    } catch (e) {
-      setConnMsg(m => ({
-        ...m,
-        [c.key]: 'Failed'
-      }));
-    }
-    setTimeout(refreshConnectors, 1200);
-    setTimeout(() => setConnMsg(m => {
-      const n = {
-        ...m
-      };
-      delete n[c.key];
-      return n;
-    }), 5000);
-  };
-
-  // ── Multi-account Google (Gmail/Calendar/Drive) state ──
-  // Tokens live encrypted server-side; this only ever sees non-secret metadata.
-  const [googleAccounts, setGoogleAccounts] = useState([]);
-  const [googleProtection, setGoogleProtection] = useState('');
-  const [googleAcctMsg, setGoogleAcctMsg] = useState('');
-  const [googleAcctLabel, setGoogleAcctLabel] = useState('');
-  // Off every time the panel is opened, and never remembered. Permission to
-  // send mail as Stephen is asked for per connection, deliberately — a
-  // sticky checkbox would make it a thing he ticked once, months ago.
-  const [googleAllowSend, setGoogleAllowSend] = useState(false);
-  const refreshGoogleAccounts = () => {
-    fetch('/api/google/accounts').then(r => r.json()).then(d => {
-      if (d && d.accounts) {
-        setGoogleAccounts(d.accounts);
-        setGoogleProtection(d.protection || '');
-      }
-    }).catch(() => {});
-  };
-  useEffect(() => {
-    if (settingsOpen) refreshGoogleAccounts();
-  }, [settingsOpen]);
-  const addGoogleAccount = async () => {
-    setGoogleAcctMsg('Opening Google…');
-    try {
-      const r = await fetch('/api/google/accounts/connect', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          label: googleAcctLabel,
-          include_send: googleAllowSend
-        })
-      });
-      const d = await r.json();
-      if (d.status === 'ok' && d.auth_url) {
-        window.open(d.auth_url, '_blank', 'width=520,height=660');
-        setGoogleAcctMsg(d.requesting_send ? 'Google will ask to let Friday send mail — that’s expected. Approve, then tap Refresh.' : 'Approve in the popup, then tap Refresh.');
-        setGoogleAcctLabel('');
-        setGoogleAllowSend(false);
-      } else {
-        setGoogleAcctMsg(d.message || 'Could not start sign-in.');
-      }
-    } catch (e) {
-      setGoogleAcctMsg('Failed to start sign-in.');
-    }
-    setTimeout(() => setGoogleAcctMsg(''), 7000);
-  };
-  const removeGoogleAccount = async a => {
-    if (!window.confirm('Disconnect ' + (a.email || a.label) + '?\n\nThis revokes Friday’s access at Google and deletes the encrypted token from this machine.')) return;
-    try {
-      await fetch('/api/google/accounts/' + a.id + '/remove', {
-        method: 'POST'
-      });
-    } catch (e) {}
-    refreshGoogleAccounts();
-  };
-  const toggleAccountService = async (a, svc) => {
-    const next = {
-      ...(a.services || {}),
-      [svc]: !(a.services || {})[svc]
-    };
-    try {
-      await fetch('/api/google/accounts/' + a.id + '/services', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          services: next
-        })
-      });
-    } catch (e) {}
-    refreshGoogleAccounts();
-  };
-  // ══ Self-Sufficient Friday: Cost & Usage / Active Hooks ══
-  // (Scheduled Tasks used to live here as a second, fully dead "Scheduler"
-  // section: its state, 7 handlers, and 5s poll were never wired to any JSX
-  // in this file and were removed. The real, working scheduler UI is the
-  // Workflows tab's schedules panel, using differently-named handlers
-  // (runSched/toggleSched/deleteSched). Cost & Usage lives in
-  // SettingsTabCosts() above.)
-
-  // ── Active Hooks (Part B) ──
-  const [hooksList, setHooksList] = useState([]);
-  const refreshHooks = () => fetch('/api/hooks').then(r => r.json()).then(d => setHooksList(d.hooks || [])).catch(() => {});
-  useEffect(() => {
-    if (settingsOpen && openSections.hooks) refreshHooks();
-  }, [settingsOpen, openSections.hooks]);
-  const toggleHook = h => {
-    if (h.critical) return;
-    fetch('/api/hooks/' + h.name, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        enabled: !h.enabled
-      })
-    }).then(() => refreshHooks()).catch(() => {});
-  };
   const saveAgentSettings = async (patch, opts = {}) => {
     const prev = agentSettings;
     const next = {
@@ -43978,107 +43457,12 @@ function App() {
         ...DEFAULT_AGENT_SETTINGS,
         ...d.settings
       });
-      if (opts.personality !== undefined && typeof d?.personality === 'string') {
-        setAgentPersonality(d.personality);
-        setPersonalityDraft(d.personality);
-      }
       setSettingsSaveMsg(opts.msg || 'Saved');
     } catch (e) {
       setSettingsSaveMsg('Save failed');
     }
     setTimeout(() => setSettingsSaveMsg(''), 1800);
     return true;
-  };
-  const savePersonality = () => saveAgentSettings({}, {
-    personality: personalityDraft,
-    msg: 'Personality saved'
-  });
-  const toggleNewsTopic = t => {
-    const cur = new Set(agentSettings.news_priorities || []);
-    cur.has(t) ? cur.delete(t) : cur.add(t);
-    saveAgentSettings({
-      news_priorities: [...cur]
-    });
-  };
-  // ── Onboarding parity (Settings → Providers / Services / Hardware / Distribution / Advanced) ──
-  // Same backend as the wizard, so the two surfaces stay congruent.
-  const [provHealth, setProvHealth] = useState({}); // provider name -> {status,detail}
-  const [capList, setCapList] = useState([]); // capability_router.route_table()
-  const [hwFull, setHwFull] = useState(null); // /api/health/full
-  const [distroList, setDistroList] = useState([]);
-  const [provKeyInput, setProvKeyInput] = useState({}); // provider name -> draft key
-  const refreshOnboarding = useCallback(() => {
-    fetch('/api/providers/health').then(r => r.json()).then(d => {
-      const m = {};
-      (d.providers || []).forEach(p => {
-        m[p.provider] = p;
-      });
-      setProvHealth(m);
-    }).catch(() => {});
-    fetch('/api/capabilities').then(r => r.json()).then(d => setCapList(d.capabilities || [])).catch(() => {});
-    fetch('/api/health/full').then(r => r.json()).then(d => setHwFull(d)).catch(() => {});
-    fetch('/api/distros').then(r => r.json()).then(d => setDistroList(d.distros || [])).catch(() => {});
-  }, []);
-  useEffect(() => {
-    if (settingsOpen) refreshOnboarding();
-  }, [settingsOpen, refreshOnboarding]);
-  const saveProviderKey = async name => {
-    const key = (provKeyInput[name] || '').trim();
-    if (!key) return;
-    try {
-      await fetch('/api/providers/' + name + '/key', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          key
-        })
-      });
-    } catch (e) {}
-    setProvKeyInput(s => ({
-      ...s,
-      [name]: ''
-    }));
-    try {
-      fridayInvalidateModelCatalog();
-    } catch (_) {}
-    refreshOnboarding();
-  };
-  const removeProviderKey = async name => {
-    try {
-      await fetch('/api/providers/' + name + '/key', {
-        method: 'DELETE'
-      });
-    } catch (e) {}
-    try {
-      fridayInvalidateModelCatalog();
-    } catch (_) {}
-    refreshOnboarding();
-  };
-  const applyDistro = async name => {
-    try {
-      const r = await fetch('/api/distros/' + name + '/apply', {
-        method: 'POST'
-      });
-      const d = await r.json();
-      if (d && d.settings) setAgentSettings(s => ({
-        ...s,
-        ...d.settings
-      }));
-    } catch (e) {}
-  };
-  const checkSycophancy = () => {
-    fetch('/api/personality').then(r => r.json()).then(d => {
-      setStPers(d);
-      const s = d?.sycophancy || {};
-      const streak = s.agreement_streak || 0;
-      const bias = s.positivity_bias ?? 0.5;
-      const events = (s.circuit_breaker_events || []).length;
-      let status = 'HEALTHY';
-      if (streak >= 5 || bias > 0.75 || events > 3) status = 'SYCOPHANCY RISK';else if (streak >= 3 || bias > 0.65) status = 'LEAN POSITIVE';
-      setStSycoMsg(`${status} · streak ${streak} · bias ${bias.toFixed(2)} · ${events} breaker events`);
-    }).catch(() => setStSycoMsg('Check failed'));
   };
   const formatUptime = s => {
     if (!s && s !== 0) return '—';
@@ -44318,22 +43702,7 @@ function App() {
     short: '—'
   };
   const orchModel = _modelOf(agentSettings.orchestrator_model, 'orchestrator');
-  const creativeModel = _modelOf(agentSettings.creative_model, 'creative');
-  const subagentModel = _modelOf(agentSettings.subagent_model, 'subagent');
-  // ── Top-bar model menu (quick switcher) ── available-only, compact views.
-  // The dropdown is a channel switcher, not the catalog: only models the user
-  // can route to right now (available !== false — the offline-fallback statics
-  // carry no availability field and must not vanish), a handful per role, zero
-  // greyed-out rows, zero duplicates. The FULL browsable catalog with all the
-  // per-model metadata lives in Settings → Providers.
-  const _mmAvail = m => !!m && m.available !== false;
-  const _mmRole = r => (modelCatalog[r] || []).filter(_mmAvail);
   const curOrchId = agentSettings.orchestrator_model || orchModel.id || '';
-  // Quick Switch list: current orchestrator pinned first (even if its provider
-  // just lost its key — it IS still the routed id), then up to 4 available
-  // alternatives: one per provider first so the list spans providers (e.g.
-  // Sonnet → Opus, Gemini, local Gemma), then fill remaining slots in catalog
-  // order (available-first, provider-declared).
   /* WHAT ACTUALLY SERVED THE LAST TURN — not what settings say is bound.
      If the user swaps a seat, the save succeeds, and every turn keeps being
      served by the old model, a pill that shows the SELECTION agrees with the
@@ -44351,212 +43720,12 @@ function App() {
     }
     return null;
   })();
-  const seatMismatch = !!(lastServed && curOrchId && lastServed.model !== curOrchId);
   // The pill promises "switching to X" and must stop promising once X has
   // actually answered. Anything else is the old bug in a new costume: the
   // UI asserting a state the dispatcher has not reached.
   useEffect(() => {
     if (pendingSeat && lastServed && lastServed.model === pendingSeat.id) setPendingSeat(null);
   }, [pendingSeat, lastServed && lastServed.model]);
-  const quickSwitch = (() => {
-    const pool = _mmRole('orchestrator');
-    const cur = pool.find(m => m.id === curOrchId) || (curOrchId ? {
-      id: curOrchId,
-      label: orchModel.label || curOrchId,
-      short: orchModel.short || curOrchId,
-      provider: orchModel.provider,
-      provider_label: orchModel.provider_label,
-      local: !!orchModel.local
-    } : null);
-    const out = cur ? [cur] : [];
-    const seen = new Set(out.map(m => m.id));
-    const provs = new Set(out.filter(m => m.provider).map(m => m.provider));
-    for (const m of pool) {
-      if (out.length >= 5) break;
-      if (seen.has(m.id) || m.provider && provs.has(m.provider)) continue;
-      seen.add(m.id);
-      if (m.provider) provs.add(m.provider);
-      out.push(m);
-    }
-    for (const m of pool) {
-      if (out.length >= 5) break;
-      if (seen.has(m.id)) continue;
-      seen.add(m.id);
-      out.push(m);
-    }
-    return out;
-  })();
-  const voiceEngine = agentSettings.voice_engine || 'local';
-  const voiceEngineMeta = (modelCatalog.voiceEngines || []).find(e => e.id === voiceEngine) || {
-    id: voiceEngine,
-    label: voiceEngine,
-    short: voiceEngine
-  };
-  const mmVoiceEngines = (modelCatalog.voiceEngines || []).filter(_mmAvail);
-  const mmVoiceModels = _mmRole('voice').slice(0, 5);
-  // Creative splits by modality. Image routes via the flat creative_model key;
-  // video has NO flat mirror (_CAP_FLAT_MAP) and writes
-  // capability_routing.creative_video directly. When the catalog carries no
-  // modality tags (offline fallback consts), the image group shows the whole
-  // creative list rather than rendering empty.
-  const _mmHasMod = (m, mod) => (m.modalities || []).includes(mod);
-  const _mmCreative = _mmRole('creative');
-  const mmCreativeImg = (_mmCreative.some(m => _mmHasMod(m, 'image')) ? _mmCreative.filter(m => _mmHasMod(m, 'image')) : _mmCreative).slice(0, 4);
-  const mmCreativeVid = _mmCreative.filter(m => _mmHasMod(m, 'video')).slice(0, 4);
-  const creativeVideoId = ((agentSettings.capability_routing || {}).creative_video || {}).model || '';
-
-  // ── Ollama / Model Routing state ──
-  const [ollamaStatus, setOllamaStatus] = useState({
-    available: false,
-    models: [],
-    model_count: 0
-  });
-  const [routingStats, setRoutingStats] = useState({
-    local_requests: 0,
-    cloud_requests: 0,
-    estimated_savings: 0,
-    mode: 'cloud_only'
-  });
-  const routingMode = (agentSettings.model_routing || {}).mode || 'cloud_only';
-  useEffect(() => {
-    const poll = () => {
-      fetch('/api/ollama/status').then(r => r.json()).then(setOllamaStatus).catch(() => {});
-      fetch('/api/model-stats').then(r => r.json()).then(setRoutingStats).catch(() => {});
-    };
-    poll();
-    const iv = setInterval(poll, 30000);
-    return () => clearInterval(iv);
-  }, []);
-  const pullModel = name => {
-    fetch('/api/ollama/pull', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: name
-      })
-    }).then(r => r.json()).then(() => {
-      setTimeout(() => fetch('/api/ollama/status').then(r => r.json()).then(setOllamaStatus).catch(() => {}), 5000);
-    }).catch(() => {});
-  };
-  const setRoutingMode = mode => {
-    const cur = agentSettings.model_routing || {};
-    saveAgentSettings({
-      model_routing: {
-        ...cur,
-        mode
-      }
-    });
-  };
-  const setLocalModel = name => {
-    const cur = agentSettings.model_routing || {};
-    saveAgentSettings({
-      model_routing: {
-        ...cur,
-        local_model: name
-      }
-    });
-  };
-  // ── Seat-gate status: DIAGNOSTIC ONLY. Nothing here gates a binding.
-  // The gate is removed. Any installed model can be assigned to
-  // any seat and will actually serve. The chip reports whether the structural
-  // tool-call check has been run and what it said — it never blocks a choice,
-  // and a red/ungated model is fully selectable.
-  const [seatGate, setSeatGate] = useState({});
-  const refreshSeatGate = () => fetch('/api/seat-gate/statuses').then(r => r.json()).then(d => setSeatGate(d.statuses || {})).catch(() => {});
-  useEffect(() => {
-    refreshSeatGate();
-    const iv = setInterval(refreshSeatGate, 15000);
-    return () => clearInterval(iv);
-  }, []);
-  const runSeatGate = name => {
-    setSeatGate(s => ({
-      ...s,
-      [name]: {
-        ...(s[name] || {}),
-        running: true
-      }
-    }));
-    fetch('/api/seat-gate/run', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: name
-      })
-    }).then(() => setTimeout(refreshSeatGate, 3000)).catch(() => {});
-  };
-  const gateChip = name => {
-    const g = seatGate[name] || {};
-    if (g.running) return /*#__PURE__*/React.createElement("span", {
-      title: "Gate axes running \u2014 progress shows as an orb",
-      style: {
-        fontSize: 8,
-        fontFamily: 'JetBrains Mono',
-        color: '#00d4ff',
-        border: '1px solid rgba(0,212,255,0.35)',
-        borderRadius: 3,
-        padding: '0 4px',
-        marginRight: 4
-      }
-    }, "\u23F3 gating");
-    const st = g.structural === 'green' ? 'green' : g.structural === 'red' ? 'red' : 'ungated';
-    const cfg = {
-      green: {
-        c: '#00ff80',
-        b: 'rgba(0,255,128,0.35)',
-        t: '✓',
-        ti: 'Structural tool-call check: PASSED. Informational only — every model is selectable regardless.'
-      },
-      red: {
-        c: '#f59e0b',
-        b: 'rgba(245,158,11,0.35)',
-        t: '!',
-        ti: 'Structural tool-call check: did not pass. This does NOT block anything — you can still assign this model to any seat. A model that will not emit tool calls is usually a prompting/template issue.'
-      },
-      ungated: {
-        c: '#8b93a7',
-        b: 'rgba(255,255,255,0.2)',
-        t: '—',
-        ti: 'Not checked. Nothing is gated — assign this model freely. Click ▶ check to run the structural diagnostic.'
-      }
-    }[st];
-    return /*#__PURE__*/React.createElement("span", {
-      title: cfg.ti,
-      style: {
-        fontSize: 8,
-        fontFamily: 'JetBrains Mono',
-        color: cfg.c,
-        border: '1px solid ' + cfg.b,
-        borderRadius: 3,
-        padding: '0 4px',
-        marginRight: 4
-      }
-    }, cfg.t);
-  };
-  // ── A1: in-UI model pull with disk-space preflight; progress = pull orb.
-  const [pullName, setPullName] = useState('');
-  const [pullMsg, setPullMsg] = useState('');
-  const pullArmed = useRef(false);
-  const pullWithPreflight = async () => {
-    const name = pullName.trim();
-    if (!name) return;
-    try {
-      const pf = await fetch('/api/ollama/pull/preflight?name=' + encodeURIComponent(name)).then(r => r.json());
-      if (pf.warning && !pullArmed.current) {
-        pullArmed.current = true;
-        setPullMsg(pf.warning + ' — click Pull again to force');
-        return;
-      }
-    } catch (_) {}
-    pullArmed.current = false;
-    setPullMsg('Pulling ' + name + ' — progress shows as a process orb; it appears in this list when done.');
-    pullModel(name);
-    setPullName('');
-    setTimeout(() => setPullMsg(''), 10000);
-  };
   const chatEnd = useRef(null);
 
   // ─── Voice Mode (Gemini Live via /ws/live) ───
@@ -46947,7 +46116,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     };
   }, []);
 
-  // The one writer for dock_custom. Settings → Dock lives inside SettingsWS,
+  // The one writer for dock_custom. Settings → Appearance & 3D lives inside SettingsWS,
   // which reads through useSettings() — a parallel store over the same POST
   // endpoint that does not feed agentSettings. Routing the write back here
   // means the dock reshapes as the panel is edited instead of on the next full
@@ -47367,7 +46536,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // SitesWS portfolio manager instead.
   const showAllWorkspaces = agentSettings.show_all_workspaces !== false;
   // One computation of what the dock is, shared by the dock itself and by
-  // Settings → Dock. Recomputed only when an input changes, because it runs on
+  // Settings → Appearance & 3D. Recomputed only when an input changes, because it runs on
   // every App render otherwise and App re-renders on every chat token.
   const dockShape = React.useMemo(
     () => dockArrangement(agentSettings.dock_custom, showAllWorkspaces),
@@ -49844,12 +49013,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       setSettingsOpen(false);
       toggle('settings');
     }
-  }, "\u2699\uFE0F\uFE0F Open Full Settings"), /*#__PURE__*/React.createElement("div", {
+  }, "Open full Settings"), /*#__PURE__*/React.createElement("div", {
     className: "settings-section-title",
     style: {
       marginBottom: 8
     }
-  }, "Quick Toggles"),
+  }, "Quick toggles"),
   // Once the dock has been shaped by hand, this toggle no longer decides
   // anything — dockArrangement() ignores show_all_workspaces the moment a
   // custom arrangement exists. A switch that flips and changes nothing is
@@ -49859,10 +49028,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         className: "settings-toggle",
         style: { opacity: 0.5, cursor: 'default' },
         title: "Your own dock arrangement is in use, so this no longer applies.",
-        onClick: () => { setSettingsOpen(false); toggle('settings'); window.__fridaySettingsTab = 'dock'; }
+        onClick: () => { window.__fridaySettingsTab = 'appearance'; setSettingsOpen(false); toggle('settings'); try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'appearance' } })); } catch (e) {} }
       }, /*#__PURE__*/React.createElement("span", {
         className: "settings-toggle-label"
-      }, "Show all workspaces — set in Settings → Dock"))
+      }, "Show all workspaces — set in Settings → Appearance & 3D"))
     : /*#__PURE__*/React.createElement("div", {
         className: "settings-toggle",
         onClick: () => saveAgentSettings({
@@ -49883,7 +49052,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     style: {
       color: agentSettings.off_record ? '#ff0080' : undefined
     }
-  }, "Go Off Record"), /*#__PURE__*/React.createElement("div", {
+  }, "Go off the record"), /*#__PURE__*/React.createElement("div", {
     className: `settings-toggle-switch ${agentSettings.off_record ? 'on' : ''}`
   })), /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
@@ -49892,18 +49061,24 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     })
   }, /*#__PURE__*/React.createElement("span", {
     className: "settings-toggle-label"
-  }, "Context Logging"), /*#__PURE__*/React.createElement("div", {
+  }, "Log conversations"), /*#__PURE__*/React.createElement("div", {
     className: `settings-toggle-switch ${agentSettings.context_logging_enabled ? 'on' : ''}`
-  })), /*#__PURE__*/React.createElement("div", {
+  })),
+  // Computer control is high risk and needs a separate grant, so it is
+  // switched only in Privacy & Approvals, beside its warning and grant
+  // status. This row reports the state and goes there.
+  /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
-    onClick: () => saveAgentSettings({
-      computer_control_enabled: !agentSettings.computer_control_enabled
-    })
+    role: "button",
+    tabIndex: 0,
+    title: "Computer control is changed in Settings, next to its warning and grant.",
+    onClick: () => { window.__fridaySettingsTab = 'privacy'; setSettingsOpen(false); toggle('settings'); try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'privacy' } })); } catch (e) {} },
+    onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }
   }, /*#__PURE__*/React.createElement("span", {
     className: "settings-toggle-label"
-  }, "Computer Control"), /*#__PURE__*/React.createElement("div", {
-    className: `settings-toggle-switch ${agentSettings.computer_control_enabled ? 'on' : ''}`
-  })))), quickDraft && /*#__PURE__*/React.createElement("div", {
+  }, "Computer Control"), /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 11, color: agentSettings.computer_control_enabled ? '#ffb347' : 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono' }
+  }, (agentSettings.computer_control_enabled ? 'On' : 'Off') + ' \u2192')))), quickDraft && /*#__PURE__*/React.createElement("div", {
     ref: quickDraftRef,
     style: {
       position: 'fixed',

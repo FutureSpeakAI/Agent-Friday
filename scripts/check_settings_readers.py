@@ -105,15 +105,9 @@ ALLOWLIST: dict[str, str] = {
         "reads this key to decide whether a response streams. The toggle "
         "('Stream tokens as they arrive') has no effect in either "
         "position. KNOWN_ISSUES.md.",
-    "auto_open_chat": "(b) written and read back only to redraw its own "
-        "toggle (index.html:31473-31475) -- no other reference in the "
-        "tree. KNOWN_ISSUES.md.",
-    "compact_mode": "(b) same shape as auto_open_chat -- self-referential, "
-        "no consumer. KNOWN_ISSUES.md.",
-    "scene_name": "(b) same shape -- the 3D scene picker persists a "
-        "choice nothing reads to pick a scene. KNOWN_ISSUES.md.",
-    "startup_workspace": "(b) same shape -- nothing opens this workspace "
-        "at startup or any other time. KNOWN_ISSUES.md.",
+    "scene_name": "(b) written and read back only to redraw its own "
+        "picker -- the 3D scene picker persists a choice nothing reads to "
+        "pick a scene. KNOWN_ISSUES.md.",
     # (c) genuinely functional (both keys are declared in DEFAULT_SETTINGS
     # and read by src/agent_friday/cli.py and governance/proof_of_integrity.py)
     # -- the divergence is real, but it is the ALREADY-TRACKED structural

@@ -138,7 +138,7 @@ def build_usage_model():
 
 
 def _hidden_workspaces() -> set:
-    """Workspace ids the owner has hidden from the dock (Settings → Dock).
+    """Workspace ids the owner has hidden from the dock (Settings → Appearance & 3D).
 
     Reads `dock_layout.hidden` from settings. Returns an empty set on any
     failure, which is the right direction to fail: a suggestion nobody wanted

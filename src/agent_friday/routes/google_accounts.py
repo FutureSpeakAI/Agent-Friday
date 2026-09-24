@@ -72,7 +72,7 @@ def list_google_accounts():
 
     Also surfaces the OAuth redirect_uri
     — side-effect-free, unlike POST /connect (rate limited, starts a real
-    flow), so the Settings -> Connectors panel can show it up front, before
+    flow), so the Settings -> Accounts & Keys panel can show it up front, before
     the user ever clicks Add Account. Pinned to loopback regardless of the
     request Host; the Web-client GCP-registration note only applies when
     client_type == "web".

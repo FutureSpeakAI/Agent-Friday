@@ -178,7 +178,7 @@ class TestRecoveryPathIsOffered:
         # Someone fixing a broken token is the person least likely to read a
         # consent screen carefully, so permission to send mail is never
         # inherited or re-requested here — it is granted only from an explicit
-        # tick in Settings → Dock's sibling, the Google connector panel.
+        # tick in the Google connector panel (Settings → Accounts & Keys).
         assert built["include_send"] is False
         assert d["requesting_send"] is False
 

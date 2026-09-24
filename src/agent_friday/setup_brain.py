@@ -35,7 +35,7 @@ Deliberately NOT asked for:
   * OpenRouter, Together, Groq, Mistral, xAI, Perplexity — each appears once or
     twice behind an alternative-provider path most users never take. Asking
     about seven providers to reach a first conversation is its own failure.
-    They remain settable in Settings -> Providers.
+    They remain settable in Settings -> Accounts & Keys.
 """
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ KEYS = [
 
 #: Where to go afterwards. Named explicitly, because skipping a key must not be
 #: easier than un-skipping it.
-ADD_LATER = "Settings -> Providers, in Friday's own window. No re-running setup."
+ADD_LATER = "Settings -> Accounts & Keys, in Friday's own window. No re-running setup."
 
 
 def assess(profile=None) -> dict:

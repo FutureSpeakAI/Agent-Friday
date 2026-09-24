@@ -842,7 +842,7 @@ def step_brain(total: int, existing_anthro: str, existing_gemini: str) -> tuple[
         choice = Prompt.ask("  Which?", choices=["1", "2", "3"], default="3")
         if choice == "1":
             console.print("\n  [green]Local only. You can add a key any time in "
-                          "Settings -> Providers.[/green]\n")
+                          "Settings -> Accounts & Keys.[/green]\n")
             _pause()
             return "", existing_gemini or ""
     else:
@@ -1401,13 +1401,13 @@ def step_connectors(total: int, existing: dict) -> dict:
         console.print("  [green]Already connected:[/green] "
                       + ", ".join(str(e) for e in signed_in))
         console.print("  [dim]Manage these in Friday: "
-                      "Settings → Connectors.[/dim]\n")
+                      "Settings → Accounts & Keys.[/dim]\n")
         return connected
 
     console.print(
         "  [dim]Nothing is connected yet, and this installer cannot connect it\n"
         "  for you — signing in needs a browser and a running Friday.[/dim]\n"
-        "  When Friday opens: [bold]Settings → Connectors → + Add Account[/bold].\n"
+        "  When Friday opens: [bold]Settings → Accounts & Keys → + Add Account[/bold].\n"
     )
     console.print(
         "  [dim]Everything else works without it. Mail and calendar simply\n"

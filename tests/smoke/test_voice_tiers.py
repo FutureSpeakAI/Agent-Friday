@@ -129,7 +129,7 @@ class TestTier3GeminiLive:
         import asyncio
         from agent_friday.services import voice_engine as ve
         key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        assert key, "GEMINI_API_KEY not set — configure it in Settings → Providers"
+        assert key, "GEMINI_API_KEY not set — configure it in Settings → Accounts & Keys"
         from google import genai
         from google.genai import types
 

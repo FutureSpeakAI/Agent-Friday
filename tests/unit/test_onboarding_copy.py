@@ -136,7 +136,7 @@ def test_the_cloud_screen_says_the_map_loses_its_semantic_layer_by_default():
     )
     assert "settings" in ack, (
         "the screen must point at the real escape hatch (Settings -> "
-        "Knowledge Graph) now that cloud indexing is a genuine choice, not "
+        "Privacy & Approvals) now that cloud indexing is a genuine choice, not "
         "just describe an unconditional local pin"
     )
 

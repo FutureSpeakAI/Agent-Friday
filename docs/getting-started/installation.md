@@ -207,7 +207,7 @@ Where a key ends up depends on how you enter it:
 
 | Entered through | Stored in | Protection |
 |---|---|---|
-| **Settings → Providers** in the running app | `~/.friday/providers/keys/<provider>.key` | Encrypted: vault key (Argon2id → AES-256-GCM) when a vault passphrase is set, otherwise Windows DPAPI, otherwise plaintext with a one-time warning. |
+| **Settings → Accounts & Keys** in the running app | `~/.friday/providers/keys/<provider>.key` | Encrypted: vault key (Argon2id → AES-256-GCM) when a vault passphrase is set, otherwise Windows DPAPI, otherwise plaintext with a one-time warning. |
 | **`friday setup`** (the command-line wizard) | `~/.friday/settings.json`, `~/.friday/config.yaml`, and a `start.bat` launcher in the checkout | **Plaintext.** These files are outside the repository or gitignored, but treat them as containing live secrets. |
 | Environment variables | your shell or system environment | Wins over every stored copy. |
 
@@ -215,9 +215,9 @@ The vault passphrase is never written to a launch script: `friday setup` and
 `friday vault-setup` store it in the OS keychain and a DPAPI-wrapped file
 under `~/.friday/security/`. Full detail: [SECURITY.md](../../SECURITY.md).
 
-### Option A: Settings → Providers (recommended)
+### Option A: Settings → Accounts & Keys (recommended)
 
-Start Friday, open **Settings → Providers**, and paste the key. It is verified
+Start Friday, open **Settings → Accounts & Keys**, and paste the key. It is verified
 against the provider and stored in the encrypted store. `friday setup` is the
 terminal alternative for a first run; it configures routing, the vault
 passphrase, and voice as well, but writes provider keys in plaintext as shown
@@ -252,7 +252,7 @@ export GEMINI_API_KEY=AIza...
 
 Other OpenAI-compatible providers (Groq, Mistral, DeepSeek, xAI, Together,
 Fireworks, and more) can be added with their own keys through `friday setup`
-or **Settings → Providers**.
+or **Settings → Accounts & Keys**.
 
 ### Vault Encryption with FRIDAY_PASSWORD
 

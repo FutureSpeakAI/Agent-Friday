@@ -109,7 +109,7 @@ change your mind at any time in **Settings → Intelligence**.
 
 Cloud keys — Anthropic for sharper reasoning, Gemini for voice and creative
 work, OpenRouter for hundreds of models through one key — are optional and are
-added in **Settings → Providers**, where they are stored encrypted. The
+added in **Settings → Accounts & Keys**, where they are stored encrypted. The
 model ladder, the VRAM arithmetic, and the honest limits of small models are
 documented in [Installation](docs/getting-started/installation.md).
 

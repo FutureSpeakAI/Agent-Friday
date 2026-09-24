@@ -1174,7 +1174,7 @@ def chat():
                     "I'm set to **cloud only**, and there's no cloud AI key on "
                     "this computer yet — so there's nothing for me to think "
                     "with. I haven't sent this anywhere.\n\n"
-                    "Add a key in **Settings → Providers**. Anthropic's Claude "
+                    "Add a key in **Settings → Accounts & Keys**. Anthropic's Claude "
                     "is what I use by default; the panel there has a button "
                     "through to the signup page and takes the key straight "
                     "from you — nothing to edit by hand.\n\n"

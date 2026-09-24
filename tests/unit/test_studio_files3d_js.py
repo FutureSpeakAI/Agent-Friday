@@ -126,7 +126,7 @@ def test_page_loads_the_browser_and_honours_the_backdrop_hold(path):
 @pytest.mark.parametrize("path", ["index.html", "ui_parts/app.html"])
 def test_settings_offers_the_dazzle_slider(path):
     text = (ROOT / path).read_text(encoding="utf-8")
-    assert "3D Dazzle (every 3D view)" in text
+    assert "3D dazzle" in text
     assert "studio_dazzle" in text and "friday-dazzle" in text
 
 

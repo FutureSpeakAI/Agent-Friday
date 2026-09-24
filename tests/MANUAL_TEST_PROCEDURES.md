@@ -38,7 +38,7 @@ Diagnostics if it fails:
 
 Cannot be automated — needs an interactive Google consent screen.
 
-1. Settings → Connectors (or the Messages/Calendar workspace "Connect" button).
+1. Settings → Accounts & Keys (or the Messages/Calendar workspace "Connect" button).
 2. Click **Connect Google**. A browser tab opens Google's consent screen.
 3. Approve; confirm redirect back and `~/.friday/google_token.json` is written.
 4. Reopen **Messages** → real Gmail threads load (not the "Google not connected"
@@ -126,7 +126,7 @@ Sonnet 5 is the default orchestrator. Fable 5 is the creative/narrative speciali
 - [ ] The panel never lists more than ~15 model entries total, and no
       grayed-out/unavailable models appear anywhere in it.
 - [ ] "Browse All Models" opens Settings on the **Providers** tab.
-- [ ] Settings → Providers **Model Browser** auto-populates on open (no
+- [ ] Settings → Accounts & Keys **Model Browser** auto-populates on open (no
       empty state) and offers a search box, provider filter, capability
       filter (Tool calling / Vision / Image gen / Video gen / Free /
       Local), and price/context sorting.

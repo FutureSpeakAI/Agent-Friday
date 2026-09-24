@@ -1116,7 +1116,7 @@ def resolve_gemini_key(update_core=True):
     _add("process env GOOGLE_API_KEY (launcher script)",
          os.environ.get("GOOGLE_API_KEY", ""))
     try:
-        _add("settings.json (Settings → Providers)",
+        _add("settings.json (Settings → Accounts & Keys)",
              (_load_settings() or {}).get("gemini_api_key", ""))  # pragma: allowlist secret
     except Exception:
         pass
