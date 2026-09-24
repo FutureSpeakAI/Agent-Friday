@@ -2043,6 +2043,36 @@ def chat_turn_liveness(turn_id):
     return jsonify(out)
 
 
+@chat_bp.route('/api/chat/turn/<turn_id>/stop', methods=['POST'])
+def chat_turn_stop(turn_id):
+    """Stop a running turn, at the user's word.
+
+    The counterpart to raising the local round budget to parity with the cloud
+    path. A cap of 50 was the only thing that had ever ended a long interactive
+    turn; the replacement limits (loop detection, the clock, the token ceiling)
+    are all automatic, and none of them is the user deciding they have seen
+    enough. This is that decision, and it is the one limit that needs no
+    justification.
+
+    Cooperative: the round loop checks between rounds, so the turn stops with
+    its transcript and receipts intact rather than being killed mid-call.
+
+    `stopping` is False when the turn is not running here -- already finished,
+    or never registered -- so the UI reports that instead of implying it
+    stopped something.
+    """
+    ok = core.turn_request_stop(turn_id)
+    return jsonify({
+        "status": "ok",
+        "turn_id": turn_id,
+        "stopping": bool(ok),
+        "detail": ("the turn has been asked to stop at its next round"
+                   if ok else
+                   "that turn is not running here — it may have already "
+                   "finished"),
+    })
+
+
 @chat_bp.route('/api/chat/history', methods=['GET'])
 def chat_history():
     """Return chat history (last 30 days, pinned messages included)."""
