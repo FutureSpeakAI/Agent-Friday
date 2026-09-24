@@ -771,7 +771,14 @@
   // underneath (hidden) so switching back is instant and loses nothing.
   function Friday3DToggle({ ws, source, children }) {
     ws = ws || source;
-    const [on, setOn] = useState(() => { try { return localStorage.getItem('friday_3d_on_' + ws) === '1'; } catch (_) { return false; } });
+    // A link that says view3d (e.g. /w/news?view3d=1) is read here, while the
+    // bar is created: the workspace inside reads the same nav target in its
+    // own effect, which runs first and clears it.
+    const [on, setOn] = useState(() => {
+      const t = window.__fridayNavTarget;
+      if (t && t.workspace === ws && t.view3d != null) return !!t.view3d;
+      try { return localStorage.getItem('friday_3d_on_' + ws) === '1'; } catch (_) { return false; }
+    });
     const set = v => { setOn(v); try { localStorage.setItem('friday_3d_on_' + ws, v ? '1' : '0'); } catch (_) {} };
     useEffect(() => {
       // a link that opened this workspace before the bar mounted

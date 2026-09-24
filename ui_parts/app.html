@@ -173,7 +173,7 @@ function fridayPrefetchPanels() {
   });
 }
 if (typeof document !== 'undefined') {
-  if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
+  if (window.__FRIDAY_STANDALONE__) {/* one workspace, nothing else to warm */} else if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
 }
 // ── end panel data cache ──────────────────────────────────────────────────
 // Full dock. `core:true` marks the trimmed 10-icon set shown to fresh installs
@@ -551,7 +551,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   },[id]);
   return(<div className={'fwin'+(closing?' closing':'')} ref={fwinRef} style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
-      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button><button onClick={onClose}>×</button></div>
+      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();fridayOpenWorkspaceTab(id)}} style={{fontSize:12}}>↗</button><button onClick={onClose}>×</button></div>
     </div><div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
       {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
       {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
@@ -10902,6 +10902,72 @@ function ArbiterStrip(){
     })}
   </span>;
 }
+// ═══ A WORKSPACE AS ITS OWN TAB (/w/<id>) ═══
+// The server marks the page (window.__FRIDAY_STANDALONE__) before anything
+// renders; the scene never starts and App draws that one workspace full-tab
+// under a slim header. Query parameters become the workspace's nav target.
+// Approval cards reach the tab through its own poller.
+const STANDALONE_WS=(function(){try{const m=/^\/w\/([a-z][a-z0-9_-]{0,31})\/?$/.exec(window.location.pathname);return window.__FRIDAY_STANDALONE__||(m&&m[1])||null}catch(e){return null}})();
+if(STANDALONE_WS){try{const t={workspace:STANDALONE_WS};new URLSearchParams(window.location.search).forEach((v,k)=>{t[k]=k==='view3d'?(v==='1'||v==='true'):v});window.__fridayNavTarget=t}catch(e){}}
+function fridayWorkspaceTabUrl(id,params){const q=params&&Object.keys(params).length?'?'+new URLSearchParams(params).toString():'';return '/w/'+encodeURIComponent(id)+q}
+function fridayOpenWorkspaceTab(id,params){
+  if(!id||id==='settings')return false;
+  const w=window.open(fridayWorkspaceTabUrl(id,params),'_blank');   // no feature string: a tab, not a popup
+  if(!w){alert('The browser blocked that tab. Allow pop-ups for Friday and try again.');return false}
+  try{w.focus()}catch(e){}
+  return true;
+}
+window.fridayWorkspaceTabUrl=fridayWorkspaceTabUrl;
+window.fridayOpenWorkspaceTab=fridayOpenWorkspaceTab;
+function StandaloneApprovals(){
+  const[items,setItems]=useState([]);const[open,setOpen]=useState(false);const[busy,setBusy]=useState('');const[fresh,setFresh]=useState(null);
+  const seen=useRef(null);
+  const load=useCallback(()=>fetch('/api/approvals?status=pending').then(r=>r.json()).then(d=>{
+    const list=Array.isArray(d&&d.approvals)?d.approvals:[];
+    if(seen.current){const nu=list.find(a=>!seen.current.has(a.approval_id));if(nu)setFresh(nu)}
+    seen.current=new Set(list.map(a=>a.approval_id));setItems(list);
+  }).catch(()=>{}),[]);
+  useEffect(()=>{load();const iv=setInterval(()=>{if(document.visibilityState!=='hidden')load()},8000);const onVis=()=>{if(document.visibilityState==='visible')load()};document.addEventListener('visibilitychange',onVis);return()=>{clearInterval(iv);document.removeEventListener('visibilitychange',onVis)}},[load]);
+  useEffect(()=>{if(!fresh)return;const t=setTimeout(()=>setFresh(null),12000);return()=>clearTimeout(t)},[fresh]);
+  const decide=(id,decision)=>{setBusy(id);fetch('/api/approvals/'+encodeURIComponent(id)+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})}).catch(()=>{}).then(()=>{setBusy('');load()})};
+  useEffect(()=>{window.__fridayPendingApprovals=items.length},[items.length]);
+  return(<>
+    <button className={'ws-tab-ask'+(items.length?'':' none')} data-testid="ws-tab-approvals" onClick={()=>setOpen(v=>!v)} title={items.length?'Friday is waiting for your approval':'Nothing is waiting for your approval'}>{items.length?'✋ '+items.length+' waiting for you':'✋ No approvals waiting'}</button>
+    {open&&<div className="ws-tab-drawer" role="dialog" aria-label="Approvals">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><b style={{color:'#ffd699'}}>Waiting for your approval</b><button className="ws-tab-link" onClick={()=>setOpen(false)}>✕</button></div>
+      {!items.length&&<div style={{color:'#7f93ad',fontSize:12}}>Nothing is waiting.</div>}
+      {items.map(a=><div key={a.approval_id} className="ws-tab-card">
+        <div style={{fontWeight:700,color:'#fff',marginBottom:4}}>{a.title}</div>
+        {a.action_description&&<div style={{whiteSpace:'pre-wrap',fontSize:12,color:'#b8c7dc',maxHeight:220,overflow:'auto'}}>{a.action_description}</div>}
+        <div style={{display:'flex',gap:8,marginTop:8}}>
+          <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#22c55e',color:'#86efac'}} onClick={()=>decide(a.approval_id,'approve')}>{busy===a.approval_id?'…':'Approve'}</button>
+          <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#ef4444',color:'#fca5a5'}} onClick={()=>decide(a.approval_id,'deny')}>Deny</button>
+        </div></div>)}
+    </div>}
+    {fresh&&!open&&<div className="ws-tab-toast" role="status">✋ Friday is asking: {fresh.title||'an approval'}<button className="ws-tab-link" onClick={()=>{setOpen(true);setFresh(null)}}>Review</button></div>}
+  </>);
+}
+function StandaloneShell({ws,children}){
+  useEffect(()=>{
+    document.title=ws.label+' — Friday';
+    const iconUrl=ws.id==='workflows'?null:'/assets/icons/'+ws.id+'.svg';
+    const emojiIcon='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">'+(ws.ico||'▣')+'</text></svg>');
+    document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l=>l.parentNode.removeChild(l));
+    const link=document.createElement('link');link.rel='icon';link.href=iconUrl||emojiIcon;if(iconUrl)link.type='image/svg+xml';link.onerror=()=>{link.href=emojiIcon};document.head.appendChild(link);
+  },[ws.id]);
+  return(<div className="ws-tab" data-standalone={ws.id}>
+    <header className="ws-tab-head">
+      <a className="ws-tab-mark" href="/" title="Friday desktop">FRIDAY</a>
+      <div className="ws-tab-name">{ws.id!=='workflows'&&<img src={'/assets/icons/'+ws.id+'.svg'} alt="" onError={e=>{e.target.style.display='none'}}/>}<span>{ws.label}</span></div>
+      <span className="ws-tab-sp"/>
+      <StandaloneApprovals/>
+      <a className="ws-tab-link" href="/?chrome=chat" target="_blank" rel="noopener" title="Talk to Friday in a tab of its own">💬 Chat</a>
+      <a className="ws-tab-link" href={'/?workspace='+encodeURIComponent(ws.id)} data-testid="ws-tab-back" title="Back to the Friday desktop, with this workspace open">← Back to desktop</a>
+    </header>
+    <main className="ws-tab-body">{children}</main>
+  </div>);
+}
+
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
@@ -12963,6 +13029,15 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const structures=window.fridayVibe?.getStructures?.()??[];
   const moods=window.fridayVibe?.getMoods?.()??['LISTENING','REASONING','EXECUTING','EXCITED','CALM'];
 
+  // A workspace in its own tab: that workspace, full-tab, and nothing else of the desktop.
+  if(STANDALONE_WS&&STANDALONE_WS!=='settings'){
+    const sw=wsInfo[STANDALONE_WS];
+    return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
+      {sw?<StandaloneShell ws={sw}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
+        :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the Friday desktop</a></div>}
+    </WsCustomCtx.Provider>);
+  }
+
   return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
     {/* ── Setup Wizard (first-run) ── */}
     {!setupDone&&<SetupWizard
@@ -13854,7 +13929,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">
           <div className="dock-group-btns">
-            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} onClick={()=>toggle(w.id)} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();fridayOpenWorkspaceTab(w.id);return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();fridayOpenWorkspaceTab(w.id)}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
               {w.id==='wiki'&&wikiPending>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
               {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}

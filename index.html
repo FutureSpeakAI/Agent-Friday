@@ -466,6 +466,36 @@ window.addEventListener('DOMContentLoaded',function(){
            touching. The panel keeps every behaviour it has when docked —
            transcript, seat picker, composer — because it is the same panel.
            Only the room around it is gone. */
+        /* ── A workspace as its own tab (/w/<id>) ───────────────────────
+           The server marks <html class="ws-standalone"> before anything
+           renders. The scene never starts (window.onload is skipped) and
+           the HUD, camera and hand-tracking layers are not shown; App draws
+           the one workspace full-tab under .ws-tab-head. */
+        html.ws-standalone #friday-scene-canvas,
+        html.ws-standalone #hud-overlay,
+        html.ws-standalone #camera-indicator,
+        html.ws-standalone #hand-cursor,
+        html.ws-standalone #state-indicator,
+        html.ws-standalone #chrome-orb-exit { display: none !important; }
+        html.ws-standalone body { background: #070b14; overflow: auto; }
+        .ws-tab { min-height: 100vh; display: flex; flex-direction: column; color: #dbe6f5; }
+        .ws-tab-head { position: sticky; top: 0; z-index: 60; display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+            background: rgba(6,10,18,0.96); border-bottom: 1px solid rgba(0,212,255,0.18); backdrop-filter: blur(6px); }
+        .ws-tab-mark { font-family: Orbitron, Inter, sans-serif; font-size: 12px; letter-spacing: .14em; color: #00d4ff; text-decoration: none; white-space: nowrap; }
+        .ws-tab-name { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: #fff; }
+        .ws-tab-name img { width: 20px; height: 20px; }
+        .ws-tab-sp { flex: 1; }
+        .ws-tab-link { font-size: 12px; color: #9fd0ff; text-decoration: none; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.3); border-radius: 7px; background: transparent; cursor: pointer; }
+        .ws-tab-link:hover { border-color: #00d4ff; color: #e6f9ff; }
+        .ws-tab-ask { font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(245,158,11,0.6); background: rgba(245,158,11,0.12); color: #ffd699; }
+        .ws-tab-ask.none { border-color: rgba(255,255,255,0.12); background: transparent; color: #7f93ad; }
+        .ws-tab-body { flex: 1; padding: 14px 18px 24px; min-height: 0; }
+        .ws-tab-drawer { position: fixed; top: 48px; right: 14px; width: min(460px, 94vw); max-height: 78vh; overflow: auto; z-index: 70;
+            background: rgba(8,12,22,0.98); border: 1px solid rgba(245,158,11,0.45); border-radius: 12px; padding: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+        .ws-tab-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; padding: 10px; margin-bottom: 10px; background: rgba(255,255,255,0.02); }
+        .ws-tab-toast { position: fixed; right: 16px; bottom: 16px; z-index: 80; display: flex; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 9px;
+            background: rgba(8,12,22,0.97); border: 1px solid rgba(245,158,11,0.6); color: #ffe2ad; font-size: 12.5px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+
         body.chrome-chat #friday-scene-canvas,
         body.chrome-chat #hud-overlay,
         body.chrome-chat #camera-indicator,
@@ -5016,7 +5046,10 @@ window.addEventListener('DOMContentLoaded',function(){
             if (composer && !(window.__fridayBackdropHold > 0)) composer.render();
         }
 
-        window.onload = init;
+        // A workspace in its own tab (/w/<id>), or an undocked chat
+        // (?chrome=chat), has no room around it: the scene, its GPU context
+        // and its render loop are never started. The orb mode is the scene.
+        if (!window.__FRIDAY_STANDALONE__ && window.__FRIDAY_CHROME__ !== 'chat') window.onload = init;
     </script>
 
 <script>
@@ -5313,7 +5346,7 @@ function fridayPrefetchPanels() {
   });
 }
 if (typeof document !== 'undefined') {
-  if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
+  if (window.__FRIDAY_STANDALONE__) {/* one workspace, nothing else to warm */} else if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
 }
 // ── end panel data cache ──────────────────────────────────────────────────
 // Full dock. `core:true` marks the trimmed 10-icon set shown to fresh installs
@@ -6118,24 +6151,16 @@ function FWin({
       color: histOpen ? '#00d4ff' : undefined
     }
   }, "\uD83D\uDD52"), /*#__PURE__*/React.createElement("button", {
-    /* ANY WORKSPACE CAN BE ITS OWN TAB. Friday is served over HTTP, so a
-       second tab is the same app pointed somewhere else - ?workspace=<id>,
-       read once on load. No feature string on window.open, because passing
-       one is what turns a tab into a chrome-less popup.
-
-       Hidden inside a window that is already a tab's whole reason for
-       existing, where it would only ever open a duplicate. */
-    title: `Open ${title} in a new tab`,
-    "aria-label": `Open ${title} in a new tab`,
+    /* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id>, the workspace
+       alone, full-tab (see StandaloneShell). Not shown for Settings, which
+       lives in the desktop. */
+    title: `Open ${title} in its own tab`,
+    "aria-label": `Open ${title} in its own tab`,
+    "data-ws-tab": id,
+    hidden: id === 'settings',
     onClick: e => {
       e.stopPropagation();
-      const w = window.open('/?workspace=' + encodeURIComponent(id), '_blank');
-      if (!w) {
-        alert('The browser blocked that tab. Allow pop-ups for Friday and try '
-              + 'again.');
-        return;
-      }
-      try { w.focus(); } catch (err) {}
+      fridayOpenWorkspaceTab(id);
     },
     style: {
       fontSize: 12
@@ -42857,6 +42882,137 @@ function ArbiterStrip() {
     }, " \u00b7 ", fmtUnits(r.claimed_units, r.unit), " held"));
   }));
 }
+/* ── A WORKSPACE AS ITS OWN TAB (/w/<id>) ───────────────────────────────────
+   Chat already undocks into a tab of its own; every workspace but Settings
+   can too. The server marks the page (window.__FRIDAY_STANDALONE__) before
+   anything renders, the holographic scene never starts, and App draws that
+   one workspace full-tab under a slim header instead of the desktop.
+   Query parameters become the workspace's nav target, so
+   /w/messages?thread_id=... or /w/calendar?date=... open where they point.
+   Approval cards reach the tab through its own poller: with only standalone
+   tabs open there is no desktop bell to show them. */
+const STANDALONE_WS = function () {
+  try {
+    const m = /^\/w\/([a-z][a-z0-9_-]{0,31})\/?$/.exec(window.location.pathname);
+    return window.__FRIDAY_STANDALONE__ || m && m[1] || null;
+  } catch (e) {
+    return null;
+  }
+}();
+if (STANDALONE_WS) {
+  try {
+    const t = { workspace: STANDALONE_WS };
+    new URLSearchParams(window.location.search).forEach((v, k) => {
+      t[k] = k === 'view3d' ? v === '1' || v === 'true' : v;
+    });
+    window.__fridayNavTarget = t;
+  } catch (e) {}
+}
+function fridayWorkspaceTabUrl(id, params) {
+  const q = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
+  return '/w/' + encodeURIComponent(id) + q;
+}
+function fridayOpenWorkspaceTab(id, params) {
+  if (!id || id === 'settings') return false;
+  // No feature string: that is what keeps it a tab rather than a popup.
+  const w = window.open(fridayWorkspaceTabUrl(id, params), '_blank');
+  if (!w) {
+    alert('The browser blocked that tab. Allow pop-ups for Friday and try again.');
+    return false;
+  }
+  try { w.focus(); } catch (e) {}
+  return true;
+}
+window.fridayWorkspaceTabUrl = fridayWorkspaceTabUrl;
+window.fridayOpenWorkspaceTab = fridayOpenWorkspaceTab;
+
+// Pending approval cards, for a tab with no desktop around it: a header
+// chip that counts them, a toast when a new one arrives, and the cards
+// themselves with Approve / Deny (the same /decide call as System > Approvals).
+function StandaloneApprovals() {
+  const [items, setItems] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [fresh, setFresh] = useState(null);
+  const seen = useRef(null);
+  const load = useCallback(() => fetch('/api/approvals?status=pending').then(r => r.json()).then(d => {
+    const list = Array.isArray(d && d.approvals) ? d.approvals : [];
+    if (seen.current) {
+      const nu = list.find(a => !seen.current.has(a.approval_id));
+      if (nu) setFresh(nu);
+    }
+    seen.current = new Set(list.map(a => a.approval_id));
+    setItems(list);
+  }).catch(() => {}), []);
+  useEffect(() => {
+    load();
+    const iv = setInterval(() => { if (document.visibilityState !== 'hidden') load(); }, 8000);
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVis); };
+  }, [load]);
+  useEffect(() => {
+    if (!fresh) return;
+    const t = setTimeout(() => setFresh(null), 12000);
+    return () => clearTimeout(t);
+  }, [fresh]);
+  const decide = (id, decision) => {
+    setBusy(id);
+    fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision })
+    }).catch(() => {}).then(() => { setBusy(''); load(); });
+  };
+  useEffect(() => { window.__fridayPendingApprovals = items.length; }, [items.length]);
+  return /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement("button", {
+      className: 'ws-tab-ask' + (items.length ? '' : ' none'), "data-testid": "ws-tab-approvals",
+      onClick: () => setOpen(v => !v), title: items.length ? 'Friday is waiting for your approval' : 'Nothing is waiting for your approval'
+    }, items.length ? '\u270B ' + items.length + ' waiting for you' : '\u270B No approvals waiting'),
+    open && /*#__PURE__*/React.createElement("div", { className: 'ws-tab-drawer', role: 'dialog', 'aria-label': 'Approvals' },
+      /*#__PURE__*/React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
+        /*#__PURE__*/React.createElement("b", { style: { color: '#ffd699' } }, 'Waiting for your approval'),
+        /*#__PURE__*/React.createElement("button", { className: 'ws-tab-link', onClick: () => setOpen(false) }, '\u2715')),
+      !items.length && /*#__PURE__*/React.createElement("div", { style: { color: '#7f93ad', fontSize: 12 } }, 'Nothing is waiting.'),
+      items.map(a => /*#__PURE__*/React.createElement("div", { key: a.approval_id, className: 'ws-tab-card' },
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, color: '#fff', marginBottom: 4 } }, a.title),
+        a.action_description && /*#__PURE__*/React.createElement("div", { style: { whiteSpace: 'pre-wrap', fontSize: 12, color: '#b8c7dc', maxHeight: 220, overflow: 'auto' } }, a.action_description),
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
+          /*#__PURE__*/React.createElement("button", { className: 'ws-tab-link', disabled: !!busy, style: { borderColor: '#22c55e', color: '#86efac' }, onClick: () => decide(a.approval_id, 'approve') }, busy === a.approval_id ? '\u2026' : 'Approve'),
+          /*#__PURE__*/React.createElement("button", { className: 'ws-tab-link', disabled: !!busy, style: { borderColor: '#ef4444', color: '#fca5a5' }, onClick: () => decide(a.approval_id, 'deny') }, 'Deny'))))),
+    fresh && !open && /*#__PURE__*/React.createElement("div", { className: 'ws-tab-toast', role: 'status' },
+      '\u270B Friday is asking: ' + (fresh.title || 'an approval'),
+      /*#__PURE__*/React.createElement("button", { className: 'ws-tab-link', onClick: () => { setOpen(true); setFresh(null); } }, 'Review')));
+}
+
+// The tab itself: Friday mark, the workspace's name and icon, approvals, the
+// way back to the desktop, and the workspace full-tab. The tab's title and
+// favicon name the workspace, so a row of Friday tabs can be told apart.
+function StandaloneShell({ ws, children }) {
+  useEffect(() => {
+    const pending = window.__fridayPendingApprovals;
+    document.title = ws.label + ' \u2014 Friday';
+    const iconUrl = ws.id === 'workflows' ? null : '/assets/icons/' + ws.id + '.svg';
+    const emojiIcon = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">' + (ws.ico || '\u25A3') + '</text></svg>');
+    document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l => l.parentNode.removeChild(l));
+    const link = document.createElement('link');
+    link.rel = 'icon';
+    link.href = iconUrl || emojiIcon;
+    if (iconUrl) link.type = 'image/svg+xml';
+    link.onerror = () => { link.href = emojiIcon; };
+    document.head.appendChild(link);
+  }, [ws.id]);
+  return /*#__PURE__*/React.createElement("div", { className: 'ws-tab', "data-standalone": ws.id },
+    /*#__PURE__*/React.createElement("header", { className: 'ws-tab-head' },
+      /*#__PURE__*/React.createElement("a", { className: 'ws-tab-mark', href: '/', title: 'Friday desktop' }, 'FRIDAY'),
+      /*#__PURE__*/React.createElement("div", { className: 'ws-tab-name' },
+        ws.id !== 'workflows' && /*#__PURE__*/React.createElement("img", { src: '/assets/icons/' + ws.id + '.svg', alt: '', onError: e => { e.target.style.display = 'none'; } }),
+        /*#__PURE__*/React.createElement("span", null, ws.label)),
+      /*#__PURE__*/React.createElement("span", { className: 'ws-tab-sp' }),
+      /*#__PURE__*/React.createElement(StandaloneApprovals, null),
+      /*#__PURE__*/React.createElement("a", { className: 'ws-tab-link', href: '/?chrome=chat', target: '_blank', rel: 'noopener', title: 'Talk to Friday in a tab of its own' }, '\uD83D\uDCAC Chat'),
+      /*#__PURE__*/React.createElement("a", { className: 'ws-tab-link', href: '/?workspace=' + encodeURIComponent(ws.id), "data-testid": "ws-tab-back", title: 'Back to the Friday desktop, with this workspace open' }, '\u2190 Back to desktop')),
+    /*#__PURE__*/React.createElement("main", { className: 'ws-tab-body' }, children));
+}
 function App() {
   const [openWins, setOpenWins] = useState(new Set());
   const [focusWin, setFocusWin] = useState(null);
@@ -47413,6 +47569,19 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const noWindows = openWins.size === 0;
   const structures = window.fridayVibe?.getStructures?.() ?? [];
   const moods = window.fridayVibe?.getMoods?.() ?? ['LISTENING', 'REASONING', 'EXECUTING', 'EXCITED', 'CALM'];
+  // A workspace in its own tab: that workspace, full-tab, and nothing else of
+  // the desktop (no dock, windows, HUD or scene). Settings never gets here
+  // (the server sends /w/settings back to the desktop). An unknown id says so.
+  if (STANDALONE_WS && STANDALONE_WS !== 'settings') {
+    const sw = wsInfo[STANDALONE_WS];
+    return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
+      value: { map: wsCustMap, setCust }
+    }, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw },
+      /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")))
+      : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
+        'There is no workspace called “' + STANDALONE_WS + '”. ',
+        /*#__PURE__*/React.createElement("a", { href: '/', style: { color: '#00d4ff' } }, 'Back to the Friday desktop')));
+  }
   return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
     value: {
       map: wsCustMap,
@@ -50036,7 +50205,24 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   }, g.items.map(w => /*#__PURE__*/React.createElement("button", {
     key: w.id,
     className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${suggestedWs.has(w.id) && !openWins.has(w.id) ? 'suggested' : ''}`,
-    onClick: () => toggle(w.id),
+    "data-ws": w.id,
+    // Ctrl/Cmd-click or middle-click: the workspace in its own tab, the way a
+    // link would. A plain click still opens (or closes) the window.
+    onClick: e => {
+      if ((e.ctrlKey || e.metaKey) && w.id !== 'settings') {
+        e.preventDefault();
+        fridayOpenWorkspaceTab(w.id);
+        return;
+      }
+      toggle(w.id);
+    },
+    onAuxClick: e => {
+      if (e.button === 1 && w.id !== 'settings') {
+        e.preventDefault();
+        fridayOpenWorkspaceTab(w.id);
+      }
+    },
+    onMouseDown: e => { if (e.button === 1) e.preventDefault(); },
     title: suggestedWs.has(w.id) && !openWins.has(w.id) ? 'Suggested — Friday predicts you’ll want this' : undefined,
     style: {
       position: 'relative'
