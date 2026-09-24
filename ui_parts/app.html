@@ -579,6 +579,7 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
           :<div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',minWidth:0,justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
             <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb',whiteSpace:m.role==='friday'&&m.via!=='voice'?undefined:'pre-wrap',minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>
+              {m.role==='friday'&&m.trace_id?<ChatReasoning traceId={m.trace_id} streaming={!!m.streaming} sources={m.reasoning_sources}/>:null}
               {m.role==='friday'&&m.via!=='voice'
                 ?<div dangerouslySetInnerHTML={{__html:renderFridayMarkdown(m.text||'',{compact:true})}}/>
                 :m.text}
@@ -8593,6 +8594,2088 @@ function CameraMode({source,intervalSec,onClose,frameRef,setSendIndicator,facing
   return(<>{showScreen&&pip('screen','SCREEN',screenErr,{dx:0,dy:0})}{showWebcam&&pip('webcam','WEBCAM',webcamErr,{dx:isBoth?-130:0,dy:0})}</>);
 }
 
+// ═══ REASONING TRACES ═══════════════════════════════════════════════════
+// Every model turn (chat, subagent, scheduled, background) is recorded by the
+// server as a trace: reasoning segments, model calls, tool calls with their
+// results, and source markers, in the order they happened, with subagent
+// traces linked to their parent by parent_id. This block is the UI half: one
+// live store that owns the polling, and the components that render a trace
+// and its children as a tree.
+//
+// Honesty invariant: a reasoning segment or marker is always shown with the
+// server's own label for where its text came from (labels[source]). A segment
+// with no text shows that label and nothing else. No text is ever made up.
+//
+// Written with React.createElement (no JSX) so the same block is valid in
+// index.html and in the ui_parts/app.html mirror.
+const rtEl = React.createElement;
+const RT_KIND_ICON = {
+  chat: '💬',
+  subagent: '🤖',
+  scheduled: '⏰',
+  background: '⚙'
+};
+const RT_MONO = "'JetBrains Mono', monospace";
+const RT_CHUNK = 1500; // characters per virtualized reasoning chunk
+const RT_LH = 15; // reasoning line height, px
+function rtShallowEq(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+function rtFmtN(n) {
+  n = Number(n) || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e4) return Math.round(n / 1e3) + 'k';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+function rtFmtDur(sec) {
+  if (sec == null || !isFinite(sec)) return '';
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec + 's';
+  const m = Math.floor(sec / 60);
+  if (m < 60) return m + 'm ' + sec % 60 + 's';
+  return Math.floor(m / 60) + 'h ' + m % 60 + 'm';
+}
+function rtReasoningChars(list) {
+  let n = 0;
+  (list || []).forEach(t => (t && t.events || []).forEach(e => {
+    if (e.type === 'reasoning' && e.text) n += e.text.length;
+  }));
+  return n;
+}
+
+/* The live store. One poller for the whole app, running only while
+   something is subscribed: a snapshot first, then the cursor feed. Feed
+   events are applied in place and subscribers hear about it at most once
+   per animation frame, so a burst of reasoning deltas is one render. */
+window.fridayTraceStore = window.fridayTraceStore || function () {
+  const live = new Map(); // trace_id -> trace (header fields + events[])
+  const kids = new Map(); // parent_id -> Set(child trace_id)
+  const trees = new Map(); // trace_id -> {at, p, done} for GET /api/traces/<id>
+  const subs = new Set();
+  let labels = {};
+  let cursor = 0;
+  let needSnapshot = true;
+  let ready = false;
+  let error = null;
+  let lastPollAt = 0;
+  let inflight = false;
+  let timer = null;
+  let rafPending = false;
+  let hotN = 0;
+  const notify = () => {
+    if (rafPending) return;
+    rafPending = true;
+    const run = () => {
+      rafPending = false;
+      subs.forEach(fn => {
+        try {
+          fn();
+        } catch (_) {}
+      });
+    };
+    if (typeof requestAnimationFrame === 'function' && !document.hidden) requestAnimationFrame(run);else setTimeout(run, 16);
+  };
+  const link = t => {
+    if (!t.parent_id) return;
+    let s = kids.get(t.parent_id);
+    if (!s) kids.set(t.parent_id, s = new Set());
+    s.add(t.trace_id);
+  };
+  const loadSnapshot = async () => {
+    const r = await apiFetch('/api/traces/live?snapshot=1');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    live.clear();
+    kids.clear();
+    (d.traces || []).forEach(t => {
+      if (!t || !t.trace_id) return;
+      const h = Object.assign({}, t);
+      h.events = Array.isArray(t.events) ? t.events.map(e => Object.assign({}, e)) : [];
+      h._rev = 1;
+      live.set(h.trace_id, h);
+      link(h);
+    });
+    if (d.labels) labels = d.labels;
+    cursor = d.cursor != null ? d.cursor : 0;
+    needSnapshot = false;
+  };
+  const applyEvents = list => {
+    const touched = new Set();
+    for (const ev of list) {
+      if (!ev) continue;
+      const id = ev.trace_id || ev.trace && ev.trace.trace_id;
+      if (!id) continue;
+      let t = live.get(id);
+      if (!t) {
+        t = {
+          trace_id: id,
+          status: 'running',
+          events: []
+        };
+        live.set(id, t);
+      }
+      touched.add(id);
+      if (ev.type === 'start' || ev.type === 'header' || ev.type === 'end') {
+        const h = Object.assign({}, ev.trace || {});
+        delete h.events;
+        Object.assign(t, h, {
+          trace_id: id
+        });
+        link(t);
+        continue;
+      }
+      const evs = t.events;
+      if (ev.type === 'reasoning_delta') {
+        // Deltas extend the segment they belong to. A tool call or a
+        // different source/model in between starts a new segment, so the
+        // order of thought and action is kept.
+        const last = evs[evs.length - 1];
+        if (last && last.type === 'reasoning' && last.source === ev.source && last.model === ev.model) {
+          last.text = (last.text || '') + (ev.text || '');
+        } else {
+          evs.push({
+            type: 'reasoning',
+            text: ev.text || '',
+            source: ev.source,
+            model: ev.model,
+            t: ev.t
+          });
+        }
+        continue;
+      }
+      const e = Object.assign({}, ev);
+      delete e.seq;
+      delete e.trace_id;
+      evs.push(e);
+    }
+    // A touched trace becomes a new object so selectors see the change.
+    touched.forEach(id => {
+      const t = live.get(id);
+      if (t) live.set(id, Object.assign({}, t, {
+        _rev: (t._rev || 0) + 1
+      }));
+    });
+    return touched.size > 0;
+  };
+  const poll = async () => {
+    if (inflight) return;
+    inflight = true;
+    let changed = false;
+    try {
+      if (needSnapshot || Date.now() - lastPollAt > 30000) {
+        await loadSnapshot();
+        changed = true;
+      } else {
+        const r = await apiFetch('/api/traces/live?since=' + encodeURIComponent(cursor));
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (d.labels) labels = d.labels;
+        if (d.reset) {
+          await loadSnapshot();
+          changed = true;
+        } else {
+          if (Array.isArray(d.events) && d.events.length && applyEvents(d.events)) changed = true;
+          if (d.cursor != null) cursor = d.cursor;
+        }
+      }
+      lastPollAt = Date.now();
+      if (!ready || error) changed = true;
+      ready = true;
+      error = null;
+    } catch (e) {
+      const msg = String(e && e.message || e);
+      if (msg !== error) changed = true;
+      error = msg;
+      needSnapshot = true;
+    } finally {
+      inflight = false;
+    }
+    if (changed) notify();
+  };
+  const anyRunning = () => {
+    for (const t of live.values()) if (t.status === 'running') return true;
+    return false;
+  };
+  const schedule = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (!subs.size || document.hidden) return;
+    // Fast while a live view is on screen or anything is running; ~3s
+    // otherwise; slow after a failure; nothing at all while hidden.
+    const delay = error ? 8000 : hotN > 0 || anyRunning() ? 500 : 3000;
+    timer = setTimeout(tick, delay);
+  };
+  const tick = () => {
+    timer = null;
+    poll().then(schedule, schedule);
+  };
+  const kick = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (!inflight && subs.size && !document.hidden) tick();
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) kick();
+  });
+  const subscribe = (fn, hot) => {
+    subs.add(fn);
+    if (hot) hotN++;
+    if (hot || !timer && !inflight) kick();
+    return () => {
+      subs.delete(fn);
+      if (hot) hotN = Math.max(0, hotN - 1);
+      if (!subs.size && timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+  };
+  const byStarted = (a, b) => (a.started || 0) - (b.started || 0);
+  // The server keeps finished traces in the live window for ten minutes;
+  // the feed does not announce their removal, so they are aged out here.
+  const fresh = t => t.status === 'running' || !t.ended || Date.now() / 1000 - t.ended < 600;
+  const children = id => {
+    const s = kids.get(id);
+    if (!s) return [];
+    const out = [];
+    s.forEach(k => {
+      const t = live.get(k);
+      if (t) out.push(t);
+    });
+    return out.sort(byStarted);
+  };
+  const subtree = id => {
+    const out = [];
+    const seen = new Set();
+    const walk = (x, depth) => {
+      const t = live.get(x);
+      if (!t || seen.has(x) || depth > 12) return;
+      seen.add(x);
+      out.push(t);
+      children(x).forEach(c => walk(c.trace_id, depth + 1));
+    };
+    walk(id, 0);
+    return out;
+  };
+  const roots = () => {
+    const out = [];
+    live.forEach(t => {
+      if ((!t.parent_id || !live.has(t.parent_id)) && fresh(t)) out.push(t);
+    });
+    return out.sort((a, b) => (b.status === 'running') - (a.status === 'running') || (b.started || 0) - (a.started || 0));
+  };
+  const findByTask = taskId => {
+    if (!taskId) return null;
+    let best = null;
+    live.forEach(t => {
+      if (t.task_id !== taskId) return;
+      const p = t.parent_id && live.get(t.parent_id);
+      const top = !(p && p.task_id === taskId);
+      const bTop = best && !(best.parent_id && live.get(best.parent_id) && live.get(best.parent_id).task_id === taskId);
+      if (!best || top && !bTop || top === bTop && (t.started || 0) > (best.started || 0)) best = t;
+    });
+    return best;
+  };
+  const loadTree = (id, force) => {
+    const c = trees.get(id);
+    if (c && !force && (c.done || Date.now() - c.at < 4000)) return c.p;
+    const p = apiFetch('/api/traces/' + encodeURIComponent(id)).then(r => {
+      if (r.status === 404) return {
+        missing: true
+      };
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(d => {
+      const e = trees.get(id);
+      if (e && e.p === p) e.done = !!(d && d.tree && d.tree.status && d.tree.status !== 'running');
+      return d;
+    });
+    p.catch(() => {
+      if (trees.get(id) && trees.get(id).p === p) trees.delete(id);
+    });
+    trees.set(id, {
+      at: Date.now(),
+      p,
+      done: false
+    });
+    if (trees.size > 40) trees.delete(trees.keys().next().value);
+    return p;
+  };
+  return {
+    get: id => id && live.get(id) || null,
+    children,
+    subtree,
+    roots,
+    findByTask,
+    loadTree,
+    labels: () => labels,
+    label: s => s && labels[s] || s || '',
+    ready: () => ready,
+    error: () => error,
+    subscribe,
+    kick
+  };
+}();
+window.fridayOpenTrace = id => {
+  if (!id) return;
+  try {
+    window.dispatchEvent(new CustomEvent('friday:open-trace', {
+      detail: {
+        id
+      }
+    }));
+  } catch (_) {}
+};
+
+/* Subscribe a component to the store. The selector runs on every render
+   and on every store notification; the component re-renders only when the
+   selected value (an array is compared element by element) changed.
+   `hot` marks a view that is on screen and wants the fast poll. */
+function useTraceStore(selector, hot, enabled) {
+  const store = window.fridayTraceStore;
+  const [, bump] = useState(0);
+  const selRef = useRef(selector);
+  selRef.current = selector;
+  const cur = selector(store);
+  const lastRef = useRef(cur);
+  lastRef.current = cur;
+  const on = enabled !== false;
+  useEffect(() => {
+    if (!on) return undefined;
+    return store.subscribe(() => {
+      let v;
+      try {
+        v = selRef.current(store);
+      } catch (_) {
+        return;
+      }
+      if (!rtShallowEq(v, lastRef.current)) bump(n => n + 1);
+    }, !!hot);
+  }, [on, !!hot]);
+  return cur;
+}
+function useRtTicker(on, ms) {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (!on) return undefined;
+    const iv = setInterval(() => bump(n => n + 1), ms || 1000);
+    return () => clearInterval(iv);
+  }, [on, ms]);
+}
+
+/* Chunk boundaries for one reasoning segment. Text only ever grows, so a
+   boundary is fixed once the search window after it is complete, and the
+   work done for a 500 KB segment is kept between renders. */
+const rtChunkCache = new WeakMap();
+function rtChunks(seg) {
+  const text = seg.text || '';
+  let c = rtChunkCache.get(seg);
+  if (!c || c.len > text.length) c = {
+    bounds: [0],
+    nl: [],
+    len: 0
+  };
+  let start = c.bounds[c.bounds.length - 1];
+  while (text.length - start >= RT_CHUNK + 400) {
+    const lo = start + RT_CHUNK - 400;
+    const win = text.slice(lo, start + RT_CHUNK + 400);
+    let k = win.lastIndexOf('\n');
+    if (k < 0) k = win.lastIndexOf(' ');
+    const cut = k >= 0 ? lo + k + 1 : start + RT_CHUNK;
+    c.bounds.push(cut);
+    start = cut;
+  }
+  c.len = text.length;
+  rtChunkCache.set(seg, c);
+  return c;
+}
+function rtChunkNewlines(seg, c, j) {
+  const a = c.bounds[j];
+  const closed = j + 1 < c.bounds.length;
+  if (closed && c.nl[j] != null) return c.nl[j];
+  const b = closed ? c.bounds[j + 1] : (seg.text || '').length;
+  let n = 0;
+  const s = seg.text || '';
+  for (let i = a; i < b; i++) if (s.charCodeAt(i) === 10) n++;
+  if (closed) c.nl[j] = n;
+  return n;
+}
+const rtPill = (text, color, title) => rtEl("span", {
+  title: title || text,
+  style: {
+    display: 'inline-block',
+    maxWidth: '100%',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    verticalAlign: 'middle',
+    fontSize: 9,
+    fontFamily: RT_MONO,
+    color: color || 'rgba(190,200,225,0.75)',
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.10)',
+    borderRadius: 4,
+    padding: '0 5px',
+    lineHeight: '14px'
+  }
+}, text);
+const rtMuted = (text, extra) => rtEl("div", {
+  style: Object.assign({
+    fontSize: 10,
+    fontFamily: RT_MONO,
+    color: 'rgba(255,255,255,0.45)',
+    padding: '4px 2px'
+  }, extra || {})
+}, text);
+function RtSpinner() {
+  return rtEl("span", {
+    className: "task-card-spinner",
+    style: {
+      display: 'inline-block',
+      flexShrink: 0
+    }
+  });
+}
+
+/* One tool call, with its result folded under it (matched by call_id). */
+function RtToolRow({
+  ev,
+  res,
+  running
+}) {
+  const [open, setOpen] = useState(false);
+  const args = typeof ev.args === 'string' ? ev.args : ev.args == null ? '' : JSON.stringify(ev.args);
+  const preview = args.length > 90 ? args.slice(0, 90) + '…' : args;
+  const state = res ? res.ok === false ? {
+    t: '✕',
+    c: '#f87171'
+  } : {
+    t: '✓',
+    c: '#3effa1'
+  } : running ? {
+    t: '…',
+    c: '#f59e0b'
+  } : {
+    t: '?',
+    c: '#888'
+  };
+  const SHOW = 20000;
+  return rtEl("div", {
+    style: {
+      margin: '3px 0',
+      padding: '3px 6px',
+      borderRadius: 5,
+      background: 'rgba(0,212,255,0.035)',
+      border: '1px solid rgba(0,212,255,0.10)',
+      fontFamily: RT_MONO,
+      fontSize: 10
+    }
+  }, rtEl("div", {
+    role: "button",
+    tabIndex: 0,
+    onClick: () => setOpen(o => !o),
+    onKeyDown: e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        setOpen(o => !o);
+      }
+    },
+    style: {
+      display: 'flex',
+      gap: 5,
+      alignItems: 'baseline',
+      cursor: 'pointer',
+      minWidth: 0
+    }
+  }, rtEl("span", {
+    style: {
+      flexShrink: 0
+    }
+  }, "🔧"), rtEl("span", {
+    style: {
+      color: '#8fdcff',
+      flexShrink: 0
+    }
+  }, ev.name || 'tool'), rtEl("span", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      color: 'rgba(255,255,255,0.45)'
+    }
+  }, preview), rtEl("span", {
+    style: {
+      color: state.c,
+      flexShrink: 0
+    },
+    title: res ? res.ok === false ? 'returned an error' : 'returned' : running ? 'waiting for the result' : 'no result recorded'
+  }, state.t), res && res.duration_ms != null && rtEl("span", {
+    style: {
+      color: '#667',
+      flexShrink: 0
+    }
+  }, Math.round(res.duration_ms), "ms"), rtEl("span", {
+    style: {
+      color: '#667',
+      flexShrink: 0
+    }
+  }, open ? '▾' : '▸')), res && res.summary && !open && rtEl("div", {
+    style: {
+      marginTop: 2,
+      paddingLeft: 17,
+      color: res.ok === false ? '#f8a1a1' : 'rgba(200,210,230,0.6)',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, "→ ", String(res.summary)), open && rtEl("div", {
+    style: {
+      marginTop: 4
+    }
+  }, rtEl("div", {
+    style: {
+      color: '#778',
+      fontSize: 9
+    }
+  }, "args"), rtEl("pre", {
+    style: {
+      margin: '2px 0 4px',
+      maxHeight: 180,
+      overflow: 'auto',
+      whiteSpace: 'pre-wrap',
+      overflowWrap: 'anywhere',
+      color: 'rgba(210,215,235,0.8)',
+      background: 'rgba(0,0,0,0.3)',
+      borderRadius: 4,
+      padding: 5,
+      fontSize: 10
+    }
+  }, args ? args.slice(0, SHOW) : '(no arguments)', args.length > SHOW ? '\n… ' + rtFmtN(args.length - SHOW) + ' more characters not shown here' : ''), rtEl("div", {
+    style: {
+      color: '#778',
+      fontSize: 9
+    }
+  }, "result"), rtEl("div", {
+    style: {
+      whiteSpace: 'pre-wrap',
+      overflowWrap: 'anywhere',
+      color: res ? res.ok === false ? '#f8a1a1' : 'rgba(200,210,230,0.75)' : '#888'
+    }
+  }, res ? String(res.summary || (res.ok === false ? 'error (no summary)' : 'ok (no summary)')) : running ? 'waiting for the result…' : 'no result recorded')));
+}
+
+/* The event list of one trace, in order, virtualized. Reasoning segments
+   are cut into ~1500-character chunks; only the chunks in or near the
+   scroll viewport are rendered, with spacers standing in for the rest.
+   Heights are estimated until an item has been rendered once, then the
+   measured height is cached. While the trace runs, the box follows the
+   bottom unless the user has scrolled up. */
+function RtEventList({
+  trace,
+  labels,
+  maxHeight
+}) {
+  const running = trace.status === 'running';
+  const boxRef = useRef(null);
+  const follow = useRef(running);
+  const heights = useRef(new Map());
+  const virtRef = useRef(false);
+  const rafRef = useRef(0);
+  const [view, setView] = useState({
+    top: 0,
+    h: 0,
+    w: 0
+  });
+  const [, setMeasured] = useState(0);
+  const lab = s => labels && s && labels[s] || s || '';
+  const events = trace.events || [];
+  const results = {};
+  const calls = new Set();
+  events.forEach(e => {
+    if (e.type === 'tool_result' && e.call_id != null) results[e.call_id] = e;
+    if (e.type === 'tool_call' && e.call_id != null) calls.add(e.call_id);
+  });
+  const items = [];
+  let lastSrc = null;
+  events.forEach((e, i) => {
+    if (e.type === 'reasoning') {
+      const src = (e.source || '') + '|' + (e.model || '');
+      const empty = !e.text;
+      if (empty || src !== lastSrc) items.push({
+        key: 'r' + i + 'h',
+        kind: 'seghead',
+        ev: e,
+        empty
+      });
+      lastSrc = src;
+      if (!empty) {
+        const c = rtChunks(e);
+        for (let j = 0; j < c.bounds.length; j++) items.push({
+          key: 'r' + i + 'c' + j,
+          kind: 'chunk',
+          seg: e,
+          c,
+          j
+        });
+      }
+      return;
+    }
+    if (e.type === 'tool_result' && e.call_id != null && calls.has(e.call_id)) return;
+    items.push({
+      key: 'e' + i,
+      kind: e.type || 'unknown',
+      ev: e
+    });
+  });
+  const VIRT = items.length > 60;
+  virtRef.current = VIRT;
+  const w = view.w || 320;
+  const cpl = Math.max(20, Math.floor((w - 18) / 6.1));
+  const chunkLen = it => {
+    const a = it.c.bounds[it.j];
+    const b = it.j + 1 < it.c.bounds.length ? it.c.bounds[it.j + 1] : (it.seg.text || '').length;
+    return b - a;
+  };
+  const hs = new Array(items.length);
+  const tops = new Array(items.length);
+  let total = 0;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const len = it.kind === 'chunk' ? chunkLen(it) : 0;
+    const m = heights.current.get(it.key);
+    let h;
+    if (m && m.len === len) h = m.h;else if (it.kind === 'chunk') h = Math.ceil(len / cpl + rtChunkNewlines(it.seg, it.c, it.j) * 0.6) * RT_LH + 1;else if (it.kind === 'seghead') h = 19;else h = 24;
+    hs[i] = h;
+    tops[i] = total;
+    total += h;
+  }
+  let first = 0,
+    last = items.length;
+  if (VIRT) {
+    const vh = view.h || 400;
+    // A following box always holds the tail, whatever the estimates say,
+    // so its window is measured from the bottom rather than from a
+    // scrollTop that is about to be moved.
+    const tail = follow.current && running;
+    const lo = tail ? total - vh - 900 : view.top - 900,
+      hi = tail ? total : view.top + vh + 900;
+    first = 0;
+    while (first < items.length && tops[first] + hs[first] < lo) first++;
+    last = first;
+    while (last < items.length && tops[last] < hi) last++;
+    if (tail) last = items.length;
+  }
+  React.useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    let changed = false;
+    const bw = box.clientWidth;
+    if (Math.abs(bw - view.w) > 4) {
+      heights.current.clear();
+      changed = true;
+    }
+    for (const el of box.children) {
+      const k = el.getAttribute('data-rt-key');
+      if (!k) continue;
+      const h = el.offsetHeight;
+      const len = +(el.getAttribute('data-rt-len') || 0);
+      const old = heights.current.get(k);
+      if (!old || old.len !== len || Math.abs(old.h - h) > 1) {
+        heights.current.set(k, {
+          h,
+          len
+        });
+        changed = true;
+      }
+    }
+    if (follow.current) box.scrollTop = box.scrollHeight;
+    if (Math.abs(bw - view.w) > 4 || box.clientHeight !== view.h) {
+      setView(v => ({
+        top: box.scrollTop,
+        h: box.clientHeight,
+        w: bw
+      }));
+    } else if (changed && VIRT) setMeasured(n => n + 1);
+  });
+  useEffect(() => () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+  }, []);
+  const onScroll = () => {
+    const box = boxRef.current;
+    if (!box) return;
+    follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+    if (!virtRef.current || rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      const b = boxRef.current;
+      if (b) setView(v => v.top === b.scrollTop ? v : Object.assign({}, v, {
+        top: b.scrollTop
+      }));
+    });
+  };
+  const renderItem = it => {
+    const e = it.ev;
+    switch (it.kind) {
+      case 'seghead':
+        return rtEl("div", {
+          style: {
+            display: 'flex',
+            gap: 5,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            padding: '2px 0',
+            minWidth: 0
+          }
+        }, rtEl("span", {
+          style: {
+            fontSize: 10
+          }
+        }, "💭"), rtPill(lab(e.source), '#c4b5fd', 'Where this text came from, as the server labels it'), e.model && rtEl("span", {
+          style: {
+            fontSize: 9,
+            fontFamily: RT_MONO,
+            color: 'rgba(255,255,255,0.35)'
+          }
+        }, e.model));
+      case 'chunk':
+        {
+          const a = it.c.bounds[it.j];
+          const b = it.j + 1 < it.c.bounds.length ? it.c.bounds[it.j + 1] : (it.seg.text || '').length;
+          return rtEl("div", {
+            style: {
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
+              wordBreak: 'break-word',
+              fontFamily: RT_MONO,
+              fontSize: 10.5,
+              lineHeight: RT_LH + 'px',
+              color: 'rgba(210,215,235,0.82)'
+            }
+          }, it.seg.text.slice(a, b));
+        }
+      case 'tool_call':
+        return rtEl(RtToolRow, {
+          ev: e,
+          res: e.call_id != null ? results[e.call_id] : null,
+          running
+        });
+      case 'tool_result':
+        return rtEl("div", {
+          style: {
+            fontSize: 10,
+            fontFamily: RT_MONO,
+            color: e.ok === false ? '#f8a1a1' : 'rgba(200,210,230,0.6)',
+            padding: '2px 0'
+          }
+        }, "→ result", e.call_id != null ? ' (' + e.call_id + ')' : '', ": ", String(e.summary || (e.ok === false ? 'error' : 'ok')));
+      case 'note':
+        return rtEl("div", {
+          style: {
+            fontSize: 10,
+            fontFamily: RT_MONO,
+            color: 'rgba(255,255,255,0.6)',
+            fontStyle: 'italic',
+            padding: '2px 0',
+            overflowWrap: 'anywhere'
+          }
+        }, "▸ ", e.text || '');
+      case 'source_marker':
+        return rtEl("div", {
+          style: {
+            padding: '2px 0',
+            display: 'flex',
+            gap: 5,
+            alignItems: 'center',
+            flexWrap: 'wrap'
+          },
+          title: e.detail || ''
+        }, rtPill((e.label || lab(e.source)) + (e.count > 1 ? ' ×' + e.count : ''), 'rgba(255,255,255,0.5)'), e.model && rtEl("span", {
+          style: {
+            fontSize: 9,
+            fontFamily: RT_MONO,
+            color: 'rgba(255,255,255,0.3)'
+          }
+        }, e.model));
+      case 'model_call':
+        {
+          const tk = e.tokens || {};
+          const tin = e.tokens_in != null ? e.tokens_in : tk.in;
+          const tout = e.tokens_out != null ? e.tokens_out : tk.out;
+          const tr = e.reasoning_tokens != null ? e.reasoning_tokens : tk.reasoning;
+          return rtEl("div", {
+            style: {
+              fontSize: 9,
+              fontFamily: RT_MONO,
+              color: 'rgba(255,255,255,0.35)',
+              padding: '2px 0',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }
+          }, "⚙ ", e.model || '?', e.seat ? ' · ' + e.seat : '', e.provider ? ' · ' + e.provider : '', tin != null || tout != null ? ' · ' + rtFmtN(tin) + '/' + rtFmtN(tout) + ' tk' : '', tr ? ' · ' + rtFmtN(tr) + ' reasoning tk' : '');
+        }
+      default:
+        return rtEl("div", {
+          style: {
+            fontSize: 9,
+            fontFamily: RT_MONO,
+            color: 'rgba(255,255,255,0.3)',
+            padding: '2px 0'
+          }
+        }, "\xB7 ", it.kind);
+    }
+  };
+  if (items.length === 0) {
+    return rtMuted(running ? 'no events yet' : 'no reasoning or tool calls were recorded for this trace');
+  }
+  const shown = items.slice(first, last);
+  return rtEl("div", {
+    ref: boxRef,
+    onScroll: onScroll,
+    style: {
+      maxHeight: maxHeight || 260,
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      padding: '2px 6px 2px 4px',
+      background: 'rgba(0,0,0,0.28)',
+      borderRadius: 6,
+      border: '1px solid rgba(255,255,255,0.05)',
+      overscrollBehavior: 'contain'
+    }
+  }, VIRT && first > 0 && rtEl("div", {
+    style: {
+      height: tops[first]
+    }
+  }), shown.map(it => rtEl("div", {
+    key: it.key,
+    "data-rt-key": it.key,
+    "data-rt-len": it.kind === 'chunk' ? chunkLen(it) : 0
+  }, renderItem(it))), VIRT && last < items.length && rtEl("div", {
+    style: {
+      height: total - tops[last]
+    }
+  }));
+}
+
+/* One trace: its header, its events, and its subagent children nested
+   beneath it on a tree rail. `getChildren` resolves children either from
+   the live store or from a fetched tree's `children` arrays. */
+function ReasoningTrace({
+  trace,
+  getChildren,
+  labels,
+  depth,
+  maxHeight,
+  focusId
+}) {
+  depth = depth || 0;
+  const t = trace;
+  const running = t.status === 'running';
+  const [kidsOpen, setKidsOpen] = useState(depth < 3);
+  const [bodyOpen, setBodyOpen] = useState(true);
+  const rootRef = useRef(null);
+  const focus = !!focusId && focusId === t.trace_id;
+  useRtTicker(running, 1000);
+  useEffect(() => {
+    if (focus && depth > 0 && rootRef.current && rootRef.current.scrollIntoView) {
+      try {
+        rootRef.current.scrollIntoView({
+          block: 'nearest'
+        });
+      } catch (_) {}
+    }
+  }, [focus]);
+  const lab = s => labels && s && labels[s] || s || '';
+  const kids = getChildren && depth < 12 ? getChildren(t) || [] : [];
+  const el = t.started ? (t.ended || Date.now() / 1000) - t.started : null;
+  const tok = t.tokens || {};
+  const srcs = t.sources && t.sources.length ? t.sources.map(lab) : t.source_label ? [t.source_label] : [];
+  const statusEl = running ? rtEl("span", {
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 4,
+      color: '#f59e0b',
+      fontSize: 9,
+      fontFamily: RT_MONO
+    }
+  }, rtEl(RtSpinner, null), "live") : t.status === 'complete' ? rtEl("span", {
+    style: {
+      color: '#3effa1',
+      fontSize: 9,
+      fontFamily: RT_MONO
+    }
+  }, "✓ complete") : t.status === 'failed' ? rtEl("span", {
+    style: {
+      color: '#f87171',
+      fontSize: 9,
+      fontFamily: RT_MONO
+    }
+  }, "✕ failed") : t.status ? rtEl("span", {
+    style: {
+      color: '#aaa',
+      fontSize: 9,
+      fontFamily: RT_MONO
+    }
+  }, t.status) : null;
+  return rtEl("div", {
+    ref: rootRef,
+    "data-trace-id": t.trace_id,
+    style: {
+      minWidth: 0,
+      borderRadius: 7,
+      padding: focus && depth > 0 ? 4 : 0,
+      outline: focus && depth > 0 ? '1px solid rgba(0,212,255,0.55)' : 'none'
+    }
+  }, rtEl("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      minWidth: 0,
+      cursor: 'pointer'
+    },
+    role: "button",
+    tabIndex: 0,
+    "aria-expanded": bodyOpen,
+    onClick: () => setBodyOpen(o => !o),
+    onKeyDown: e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        setBodyOpen(o => !o);
+      }
+    },
+    title: t.trace_id
+  }, rtEl("span", {
+    style: {
+      fontSize: 11,
+      flexShrink: 0
+    }
+  }, RT_KIND_ICON[t.kind] || '💭'), rtEl("span", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.85)',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, t.label || t.kind || 'trace'), statusEl, rtEl("span", {
+    style: {
+      color: '#667',
+      fontSize: 9,
+      flexShrink: 0
+    }
+  }, bodyOpen ? '▾' : '▸')), rtEl("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '3px 8px',
+      alignItems: 'center',
+      margin: '3px 0 4px',
+      fontSize: 9,
+      fontFamily: RT_MONO,
+      color: 'rgba(255,255,255,0.4)',
+      minWidth: 0
+    }
+  }, (t.model || t.seat) && rtEl("span", {
+    style: {
+      color: t.seat === 'local' ? '#f59e0b' : '#00d4ff'
+    },
+    title: (t.models && t.models.length > 1 ? 'models this trace used: ' + t.models.join(', ') : '') || t.provider || ''
+  }, t.model || '?', t.seat ? ' · ' + t.seat : '', t.models && t.models.length > 1 ? ' +' + (t.models.length - 1) : ''), srcs.map((s, i) => rtEl(React.Fragment, {
+    key: i
+  }, rtPill(s, '#c4b5fd'))), (tok.in || tok.out) ? rtEl("span", null, rtFmtN(tok.in), "/", rtFmtN(tok.out), " tk") : null, tok.reasoning ? rtEl("span", null, rtFmtN(tok.reasoning), " reasoning tk") : null, t.tool_calls ? rtEl("span", null, "🔧 ", t.tool_calls) : null, el != null && rtEl("span", null, rtFmtDur(el)), t.truncated && rtPill('truncated', '#f59e0b', 'The server stopped recording this trace at its size limit'), t.archived && t.archived.seq != null && rtEl("span", {
+    title: t.archived.hash ? 'ledger hash ' + t.archived.hash : ''
+  }, "#", t.archived.seq)), bodyOpen && (t.unreadable ? rtMuted('unreadable (locked vault?) — ' + t.unreadable, {
+    color: '#f87171'
+  }) : rtEl(RtEventList, {
+    trace: t,
+    labels: labels,
+    maxHeight: maxHeight
+  })), kids.length > 0 && rtEl("div", {
+    style: {
+      marginTop: 5
+    }
+  }, rtEl("button", {
+    onClick: () => setKidsOpen(o => !o),
+    style: {
+      background: 'none',
+      border: 'none',
+      color: 'rgba(0,212,255,0.75)',
+      cursor: 'pointer',
+      fontSize: 9,
+      fontFamily: RT_MONO,
+      padding: 0
+    },
+    "aria-expanded": kidsOpen
+  }, kidsOpen ? '▾' : '▸', " ", kids.length, " subagent", kids.length === 1 ? '' : 's'), kidsOpen && rtEl("div", {
+    style: {
+      marginLeft: 5,
+      paddingLeft: 8,
+      borderLeft: '1px solid rgba(0,212,255,0.22)',
+      marginTop: 4,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8
+    }
+  }, kids.map(k => rtEl(ReasoningTrace, {
+    key: k.trace_id,
+    trace: k,
+    getChildren: getChildren,
+    labels: labels,
+    depth: depth + 1,
+    maxHeight: Math.min(typeof maxHeight === 'number' ? maxHeight : 320, 320),
+    focusId: focusId
+  })))));
+}
+
+/* A trace by id (or by task id), live from the store when it is there and
+   fetched from GET /api/traces/<id> when it is not. A task with no trace
+   id is looked up in the store, then in the ledger by task. */
+function TraceView({
+  traceId,
+  taskId,
+  emptyText,
+  maxHeight,
+  hot,
+  wholeTree,
+  focusId,
+  pending
+}) {
+  const store = window.fridayTraceStore;
+  const sub = useTraceStore(s => {
+    let t = traceId ? s.get(traceId) : null;
+    if (!t && taskId && !traceId) t = s.findByTask(taskId);
+    if (t && wholeTree && t.root_id && t.root_id !== t.trace_id && s.get(t.root_id)) t = s.get(t.root_id);
+    return t ? s.subtree(t.trace_id) : [null, s.ready(), s.error()];
+  }, hot !== false);
+  const liveT = sub[0];
+  const [resolved, setResolved] = useState(null); // trace id found in the ledger for a task
+  const [lookup, setLookup] = useState('idle');
+  const [tree, setTree] = useState(null);
+  const [st, setSt] = useState('idle');
+  const wantId = traceId || resolved;
+  useEffect(() => {
+    if (liveT || traceId || !taskId || !sub[1]) return undefined;
+    let on = true;
+    setLookup('loading');
+    apiFetch('/api/traces?task=' + encodeURIComponent(taskId) + '&limit=20').then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))).then(d => {
+      if (!on) return;
+      const list = d && d.traces || [];
+      const top = list.filter(x => !x.parent_id || !list.some(y => y.trace_id === x.parent_id));
+      const pick = (top.length ? top : list).sort((a, b) => (b.started || 0) - (a.started || 0))[0];
+      setResolved(pick ? pick.trace_id : null);
+      setLookup(pick ? 'ok' : 'none');
+    }).catch(e => {
+      if (on) setLookup('error:' + (e && e.message || e));
+    });
+    return () => {
+      on = false;
+    };
+  }, [taskId, traceId, !!liveT, !!sub[1]]);
+  useEffect(() => {
+    // Wait for the first snapshot: a live trace is read from the store, and
+    // asking the ledger for it first would only race the snapshot.
+    if (liveT || !wantId || !sub[1] && !sub[2]) return undefined;
+    let on = true;
+    setSt('loading');
+    store.loadTree(wantId).then(d => {
+      if (!on) return;
+      if (!d || d.missing || !d.tree) {
+        setTree(null);
+        setSt('missing');
+        return;
+      }
+      setTree(d);
+      setSt('ok');
+    }).catch(e => {
+      if (on) setSt('error:' + (e && e.message || e));
+    });
+    return () => {
+      on = false;
+    };
+  }, [wantId, !!liveT, !!(sub[1] || sub[2])]);
+  if (liveT) return rtEl(ReasoningTrace, {
+    trace: liveT,
+    getChildren: x => store.children(x.trace_id),
+    labels: store.labels(),
+    maxHeight: maxHeight,
+    focusId: focusId || traceId
+  });
+  if (tree && tree.tree) return rtEl(ReasoningTrace, {
+    trace: tree.tree,
+    getChildren: x => x.children || [],
+    labels: tree.labels || store.labels(),
+    maxHeight: maxHeight,
+    focusId: focusId || tree.focus
+  });
+  if (wantId) {
+    // A turn still being written may not have reached the server's record
+    // yet; the live feed will bring it, so say that rather than "none".
+    if (st === 'missing') return rtMuted(pending ? 'waiting for the first reasoning event…' : emptyText || 'no reasoning captured for this trace');
+    if (st.indexOf('error:') === 0) return rtMuted('could not load reasoning — ' + st.slice(6), {
+      color: '#f87171'
+    });
+    return rtMuted('loading reasoning…');
+  }
+  if (!taskId) return rtMuted(emptyText || 'no reasoning captured');
+  if (!sub[1]) return rtMuted(sub[2] ? 'reasoning feed unavailable — ' + sub[2] : 'looking for reasoning…', sub[2] ? {
+    color: '#f87171'
+  } : null);
+  if (lookup === 'loading' || lookup === 'idle') return rtMuted('looking for reasoning…');
+  if (lookup.indexOf('error:') === 0) return rtMuted('could not look up reasoning — ' + lookup.slice(6), {
+    color: '#f87171'
+  });
+  return rtMuted(emptyText || 'no reasoning captured for this task');
+}
+
+/* "💭 reasoning" expander for a task card or a running-process row. */
+function TraceExpander({
+  traceId,
+  taskId
+}) {
+  const [open, setOpen] = useState(false);
+  return rtEl("div", {
+    style: {
+      marginTop: 5,
+      minWidth: 0
+    },
+    onClick: e => e.stopPropagation()
+  }, rtEl("button", {
+    className: "task-card-btn",
+    onClick: e => {
+      e.stopPropagation();
+      setOpen(o => !o);
+    },
+    "aria-expanded": open,
+    title: open ? 'Hide the reasoning' : 'Show the reasoning, tool calls and subagents behind this',
+    style: {
+      fontSize: 9,
+      padding: '1px 6px'
+    }
+  }, "💭 reasoning ", open ? '▾' : '▸'), open && rtEl("div", {
+    style: {
+      marginTop: 5
+    }
+  }, rtEl(TraceView, {
+    traceId: traceId || null,
+    taskId: taskId || null,
+    maxHeight: 220,
+    hot: true,
+    emptyText: 'no reasoning captured for this task'
+  })));
+}
+
+/* A collapsed tray card for one root trace: the latest line of reasoning
+   (or, when the provider exposes none, the server's label saying so). */
+function RtTrayCard({
+  trace,
+  open,
+  onToggle
+}) {
+  const store = window.fridayTraceStore;
+  const t = trace;
+  const running = t.status === 'running';
+  const lab = s => store.label(s);
+  let snippet = '',
+    src = '';
+  const evs = t.events || [];
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.type === 'reasoning') {
+      src = lab(e.source);
+      const tx = e.text || '';
+      snippet = (tx.length > 160 ? '…' : '') + tx.slice(-160).replace(/\s+/g, ' ').trim();
+      break;
+    }
+    if (e.type === 'source_marker') {
+      src = e.label || lab(e.source);
+      break;
+    }
+  }
+  if (!src && t.sources && t.sources.length) src = lab(t.sources[t.sources.length - 1]);
+  const nKids = store.children(t.trace_id).length;
+  return rtEl("div", {
+    style: {
+      marginBottom: 6,
+      padding: '6px 8px',
+      borderRadius: 7,
+      background: 'rgba(255,255,255,0.03)',
+      border: '1px solid ' + (running ? 'rgba(245,158,11,0.22)' : 'rgba(255,255,255,0.07)'),
+      minWidth: 0
+    }
+  }, rtEl("div", {
+    role: "button",
+    tabIndex: 0,
+    "aria-expanded": open,
+    onClick: onToggle,
+    onKeyDown: e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onToggle();
+      }
+    },
+    style: {
+      cursor: 'pointer',
+      minWidth: 0
+    }
+  }, rtEl("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      minWidth: 0
+    }
+  }, running ? rtEl(RtSpinner, null) : rtEl("span", {
+    style: {
+      fontSize: 9,
+      color: t.status === 'failed' ? '#f87171' : '#3effa1',
+      flexShrink: 0
+    }
+  }, t.status === 'failed' ? '✕' : '✓'), rtEl("span", {
+    style: {
+      fontSize: 11,
+      flexShrink: 0
+    }
+  }, RT_KIND_ICON[t.kind] || '💭'), rtEl("span", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.85)',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, t.label || t.kind || 'trace'), t.model && rtEl("span", {
+    style: {
+      fontSize: 9,
+      fontFamily: RT_MONO,
+      color: 'rgba(255,255,255,0.4)',
+      maxWidth: '38%',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, t.model), rtEl("span", {
+    style: {
+      color: '#667',
+      fontSize: 9,
+      flexShrink: 0
+    }
+  }, open ? '▾' : '▸')), !open && snippet && rtEl("div", {
+    style: {
+      marginTop: 3,
+      fontSize: 10,
+      fontFamily: RT_MONO,
+      color: 'rgba(210,215,235,0.7)',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    },
+    title: snippet
+  }, snippet), rtEl("div", {
+    style: {
+      marginTop: 3,
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      minWidth: 0
+    }
+  }, src ? rtPill(src, '#c4b5fd') : rtPill(running ? 'no reasoning events yet' : 'no reasoning captured', 'rgba(255,255,255,0.4)'), nKids > 0 && rtEl("span", {
+    style: {
+      fontSize: 9,
+      fontFamily: RT_MONO,
+      color: 'rgba(0,212,255,0.7)'
+    }
+  }, "🤖 ", nKids, " subagent", nKids === 1 ? '' : 's'))), open && rtEl("div", {
+    style: {
+      marginTop: 6
+    }
+  }, rtEl(TraceView, {
+    traceId: t.trace_id,
+    maxHeight: 240,
+    hot: true
+  }), rtEl("button", {
+    onClick: () => window.fridayOpenTrace(t.trace_id),
+    style: {
+      marginTop: 4,
+      background: 'none',
+      border: 'none',
+      color: 'rgba(0,212,255,0.75)',
+      cursor: 'pointer',
+      fontSize: 9,
+      fontFamily: RT_MONO,
+      padding: 0
+    }
+  }, "open full tree ↗")));
+}
+
+/* The tray's REASONING section: every live root trace (running first,
+   then those finished in the last ten minutes). */
+function ReasoningTraySection({
+  onOpenViewer
+}) {
+  const snap = useTraceStore(s => [s.ready(), s.error()].concat(s.roots()), true);
+  const ready = snap[0],
+    err = snap[1],
+    roots = snap.slice(2);
+  const [open, setOpen] = useState({});
+  const runningN = roots.filter(t => t.status === 'running').length;
+  const MAX = 6;
+  return rtEl(React.Fragment, null, rtEl("div", {
+    className: "notif-section-header"
+  }, rtEl("span", null, "REASONING", runningN ? ' · ' + runningN + ' LIVE' : ''), onOpenViewer && rtEl("button", {
+    onClick: onOpenViewer,
+    title: "Browse, search and verify every recorded reasoning trace",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.25)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 9,
+      fontFamily: 'JetBrains Mono',
+      borderRadius: 4,
+      padding: '1px 6px'
+    }
+  }, "💭 Traces")), rtEl("div", {
+    style: {
+      padding: '6px 10px 2px'
+    }
+  }, !ready ? rtMuted(err ? 'reasoning feed unavailable — ' + err : 'loading reasoning…', err ? {
+    color: '#f87171'
+  } : null) : roots.length === 0 ? rtEl("div", {
+    className: "notif-empty",
+    style: {
+      padding: '8px 4px'
+    }
+  }, "No reasoning in the last 10 minutes") : roots.slice(0, MAX).map(t => rtEl(RtTrayCard, {
+    key: t.trace_id,
+    trace: t,
+    open: !!open[t.trace_id],
+    onToggle: () => setOpen(o => Object.assign({}, o, {
+      [t.trace_id]: !o[t.trace_id]
+    }))
+  })), ready && roots.length > MAX && rtEl("button", {
+    onClick: onOpenViewer,
+    style: {
+      background: 'none',
+      border: 'none',
+      color: 'rgba(0,212,255,0.75)',
+      cursor: 'pointer',
+      fontSize: 9,
+      fontFamily: RT_MONO,
+      padding: '0 0 6px'
+    }
+  }, "+", roots.length - MAX, " more — open Traces"), ready && err && rtMuted('feed interrupted — ' + err + ' (retrying)', {
+    color: '#f59e0b'
+  })), rtEl("div", {
+    className: "notif-section-divider"
+  }));
+}
+
+/* Collapsible "Reasoning" above a Friday reply that carries a trace_id.
+   While the reply streams the header says so and shows the latest line;
+   expanded, the full tree spools from the live store (or is fetched). */
+function ChatReasoning({
+  traceId,
+  streaming,
+  sources
+}) {
+  const store = window.fridayTraceStore;
+  const [open, setOpen] = useState(false);
+  const watch = !!streaming || open;
+  const sub = useTraceStore(s => s.subtree(traceId), watch, watch);
+  const root = sub[0] || null;
+  const live = !!streaming || !!(root && root.status === 'running');
+  const labelsShown = root && root.sources && root.sources.length ? root.sources.map(s => store.label(s)) : sources || [];
+  const chars = root ? root.reasoning_chars != null && !live ? root.reasoning_chars : rtReasoningChars(sub) : null;
+  let snippet = '';
+  if (live && !open && root) {
+    const evs = root.events || [];
+    for (let i = evs.length - 1; i >= 0; i--) if (evs[i].type === 'reasoning') {
+      const tx = evs[i].text || '';
+      snippet = (tx.length > 140 ? '…' : '') + tx.slice(-140).replace(/\s+/g, ' ').trim();
+      break;
+    }
+  }
+  return rtEl("div", {
+    style: {
+      marginBottom: 6,
+      paddingLeft: 7,
+      borderLeft: '2px solid rgba(196,181,253,0.35)',
+      whiteSpace: 'normal',
+      minWidth: 0
+    }
+  }, rtEl("div", {
+    role: "button",
+    tabIndex: 0,
+    "aria-expanded": open,
+    onClick: () => setOpen(o => !o),
+    onKeyDown: e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        setOpen(o => !o);
+      }
+    },
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: '2px 6px',
+      cursor: 'pointer',
+      fontSize: 10,
+      fontFamily: RT_MONO,
+      color: '#a99bd8',
+      minWidth: 0
+    }
+  }, rtEl("span", null, open ? '▾' : '▸', " 💭 Reasoning", live ? ' · live' : ''), live && rtEl(RtSpinner, null), labelsShown.map((l, i) => rtEl(React.Fragment, {
+    key: i
+  }, rtPill(l, '#c4b5fd'))), chars ? rtEl("span", {
+    style: {
+      color: 'rgba(255,255,255,0.35)'
+    }
+  }, rtFmtN(chars), " chars") : null), snippet && rtEl("div", {
+    style: {
+      marginTop: 2,
+      fontSize: 10,
+      fontFamily: RT_MONO,
+      color: 'rgba(210,215,235,0.6)',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, snippet), open && rtEl("div", {
+    style: {
+      marginTop: 5
+    }
+  }, rtEl(TraceView, {
+    traceId: traceId,
+    maxHeight: 280,
+    hot: true,
+    emptyText: 'no reasoning captured for this reply',
+    pending: !!streaming
+  }), rtEl("button", {
+    onClick: () => window.fridayOpenTrace(traceId),
+    style: {
+      marginTop: 4,
+      background: 'none',
+      border: 'none',
+      color: 'rgba(0,212,255,0.75)',
+      cursor: 'pointer',
+      fontSize: 9,
+      fontFamily: RT_MONO,
+      padding: 0
+    }
+  }, "open full tree ↗")));
+}
+
+/* Full-tree view of one trace, opened from anywhere via
+   window.fridayOpenTrace(id). Mounted once in App. */
+function TraceModalHost() {
+  const [id, setId] = useState(null);
+  useEffect(() => {
+    const on = e => setId(e && e.detail && e.detail.id || null);
+    window.addEventListener('friday:open-trace', on);
+    return () => window.removeEventListener('friday:open-trace', on);
+  }, []);
+  useEffect(() => {
+    if (!id) return undefined;
+    const k = e => {
+      if (e.key === 'Escape') setId(null);
+    };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [id]);
+  if (!id) return null;
+  return rtEl("div", {
+    onClick: () => setId(null),
+    style: {
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.55)',
+      zIndex: 9700,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 8
+    }
+  }, rtEl("div", {
+    role: "dialog",
+    "aria-label": "Reasoning trace",
+    onClick: e => e.stopPropagation(),
+    style: {
+      width: 'min(880px, 100%)',
+      maxHeight: '92vh',
+      display: 'flex',
+      flexDirection: 'column',
+      background: 'rgba(8,12,20,0.98)',
+      border: '1px solid rgba(0,212,255,0.28)',
+      borderRadius: 10,
+      boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+      minWidth: 0
+    }
+  }, rtEl("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '10px 12px',
+      borderBottom: '1px solid rgba(255,255,255,0.06)',
+      minWidth: 0
+    }
+  }, rtEl("span", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 10,
+      color: '#00d4ff',
+      letterSpacing: '0.08em',
+      flexShrink: 0
+    }
+  }, "REASONING TRACE"), rtEl("span", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      fontFamily: RT_MONO,
+      fontSize: 9,
+      color: '#667',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, id), rtEl("button", {
+    onClick: () => setId(null),
+    "aria-label": "Close",
+    style: {
+      background: 'none',
+      border: 'none',
+      color: '#999',
+      cursor: 'pointer',
+      fontSize: 12
+    }
+  }, "✕")), rtEl("div", {
+    style: {
+      flex: 1,
+      minHeight: 0,
+      overflowY: 'auto',
+      padding: '8px 10px'
+    }
+  }, rtEl(TraceView, {
+    key: id,
+    traceId: id,
+    wholeTree: true,
+    maxHeight: '58vh',
+    hot: true,
+    focusId: id
+  }))));
+}
+function rtDayEpoch(str, end) {
+  if (!str) return 0;
+  const d = new Date(str + 'T00:00:00');
+  if (isNaN(d.getTime())) return 0;
+  return Math.floor(d.getTime() / 1000) + (end ? 86399 : 0);
+}
+const RT_INPUT = {
+  background: 'rgba(255,255,255,0.05)',
+  border: '1px solid rgba(255,255,255,0.15)',
+  borderRadius: 4,
+  color: '#ccc',
+  fontSize: 9,
+  fontFamily: 'JetBrains Mono',
+  padding: '2px 5px',
+  outline: 'none',
+  minWidth: 0
+};
+const RT_BTN = {
+  background: 'rgba(0,212,255,0.06)',
+  border: '1px solid rgba(0,212,255,0.25)',
+  color: '#00d4ff',
+  cursor: 'pointer',
+  fontSize: 9,
+  fontFamily: 'JetBrains Mono',
+  borderRadius: 4,
+  padding: '1px 7px'
+};
+
+/* The "Reasoning traces" tab of the activity ledger: search and filter the
+   recorded traces, open any as its full tree, check the hash chain, set
+   retention, export. */
+function TracesViewer() {
+  const LIMIT = 40;
+  const [q, setQ] = useState('');
+  const [task, setTask] = useState('');
+  const [deb, setDeb] = useState({
+    q: '',
+    task: ''
+  });
+  const [model, setModel] = useState('');
+  const [kind, setKind] = useState('');
+  const [subOnly, setSubOnly] = useState(false);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [rev, setRev] = useState(0);
+  const [verify, setVerify] = useState(null);
+  const [ret, setRet] = useState(null);
+  const [confirmRet, setConfirmRet] = useState(false);
+  const [note, setNote] = useState('');
+  const [exporting, setExporting] = useState(false);
+  useEffect(() => {
+    const tm = setTimeout(() => {
+      setDeb(d => d.q === q.trim() && d.task === task.trim() ? d : {
+        q: q.trim(),
+        task: task.trim()
+      });
+      setOffset(0);
+    }, 300);
+    return () => clearTimeout(tm);
+  }, [q, task]);
+  const reset = fn => v => {
+    fn(v);
+    setOffset(0);
+  };
+  useEffect(() => {
+    let on = true;
+    const p = new URLSearchParams();
+    if (deb.q) p.set('q', deb.q);
+    if (model) p.set('model', model);
+    if (kind) p.set('kind', kind);
+    if (deb.task) p.set('task', deb.task);
+    if (subOnly) p.set('subagents', '1');
+    const since = rtDayEpoch(from, false),
+      until = rtDayEpoch(to, true);
+    if (since) p.set('since', String(since));
+    if (until) p.set('until', String(until));
+    p.set('limit', String(LIMIT));
+    p.set('offset', String(offset));
+    const load = () => {
+      setLoading(true);
+      apiFetch('/api/traces?' + p.toString()).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))).then(d => {
+        if (on) {
+          setData(d);
+          setErr(null);
+        }
+      }).catch(e => {
+        if (on) setErr(String(e && e.message || e));
+      }).finally(() => {
+        if (on) setLoading(false);
+      });
+    };
+    load();
+    const iv = setInterval(() => {
+      if (!document.hidden) load();
+    }, 10000);
+    return () => {
+      on = false;
+      clearInterval(iv);
+    };
+  }, [deb, model, kind, subOnly, from, to, offset, rev]);
+  const runVerify = () => {
+    setVerify({
+      checking: true
+    });
+    apiFetch('/api/traces/verify').then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))).then(d => setVerify(d || {})).catch(e => setVerify({
+      error: String(e && e.message || e)
+    }));
+  };
+  useEffect(() => {
+    runVerify();
+  }, []);
+  const status = data && data.status || {};
+  const labels = data && data.labels || {};
+  const retVal = ret != null ? ret : String(status.retention_days != null ? status.retention_days : 0);
+  const saveRet = confirmed => {
+    const n = Math.max(0, parseInt(retVal, 10) || 0);
+    if (n > 0 && !confirmed) {
+      setConfirmRet(true);
+      return;
+    }
+    setConfirmRet(false);
+    setNote('saving retention…');
+    apiFetch('/api/traces/retention', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        retention_days: n,
+        apply: n > 0
+      })
+    }).then(r => r.json().catch(() => ({})).then(d => ({
+      ok: r.ok,
+      d
+    }))).then(({
+      ok,
+      d
+    }) => {
+      if (!ok) throw new Error(d && (d.error || d.detail) || 'the server refused');
+      const res = d && d.result;
+      const nums = res && typeof res === 'object' ? Object.keys(res).filter(k => typeof res[k] === 'number').map(k => k.replace(/_/g, ' ') + ' ' + res[k]).join(', ') : '';
+      setNote(n === 0 ? 'retention saved · keep all' : 'retention saved · ' + n + ' days' + (nums ? ' · ' + nums : ''));
+      setRet(null);
+      setRev(x => x + 1);
+      runVerify();
+    }).catch(e => setNote('retention not saved — ' + (e && e.message || e)));
+  };
+  const doExport = () => {
+    setExporting(true);
+    apiFetch('/api/traces/export').then(r => r.ok ? r.blob() : Promise.reject(new Error('HTTP ' + r.status))).then(b => {
+      const url = URL.createObjectURL(b);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'friday-reasoning-traces-' + new Date().toISOString().slice(0, 10) + '.ndjson';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setNote('export downloaded');
+    }).catch(e => setNote('export failed — ' + (e && e.message || e))).finally(() => setExporting(false));
+  };
+  const rows = data && data.traces || [];
+  const total = data && data.total != null ? data.total : rows.length;
+  const models = data && data.models || [];
+  const kinds = data && data.kinds && data.kinds.length ? data.kinds : ['chat', 'subagent', 'scheduled', 'background'];
+  const v = verify || {};
+  return rtEl("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: 0,
+      flex: 1
+    }
+  }, rtEl("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 5,
+      padding: '6px 10px',
+      borderBottom: '1px solid rgba(255,255,255,0.05)',
+      alignItems: 'center'
+    }
+  }, rtEl("input", {
+    value: q,
+    onChange: e => setQ(e.target.value),
+    placeholder: "search reasoning, labels, tools…",
+    "aria-label": "Search traces",
+    style: Object.assign({}, RT_INPUT, {
+      flex: '1 1 160px'
+    })
+  }), rtEl("select", {
+    value: model,
+    onChange: e => reset(setModel)(e.target.value),
+    "aria-label": "Model",
+    style: Object.assign({}, RT_INPUT, {
+      maxWidth: 160
+    })
+  }, rtEl("option", {
+    value: ""
+  }, "all models"), models.map(m => rtEl("option", {
+    key: m,
+    value: m
+  }, m))), rtEl("select", {
+    value: kind,
+    onChange: e => reset(setKind)(e.target.value),
+    "aria-label": "Kind",
+    style: RT_INPUT
+  }, rtEl("option", {
+    value: ""
+  }, "all kinds"), kinds.map(k => rtEl("option", {
+    key: k,
+    value: k
+  }, k))), rtEl("label", {
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 3,
+      fontSize: 9,
+      fontFamily: 'JetBrains Mono',
+      color: '#aab',
+      cursor: 'pointer'
+    }
+  }, rtEl("input", {
+    type: "checkbox",
+    checked: subOnly,
+    onChange: e => reset(setSubOnly)(e.target.checked)
+  }), "subagents only"), rtEl("input", {
+    type: "date",
+    value: from,
+    onChange: e => reset(setFrom)(e.target.value),
+    "aria-label": "From date",
+    title: "From",
+    style: RT_INPUT
+  }), rtEl("input", {
+    type: "date",
+    value: to,
+    onChange: e => reset(setTo)(e.target.value),
+    "aria-label": "To date",
+    title: "To",
+    style: RT_INPUT
+  }), rtEl("input", {
+    value: task,
+    onChange: e => setTask(e.target.value),
+    placeholder: "task id",
+    "aria-label": "Task id",
+    style: Object.assign({}, RT_INPUT, {
+      width: 90
+    })
+  })), rtEl("div", {
+    style: {
+      flex: 1,
+      minHeight: 120,
+      overflowY: 'auto',
+      padding: '4px 10px'
+    }
+  }, err ? rtMuted('could not load traces — ' + err, {
+    color: '#f87171',
+    textAlign: 'center',
+    padding: 20
+  }) : !data ? rtMuted('loading traces…', {
+    textAlign: 'center',
+    padding: 20
+  }) : rows.length === 0 ? rtMuted('No reasoning traces match.', {
+    textAlign: 'center',
+    padding: 20
+  }) : rows.map(r => {
+    const when = r.started ? new Date(r.started * 1000) : null;
+    const tk = r.tokens || {};
+    const src = r.source_label || (r.headline_source ? labels[r.headline_source] || r.headline_source : '');
+    return rtEl("div", {
+      key: r.trace_id,
+      role: "button",
+      tabIndex: 0,
+      onClick: () => window.fridayOpenTrace(r.trace_id),
+      onKeyDown: e => {
+        if (e.key === 'Enter') window.fridayOpenTrace(r.trace_id);
+      },
+      title: 'Open ' + r.trace_id + ' as its full tree',
+      style: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '2px 7px',
+        alignItems: 'baseline',
+        padding: '4px 0',
+        borderBottom: '1px solid rgba(255,255,255,0.04)',
+        fontSize: 9,
+        fontFamily: 'JetBrains Mono',
+        color: '#aab',
+        cursor: 'pointer',
+        minWidth: 0
+      }
+    }, r.live || r.status === 'running' ? rtEl("span", {
+      title: "live",
+      style: {
+        color: '#f59e0b'
+      }
+    }, "●") : null, rtEl("span", null, r.parent_id ? '↳' : '', RT_KIND_ICON[r.kind] || '💭'), rtEl("span", {
+      style: {
+        color: '#778',
+        flexShrink: 0
+      },
+      title: when ? when.toString() : ''
+    }, when ? when.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric'
+    }) + ' ' + when.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit'
+    }) : '—'), rtEl("span", {
+      style: {
+        flex: '1 1 140px',
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        color: r.unreadable ? '#f87171' : '#dde'
+      }
+    }, r.unreadable ? 'unreadable (locked vault?)' : r.label || r.kind || r.trace_id), r.model && rtEl("span", {
+      style: {
+        color: r.seat === 'local' ? '#f59e0b' : '#00d4ff',
+        maxWidth: 150,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }
+    }, r.model), src && rtPill(src, '#c4b5fd'), (tk.in || tk.out) ? rtEl("span", {
+      style: {
+        color: '#667'
+      }
+    }, rtFmtN(tk.in), "/", rtFmtN(tk.out), "tk") : null, r.tool_calls ? rtEl("span", {
+      style: {
+        color: '#667'
+      }
+    }, "🔧", r.tool_calls) : null, r.ledger_seq != null && rtEl("span", {
+      style: {
+        color: '#556'
+      },
+      title: r.ledger_hash ? 'ledger hash ' + r.ledger_hash : ''
+    }, "#", r.ledger_seq));
+  })), rtEl("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '4px 10px',
+      fontSize: 9,
+      fontFamily: 'JetBrains Mono',
+      color: '#889',
+      borderTop: '1px solid rgba(255,255,255,0.05)'
+    }
+  }, rtEl("button", {
+    disabled: offset === 0,
+    onClick: () => setOffset(Math.max(0, offset - LIMIT)),
+    style: Object.assign({}, RT_BTN, {
+      opacity: offset === 0 ? 0.4 : 1
+    })
+  }, "‹ newer"), rtEl("span", null, total ? offset + 1 + '–' + Math.min(offset + rows.length, total) + ' of ' + total : '0', loading ? ' · …' : ''), rtEl("button", {
+    disabled: offset + LIMIT >= total,
+    onClick: () => setOffset(offset + LIMIT),
+    style: Object.assign({}, RT_BTN, {
+      opacity: offset + LIMIT >= total ? 0.4 : 1
+    })
+  }, "older ›")), rtEl("div", {
+    style: {
+      padding: '6px 10px 8px',
+      borderTop: '1px solid rgba(255,255,255,0.06)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 5,
+      fontSize: 9,
+      fontFamily: 'JetBrains Mono',
+      color: '#aab'
+    }
+  }, rtEl("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '3px 10px',
+      alignItems: 'center'
+    }
+  }, v.checking ? rtEl("span", {
+    style: {
+      color: '#889'
+    }
+  }, "verifying chain…") : v.error ? rtEl("span", {
+    style: {
+      color: '#f87171'
+    }
+  }, "chain check failed — ", v.error) : v.valid ? rtEl("span", {
+    style: {
+      color: '#3effa1'
+    }
+  }, "✓ chain verified \xB7 ", v.records != null ? v.records : '?', " records") : verify ? rtEl("span", {
+    style: {
+      color: '#f87171'
+    }
+  }, "✕ chain broken", v.break_at != null ? ' at #' + v.break_at : '', v.reason ? ' — ' + v.reason : '') : null, v.pending ? rtEl("span", {
+    style: {
+      color: '#f59e0b'
+    }
+  }, v.pending, " pending") : status.pending ? rtEl("span", {
+    style: {
+      color: '#f59e0b'
+    }
+  }, status.pending, " pending") : null, rtEl("button", {
+    onClick: runVerify,
+    style: RT_BTN
+  }, "re-verify"), status.capture === false && rtEl("span", {
+    style: {
+      color: '#f59e0b'
+    }
+  }, "capture is off"), status.last_error && rtEl("span", {
+    style: {
+      color: '#f87171',
+      overflowWrap: 'anywhere'
+    }
+  }, "last error: ", String(status.last_error))), rtEl("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6,
+      alignItems: 'center'
+    }
+  }, rtEl("span", null, "keep traces for"), rtEl("input", {
+    type: "number",
+    min: 0,
+    value: retVal,
+    onChange: e => {
+      setRet(e.target.value);
+      setConfirmRet(false);
+    },
+    "aria-label": "Retention in days, 0 keeps all",
+    style: Object.assign({}, RT_INPUT, {
+      width: 56
+    })
+  }), rtEl("span", {
+    style: {
+      color: '#778'
+    }
+  }, (parseInt(retVal, 10) || 0) === 0 ? 'days (0 = keep all)' : 'days'), rtEl("button", {
+    onClick: () => saveRet(false),
+    style: RT_BTN
+  }, "Save"), rtEl("span", {
+    style: {
+      flex: 1
+    }
+  }), rtEl("button", {
+    onClick: doExport,
+    disabled: exporting,
+    style: RT_BTN,
+    title: "Download every trace as NDJSON; the first line is the verification report"
+  }, exporting ? 'exporting…' : 'Export')), confirmRet && rtEl("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6,
+      alignItems: 'center',
+      padding: '5px 7px',
+      borderRadius: 5,
+      background: 'rgba(255,84,112,0.07)',
+      border: '1px solid rgba(255,84,112,0.3)',
+      color: '#ffb3c0'
+    }
+  }, rtEl("span", {
+    style: {
+      flex: '1 1 200px'
+    }
+  }, "Delete trace records older than ", parseInt(retVal, 10) || 0, " days now? This cannot be undone."), rtEl("button", {
+    onClick: () => saveRet(true),
+    style: Object.assign({}, RT_BTN, {
+      color: '#ff5470',
+      borderColor: 'rgba(255,84,112,0.4)',
+      background: 'rgba(255,84,112,0.08)'
+    })
+  }, "Delete & save"), rtEl("button", {
+    onClick: () => setConfirmRet(false),
+    style: RT_BTN
+  }, "Cancel")), note && rtEl("div", {
+    style: {
+      color: /not saved|failed/.test(note) ? '#f87171' : '#889'
+    }
+  }, note), (status.method || status.bytes != null) && rtEl("div", {
+    style: {
+      color: '#556',
+      overflowWrap: 'anywhere'
+    }
+  }, status.method ? status.method + ' · ' : '', status.bytes != null ? rtFmtN(status.bytes) + 'B' : '')));
+}
+
 // ═══ TASK TRAY (background task runner UI) ═══
 function fmtElapsed(sec){if(sec==null)return'0s';const s=Math.floor(sec);if(s<60)return s+'s';const m=Math.floor(s/60);const r=s%60;if(m<60)return m+'m '+r+'s';const h=Math.floor(m/60);return h+'h '+(m%60)+'m'}
 // ═══ TASK TIMELINE + CONTROLS (docs/design/active/task-visibility.md §4.4) ═══
@@ -8717,6 +10800,7 @@ function TaskCard({task,expanded,onToggle,onCancel,onView,onChanged}){
       <span className="task-card-elapsed">{fmtElapsed(task.elapsed)}</span>
     </div>
     {(task.now||task.cost_usd!=null)&&<div className="task-card-sub" style={{marginTop:3,fontSize:10,color:'#aaa',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={task.now||''}>{task.now?'now: '+task.now:''}{task.cost_usd!=null&&task.cost_usd>0?(task.now?' · ':'')+'$'+Number(task.cost_usd).toFixed(4):''}</div>}
+    <TraceExpander traceId={task.trace_id} taskId={task.linked_task_id||task.task_id}/>
     {(status==='complete'||status==='completed_unverified')&&<div style={{marginTop:6,display:'flex',gap:4}}>
       <button className="task-card-btn results" onClick={e=>{e.stopPropagation();onView()}}>View Results</button>
     </div>}
@@ -12568,15 +14652,17 @@ function App(){
   // process, every reasoning thread needs to be visible if the user wishes
   // to see it." Badges default-on; this panel is the depth-on-demand. ──
   const[activityOpen,setActivityOpen]=useState(false);
+  // 'activity' | 'traces' — the ledger panel's two tabs.
+  const[activityTab,setActivityTab]=useState('activity');
   const[activityEvents,setActivityEvents]=useState([]);
   const[activityKind,setActivityKind]=useState('');
   const[activityFilter,setActivityFilter]=useState('');
   useEffect(()=>{
-    if(!activityOpen)return;let active=true;
+    if(!activityOpen||activityTab!=='activity')return;let active=true;
     const tick=()=>fetch('/api/activity?limit=200'+(activityKind?'&kind='+encodeURIComponent(activityKind):'')).then(r=>r.json()).then(d=>{if(active)setActivityEvents(d.events||[])}).catch(()=>{});
     tick();const iv=setInterval(tick,4000);
     return()=>{active=false;clearInterval(iv)};
-  },[activityOpen,activityKind]);
+  },[activityOpen,activityKind,activityTab]);
   const[threadSteps,setThreadSteps]=useState([]);
   const[taskLog,setTaskLog]=useState(null);   // null = no task-backed log (use steps); [] = task with empty log
   const[taskMeta,setTaskMeta]=useState(null); // {status,result,evaluation,verified}
@@ -13003,7 +15089,7 @@ function App(){
       if(d.seat_events&&d.seat_events.length)setChatMsgs(p=>[...p,...d.seat_events.map(ev=>({role:'system',kind:'seat_change',text:'⚙ '+ev.text,time:new Date().toLocaleTimeString()}))]);
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
-      setChatMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],offer_cloud_switch:!!d.offer_cloud_switch,time:new Date().toLocaleTimeString()}]);
+      setChatMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],trace_id:d.trace_id||null,reasoning_sources:d.reasoning_sources||[],offer_cloud_switch:!!d.offer_cloud_switch,time:new Date().toLocaleTimeString()}]);
       // Execute any structured actions Friday returned (navigate, open_path…).
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
       fridayRunActions(d.actions);
@@ -13552,33 +15638,45 @@ function App(){
 
     {/* ── B4: Activity Ledger panel — filterable stream of model invocations,
         subagent spawns, and tool calls (seat, model, duration, tokens). ── */}
-    {activityOpen&&<div style={{position:'fixed',top:60,right:14,width:400,maxWidth:'92vw',maxHeight:'calc(100vh - 120px)',display:'flex',flexDirection:'column',background:'rgba(8,12,20,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:10,zIndex:9500,boxShadow:'0 8px 40px rgba(0,0,0,0.6)'}} onClick={e=>e.stopPropagation()}>
+    <TraceModalHost/>
+    {activityOpen&&<div style={{position:'fixed',top:60,right:14,width:activityTab==='traces'?760:400,maxWidth:'calc(100vw - 16px)',maxHeight:'calc(100vh - 120px)',display:'flex',flexDirection:'column',background:'rgba(8,12,20,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:10,zIndex:9500,boxShadow:'0 8px 40px rgba(0,0,0,0.6)'}} onClick={e=>e.stopPropagation()}>
       <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'0.08em'}}>ACTIVITY LEDGER</span>
-        <select value={activityKind} onChange={e=>setActivityKind(e.target.value)} style={{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',borderRadius:4,color:'#ccc',fontSize:9,fontFamily:'JetBrains Mono',padding:'2px 4px'}}>
+        <div role="tablist" style={{display:'inline-flex',gap:2,flexShrink:0}}>
+          {[['activity','Activity'],['traces','Reasoning traces']].map(([k,l])=><button key={k} role="tab" aria-selected={activityTab===k} onClick={()=>setActivityTab(k)}
+            style={{background:activityTab===k?'rgba(0,212,255,0.14)':'none',border:'1px solid '+(activityTab===k?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.12)'),color:activityTab===k?'#00d4ff':'#99a',cursor:'pointer',fontSize:9,fontFamily:'JetBrains Mono',borderRadius:4,padding:'1px 6px',whiteSpace:'nowrap'}}>{l}</button>)}
+        </div>
+        {activityTab==='activity'&&<select value={activityKind} onChange={e=>setActivityKind(e.target.value)} style={{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',borderRadius:4,color:'#ccc',fontSize:9,fontFamily:'JetBrains Mono',padding:'2px 4px'}}>
           <option value="">all kinds</option>
           <option value="model_invocation">model invocations</option>
           <option value="tool_call">tool calls</option>
           <option value="subagent_spawn">subagent spawns</option>
-        </select>
-        <input value={activityFilter} onChange={e=>setActivityFilter(e.target.value)} placeholder="filter…" style={{flex:1,minWidth:0,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:4,color:'#ccc',fontSize:9,fontFamily:'JetBrains Mono',padding:'2px 6px',outline:'none'}}/>
+          <option value="reasoning_trace">reasoning traces</option>
+        </select>}
+        {activityTab==='activity'?<input value={activityFilter} onChange={e=>setActivityFilter(e.target.value)} placeholder="filter…" style={{flex:1,minWidth:0,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:4,color:'#ccc',fontSize:9,fontFamily:'JetBrains Mono',padding:'2px 6px',outline:'none'}}/>:<span style={{flex:1}}/>}
         <button onClick={()=>setActivityOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:12}}>✕</button>
       </div>
-      <div style={{flex:1,overflowY:'auto',padding:'6px 10px'}}>
+      {activityTab==='traces'?<TracesViewer/>:<div style={{flex:1,overflowY:'auto',padding:'6px 10px'}}>
         {(()=>{
           const f=activityFilter.trim().toLowerCase();
           const shown=activityEvents.filter(ev=>!f||JSON.stringify(ev).toLowerCase().includes(f));
           if(shown.length===0)return <div style={{textAlign:'center',color:'#666',fontSize:10,padding:24,fontFamily:'JetBrains Mono'}}>No activity recorded{f?' matching filter':''} yet.</div>;
-          const ICO={model_invocation:'🧠',tool_call:'🔧',subagent_spawn:'🤖'};
+          const ICO={model_invocation:'🧠',tool_call:'🔧',subagent_spawn:'🤖',reasoning_trace:'💭'};
           return shown.map((ev,i)=>{
             const when=ev.ts?new Date(ev.ts*1000).toLocaleTimeString():'';
             const seatColor=ev.seat==='local'?'#f59e0b':'#00d4ff';
-            return <div key={i} style={{display:'flex',gap:6,alignItems:'baseline',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:9,fontFamily:'JetBrains Mono',color:'#aab'}}>
+            const isTrace=ev.kind==='reasoning_trace'&&!!ev.trace_id;
+            return <div key={i} role={isTrace?'button':undefined} tabIndex={isTrace?0:undefined}
+              onClick={isTrace?()=>window.fridayOpenTrace(ev.trace_id):undefined}
+              onKeyDown={isTrace?e=>{if(e.key==='Enter')window.fridayOpenTrace(ev.trace_id)}:undefined}
+              title={isTrace?'Open this reasoning trace as its full tree':undefined}
+              style={{display:'flex',gap:6,alignItems:'baseline',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:9,fontFamily:'JetBrains Mono',color:'#aab',cursor:isTrace?'pointer':undefined}}>
               <span>{ICO[ev.kind]||'·'}</span>
               <span style={{color:'#778',flexShrink:0}}>{when}</span>
               <span style={{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                 {ev.kind==='tool_call'?<span>{ev.tool} <span style={{color:ev.ok?'#3effa1':'#f87171'}}>{ev.ok?'ok':'deny/err'}</span></span>
                  :ev.kind==='subagent_spawn'?<span>spawn {ev.description||ev.task_id||''}</span>
+                 :ev.kind==='reasoning_trace'?<span>{ev.parent_id?'↳ ':''}{ev.trace_kind||'trace'} · <span style={{color:seatColor}}>{ev.model||'?'}{ev.seat?' · '+ev.seat:''}</span>{ev.source?' · '+window.fridayTraceStore.label(ev.source):''}{ev.reasoning_chars?' · '+ev.reasoning_chars+' chars':''}{ev.tool_calls?' · 🔧'+ev.tool_calls:''}{ev.ledger_seq!=null?' · #'+ev.ledger_seq:''}</span>
                  :<span style={{color:seatColor}}>{ev.model||'?'}{ev.seat?' · '+ev.seat:''}</span>}
               </span>
               {ev.duration_ms!=null&&<span style={{color:'#667',flexShrink:0}}>{Math.round(ev.duration_ms)}ms</span>}
@@ -13587,14 +15685,15 @@ function App(){
             </div>;
           });
         })()}
-      </div>
+      </div>}
     </div>}
 
     {/* Notifications + Tasks dropdown (anchored under bell icon) */}
     {notifOpen&&<div ref={notifPanelRef} className="notif-dropdown" style={{top:notifAnchor.top,right:notifAnchor.right}}>
+      <ReasoningTraySection onOpenViewer={()=>{setActivityTab('traces');setActivityOpen(true);setNotifOpen(false)}}/>
       <div className="notif-section-header">
         <span>TASKS{runningTaskCount>0?` · ${runningTaskCount} LIVE`:''}</span>
-        <button onClick={()=>{setActivityOpen(true);setNotifOpen(false)}} title="Open the global activity ledger — every model action, subagent spawn, and tool call"
+        <button onClick={()=>{setActivityTab('activity');setActivityOpen(true);setNotifOpen(false)}} title="Open the global activity ledger — every model action, subagent spawn, and tool call"
           style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.25)',color:'#00d4ff',cursor:'pointer',fontSize:9,fontFamily:'JetBrains Mono',borderRadius:4,padding:'1px 6px',marginLeft:8}}>📒 Ledger</button>
         {sortedBgTasks.some(t=>t.status!=='running'&&t.status!=='queued')&&<button
           onClick={()=>{fetch('/api/tasks/dismiss-all',{method:'POST'}).catch(()=>{})
@@ -13664,6 +15763,7 @@ function App(){
             <div style={{fontSize:9,fontFamily:'JetBrains Mono',color:over?'#f59e0b':'rgba(255,255,255,0.35)',marginTop:3}}>
               {pct}% · {when}
             </div>
+            <TraceExpander traceId={p.trace_id} taskId={p.task_id}/>
           </div>;
         })}
       </div>}

@@ -1827,8 +1827,19 @@ def process_register(pid, *, name="Task", label=None, category="default",
             "step_total": step_total,
             "started": _time.time(),
             "updated": _time.time(),
+            # The reasoning trace this orb's work is recorded in, so the tray
+            # row can expand into the reasoning behind it.
+            "trace_id": _current_trace_id(),
         }
     turn_pet(label=label or name, model=model)
+
+
+def _current_trace_id():
+    try:
+        from agent_friday.services import reasoning_trace as _rt
+        return _rt.current()
+    except Exception:
+        return None
 
 
 def process_update(pid, *, status=None, progress=None, label=None,
@@ -2180,6 +2191,13 @@ DEFAULT_SETTINGS = {
         "retention_days": 0,
         "capture_reasoning": True,
         "encrypt_at_rest": True,
+    },
+    # Reasoning traces (services/reasoning_trace.py): every model call's
+    # reasoning, streamed to the tray and archived encrypted + hash-chained.
+    # retention_days 0 keeps everything; the user chooses a threshold.
+    "reasoning_traces": {
+        "capture": True,
+        "retention_days": 0,
     },
     # ── Auto-compaction (Part C) ──
     # When the assembled transcript exceeds trigger_ratio × the model's context

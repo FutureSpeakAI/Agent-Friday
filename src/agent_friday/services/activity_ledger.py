@@ -38,6 +38,14 @@ _ALLOWED_FIELDS = {
     # (task-visibility.md TV11): what left, to whom, and whether the gate
     # withheld anything. Never the content itself.
     "journal_read": {"task_id", "principal", "route", "events", "reasoning", "redacted", "withheld"},
+    # A reasoning trace was archived (services/reasoning_trace.py). A pointer
+    # into the encrypted trace ledger by seq/hash plus counts -- the reasoning
+    # itself, the label and tool arguments stay in the encrypted record.
+    "reasoning_trace": {
+        "trace_id", "parent_id", "task_id", "model", "seat", "trace_kind", "source",
+        "tokens_in", "tokens_out", "reasoning_chars", "tool_calls", "duration_ms",
+        "ledger_seq", "ledger_hash",
+    },
 }
 
 # Free-text fields still get a hard length cap so a caller can't smuggle a
