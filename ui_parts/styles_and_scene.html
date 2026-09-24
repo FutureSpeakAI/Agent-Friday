@@ -1,5 +1,20 @@
 <body>
     <style>
+    /* Edge and corner grab zones (fridayEdgeHandles) on workspace and chat windows. */
+    .win-edge{position:absolute;z-index:5}
+    .win-edge-n,.win-edge-s{left:12px;right:12px;height:6px;cursor:ns-resize}
+    .win-edge-n{top:0}.win-edge-s{bottom:0}
+    .win-edge-e,.win-edge-w{top:12px;bottom:12px;width:6px;cursor:ew-resize}
+    .win-edge-e{right:0}.win-edge-w{left:0}
+    .win-edge-ne,.win-edge-nw,.win-edge-se,.win-edge-sw{width:14px;height:14px;z-index:6}
+    .win-edge-ne{top:0;right:0;cursor:nesw-resize}.win-edge-sw{bottom:0;left:0;cursor:nesw-resize}
+    .win-edge-nw{top:0;left:0;cursor:nwse-resize}.win-edge-se{bottom:0;right:0;cursor:nwse-resize}
+    .fwin .win-edge-se{display:none}
+    .chat-win-bar{display:flex;align-items:center;gap:8px;flex-shrink:0;padding:5px 12px 4px;user-select:none;background:rgba(0,212,255,0.05);border-bottom:1px solid rgba(0,212,255,0.14)}
+    .chat-win-grip{color:rgba(0,212,255,0.55);font-size:11px}
+    .chat-win-title{font-family:'Orbitron';font-size:10px;letter-spacing:.06em;color:#7fdcff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .chat-win textarea.input,.chat-panel textarea.input{min-height:32px}
+    @media (max-width: 768px){.win-edge{display:none}}
     /* Offline-first: desaturate the holographic scene when the network monitor
        reports we're offline, so the environment visibly (but calmly) reflects
        the degraded state. Eased in/out so the transition isn't jarring. */

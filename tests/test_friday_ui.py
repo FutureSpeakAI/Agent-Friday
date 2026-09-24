@@ -70,7 +70,7 @@ def loaded_page(page: Page, console_messages):
     """Navigate to base URL and wait for the React app to render."""
     page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30000)
     # Wait for either greeting input or dock to confirm React mounted
-    page.wait_for_selector(".dock, input[placeholder*='Ask Friday']", timeout=15000)
+    page.wait_for_selector(".dock, textarea[placeholder*='Ask Friday']", timeout=15000)
     # Give Three.js a moment to attach the canvas
     page.wait_for_timeout(1500)
     return page
@@ -100,7 +100,7 @@ class TestPageLoad:
         assert loaded_page.locator("#ui-inner").count() == 1
         # dock or greeting should be visible
         assert loaded_page.locator(".dock").count() >= 1 \
-            or loaded_page.locator("input[placeholder*='Ask Friday']").count() >= 1
+            or loaded_page.locator("textarea[placeholder*='Ask Friday']").count() >= 1
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -191,7 +191,7 @@ class TestWorkspaces:
 # ────────────────────────────────────────────────────────────────────────────
 class TestChat:
     def test_greeting_input_present(self, loaded_page: Page):
-        inp = loaded_page.locator("input[placeholder*='Ask Friday']")
+        inp = loaded_page.locator("textarea[placeholder*='Ask Friday']")
         assert inp.count() >= 1, "Greeting chat input not found"
 
     def test_open_chat_panel(self, loaded_page: Page):
@@ -203,7 +203,7 @@ class TestChat:
         chat_btn.click()
         loaded_page.wait_for_timeout(500)
         # chat input with placeholder 'Talk to Friday...' should appear
-        talk_input = loaded_page.locator("input[placeholder*='Talk to Friday'], input[placeholder*='Voice mode active']")
+        talk_input = loaded_page.locator("textarea[placeholder*='Talk to Friday'], textarea[placeholder*='Voice mode active']")
         assert talk_input.count() >= 1, "Chat panel didn't open"
         loaded_page.screenshot(path=str(SCREENSHOTS / "chat_panel_open.png"))
 
@@ -211,7 +211,7 @@ class TestChat:
         """Type a message into the greeting input and press Enter.
         We don't wait for a full LLM response (cost/time), but the input should clear
         OR the chat panel should open with our message echoed."""
-        inp = loaded_page.locator("input[placeholder*='Ask Friday']").first
+        inp = loaded_page.locator("textarea[placeholder*='Ask Friday']").first
         if inp.count() == 0:
             pytest.skip("Greeting input not present")
         inp.fill("ping")
@@ -330,7 +330,7 @@ class TestResponsive:
     def test_layout_at_viewport(self, page: Page, w: int, h: int):
         page.set_viewport_size({"width": w, "height": h})
         page.goto(BASE_URL, wait_until="domcontentloaded")
-        page.wait_for_selector(".dock, input[placeholder*='Ask Friday']", timeout=15000)
+        page.wait_for_selector(".dock, textarea[placeholder*='Ask Friday']", timeout=15000)
         page.wait_for_timeout(1200)
         # Dock should be visible and not horizontally overflowing
         dock = page.locator(".dock").first
@@ -553,7 +553,7 @@ class TestPerformance:
     def test_load_under_budget(self, page: Page):
         start = time.time()
         page.goto(BASE_URL, wait_until="domcontentloaded")
-        page.wait_for_selector(".dock, input[placeholder*='Ask Friday']", timeout=15000)
+        page.wait_for_selector(".dock, textarea[placeholder*='Ask Friday']", timeout=15000)
         elapsed = time.time() - start
         # Allowed budget: 8 s on a cold start (Babel transpiling in-browser)
         assert elapsed < 8.0, f"Page load too slow: {elapsed:.2f}s"
