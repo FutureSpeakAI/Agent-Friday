@@ -73,6 +73,7 @@ async function expectFront(profileDir: string, title: string) {
   await expect.poll(() => plain(frontTitles(profileDir)[0]), { timeout: 15000, message: 'the tab in front' }).toBe(plain(title));
 }
 
+declare const WS: any[];
 let ctx: BrowserContext;
 let profile: string;
 
@@ -135,22 +136,46 @@ async function openWindow(page: Page, id: string) {
   return win;
 }
 
+/** The workspace the first test moved into a tab (whichever has enough in it
+ *  to scroll in the Friday home under test). */
+let moved = { id: 'contacts', title: 'Contacts · Agent Friday' };
+
+const scrollRange = (win: ReturnType<Page['locator']>) => win.locator('.fwin-body').evaluate(el => {
+  const sc = (window as any).fridayMainScroller(el);
+  return sc ? sc.scrollHeight - sc.clientHeight : 0;
+});
+
 test('one click: the tab opens where the window was, the window folds away, the tab is in front', async () => {
   const page = await desktop();
   await closeOthers(page);
-  const win = await openWindow(page, 'contacts');
+  // a workspace with enough in it to scroll: what that is depends on the home under test
+  let win = null as null | ReturnType<Page['locator']>;
+  for (const id of ['contacts', 'system', 'trust', 'code', 'news', 'knowledge']) {
+    const w = await openWindow(page, id);
+    let range = 0;
+    for (let i = 0; i < 12 && range <= 200; i++) { await page.waitForTimeout(500); range = await scrollRange(w); }
+    if (range > 200) {
+      win = w;
+      const label = await page.evaluate(x => WS.find((w: any) => w.id === x).label, id);
+      moved = { id, title: label + ' · Agent Friday' };
+      break;
+    }
+    await w.locator('.fwin-btns button').last().click();        // close it and try the next
+    await expect(page.locator(`.fwin:has([data-ws-tab="${id}"])`)).toHaveCount(0);
+  }
+  expect(win, 'no workspace had enough in it to scroll').not.toBeNull();
+  const id = moved.id;
   // somewhere down the window, so there is a place to carry across
-  await expect.poll(() => win.locator('.fwin-body').evaluate(el => { const sc = (window as any).fridayMainScroller(el); return sc ? sc.scrollHeight - sc.clientHeight : 0; }), { timeout: 30000 }).toBeGreaterThan(200);
-  await win.locator('.fwin-body').evaluate(el => { const sc = (window as any).fridayMainScroller(el); sc.scrollTop = Math.round((sc.scrollHeight - sc.clientHeight) * 0.4); });
-  const asked = ctx.waitForEvent('request', r => r.resourceType() === 'document' && r.url().includes('/w/contacts'));
-  const [tab] = await Promise.all([ctx.waitForEvent('page'), win.locator('[data-ws-tab="contacts"]').click()]);
-  await tab.waitForURL(/\/w\/contacts/, { timeout: 30000 });
+  await win!.locator('.fwin-body').evaluate(el => { const sc = (window as any).fridayMainScroller(el); sc.scrollTop = Math.round((sc.scrollHeight - sc.clientHeight) * 0.4); });
+  const asked = ctx.waitForEvent('request', r => r.resourceType() === 'document' && r.url().includes('/w/' + id));
+  const [tab] = await Promise.all([ctx.waitForEvent('page'), win!.locator(`[data-ws-tab="${id}"]`).click()]);
+  await tab.waitForURL(u => u.pathname === '/w/' + id, { timeout: 30000 });
   const url = new URL((await asked).url());          // what the tab was opened with
   expect(url.origin).toBe(new URL(BASE).origin);         // no named address proven here
   // the desktop window is gone (folded into its dock icon)
-  await expect(page.locator('.fwin:has([data-ws-tab="contacts"])')).toHaveCount(0);
-  await tab.waitForSelector('[data-standalone="contacts"] .ws-tab-body > *', { timeout: 60000 });
-  await expectFront(profile, 'Contacts · Agent Friday');
+  await expect(page.locator(`.fwin:has([data-ws-tab="${id}"])`)).toHaveCount(0);
+  await tab.waitForSelector(`[data-standalone="${id}"] .ws-tab-body > *`, { timeout: 60000 });
+  await expectFront(profile, moved.title);
   // the carried scroll position was used, then dropped from the address
   expect(Number(url.searchParams.get('scroll'))).toBeCloseTo(0.4, 1);
   await expect.poll(() => tab.evaluate(() => { const sc = (window as any).fridayMainScroller(document.querySelector('.ws-tab-body')); return sc ? sc.scrollTop / (sc.scrollHeight - sc.clientHeight) : 0; }), { timeout: 20000 }).toBeGreaterThan(0.2);
@@ -162,15 +187,15 @@ test('asking again finds the same tab: no copy, and it comes back to the front',
   await page.bringToFront();
   await expectFront(profile, await page.title());
   const before = ctx.pages().length;
-  const win = await openWindow(page, 'contacts');
+  const win = await openWindow(page, moved.id);
   let opened = false;
   ctx.once('page', () => { opened = true; });
-  await win.locator('[data-ws-tab="contacts"]').click();
+  await win.locator(`[data-ws-tab="${moved.id}"]`).click();
   await page.waitForTimeout(1500);
   expect(opened).toBe(false);
   expect(ctx.pages().length).toBe(before);
-  await expect(page.locator('.fwin:has([data-ws-tab="contacts"])')).toHaveCount(0);
-  await expectFront(profile, 'Contacts · Agent Friday');
+  await expect(page.locator(`.fwin:has([data-ws-tab="${moved.id}"])`)).toHaveCount(0);
+  await expectFront(profile, moved.title);
 });
 
 test('a blocked tab keeps the window open and says how to allow it', async () => {
