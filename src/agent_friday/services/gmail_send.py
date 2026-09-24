@@ -471,6 +471,16 @@ def send(approval_id: str) -> dict:
     # an approval spent with no message sent. That is the right direction to
     # fail: the owner is asked again, rather than a stranger receiving the
     # same message twice.
+    # The checkpoint's integrity check and signed receipt, as for any tool
+    # call. Before the approval is burned: a held send leaves the card usable
+    # once whatever held it is fixed.
+    from agent_friday.governance import action_gate as _gate
+    try:
+        _gate.record_external("gmail:send", surface="mail", approval_id=approval_id,
+                              target=_fingerprint_target(payload))
+    except _gate.Held as e:
+        raise SendRefused("held: %s. Nothing was sent." % e)
+
     _burned, was_first = _ap._consume(appr)
     if not was_first:
         raise SendRefused("that approval is already being used to send. "
@@ -492,6 +502,13 @@ def send(approval_id: str) -> dict:
     return {"ok": True, "message_id": sent.get("id"),
             "thread_id": sent.get("threadId"),
             "to": payload.get("to"), "approval_id": approval_id}
+
+
+def _fingerprint_target(payload: dict) -> str:
+    """Who a message goes to, for the receipt, without the addresses."""
+    rcpts = [str(a).lower() for k in ("to", "cc", "bcc") for a in (payload.get(k) or [])]
+    return "%d recipient(s) %s" % (
+        len(rcpts), hashlib.sha256("|".join(sorted(rcpts)).encode()).hexdigest()[:12])
 
 
 def _mime_raw(payload: dict, extras: dict) -> str:
