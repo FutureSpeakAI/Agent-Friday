@@ -42,6 +42,7 @@ from agent_friday.core import (
     process_register,
     process_remove,
 )  # noqa: E501
+from agent_friday.services.action_policy import seal_system_prompt
 from agent_friday.services.agent import (
     ACTION_PERMISSION_POLICY,
     prepare_confirmation_ctx,
@@ -1121,10 +1122,9 @@ def chat():
         # below like the rest of _extra_system.
         _extra_system += _build_session_continuity_block()
         _extra_system += _build_emotional_tone_block()
-        # The ask-first action policy is appended by
-        # `_get_friday_system_prompt` for every caller, so it is not added here:
-        # a second copy in one prompt reads as a diff rather than as emphasis.
-        # The gate in _execute_tool still enforces it if the model forgets.
+        # The ask-first action policy is added by `seal_system_prompt` in
+        # `_prep_for`, once and last. The gate in _execute_tool still enforces
+        # it if the model forgets.
         if cite_sources:
             _extra_system += CITATION_INSTRUCTIONS
 
@@ -1190,7 +1190,10 @@ def chat():
                         "reference the underlying value — they will be substituted "
                         "with the real data before the user sees your response."
                     )
-            return sp, src, lookup
+            # This route assembles its own prompt rather than going through
+            # `_get_friday_system_prompt`, so the policy and the override
+            # strip are applied here, last.
+            return seal_system_prompt(sp, "/api/chat prompt"), src, lookup
 
         system_prompt, sources, pii_lookup = _prep_for(_provider)
 
@@ -2141,8 +2144,6 @@ def chat_send():
             # Prepend user-configured agent personality + response prefs + cLaws
             personality = _load_agent_personality()
             prompt = _settings_system_prefix(settings, personality) + (prompt or '')
-            # The action policy comes from `_get_friday_system_prompt`, which
-            # built `prompt`; it is not appended twice.
             # Cross-session memory: recall relevant past exchanges + carry
             # forward the last session summary + adapt tone from the
             # accumulated arc. Rebuilt per provider along with everything
@@ -2156,7 +2157,9 @@ def chat_send():
                     prompt = prompt + "\n" + _mem_block
             except Exception as _mb_err:
                 print(f"  [MEMORY] /chat/send recall skipped: {_mb_err}")
-            return prompt
+            # Assembled here, not by `_get_friday_system_prompt`: the policy
+            # and the override strip are applied here, last.
+            return seal_system_prompt(prompt, "/api/chat/send prompt")
 
         # THE CONVERSATION'S OWN SEAT, ON THE PATH THE UI ACTUALLY USES.
         #

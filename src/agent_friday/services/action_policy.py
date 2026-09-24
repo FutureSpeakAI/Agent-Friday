@@ -100,6 +100,20 @@ _COMPILED = tuple(re.compile(p, re.IGNORECASE) for p in OVERRIDE_PATTERNS)
 _REDACTION = "[removed: cannot override the action permission policy]"
 
 
+def seal_system_prompt(prompt, source: str = "assembled prompt"):
+    """Strip overrides from a whole assembled prompt and end it with the policy.
+
+    For callers that assemble a system prompt themselves instead of through
+    `model_router._get_friday_system_prompt` -- the two chat endpoints do, and
+    add memory recall, session continuity, the user model and heuristics on
+    top. Whatever was assembled, the result carries the policy exactly once
+    and last, and no derived stretch of it can argue with the rule.
+    """
+    s = str(prompt or "").replace(ACTION_PERMISSION_POLICY, "")
+    s = strip_authority_overrides(s, source=source).rstrip()
+    return s + "\n\n" + ACTION_PERMISSION_POLICY
+
+
 def contains_authority_override(text) -> bool:
     """True when `text` tries to grant authority over real-world actions."""
     if not text:
