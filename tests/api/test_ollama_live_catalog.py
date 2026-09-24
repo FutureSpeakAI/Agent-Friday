@@ -43,6 +43,20 @@ def fake_ollama(monkeypatch):
     import agent_friday.routing.ollama_manager as om
     mgr = _FakeOllamaManager()
     monkeypatch.setattr(om, "get_manager", lambda *a, **k: mgr)
+    # The picker never waits on the daemon inside a request; it reads machine
+    # snapshots that the boot warmer fills. Fill them the way the warmer does,
+    # outside a request, so the catalog sees this daemon.
+    from agent_friday.services import machine_probe as mp
+    from agent_friday.services import model_catalog as mc
+    reg = mc.get_provider_registry()
+    for prov in reg.get_enabled_providers():
+        if prov.get("type") != "ollama":
+            continue
+        name = prov.get("name")
+        mp.snapshot("models:provider_available:" + name,
+                    lambda name=name: bool(reg.is_provider_available(name)),
+                    fresh_for=60.0, allow_blocking=True)
+        mc._live_ollama_models(prov.get("base_url"))
     return mgr
 
 

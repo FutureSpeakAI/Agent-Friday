@@ -215,6 +215,13 @@ def write_cache(provider_name: str, models: list, ttl_s: int = DEFAULT_TTL_S) ->
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(blob, f, indent=1)
     tmp.replace(path)
+    # The model picker serves a warm copy of the catalog built from these
+    # caches; a refresh that does not reach it is a refresh the user cannot see.
+    try:
+        from agent_friday.services import warm_cache
+        warm_cache.invalidate("model_catalog")
+    except Exception:
+        pass
     return path
 
 

@@ -163,6 +163,19 @@ def test_seeded_anthropic_cache_surfaces_opus5_and_fable5(client, cache_dir):
     assert opus5["curated"] is True
 
 
+def test_a_refresh_reaches_a_picker_that_is_already_warm(client, cache_dir):
+    """/api/models serves a warm copy of the catalog. A refreshed hosted
+    catalog must reach it on the next request, not after the warm copy's
+    TTL, or the refresh the user just asked for looks like it did nothing."""
+    before = {m["id"] for m in client.get("/api/models").get_json()["models"]}
+    assert "claude-fable-9" not in before
+    md.write_cache("anthropic", [{"id": "claude-fable-9",
+                                  "label": "Claude Fable 9",
+                                  "modalities": ["text"], "source": "discovery"}])
+    after = {m["id"] for m in client.get("/api/models").get_json()["models"]}
+    assert "claude-fable-9" in after
+
+
 def test_no_cache_falls_back_to_statics_flagged_stale(client, cache_dir):
     data = client.get("/api/models").get_json()
     anthropic = [m for m in data["models"] if m["provider"] == "anthropic"]
