@@ -537,6 +537,15 @@ def _voice_tool_run(name, args, send_client):
                 f"Ask a short yes/no question about {_what}, then call this tool "
                 f"again with confirmed=true only after they say yes.")
 
+    # Every voice tool runs through agent._execute_tool, the one path to a
+    # handler, so the governance check, provenance ledger, audit and PII hooks
+    # apply to a spoken request exactly as to a typed one.
+    from agent_friday.services.agent import _execute_tool
+
+    def _governed(tool, fn, a):
+        return _execute_tool(tool, a, handler=fn, session_ctx={
+            "authenticated": True, "surface": "voice-live", "taint_key": "voice-live"})
+
     try:
         if name == "ask_friday":
             try:
@@ -546,7 +555,7 @@ def _voice_tool_run(name, args, send_client):
             except Exception:
                 pass
             try:
-                return _tool_ask_friday(args)
+                return _governed("ask_friday", _tool_ask_friday, args)
             finally:
                 try:
                     send_client({"type": "stage", "stage": "mind", "state": "idle",
@@ -561,7 +570,7 @@ def _voice_tool_run(name, args, send_client):
                 send_client({"type": "tts_pause"})
             except Exception:
                 pass
-            res = _tool_navigate(args)
+            res = _governed("navigate", _tool_navigate, args)
             ok = isinstance(res, str) and res.startswith("NAV_OK:")
             if ok:
                 wsid = res.split(":", 1)[1].split(" ", 1)[0].strip()
@@ -585,7 +594,7 @@ def _voice_tool_run(name, args, send_client):
                 send_client({"type": "tts_pause"})
             except Exception:
                 pass
-            res = _tool_open_url(args)
+            res = _governed("open_url", _tool_open_url, args)
             # _tool_open_url validates the URL and returns an "I did NOT open"
             # message for dead/malformed links — surface that as a failure to report.
             opened = isinstance(res, str) and res.lower().startswith("opened")
@@ -606,7 +615,7 @@ def _voice_tool_run(name, args, send_client):
             return (f"I did not open it because the link looks invalid. {res} "
                     f"Tell the user the link appears broken and offer to find the right source.")
         if name == "search_news":
-            res = _tool_search_news(args)
+            res = _governed("search_news", _tool_search_news, args)
             try:
                 hits = (json.loads(res) or {}).get("hits", [])
                 chips = [{"title": h.get("title"), "source": h.get("source"),
@@ -617,9 +626,9 @@ def _voice_tool_run(name, args, send_client):
                 pass
             return res
         if name == "search_web":
-            return _tool_search_web(args)
+            return _governed("search_web", _tool_search_web, args)
         if name == "search_wiki":
-            return _tool_search_wiki(args)
+            return _governed("search_wiki", _tool_search_wiki, args)
         if name == "spawn_task":
             # Voice's one durable-work primitive. The Live model is told (in the
             # shared system prompt) to delegate anything longer than a turn; before
@@ -635,7 +644,7 @@ def _voice_tool_run(name, args, send_client):
             if _oc_spawn and _oc_prompt:
                 _payload["on_complete"] = {"spawn": _oc_spawn, "prompt": _oc_prompt,
                                            "with_context": True}
-            res = _tool_spawn_task(_payload)
+            res = _governed("spawn_task", _tool_spawn_task, _payload)
             try:
                 send_client({"type": "task_spawned",
                              "name": args.get("name") or "Background task"})
@@ -643,13 +652,13 @@ def _voice_tool_run(name, args, send_client):
                 pass
             return res
         if name == "query_calendar":
-            return _tool_query_calendar(args)
+            return _governed("query_calendar", _tool_query_calendar, args)
         if name == "check_email":
-            return _tool_check_email(args)
+            return _governed("check_email", _tool_check_email, args)
         if name == "get_source_trust":
-            return _tool_get_source_trust(args)
+            return _governed("get_source_trust", _tool_get_source_trust, args)
         if name == "get_article_deep_dive":
-            res = _tool_get_article_deep_dive(args)
+            res = _governed("get_article_deep_dive", _tool_get_article_deep_dive, args)
             url = (args.get("url") or "").strip()
             if url.startswith("http"):
                 try:
@@ -670,7 +679,6 @@ def _voice_tool_run(name, args, send_client):
         # that result through egress_gate before it is sent back -- so a cloud
         # model can read a PDF in Downloads without the vault ever leaving.
         if name in dict((n, d) for n, d, _sc in _voice_shared_tool_specs()):
-            from agent_friday.services.agent import _execute_tool
             return _execute_tool(name, args, session_ctx={
                 # The live socket is authenticated before the session opens
                 # (routes/voice.py rejects unauthenticated connects), which is
@@ -679,6 +687,7 @@ def _voice_tool_run(name, args, send_client):
                 # comes back as an honest deny, not a silent nothing.
                 "authenticated": True,
                 "surface": "voice-live",
+                "taint_key": "voice-live",
             })
     except Exception as e:
         _log.error("Voice tool %r raised %s: %s", name, type(e).__name__, e, exc_info=True)

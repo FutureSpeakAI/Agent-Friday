@@ -22373,7 +22373,9 @@ function SystemWS() {
       color: '#999',
       marginTop: 2
     }
-  }, a.action_description), /*#__PURE__*/React.createElement("div", {
+  }, a.action_description), /*#__PURE__*/React.createElement(ApprovalProvenance, {
+    p: a.provenance
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: 'rgba(255,255,255,0.4)',
@@ -43792,6 +43794,25 @@ function fridayOpenWorkspaceTab(id, params) {
 window.fridayWorkspaceTabUrl = fridayWorkspaceTabUrl;
 window.fridayOpenWorkspaceTab = fridayOpenWorkspaceTab;
 
+// Where an approval card's details came from (services/taint.py). A detail
+// Friday found in something it read -- an email, a web page, a document --
+// rather than in anything the user typed is named here, above the buttons.
+function ApprovalProvenance({ p }) {
+  const flags = p && Array.isArray(p.flags) ? p.flags : [];
+  if (!flags.length) return null;
+  const warn = flags.some(f => f.severity === 'warn');
+  return /*#__PURE__*/React.createElement("div", {
+    "data-testid": "approval-provenance", role: warn ? 'alert' : 'note',
+    style: { marginTop: 6, padding: '6px 8px', borderRadius: 6,
+      border: '1px solid ' + (warn ? '#f59e0b' : 'rgba(255,255,255,0.15)'),
+      background: warn ? 'rgba(245,158,11,0.10)' : 'rgba(255,255,255,0.04)' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 12, fontWeight: 700, color: warn ? '#fbbf24' : '#b8c7dc', marginBottom: 3 }
+  }, (warn ? '\u26A0 ' : '\u2139 ') + (p.headline || '')), flags.map((f, i) => /*#__PURE__*/React.createElement("div", {
+    key: i, style: { fontSize: 12, color: f.severity === 'warn' ? '#fde68a' : '#9fb0c6', marginTop: 2 }
+  }, '\u2022 ' + f.text)));
+}
+
 // Pending approval cards, for a tab with no desktop around it: a header
 // chip that counts them, a toast when a new one arrives, and the cards
 // themselves with Approve / Deny (the same /decide call as System > Approvals).
@@ -43842,6 +43863,7 @@ function StandaloneApprovals() {
       items.map(a => /*#__PURE__*/React.createElement("div", { key: a.approval_id, className: 'ws-tab-card' },
         /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, color: '#fff', marginBottom: 4 } }, a.title),
         a.action_description && /*#__PURE__*/React.createElement("div", { style: { whiteSpace: 'pre-wrap', fontSize: 12, color: '#b8c7dc', maxHeight: 220, overflow: 'auto' } }, a.action_description),
+        /*#__PURE__*/React.createElement(ApprovalProvenance, { p: a.provenance }),
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
           /*#__PURE__*/React.createElement("button", { className: 'ws-tab-link', disabled: !!busy, style: { borderColor: '#22c55e', color: '#86efac' }, onClick: () => decide(a.approval_id, 'approve') }, busy === a.approval_id ? '\u2026' : 'Approve'),
           /*#__PURE__*/React.createElement("button", { className: 'ws-tab-link', disabled: !!busy, style: { borderColor: '#ef4444', color: '#fca5a5' }, onClick: () => decide(a.approval_id, 'deny') }, 'Deny'))))),

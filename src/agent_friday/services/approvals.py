@@ -295,6 +295,15 @@ def _safe_check_dissent(action_description: str, interest_model: Optional[dict])
                 "error": f"dissent check unavailable: {e}"}
 
 
+def _current_provenance() -> Optional[dict]:
+    try:
+        from agent_friday.services import taint as _taint
+        return _taint.current_card()
+    except Exception as e:
+        _log.debug("provenance unavailable: %s", e)
+        return None
+
+
 def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str,
                     description: str = "", action_description: str = "",
                     cost_estimate_mψ: int = 0, payload: Optional[dict] = None,
@@ -325,7 +334,13 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     policy = classify(action_text)
     dissent = _safe_check_dissent(action_text, interest_model)
     law1_blocked = bool(dissent.get("law1_blocked"))
-    gated = bool(policy["gated"] or force_gate)
+    # Where the action's details came from (services/taint.py), when a tool
+    # call raised this card. A card whose recipient, link or account number
+    # came from something Friday read is never auto-approved.
+    provenance = _current_provenance()
+    tainted = bool(provenance and any(f.get("severity") == "warn"
+                                      for f in provenance.get("flags") or []))
+    gated = bool(policy["gated"] or force_gate or tainted)
 
     now = time.time()
     expires_seconds = policy.get("expires_seconds")
@@ -345,6 +360,7 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
         "payload": payload or {},
         "requested_by": requested_by,
         "dissent": dissent,
+        "provenance": provenance,
         "status": status,
         "consumed": False,
         "created_at": now,

@@ -5398,6 +5398,7 @@ function SystemWS(){
         :approvals.map(a=><div key={a.approval_id} className="card" style={{marginBottom:6,padding:8}}>
             <div style={{fontSize:12,color:'#ddd'}}>{a.title}</div>
             {a.action_description&&<div style={{fontSize:11,color:'#999',marginTop:2}}>{a.action_description}</div>}
+            <ApprovalProvenance p={a.provenance}/>
             <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginTop:4}}>{a.kind} · {a.policy_class}{a.expires_at?' · expires '+new Date(a.expires_at*1000).toLocaleString():''}</div>
             <div style={{display:'flex',gap:6,marginTop:6}}>
               <button className="btn" style={{fontSize:11,padding:'2px 10px',color:'#00ff80'}} disabled={!!apBusy} onClick={()=>decideApproval(a.approval_id,'approve')}>Approve</button>
@@ -10939,6 +10940,18 @@ function fridayOpenWorkspaceTab(id,params){
 }
 window.fridayWorkspaceTabUrl=fridayWorkspaceTabUrl;
 window.fridayOpenWorkspaceTab=fridayOpenWorkspaceTab;
+// Where an approval card's details came from (services/taint.py). A detail
+// Friday found in something it read -- an email, a web page, a document --
+// rather than in anything the user typed is named here, above the buttons.
+function ApprovalProvenance({p}){
+  const flags=p&&Array.isArray(p.flags)?p.flags:[];
+  if(!flags.length)return null;
+  const warn=flags.some(f=>f.severity==='warn');
+  return <div data-testid="approval-provenance" role={warn?'alert':'note'} style={{marginTop:6,padding:'6px 8px',borderRadius:6,border:'1px solid '+(warn?'#f59e0b':'rgba(255,255,255,0.15)'),background:warn?'rgba(245,158,11,0.10)':'rgba(255,255,255,0.04)'}}>
+    <div style={{fontSize:12,fontWeight:700,color:warn?'#fbbf24':'#b8c7dc',marginBottom:3}}>{(warn?'\u26A0 ':'\u2139 ')+(p.headline||'')}</div>
+    {flags.map((f,i)=><div key={i} style={{fontSize:12,color:f.severity==='warn'?'#fde68a':'#9fb0c6',marginTop:2}}>{'\u2022 '+f.text}</div>)}
+  </div>;
+}
 function StandaloneApprovals(){
   const[items,setItems]=useState([]);const[open,setOpen]=useState(false);const[busy,setBusy]=useState('');const[fresh,setFresh]=useState(null);
   const seen=useRef(null);
@@ -10959,6 +10972,7 @@ function StandaloneApprovals(){
       {items.map(a=><div key={a.approval_id} className="ws-tab-card">
         <div style={{fontWeight:700,color:'#fff',marginBottom:4}}>{a.title}</div>
         {a.action_description&&<div style={{whiteSpace:'pre-wrap',fontSize:12,color:'#b8c7dc',maxHeight:220,overflow:'auto'}}>{a.action_description}</div>}
+        <ApprovalProvenance p={a.provenance}/>
         <div style={{display:'flex',gap:8,marginTop:8}}>
           <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#22c55e',color:'#86efac'}} onClick={()=>decide(a.approval_id,'approve')}>{busy===a.approval_id?'…':'Approve'}</button>
           <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#ef4444',color:'#fca5a5'}} onClick={()=>decide(a.approval_id,'deny')}>Deny</button>

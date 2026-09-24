@@ -68,6 +68,20 @@ def receive_job():
     if not accepted:
         return jsonify(prov.reject_job(data, reason)), 402
 
+    # A peer's job runs code on this machine, so it passes the same governance
+    # checkpoint as Friday's own outward actions: the owner decides this exact
+    # job on an approval card first. The peer resubmits once it is approved.
+    from agent_friday.governance import action_gate
+    verdict = action_gate.authorize_external(
+        "run a federated compute job",
+        {"capability": data.get("capability"), "requester": data.get("requester_id")
+         or data.get("requester"), "prompt": str(data.get("prompt") or "")[:2000]},
+        requested_by="federation")
+    if verdict.action != "allow":
+        return jsonify({"ok": False, "job_id": data.get("job_id"),
+                        "status": "HELD" if verdict.action == "card" else "DECLINED",
+                        "reason": verdict.reason}), 403
+
     import threading
     job_id = data.get("job_id")
     t = threading.Thread(target=prov.execute_job, args=(data,), daemon=True)
