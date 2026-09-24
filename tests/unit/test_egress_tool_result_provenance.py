@@ -9,7 +9,7 @@ Two changes are pinned here:
 
   2. news_engine registers article title AND snippet as third-party published
      text at the fetch point, so search_news participates in the same
-     provenance registry the Edition digest and web_fetch already use.
+     provenance registry web_fetch already uses.
 
 THE POINT OF THIS FILE IS THE PRIVATE CASES. A test that only demonstrates
 "news now passes" is not evidence of anything — it would pass just as well if

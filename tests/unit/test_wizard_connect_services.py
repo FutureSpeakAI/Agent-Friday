@@ -22,7 +22,7 @@ rendered a green ● beside a service that had never been connected.
 
 That is Friday claiming a capability she does not have, which is the one
 thing this codebase refuses to do anywhere else — no-receipt-no-render on
-the Edition, the capability manifest on /api/health, the tool receipts on
+the capability manifest on /api/health, the tool receipts on
 every chat turn. The wizard was the gap.
 
 Genuinely clicking to connect is gated on Friday shipping an OAuth client

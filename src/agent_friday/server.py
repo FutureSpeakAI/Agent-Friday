@@ -113,7 +113,7 @@ ROUTE_MODULES = [
     'ambient', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code',
     'compute', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations',
     'control', 'core_routes',
-    'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming', 'edition',
+    'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming',
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'goals',
     'gmail_send',
     'google', 'google_accounts', 'hooks', 'insights', 'intelligence', 'jobs', 'knowledge_graph',

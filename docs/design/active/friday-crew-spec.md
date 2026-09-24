@@ -1,4 +1,12 @@
 # Friday Crew — Teach, Delegate, and the Second Computer
+> **Status note (2026-09-24):** every citation of `services/edition_engine.py`
+> below is to a module that has since been **removed**. The Friday Edition
+> workspace was eliminated at Stephen's request in favour of the briefings; its
+> data remains at `~/.friday/edition`. The patterns this spec borrows from it —
+> the receipt gate, the charter's taste/accuracy split, `_card_content_hash`,
+> `_build_rationale` — are unchanged as design ideas and can be read in git
+> history at the commit that removed the file. Nothing in this spec depends on
+> the module still existing.
 
 > **Status:** active
 > **Last verified:** 2026-09-06
