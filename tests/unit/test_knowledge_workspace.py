@@ -217,9 +217,6 @@ LAYOUT_RULES = [
     r"\.kw-body\s*\{[^}]*flex:\s*1;[^}]*min-height:\s*0",
     r"\.kw-bar\s*\{[^}]*flex-shrink:\s*0",
     r"\.kw-scene\s*>\s*canvas\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0",
-    r"\.fwin-body\s*>\s*\.ws-custom-root:has\(>\s*\.kw-root\)\s*\{[^}]*height:\s*100%",
-    r"\.ws-tab:has\(\.kw-root\)\s*\{[^}]*height:\s*100vh;[^}]*overflow:\s*hidden",
-    r"\.ws-tab:has\(\.kw-root\)\s+\.ws-tab-body\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column",
     r"\.kw-root:fullscreen\s*\{[^}]*height:\s*100vh",
 ]
 
@@ -231,13 +228,38 @@ def test_the_layout_gives_the_bar_its_row_in_every_host(host, rule):
     assert re.search(rule, css), f"{host}: missing {rule}"
 
 
+# Knowledge's root is a .ws-fill: the shell gives such a root exactly its
+# frame's height, in a standalone tab and in a desktop window.
+FILL_RULES = [
+    r"\.ws-tab-body\s*>\s*\.ws-fill[^{]*\{[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0",
+    r"\.ws-custom-root\s*>\s*\.ws-fill[^{]*\{[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0",
+    r"\.ws-custom-root:has\(>\s*\.ws-fill\)[^{]*\{[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0",
+    r"\.fwin-body:has\(>\s*\.ws-custom-root\s*>\s*\.ws-fill\)[^{]*\{[^}]*flex-direction:\s*column",
+]
+FILL_HOSTS = {"index.html": ROOT / "index.html",
+              "styles_and_scene.html": ROOT / "ui_parts" / "styles_and_scene.html"}
+
+
+@pytest.mark.parametrize("host", sorted(FILL_HOSTS))
+@pytest.mark.parametrize("rule", FILL_RULES)
+def test_every_frame_fills_a_ws_fill_root(host, rule):
+    assert re.search(rule, FILL_HOSTS[host].read_text(encoding="utf-8")), f"{host}: missing {rule}"
+
+
+@pytest.mark.parametrize("ui", sorted(UI))
+def test_the_knowledge_root_is_a_ws_fill(ui):
+    assert "className: 'kw-root ws-fill'" in _text(ui), ui
+
+
 @pytest.mark.parametrize("ui", sorted(UI))
 def test_the_bar_is_rendered_unconditionally(ui):
     text = _text(ui)
     a = text.index("function KnowledgeWS(")
     body = text[a:text.index("\nfunction ", a + 10)]
-    # The last child of .kw-root, with no condition in front of it.
-    assert re.search(r"\)\)\), h\('div', \{\s*className: 'kw-bar',\s*'data-kw-bar': '1'", body), ui
+    # The last child of .kw-root, with no condition in front of it, marked as
+    # the workspace's footer (the standalone layout check measures the panes
+    # against it).
+    assert re.search(r"\)\)\), h\('div', \{\s*className: 'kw-bar',\s*'data-kw-bar': '1',\s*'data-ws-footer': '1'", body), ui
 
 
 @pytest.mark.parametrize("ui", sorted(UI))

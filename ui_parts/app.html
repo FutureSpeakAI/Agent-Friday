@@ -3586,12 +3586,16 @@ function KnowledgeWS() {
   }, [section, gv]);
 
   // Split stacks the graph above the page when the space is narrow or tall.
+  // Both observers read layout size (offsetWidth/Height): a desktop window
+  // opens by scaling up from its dock icon, and a transformed reading taken
+  // then would stay, since the layout size never changes afterwards.
   useEffect(() => {
     const el = rootRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
-      const r = el.getBoundingClientRect();
-      setStack(r.width < 860 || r.height > r.width * 1.1);
+      const w = el.offsetWidth,
+        ht = el.offsetHeight;
+      if (w > 0) setStack(w < 860 || ht > w * 1.1);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -3603,7 +3607,7 @@ function KnowledgeWS() {
     const el = graphPaneRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
-      const w = el.getBoundingClientRect().width;
+      const w = el.offsetWidth;
       if (w > 0) setToolbar(w < 700 ? 'compact' : w < 900 ? 'narrow' : 'full');
     });
     ro.observe(el);
@@ -3644,7 +3648,7 @@ function KnowledgeWS() {
   const selPath = sel && sel.type !== 'soul' ? kwPathOf(sel) : null;
   return h('div', {
     ref: rootRef,
-    className: 'kw-root',
+    className: 'kw-root ws-fill',
     'data-kw-view': view
   }, h('div', {
     className: 'kw-head'
@@ -3710,6 +3714,7 @@ function KnowledgeWS() {
   }))), h('div', {
     className: 'kw-bar',
     'data-kw-bar': '1',
+    'data-ws-footer': '1',
     role: 'status'
   }, crumb, links && page && !links.missing ? h('span', {
     className: 'kw-dim kw-counts'
