@@ -5677,11 +5677,6 @@ if (typeof document !== 'undefined') {
 const DOCK_GROUPS = [{
   name: 'Life',
   items: [{
-    id: 'home',
-    ico: '🏠',
-    label: 'Home',
-    core: true
-  }, {
     id: 'news',
     ico: '📰',
     label: 'News',
@@ -8771,9 +8766,15 @@ function CommandPalette({
   const activate = item => {
     if (!item) return;
     if (item.kind === 'ws') onOpenWs(item.id);else if (item.kind === 'routine') {
-      fetch(`/api/routines/${item.id}/run`, {
+      // apiFetch, and the answer is READ. This used to discard the response, so
+      // a refusal and a success were both silence.
+      apiFetch(`/api/routines/${item.id}/run`, {
         method: 'POST'
-      }).catch(() => {});
+      }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+        fridayToast((d && d.message) || (ok ? 'Started.' : 'Could not start it.'),
+                    { error: !ok });
+      }).catch(() => fridayToast('Could not reach Friday to start that routine.',
+                                 { error: true }));
       onClose();
     } else if (item.kind === 'contact') {
       onOpenWs('contacts');
@@ -9041,299 +9042,6 @@ function TalkToFridayButton({
 }
 
 // ═══ WORKSPACES ═══
-function HomeWS() {
-  const [cd, setCd] = useState(null);
-  const [trust, setTrust] = useState(null);
-  const [pers, setPers] = useState(null);
-  const [mem, setMem] = useState(null);
-  const [epi, setEpi] = useState(null);
-  const [todos, setTodos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [routines, setRoutines] = useState([]);
-  const [runningRoutine, setRunningRoutine] = useState(null);
-  const [routineToast, setRoutineToast] = useState('');
-  const loadRoutines = () => fetch('/api/routines').then(r => r.json()).then(d => setRoutines(d.routines || [])).catch(() => {});
-  useEffect(() => {
-    Promise.all([fetch('/api/countdowns').then(r => r.json()).then(setCd).catch(() => null), fetch('/api/trust').then(r => r.json()).then(setTrust).catch(() => null), fetch('/api/personality').then(r => r.json()).then(setPers).catch(() => null), fetch('/api/memory/stats').then(r => r.json()).then(setMem).catch(() => null), fetch('/api/epistemic').then(r => r.json()).then(setEpi).catch(() => null), fetch('/api/todos').then(r => r.json()).then(d => setTodos(d.todos || [])).catch(() => []), loadRoutines()]).then(() => setLoading(false));
-  }, []);
-  const runRoutine = async (id, label) => {
-    setRunningRoutine(id);
-    try {
-      const r = await fetch('/api/routines/' + id + '/run', {
-        method: 'POST'
-      });
-      const d = await r.json();
-      setRoutineToast(d.status === 'ok' ? label + ' launched' : 'Launch failed');
-      loadRoutines();
-    } catch (e) {
-      setRoutineToast('Launch failed');
-    }
-    setRunningRoutine(null);
-    setTimeout(() => setRoutineToast(''), 2500);
-  };
-  const approveTodo = id => fetch(`/api/todos/${id}/approve`, {
-    method: 'POST'
-  }).then(() => setTodos(t => t.map(x => x.id === id ? {
-    ...x,
-    status: 'approved'
-  } : x)));
-  const rejectTodo = id => fetch(`/api/todos/${id}/reject`, {
-    method: 'POST'
-  }).then(() => setTodos(t => t.filter(x => x.id !== id)));
-  const runMorningRoutines = () => {
-    fetch('/api/vibe-code/launch', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        tasks: ['Run daily news briefing', 'Run email scan'],
-        cwd: '~\\Projects\\friday-desktop'
-      })
-    }).then(() => fridayToast('Morning routines launched')).catch(() => {});
-  };
-  if (loading) return /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#999',
-      textAlign: 'center',
-      padding: 40
-    }
-  }, "Loading systems...");
-  const pending = todos.filter(t => t.status === 'proposed').length;
-  const insight = cd?.countdowns ? `${cd.countdowns.map(c => `${c.label || c.name || 'Event'} in ${c.days ?? c.days_until ?? '?'}d`).join(' · ')}${pending > 0 ? ` · ${pending} task${pending > 1 ? 's' : ''} awaiting approval` : ''}` : 'Systems initializing...';
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
-    text: insight
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'flex-end',
-      marginBottom: 8
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11
-    },
-    onClick: runMorningRoutines
-  }, "Run Morning Routines")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title"
-  }, "Upcoming Events"), cd?.countdowns?.map((c, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      padding: '5px 0',
-      borderBottom: '1px solid rgba(255,255,255,0.03)'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, c.emoji || '📅', " ", c.label || c.name), /*#__PURE__*/React.createElement("span", {
-    className: "stat",
-    style: {
-      fontSize: 16,
-      color: '#00d4ff'
-    }
-  }, c.days ?? c.days_until ?? '?', "d"))) || /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#999'
-    }
-  }, "No events")), /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title"
-  }, "Personality"), (() => {
-    const sc = pers?.session_count || 0;
-    const mp = Math.min(100, Math.round(sc / 50 * 100));
-    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-      className: "stat"
-    }, sc), /*#__PURE__*/React.createElement("div", {
-      className: "stat-label"
-    }, "sessions \xB7 ", mp, "% maturity"), /*#__PURE__*/React.createElement("div", {
-      className: "progress-bar",
-      style: {
-        marginTop: 6
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "progress-fill",
-      style: {
-        width: Math.max(mp, 2) + '%',
-        background: mp >= 66 ? '#00ff80' : mp >= 33 ? '#f59e0b' : '#7c3aed'
-      }
-    })));
-  })()), /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title"
-  }, "Trust Network"), /*#__PURE__*/React.createElement("div", {
-    className: "stat"
-  }, trust?.people ? Array.isArray(trust.people) ? trust.people.length : Object.keys(trust.people).length : 0), /*#__PURE__*/React.createElement("div", {
-    className: "stat-label"
-  }, "entities tracked")), /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title"
-  }, "Epistemic Score"), (() => {
-    const e = epi?.overall_score ?? epi?.overall ?? 0.72;
-    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-      className: "stat",
-      style: {
-        color: e > 0.6 ? '#00ff80' : e > 0.4 ? '#f59e0b' : '#ff0080'
-      }
-    }, e.toFixed(2)), /*#__PURE__*/React.createElement("div", {
-      className: "stat-label"
-    }, e > 0.6 ? 'making user smarter' : e > 0.4 ? 'neutral' : 'dependency risk'));
-  })()), /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title"
-  }, "Memory Banks"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12
-    }
-  }, [['🔵', 'Short-term', mem?.short || 0], ['🟣', 'Medium-term', mem?.medium || 0], ['🟠', 'Long-term', mem?.long || 0]].map(([e, l, v], i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      padding: '2px 0'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, e, " ", l), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono'
-    }
-  }, v))))), /*#__PURE__*/React.createElement("div", {
-    className: "card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title"
-  }, "AI To-Do List"), todos.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#999',
-      fontSize: 11
-    }
-  }, "No tasks proposed yet") : todos.slice(0, 5).map(t => /*#__PURE__*/React.createElement("div", {
-    key: t.id || Math.random(),
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: '3px 0',
-      borderBottom: '1px solid rgba(255,255,255,0.03)',
-      fontSize: 11
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      flex: 1,
-      color: t.status === 'approved' ? '#00ff80' : '#ccc'
-    }
-  }, t.title || t.task || 'Task'), t.status === 'proposed' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      padding: '2px 6px',
-      fontSize: 11,
-      marginLeft: 4
-    },
-    onClick: () => approveTodo(t.id)
-  }, "\u2713"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
-    style: {
-      padding: '2px 6px',
-      fontSize: 11,
-      marginLeft: 2
-    },
-    onClick: () => rejectTodo(t.id)
-  }, "\u2717")))))), /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title",
-    style: {
-      margin: 0
-    }
-  }, "Routines"), routineToast && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff'
-    }
-  }, routineToast)), routines.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#999',
-      fontSize: 11
-    }
-  }, "No routines registered") : /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: 6
-    }
-  }, routines.map(r => {
-    const busy = runningRoutine === r.id;
-    const lr = r.last_run ? new Date(r.last_run).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
-    }) : 'never';
-    return /*#__PURE__*/React.createElement("div", {
-      key: r.id,
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '5px 6px',
-        borderRadius: 6,
-        background: 'rgba(255,255,255,0.05)',
-        border: '1px solid rgba(255,255,255,0.04)'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 16
-      }
-    }, r.ico), /*#__PURE__*/React.createElement("div", {
-      style: {
-        flex: 1,
-        minWidth: 0
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 11,
-        color: '#ccc',
-        fontWeight: 600,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, r.label), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 11,
-        color: '#a8a8b4',
-        fontFamily: 'JetBrains Mono'
-      }
-    }, r.schedule || r.category, " \xB7 last ", lr)), /*#__PURE__*/React.createElement("button", {
-      className: "btn",
-      style: {
-        fontSize: 11,
-        padding: '3px 7px'
-      },
-      disabled: busy,
-      onClick: () => runRoutine(r.id, r.label)
-    }, busy ? '...' : 'Run Now'));
-  }))));
-}
 function CareerWS() {
   const [tracker, setTracker] = useState(null);
   const [reports, setReports] = useState([]);
@@ -48137,13 +47845,10 @@ function App() {
     return () => { delete window.fridayOpenChatWindow; };
   }, [openConvWin]);
 
-  // Open Home once setup is confirmed done, so the desktop greets you with
-  // something rather than an empty scene. This used to open The Friday Edition;
-  // that workspace was removed 2026-09-24 and the briefings carry the morning
-  // read now.
-  useEffect(() => {
-    if (setupDone) openWs('home');
-  }, [setupDone]);
+  // NOTHING auto-opens. The desktop hero IS the landing screen: the greeting,
+  // the countdown ticker and START MY DAY. The Friday Edition opened here until
+  // 2026-09-24, then Home did; both are gone, and a workspace window covering
+  // the hero on every launch is what was complained about in each case.
 
   // ─── Camera Mode ────────────────────────────────────────────
   const [cameraOn, setCameraOn] = useState(false);
@@ -48550,7 +48255,6 @@ function App() {
     source
   }, el) : el;
   const wsMap = {
-    home: with3D('home', 'tasks', /*#__PURE__*/React.createElement(HomeWS, null)),
     career: /*#__PURE__*/React.createElement(CareerWS, null),
     wiki: /*#__PURE__*/React.createElement(WikiWS, null),
     knowledge: /*#__PURE__*/React.createElement(KnowledgeGraphWS, null),
