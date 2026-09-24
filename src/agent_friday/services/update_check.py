@@ -403,19 +403,32 @@ def status() -> dict[str, Any]:
     }
 
 
+def initial_enabled() -> bool:
+    """Whether a newly seeded schedule starts switched on.
+
+    Only when the owner answered "check" to the first-run question (recorded
+    in ~/.friday/onboarding.json as updates_choice). Unanswered is off: no
+    request leaves the machine until someone has said yes to it.
+    """
+    try:
+        state = json.loads((FRIDAY_DIR / "onboarding.json").read_text(encoding="utf-8"))
+        return isinstance(state, dict) and state.get("updates_choice") == "on"
+    except Exception:
+        return False
+
+
 def is_enabled() -> bool:
     """Whether the weekly check is switched on.
 
     Read from the SCHEDULE record, which is the only place the answer lives.
-    A missing record means the roster has not been seeded yet on this install;
-    the default is on, so say on rather than reporting a switch the user never
-    touched as off.
+    A missing record means the roster has not been seeded yet on this install,
+    so the answer is the one the seed will use.
     """
     try:
         from agent_friday.services.scheduler import get_schedule
         rec = get_schedule(SCHEDULE_ID)
         if rec is None:
-            return True
-        return bool(rec.get("enabled", True))
+            return initial_enabled()
+        return bool(rec.get("enabled", False))
     except Exception:
-        return True
+        return False

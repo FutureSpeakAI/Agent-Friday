@@ -502,6 +502,8 @@ def _unanswered(existing: dict) -> list:
         has_pass = False
     if not (has_pass or acks.get("vault_skipped")):
         missing.append("vault")
+    if acks.get("updates_choice") not in ("on", "off"):
+        missing.append("updates")
     if not acks.get("third_party_ack"):
         missing.append("third_party")
     if (routing.get("mode") == "cloud_only") and not acks.get("cloud_ack"):
@@ -572,6 +574,17 @@ def step_third_party(total: int, step: int) -> None:
     _say_screen("third_party", total, step)
     Prompt.ask("  [dim]Press Enter to continue[/dim]", default="", show_default=False)
     _record_onboarding(third_party_ack=True)
+
+
+def step_updates(total: int, step: int) -> None:
+    """Whether Friday may look for new versions. Nothing is sent until the
+    answer is "check"; the scheduler seeds the weekly check from this answer."""
+    scr = _say_screen("updates", total, step)
+    for n, c in enumerate(scr["choices"], 1):
+        console.print(f"  [bold]{n}[/bold] {c['label']}  [dim]{c['detail']}[/dim]")
+    console.print()
+    pick = Prompt.ask("  Choose", choices=["1", "2"], default="2")
+    _record_onboarding(updates_choice=scr["choices"][int(pick) - 1]["value"])
 
 
 def step_welcome(quick: bool):
@@ -1651,6 +1664,12 @@ def main():
     # ── Screen 4: the people who were never asked ──
     if not quick and _ask("third_party"):
         step_third_party(total_steps, 5)
+
+    # ── Screen 5: new versions ──
+    # Asked, never assumed: the weekly check is the only request Friday would
+    # make on its own schedule. Quick setup does not ask, so it stays off.
+    if not quick and _ask("updates"):
+        step_updates(total_steps, 5)
 
     # Step 6: Name
     if _ask("name"):
