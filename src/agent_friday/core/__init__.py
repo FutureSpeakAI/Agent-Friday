@@ -2694,6 +2694,18 @@ DEFAULT_SETTINGS = {
         "https_port": 443,
         "http_port": 80,
     },
+    # ── Offering meeting times (services/scheduling.py) ──
+    # timezone: IANA name; "" means this computer's own zone. Working hours
+    # are wall-clock times in that zone; working_days are Monday=0..Sunday=6.
+    # min_notice_hours and buffer_minutes are the defaults find_free_slots
+    # uses when a request does not give its own.
+    "scheduling": {
+        "timezone": "",
+        "working_hours": {"start": "09:00", "end": "17:00"},
+        "working_days": [0, 1, 2, 3, 4],
+        "min_notice_hours": 12,
+        "buffer_minutes": 15,
+    },
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.

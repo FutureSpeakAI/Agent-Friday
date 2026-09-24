@@ -114,6 +114,13 @@ def repin_claws() -> str:
 OUTWARD_TOOLS = frozenset({
     "draft_email",                  # its own card is the gate (SELF_GATED)
     "create_calendar_event", "update_calendar_event", "annotate_calendar_events",
+    # Scheduling (services/scheduling.py). book_slot sends invitations to
+    # other people. hold_slots writes only to the owner's own calendar and
+    # invites nobody, but a hold shows as busy to everyone who can see that
+    # calendar's free/busy (colleagues on a work account), so it changes what
+    # other people see: it asks, once per batch of holds. A standing,
+    # expiring grant for holds is a later refinement, not a default.
+    "hold_slots", "book_slot",
     "delete_task",
     "install_package",
     "spawn_interactive_session", "send_to_session",
@@ -152,6 +159,11 @@ INTERNAL_TOOLS = frozenset({
     "move_mouse", "click", "type_text", "press_key", "screenshot", "scroll",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
+    # find_free_slots reads free/busy only. release_holds deletes nothing but
+    # Friday's own holds: each event is re-read and must carry Friday's active
+    # hold marker for that series and no attendees, and nobody is notified,
+    # so it undoes Friday's own earlier work and reaches no one.
+    "find_free_slots", "release_holds",
 })
 
 #: Classified by argument: run_command by its command, content_create_post by

@@ -33,6 +33,7 @@ _READ_ONLY_TOOLS = frozenset(
         "query_calendar",
         "query_trust_graph",
         "find_calendar_events",
+        "find_free_slots",
         "get_career_pipeline",
         "get_briefing",
         "list_tasks",
