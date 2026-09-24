@@ -160,7 +160,7 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "blurb": "Search and read your Notion workspace — notes, docs, and "
                  "databases — via Notion's official hosted MCP server.",
         "capabilities": ["pages", "databases", "search"],
-        "workspaces": ["wiki", "content", "home"],
+        "workspaces": ["knowledge", "content", "home"],
         "mcp_server": "notion",
         # Official remote (Streamable HTTP) server — OAuth in the browser,
         # no integration token to paste.

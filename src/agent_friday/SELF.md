@@ -352,7 +352,8 @@ visible; the rest can be switched on in Settings (`show_all_workspaces`).
   intelligence), Code (dev cockpit + vibe coding), Sites (deploy manager for
   shippable web repos), Draft (tone-matched drafting), Content (idea → post
   pipeline).
-- **System** — Wiki (living knowledge base), Trust (Trust Graph explorer),
+- **System** — Knowledge (the living knowledge base: its pages, and the
+  galaxy of how they link), Trust (Trust Graph explorer),
   Studio (creative suite: Gallery, Generate image/video, Music, Timeline,
   Production pipeline, Projects/Series Bible), Marketplace (federation skill
   and creation exchange), System (health + self-improvement reports), and

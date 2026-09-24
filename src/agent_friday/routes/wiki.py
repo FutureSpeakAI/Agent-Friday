@@ -377,4 +377,4 @@ def wiki_setup_research():
         drafts.append({"id": pid, "file": rel, "section": section, "preview": content[:400]})
 
     return jsonify({"status": "ok", "drafts": drafts, "count": len(drafts),
-                    "message": "Drafts created as pending. Approve each in the Wiki workspace."})
+                    "message": "Drafts created as pending. Approve each in Knowledge, on its Pages view."})

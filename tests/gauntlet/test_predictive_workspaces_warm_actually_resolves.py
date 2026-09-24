@@ -9,11 +9,14 @@ and every single warm attempt silently returned False, forever, for
 every workspace, since the function was written.
 
 This probe proves each branch resolves a real, importable warmer
-(messages, wiki, contacts/trust), and that calendar, news and code warm the
+(messages, knowledge -- also under its older id, wiki -- contacts/trust), and
+that calendar, news and code warm the
 stale-while-revalidate cache their routes read: a warmed workspace's next
 read makes no live call.
 """
 from __future__ import annotations
+
+import pytest
 
 import agent_friday.services.predictive_workspaces as pw
 
@@ -33,13 +36,16 @@ class TestWarmWorkspaceActuallyResolvesRealFunctions:
         )
         assert calls == ["called"]
 
-    def test_wiki_warm_calls_the_real_index_generator_and_reports_true(self, monkeypatch):
+    # Knowledge holds the wiki; usage history recorded before the merge
+    # still names it `wiki`.
+    @pytest.mark.parametrize("ws", ["knowledge", "wiki"])
+    def test_knowledge_warm_calls_the_real_index_generator_and_reports_true(self, monkeypatch, ws):
         calls = []
         import agent_friday.services.model_router as model_router
         monkeypatch.setattr(model_router, "_generate_wiki_indexes",
                              lambda: calls.append("called"))
 
-        result = pw._warm_workspace("wiki")
+        result = pw._warm_workspace(ws)
 
         assert result is True
         assert calls == ["called"]

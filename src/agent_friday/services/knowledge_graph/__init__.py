@@ -87,10 +87,25 @@ _dirty_lock = threading.Lock()
 _wiki_dirty = {"dirty": True, "reason": "startup"}
 
 
+_dirty_listeners: list = []
+
+
+def on_wiki_dirty(fn) -> None:
+    """Call fn(reason) whenever the wiki changes. The route layer uses this to
+    tell open Knowledge views to refresh; services stay unaware of routes."""
+    if fn not in _dirty_listeners:
+        _dirty_listeners.append(fn)
+
+
 def mark_wiki_dirty(reason: str = "wiki_edit") -> None:
     with _dirty_lock:
         _wiki_dirty["dirty"] = True
         _wiki_dirty["reason"] = str(reason)[:200]
+    for fn in list(_dirty_listeners):
+        try:
+            fn(str(reason)[:200])
+        except Exception:
+            pass
 
 
 def consume_wiki_dirty() -> bool:

@@ -78,29 +78,52 @@ Clear the current chat session.
 
 ## Wiki
 
-### `GET /api/wiki/<section>/<filename>`
-Read a wiki page by section and filename.
+The wiki's pages are read and edited in the Knowledge workspace (its Pages
+view); the same pages are the nodes of the knowledge graph below.
+
+### `GET /api/wiki/page?path=`
+Read any wiki page by its path, nested or at the wiki root. The path is
+resolved inside the wiki or refused (`400`); `404` if there is no such page.
 
 **Response:**
 ```json
 {
+  "status": "ok",
+  "path": "professional/job-search.md",
   "content": "# Page Title\n...",
-  "path": "professional/job-search.md"
+  "section": "professional",
+  "filename": "job-search.md",
+  "modified": 1760000000.0,
+  "locked": false
 }
 ```
+
+`locked` is `true` for a vault-encrypted page while the vault is locked;
+`content` is then a placeholder, not the page.
+
+### `GET /api/wiki/<section>/<filename>`
+The two-level form of the same read, kept for older links:
+`{"status", "content", "section", "filename"}`. A `section` of `..` is
+refused like any path outside the wiki.
 
 ### `GET /api/wiki/structure`
 Returns the full wiki directory tree.
 
 ### `POST /api/wiki/update`
-Propose a wiki update (queued for approval).
+Change a page, or with `"auto": true` queue the change for approval (it then
+appears under pending, below). When `old_value` is found in the page it is
+replaced in place; otherwise `new_value` is appended under `## {section}`.
+A page that does not exist yet is created.
 
 **Request:**
 ```json
 {
-  "path": "professional/job-search.md",
-  "content": "# Updated content...",
-  "reason": "Added new job listing"
+  "file": "professional/job-search.md",
+  "section": "Current search",
+  "old_value": "...",
+  "new_value": "...",
+  "reason": "Added new job listing",
+  "auto": true
 }
 ```
 
@@ -114,30 +137,48 @@ Approve a pending wiki update.
 Reject a pending wiki update.
 
 ### `PUT /api/wiki/edit`
-Direct wiki edit (bypasses approval queue).
+Direct wiki edit (bypasses approval queue). Creates the page if it does not
+exist.
 
 **Request:**
 ```json
 {
-  "path": "identity/about.md",
+  "file": "identity/about.md",
   "content": "# Updated content..."
 }
 ```
 
+`400` for a path outside the wiki. `409` with `"locked": true` when the page
+is vault-encrypted and the vault is locked: what an editor showed was the
+placeholder, and saving it would replace the page.
+
 ### `DELETE /api/wiki/file`
-Delete a wiki file.
+Delete a wiki file. The confirmation token is required.
 
 **Request:**
 ```json
-{ "path": "notes/old-draft.md" }
+{ "file": "notes/old-draft.md", "confirm": "DELETE" }
 ```
 
 ### `POST /api/wiki/search`
-Search the wiki by keyword.
+Full-text search across the wiki's `.md` and `.txt` files (at most 50
+results, three line snippets each).
 
 **Request:**
 ```json
-{ "query": "job search", "limit": 5 }
+{ "query": "job search" }
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "query": "job search",
+  "results": [
+    { "path": "professional/job-search.md", "matches": 2,
+      "snippets": [{ "line": 12, "text": "..." }] }
+  ]
+}
 ```
 
 ### `POST /api/wiki/correct`
@@ -151,7 +192,8 @@ Trigger an auto-research task to build/enrich a wiki section.
 ## Knowledge Graph
 
 The two-tier knowledge graph over the wiki, SOUL.md, and memory
-(`docs/KNOWLEDGE_SYSTEM_SPEC.md`). Tier A (structural) is always available
+([knowledge-system-spec](../design/implemented/knowledge-system-spec.md)).
+The Knowledge workspace draws it as its Graph view. Tier A (structural) is always available
 and LLM-free; Tier B (semantic) requires a reindex and defaults to
 local-only models.
 
@@ -193,8 +235,10 @@ already running.
 Fast title/description substring search for the explorer's search box.
 
 ### `GET /api/knowledge-graph/events`
-Server-sent events: `node_ignited` (a newly learned fact lit up),
-`reindexed`, `progress`.
+Server-sent events: `hello` (on connect), `node_ignited` (a newly learned
+fact lit up), `reindexed`, `progress`, and `wiki_changed` (a page was saved,
+created, deleted or approved; open Knowledge views refresh their page list
+and graph).
 
 ---
 

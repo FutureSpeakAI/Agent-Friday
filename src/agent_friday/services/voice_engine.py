@@ -412,7 +412,7 @@ def _navigate_tool_description(desc):
     except Exception:
         ids = ("calendar, career, code, contacts, content, draft, family, "
                "finance, futurespeak, health, home, marketplace, messages, "
-               "news, settings, studio, system, trust, wiki")
+               "knowledge, news, settings, studio, system, trust")
     return desc.replace("{workspace_ids}", ids)
 
 
