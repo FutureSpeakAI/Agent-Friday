@@ -42,6 +42,34 @@ from agent_friday.services.calendar_engine import (
 
 google_bp = Blueprint('google', __name__)
 
+# Pending sign-ins, keyed by the `state` Google hands back -- the way
+# routes/google_accounts.py keeps its own. The return trip is pinned to
+# http://localhost:<port>, so a sign-in begun on https://agent.<name> finishes on
+# a different address, where the session cookie from the start does not exist.
+# The verifier stays here on the server; only `state`, which Google already
+# carries in the URL, crosses. Single-use, and gone after fifteen minutes.
+_PENDING: dict = {}
+_PENDING_LOCK = threading.Lock()
+_PENDING_TTL_S = 900
+
+
+def _remember_pending(state, verifier, redirect_uri):
+    now = _time.time()
+    with _PENDING_LOCK:
+        for k in [k for k, v in _PENDING.items() if now - v["ts"] > _PENDING_TTL_S]:
+            _PENDING.pop(k, None)
+        _PENDING[state] = {"verifier": verifier, "redirect_uri": redirect_uri, "ts": now}
+
+
+def _take_pending(state):
+    if not state:
+        return None
+    with _PENDING_LOCK:
+        rec = _PENDING.pop(state, None)
+    if rec and _time.time() - rec["ts"] <= _PENDING_TTL_S:
+        return rec
+    return None
+
 
 
 @google_bp.route('/api/google/auth')
@@ -93,6 +121,7 @@ def google_auth_start():
         # has nothing to replay and Google refuses with invalid_grant
         # ("Missing code verifier").
         session['google_oauth_verifier'] = flow.code_verifier
+        _remember_pending(state, flow.code_verifier, redirect_uri)
         resp = {
             "status": "ok",
             "auth_url": auth_url,
@@ -132,6 +161,14 @@ def google_auth_callback():
         return f"<h2>google-auth-oauthlib not installed</h2><p>{e}</p>", 500
     state = session.get('google_oauth_state')
     verifier = session.get('google_oauth_verifier')
+    saved_redirect = session.get('google_oauth_redirect_uri')
+    # Consumed either way, so a state can be exchanged at most once.
+    pending = _take_pending(request.args.get('state'))
+    if (not state or not verifier) and pending:
+        # Begun on another of this Friday's addresses (https://agent.<name>),
+        # whose cookie this address never sees.
+        state, verifier = request.args.get('state'), pending['verifier']
+        saved_redirect = pending['redirect_uri']
     if not state or not verifier:
         # Never attempt the exchange without a verifier to replay — that's
         # exactly the bug being fixed, not something to fall through on.
@@ -145,7 +182,7 @@ def google_auth_callback():
     try:
         # Fall back to the same redirect the start endpoint would have chosen so
         # the token exchange matches even if the session cookie was dropped.
-        redirect_uri = session.get('google_oauth_redirect_uri') or _google_redirect_uri(cfg)
+        redirect_uri = saved_redirect or _google_redirect_uri(cfg)
         flow = Flow.from_client_config(
             cfg, scopes=GOOGLE_SCOPES, state=state, redirect_uri=redirect_uri
         )

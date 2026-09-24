@@ -117,7 +117,7 @@ ROUTE_MODULES = [
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'goals',
     'gmail_send',
     'google', 'google_accounts', 'hooks', 'insights', 'intelligence', 'jobs', 'knowledge_graph',
-    'learning', 'liveness', 'memory_proposals', 'messages',
+    'learning', 'liveness', 'local_address', 'memory_proposals', 'messages',
     'news', 'notifications', 'orchestrator', 'ownership',
     'persona', 'platform', 'privacy_consent', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos', 'traces',
     'work_plan',
@@ -1127,6 +1127,16 @@ if __name__ == '__main__':
         _th.Thread(target=_confirm_boot, daemon=True).start()
     except Exception as _bg_err:
         print(f"  Boot guard: unavailable ({_bg_err})")
+
+    # Friday's address on this PC (https://agent.<name>, services/local_address):
+    # its own loopback listeners if the person turned them on in Settings, then
+    # a background check of which address reaches THIS process, which is what
+    # the tab links and the tray use. Never prompts and never changes Windows.
+    try:
+        from agent_friday.services import local_address as _la
+        _la.boot(_port)
+    except Exception as _la_err:
+        print(f"  Local address: skipped ({_la_err})")
 
     try:
         app.run(host=bind_host, port=_port, debug=False, threaded=True,

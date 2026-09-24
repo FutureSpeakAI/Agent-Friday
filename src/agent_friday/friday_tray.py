@@ -212,7 +212,18 @@ class FridayTray:
 
     # ── Menu actions ──────────────────────────────────────────────────
     def _open_ui(self, _icon, _item) -> None:
-        webbrowser.open(SERVER_URL)
+        # Friday's own address (https://agent.<name>, services/local_address)
+        # when it is proven to reach the same Friday as SERVER_URL; SERVER_URL
+        # otherwise. Checked on a thread so a slow answer never freezes the menu.
+        def go():
+            url = SERVER_URL
+            try:
+                from agent_friday.services.local_address import open_url
+                url = open_url(SERVER_URL)
+            except Exception:
+                pass
+            webbrowser.open(url)
+        threading.Thread(target=go, name="friday-open-ui", daemon=True).start()
 
     def _restart(self, _icon, _item) -> None:
         threading.Thread(target=self.restart_server, daemon=True).start()

@@ -393,6 +393,45 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fwin-btns button:hover { color: #ff0080; }
         .fwin-body { flex: 1; overflow-y: auto; padding: 12px; }
+        /* The browser refused a workspace's own tab: said under the title bar. */
+        .fwin-tab-blocked { display: flex; gap: 8px; align-items: flex-start; margin: 6px 10px 0; padding: 7px 10px; border-radius: 8px; background: rgba(255,196,0,0.10); border: 1px solid rgba(255,196,0,0.38); color: #ffe7a3; font-size: 12px; line-height: 1.45; }
+        .fwin-tab-blocked b { color: #fff3c9; }
+        .fwin-tab-blocked button { margin-left: auto; background: none; border: 0; color: inherit; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
+        /* Settings -> General -> Local address (LocalAddressSettings) */
+        .la-card { font-size: 12px; }
+        .la-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+        .la-addr { font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #7fe9ff; text-decoration: none; word-break: break-all; }
+        a.la-addr:hover { text-decoration: underline; }
+        .la-pill { font-family: 'Orbitron', sans-serif; font-size: 9px; letter-spacing: .12em; padding: 3px 8px; border-radius: 10px; border: 1px solid; text-transform: uppercase; }
+        .la-pill.ok { color: #6dffb0; border-color: rgba(109,255,176,.45); }
+        .la-pill.warn { color: #ffd479; border-color: rgba(255,212,121,.45); }
+        .la-pill.off { color: rgba(255,255,255,.55); border-color: rgba(255,255,255,.2); }
+        .la-sub { font-size: 11px; color: rgba(255,255,255,.45); line-height: 1.5; margin-bottom: 12px; }
+        .la-line { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 11px; }
+        .la-ind { width: 18px; height: 18px; border-radius: 9px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; margin-top: 1px; }
+        .la-ind.ok { background: rgba(109,255,176,.14); color: #6dffb0; }
+        .la-ind.no { background: rgba(255,107,138,.12); color: #ff8aa3; }
+        .la-ind.wait { background: rgba(255,255,255,.06); color: rgba(255,255,255,.5); }
+        .la-label { font-size: 12px; color: rgba(255,255,255,.8); font-family: 'JetBrains Mono', monospace; }
+        .la-detail { font-size: 11px; color: rgba(255,255,255,.52); line-height: 1.55; margin-top: 2px; }
+        .la-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+        .la-hint { font-size: 11px; color: rgba(255,255,255,.42); line-height: 1.5; }
+        .la-link { display: block; text-align: left; background: none; border: 0; padding: 0; margin-top: 5px; color: #7fe9ff; font-size: 11px; cursor: pointer; text-decoration: underline; }
+        .la-link:disabled { opacity: .45; cursor: default; }
+        .la-warn { font-size: 11px; color: #ffd479; line-height: 1.5; margin: 3px 0 8px; }
+        .la-err { font-size: 11px; color: #ff8aa3; line-height: 1.5; margin-top: 8px; }
+        .la-job { font-size: 11px; line-height: 1.5; margin: 2px 0 12px 28px; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); color: rgba(255,255,255,.75); }
+        .la-job.waiting { border-color: rgba(255,212,121,.4); color: #ffe6a8; background: rgba(255,212,121,.06); }
+        .la-job.done { border-color: rgba(109,255,176,.35); color: #b9ffd9; }
+        .la-job.cancelled, .la-job.failed { border-color: rgba(255,107,138,.35); color: #ffc2cf; }
+        .la-consent { margin: 2px 0 14px 28px; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(0,212,255,.3); background: rgba(0,212,255,.05); font-size: 12px; line-height: 1.6; color: rgba(255,255,255,.84); }
+        .la-consent-title { font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: .12em; color: #00d4ff; margin-bottom: 8px; text-transform: uppercase; }
+        .la-consent p { margin: 0 0 8px; }
+        .la-consent ul { margin: 0 0 8px 18px; padding: 0; }
+        .la-consent li { margin-bottom: 4px; }
+        .la-thumb { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #fff; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: 6px 8px; margin: 0 0 8px; word-break: break-all; letter-spacing: .04em; }
+        .la-check { display: flex; gap: 6px; align-items: flex-start; font-size: 11px; color: rgba(255,255,255,.6); line-height: 1.5; margin: 6px 0; }
+        .la-check code { font-size: 10.5px; color: #7fe9ff; word-break: break-all; }
         .ws-typing-dot { width: 6px; height: 6px; border-radius: 50%; background: #00d4ff; display: inline-block; animation: wsTyping 1s infinite ease-in-out; }
         @keyframes wsTyping { 0%,80%,100% { transform: scale(0.5); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
         /* Indeterminate progress sweep — used by the Music/Timeline export panels
@@ -5512,6 +5551,19 @@ const WsCustomCtx = React.createContext({
 window.FRIDAY_VOICE_DEBUG = window.FRIDAY_VOICE_DEBUG || false;
 // Thin wrapper around fetch() that attaches the ephemeral UI session token so
 // API calls authenticate correctly on non-loopback (remote tunnel) connections.
+/* A browser gives the microphone and camera only to a secure page: https, or
+   localhost itself. On http://agent.<name> there is simply no microphone to
+   ask for, so say where voice does work instead of failing obscurely. */
+function fridayMicBlockedReason() {
+  try {
+    if (window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) return '';
+    const la = window.__FRIDAY_LOCAL_ADDRESS__ || {};
+    const where = la.secure && la.origin ? la.origin : la.local || 'http://localhost:3000';
+    return 'This address is not secure, so the browser allows no microphone or camera here. Open Friday at ' + where + ' for voice' + (la.secure ? '.' : ', or make this address secure in Settings \u2192 General \u2192 Local address.');
+  } catch (e) {
+    return '';
+  }
+}
 function apiFetch(url, opts) {
   const tok = window.__FRIDAY_API_TOKEN || '';
   const headers = Object.assign({}, opts && opts.headers);
@@ -5923,6 +5975,62 @@ function useNavTarget(workspace, handler) {
     window.addEventListener('friday-nav', onNav);
     return () => window.removeEventListener('friday-nav', onNav);
   }, [workspace]);
+}
+/* WHAT A WORKSPACE HANDS THE TAB IT MOVES INTO (\u2197): the same keys it reads
+   back through useNavTarget, so the tab opens where the window was. Answered
+   from state the workspace already holds, because it is collected
+   synchronously inside the click that opens the tab. */
+function useTabState(workspace, get) {
+  const ref = useRef(get);
+  ref.current = get;
+  useEffect(() => {
+    const on = e => {
+      const d = e && e.detail;
+      if (!d || d.workspace !== workspace || !d.params) return;
+      try { Object.assign(d.params, ref.current() || {}); } catch (_) {}
+    };
+    window.addEventListener('friday:tab-state', on);
+    return () => window.removeEventListener('friday:tab-state', on);
+  }, [workspace]);
+}
+window.fridayUseTabState = useTabState;
+/* A workspace's main scrolling pane: the frame itself for most, but a pane
+   inside it for the ones that fill the frame (News' grid, Messages' list). The
+   one with the most to scroll wins, in the window and in the tab alike. */
+function fridayMainScroller(root) {
+  if (!root) return null;
+  let best = null,
+    bestRange = 8;
+  const consider = el => {
+    const range = el.scrollHeight - el.clientHeight;
+    if (range > bestRange && el.clientHeight > 100) {
+      const oy = getComputedStyle(el).overflowY;
+      if (oy === 'auto' || oy === 'scroll') {
+        best = el;
+        bestRange = range;
+      }
+    }
+  };
+  consider(root);
+  root.querySelectorAll('*').forEach(consider);
+  return best;
+}
+function fridayCollectTabState(id, root) {
+  const params = {};
+  try {
+    window.dispatchEvent(new CustomEvent('friday:tab-state', { detail: { workspace: id, params } }));
+  } catch (e) {}
+  // and how far down the window was, as a fraction (fridayRestoreTabScroll)
+  try {
+    const sc = fridayMainScroller(root);
+    const range = sc ? sc.scrollHeight - sc.clientHeight : 0;
+    if (params.scroll == null && sc && sc.scrollTop > 4) params.scroll = (sc.scrollTop / range).toFixed(3);
+  } catch (e) {}
+  Object.keys(params).forEach(k => {
+    const v = params[k];
+    if (v == null || v === '' || v === false) delete params[k];else params[k] = String(v);
+  });
+  return params;
 }
 // ═══ ACTION BUS ═══
 // The chat backend can return structured actions alongside its text reply:
@@ -6493,6 +6601,9 @@ function FWin({
   // one-shot flag below, rather than carrying a second copy of the panel that
   // could drift from this one.
   const [histOpen, setHistOpen] = useState(false);
+  // The browser refused the tab (pop-ups blocked for this site): the window
+  // stays, with a line under its title bar saying how to allow it.
+  const [tabBlocked, setTabBlocked] = useState(false);
   // Two arrival paths, because the window may or may not already exist. A flag
   // read on mount covers "Settings opened this workspace just now"; an event
   // covers "the window was already open, so nothing is going to mount." Both
@@ -6589,16 +6700,38 @@ function FWin({
     "aria-label": `Open ${title} in its own tab`,
     "data-ws-tab": id,
     hidden: id === 'settings',
+    /* ONE CLICK MOVES IT. The tab opens (or the workspace's existing tab comes
+       forward) inside this click, carrying the window's place -- thread,
+       folder, how far down -- and only once the browser has actually given
+       us the tab does this window fold back into its dock icon. If the
+       browser blocks it, nothing closes: the window stays and says why. */
     onClick: e => {
       e.stopPropagation();
-      fridayOpenWorkspaceTab(id);
+      const body = fwinRef.current && fwinRef.current.querySelector('.fwin-body');
+      const tab = fridayOpenWorkspaceTab(id, fridayCollectTabState(id, body));
+      if (!tab) {
+        setTabBlocked(true);
+        return;
+      }
+      setTabBlocked(false);
+      onClose();
     },
     style: {
       fontSize: 12
     }
   }, "\u2197"), /*#__PURE__*/React.createElement("button", {
     onClick: onClose
-  }, "\xD7"))), /*#__PURE__*/React.createElement("div", {
+  }, "\xD7"))), tabBlocked && /*#__PURE__*/React.createElement("div", {
+    className: "fwin-tab-blocked",
+    role: "alert"
+  }, /*#__PURE__*/React.createElement("span", null, "The browser blocked the new tab. Allow pop-ups for ", /*#__PURE__*/React.createElement("b", null, window.location.host), " (the blocked pop-up icon at the right end of the address bar), then click \u2197 again. This window stays open until then."), /*#__PURE__*/React.createElement("button", {
+    title: "Dismiss",
+    "aria-label": "Dismiss the pop-up notice",
+    onClick: e => {
+      e.stopPropagation();
+      setTabBlocked(false);
+    }
+  }, "\xD7")), /*#__PURE__*/React.createElement("div", {
     className: "fwin-body"
   }, /*#__PURE__*/React.createElement("div", {
     className: "ws-custom-root",
@@ -7547,7 +7680,7 @@ function ChatSurface(props) {
          entirely gives an ordinary tab. The first version of this specified a
          size, got a popup, and was wrong about what the user wanted in a way
          only the user could see. */
-      const url = '/?conversation=' + encodeURIComponent(cid) + '&chrome=chat';
+      const url = fridayTabOrigin() + '/?conversation=' + encodeURIComponent(cid) + '&chrome=chat';
       const w = window.open(url, '_blank');
       if (!w) {
         fridayToast('The browser blocked that tab. Allow pop-ups for Friday and '
@@ -10075,6 +10208,8 @@ function KnowledgeGraphWS() {
   const [arrangement, setArrangement] = useState('galaxy');
   const [hasDates, setHasDates] = useState(false);
   const [touring, setTouring] = useState(false);
+  // what its own tab (↗) opens on: the keys useNavTarget below reads
+  useTabState('knowledge', () => ({ query: searchQ }));
   useNavTarget('knowledge', t => {
     if (t.query) {
       setSearchQ(t.query);
@@ -12360,6 +12495,8 @@ function WikiWS() {
 
   // Deep-link target: fridayNavigate({workspace:'wiki', path}) — used by the
   // Knowledge Galaxy's click-to-open and by chat navigate actions.
+  // what its own tab (↗) opens on: the keys useNavTarget below reads
+  useTabState('wiki', () => ({ path }));
   useNavTarget('wiki', t => {
     if (t && t.path) loadPath(t.path);
   });
@@ -23972,6 +24109,8 @@ function CodeWS() {
   const [srcFilter, setSrcFilter] = useState('');
   const logBoxRef = useRef(null);
   // Deep-link: a notification target {workspace:'code', tab:'logs'|'repos'|...}.
+  // what its own tab (↗) opens on: the keys useNavTarget below reads
+  useTabState('code', () => ({ tab }));
   useNavTarget('code', t => {
     if (t.tab) setTab(t.tab);
   });
@@ -24590,6 +24729,8 @@ function NewsWS() {
   const [newsToast, setNewsToast] = useState('');
   // Deep-link: a notification target {workspace:'news', tab:'frontpage'|'briefings'|...}
   // switches to the requested tab and clears any open single-briefing reader.
+  // what its own tab (↗) opens on: the keys useNavTarget below reads
+  useTabState('news', () => ({ tab }));
   useNavTarget('news', t => {
     if (t.tab) {
       setTab(t.tab);
@@ -27356,6 +27497,8 @@ function MessagesWS() {
   // Deep-link: a notification target {workspace:'messages', lane, thread_id} jumps
   // to the lane and (best-effort) auto-opens the thread once messages have loaded.
   const pendingThread = useRef(null);
+  // what its own tab (↗) opens on: the keys useNavTarget below reads
+  useTabState('messages', () => ({ lane: lane !== 'all' ? lane : '', thread_id: expanded || '' }));
   useNavTarget('messages', t => {
     if (t.lane) setLane(t.lane);
     if (t.thread_id) pendingThread.current = t.thread_id;
@@ -27822,6 +27965,8 @@ function CalendarWS() {
   const [toast, setToast] = useState('');
   const tlRef = useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
+  // what its own tab (↗) opens on: the keys useNavTarget below reads
+  useTabState('calendar', () => ({ date: sel || '' }));
   useNavTarget('calendar', t => {
     if (t.date) setSel(t.date);
   });
@@ -29803,6 +29948,8 @@ function ContactsWS() {
     loadList();
   }, []);
   // Deep link: {workspace:'contacts', name} opens that person (the 3D view uses it).
+  // what its own tab (↗) opens on: the keys useNavTarget below reads
+  useTabState('contacts', () => ({ name: selected && selected.name || '' }));
   useNavTarget('contacts', t => {
     if (t && t.name) openContact({
       name: t.name
@@ -33948,6 +34095,8 @@ function ContentWS() {
     loadPlats();
     fetch('/api/content/queue').then(r => r.json()).then(setQsum).catch(() => {});
   }, []);
+  // what its own tab (↗) opens on: the keys useNavTarget below reads
+  useTabState('content', () => ({ tab }));
   useNavTarget('content', t => {
     if (!t) return;
     if (t.tab) setTab(t.tab);
@@ -38520,6 +38669,145 @@ function CcGrantPanel({
     }
   }, err));
 }
+/* LOCAL ADDRESS (services/local_address.py). Friday's address on this PC --
+   https://agent.<the agent's name> -- and each step that makes it work, said
+   in plain words. The two steps that change Windows (a line in the hosts file,
+   trusting Friday's certificate) run only from the buttons here, and Windows
+   itself asks before either happens. Nothing on this card is ever done for
+   the person. */
+function LocalAddressSettings() {
+  const h = React.createElement;
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [custom, setCustom] = useState(null);           // null: closed
+  const [registered, setRegistered] = useState(false);
+  const load = useCallback(fresh => apiFetch('/api/local-address' + (fresh ? '?refresh=1' : '')).then(r => r.json()).then(d => {
+    setSt(d);
+    return d;
+  }).catch(() => null), []);
+  useEffect(() => {
+    load(true);
+  }, [load]);
+  const waiting = !!(st && st.job && st.job.state === 'waiting');
+  // While Windows is asking the person, look again until they have answered.
+  useEffect(() => {
+    if (!waiting) return;
+    const iv = setInterval(() => {
+      load(false).then(d => {
+        if (d && d.job && d.job.state !== 'waiting') load(true);
+      });
+    }, 1500);
+    return () => clearInterval(iv);
+  }, [waiting, load]);
+  const post = async (path, body, what) => {
+    setBusy(what);
+    setMsg('');
+    try {
+      const r = await apiFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {})
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.ok === false) setMsg(d.message || 'That did not work.');
+      if (d.status) setSt(d.status);else await load(false);
+    } catch (e) {
+      setMsg('Could not reach Friday.');
+    }
+    setBusy('');
+  };
+  if (!st) return h(StSection, { title: 'LOCAL ADDRESS' }, h('div', { className: 'la-sub' }, 'Checking…'));
+  const host = st.host;
+  const secure = !!st.secure;
+  const https = st.https || {};
+  const http = st.http || {};
+  const answers = !!(https.works || http.works);
+  const ca = st.ca || {};
+  const o = st.oauth || {};
+  const onWindows = st.platform === 'win32';
+  const goal = st.preferred_origin || 'https://' + host;
+  const via = s => s === 'friday' ? 'Friday answers there itself, for this PC only.' : s === 'this Friday, through another program' ? 'Friday answers there through another program already on this PC (the older demo proxy).' : s === 'another program' ? 'Something else on this PC answers there, not this Friday.' : '';
+  const portTrouble = [];
+  ['https', 'http'].forEach(k => {
+    const a = ((st.listeners || {})[k] || {}).addrs || {};
+    Object.keys(a).forEach(ad => {
+      const v = a[ad];
+      if (v !== 'ok' && portTrouble.indexOf(v) < 0) portTrouble.push(v);
+    });
+  });
+  const thumb = String(ca.sha1 || '').replace(/:/g, '').replace(/(.{8})(?=.)/g, '$1 ');
+  const recentJob = st.job && (st.job.state === 'waiting' || st.job.finished && Date.now() / 1000 - st.job.finished < 600) ? st.job : null;
+  const Line = ({ ok, label, children }) => h('div', { className: 'la-line' },
+    h('span', { className: 'la-ind ' + (ok ? 'ok' : ok === false ? 'no' : 'wait'), 'aria-hidden': 'true' }, ok ? '✓' : ok === false ? '✕' : '…'),
+    h('div', { style: { minWidth: 0 } }, h('div', { className: 'la-label' }, label), h('div', { className: 'la-detail' }, React.Children.toArray(children))));
+  return h(StSection, { title: 'LOCAL ADDRESS' },
+    h('div', { className: 'la-card', 'data-testid': 'local-address' },
+      h('div', { className: 'la-head' },
+        answers ? h('a', { className: 'la-addr', href: goal + '/', target: '_blank', rel: 'noopener' }, goal.replace(/^https?:\/\//, '')) : h('span', { className: 'la-addr' }, host),
+        h('span', { className: 'la-pill ' + (secure ? 'ok' : answers ? 'warn' : 'off') }, secure ? 'Secure' : answers ? 'Not secure yet' : 'Not set up')),
+      h('div', { className: 'la-sub' },
+        st.source === 'custom' ? 'Chosen here. ' : 'From the agent’s name, ' + (st.agent_name || 'AGENT FRIDAY') + '. ',
+        'Workspace tabs and the tray’s “Open Friday Desktop” use this address once it works; until then they stay on localhost.'),
+      st.note && h('div', { className: 'la-warn' }, st.note),
+      h(Line, { ok: st.resolves, label: 'This PC knows the name' },
+        st.resolves ? host + ' points to this PC.' : 'Not yet. Windows needs one line in its hosts file pointing ' + host + ' at this PC.',
+        !st.resolves && onWindows && h('div', { className: 'la-actions' },
+          h('button', { className: 'settings-btn active', disabled: !!busy || waiting, onClick: () => post('/api/local-address/hosts-entry', { add: true }, 'hosts') }, 'Add ' + host + ' to this PC'),
+          h('span', { className: 'la-hint' }, 'Windows asks for permission first (its shield prompt). Nothing else on the PC changes.')),
+        st.resolves && (st.hosts_entry || {}).ours && h('button', { className: 'la-link', disabled: !!busy || waiting, onClick: () => post('/api/local-address/hosts-entry', { add: false }, 'hosts') }, 'Remove it from this PC')),
+      h(Line, { ok: st.resolves ? answers : null, label: 'Friday answers there' },
+        !st.resolves ? 'Once this PC knows the name.' : answers ? via(https.works ? https.served_by : http.served_by) : via(https.served_by || http.served_by) || 'Nothing answers at ' + host + ' yet.',
+        portTrouble.map(t => h('div', { key: t, className: 'la-warn' }, t.charAt(0).toUpperCase() + t.slice(1) + '.')),
+        !answers && !st.serve && h('div', { className: 'la-actions' },
+          h('button', { className: 'settings-btn active', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: true }, 'serve') }, 'Turn on Friday’s local address'),
+          h('span', { className: 'la-hint' }, 'No system change: Friday listens on ' + host + ' for this PC only.')),
+        st.serve && h('button', { className: 'la-link', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: false }, 'serve') }, 'Turn Friday’s listener off')),
+      h(Line, { ok: st.resolves && answers ? secure : null, label: 'Secure (the padlock)' },
+        secure ? 'Your browser trusts https://' + host + '.' : 'Not yet. Until it is, browsers switch off the microphone and camera on this address, so voice keeps working at localhost.',
+        !secure && onWindows && ca.exists && !ca.trusted && !consent && h('div', { className: 'la-actions' },
+          h('button', { className: 'settings-btn active', disabled: !!busy || waiting, onClick: () => setConsent(true) }, 'Enable secure local address')),
+        (ca.trusted || (ca.previous_trusted || []).length > 0) && h('button', { className: 'la-link', disabled: !!busy || waiting, onClick: () => post('/api/local-address/untrust', {}, 'untrust') }, 'Stop trusting Friday’s certificate')),
+      consent && !secure && h('div', { className: 'la-consent', role: 'region', 'aria-label': 'Make ' + host + ' secure' },
+        h('div', { className: 'la-consent-title' }, 'Make ' + host + ' secure'),
+        h('p', null, 'Friday made its own certificate authority on this PC, called “', h('b', null, ca.subject), '”. For your browser to show a padlock at https://' + host + ', Windows has to trust it. That changes what this PC trusts, so it is your decision.'),
+        h('ul', null,
+          h('li', null, 'It can vouch for ', h('b', null, host), ' and nothing else. It was made unable to vouch for any other website or any IP address, so even a copy of it could not pass for your bank or your email.'),
+          h('li', null, 'It stays on this PC, and only your Windows account will trust it.'),
+          h('li', null, 'You can undo it here at any time; Windows asks you to confirm that too.'),
+          h('li', null, 'Edge and Chrome use it. Firefox keeps its own list and will not.')),
+        h('p', null, 'When you click Trust, Windows shows a Security Warning about installing a certificate from “' + ca.subject + '”. Check that the thumbprint it shows is this one:'),
+        h('div', { className: 'la-thumb', 'data-testid': 'la-thumbprint' }, thumb),
+        h('p', null, 'Then click Yes. Clicking No leaves everything as it is.'),
+        h('div', { className: 'la-actions' },
+          h('button', { className: 'settings-btn active', disabled: !!busy || waiting, onClick: () => {
+            setConsent(false);
+            post('/api/local-address/trust', {}, 'trust');
+          } }, 'Trust Friday’s certificate'),
+          h('button', { className: 'settings-btn', onClick: () => setConsent(false) }, 'Not now'))),
+      recentJob && h('div', { className: 'la-job ' + recentJob.state, role: 'status' }, recentJob.message),
+      h(Line, { ok: true, label: 'Google sign-in' },
+        'Returns to ' + (o.returns_to || 'localhost') + ', which works wherever you started it, this address included.',
+        secure && !o.override && o.client_type === 'web' && h('div', null,
+          h('label', { className: 'la-check' },
+            h('input', { type: 'checkbox', checked: registered, onChange: e => setRegistered(e.target.checked) }),
+            h('span', null, 'I added ', h('code', null, (o.named_callbacks || [])[0]), ' and ', h('code', null, (o.named_callbacks || [])[1]), ' as Authorized redirect URIs in my Google Cloud project.')),
+          h('button', { className: 'settings-btn', disabled: !registered || !!busy, onClick: () => post('/api/local-address/google', { use: true, confirmed: true }, 'google') }, 'Use ' + host + ' for Google sign-in')),
+        secure && !o.override && o.client_type && o.client_type !== 'web' && h('div', { className: 'la-hint' }, 'Friday’s Google client is a Desktop client, and Google only lets those return to localhost, so there is nothing to change.'),
+        o.override && h('button', { className: 'la-link', disabled: !!busy, onClick: () => post('/api/local-address/google', { use: false }, 'google') }, 'Return Google sign-in to localhost')),
+      msg && h('div', { className: 'la-err', role: 'alert' }, msg),
+      h('div', { className: 'la-actions' },
+        custom === null ? h('button', { className: 'la-link', onClick: () => setCustom(st.custom_host || '') }, st.source === 'custom' ? 'Change the address' : 'Use a different address') : h(React.Fragment, null,
+          h('input', { className: 'input', 'aria-label': 'Address', value: custom, placeholder: 'agent.' + (host.split('.')[1] || 'friday'), onChange: e => setCustom(e.target.value.trim().toLowerCase()), style: { width: 220 } }),
+          h('button', { className: 'settings-btn active', disabled: !!busy || !custom, onClick: () => post('/api/local-address/host', { host: custom }, 'host').then(() => setCustom(null)) }, 'Save'),
+          st.source === 'custom' && h('button', { className: 'settings-btn', disabled: !!busy, onClick: () => post('/api/local-address/host', { host: '' }, 'host').then(() => setCustom(null)) }, 'Back to the name'),
+          h('button', { className: 'settings-btn', onClick: () => setCustom(null) }, 'Cancel')),
+        h('button', { className: 'la-link', disabled: !!busy, onClick: () => {
+          setMsg('');
+          load(true);
+        } }, busy ? 'Working…' : 'Check again'))));
+}
 function SettingsTabGeneral({
   s,
   save
@@ -38555,7 +38843,7 @@ function SettingsTabGeneral({
       personality: e.target.value
     }),
     placeholder: "Describe Friday's personality..."
-  }))), /*#__PURE__*/React.createElement(StSection, {
+  }))), /*#__PURE__*/React.createElement(LocalAddressSettings, null), /*#__PURE__*/React.createElement(StSection, {
     title: "APPEARANCE"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Show All Workspaces",
@@ -46193,27 +46481,96 @@ const STANDALONE_WS = function () {
 if (STANDALONE_WS) {
   try {
     const t = { workspace: STANDALONE_WS };
-    new URLSearchParams(window.location.search).forEach((v, k) => {
+    const q = new URLSearchParams(window.location.search);
+    q.forEach((v, k) => {
+      if (k === 'scroll') { window.__fridayTabScroll = parseFloat(v); return; }
       t[k] = k === 'view3d' ? v === '1' || v === 'true' : v;
     });
     window.__fridayNavTarget = t;
+    // A reload of the tab should not jump back to where the window once was.
+    if (q.has('scroll')) {
+      q.delete('scroll');
+      const rest = q.toString();
+      history.replaceState(history.state, '', window.location.pathname + (rest ? '?' + rest : '') + window.location.hash);
+    }
   } catch (e) {}
+}
+/* WHERE A WORKSPACE TAB LIVES. Relative, so a tab stays on whatever address
+   this page is on -- except when this page is on bare localhost and Friday's
+   own address (https://agent.<name>, services/local_address.py) is PROVEN to
+   reach this same Friday: then the tab opens there. The server says which as
+   it serves the page (window.__FRIDAY_LOCAL_ADDRESS__), so nothing here
+   guesses a host or a port, and nothing is awaited inside the click. */
+function fridayTabOrigin() {
+  try {
+    const la = window.__FRIDAY_LOCAL_ADDRESS__ || {};
+    const h = window.location.hostname;
+    if (la.origin && (h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1')) return String(la.origin).replace(/\/+$/, '');
+  } catch (e) {}
+  return '';
 }
 function fridayWorkspaceTabUrl(id, params) {
   const q = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
-  return '/w/' + encodeURIComponent(id) + q;
+  return fridayTabOrigin() + '/w/' + encodeURIComponent(id) + q;
 }
-function fridayOpenWorkspaceTab(id, params) {
-  if (!id || id === 'settings') return false;
-  // No feature string: that is what keeps it a tab rather than a popup.
-  const w = window.open(fridayWorkspaceTabUrl(id, params), '_blank');
-  if (!w) {
-    fridayToast('The browser blocked that tab. Allow pop-ups for Friday and try again.');
-    return false;
+/* OPEN A WORKSPACE IN ITS OWN TAB -- or bring its tab forward.
+   All of it runs inside the click that asked, with nothing awaited before
+   window.open: a browser lets a page open a tab, and switch to it, only from
+   within the person's own gesture. No feature string: that keeps it a tab.
+   Each workspace's tab is NAMED (friday-ws-<id>), so asking again for a
+   workspace that already has a tab finds that tab instead of making a copy:
+   window.open('', name) hands back the existing tab untouched, or a blank new
+   one, which is then pointed at the workspace. A tab on another address than
+   this page (agent.<name> while this page is on localhost) cannot be read
+   from here -- which is how it is known to be the existing one -- and it is
+   told where to go by message rather than reloaded.
+   Returns the tab's window, or null when the browser blocked it.
+   {background:true} is Ctrl/middle-click on the dock: a plain new tab and no
+   focus call, so the browser keeps it behind this one, as that click asks. */
+function fridayOpenWorkspaceTab(id, params, opts) {
+  if (!id || id === 'settings') return null;
+  const url = fridayWorkspaceTabUrl(id, params);
+  if (opts && opts.background) return window.open(url, '_blank');
+  let w = null;
+  try { w = window.open('', 'friday-ws-' + id); } catch (e) { w = null; }
+  if (!w) return null;
+  let href = null;
+  try { href = w.location.href; } catch (e) { href = null; }   // null: on another address
+  let path = '';
+  try { path = w.location.pathname; } catch (e) {}
+  const hasParams = params && Object.keys(params).length;
+  if (href !== null && (!href || href === 'about:blank' || path !== '/w/' + id)) {
+    try { w.location.replace(url); } catch (e) { try { w.location.href = url; } catch (_) {} }
+  } else if (hasParams) {
+    let to = '';
+    try { to = w.location.origin; } catch (e) { to = fridayTabOrigin(); }
+    if (to) try { w.postMessage({ type: 'friday:ws-nav', target: Object.assign({ workspace: id }, params) }, to); } catch (e) {}
   }
   try { w.focus(); } catch (e) {}
-  return true;
+  return w;
 }
+/* Put a tab where the desktop window was scrolled, as a fraction of the way
+   down -- the two are different widths, so pixels would not line up. The
+   workspace fetches its data after it mounts, so this waits for the height
+   to hold still, gives up after ten seconds, and stops the moment the person
+   scrolls, clicks or types. Returns its own cleanup. */
+function fridayRestoreTabScroll(frac) {
+  let done = false, last = -1, still = 0, n = 0;
+  const evs = ['wheel', 'pointerdown', 'keydown', 'touchstart'];
+  const stop = () => { done = true; };
+  const finish = () => { clearInterval(iv); evs.forEach(ev => window.removeEventListener(ev, stop, true)); };
+  evs.forEach(ev => window.addEventListener(ev, stop, true));
+  const iv = setInterval(() => {
+    if (done || ++n > 40) { finish(); return; }
+    const sc = fridayMainScroller(document.querySelector('.ws-tab-body'));
+    if (!sc) return;
+    const range = sc.scrollHeight - sc.clientHeight;
+    if (sc.scrollHeight === last) still++; else { still = 0; last = sc.scrollHeight; }
+    if (still >= 2) { sc.scrollTop = Math.round(Math.min(1, Math.max(0, frac)) * range); finish(); }
+  }, 250);
+  return finish;
+}
+window.fridayTabOrigin = fridayTabOrigin;
 window.fridayWorkspaceTabUrl = fridayWorkspaceTabUrl;
 window.fridayOpenWorkspaceTab = fridayOpenWorkspaceTab;
 
@@ -46301,6 +46658,28 @@ function StandaloneApprovals() {
 function StandaloneShell({ ws, children }) {
   // The desktop's wordmark shows the agent's own name when it has been renamed.
   const [agentName, setAgentName] = useState('AGENT FRIDAY');
+  // Moving the same workspace here again from the desktop (\u2197) finds this
+  // tab by name and says where the window was, rather than reloading it
+  // (fridayOpenWorkspaceTab). Only the desktop that opened this tab is heard.
+  useEffect(() => {
+    const onMsg = e => {
+      const d = e && e.data;
+      if (!d || d.type !== 'friday:ws-nav' || !d.target || d.target.workspace !== ws.id) return;
+      if (!window.opener || e.source !== window.opener) return;
+      const t = Object.assign({}, d.target);
+      const frac = parseFloat(t.scroll);
+      delete t.scroll;
+      fridayNavigate(t);
+      if (frac >= 0) fridayRestoreTabScroll(frac);
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [ws.id]);
+  useEffect(() => {
+    const frac = window.__fridayTabScroll;
+    delete window.__fridayTabScroll;
+    if (frac > 0) return fridayRestoreTabScroll(frac);
+  }, []);
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => { const n = ((d && (d.settings || d)) || {}).agent_name; if (n) setAgentName(n); }).catch(() => {});
   }, []);
@@ -48379,6 +48758,12 @@ function App() {
         channelCount: 1
       };
       const _acquire = async withId => {
+        const _why = fridayMicBlockedReason();
+        if (_why) {
+          const _e = new Error(_why);
+          _e.name = 'InsecureContextError';
+          throw _e;
+        }
         const c = {
           audio: withId && _inputId ? {
             ..._baseAudio,
@@ -48536,7 +48921,7 @@ function App() {
       // mic failure tore down so fast the user just saw "nothing happens".
       const _n = e && e.name || '';
       let _m;
-      if (_n === 'NotFoundError' || _n === 'OverconstrainedError' || _n === 'DevicesNotFoundError') _m = '⚠ No microphone found. Plug one in (or pick a device via 🎙), then click the mic again.';else if (_n === 'NotAllowedError' || _n === 'SecurityError') _m = '⚠ Microphone blocked. Click the 🔒/camera icon in the address bar → allow the mic for this site, then reload.';else if (_n === 'NotReadableError' || _n === 'TrackStartError') _m = '⚠ Microphone is in use by another app (Zoom/Teams/etc.). Close it, then click the mic again.';else _m = '⚠ Mic error (' + (_n || 'unknown') + '): ' + (e && e.message || e);
+      if (_n === 'InsecureContextError') _m = '\u26A0 ' + e.message;else if (_n === 'NotFoundError' || _n === 'OverconstrainedError' || _n === 'DevicesNotFoundError') _m = '⚠ No microphone found. Plug one in (or pick a device via 🎙), then click the mic again.';else if (_n === 'NotAllowedError' || _n === 'SecurityError') _m = '⚠ Microphone blocked. Click the 🔒/camera icon in the address bar → allow the mic for this site, then reload.';else if (_n === 'NotReadableError' || _n === 'TrackStartError') _m = '⚠ Microphone is in use by another app (Zoom/Teams/etc.). Close it, then click the mic again.';else _m = '⚠ Mic error (' + (_n || 'unknown') + '): ' + (e && e.message || e);
       try {
         voiceStopRef.current?.({
           status: _m
@@ -52758,12 +53143,13 @@ function App() {
     key: w.id,
     className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${suggestedWs.has(w.id) && !openWins.has(w.id) ? 'suggested' : ''}`,
     "data-ws": w.id,
-    // Ctrl/Cmd-click or middle-click: the workspace in its own tab, the way a
-    // link would. A plain click still opens (or closes) the window.
+    // Ctrl/Cmd-click or middle-click: the workspace in a new BACKGROUND tab,
+    // the way a link would -- the person chose to stay here. A plain click
+    // still opens (or closes) the window.
     onClick: e => {
       if ((e.ctrlKey || e.metaKey) && w.id !== 'settings') {
         e.preventDefault();
-        fridayOpenWorkspaceTab(w.id);
+        if (!fridayOpenWorkspaceTab(w.id, null, { background: true })) fridayToast('The browser blocked that tab. Allow pop-ups for ' + window.location.host + ' and try again.');
         return;
       }
       toggle(w.id);
@@ -52771,7 +53157,7 @@ function App() {
     onAuxClick: e => {
       if (e.button === 1 && w.id !== 'settings') {
         e.preventDefault();
-        fridayOpenWorkspaceTab(w.id);
+        if (!fridayOpenWorkspaceTab(w.id, null, { background: true })) fridayToast('The browser blocked that tab. Allow pop-ups for ' + window.location.host + ' and try again.');
       }
     },
     onMouseDown: e => { if (e.button === 1) e.preventDefault(); },

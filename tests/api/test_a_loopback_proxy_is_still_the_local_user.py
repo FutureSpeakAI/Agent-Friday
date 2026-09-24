@@ -161,6 +161,39 @@ def test_a_tunnelled_request_is_challenged_end_to_end(flask_app, headers):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# The address follows the agent's name (services/local_address): an agent
+# named JARVIS lives at agent.jarvis, and its own proxy must read as local
+# exactly as agent.friday does -- while a tunnel stays remote whatever host it
+# claims.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def named_jarvis(monkeypatch):
+    from agent_friday.services import local_address as la
+    monkeypatch.setattr(la, "configured_host", lambda settings=None: "agent.jarvis")
+
+
+def test_the_configured_address_through_a_local_proxy_is_the_local_user(flask_app, named_jarvis):
+    with _ctx(flask_app, dict(CADDY, **{"X-Forwarded-Host": "agent.jarvis"})):
+        assert core._is_local_request() is True
+
+
+@pytest.mark.parametrize("headers", [
+    pytest.param(dict(CLOUDFLARED, **{"X-Forwarded-Host": "agent.jarvis"}),
+                 id="cloudflared-claiming-the-configured-host"),
+    pytest.param({"CF-Connecting-IP": "203.0.113.9", "X-Forwarded-For": "127.0.0.1",
+                  "X-Forwarded-Host": "agent.jarvis"}, id="cf-header-loopback-chain"),
+    pytest.param({"X-Forwarded-For": "203.0.113.9", "X-Forwarded-Host": "agent.jarvis"},
+                 id="public-client-configured-host"),
+    pytest.param(dict(CADDY, **{"X-Forwarded-Host": "agent.smith"}),
+                 id="a-name-that-is-not-the-configured-one"),
+])
+def test_the_configured_address_does_not_make_a_tunnel_local(flask_app, named_jarvis, headers):
+    with _ctx(flask_app, headers):
+        assert core._is_local_request() is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # The pre-existing rules this must not lose.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -251,18 +284,20 @@ def test_the_multi_account_flow_does_not_need_the_session_cookie():
 
     `routes/google_accounts.py` keeps the PKCE verifier in a server-side
     `_PENDING` map keyed by `state`, and reads `state` from the query string, so
-    a consent begun on agent.friday can complete on localhost:3000. The legacy
-    single-account flow in `routes/google.py` keeps its verifier in the Flask
-    session and therefore cannot; it fails with an explicit "your session cookie
-    was dropped" 400 rather than silently. That path is superseded by
-    "+ Add Account", and the verifier is a secret that cannot move to the query
-    string, so this records the asymmetry rather than pretending to fix it.
+    a consent begun on agent.friday can complete on localhost:3000.
+
+    The legacy single-account flow in `routes/google.py` keeps the same kind
+    of server-side record (the verifier never leaves the server; only `state`
+    crosses in the URL), so it too completes when begun on agent.friday -- see
+    tests/api/test_google_oauth_pkce.py for the flow end to end.
     """
+    import agent_friday.routes.google as g_routes
     import agent_friday.routes.google_accounts as ga_routes
 
-    assert hasattr(ga_routes, "_PENDING"), (
-        "the server-side pending-auth map is gone; the multi-account flow would "
-        "now depend on a cookie that does not cross the origin change")
+    for mod in (ga_routes, g_routes):
+        assert hasattr(mod, "_PENDING"), (
+            "%s lost its server-side pending-auth map; its flow would now depend "
+            "on a cookie that does not cross the origin change" % mod.__name__)
     src = io.open(ga_routes.__file__, encoding="utf-8", errors="replace").read()
     assert 'request.args.get("state")' in src, (
         "the callback no longer prefers the state from the query string")
