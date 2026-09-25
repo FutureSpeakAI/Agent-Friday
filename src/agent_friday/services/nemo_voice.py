@@ -41,6 +41,7 @@ from __future__ import annotations
 import array
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -65,6 +66,25 @@ NEMO_DIR = friday_home() / "models" / "nemo"
 NEMO_ASR_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 NEMO_FASTPITCH_MODEL = "nvidia/tts_en_fastpitch"
 NEMO_HIFIGAN_MODEL = "nvidia/tts_hifigan"
+
+#: The only models NeMo may download and load: NVIDIA's own namespace. Loading
+#: a NeMo checkpoint instantiates classes named in its config (hydra) and
+#: restores a Lightning checkpoint, and both have open advisories for code
+#: execution from an untrusted checkpoint or config that no installable
+#: version fixes. The model name comes from a setting, so it is held to
+#: NVIDIA's repositories here; docs/security/dependency-advisories.md.
+_TRUSTED_NEMO_MODEL = re.compile(r"^nvidia/[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def trusted_nemo_model(name) -> str:
+    """`name` if it is an NVIDIA-published model id, else the default."""
+    candidate = str(name or "").strip()
+    if _TRUSTED_NEMO_MODEL.match(candidate):
+        return candidate
+    if candidate:
+        log.warning("NeMo model %r is not an NVIDIA-published id; using %s",
+                     candidate[:80], NEMO_ASR_MODEL)
+    return NEMO_ASR_MODEL
 NEMO_TTS_NATIVE_RATE = 22050      # FastPitch+HiFi-GAN synthesize at 22.05 kHz
 
 # Minimum *free* VRAM (GB) to offer the GPU tier. 0.6B RNN-T fp16 is ~2–3 GB
@@ -534,7 +554,7 @@ class NeMoASR:
     """
 
     def __init__(self, model_name=NEMO_ASR_MODEL):
-        self.model_name = model_name or NEMO_ASR_MODEL
+        self.model_name = trusted_nemo_model(model_name)
         self.model_size = self.model_name           # parity with WhisperASR.model_size
         self._model = None
         self._device = "cuda"

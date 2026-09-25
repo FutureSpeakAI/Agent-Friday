@@ -57,6 +57,9 @@ voice-local-lite = [
 # version-fragile â€” opt-in ONLY, NEVER in [all]. torch+CUDA must be installed via
 # a dedicated installer step with the correct CUDA index URL, not a blind pip dep.
 voice-local-gpu = [
+    # NeMo caps lightning and hydra-core below the versions that fix their
+    # checkpoint/config code-execution advisories; Friday loads only
+    # NVIDIA-published models. docs/security/dependency-advisories.md
     "nemo_toolkit[asr,tts]>=2.6",
     # FastPitch's English g2p (EnglishG2p) imports nltk, and nemo_toolkit's
     # tts extra does NOT pull it in. Without it NeMo's config allow-list fails
