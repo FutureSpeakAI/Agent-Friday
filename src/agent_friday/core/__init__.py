@@ -1139,6 +1139,12 @@ ENV_FROM_LAUNCH_SCRIPTS: set = set()
 
 
 def _bootstrap_env_from_launch_scripts():
+    # The test suite never reads a developer's launch scripts: they hold the
+    # machine's real provider keys (forced over the environment, below) and
+    # its secrets, and a test that runs against them behaves differently from
+    # the same test in CI, or makes a paid call.
+    if os.environ.get("FRIDAY_TESTING") == "1":
+        return
     repo = Path(__file__).resolve().parents[3]  # __init__.py is src/agent_friday/core/__init__.py → repo root
     # Later files do not override earlier ones (setdefault); start.bat is primary.
     candidates = ['start.bat', 'launch_now.bat', 'friday_startup.bat']
