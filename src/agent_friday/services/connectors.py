@@ -225,7 +225,7 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "blurb": "Lets Friday read what is on screen through Windows' "
                  "accessibility tree (Windows-MCP). Starts read-only.",
         "capabilities": ["desktop_state", "accessibility_tree"],
-        "workspaces": ["home"],
+        "workspaces": ["system"],
         "mcp_server": "windows_desktop",
         "mcp_template": {
             "command": "uvx",

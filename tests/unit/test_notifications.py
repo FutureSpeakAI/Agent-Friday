@@ -158,7 +158,9 @@ class TestPriorityJobAlert:
     def test_actions_present(self):
         actions = priority_job_alert(SAMPLE_JOB)["actions"]
         labels = [a["label"] for a in actions if a is not None]
-        assert "Apply" in labels
+        # Friday prepares an application; the owner submits it.
+        assert "Prepare application" in labels
+        assert "Apply" not in labels
         assert "Snooze" in labels
 
     def test_minimal_job_no_crash(self):
