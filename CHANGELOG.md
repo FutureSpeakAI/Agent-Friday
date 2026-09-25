@@ -165,6 +165,12 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   where it is and reported. A vault passphrase chosen or recovered on the
   lost-passphrase screen is stored in Credential Manager; the screen no
   longer claims it was written to `start.bat`.
+- **`friday export` no longer includes the keystore root key.** The data
+  export leaves out every key and credential file and downloaded models, and
+  is written to Documents (or `--out`), never into the program folder.
+  `friday export --full` includes the keys inside a passphrase-encrypted
+  file; `friday decrypt-backup` opens it. See
+  [backup and restore](docs/user-guide/backup-and-restore.md).
 
 ### Fixed
 
