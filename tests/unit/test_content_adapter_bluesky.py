@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import record_own_sleeps
+
 _SRC = Path(__file__).resolve().parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
@@ -438,8 +440,7 @@ def test_thread_reply_chain_and_resume_after_mid_thread_failure(adapter, http):
 def test_thread_jitter_between_segments(adapter, http, monkeypatch):
     _connect(adapter)
     adapter.configure({"thread_jitter_s": [0.5, 0.5]})
-    sleeps = []
-    monkeypatch.setattr(bmod.time, "sleep", lambda s: sleeps.append(s))
+    sleeps = record_own_sleeps(monkeypatch, bmod.time)
     rkeys = iter(["j1", "j2", "j3"])
     http.route("createRecord",
                lambda c: _ok({"uri": _uri(next(rkeys)), "cid": "c"}))

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.conftest import record_own_sleeps
+
 import agent_friday.services.model_router as smr
 
 pytestmark = pytest.mark.real_provider_paths
@@ -257,7 +259,7 @@ def test_429_retry_after_honored(monkeypatch):
         return _Resp429() if calls["n"] == 1 else _FakeResp()
 
     monkeypatch.setattr(requests, "post", _fake_post)
-    monkeypatch.setattr(smr._time, "sleep", lambda s: slept.append(s))
+    record_own_sleeps(monkeypatch, smr._time, into=slept)
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-not-real")
 
     text, _ = smr._call_openai([{"role": "user", "content": "hello"}],

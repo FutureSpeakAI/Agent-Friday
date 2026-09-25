@@ -182,6 +182,30 @@ import pytest  # noqa: E402
 CANNED_TEXT = "[[friday-test-stub-response]]"
 
 
+def record_own_sleeps(monkeypatch, time_module, into=None):
+    """Replace `time_module.sleep` and return the list of durations slept by
+    the calling test's own thread (appended to `into` when given).
+
+    A module's `time` is the process-wide time module, so a bare replacement
+    also records the sleeps of background threads other tests left running
+    on the same worker, and an exact-list assertion then fails at random.
+    Sleeps from any other thread still really sleep.
+    """
+    import threading
+    me = threading.get_ident()
+    real_sleep = time_module.sleep
+    slept = [] if into is None else into
+
+    def fake(seconds):
+        if threading.get_ident() == me:
+            slept.append(seconds)
+        else:
+            real_sleep(seconds)
+
+    monkeypatch.setattr(time_module, "sleep", fake)
+    return slept
+
+
 def pytest_addoption(parser):
     """`--run-network` opts IN to tests that need live network or spend money.
 

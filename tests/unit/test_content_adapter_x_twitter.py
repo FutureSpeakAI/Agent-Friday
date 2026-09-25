@@ -20,6 +20,8 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from tests.conftest import record_own_sleeps
+
 _SRC = Path(__file__).resolve().parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
@@ -298,8 +300,7 @@ def test_thread_resume_after_mid_thread_failure(adapter, http):
 def test_thread_jitter_between_segments(adapter, http, monkeypatch):
     _connect(adapter)
     adapter.configure({"client_id": "cid-123", "thread_jitter_s": [0.5, 0.5]})
-    sleeps = []
-    monkeypatch.setattr(xmod.time, "sleep", lambda s: sleeps.append(s))
+    sleeps = record_own_sleeps(monkeypatch, xmod.time)
     seq = iter(["1", "2", "3"])
     http.route("POST https://api.x.com/2/tweets",
                lambda c: _ok({"data": {"id": next(seq)}}, 201))

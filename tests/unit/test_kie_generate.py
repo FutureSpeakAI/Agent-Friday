@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.conftest import record_own_sleeps
+
 from agent_friday.services import kie_generate as kg
 
 TASK_ID = "task_abc123"
@@ -52,8 +54,7 @@ def test_membership_never_raises_without_a_registry(monkeypatch):
 
 def test_rate_limiter_blocks_past_the_window(monkeypatch):
     lim = kg._RateLimiter(2, 10.0)
-    slept = []
-    monkeypatch.setattr(kg.time, "sleep", lambda s: slept.append(s))
+    slept = record_own_sleeps(monkeypatch, kg.time)
     lim.acquire()
     lim.acquire()
     lim.acquire()  # third in the same instant must wait
@@ -63,8 +64,7 @@ def test_rate_limiter_blocks_past_the_window(monkeypatch):
 def test_rate_limiter_forgets_old_hits(monkeypatch):
     lim = kg._RateLimiter(1, 10.0)
     lim._hits.append(kg.time.monotonic() - 20.0)  # long expired
-    slept = []
-    monkeypatch.setattr(kg.time, "sleep", lambda s: slept.append(s))
+    slept = record_own_sleeps(monkeypatch, kg.time)
     lim.acquire()
     assert not slept  # the expired hit must not count against the new one
 
