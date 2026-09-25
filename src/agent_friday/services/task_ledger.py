@@ -125,7 +125,8 @@ def note_pending(task_id: Optional[str], name: str, args: Any) -> None:
     led = load(task_id)
     if led is None:
         return
-    led["pending"] = {"name": str(name), "args": _one_line(args, 300), "at": time.time()}
+    led["pending"] = {"name": str(name), "args": _one_line(tier_safe(_one_line(args, 600)), 300),
+                      "at": time.time()}
     save(task_id, led)
 
 
@@ -171,6 +172,50 @@ def _one_line(value: Any, cap: int) -> str:
     return text if len(text) <= cap else text[:cap] + "…"
 
 
+def _luhn_ok(digits: str) -> bool:
+    total, alt = 0, False
+    for ch in reversed(digits):
+        d = ord(ch) - 48
+        if alt:
+            d = d * 2 - 9 if d > 4 else d * 2
+        total += d
+        alt = not alt
+    return total % 10 == 0
+
+
+def _aba_ok(digits: str) -> bool:
+    w = (3, 7, 1) * 3
+    return sum(int(c) * k for c, k in zip(digits, w)) % 10 == 0
+
+
+def tier_safe(text: str) -> str:
+    """`text` with structured personal data replaced by placeholders, by the
+    sensitivity classifier's own Layer 1a patterns (local, deterministic).
+
+    Step lines are pinned into every later request and handed to every
+    summary, so an SSN or a card number a tool returned would otherwise ride
+    along with the whole task. Card and routing numbers are redacted only
+    when their checksum holds: a 13-digit timestamp or a 9-digit order number
+    is exactly what a resume needs to see."""
+    try:
+        from agent_friday.services import sensitivity_classifier as sc
+    except Exception:
+        return text
+    s = str(text)
+    s = sc._API_KEY_RE.sub("[redacted key]", s)
+    s = sc._SSN_RE.sub("[redacted SSN]", s)
+    s = sc._CC_RE.sub(lambda m: "[redacted card number]"
+                      if _luhn_ok(re.sub(r"\D", "", m.group(0))) else m.group(0), s)
+    s = sc._ROUTING_RE.sub(lambda m: "[redacted routing number]"
+                           if _aba_ok(m.group(0)) else m.group(0), s)
+    for pat, word in ((sc._ACCT_TAIL_RE, "account number"), (sc._ISSUED_ID_RE, "ID number"),
+                      (sc._ADDRESS_RE, "address")):
+        s = pat.sub("[redacted %s]" % word, s)
+    s = sc._PHONE_RE.sub(lambda m: m.group(0) if (m.group(1) or m.group(2)) in sc._TOLLFREE_AREA
+                         else "[redacted phone]", s)
+    return s
+
+
 def record_step(ledger: Dict[str, Any], name: str, args: Any, result: Any) -> None:
     """One tool round, mechanically: the step line and any file paths."""
     if ledger is None:
@@ -185,7 +230,8 @@ def record_step(ledger: Dict[str, Any], name: str, args: Any, result: Any) -> No
         seen.append(sig)
     ledger["distinct_steps"] = len(seen)
     ledger.setdefault("done", []).append(
-        "%d. %s(%s) -> %s" % (ledger["rounds"], name, _one_line(args, 160), _one_line(result, 200)))
+        "%d. %s(%s) -> %s" % (ledger["rounds"], name, _one_line(tier_safe(_one_line(args, 400)), 160),
+                              _one_line(tier_safe(_one_line(result, 600)), 200)))
     files = ledger.setdefault("files", [])
     for p in _paths_in(args):
         if p not in files:
