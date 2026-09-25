@@ -178,6 +178,12 @@ def cc_on(monkeypatch):
             clicks.append((x, y))
 
     monkeypatch.setattr(agent, "_pag", Pag())
+    # Without pyautogui (a Linux runner) startup withdraws the desktop tools;
+    # the fake above stands in for it, so the real handlers are registered.
+    for name, fn in (("click", agent._tool_click), ("move_mouse", agent._tool_move_mouse),
+                     ("type_text", agent._tool_type_text), ("press_key", agent._tool_press_key),
+                     ("scroll", agent._tool_scroll)):
+        monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, name, fn)
     monkeypatch.setitem(agent._CC_LAST_SHOT, "scale_x", 1.0)
     monkeypatch.setitem(agent._CC_LAST_SHOT, "scale_y", 1.0)
     return clicks
