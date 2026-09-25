@@ -34,7 +34,7 @@ async function waitForLiquidUI(page: Page) {
 }
 
 const WORKSPACES = [
-  'Home', 'News', 'Messages', 'Calendar', 'Family', 'Household', 'Health',
+  'Home', 'News', 'Messages', 'Calendar', 'Family', 'Health',
   'Finance', 'Career', 'Contacts', 'Code', 'Sites', 'Draft', 'Content',
   'Knowledge', 'Trust', 'Studio', 'System',
 ];

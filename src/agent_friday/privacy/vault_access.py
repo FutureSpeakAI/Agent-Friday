@@ -2,7 +2,7 @@
 Vault Access Control — the gatekeeper for the Sovereign Vault.
 
 The Sovereign Vault holds the user's most private data: financial records,
-health records, legal / household archives, contacts, family info,
+health records, legal archives, contacts, family info,
 and encrypted PII. The governing rule is simple and non-negotiable:
 
     Vault content is readable by LOCAL models only.
