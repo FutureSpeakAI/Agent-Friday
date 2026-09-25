@@ -3316,6 +3316,19 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                            reply=(TASKS.get(task_id) or {}).get('result'))
 
 
+def _ledger_view_chars_for(model):
+    """The pinned-ledger size for whichever seat a task's next leg will land
+    on: the local seat when routing prefers local, else the task's model."""
+    try:
+        from agent_friday.services import compaction as _c
+        rc = (_load_settings() or {}).get('model_routing') or {}
+        if str(rc.get('mode') or '').startswith('local') and rc.get('local_model'):
+            model = rc.get('local_model')
+        return _c.ledger_view_chars(model)
+    except Exception:
+        return 12000
+
+
 def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰',
                           model=None, tools=None):
     """Run a Claude agent prompt to completion and store results.
@@ -3443,19 +3456,61 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         # Unattended: a scheduled or background run keeps a tighter round cap
         # than an interactive turn, because nobody is watching it.
         from agent_friday.services import turn_budget as _tbud
-        with _tbud.unattended():
-            reply, tool_trace = _generate_agent(
-                messages, system=system, system_builder=_sys_for,
-                max_tokens=16384, model=subagent_model,
-                session_ctx={"authenticated": True, "is_background_task": True,
-                             "task_id": task_id,
-                             # A scheduled job's outward actions need a grant
-                             # scoped to that schedule (governance/action_gate).
-                             # Only the scheduler sets it; see _spawn_task.
-                             "schedule_id": _task_schedule_id(task_id)},
-                orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
-                workspace='task', on_route=_log_route, tools=_tools_override,
-            )
+        from agent_friday.services import task_ledger as _task_ledger
+        # The task's durable working ledger (goal, steps, facts, next step):
+        # compaction writes into it and pins it, a crash resumes from it.
+        _ledger = _task_ledger.ensure(task_id, prompt)
+        _task_ledger.remember_run(_ledger, name=name, description=description,
+                                  model=model, tools=list(tools) if tools else None,
+                                  orb_icon=orb_icon)
+        _task_ledger.save(task_id, _ledger)
+
+        def _leg(leg_messages):
+            with _tbud.unattended():
+                return _generate_agent(
+                    leg_messages, system=system, system_builder=_sys_for,
+                    max_tokens=16384, model=subagent_model,
+                    session_ctx={"authenticated": True, "is_background_task": True,
+                                 "task_id": task_id,
+                                 # A scheduled job's outward actions need a grant
+                                 # scoped to that schedule (governance/action_gate).
+                                 # Only the scheduler sets it; see _spawn_task.
+                                 "schedule_id": _task_schedule_id(task_id)},
+                    orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
+                    workspace='task', on_route=_log_route, tools=_tools_override,
+                )
+
+        _rounds_before = int((_ledger or {}).get("rounds") or 0)
+        _tbud.take_last_stop()          # nothing stale from an earlier turn
+        reply, tool_trace = _leg(messages)
+        # A LONG JOB DOES NOT STOP AT A PER-TURN LIMIT. When a leg ends on the
+        # round, clock or token limit (or ran long) with the job unfinished,
+        # the next leg starts in a fresh context from the ledger, without
+        # asking anyone to say "continue". It stops when a leg makes no
+        # progress (no new step in the ledger), when the loop detector says
+        # it is going in circles, or when the user stops it.
+        _legs = 1
+        while True:
+            _why = _tbud.take_last_stop()
+            if _why not in ("rounds", "clock", "tokens", "ran_long"):
+                break
+            if _tj.stop_requested(task_id):
+                break
+            _led_now = _task_ledger.load(task_id)
+            _rounds_now = int((_led_now or {}).get("rounds") or 0)
+            if _led_now is None or _rounds_now <= _rounds_before:
+                _task_log(task_id, 'Stopped: the last stretch made no progress, '
+                                   'so starting another would repeat it.')
+                break
+            _legs += 1
+            _rounds_before = _rounds_now
+            _task_log(task_id, 'Continuing in a fresh context (stretch %d, %d steps so far) '
+                               'from the task ledger' % (_legs, _rounds_now))
+            _more_reply, _more_trace = _leg([{"role": "user", "content": _task_ledger.continuation_prompt(
+                prompt, _led_now, "the previous stretch reached its %s limit" % _why,
+                max_chars=_ledger_view_chars_for(subagent_model))}])
+            tool_trace = list(tool_trace or []) + list(_more_trace or [])
+            reply = _more_reply
         # Stop-after-step (TV10): the loop returned at a checkpoint because the
         # user asked it to. That is a cancellation with a complete record, not
         # a result to grade or a chain link to advance.
@@ -7922,6 +7977,11 @@ def _task_log_tool(session_ctx, name, args):
     tid = (session_ctx or {}).get("task_id")
     if not tid:
         return
+    try:
+        from agent_friday.services import task_ledger as _tl
+        _tl.note_pending(tid, name, args)
+    except Exception:
+        pass
     # Defect E: tool-call bookkeeping. Without this bump every healthy task
     # carries tool_calls=0 forever and reads as the zero-tool-call wedge
     # signature; the watchdog would rule it 'stuck'. This field is the
@@ -9310,6 +9370,11 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
     _rtrace.tool_finished(name, args, result, ok=(_tool_call_status(result) == "ok"),
                           duration_ms=int(duration_ms or 0))
     try:
+        from agent_friday.services import task_ledger as _tl
+        _tl.note_tool(_journal().current_task(), name, args, result)
+    except Exception:
+        pass
+    try:
         _journal().tool_call(name=name, args=_tier_safe_summary(args, limit=1000, kind="args"),
                              result=_tier_safe_summary(result, limit=400, kind="result"),
                              duration_ms=int(duration_ms or 0))
@@ -9479,7 +9544,10 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     # threshold. The summary is written by Claude, where this transcript is
     # already going -- never by a model somewhere else (services/compaction.py). ──
     from agent_friday.services import compaction as _compaction
+    from agent_friday.services import task_ledger as _task_ledger
     _claude_summary = _compaction.claude_summarizer(client, model or ANTHROPIC_MODEL_DEFAULT)
+    _ledger_task = _journal().resolve_task_id(session_ctx)
+    _ledger = _task_ledger.ensure(_ledger_task, _task_ledger.goal_of(convo)) if _ledger_task else None
 
     _hr_mark = [len(convo)]
 
@@ -9494,7 +9562,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 reserve_tokens=int(max_tokens or 0) + int(
                     (_compaction.schema_tokens(CLAUDE_TOOLS) + _compaction.schema_tokens(safe_system))
                     * _compaction.calibration(model or ANTHROPIC_MODEL_DEFAULT)),
-                seat="cloud")
+                seat="cloud", ledger=_ledger, task_id=_ledger_task)
             if _new is not convo:
                 convo[:] = _new
         except Exception as _ce:
@@ -10056,7 +10124,12 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # seat through its own transport: a local seat's transcript never goes to
     # another model to be summarised (services/compaction.py).
     from agent_friday.services import compaction as _compaction
+    from agent_friday.services import task_ledger as _task_ledger
     _compact_seat = "local" if _led_seat == "local" else "cloud"
+    # A background task keeps a durable working ledger (goal, steps, facts,
+    # next step) that compaction writes into and pins, and resume reads.
+    _ledger_task = _journal().resolve_task_id(session_ctx)
+    _ledger = _task_ledger.ensure(_ledger_task, _task_ledger.goal_of(convo)) if _ledger_task else None
     _seat_summary = _compaction.seat_summarizer(send_fn)
 
     _hr_mark = [len(convo)]
@@ -10074,7 +10147,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 _new, model=model, summarizer=_seat_summary,
                 reserve_tokens=int(max_tokens or 0) + int(
                     _schema_tokens[0] * _compaction.calibration(model)),
-                seat=_compact_seat, force=force)
+                seat=_compact_seat, force=force, ledger=_ledger, task_id=_ledger_task)
             if _new is not convo:
                 convo[:] = _new
         except Exception as _ce:

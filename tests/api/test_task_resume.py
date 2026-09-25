@@ -317,10 +317,15 @@ def test_checkpointing_off_writes_nothing(monkeypatch, task):
     assert tr.read(task) is None
 
 
-def test_auto_resume_is_off_by_default(monkeypatch):
+def test_auto_resume_is_on_by_default(monkeypatch):
+    """Long work keeps going across a restart without a person asking for it.
+    The crash-loop guard is MAX_ATTEMPTS (above), not a default of off, and a
+    step that is not safe to repeat still waits for a person."""
     monkeypatch.setattr(tr, "_settings", lambda: {})
-    assert tr.auto_enabled() is False
+    assert tr.auto_enabled() is True
     assert tr.enabled() is True
+    monkeypatch.setattr(tr, "_settings", lambda: {"task_resume_auto": False})
+    assert tr.auto_enabled() is False
 
 
 def test_a_journal_delete_takes_the_checkpoint_with_it(monkeypatch, task):

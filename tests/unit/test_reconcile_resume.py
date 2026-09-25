@@ -77,7 +77,11 @@ def test_no_checkpoint_still_gets_the_honest_old_message(monkeypatch, _clean):
 
 
 def test_a_checkpointed_task_is_offered_not_written_off(monkeypatch, _clean):
-    """The change that matters: work already paid for is not re-bought."""
+    """The change that matters: work already paid for is not re-bought.
+    (The offer wording; with auto-resume on it is picked up instead -- see
+    the auto tests below.)"""
+    from agent_friday.services import task_resume as tr
+    monkeypatch.setattr(tr, "auto_enabled", lambda: False)
     _task("t2")
     _verdict(monkeypatch, resumable=True, iteration=7,
              reason="7 step(s) of work are saved and will not be redone.")
@@ -106,7 +110,7 @@ def test_a_tool_in_flight_is_named_as_a_risk_not_hidden(monkeypatch, _clean):
     assert msg["meta"]["needs_confirmation"] is True
 
 
-def test_auto_resume_off_by_default_only_offers(monkeypatch, _clean):
+def test_auto_resume_turned_off_only_offers(monkeypatch, _clean):
     started = []
     monkeypatch.setattr(rc, "_resume_in_background", lambda tid: started.append(tid))
     from agent_friday.services import task_resume as tr

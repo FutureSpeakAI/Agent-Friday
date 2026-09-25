@@ -605,8 +605,13 @@ def resume_task(task_id):
         _tj.push_task(task_id)
         try:
             text, _trace = _tr.resume(task_id, confirm_pending=confirm)
-            _task_set(task_id, status='completed', result=text,
-                      ended=_time.time())
+            with TASKS_LOCK:
+                _still = (TASKS.get(task_id) or {}).get('status') in ('running', 'queued')
+            # A ledger resume ran the task's own worker, which already
+            # recorded how it ended; do not report a failed run as completed.
+            if _still:
+                _task_set(task_id, status='completed', result=text,
+                          ended=_time.time())
         except _tr.ResumeRefused as e:
             _task_set(task_id, status='interrupted', result=f"[Not resumed] {e}")
         except Exception as e:

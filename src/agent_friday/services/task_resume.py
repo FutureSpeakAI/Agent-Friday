@@ -38,15 +38,24 @@ WHAT CANNOT BE RESUMED — stated here rather than discovered later:
   * **Live attachments.** An open voice session, a browser the user was
     watching, a streaming response half-delivered to a socket. The task
     resumes; those do not come back.
-  * **The OpenAI-shaped loop** (``_oai_agentic_loop``) is not checkpointed yet.
-    Its transcript has the same append-only property, so the same approach
-    applies — it is unbuilt, not impossible.
 
-WHY IT DOES NOT AUTO-RESUME BY DEFAULT. ``task_resume_auto`` is off. A task
-that crashes Friday will crash it again on resume, and an automatic resume
-turns one crash into a boot loop that burns money on every pass. Resume is
-offered, one click, with the attempt counted (``MAX_ATTEMPTS``) so even the
-opt-in path cannot loop forever.
+THE LEDGER PATH. A task on a local seat runs the OpenAI-shaped loop, whose
+transcript is not checkpointed and could not be re-entered here anyway (the
+transport keeps only string content). Every background task also keeps a
+working ledger (services/task_ledger.py): goal, every step taken, key facts
+and files, and the next step, updated after each tool round and at each
+compaction. When there is no usable transcript checkpoint, a task with a
+ledger resumes by running again through its own worker -- same model, tools
+and gated system prompt -- with the ledger pinned and an instruction to pick
+up at NEXT and not repeat DONE steps. A step recorded as in flight when the
+process died is gated exactly like a pending tool above.
+
+AUTO-RESUME IS ON BY DEFAULT (``task_resume_auto``). Friday is meant to keep
+long work going on its own across a restart or a reboot. What stops a crash
+from becoming a boot loop is the attempt count (``MAX_ATTEMPTS`` per task,
+counted for both paths), not a default of off; and a task whose in-flight
+step is not provably safe to repeat is never resumed without a person saying
+so.
 """
 from __future__ import annotations
 
@@ -96,8 +105,8 @@ def enabled() -> bool:
 
 
 def auto_enabled() -> bool:
-    """Resuming WITHOUT being asked is off by default. See the module note."""
-    return bool(_settings().get("task_resume_auto", False))
+    """Resuming without being asked is on by default. See the module note."""
+    return bool(_settings().get("task_resume_auto", True))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +241,53 @@ def clear(task_id) -> None:
 #  Reading it back
 # ─────────────────────────────────────────────────────────────────────────────
 def resumability(task_id) -> Dict[str, Any]:
+    """The transcript checkpoint's verdict, or -- when that cannot be used --
+    the task ledger's."""
+    verdict = _checkpoint_resumability(task_id)
+    if verdict.get("resumable"):
+        return verdict
+    # The crash-loop guard covers both paths: a task whose transcript has
+    # already been resumed MAX_ATTEMPTS times does not get fresh tries from
+    # its ledger.
+    if int(verdict.get("attempts") or 0) >= MAX_ATTEMPTS:
+        return verdict
+    ledger_verdict = _ledger_resumability(task_id, int(verdict.get("attempts") or 0))
+    if not ledger_verdict.get("resumable"):
+        return verdict
+    if verdict.get("unreadable"):
+        ledger_verdict["reason"] = ("the transcript checkpoint cannot be read (most likely "
+                                    "written under a previous vault passphrase); resuming "
+                                    "from the task ledger instead. " + ledger_verdict["reason"])
+    return ledger_verdict
+
+
+def _ledger_resumability(task_id, prior_attempts: int = 0) -> Dict[str, Any]:
+    from agent_friday.services import task_ledger as _tl
+    led = _tl.load(task_id)
+    base = {"resumable": False, "reason": "no task ledger", "iteration": 0,
+            "pending_tool": None, "needs_confirmation": False, "attempts": 0,
+            "via": "ledger"}
+    if not led:
+        return base
+    steps = int(led.get("rounds") or 0)
+    attempts = max(int(led.get("resume_attempts") or 0), int(prior_attempts or 0))
+    out = {**base, "iteration": steps, "attempts": attempts,
+           "pending_tool": led.get("pending"), "saved": led.get("updated")}
+    if steps <= 0:
+        return {**out, "reason": "the ledger has no completed steps yet"}
+    if attempts >= MAX_ATTEMPTS:
+        return {**out, "reason": f"already resumed {attempts} times without finishing"}
+    pending = led.get("pending") or None
+    if pending and not replay_safe(pending.get("name") or ""):
+        return {**out, "resumable": True, "needs_confirmation": True,
+                "reason": (f"'{pending.get('name')}' was running when the process "
+                           f"stopped, and nothing on disk can say whether it "
+                           f"finished. Resuming may run it again.")}
+    return {**out, "resumable": True,
+            "reason": f"{steps} step(s) are recorded in the task ledger and will not be redone."}
+
+
+def _checkpoint_resumability(task_id) -> Dict[str, Any]:
     """Can this task be picked up, and what is the honest caveat?
 
     Returns ``{resumable, reason, iteration, pending_tool, needs_confirmation,
@@ -373,6 +429,8 @@ def resume(task_id, *, confirm_pending: bool = False,
         raise ResumeRefused(verdict["reason"])
     if verdict["needs_confirmation"] and not confirm_pending:
         raise ResumeRefused(verdict["reason"])
+    if verdict.get("via") == "ledger":
+        return _resume_from_ledger(task_id, verdict)
 
     blob = read(task_id) or {}
     convo = blob.get("convo") or []
@@ -402,6 +460,61 @@ def resume(task_id, *, confirm_pending: bool = False,
         orb_icon=blob.get("orb_icon") or "🧠",
         resumed_tool_trace=tool_trace,
     )
+
+
+def _resume_from_ledger(task_id, verdict) -> Tuple[Optional[str], list]:
+    """Run the task again through its own worker, continuing from its ledger.
+
+    The worker records the task's final status itself; the returned text is
+    the result it recorded (callers must not overwrite a status the worker
+    already set -- see `settle`)."""
+    from agent_friday.services import task_ledger as _tl
+    from agent_friday.services import agent as _ag
+    led = _tl.load(task_id) or {}
+    led["resume_attempts"] = int(led.get("resume_attempts") or 0) + 1
+    pending = led.get("pending")
+    led["pending"] = None
+    _tl.save(task_id, led)
+    run = led.get("run") or {}
+    why = "Friday restarted in the middle of it"
+    if pending:
+        why += (f"; the step {pending.get('name')}({pending.get('args', '')}) was in "
+                f"progress at that moment -- check whether it took effect before "
+                f"doing it again")
+    try:
+        _journal().append(task_id, "checkpoint",
+                          summary=f"Resumed from the task ledger at step {verdict['iteration']}",
+                          phase="resume")
+    except Exception:
+        pass
+    with _ag.TASKS_LOCK:
+        rec = _ag.TASKS.get(task_id) or {}
+        name = rec.get("name") or run.get("name") or "Task"
+    _ag._task_worker(task_id, name, _tl.continuation_prompt(
+                         led.get("goal"), led, why,
+                         max_chars=_ag._ledger_view_chars_for(run.get("model"))),
+                     run.get("description") or "", orb_icon=run.get("orb_icon") or "🛰",
+                     model=run.get("model"), tools=run.get("tools"))
+    with _ag.TASKS_LOCK:
+        rec = _ag.TASKS.get(task_id) or {}
+        return rec.get("result"), []
+
+
+def settle(task_id, text, *, TASKS, TASKS_LOCK, status="complete") -> None:
+    """Mark a resumed task finished -- unless its worker already did.
+
+    A ledger resume runs the task's own worker, which sets completed, failed,
+    cancelled or timeout itself; overwriting that with "complete" would report
+    a failed run as a success."""
+    with TASKS_LOCK:
+        rec = TASKS.get(task_id)
+        if rec is None:
+            return
+        if rec.get("status") not in ("running", "queued"):
+            return
+        rec["status"] = status
+        rec["result"] = text
+        rec["ended"] = time.time()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

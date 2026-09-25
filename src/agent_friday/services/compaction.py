@@ -46,6 +46,9 @@ from agent_friday.core import ANTHROPIC_MODEL_DEFAULT, _load_settings
 
 _CHARS_PER_TOKEN = 4
 _SUMMARY_PREFIX = "[Context Summary]"
+# The summary is written in the task ledger's sections so it can be absorbed
+# into the ledger (services/task_ledger.py).
+from agent_friday.services.task_ledger import SUMMARY_SECTIONS as _SECTIONS  # noqa: E402
 _TRIM_MARKER = "... [{n} characters of this tool result were trimmed to fit the context window]"
 
 # Cumulative, per process — surfaced by GET /api/context/compression-stats.
@@ -191,6 +194,14 @@ def schema_tokens(obj):
         return len(obj if isinstance(obj, str) else json.dumps(obj, default=str)) // _CHARS_PER_TOKEN
     except Exception:
         return 0
+
+
+def ledger_view_chars(model=None, window=None):
+    """How much of a seat's window the pinned task ledger may use: a quarter,
+    in characters, at this model's calibrated token rate. The ledger rides in
+    a message compaction cannot shrink, so it must fit with room to work."""
+    window = window or resolve_context_window(model)
+    return max(2000, int(window * 0.25 * _CHARS_PER_TOKEN / max(1.0, calibration(model))))
 
 
 def effective_tokens(messages, model=None):
@@ -365,7 +376,7 @@ _SUMMARY_INSTRUCTION = (
     "note that preserves decisions made, open questions, key entities, exact "
     "figures and identifiers, what each tool call found, and any state the "
     "assistant must remember to continue. Be terse; no preamble. Limit to "
-    "about {n} tokens.\n\n=== EXCERPT ===\n{text}\n=== END ===")
+    "about {n} tokens.\n" + _SECTIONS + "\n=== EXCERPT ===\n{text}\n=== END ===")
 
 
 def _default_summarizer(text, max_tokens=400):
@@ -546,7 +557,7 @@ def compress_new_output(messages, start, model=None, seat=None):
 
 
 def maybe_compact(messages, model=None, summarizer=None, *, window=None,
-                  reserve_tokens=0, seat=None, force=False):
+                  reserve_tokens=0, seat=None, force=False, ledger=None, task_id=None):
     """Return a (possibly) compacted copy of ``messages``.
 
     No-op (returns the original list) when compaction is disabled or the
@@ -560,6 +571,8 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
     room the reply needs (a reasoning seat's thinking counts). `seat` labels
     the stats ("local" / "cloud"). `force` compacts to well under the budget
     even when the estimate says it fits -- the seat has just refused it.
+    `ledger` (with `task_id`) is the task's working ledger: the summary is
+    absorbed into it, it is saved, and the pinned block shows the ledger.
     """
     if not messages:
         return messages
@@ -607,10 +620,16 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
             summary = _rolling_summary(summarizer or _default_summarizer, prior,
                                        transcript, max_tokens, window)
         if summary:
+            body = summary
+            if ledger is not None:
+                from agent_friday.services import task_ledger as _tl
+                _tl.absorb_summary(ledger, summary)
+                _tl.save(task_id, ledger)
+                body = _tl.render(ledger, ledger_view_chars(model, window))
             summary_msg = {
                 "role": "user",
                 "content": f"{_SUMMARY_PREFIX} Earlier in this session ("
-                           f"{len(middle)} messages condensed): {summary}",
+                           f"{len(middle)} messages condensed): {body}",
             }
             compacted = _merge_adjacent(list(head) + [summary_msg] + list(tail))
         else:

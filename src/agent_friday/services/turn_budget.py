@@ -144,6 +144,18 @@ def _cfg() -> Dict[str, Any]:
 
 _unattended = threading.local()
 
+# Which limit ended the last turn on this thread, for a background task that
+# continues a long job in a fresh leg instead of stopping (agent._task_worker).
+_last_stop = threading.local()
+
+
+def take_last_stop() -> Optional[str]:
+    """The kind of the last limit stop on this thread ("rounds", "clock",
+    "tokens", "loop", "ran_long"), cleared as it is read."""
+    kind = getattr(_last_stop, "kind", None)
+    _last_stop.kind = None
+    return kind
+
 
 class unattended:
     """Mark everything inside as work nobody is watching.
@@ -438,6 +450,7 @@ def limit_message(kind: str, *, detail: str = "", used: int = 0,
     """
     m = str(model or "the model")
     k = str(kind or "").strip().lower()
+    _last_stop.kind = k
     if k == "loop":
         return (
             "I stopped: %s, so I was going round in circles rather than making "
@@ -638,6 +651,7 @@ def ran_long_message(*, model: str = "", rounds: int = 0) -> str:
     ended a 19-minute turn by telling the person to raise a setting they cannot
     see, which reads as their fault and is not even advice they can act on.
     """
+    _last_stop.kind = "ran_long"
     where = (" after %d rounds of work" % rounds) if rounds else ""
     return (
         "I ran long on this one%s and did not get to a finished answer — I kept "

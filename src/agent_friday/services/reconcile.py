@@ -439,12 +439,10 @@ def _resume_in_background(task_id: str) -> None:
                     rec["status"] = "running"
                     rec["ended"] = None
             text, _trace = _tr.resume(task_id)
-            with TASKS_LOCK:
-                rec = TASKS.get(task_id)
-                if rec is not None:
-                    rec["status"] = "complete"
-                    rec["result"] = text
-                    rec["ended"] = time.time()
+            # A task resumed from its ledger ran its own worker, which has
+            # already recorded how it ended; `settle` only fills in a status
+            # nothing else set.
+            _tr.settle(task_id, text, TASKS=TASKS, TASKS_LOCK=TASKS_LOCK)
         except Exception as e:
             with TASKS_LOCK:
                 rec = TASKS.get(task_id)
