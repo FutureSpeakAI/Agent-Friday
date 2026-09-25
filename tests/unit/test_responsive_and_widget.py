@@ -203,6 +203,45 @@ def test_the_avatar_stays_centred_and_visible(desktop, w, h):
         "the avatar is %dpx off centre at %dpx wide" % (r["avatarOffCentre"], w))
 
 
+
+MENU_PROBE = """label => {
+  const btn = document.querySelector('button[aria-label="' + label + '"]');
+  if (!btn) return {found: false};
+  const menu = Array.from(btn.parentElement.children).find(c => c !== btn);
+  if (!menu) return {found: true, opened: false};
+  const bar = document.querySelector('.top-bar').getBoundingClientRect();
+  const r = menu.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = Math.max(r.top, bar.bottom) + 12;
+  const hit = document.elementFromPoint(x, y);
+  return {found: true, opened: true, box: [Math.round(r.left), Math.round(r.top),
+          Math.round(r.width), Math.round(r.height)], barBottom: Math.round(bar.bottom),
+          dropsDown: r.top >= bar.bottom - 12, visible: !!hit && menu.contains(hit)};
+}"""
+
+
+@pytest.mark.parametrize("label", ["Scene selection", "Model quick switch"])
+@pytest.mark.parametrize("w,h", [(1600, 900), (1024, 768)], ids=lambda v: str(v))
+def test_the_top_bar_menus_open_where_they_can_be_seen(desktop, w, h, label):
+    """A menu that drops out of the top bar is seen, not merely mounted.
+
+    The bar's halves clip what does not fit on a narrow window. Clipping them
+    vertically as well hid the scene selector's menu and the model quick
+    switch's menu completely: the click opened each one and nothing appeared.
+    """
+    desktop.evaluate("() => { const c = window.fridayCondensed; if (c && c.exit) c.exit(); }")
+    desktop.set_viewport_size({"width": w, "height": h})
+    desktop.wait_for_timeout(900)
+    desktop.locator('button[aria-label="%s"]' % label).click()
+    desktop.wait_for_timeout(700)
+    r = desktop.evaluate(MENU_PROBE, label)
+    desktop.keyboard.press("Escape")
+    desktop.mouse.click(w // 2, int(h * 0.45))
+    desktop.wait_for_timeout(400)
+    assert r.get("found"), "no %r button in the top bar" % label
+    assert r.get("opened"), "%r did not open its menu at %dpx" % (label, w)
+    assert r["dropsDown"], "%r's menu opens above the bar at %dpx: %r" % (label, w, r)
+    assert r["visible"], "%r's menu opened but cannot be seen at %dpx: %r" % (label, w, r)
+
 def test_condensed_mode_is_the_avatar_and_nothing_else(desktop):
     desktop.set_viewport_size({"width": 340, "height": 400})
     desktop.evaluate("window.fridayCondensed.enter()")

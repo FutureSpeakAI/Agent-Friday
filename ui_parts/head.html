@@ -170,6 +170,13 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
         .top-bar.hidden { transform: translateY(-100%); }
+        /* A flex child will not shrink below its own content unless told it
+           may, so both halves of the bar may shrink, and whatever still does
+           not fit is clipped at the side rather than sticking out over the
+           scene. Only at the side: the scene selector and the model quick
+           switch drop their menus down out of the left-hand group, and
+           clipping vertically hides them completely. */
+        .top-bar > * { min-width: 0; overflow-x: clip; overflow-y: visible; }
 
         /* Kill Switch — floating always-visible emergency stop */
         .kill-switch {
