@@ -2098,7 +2098,7 @@ DEFAULT_SETTINGS = {
     #   "gemini"    — Gemini Live cloud voice (most expressive; needs a key + network)
     #   "auto"      — GPU tier when ready, else CPU; local preferred over cloud
     "voice_engine": "local",
-    "local_voice_asr_model": "small",      # Tier-1 faster-whisper size: tiny|base|small|medium
+    "local_voice_asr_model": "auto",       # faster-whisper size: auto (base on CPU, small on a GPU)|tiny|base|small|medium
     # ── Push-to-transcribe ────────────────────────────────────────────────
     # Hold a key anywhere in Windows, speak, release, and the local transcript
     # is pasted into whatever window has focus. On by default, and system-wide

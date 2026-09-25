@@ -576,10 +576,12 @@ class CpuWhisperEar(EarEngine):
     name = "faster-whisper"
     device = "cpu"
 
-    def __init__(self, model_size: str = "small"):
-        from agent_friday.services.local_voice import WhisperASR
-        self._asr = WhisperASR(model_size)
-        self.model = f"{model_size} int8"
+    def __init__(self, model_size: str = "auto"):
+        from agent_friday.services.local_voice import WhisperASR, resolve_whisper_model
+        # CPU by construction: this engine is what runs when the GPU worker
+        # was refused, so it must not load onto that card in-process.
+        self._asr = WhisperASR(model_size, force_cpu=True)
+        self.model = f"{resolve_whisper_model(model_size, 'cpu')} int8"
 
     def load(self, progress=None):
         self._asr.load(progress=progress)
@@ -751,8 +753,9 @@ def _on_evicted(worker: VoiceWorker) -> None:
 def build_ear(selection: dict, progress=None) -> EarEngine:
     """The ear for `selection`, honouring its GPU policy. Reuses a held,
     alive worker. Raises GpuRefused only under policy `required`."""
+    from agent_friday.services.local_voice import resolve_whisper_model
     policy = str(selection.get("device_policy") or "if_free")
-    model = str(selection.get("model") or "small")
+    model = str(selection.get("model") or "auto")
     cur = held("ear")
     if policy != "never":
         # A held GPU worker is reused; a held CPU ear is NOT — "if free" means
@@ -762,7 +765,8 @@ def build_ear(selection: dict, progress=None) -> EarEngine:
             return cur
         try:
             w = VoiceWorker("whisper-cuda", "ear", idle_s=_idle_s(),
-                            args={"model": model}, on_evicted=_on_evicted)
+                            args={"model": resolve_whisper_model(model, "cuda")},
+                            on_evicted=_on_evicted)
             w.start(progress=progress)
             eng = WorkerEar(w)
             eng.model = w.model
@@ -780,7 +784,8 @@ def build_ear(selection: dict, progress=None) -> EarEngine:
             _notice("voice_worker_died",
                     f"Friday's ear engine crashed on the GPU and was restarted "
                     f"on the CPU ({type(e).__name__}).")
-    if isinstance(cur, CpuWhisperEar) and cur.model == f"{model} int8":
+    if (isinstance(cur, CpuWhisperEar)
+            and cur.model == f"{resolve_whisper_model(model, 'cpu')} int8"):
         return cur
     eng = CpuWhisperEar(model)
     eng.load(progress=progress)

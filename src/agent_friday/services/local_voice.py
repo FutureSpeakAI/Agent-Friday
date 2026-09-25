@@ -84,9 +84,28 @@ PIPER_DIR = LOCAL_VOICE_DIR / "piper"
 ASR_RATE = 16000
 PLAYBACK_RATE = 24000
 
-# Defaults (settings-overridable). whisper "small" is the quality/latency sweet
-# spot on CPU; "base" is the lighter option. Piper amy-medium is a clean default.
-DEFAULT_WHISPER_MODEL = "small"
+# Defaults (settings-overridable). The whisper default is "auto": the size is
+# chosen for the device the model actually lands on, because a fresh install
+# writes this default into settings.json and it then has to suit whatever
+# machine it is on. On a GPU "small" is the quality sweet spot; on a laptop CPU
+# (int8) "small" is slow enough to feel broken, and "base" keeps a spoken
+# sentence close to real time. A size the user sets (tiny|base|small|medium)
+# is used as given. Piper amy-medium is a clean default.
+DEFAULT_WHISPER_MODEL = "auto"
+WHISPER_MODEL_ON_GPU = "small"
+WHISPER_MODEL_ON_CPU = "base"
+
+
+def resolve_whisper_model(requested, device: str) -> str:
+    """The faster-whisper size to load for `requested` on `device`.
+
+    "auto" (or nothing) picks by device; any other value is the user's choice
+    and is returned unchanged.
+    """
+    req = str(requested or "").strip().lower()
+    if req in ("", "auto"):
+        return WHISPER_MODEL_ON_GPU if device == "cuda" else WHISPER_MODEL_ON_CPU
+    return str(requested).strip()
 DEFAULT_PIPER_VOICE = "en_US-amy-medium"
 
 # Piper voices are published as <name>.onnx + <name>.onnx.json on Hugging Face
@@ -346,8 +365,14 @@ class VADEndpointer:
 class WhisperASR:
     """faster-whisper ASR. Loads lazily; transcribes 16 kHz mono PCM16 bytes."""
 
-    def __init__(self, model_size=DEFAULT_WHISPER_MODEL):
-        self.model_size = model_size or DEFAULT_WHISPER_MODEL
+    def __init__(self, model_size=DEFAULT_WHISPER_MODEL, force_cpu=False):
+        #: What settings asked for ("auto" or a size). `model_size` becomes the
+        #: size that actually loaded once `load` has run.
+        self.requested_size = model_size or DEFAULT_WHISPER_MODEL
+        self.model_size = self.requested_size
+        #: The CPU ear of voice_workers: the GPU was already refused for it,
+        #: so it must not take the card in-process instead.
+        self.force_cpu = bool(force_cpu)
         self._model = None
         self._lock = threading.Lock()
 
@@ -433,8 +458,6 @@ class WhisperASR:
         with self._lock:
             if self._model is not None:
                 return
-            if progress:
-                progress(f"Loading speech model ({self.model_size})…")
             from faster_whisper import WhisperModel
             download_root = self._download_root()
             # exist_ok=True makes this a no-op against a read-only baked
@@ -443,10 +466,16 @@ class WhisperASR:
             # download_root keeps the checkpoint under ~/.friday so it survives
             # and is inspectable (or, under OS mode with a baked copy present,
             # reads straight from the sealed image's own asset directory).
-            device, compute, why_cpu = self._pick_device()
+            if self.force_cpu:
+                device, compute, why_cpu = "cpu", "int8", "the CPU ear"
+            else:
+                device, compute, why_cpu = self._pick_device()
+            size = resolve_whisper_model(self.requested_size, device)
+            if progress:
+                progress(f"Loading speech model ({size})…")
             try:
                 self._model = WhisperModel(
-                    self.model_size, device=device, compute_type=compute,
+                    size, device=device, compute_type=compute,
                     download_root=str(download_root))
             except Exception as exc:
                 # A CUDA build that will not initialise must not take local
@@ -456,9 +485,11 @@ class WhisperASR:
                 log.warning("local voice: whisper on CUDA failed (%s); "
                              "falling back to CPU int8", str(exc)[:160])
                 device, compute, why_cpu = "cpu", "int8", str(exc)[:80]
+                size = resolve_whisper_model(self.requested_size, device)
                 self._model = WhisperModel(
-                    self.model_size, device=device, compute_type=compute,
+                    size, device=device, compute_type=compute,
                     download_root=str(download_root))
+            self.model_size = size
             self._device = device
             self._compute = compute
             self._why_cpu = why_cpu

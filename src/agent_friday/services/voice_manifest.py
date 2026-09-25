@@ -109,7 +109,7 @@ def read_selection(settings: dict | None = None) -> dict:
     return {
         "mode": mode,
         "ear": {"engine": "faster-whisper",
-                "model": str(s.get("local_voice_asr_model") or "small"),
+                "model": str(s.get("local_voice_asr_model") or "auto"),
                 "device_policy": _policy(s.get("voice_ear_gpu"))},
         "mind": {"engine": "seat", "reply_cap": _reply_cap(s)},
         "mouth": {"engine": str(s.get("local_voice_tts_engine") or "piper").strip().lower(),

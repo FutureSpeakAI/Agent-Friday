@@ -11,6 +11,7 @@ import time
 import pytest
 
 from agent_friday.services import voice_manifest as vm
+from agent_friday.services.local_voice import resolve_whisper_model
 
 
 def _boom(*a, **k):
@@ -36,9 +37,10 @@ def _good_runners(monkeypatch, *, ear_text="Friday, what time is it right now?",
                   mouth_pcm=b"\x00\x01" * 24000, mouth_engine="kokoro",
                   mouth_device="cuda", contract=None):
     monkeypatch.setitem(vm.ENGINE_RUNNERS, "ear",
-                        lambda sel, pcm, prog: (ear_text, {"engine": "faster-whisper",
-                                                           "device": "cpu",
-                                                           "model": f"{sel.get('model')} int8"}))
+                        lambda sel, pcm, prog: (ear_text, {
+                            "engine": "faster-whisper", "device": "cpu",
+                            # What CpuWhisperEar reports: the size that loads.
+                            "model": f"{resolve_whisper_model(sel.get('model'), 'cpu')} int8"}))
     monkeypatch.setitem(vm.ENGINE_RUNNERS, "mouth",
                         lambda sel, text, prog: (mouth_pcm, {"engine": mouth_engine,
                                                              "device": mouth_device,
@@ -85,7 +87,7 @@ def test_proof_is_set_only_by_evidence(manifest, monkeypatch):
         assert isinstance(p["latency_ms"], int)
         assert p["sample"]
     d = manifest.describe_for_model()
-    assert "faster-whisper small int8 on the CPU" in d
+    assert "faster-whisper base int8 on the CPU" in d   # the default size on a CPU
     assert "Kokoro (af_heart) on the GPU" in d
     assert "fridayweaver" in d.lower()
     assert "nothing leaves it" in d

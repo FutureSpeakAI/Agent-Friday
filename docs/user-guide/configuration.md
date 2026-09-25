@@ -200,7 +200,7 @@ Workflows workspace. See [scheduled jobs](scheduled-jobs.md).
 | Key | Default | Meaning |
 |---|---|---|
 | `voice_engine` | `"local"` | `local` (CPU), `local-gpu` (NVIDIA NeMo), `gemini`, `auto`, `elevenlabs`, `inworld`. |
-| `local_voice_asr_model` | `"small"` | faster-whisper size: `tiny`, `base`, `small` or `medium`. |
+| `local_voice_asr_model` | `"auto"` | faster-whisper size. `auto` loads `base` on the CPU (int8) and `small` on an NVIDIA GPU; `tiny`, `base`, `small` or `medium` is used as given. |
 | `local_voice_tts_engine` | `"piper"` | `piper`, or `kokoro` (needs an NVIDIA GPU unless `local_voice_kokoro_allow_cpu`). |
 | `local_voice_tts_voice` | `"en_US-amy-medium"` | Piper voice. |
 | `local_voice_kokoro_voice` | `"af_heart"` | Kokoro voice. |

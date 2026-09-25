@@ -133,3 +133,74 @@ def test_cuda_that_will_not_initialise_falls_back_rather_than_raising(monkeypatc
         "it should try the GPU, fail, and land on CPU: got %r" % (calls,))
     assert asr._device == "cpu"
     assert "cublas" in (asr._why_cpu or "")
+
+
+# ── the model SIZE follows the device on a fresh install ────────────────────
+#
+# A fresh install writes the default `local_voice_asr_model` into settings.json,
+# so the default has to be a value that means "pick for this machine": on a
+# laptop with no usable GPU, whisper "small" on CPU int8 is slow; "base" is the
+# size that keeps a sentence feeling like a conversation. A size the user
+# picked is used as given.
+
+def _record_loads(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        cuda_fails = False
+
+        def __init__(self, size, device=None, compute_type=None, download_root=None):
+            calls.append((size, device, compute_type))
+            if device == "cuda" and FakeModel.cuda_fails:
+                raise RuntimeError("cublas failed to initialise")
+
+    fake_fw = types.ModuleType("faster_whisper")
+    fake_fw.WhisperModel = FakeModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_fw)
+    return calls, FakeModel
+
+
+def test_a_fresh_install_on_a_laptop_loads_base_on_cpu_int8(monkeypatch):
+    from agent_friday.core import DEFAULT_SETTINGS
+    _with_torch(monkeypatch, _fake_torch(available=False))
+    calls, _m = _record_loads(monkeypatch)
+    asr = WhisperASR(DEFAULT_SETTINGS["local_voice_asr_model"])
+    asr.load()
+    assert calls == [("base", "cpu", "int8")], calls
+    assert asr.model_size == "base"
+
+
+def test_a_fresh_install_with_a_capable_gpu_loads_small_on_cuda(monkeypatch):
+    from agent_friday.core import DEFAULT_SETTINGS
+    _with_torch(monkeypatch, _fake_torch(available=True, free_gib=8.0))
+    calls, _m = _record_loads(monkeypatch)
+    WhisperASR(DEFAULT_SETTINGS["local_voice_asr_model"]).load()
+    assert calls == [("small", "cuda", "float16")], calls
+
+
+def test_an_automatic_size_shrinks_when_cuda_falls_back_to_cpu(monkeypatch):
+    _with_torch(monkeypatch, _fake_torch(available=True, free_gib=8.0))
+    calls, model = _record_loads(monkeypatch)
+    model.cuda_fails = True
+    WhisperASR("auto").load()
+    assert calls == [("small", "cuda", "float16"), ("base", "cpu", "int8")], calls
+
+
+def test_a_size_the_user_chose_is_kept_on_cpu(monkeypatch):
+    _with_torch(monkeypatch, _fake_torch(available=False))
+    calls, _m = _record_loads(monkeypatch)
+    WhisperASR("small").load()
+    assert calls == [("small", "cpu", "int8")], calls
+
+
+def test_the_cpu_ear_never_puts_whisper_on_the_gpu(monkeypatch):
+    """The GPU worker was refused (display reserve, arbiter); the fallback is
+    the CPU, not an in-process float16 load onto the same card."""
+    from agent_friday.services import voice_workers as vw
+    _with_torch(monkeypatch, _fake_torch(available=True, free_gib=8.0))
+    calls, _m = _record_loads(monkeypatch)
+    ear = vw.CpuWhisperEar("auto")
+    ear.load()
+    assert calls == [("base", "cpu", "int8")], calls
+    assert ear.describe() == {"engine": "faster-whisper", "device": "cpu",
+                              "model": "base int8"}
