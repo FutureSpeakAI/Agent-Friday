@@ -33,21 +33,21 @@ from agent_friday.services import tool_budget as tb
 #: from the user's own wiki and vault, which are not fixed.
 MAX_SYSTEM_PROMPT_TOKENS = 6_000
 
-#: Every tool's full schema: ~17,959 tokens for 100 tools. This is what a turn
+#: Every tool's full schema: ~18,769 tokens for 107 tools. This is what a turn
 #: pays only when the tool index is switched off (FRIDAY_TOOL_CATALOGUE=0), so
 #: it is the fallback's cost, and it still grows with every tool added.
 MAX_TOOL_CATALOGUE_TOKENS = 20_000
 
 #: What a turn actually sends by default: the tool index (name and one line
-#: per tool, services/tool_catalogue.py) plus the few resident tools. ~3,266
-#: tokens for 100 tools. This is the number that decides prompt-eval time.
+#: per tool, services/tool_catalogue.py) plus the few resident tools. ~3,425
+#: tokens for 107 tools. This is the number that decides prompt-eval time.
 MAX_TOOL_OPENING_TOKENS = 4_500
 
-#: What the seat reads before the conversation starts. Measured ~17,071.
-#: At the 500 tokens/second this machine sustains, 22,000 is about 44 seconds
-#: on a cache miss - already slow, and the point past which no amount of
-#: caching hides it.
-MAX_STANDING_PROMPT_TOKENS = 22_000
+#: What the seat reads before the conversation starts, with the tool index on
+#: (the default): the system prompt plus the opening tool set. Measured ~6,900
+#: (3,476 + 3,425 for 107 tools). At the 500 tokens/second a local seat
+#: sustains, 9,000 is about 18 seconds on a cache miss.
+MAX_STANDING_PROMPT_TOKENS = 9_000
 
 
 def _system_prompt_tokens() -> int:
@@ -60,6 +60,12 @@ def _system_prompt_tokens() -> int:
 def _tool_catalogue_tokens() -> int:
     from agent_friday.services.agent import CLAUDE_TOOLS
     return tb._tokens(CLAUDE_TOOLS)
+
+
+def _tool_opening_tokens() -> int:
+    from agent_friday.services.agent import CLAUDE_TOOLS
+    from agent_friday.services import tool_catalogue as tc
+    return tb._tokens(tc.opening_set(CLAUDE_TOOLS))
 
 
 def test_the_system_prompt_stays_within_its_budget():
@@ -86,14 +92,14 @@ def test_the_tool_catalogue_stays_within_its_budget():
     got = _tool_catalogue_tokens()
     assert got <= MAX_TOOL_CATALOGUE_TOKENS, (
         "the tool catalogue is ~%d tokens against a declared ceiling of %d. "
-        "Tool schemas render before everything else in the prompt, so this is "
-        "paid on every turn by every seat. A new tool is not free."
+        "Every turn pays this when the tool index is off, and every tool a "
+        "turn loads from the index pays its share. A new tool is not free."
         % (got, MAX_TOOL_CATALOGUE_TOKENS))
 
 
 def test_the_standing_prompt_stays_within_its_budget():
     """The one that matters: what the seat reads before the user's first word."""
-    got = _system_prompt_tokens() + _tool_catalogue_tokens()
+    got = _system_prompt_tokens() + _tool_opening_tokens()
     assert got <= MAX_STANDING_PROMPT_TOKENS, (
         "the standing prompt is ~%d tokens against a declared ceiling of %d - "
         "about %.0f seconds of prompt evaluation on a 500 tok/s local seat, "
@@ -124,12 +130,17 @@ def test_the_ceilings_leave_room_but_not_a_field():
     """A budget set far above reality never fires; one set at reality always
     does. Both get ignored. This keeps the declared numbers honest about
     being close to what was measured."""
-    standing = _system_prompt_tokens() + _tool_catalogue_tokens()
-    slack = MAX_STANDING_PROMPT_TOKENS / max(standing, 1)
-    assert 1.0 < slack < 2.0, (
-        "the standing-prompt ceiling is %.2fx the measured value. Under 1.0 it "
-        "is already breached; over 2.0 it will never fire and is decoration."
-        % slack)
+    measured = {
+        "standing": (MAX_STANDING_PROMPT_TOKENS,
+                     _system_prompt_tokens() + _tool_opening_tokens()),
+        "tool catalogue": (MAX_TOOL_CATALOGUE_TOKENS, _tool_catalogue_tokens()),
+    }
+    for name, (ceiling, got) in measured.items():
+        slack = ceiling / max(got, 1)
+        assert 1.0 < slack < 2.0, (
+            "the %s ceiling is %.2fx the measured value. Under 1.0 it is "
+            "already breached; over 2.0 it will never fire and is decoration."
+            % (name, slack))
 
 
 if __name__ == "__main__":  # a quick way to see the numbers, not a test
@@ -138,6 +149,6 @@ if __name__ == "__main__":  # a quick way to see the numbers, not a test
     print("tool catalogue : %6d tokens (ceiling %d)"
           % (_tool_catalogue_tokens(), MAX_TOOL_CATALOGUE_TOKENS))
     print("standing total : %6d tokens (ceiling %d)"
-          % (_system_prompt_tokens() + _tool_catalogue_tokens(),
+          % (_system_prompt_tokens() + _tool_opening_tokens(),
              MAX_STANDING_PROMPT_TOKENS))
     assert pytest  # keep the import honest when run directly

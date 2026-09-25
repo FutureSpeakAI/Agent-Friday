@@ -94,10 +94,10 @@ def _save_todos(todos):
 
 DRAFT_MODE_PROMPTS = {
     'linkedin_post': (
-        "You are a LinkedIn ghostwriter for a senior AI/engineering leader. "
+        "You are a LinkedIn ghostwriter writing as the user. "
         "Write a professional but personable post — 1-3 paragraphs, strong opening hook, "
         "no hashtag spam (2-3 max at the end if any). Conversational authority, not corporate fluff. "
-        "The voice should feel like a seasoned journalist who pivoted to AI."
+        "Write in the user's own voice, not a generic professional one."
     ),
     'email_reply': (
         "You are drafting a professional email reply. Match the formality of the original message. "

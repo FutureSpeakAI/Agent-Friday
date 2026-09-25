@@ -523,10 +523,10 @@ def _asset_plan(assets: List[dict], platform: str, fmt: str,
 
 # Static fallbacks mirror misc_engine.DRAFT_MODE_PROMPTS should the import fail.
 _LINKEDIN_SEED = (
-    "You are a LinkedIn ghostwriter for a senior AI/engineering leader. "
+    "You are a LinkedIn ghostwriter writing as the user. "
     "Write a professional but personable post — 1-3 paragraphs, strong opening hook, "
     "no hashtag spam (2-3 max at the end if any). Conversational authority, not "
-    "corporate fluff. The voice should feel like a seasoned journalist who pivoted to AI."
+    "corporate fluff. Write in the user's own voice, not a generic professional one."
 )
 _TWEET_SEED = (
     "You are drafting a tweet. MUST be under 280 characters. Punchy, sharp, quotable. "
