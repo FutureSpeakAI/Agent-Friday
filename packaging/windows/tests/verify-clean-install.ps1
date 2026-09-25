@@ -16,6 +16,7 @@
       consent   first run opens on the vault-first consent flow, and the
                 weekly update check is a question, not a default
       setup-chat the setup chat starts at its first stage
+      first-load reloading the desktop does not end first-run setup
       connections the checklist lists the services and no secret
       setup-later "Set up later" completes setup with defaults (run last)
       schedules scheduled jobs default to a local seat; the update check is off
@@ -114,6 +115,12 @@ try {
     $chat = Api '/api/setup-chat/state'
     Check 'setup-chat' (($chat.stage -eq 'welcome') -and (-not $chat.consent_done) -and (-not $chat.completed)) `
           "stage: $($chat.stage); consent done: $($chat.consent_done); completed: $($chat.completed)"
+
+    # Loading the desktop, twice, must leave first-run setup unfinished: a
+    # reload before the person finishes still brings the setup back.
+    foreach ($n in 1..2) { $null = Api '/api/evolution'; $null = Api '/api/setup/status' }
+    $still = Api '/api/setup/status'
+    Check 'first-load' (-not $still.initialized) "initialized after two page loads: $($still.initialized)"
 
     # The connection checklist lists the services, and never a secret.
     $raw = (Invoke-WebRequest -Uri "$base/api/setup/connections" -Headers $hdr -UseBasicParsing -TimeoutSec 60).Content
