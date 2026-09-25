@@ -56,7 +56,12 @@ Cloud-only installs now fully work. The plain-language summary is in
   `[PII:…]` tags, but a tool was handed the tag itself, so "email this
   address" could only fail or be refused. Tool arguments now get the real
   value back on this machine (the approval card shows it), and the model is
-  told it may use the tags in tool arguments.
+  told it may use the tags in tool arguments. Two causes kept that from
+  working: the note explaining the tags names identifier types, so the egress
+  gate withheld the note itself and sent its "no local model" placeholder
+  instead; and a message sent as content blocks reached the gate unmasked,
+  so the whole paragraph was withheld. The note is registered as trusted
+  Friday-authored text, and block content is masked like plain text.
 - The default heartbeat was never local-only: a fresh install ran it hourly
   on a cloud model. It is local-only like the other built-in jobs; on a
   cloud-only PC it follows the new question above.

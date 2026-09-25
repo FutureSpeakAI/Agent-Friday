@@ -202,6 +202,52 @@ _CHARS_PER_TOKEN = 4
 _HISTORY_STEP = 20
 
 
+#: Told to a cloud model whenever this turn's private values were masked.
+#: Registered as trusted Friday-authored text: it names identifier types
+#: ("ssn", "cc"), and the egress gate would otherwise withhold it as sensitive
+#: and send its "no local model" note instead -- the model then refused every
+#: action on a masked value.
+PRIVACY_PLACEHOLDERS_NOTE = (
+    "== PRIVACY PLACEHOLDERS ==\n"
+    "Some private values in your context appear as tags like "
+    "[PII:type:hash] (types: addr, phone, email, ssn, cc, name). "
+    "These are stable references to real data on the user's device. "
+    "Use them in your reply EXACTLY as written when you need to "
+    "reference the underlying value — they will be substituted "
+    "with the real data before the user sees your response. "
+    "Use them the same way in tool arguments (an address to "
+    "email, a number to call): the tool runs on the user's "
+    "device and receives the real value. A tag is never a "
+    "reason to refuse or to ask the user to repeat the value."
+)
+try:
+    from agent_friday.services.egress_gate import register_trusted_text as _rpn
+    _rpn(PRIVACY_PLACEHOLDERS_NOTE)
+except Exception:
+    pass
+
+
+def _scrub_messages_pii(messages, lookup) -> None:
+    """Mask private values in every message for a cloud call, in place.
+
+    Plain-string content and the text parts of block content (a turn carrying
+    context or an attachment) are both masked into `lookup`. A block left raw
+    sends the address to the egress gate, which withholds the whole
+    paragraph, and a tool can then never be given the value.
+    """
+    for m in messages:
+        c = m.get('content')
+        if isinstance(c, str) and c:
+            m['content'], sub = _scrub_pii(c)
+            lookup.update(sub)
+        elif isinstance(c, list):
+            for block in c:
+                if (isinstance(block, dict) and block.get('type') == 'text'
+                        and isinstance(block.get('text'), str) and block['text']):
+                    block['text'], sub = _scrub_pii(block['text'])
+                    lookup.update(sub)
+
+
 def _history_start(history) -> int:
     """Where this turn's transcript begins — by token cost, in whole steps.
 
@@ -1311,25 +1357,9 @@ def chat():
                 if sp:
                     sp, sub = _scrub_pii(sp)
                     lookup.update(sub)
-                for m in messages:
-                    c = m.get('content')
-                    if isinstance(c, str) and c:
-                        m['content'], sub = _scrub_pii(c)
-                        lookup.update(sub)
+                _scrub_messages_pii(messages, lookup)
                 if lookup:
-                    sp += (
-                        "\n\n== PRIVACY PLACEHOLDERS ==\n"
-                        "Some private values in your context appear as tags like "
-                        "[PII:type:hash] (types: addr, phone, email, ssn, cc, name). "
-                        "These are stable references to real data on the user's device. "
-                        "Use them in your reply EXACTLY as written when you need to "
-                        "reference the underlying value — they will be substituted "
-                        "with the real data before the user sees your response. "
-                        "Use them the same way in tool arguments (an address to "
-                        "email, a number to call): the tool runs on the user's "
-                        "device and receives the real value. A tag is never a "
-                        "reason to refuse or to ask the user to repeat the value."
-                    )
+                    sp += "\n\n" + PRIVACY_PLACEHOLDERS_NOTE
             # This route assembles its own prompt rather than going through
             # `_get_friday_system_prompt`, so the policy and the override
             # strip are applied here, last.
