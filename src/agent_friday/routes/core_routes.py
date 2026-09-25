@@ -522,7 +522,7 @@ def friday_health():
                                or core.ANTHROPIC_MODEL_DEFAULT),
         "subagent_model": settings.get("subagent_model", "claude-sonnet-5"),
         "creative_model": settings.get("creative_model", "gemini-nano-banana-2"),
-        "voice_model": settings.get("voice_model", "gemini-2.5-flash-native-audio-latest"),
+        "voice_model": settings.get("voice_model", "gemini-3.8-live"),
         "vault": {
             "encryption_enabled": _vault_state.get("enabled", False),
             "warning": _vault_warning,

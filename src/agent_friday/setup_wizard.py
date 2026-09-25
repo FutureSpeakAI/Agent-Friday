@@ -1799,7 +1799,7 @@ def main():
 
     # Defaults that server expects
     config.setdefault("subagent_model", "claude-sonnet-5")
-    config.setdefault("voice_model", "gemini-2.5-flash-native-audio-latest")
+    config.setdefault("voice_model", "gemini-3.8-live")
     config.setdefault("temperature", 0.7)
     config.setdefault("response_length", "standard")
     config.setdefault("communication_style", "professional")

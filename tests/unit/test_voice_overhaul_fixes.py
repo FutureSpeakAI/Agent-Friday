@@ -45,7 +45,7 @@ class TestDefaultVoiceModel:
         # DEFAULT_SETTINGS always wins over LIVE_MODEL (settings merge), so the
         # two MUST stay in sync or the constant becomes dead code again.
         import agent_friday.core as core
-        assert core.DEFAULT_SETTINGS["voice_model"] == "gemini-2.5-flash-native-audio-latest"
+        assert core.DEFAULT_SETTINGS["voice_model"] == ve.LIVE_MODEL == "gemini-3.8-live"
         assert ve.validate_live_model(core.DEFAULT_SETTINGS["voice_model"])["ok"]
 
     def test_ui_written_voice_settings_survive_reload(self):

@@ -206,10 +206,12 @@ class _FakeTypes:
 #  2. Promotion — only what a real connect earned
 # ══════════════════════════════════════════════════════════════════════════
 
-def test_38_live_is_in_the_fallback_chain():
-    """Earned by an actual bidiGenerateContent connect, per the rule stated
-    in voice_engine next to LIVE_MODEL."""
-    assert voice_engine.LIVE_MODEL_FALLBACK3 == "gemini-3.8-live"
+def test_38_live_is_the_default_and_25_follows_it():
+    """3.8 Live is Google's stable default and the fastest measured; the 2.5
+    native-audio model it replaced stays first in line behind it. Every id in
+    the chain earned its place by a real connect and a spoken answer."""
+    assert voice_engine.LIVE_MODEL == "gemini-3.8-live"
+    assert voice_engine.LIVE_MODEL_FALLBACK == "gemini-2.5-flash-native-audio-latest"
 
 
 def test_extended_thinking_is_not_in_the_fallback_chain():
@@ -233,7 +235,7 @@ def test_09_2025_preview_was_not_retired_on_a_docs_absence():
     still returns it (bidiGenerateContent, 131072/8192). Absence from a docs
     page is not evidence of retirement, and this fallback is load-bearing.
     """
-    assert voice_engine.LIVE_MODEL_FALLBACK == \
+    assert voice_engine.LIVE_MODEL_FALLBACK3 == \
         "gemini-2.5-flash-native-audio-preview-09-2025"
     assert "gemini-2.5-flash-native-audio-preview-09-2025" not in \
         voice_engine._RETIRED_LIVE_MODELS

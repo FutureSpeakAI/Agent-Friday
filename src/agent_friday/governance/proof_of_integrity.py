@@ -369,7 +369,7 @@ class IntegrityEngine:
                     "creative": (s.get("creative_model")
                                  or "gemini-nano-banana-2"),
                     "voice": (s.get("voice_model")
-                              or "gemini-2.5-flash-native-audio-latest"),
+                              or "gemini-3.8-live"),
                 }
         except Exception as e:
             _log.warning("integrity manifest: settings unreadable (%s); "

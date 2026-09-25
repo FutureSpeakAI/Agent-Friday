@@ -2342,7 +2342,7 @@ DEFAULT_SETTINGS = {
     # the hosted/local catalogs don't know yet (private previews, self-hosted
     # ids). The model catalog surfaces them flagged unverified + non-curated.
     "custom_models": [],
-    "voice_model": "gemini-2.5-flash-native-audio-latest",  # live audio. The -latest alias tracks Google's current native-audio model, so it survives preview retirements. MUST stay in sync with voice_engine.LIVE_MODEL — settings always win over that constant.
+    "voice_model": "gemini-3.8-live",  # live audio: Google's stable Live model and the fastest measured. MUST stay in sync with voice_engine.LIVE_MODEL — settings always win over that constant.
     # ── Creator Economy / Production (Layer 1) ──
     # Daily creation now chooses FREELY across all media (text/code/image/music/
     # video/full production), weighted by recent work + ambient mood + budget —
@@ -2657,7 +2657,7 @@ DEFAULT_SETTINGS = {
         "creative_image": {"provider": "google-gemini", "model": "gemini-nano-banana-2"},
         "creative_video": {"provider": "google-gemini", "model": "veo-3"},
         "creative_music": {"provider": "google-gemini", "model": "lyria-clip"},
-        "voice":          {"provider": "google-gemini", "model": "gemini-2.5-flash-native-audio-latest"},
+        "voice":          {"provider": "google-gemini", "model": "gemini-3.8-live"},
         # Local voice splits into asr + tts; both default to the on-device Tier-1
         # engine (the cloud "voice" entry above is used only when the user opts
         # into Gemini Live). A single user-facing `voice_engine` selector drives
