@@ -71,3 +71,32 @@ def set_budget():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@costs_bp.route('/api/costs/scheduled-cloud', methods=['GET'])
+def scheduled_cloud_view():
+    """May the built-in scheduled jobs use a cloud model when this PC has no
+    local one, which model each uses, and the estimated monthly cost."""
+    try:
+        from agent_friday.services import scheduled_cloud as _sc
+        return jsonify({"status": "ok", **_sc.view()})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@costs_bp.route('/api/costs/scheduled-cloud', methods=['POST'])
+@login_required
+def scheduled_cloud_save():
+    """Change the answer or the heartbeat cadence. Body: any of
+    {allow: bool, heartbeat_every_minutes: int, heartbeat_model, job_model}."""
+    patch = request.get_json(silent=True) or {}
+    from agent_friday.services import scheduled_cloud as _sc
+    try:
+        _sc.save(patch)
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+    return jsonify({"status": "ok", **_sc.view()})

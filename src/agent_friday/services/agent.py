@@ -3265,6 +3265,15 @@ def _summarize_task_outcome(name, reply, tool_trace, status='complete'):
             f"there was nothing actionable to do.")
 
 
+def _cloud_pin_snapshot():
+    """The calling thread's cloud pin (local_only_guard.cloud_pinned), or None."""
+    try:
+        from agent_friday.services.local_only_guard import pin_snapshot
+        return pin_snapshot()
+    except Exception:
+        return None
+
+
 def _task_schedule_id(task_id):
     """The schedule a task runs for, as recorded by `_spawn_task`, or None."""
     with TASKS_LOCK:
@@ -3282,8 +3291,18 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
     kind = "scheduled" if rec.get('schedule_id') else "subagent"
     trace = _rtrace.start(kind, name or description or "Background task", model=model,
                           task_id=task_id, parent_id=parent, trace_id=tid)
+    # A cloud pin taken on the spawning thread (a scheduled job the owner
+    # allowed onto one cloud model) is thread-local, so it is re-entered here,
+    # on the thread that actually makes the model calls.
+    import contextlib as _ctxlib
+    _pin = rec.get('cloud_pin') or None
+    if _pin:
+        from agent_friday.services.local_only_guard import cloud_pinned as _cloud_pinned
+        _pin_ctx = _cloud_pinned(_pin.get('model'), _pin.get('label'))
+    else:
+        _pin_ctx = _ctxlib.nullcontext()
     try:
-        with _rtrace.activate(trace):
+        with _rtrace.activate(trace), _pin_ctx:
             return _task_worker_untraced(task_id, name, prompt, description,
                                          orb_icon=orb_icon, model=model, tools=tools)
     finally:
@@ -3894,6 +3913,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'conversation_id': conversation_id,
             # The governance grant scope of a scheduled run (see docstring).
             'schedule_id': str(schedule_id) if schedule_id else None,
+            # The spawning thread's cloud pin, re-entered by _task_worker.
+            'cloud_pin': _cloud_pin_snapshot(),
             # Defect E: seat-supervisor admission fields. The queue keys on
             # id + seat; the watchdog view reads tool_calls off the record.
             'id': task_id,
@@ -9385,6 +9406,10 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     session_ctx: passed to _governance_check for ring-2/3 policy enforcement.
       Keys: authenticated (bool), is_background_task (bool).
     """
+    # A scheduled job allowed onto the cloud runs on the model the owner chose
+    # for it (services/local_only_guard.cloud_pinned).
+    from agent_friday.services.local_only_guard import apply_pin
+    model = apply_pin("anthropic", model)
     client = get_anthropic_client()
     if client is None:
         # One key is enough: with only an OpenRouter key, the same Claude

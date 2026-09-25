@@ -125,3 +125,100 @@ def refuse_if_active(provider, model: str = "") -> None:
                        (" (%s)" % model) if model else ""))
     _log.warning("refused a cloud call inside a local-only run: %s", msg)
     raise CloudRefused(msg)
+
+
+# ── Scheduled jobs the owner allowed onto ONE cloud model ────────────────────
+#
+# The other half of the same rule. When no local model is serving, a local-only
+# job is skipped; the owner can instead allow those jobs to run on a cloud
+# model they chose (settings `scheduled_cloud`, services/scheduled_cloud.py).
+# "Allowed onto the cloud" means that model, not whatever the router or a
+# fallback leg reaches for: an unattended job that silently escalates to a
+# frontier model is how an hourly heartbeat becomes a bill of hundreds of
+# dollars. So the chosen model is a property of the RUN, pinned here, and the
+# cloud transports apply it at the last point before the money is spent.
+
+class cloud_pinned:
+    """Context manager: every cloud call inside uses `model`, or is refused.
+
+    Thread-local and re-entrant, like `local_only`. Entering a pin clears an
+    enclosing local-only mark for its duration, because the owner allowed this
+    run onto the cloud.
+    """
+
+    def __init__(self, model: str, job_label: str = ""):
+        self.model = str(model or "").strip()
+        self.job_label = job_label or "this job"
+        self._prev = None
+
+    def __enter__(self):
+        self._prev = (getattr(_state, "pin", ""), getattr(_state, "pin_label", ""),
+                      getattr(_state, "active", False))
+        _state.pin = self.model
+        _state.pin_label = self.job_label
+        _state.active = False
+        return self
+
+    def __exit__(self, *exc):
+        _state.pin, _state.pin_label, _state.active = self._prev
+        return False
+
+
+def pinned_model() -> str:
+    """The cloud model this thread's run is pinned to, or ""."""
+    return str(getattr(_state, "pin", "") or "")
+
+
+def pin_snapshot() -> dict | None:
+    """The active pin as a plain dict, to carry into a worker thread."""
+    m = pinned_model()
+    if not m:
+        return None
+    return {"model": m, "label": str(getattr(_state, "pin_label", "") or "")}
+
+
+def _gateway_id(model: str) -> str:
+    """`claude-haiku-4-5-20251001` -> `anthropic/claude-haiku-4.5`.
+
+    The OpenRouter spelling of an Anthropic id: vendor prefix, no date suffix,
+    and a dot between version digits. `cost_meter._canonical_gateway_id`
+    reverses it, so the call still meters at the Anthropic row.
+    """
+    import re as _re
+    base = _re.sub(r"-\d{8}$", "", model)
+    return "anthropic/" + _re.sub(r"(\d)-(\d)", r"\1.\2", base)
+
+
+def apply_pin(provider, model: str | None = None) -> str | None:
+    """The model a transport should send, given the run's pin.
+
+    No pin: `model` unchanged. A local provider: unchanged (free, and a local
+    seat is never what the pin protects against). Anthropic: the pinned Claude
+    id. OpenRouter: the pinned id in its gateway spelling. Any other cloud
+    provider cannot serve the chosen model, so the call is refused rather than
+    sent to a model nobody chose.
+    """
+    pin = pinned_model()
+    if not pin:
+        return model
+    name = provider_name_of(provider).lower()
+    try:
+        from agent_friday.services.seat_policy import is_local_provider_name
+        if name and is_local_provider_name(name):
+            return model
+    except Exception:
+        pass
+    if isinstance(provider, dict) and \
+            str(provider.get("classification") or "").lower() == "local":
+        return model
+    is_claude = pin.startswith("claude")
+    if name in ("anthropic", "cloud", "claude", ""):
+        if is_claude:
+            return pin
+    elif name == "openrouter":
+        return _gateway_id(pin) if is_claude else pin
+    label_ = str(getattr(_state, "pin_label", "") or "this job")
+    msg = ("%s may run only on %s, which %s does not serve. It was not sent "
+           "to a different model." % (label_, pin, name or "this provider"))
+    _log.warning("refused a cloud call outside the pinned model: %s", msg)
+    raise CloudRefused(msg)

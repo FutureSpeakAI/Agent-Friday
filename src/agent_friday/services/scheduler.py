@@ -61,6 +61,49 @@ class SkippedRun(RuntimeError):
     """
 
 
+class PausedNoLocalModel(SkippedRun):
+    """A built-in local-only job skipped because this PC has no local model
+    serving and the owner has not allowed it onto a cloud model.
+
+    Not retried and not reported as a failure: the condition does not clear in
+    five minutes, and one self-updating status entry
+    (scheduled_cloud.notify_paused) says what is happening and where to change
+    it, instead of a failure notice per run.
+    """
+
+
+def _cloud_model_for(rec):
+    """The cloud model this local-only run may use instead, or None.
+
+    Only for the built-in jobs the owner's `scheduled_cloud` answer covers, and
+    only when that answer is yes. The caller has already established that no
+    local seat is serving; a serving local seat always wins.
+    """
+    if (rec or {}).get("id") not in LOCAL_ONLY_BY_DEFAULT:
+        return None
+    try:
+        from agent_friday.services import scheduled_cloud as _sc
+        cfg = _sc.settings()
+        if not cfg.get("allow"):
+            return None
+        return _sc.model_for(rec.get("id"), cfg) or None
+    except Exception as e:
+        _log.debug("scheduled_cloud unavailable: %s", e)
+        return None
+
+
+def _paused(rec, reason):
+    """Raise the right skip for a local-only run that found no local model."""
+    if (rec or {}).get("id") in LOCAL_ONLY_BY_DEFAULT:
+        try:
+            from agent_friday.services import scheduled_cloud as _sc
+            _sc.notify_paused()
+        except Exception:
+            pass
+        raise PausedNoLocalModel(reason)
+    raise SkippedRun(reason)
+
+
 def _resolve_local_seat():
     """The local model actually serving right now, or None.
 
@@ -427,6 +470,27 @@ def _idle_window_ok(rec, spec, now) -> bool:
     return False
 
 
+def _cloud_cadence_holds(rec, now) -> bool:
+    """Is a local-only interval job waiting for its CLOUD cadence?
+
+    When the owner allowed the heartbeat onto a cloud model and no local seat
+    serves, it runs at `scheduled_cloud.heartbeat_every_minutes`, daytime only,
+    instead of its own (hourly) interval. Asked only once the job's own
+    interval has elapsed, so the local-seat probe runs at most once an interval.
+    """
+    if not (rec.get("task") or {}).get("local_only"):
+        return False
+    if rec.get("id") != "sch_heartbeat" or not _cloud_model_for(rec):
+        return False
+    if _resolve_local_seat():
+        return False
+    try:
+        from agent_friday.services import scheduled_cloud as _sc
+        return not _sc.heartbeat_slot_open(rec, now)
+    except Exception:
+        return False
+
+
 def _is_due(rec, now) -> bool:
     if not rec.get("enabled", True):
         return False
@@ -448,7 +512,9 @@ def _is_due(rec, now) -> bool:
     if trig == "interval":
         every = max(1, int(spec.get("every_minutes", 60)))
         last = rec.get("last_run_ts") or 0
-        return (now.timestamp() - last) >= every * 60
+        if (now.timestamp() - last) < every * 60:
+            return False
+        return not _cloud_cadence_holds(rec, now)
 
     if trig == "once":
         # One-shot (§6.2 scheduler extension): spec {at: <epoch>}. Fires when
@@ -742,11 +808,20 @@ def _run_task(rec):
             # the cloud transports refuse inside.
             if task.get("local_only"):
                 from agent_friday.services import local_only_guard as _log_guard
+                # The owner allowed these jobs onto a cloud model when no local
+                # one serves: run on exactly that model, and NOT inside the
+                # local-only guard, which would refuse it.
+                _cm = _cloud_model_for(rec)
+                if _cm and not _resolve_local_seat():
+                    with _log_guard.cloud_pinned(_cm, meta.get("label") or ref):
+                        return meta["fn"]()
                 with _log_guard.local_only(meta.get("label") or ref):
                     try:
                         return meta["fn"]()
                     except _log_guard.CloudRefused as exc:
-                        raise SkippedRun(str(exc)) from exc
+                        if _resolve_local_seat():
+                            raise SkippedRun(str(exc)) from exc
+                        _paused(rec, str(exc))
             return meta["fn"]()
     # agent_prompt — run through the existing background-task machinery so the
     # scheduled run gets its own fresh vault context, orbs, and verification.
@@ -774,17 +849,33 @@ def _run_task(rec):
     # changes who it pays is the same silent-substitution defect this codebase
     # has spent a lot of effort removing from the interactive path.
     _model = task.get("model")
+    _cloud = None
     if task.get("local_only"):
         _model = _resolve_local_seat()
         if not _model:
-            raise SkippedRun(
-                "local_only schedule skipped: no local seat is serving right "
-                "now, and this job is not permitted to run in the cloud")
+            # No local seat. The owner may have allowed this job onto one
+            # cloud model; otherwise it is skipped, as before.
+            _cloud = _cloud_model_for(rec)
+            if not _cloud:
+                _paused(rec,
+                        "local_only schedule skipped: no local seat is serving "
+                        "right now, and this job is not permitted to run in "
+                        "the cloud")
+            _model = _cloud
     # Pinning the model at spawn is not the same as forbidding cloud for the
     # whole run: `_generate_agent`'s fallback ladder can retry a failed leg on
     # another provider, which is how a pinned-local heartbeat run can still
-    # cost money (mostly cache-write tokens). The context closes that.
-    if task.get("local_only"):
+    # cost money (mostly cache-write tokens). The context closes that. A run
+    # allowed onto the cloud is pinned to its model instead; `_spawn_task`
+    # carries the pin into the task's own thread.
+    if _cloud:
+        from agent_friday.services import local_only_guard as _log_guard
+        with _log_guard.cloud_pinned(_cloud, rec.get("name") or "this schedule"):
+            tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
+                              description=f"scheduled:{rec.get('id')}",
+                              orb_icon="⏰", tools=task.get("tools"),
+                              model=_model, schedule_id=rec.get("id"))
+    elif task.get("local_only"):
         from agent_friday.services import local_only_guard as _log_guard
         with _log_guard.local_only(rec.get("name") or "this schedule"):
             tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
@@ -916,6 +1007,13 @@ def dispatch(rec, *, manual=False):
                 pass
             else:
                 _notify_run(rec, "complete", summary)
+        except PausedNoLocalModel as e:
+            # Recorded as a skip with its reason. No retry (the condition does
+            # not clear in minutes) and no failure notice: the one status
+            # entry scheduled_cloud.notify_paused keeps covers every run.
+            status, summary = "skipped", str(e)
+            _patch_record(sid, last_status="skipped", last_summary=summary,
+                          retry_pending=False, retry_count=0, not_before=0)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e}"
             # print_exc() writes to stderr, which the packaged app has none
@@ -1350,6 +1448,10 @@ _DEFAULT_AGENT_SCHEDULES = [
             # is not checkable by the model; it stays as written pending a
             # maintainer decision rather than being silently rewritten here.
             "tools": ["query_calendar", "find_calendar_events", "search_email"],
+            # Listed in LOCAL_ONLY_BY_DEFAULT, so it ships local-only like the
+            # builtins: on the local seat when one serves, otherwise skipped
+            # unless the owner allowed its cloud model (scheduled_cloud).
+            "local_only": True,
         },
         "enabled": True,
         # 'status': keep ONE self-updating "last ran …" entry in the panel; never
@@ -1386,12 +1488,23 @@ def _seed_default_agent_schedules():
             if r.get("id") == "sch_heartbeat" and r.get("notify") == "on_change":
                 r["notify"] = "status"
                 migrated += 1
+        # The local-only default reaches an agent_prompt default too. A
+        # heartbeat seeded without the key has never been given an answer, so
+        # it would otherwise run hourly on the cloud subagent model; an
+        # explicit false is left alone.
+        for r in recs:
+            t = r.get("task") or {}
+            if (r.get("id") in LOCAL_ONLY_BY_DEFAULT
+                    and t.get("kind") == "agent_prompt" and "local_only" not in t):
+                t["local_only"] = True
+                r["task"] = t
+                migrated += 1
         if added or migrated:
             _write_store(recs)
             if added:
                 print(f"  [scheduler] seeded {added} default agent schedule(s).")
             if migrated:
-                print("  [scheduler] migrated heartbeat notify → 'status'.")
+                print("  [scheduler] brought the default heartbeat up to date.")
 
 
 # ── The tick loop ────────────────────────────────────────────────────────────

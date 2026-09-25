@@ -173,6 +173,10 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
         refuse_if_active("anthropic", str(model or ""))
     except ImportError:
         pass
+    # A scheduled job allowed onto the cloud runs on the model the owner chose
+    # for it, whatever the caller or a fallback leg asked for.
+    from agent_friday.services.local_only_guard import apply_pin
+    model = apply_pin("anthropic", model)
     client = get_anthropic_client()
     if client is None:
         # One key is enough: with only an OpenRouter key, the same Claude
@@ -1232,6 +1236,17 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
         refuse_if_active(provider if provider else "openai", str(model or ""))
     except ImportError:
         pass
+    # The pinned model of a scheduled cloud run (see _call_claude). The legacy
+    # single slot pointed at OpenRouter is OpenRouter for this purpose.
+    from agent_friday.services.local_only_guard import apply_pin, pinned_model
+    if pinned_model():
+        _pin_provider = provider
+        if not _pin_provider:
+            _legacy_url = str(((_load_settings().get('model_routing') or {})
+                               .get('openai_base_url')) or '')
+            _pin_provider = 'openrouter' if 'openrouter.ai' in _legacy_url else 'openai'
+        model = apply_pin(_pin_provider, model)
+        fallback_models = None      # no server-side hop to another model
     import requests
     # Lazy for the same reason as in _call_ollama: defined in the upper layer.
     from agent_friday.services.agent import _oai_agentic_loop

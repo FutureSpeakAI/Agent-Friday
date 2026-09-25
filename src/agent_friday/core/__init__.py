@@ -2374,6 +2374,25 @@ DEFAULT_SETTINGS = {
         "from_hour": 9,        # never overnight on a machine left on by accident
         "to_hour": 23,
     },
+    # ── Scheduled jobs on a cloud model (services/scheduled_cloud.py) ──
+    # The built-in jobs (news, front page, briefing, daily creation, heartbeat)
+    # are local-only. With no local model serving they are skipped, unless the
+    # owner answers yes here (setup chat, or Settings > Spending). Unanswered
+    # and not allowed until then. A local model that is serving always wins.
+    # Both models default to Claude Haiku 4.5 ($1 / $5 per million tokens):
+    # the jobs summarise and draft short pieces from material they are handed,
+    # which Haiku does well, and at a fifth of Sonnet's input price. The
+    # heartbeat runs every 4 hours between 08:00 and 20:00 in cloud mode.
+    "scheduled_cloud": {
+        "answered": False,
+        "allow": False,
+        "at": None,
+        "heartbeat_model": "claude-haiku-4-5-20251001",
+        "job_model": "claude-haiku-4-5-20251001",
+        "heartbeat_every_minutes": 240,
+        "heartbeat_from_hour": 8,
+        "heartbeat_to_hour": 20,
+    },
     # ── Family / Minor mode (§7) ──
     # When on, generation runs an age-appropriate filter ON TOP of the adult harm
     # floor — this half is real and re-checked live on every generation call.
@@ -2965,7 +2984,7 @@ def _load_settings():
 #: it edited (rounds, or the clock, or tokens), and a wholesale replace would
 #: drop the other two back to the module defaults every time one is changed.
 _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content",
-                       "turn_budget", "local_address")
+                       "turn_budget", "local_address", "scheduled_cloud")
 
 
 def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
