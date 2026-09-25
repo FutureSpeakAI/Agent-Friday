@@ -15,9 +15,13 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolated_ledger(monkeypatch, friday_dir):
+def _isolated_ledger(monkeypatch, tmp_path):
+    """A ledger of this test's own. The shared test home's ledger collects
+    lines from other files (studio routes write there too), and one line
+    that does not verify under the key in hand suspends every grant, so the
+    one this test just made would read as absent."""
     from agent_friday.services import file_grants as fg
-    ledger = friday_dir / "privacy" / "file_grants.jsonl"
+    ledger = tmp_path / "grants-ledger" / "file_grants.jsonl"
     monkeypatch.setattr(fg, "_ledger_path", lambda: ledger)
     fg._invalidate_cache()
     yield
