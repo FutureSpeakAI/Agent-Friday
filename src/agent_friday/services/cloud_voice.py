@@ -298,11 +298,44 @@ def _settings() -> dict:
         return {}
 
 
-def _api_key(provider: str) -> str:
-    """Module constant -> live env -> settings.json. The existing pattern (5.4).
+def _stored_key(provider: str) -> str:
+    """The key saved through Settings or the setup checklist: the credential
+    store, under the provider's own name (``POST /api/providers/<name>/key``)."""
+    try:
+        from agent_friday.services import credential_store as cs
+        return (cs.get_provider_key(provider) or "").strip()
+    except Exception:
+        return ""
 
-    Deliberately identical in shape to ``elevenlabs_tools._api_key()`` so there
-    is one way keys resolve, not two.
+
+def _migrate_plaintext_key(provider: str, key: str) -> None:
+    """Move a key found in plaintext settings.json into the credential store.
+
+    Older builds read the key from settings.json and nothing wrote it anywhere
+    safer. Found there, it is encrypted into the store and the plaintext copy
+    is blanked, so the next read takes the store path. Best-effort: a failed
+    migration leaves the key where it was and still usable.
+    """
+    spec = PROVIDERS.get(provider) or {}
+    try:
+        from agent_friday.services import credential_store as cs
+        cs.set_provider_key(provider, key)
+        if (cs.get_provider_key(provider) or "") != key:
+            return
+        from agent_friday.core import _save_settings
+        _save_settings({spec.get("settings_key"): ""})
+    except Exception:
+        pass
+
+
+def _api_key(provider: str) -> str:
+    """Module constant -> live env -> credential store -> settings.json.
+
+    The credential store is where a key typed into Friday is kept. The
+    plaintext settings.json field is read last, as a fallback for installs
+    that predate the store, and a key found there is migrated into the store
+    on the way out. ``elevenlabs_tools._api_key()`` delegates here so there is
+    one way keys resolve, not two.
     """
     spec = PROVIDERS.get(provider) or {}
     key = ""
@@ -315,7 +348,11 @@ def _api_key(provider: str) -> str:
         import os
         key = os.environ.get(spec.get("env_key") or "", "") or ""
     if not key:
-        key = _settings().get(spec.get("settings_key") or "", "") or ""
+        key = _stored_key(provider)
+    if not key:
+        key = str(_settings().get(spec.get("settings_key") or "", "") or "").strip()
+        if key:
+            _migrate_plaintext_key(provider, key)
     return str(key).strip()
 
 
