@@ -16,6 +16,7 @@ document it is.
 
 | Document | Purpose |
 |---|---|
+| [The setup chat](user-guide/setup-chat.md) | The first-run conversation: the connection checklist, opt-in research on you, the style questions, what is stored where, and deleting your profile. |
 | [Approvals and receipts](user-guide/approvals-and-receipts.md) | What Friday asks before it acts, cards, grants for scheduled jobs, and the signed receipts. |
 | [Privacy: local and cloud](user-guide/privacy.md) | What stays on your PC, what can leave, and the egress gate's limits. |
 | [Mail](user-guide/mail.md) | Messages and Gmail: connecting, what Friday can do, how sending is approved. |

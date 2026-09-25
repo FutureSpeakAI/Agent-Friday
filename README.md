@@ -117,8 +117,12 @@ The first time Friday opens, it asks:
 4. **Checking for new versions.** Once a week, or never. Nothing downloads on
    its own either way.
 
-Then the setup wizard takes your provider keys, optional Google connection and
-a hardware check.
+Then a short setup chat: names, a hardware check, a checklist of every
+account and key Friday can use (each says exactly what it asks for), optional
+public-web research on you that keeps only what you approve, and a few
+questions that set how Friday talks to you. It works with no model and no key,
+every step can be skipped, and **Set up later** is always there. See
+[The setup chat](docs/user-guide/setup-chat.md).
 
 Open Friday from the desktop shortcut, which opens **http://localhost:3000**,
 or from the tray icon's **Open Friday Desktop**. Optionally, give it a secure

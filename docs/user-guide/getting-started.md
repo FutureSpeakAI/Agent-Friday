@@ -64,8 +64,20 @@ The same questions appear in the terminal if you set up there.
 5. **Checking for new versions.** Check once a week, or don't check. Nothing is
    pre-selected, and nothing downloads on its own either way.
 
-Then the setup wizard: your profile, provider keys, optional services
-(Google), a hardware check that can download a local model, and you are in.
+Then the **setup chat**. Friday introduces herself and asks, one short message
+at a time: what to call you and what to call her; who this Friday is for and a
+starting profile, with a hardware check that can download a local model;
+which of your accounts and keys to connect, each card saying exactly what it
+asks for; whether to look you up on the public web (off unless you say yes);
+a few questions about how you like to be spoken to; and the speaking style
+that comes out of your answers, which you can tune with sliders. You can type
+or tap an answer, skip anything, and leave with **Set up later** at any
+point. It works with no model and no key at all.
+
+If you close Friday partway through, it picks up where you left off. Anything
+you skipped waits in **Settings → Accounts & Keys → Setup checklist**, and
+**Settings → General → Your profile** can run the chat again. What each part
+does and what is stored where: [The setup chat](setup-chat.md).
 
 ## Opening Friday
 
