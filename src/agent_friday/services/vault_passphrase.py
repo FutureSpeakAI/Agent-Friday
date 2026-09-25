@@ -303,6 +303,33 @@ def durable_value() -> tuple[str, str]:
 
 # -- Writing ------------------------------------------------------------------
 
+def _unlock_wrapped_keystore() -> bool:
+    """True when the credential keystore is wrapped with the vault passphrase
+    and this process holds its root key (unwrapping it now if needed)."""
+    try:
+        from agent_friday.services import keystore as ks
+        doc = ks._read_file() or {}
+        if doc.get("wrap") != "passphrase":
+            return False
+        ks.root_key()
+        return True
+    except Exception:
+        return False
+
+
+def _rewrap_keystore(passphrase: str) -> None:
+    """Rewrap the same root key under the new passphrase. Logged if it fails:
+    the keystore then stays wrapped under the old passphrase."""
+    try:
+        from agent_friday.services import keystore as ks
+        ks.set_wrap("passphrase", passphrase)
+    except Exception as e:
+        import logging
+        logging.getLogger("friday.vault_passphrase").error(
+            "the credential keystore could not follow the new vault passphrase "
+            "(%s); it stays wrapped under the previous one", type(e).__name__)
+
+
 def store(passphrase: str) -> list[str]:
     """Write the passphrase to every durable home available. Returns their names.
 
@@ -328,6 +355,11 @@ def store(passphrase: str) -> list[str]:
     passphrase = (passphrase or "").strip()
     if not passphrase:
         return []
+
+    # A keystore wrapped with the vault passphrase must follow it, or the next
+    # start cannot unwrap the credential root key. Unwrap now, with the
+    # passphrase still in place, and rewrap under the new one below.
+    follow_keystore = _unlock_wrapped_keystore()
 
     written: list[str] = []
 
@@ -356,6 +388,8 @@ def store(passphrase: str) -> list[str]:
 
     if written:
         reset_cache()
+        if follow_keystore:
+            _rewrap_keystore(passphrase)
     elif is_os_mode():
         raise RuntimeError(
             "refusing to report the vault passphrase as stored under "

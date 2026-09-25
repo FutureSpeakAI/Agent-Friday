@@ -147,7 +147,10 @@ cLaws text under the governance key and compares it with the pin in
 `~/.friday/governance/claws.pin.json`. If they differ, outward actions are held
 and reads continue. Its decisions, and the ring check's, are receipted in the
 one signed file `~/.friday/decision-bom.jsonl`; if an entry cannot be signed
-and written, a ring-2+ call is held rather than logged unsigned.
+and written, a ring-2+ call is held rather than logged unsigned. Only the owner
+re-pins, from Settings → Privacy & Approvals (`/api/governance/claws/repin`,
+which requires a request from this machine carrying the page's token and an
+explicit confirmation, and writes a signed receipt).
 
 **Keyring fallback:** On systems without a supported keyring backend (e.g. a
 headless Linux server without Secret Service), `get_governance_key()` falls back

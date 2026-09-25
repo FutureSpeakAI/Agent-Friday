@@ -14,14 +14,13 @@ you hit something that is not here, please open an issue.
 - **Upgrading keeps your data.** The installer replaces only the program in
   `%LOCALAPPDATA%\AgentFriday`; `%USERPROFILE%\.friday` and the vault
   passphrase in Windows Credential Manager are not touched.
-- **Moving `.friday` to a new PC or Windows account holds outward actions.**
-  The governance signing key lives in Credential Manager, so the new account
-  gets a new key and the pinned signature of Friday's rules no longer matches.
-  Reads keep working; outward actions are held. There is no Settings control
-  to re-pin. Workaround: quit Friday, delete
-  `.friday\governance\claws.pin.json`, and start Friday. See
-  [backup and restore](docs/user-guide/backup-and-restore.md). The same hold
-  would follow any release that changes the rules text.
+- **Moving `.friday` to a new PC or Windows account holds outward actions**
+  until you re-confirm Friday's rules. The governance signing key lives in
+  Credential Manager, so the new account gets a new key and the pinned
+  signature of Friday's rules no longer matches. Reads keep working. Settings
+  → Privacy & Approvals → Friday's rules on this PC shows the state and
+  re-pins after you confirm. The same hold follows any release that changes
+  the rules text. See [backup and restore](docs/user-guide/backup-and-restore.md).
 - **Installers 5.6.0 to 5.6.5** had upgrade defects (files not replaced; the
   vault passphrase deleted when it lived only in `start.bat`). Running the
   current installer repairs such an install. There is no recovery for data
@@ -141,9 +140,12 @@ or Windows credential protection.
   Prefer environment variables or the encrypted store.
 - **The credential keystore is unwrapped by default.** Its root key sits in
   `.friday\security\keystore.json` behind an owner-only file ACL, so anything
-  running as you can decrypt stored credentials. A passphrase-wrapped mode
-  exists in the code but has no Settings control yet. A backup of `.friday`
-  carries the key with it.
+  running as you can decrypt stored credentials, and a folder copy of
+  `.friday` carries the key with it. With a vault passphrase set, Settings →
+  Privacy & Approvals → Stored keys wraps the root key with it. Friday then
+  unwraps it with the passphrase from Credential Manager at start-up, so
+  anything running as you can still reach it through Credential Manager; the
+  wrap protects copies of the file, not a live session.
 - **Linux OS mode has no durable secret store.** Credential and passphrase
   storage fail closed there; the supported path is `FRIDAY_VAULT_PASSPHRASE` in
   the environment.

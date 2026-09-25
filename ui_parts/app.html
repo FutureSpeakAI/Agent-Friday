@@ -13189,6 +13189,75 @@ function SettingsTabVoice({s,save}){
     </StSection>}
   </div>;
 }
+// Friday's rules on this PC. The approval checkpoint holds every outward action
+// when the signature of the cLaws text under this PC's governance key differs
+// from the one pinned in .friday\governance: after .friday moves to another PC
+// or Windows account (the key lives in Credential Manager), or after an update
+// changes the rules text. Nothing re-pins on its own; the owner does it here.
+// /api/governance/claws/repin answers only this page, open on this PC.
+function ClawsRepinPanel(){
+  const[st,setSt]=useState(null);
+  const[msg,setMsg]=useState('');
+  const[busy,setBusy]=useState(false);
+  const load=useCallback(()=>{apiFetch('/api/governance/claws').then(r=>r.json()).then(setSt).catch(()=>setSt({state:'error',summary:'Could not read the status.'}))},[]);
+  useEffect(()=>{load()},[load]);
+  const repin=()=>{
+    if(!window.confirm("Re-confirm Friday's rules on this PC?\n\nDo this only if you moved Friday's data to this PC or Windows account, or updated Friday. "+
+      "It accepts the current rules text under this PC's signing key, and outward actions stop being held for this reason."))return;
+    setBusy(true);setMsg('');
+    apiFetch('/api/governance/claws/repin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})})
+      .then(r=>r.json().then(d=>({ok:r.ok,d}))).then(({ok,d})=>{if(ok){setSt(d);setMsg('Re-confirmed. The rules are pinned to this PC again.');}else setMsg(d&&(d.message||d.error)||'Not re-confirmed.');})
+      .catch(()=>setMsg('Could not reach the server.')).finally(()=>setBusy(false));
+  };
+  const muted={fontSize:11,color:'rgba(255,255,255,0.45)',lineHeight:1.6};
+  if(!st)return <div style={muted}>Reading the rules status…</div>;
+  const colour=st.state==='intact'?'#00ff80':st.state==='not_pinned'?'#00d4ff':'#f59e0b';
+  return <div data-testid="claws-repin">
+    <div style={{fontSize:12,color:colour,marginBottom:6,lineHeight:1.6}}>{st.summary||st.state}</div>
+    <div style={{...muted,fontFamily:'JetBrains Mono',marginBottom:10}}>Rules text SHA-256 {(st.text_sha256||'').slice(0,16)}…{st.pinned_at?' · pinned '+new Date(st.pinned_at*1000).toLocaleString():''}</div>
+    <div style={{...muted,marginBottom:10}}>Friday signs her rules with a key kept in this PC’s Credential Manager. After moving her data to another PC or Windows account, or after an update that changed the rules, the signature no longer matches and every outward action waits. Reads keep working.</div>
+    <button className="settings-btn" style={{fontSize:12}} disabled={busy||st.state!=='mismatch'} onClick={repin}>{busy?'Re-confirming…':'Re-confirm Friday’s rules on this PC'}</button>
+    {msg&&<div style={{fontSize:11,color:'#cfefff',marginTop:8}}>{msg}</div>}
+  </div>;
+}
+// The credential keystore's root key (.friday\security\keystore.json) decrypts
+// every stored API key and account sign-in. By default the file holds it behind
+// file permissions only. This panel wraps it with the vault passphrase through
+// /api/security/keystore/wrap, which answers only this page on this PC and
+// needs the passphrase typed. Nothing changes it on its own.
+function KeystoreWrapPanel(){
+  const[st,setSt]=useState(null);
+  const[pw,setPw]=useState('');
+  const[msg,setMsg]=useState('');
+  const[busy,setBusy]=useState(false);
+  const load=useCallback(()=>{apiFetch('/api/security/keystore').then(r=>r.json()).then(setSt).catch(()=>setSt(null))},[]);
+  useEffect(()=>{load()},[load]);
+  const wrapped=st&&st.wrap==='passphrase';
+  const apply=()=>{
+    const want=wrapped?'none':'passphrase';
+    const ask=want==='passphrase'
+      ?'Protect stored keys with the vault passphrase?\n\nFriday reads it from Credential Manager at start-up, so start-up stays unattended on this PC. A copy of .friday elsewhere cannot decrypt your keys without the passphrase, and if the passphrase is lost the stored keys and sign-ins are lost with it.'
+      :'Remove passphrase protection from stored keys?\n\nThe keystore file will again be protected by file permissions only.';
+    if(!window.confirm(ask))return;
+    setBusy(true);setMsg('');
+    apiFetch('/api/security/keystore/wrap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({wrap:want,passphrase:pw})})
+      .then(r=>r.json().then(d=>({ok:r.ok,d}))).then(({ok,d})=>{if(ok){setSt(d);setPw('');setMsg(want==='passphrase'?'Stored keys are now protected by the vault passphrase.':'Passphrase protection removed.');}else setMsg(d&&(d.message||d.error)||'Nothing changed.');})
+      .catch(()=>setMsg('Could not reach the server.')).finally(()=>setBusy(false));
+  };
+  const muted={fontSize:11,color:'rgba(255,255,255,0.45)',lineHeight:1.6};
+  if(!st)return <div style={muted}>Reading the keystore status…</div>;
+  return <div data-testid="keystore-wrap">
+    <div style={{fontSize:12,color:wrapped?'#00ff80':st.unlocked===false?'#ff6b8a':'#f59e0b',marginBottom:6}}>{st.summary||(wrapped?'Protected by your passphrase':'Protected by file permissions on this machine')}</div>
+    <div style={{...muted,marginBottom:10}}>The keystore holds the key that decrypts your stored API keys and account sign-ins. {wrapped?'It is wrapped with your vault passphrase, so the file is useless without it.':'Anything running as your Windows account, or anyone with a copy of .friday, can use it. Wrapping it with the vault passphrase makes the file useless on its own.'}</div>
+    {!st.vault_passphrase_set
+      ?<div style={{...muted,color:'#f59e0b'}}>Set a vault passphrase above first; the keystore is protected with it.</div>
+      :<div style={{display:'flex',gap:6}}>
+        <input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="Vault passphrase" className="input" style={{flex:1}}/>
+        <button className="settings-btn" style={{fontSize:12,whiteSpace:'nowrap'}} disabled={busy||!pw} onClick={apply}>{busy?'Working…':wrapped?'Remove passphrase protection':'Protect with vault passphrase'}</button>
+      </div>}
+    {msg&&<div style={{fontSize:11,color:'#cfefff',marginTop:8}}>{msg}</div>}
+  </div>;
+}
 function SettingsTabPrivacy({s,save}){
   const[vaultStatus,setVaultStatus]=useState(null);
   const[pass,setPass]=useState('');
@@ -13239,6 +13308,12 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="Scheduled jobs: what they may do on their own">
       <GovernanceGrantsPanel/>
+    </StSection>
+    <StSection title="Friday’s rules on this PC">
+      <ClawsRepinPanel/>
+    </StSection>
+    <StSection title="Stored keys">
+      <KeystoreWrapPanel/>
     </StSection>
     <StSection title="Computer control">
       <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High risk. Lets Friday move the mouse, click, type and take screenshots. It needs both this switch and a grant below; once granted, the grant lasts across restarts until you revoke it.</div>

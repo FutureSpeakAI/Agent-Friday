@@ -176,6 +176,15 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   longer keeps its own file, and it never writes an unsigned entry: when a
   receipt cannot be signed and written, a network or OS-control call is held.
   `.friday\vault\decision-bom.jsonl` from earlier versions is left as history.
+- **Re-confirm Friday's rules on this PC** (Settings > Privacy & Approvals).
+  After moving `.friday` to another PC or Windows account, or an update that
+  changes the rules text, outward actions are held; this control shows the
+  rules signature status and re-pins after you confirm. It answers only
+  Friday's own page on this PC and writes a signed receipt.
+- **Stored keys can be protected with the vault passphrase** (Settings >
+  Privacy & Approvals > Stored keys). The keystore root key is wrapped with
+  the passphrase you type; nothing changes for existing installs until you
+  choose it, and changing the vault passphrase rewraps it.
 
 ### Fixed
 
