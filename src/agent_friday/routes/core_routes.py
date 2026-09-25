@@ -939,106 +939,21 @@ def api_setup_skip():
 
 @core_bp.route('/api/setup/complete', methods=['POST'])
 def api_setup_complete():
-    """Persist wizard choices and mark setup complete.
+    """Persist first-run choices and mark setup complete.
 
-    Accepts the classic fields (agent_name, *_model, tts_voice, …) AND the new
-    onboarding payload (distribution, providers, capability_routing). API keys are
-    stored ENCRYPTED via credential_store — never written to settings.json — and
-    hot-reloaded so no restart is needed. The settings delta flows through
-    _save_settings so capability_routing and the flat *_model keys stay congruent.
+    Accepts the classic fields (agent_name, *_model, tts_voice, ...), the
+    onboarding payload (distribution, providers, capability_routing) and the
+    consent screen's routing_mode. The work is services/setup_complete.py,
+    shared with the setup chat so both surfaces complete setup the same way:
+    keys encrypted in the credential store, never settings.json; the routing
+    mode merged into model_routing; personality.json written only here.
     """
     data = request.get_json(silent=True) or {}
-    from agent_friday.services import credential_store as cs
-
-    # 1) Provider API keys → encrypted store + live env. Accept both the legacy
-    #    flat fields and a providers:{name:{api_key}} map from the new wizard.
-    legacy_key_fields = {'anthropic_api_key': 'anthropic',
-                         'gemini_api_key': 'google-gemini',
-                         'openai_api_key': 'openai'}
-    for field, pname in legacy_key_fields.items():
-        val = (data.get(field) or '').strip()
-        if val:
-            cs.set_provider_key(pname, val)
-            cs.hot_reload_provider_key(pname, val)
-    providers_payload = data.get('providers') or {}
-    for pname, pcfg in providers_payload.items():
-        if isinstance(pcfg, dict):
-            kv = (pcfg.get('api_key') or pcfg.get('key') or '').strip()
-            if kv:
-                cs.set_provider_key(pname, kv)
-                cs.hot_reload_provider_key(pname, kv)
-
-    # 1b) Vault passphrase (H4) → every durable home, via the ONE writer.
-    #     Arms AES-256-GCM at-rest encryption for the sovereign vault. Optional;
-    #     never written to a file in the clear. Live env is set too so this
-    #     session encrypts without a restart. Never logged.
-    #
-    #     This used to write the OS keychain directly and swallow the failure,
-    #     which on a host without `keyring` (an optional dependency) meant the
-    #     passphrase survived only until the process exited. vault_passphrase
-    #     .store() also writes a DPAPI-wrapped file, so it survives either way.
-    vault_pass = (data.get('vault_passphrase') or '').strip()
-    if vault_pass:
-        from agent_friday.services import vault_passphrase as _vp
-        _vp.store(vault_pass)
-        os.environ["FRIDAY_VAULT_PASSPHRASE"] = vault_pass
-        try:
-            core.FRIDAY_VAULT_PASSPHRASE = vault_pass
-        except Exception:
-            pass
-        _vp.reset_cache()
-
-    # 2) Settings delta (NO secrets) → _save_settings keeps routing congruent.
-    delta = {}
-    for k in ('agent_name', 'orchestrator_model', 'subagent_model', 'creative_model',
-              'music_model', 'minor_mode', 'daily_creation_free_choice',
-              'voice_model', 'tts_voice', 'temperature', 'communication_style',
-              'distribution', 'demo_mode', 'capability_routing'):
-        if k in data:
-            delta[k] = data[k]
-    if providers_payload:
-        # Persist provider CONFIG only — strip any secret that came in the payload.
-        delta['providers'] = {
-            n: {kk: vv for kk, vv in (c or {}).items() if kk not in ('api_key', 'key')}
-            for n, c in providers_payload.items() if isinstance(c, dict)
-        }
-    delta['setup_complete'] = True
-
-    # 3) Apply the chosen distribution preset (workspaces / layout / personality).
-    if data.get('distribution'):
-        try:
-            from agent_friday.services import distributions
-            delta.update(distributions.apply_distro(data['distribution']))
-        except Exception:
-            pass
-
+    from agent_friday.services.setup_complete import complete_setup
     try:
-        _save_settings(delta)
+        return jsonify(complete_setup(data))
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
-
-    # 4) Preferred holographic scene → personality.json.
-    if 'preferred_scene_index' in data:
-        pfile = FRIDAY_DIR / 'personality.json'
-        pdata = {}
-        if pfile.exists():
-            try:
-                pdata = json.loads(pfile.read_text('utf-8'))
-            except Exception:
-                pass
-        pdata['preferred_scene_index'] = int(data['preferred_scene_index'])
-        try:
-            pfile.write_text(json.dumps(pdata, indent=2), encoding='utf-8')
-        except Exception:
-            pass
-
-    # 5) Stamp the setup-complete marker.
-    try:
-        _SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
-        _SETUP_MARKER.write_text(datetime.now().isoformat(), encoding='utf-8')
-    except Exception:
-        pass
-    return jsonify({"status": "ok"})
 
 
 # ── Agent Settings endpoints ──────────────────────────────────
