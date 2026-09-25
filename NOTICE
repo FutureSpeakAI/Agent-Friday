@@ -27,6 +27,15 @@ JavaScript and CSS vendored under static/vendor/:
     Copyright (c) 2006, Ivan Sagalaev and other contributors.
     BSD 3-Clause License.
 
+Fonts under static/fonts/, each under the SIL Open Font License 1.1, whose
+text is beside each file (OFL-<family>.txt). From github.com/google/fonts:
+
+  Orbitron-Variable.ttf ....... Orbitron, Copyright 2018 The Orbitron Project
+                                Authors
+  Inter-Variable.ttf .......... Inter, Copyright 2020 The Inter Project Authors
+  JetBrainsMono-Variable.ttf .. JetBrains Mono, Copyright 2020 The JetBrains
+                                Mono Project Authors
+
 Inside the Windows installer archive:
 
   Python 3.12 embeddable distribution for Windows (amd64)

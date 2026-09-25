@@ -93,13 +93,12 @@ nothing from your conversations.
 **Fonts.** The page's typefaces (Orbitron, Inter, JetBrains Mono) are declared
 in `static/fonts/fonts.css`, served by Friday itself. Each tries a copy
 installed on the PC, then a font file in `static/fonts`, then a similar system
-font. This release does not ship those font files. While they are missing,
-Friday also adds Google Fonts to the page, so every page load asks
-`fonts.googleapis.com` and `fonts.gstatic.com` for them, unless you turn off
-**Settings → Privacy & Approvals → Fonts → Load fonts from Google Fonts**
-(or set `web_fonts_from_google` to `false`). With it off, Friday uses fonts
-already on the PC and makes no font request. Once the font files are in
-`static/fonts`, Google Fonts is never requested, whatever the setting says.
+font. Friday ships those font files, so Google Fonts is never requested.
+If the files are removed, Friday adds Google Fonts to the page (every page
+load then asks `fonts.googleapis.com` and `fonts.gstatic.com`) unless
+**Settings → Privacy & Approvals → Fonts → Load fonts from Google Fonts** is
+off (`web_fonts_from_google: false`), in which case it uses fonts already on
+the PC.
 The login page for remote access and saved draft pages use only the local
 stylesheet.
 
