@@ -432,11 +432,14 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "propose_wiki_update": {"new_value": "memory_write"},
     "content_create_post": {"body": "publish_body"},
     "content_repurpose": {"body": "publish_body"},
+    # The tracker card shows every field; flags on these go onto it.
+    "career_update_tracker": {"company": "detail", "role": "detail", "notes": "detail",
+                              "status": "detail"},
 }
 
 #: Tools that create their own approval card. A flag on these goes ON that
 #: card instead of raising a second one.
-SELF_CARDING = {"draft_email", "call_by_phone", "sign_pdf"}
+SELF_CARDING = {"draft_email", "call_by_phone", "sign_pdf", "career_update_tracker"}
 
 #: Roles judged by overlap of word runs rather than exact match.
 FREE_TEXT_ROLES = {"command", "instruction", "memory_write", "publish_body"}
