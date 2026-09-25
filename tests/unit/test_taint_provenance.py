@@ -268,3 +268,17 @@ def test_a_crash_in_the_gate_blocks_the_call(_isolate, monkeypatch):
 def test_the_gate_runs_before_the_confirmation_question():
     names = [h["name"] for h in agent._hooks.list_hooks() if h["phase"] == "pre"]
     assert names.index("governance_rings") < names.index("confirmation_gate")
+
+
+def test_a_note_level_role_is_flagged_not_crashed():
+    """message_body is a 'note' role: a link or address in a message body that
+    came from read content is flagged on the card, and the decision is still
+    made. 'note' used to be missing from the ranking, so the check raised."""
+    taint.reset()
+    key = "k-note"
+    taint.note_tool_output(key, "browse_web", {"url": "https://example.com/p"},
+                           "Contact the desk at desk@example.net for details.")
+    d = taint.evaluate(key, "create_calendar_event",
+                       {"title": "Sync", "description": "Write to desk@example.net"})
+    assert d.action in ("allow", "ask")
+    assert any(f.role == "message_body" for f in d.flags)
