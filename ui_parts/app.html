@@ -16048,6 +16048,45 @@ function KnowledgeSettings({
 //   * The tab mounting IS the refresh gate. The deleted version gated its
 //     useEffect on openSections.costs, a key whose only toggle went with the
 //     JSX, so the effect could never fire even in principle.
+// The one guard that survived the 2026-09-25 removal of every built-in cap.
+//
+// Stephen: "I want no caps unless I set them myself in the cost metering UI."
+// Rounds, time, tokens and spend now have no built-in limit; the only limits
+// are the ones set on this panel. This is the exception, and it is shown here
+// so the exception is HIS to make: it is not a cap on usage -- it fires on a
+// shape, the same call or the same short cycle repeating while the
+// conversation stands still -- which is why it defaults on.
+function LoopGuardSwitch({ on, onToggle }) {
+  const mono = 'JetBrains Mono';
+  return /*#__PURE__*/React.createElement("div", {
+    style: { marginTop: 18, paddingTop: 14,
+             borderTop: '1px solid rgba(255,255,255,0.07)' }
+  },
+    /*#__PURE__*/React.createElement("div", {
+      style: { fontFamily: 'Orbitron', fontSize: 9, color: '#00d4ff',
+               letterSpacing: '.15em', marginBottom: 8 }
+    }, "STUCK-MODEL GUARD"),
+    /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 10.5, color: 'rgba(255,255,255,0.45)',
+               fontFamily: mono, lineHeight: 1.6, marginBottom: 10 }
+    }, "Nothing limits how long Friday may work or how many rounds she may " +
+       "take — only the limits you set above. This is the one exception, and " +
+       "it is not a limit on usage: it stops a turn when the same call, or the " +
+       "same short cycle of calls, repeats without the conversation moving on. " +
+       "Switch it off and a stuck model keeps going until you press Stop."),
+    /*#__PURE__*/React.createElement("div", {
+      style: { display: 'flex', alignItems: 'center', gap: 10 }
+    },
+      /*#__PURE__*/React.createElement("button", {
+        "aria-pressed": !!on,
+        className: 'toggle-pill ' + (on ? 'on' : ''),
+        onClick: onToggle
+      }, on ? 'On' : 'Off'),
+      /*#__PURE__*/React.createElement("span", {
+        style: { fontSize: 11, fontFamily: mono, color: 'rgba(255,255,255,0.6)' }
+      }, "Stop a turn that is going in circles")));
+}
+
 function SettingsTabCosts() {
   const [costSummary, setCostSummary] = useState(null);
   const [costSeries, setCostSeries] = useState([]);
@@ -16055,6 +16094,7 @@ function SettingsTabCosts() {
   const [costBudget, setCostBudget] = useState({
     daily: 0,
     monthly: 0,
+    loop_guard_enabled: true,
     daily_enabled: false,
     monthly_enabled: false,
     hard_stop_daily: 0,
@@ -16587,7 +16627,7 @@ function SettingsTabCosts() {
       marginTop: 12,
       lineHeight: 1.5
     }, mono)
-  }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")), /*#__PURE__*/React.createElement(ScheduledCloudSection, null), /*#__PURE__*/React.createElement(PhoneCostsSection, null));
+  }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")), /*#__PURE__*/React.createElement(ScheduledCloudSection, null), /*#__PURE__*/React.createElement(LoopGuardSwitch, { on: costBudget.loop_guard_enabled !== false, onToggle: () => saveBudget({ loop_guard_enabled: costBudget.loop_guard_enabled === false }) }), /*#__PURE__*/React.createElement(PhoneCostsSection, null));
 }
 
 // Federation and Economy are on hold: the V6 wholeness spec says they must

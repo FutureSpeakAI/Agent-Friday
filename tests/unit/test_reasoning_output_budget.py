@@ -359,11 +359,29 @@ def test_an_ordinary_local_seat_is_unchanged_on_the_wire(monkeypatch):
     assert (seen.get("body") or {}).get("options", {}).get("num_predict") == 4096
 
 
-def test_a_cloud_seat_keeps_the_ordinary_budget():
-    """The reasoning budget is for seats Friday serves herself. A cloud model
-    reached through the same dialect has its own limits and its own price."""
+def test_a_cloud_seat_is_not_held_to_the_ordinary_budget():
+    """SUPERSEDED 2026-09-25, inverted in place.
+
+    This used to assert the OPPOSITE: that `_call_openai` passes an empty model
+    id for every cloud call, so a cloud model kept the ordinary 4,096 rather
+    than "quietly multiplying somebody's bill". The reasoning was wrong.
+    `max_tokens` is a limit, not an allocation, and headroom that goes unused is
+    not billed -- so what the empty id actually bought was every cloud answer
+    cut off at 4,096 tokens.
+
+    Stephen, 2026-09-25: "We're metering cloud calls, not limiting them." Spend
+    is the spending limit's business, on the costs panel, where he sets it.
+
+    The assertion is kept rather than deleted so the reversal is legible, and it
+    is deliberately still a source check, because that is what makes it fail if
+    the empty id ever comes back. What the router SENDS is asserted properly in
+    tests/unit/test_cloud_output_not_truncated.py, against the payload.
+    """
     import inspect
     from agent_friday.services import model_router as mr
     src = inspect.getsource(mr._call_openai)
-    assert 'model if local_bypass else ""' in src, (
-        "the cloud path would get the local reasoning budget")
+    assert 'model if local_bypass else ""' not in src, (
+        "the cloud path is passing an empty model id again, which holds every "
+        "cloud answer to OUTPUT_TOKENS_DEFAULT")
+    assert "cloud_output_tokens" in src, (
+        "the cloud branch no longer asks for the model's own maximum")

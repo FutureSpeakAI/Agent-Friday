@@ -47,8 +47,14 @@ def _client(monkeypatch, rounds):
                 return types.SimpleNamespace(content=[txt],
                                              stop_reason="end_turn",
                                              usage=usage)
+            # The arguments VARY per round on purpose. The Anthropic loop has
+            # had a stuck-model guard since 2026-09-25, when its 999-round cap
+            # was removed: the same call three times over stops the turn. A fake
+            # that repeats one call now trips that guard and this test would
+            # measure the guard instead of its own subject.
             blk = types.SimpleNamespace(type="tool_use", id=f"t{calls['n']}",
-                                        name="search_web", input={"q": "x"})
+                                        name="search_web",
+                                        input={"q": f"x{calls['n']}"})
             return types.SimpleNamespace(content=[txt, blk],
                                          stop_reason="tool_use", usage=usage)
 

@@ -69,6 +69,39 @@ _CTX_CACHE: dict = {}
 _CTX_CACHE_TTL_S = 300.0
 
 
+def max_output_for(model_id: str):
+    """The model's own maximum output, in tokens, or None if unknown.
+
+    None is meaningful and must be preserved, exactly as in
+    `context_window_for`: it means the catalog has no figure, and the caller
+    decides what to do rather than being handed an invented number.
+
+    This exists because a `max_tokens` we choose is a cap WE impose. Sending
+    4096 to a model that can write 128,000 silently truncates a long answer and
+    looks like the model stopping early. The figures come from the same two
+    places the windows do -- the hand-maintained descriptor metadata, and the
+    provider's own listing (OpenRouter reports `top_provider.max_completion_
+    tokens`) -- so they track the providers rather than a table here.
+    """
+    mid = (model_id or "").strip()
+    if not mid:
+        return None
+    try:
+        from agent_friday.services.model_discovery import cached_models
+        registry = get_provider_registry()
+        for prov in registry.list_providers():
+            pname = prov.get("name", "")
+            meta = (prov.get("model_meta") or {}).get(mid) or {}
+            if meta.get("max_output"):
+                return int(meta["max_output"])
+            for m in (cached_models(pname)[0] or []):
+                if m.get("id") == mid and m.get("max_output"):
+                    return int(m["max_output"])
+    except Exception:
+        pass
+    return None
+
+
 def context_window_for(model_id: str):
     """Real context window (tokens) for `model_id`, or None if unknown.
 

@@ -2265,6 +2265,15 @@ DEFAULT_SETTINGS = {
         "monthly_enabled": False,
         "hard_stop_daily": 0.0,
         "hard_stop_monthly": 0.0,
+        # THE STUCK-MODEL GUARD, shown beside the spending limits because that
+        # is where the owner decides what may stop his work.
+        #
+        # It is not a usage cap: it fires on a SHAPE -- the same call, or the
+        # same short cycle of calls, going round without the conversation
+        # moving on -- and never on an amount. That is why it survived the
+        # 2026-09-25 removal of the round, time and token caps, and why it
+        # defaults ON. It is still his to switch off.
+        "loop_guard_enabled": True,
         "hard_stop_daily_enabled": False,
         "hard_stop_monthly_enabled": False,
     },
@@ -2359,10 +2368,17 @@ DEFAULT_SETTINGS = {
     # figures are visible here; a missing or zero entry falls back to that
     # module, and a per-seat key (e.g. {"local": 200}) overrides one seat only.
     # `scheduled` is what unattended work gets, because nobody is watching it.
+    # EMPTY ON PURPOSE. A figure here is a built-in cap wearing a settings
+    # key: `turn_budget` is read before anything else, so a shipped 999 would
+    # have limited every turn no matter what the module defaults said.
+    #
+    # Stephen, 2026-09-25: "I want no caps unless I set them myself in the cost
+    # metering UI." So these groups exist but stay empty, and a figure appears
+    # only when he puts one there.
     "turn_budget": {
-        "rounds": {"default": 999, "scheduled": 300},
-        "wall_clock_s": {"default": 1800},
-        "tokens": {"default": 1000000},
+        "rounds": {},
+        "wall_clock_s": {},
+        "tokens": {},
     },
     # ── Idle-time work ──
     # The switch and the window for work that should happen while the user is

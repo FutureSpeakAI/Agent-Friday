@@ -743,12 +743,20 @@ def _rolling_spend():
 BUDGET_KEYS = ("daily", "monthly", "daily_enabled", "monthly_enabled",
                # the hard stop (services/spend_guard) -- a second, separate cap
                "hard_stop_daily", "hard_stop_monthly",
-               "hard_stop_daily_enabled", "hard_stop_monthly_enabled")
+               "hard_stop_daily_enabled", "hard_stop_monthly_enabled",
+               # Not a spending key, but it lives in the same settings block and
+               # is set from the same panel, because it is the other thing that
+               # can stop his work. Without it listed here the toggle would POST
+               # and be silently dropped.
+               "loop_guard_enabled")
 
 
 def get_budget():
     cfg = (_load_settings().get("cost_budget") or {})
     return {"daily": cfg.get("daily", 0), "monthly": cfg.get("monthly", 0),
+            # Defaults ON, so a fresh install with no cost_budget block still
+            # gets the stuck-model guard.
+            "loop_guard_enabled": bool(cfg.get("loop_guard_enabled", True)),
             "daily_enabled": cfg.get("daily_enabled", False),
             "monthly_enabled": cfg.get("monthly_enabled", False),
             "hard_stop_daily": cfg.get("hard_stop_daily", 0),

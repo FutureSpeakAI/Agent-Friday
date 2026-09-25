@@ -9422,7 +9422,7 @@ def _no_empty_text(messages):
     return out
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None):
+def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
     pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
@@ -9547,14 +9547,33 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         except Exception:
             pass
 
-    # ── Per-task cloud ceiling. ──
-    # `max_iters` defaults to 999 and nothing else here bounds spend: at the
+    # ── HOW MANY ROUNDS THIS CLOUD LOOP MAY TAKE: as many as it needs. ──
+    #
+    # This is the Anthropic tool loop, and until 2026-09-25 it was the one path
+    # that never asked turn_budget anything -- `for _ in range(max_iters)` with
+    # a literal 999 in the signature. Removing the round cap everywhere else
+    # while leaving that in place would have left the cloud capped at a figure
+    # no setting could reach.
+    #
+    # Unlimited is now the default, and a limit is honoured only where the owner
+    # set one. What replaces the cap is the guard below: this loop had no
+    # stuck-model detection at all, so it is added here rather than leaving Stop
+    # and the AGENT_STOP file as the only way out of a model going in circles.
+    from agent_friday.services import turn_budget as _tb
+    _round_cap = max_iters if max_iters else _tb.rounds_for(str(model or ""))
+    _rounds_left = int(_round_cap) if _round_cap else None
+    _loop_guard = _tb.LoopGuard() if _tb.loop_guard_enabled() else None
+
+    # ── Per-task cloud tally. ──
+    # ADVISORY: it warns, it does not stop. See prompt_cache.task_budget for the
+    # measurement that demoted it from a ceiling. At the
     # median of ~91,000 input tokens per iteration measured on the reference
-    # machine that is a theoretical 90M tokens on one task, and a
-    # crash-fallback re-sending a blown-context turn can bill ~1.43M. The
-    # ceiling is charged in the shared egress chokepoint, so it also covers
-    # any cloud call a TOOL makes from inside this loop, not just the loop's
-    # own iterations. Entered here and released in the `finally` below.
+    # machine one long task presents millions of tokens, but most of that is
+    # cache READS billed at 0.1x, so the count measures how long a task is and
+    # not what it cost. The tally is charged in the shared egress chokepoint, so
+    # it also covers any cloud call a TOOL makes from inside this loop. Money
+    # has its own stop in services/spend_guard, denominated in dollars, off
+    # until the owner turns it on. Entered here and released in the `finally`.
     _budget = None
     try:
         from agent_friday.services import prompt_cache as _pc
@@ -9564,7 +9583,9 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
     try:
         iter_count = 0
-        for _ in range(max_iters):
+        while _rounds_left is None or _rounds_left > 0:
+            if _rounds_left is not None:
+                _rounds_left -= 1
             iter_count += 1
             # ── Operator filesystem controls ───────────────────────────
             # Drop ~/.friday/AGENT_STOP to kill a runaway agent immediately.
@@ -9794,6 +9815,29 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     })
             convo.append({"role": "assistant", "content": assistant_content})
 
+            # THE STUCK-MODEL GUARD, on the round's calls before any of them
+            # runs. It is checked here rather than after execution because a
+            # model circling over a WRITE tool would otherwise repeat the side
+            # effect three times before anything noticed.
+            #
+            # This fires on a shape -- the same call, or the same short cycle of
+            # calls, while the conversation stands still -- and never on an
+            # amount, which is why it survived the removal of the round cap
+            # above and why it is on by default. The owner can switch it off in
+            # Settings > Spending.
+            if _loop_guard is not None:
+                for _tu in tool_uses:
+                    _hit = _loop_guard.observe(_tu.name, _tu.input)
+                    if _hit:
+                        _orb_safe(process_update, orb_id, status='error',
+                                  label='Loop detected', progress=1.0)
+                        # The same wording the local loop uses, so a stuck turn
+                        # reads the same to the user whichever seat it ran on.
+                        return (_tb.limit_message("loop", detail=_hit,
+                                                  used=iter_count,
+                                                  model=str(model or "")),
+                                tool_trace)
+
             # Execute tools and feed results back
             tool_results = []
             for tu in tool_uses:
@@ -9990,10 +10034,18 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     from agent_friday.services import turn_budget as _tb
     if max_iters is None:
         max_iters = _tb.rounds_for("local")
+    # `None` means the owner set no round limit, which is the default. A
+    # tool-less call still makes exactly one pass.
     loops = max_iters if oai_tools else 1
-    _loop_guard = _tb.LoopGuard()
-    _wall = _tb.WallClock(_tb.wall_clock_for("local"))
-    _tokens = _tb.TokenBudget(_tb.token_budget_for("local"))
+    # The one guard left on by default, and the owner can switch it off in
+    # Settings > Spending. It catches a stuck model, not a long one.
+    _loop_guard = _tb.LoopGuard() if _tb.loop_guard_enabled() else None
+    # The clock and the token ceiling are only constructed when the owner asked
+    # for one. `None` is not "use a default" any more -- there is no default.
+    _wall_s = _tb.wall_clock_for("local")
+    _wall = _tb.WallClock(_wall_s) if _wall_s else None
+    _tok_cap = _tb.token_budget_for("local")
+    _tokens = _tb.TokenBudget(_tok_cap) if _tok_cap else None
     _empty_retried = False
     #: Set when a round is to be re-issued with a larger output allowance.
     _retry_over = None
@@ -10015,6 +10067,10 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # The repair round is not an iteration of the tool loop — it is the loop
     # asking again for the answer it was owed — so it is granted on top of
     # `loops` rather than deducted from it, for the tool path too.
+    # None = unlimited. Counting down from infinity is not a thing, so the
+    # loop below tests for it rather than pretending a very large number is
+    # the same as no number -- which is exactly the confusion 50, then 999,
+    # then 300 each came from.
     _rounds_left = loops
     _tj_loop = _journal()
     _round = 0
@@ -10022,8 +10078,9 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # ("length", "stop", …). Carried into the empty-response message so a
     # truncation reads as a truncation instead of as silence.
     _last_finish = None
-    while _rounds_left > 0:
-        _rounds_left -= 1
+    while _rounds_left is None or _rounds_left > 0:
+        if _rounds_left is not None:
+            _rounds_left -= 1
         _round += 1
         # Stop-after-step (TV10), same contract as the Anthropic loop.
         if _tj_loop.stop_requested(_tj_loop.resolve_task_id(session_ctx)) and _round > 1:
@@ -10064,7 +10121,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # The wall clock. Raising the round cap to parity means a turn can now
         # run long legitimately, so SOMETHING has to bound it in time -- a round
         # count never did, since one round can take minutes on a busy card.
-        if _wall.expired():
+        if _wall is not None and _wall.expired():
             _orb(status='error', label='Time limit', progress=1.0)
             _led_done()
             return _tb.limit_message("clock", detail=_wall.reason(),
@@ -10097,9 +10154,10 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # The per-turn token ceiling, on the accounting that already runs.
         # Outside the try above on purpose: a ceiling that a swallowed
         # exception can silently skip is not a ceiling.
-        _tokens.add(usage.get("prompt_tokens", 0),
-                    usage.get("completion_tokens", 0))
-        if _tokens.exceeded():
+        if _tokens is not None:
+            _tokens.add(usage.get("prompt_tokens", 0),
+                        usage.get("completion_tokens", 0))
+        if _tokens is not None and _tokens.exceeded():
             _orb(status='error', label='Token budget', progress=1.0)
             _led_done()
             return _tb.limit_message("tokens", detail=_tokens.reason(),
@@ -10183,7 +10241,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 _empty_retried = True
                 # Grant the repair round rather than spend the last one on it
                 # (see the note where `_rounds_left` is set up).
-                _rounds_left += 1
+                if _rounds_left is not None:
+                    _rounds_left += 1
                 convo.append({"role": "assistant", "content": ""})
                 # Tell the model what went wrong, not just THAT something did.
                 # A reasoning seat that hit the ceiling mid-thought does not
@@ -10415,7 +10474,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             # the same arguments, over and over, is a loop; a cap only noticed
             # after 50 expensive rounds, and punished steady progress just as
             # hard. This catches the real thing in three.
-            _loop_hit = _loop_guard.observe(tname, targs)
+            _loop_hit = (_loop_guard.observe(tname, targs)
+                         if _loop_guard is not None else None)
             if _loop_hit:
                 _orb(status='error', label='Loop detected', progress=1.0)
                 _led_done()
@@ -10451,6 +10511,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # since the repair round is granted rather than deducted it can no longer
     # fall through to here. Say which budget, and how much of it was used, so
     # "max iters" is a fact about this run rather than a label for any ending.
+    # Reachable only when the OWNER set a round limit; with none set the loop
+    # above never leaves by this door.
     _orb(status='error', label=f'Round limit ({_round})', progress=1.0)
     _led_done()
     # Name the real limit and offer to continue. The old text named `max_iters`,

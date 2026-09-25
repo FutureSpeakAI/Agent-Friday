@@ -38,12 +38,19 @@ class SubagentScope:
         self.allowed_tools = data.get("allowed_tools")        # None = no allow-list
         self.denied_tools = list(data.get("denied_tools", []))
         self.max_ring = min(int(data.get("max_ring", 2)), _SUBAGENT_RING_CEILING)
-        # 25 came from the same era as the local path's 50-round cap. A subagent
-        # has a narrower remit than a chat turn so it keeps a bound, but not one a
-        # competent model trips over mid-task.
+        # A step budget belongs to a SCOPE, not to the machine: each named scope
+        # below declares its own, because a scope is a narrow role and the
+        # number is part of what the role means. What is gone is the fallback --
+        # a scope that names no budget is now unbounded rather than inheriting
+        # one from this module, because an inherited figure is exactly the kind
+        # of cap nobody set and nobody can find.
         from agent_friday.services.turn_budget import SUBAGENT_STEP_DEFAULT
-        self.max_steps = int(data.get("max_steps", SUBAGENT_STEP_DEFAULT))
-        self.time_budget_s = int(data.get("time_budget_s", 900))
+        _steps = data.get("max_steps", SUBAGENT_STEP_DEFAULT)
+        self.max_steps = int(_steps) if _steps else None
+        # Same rule as the step budget: a scope may declare a time budget, and a
+        # scope that declares none has none. 900 was a fallback nobody chose.
+        _secs = data.get("time_budget_s")
+        self.time_budget_s = int(_secs) if _secs else None
 
     def allows(self, tool_name: str, ring: int) -> tuple:
         """Return (allowed, reason)."""
@@ -73,9 +80,11 @@ class SubagentScope:
         lines = [
             "\n\n== SCOPE CONTRACT ==",
             f"You are a scoped subagent operating under the '{self.name}' scope.",
-            f"Privilege ceiling: ring-{self.max_ring}. "
-            f"Step budget: {self.max_steps} tool calls. "
-            f"Time budget: {self.time_budget_s}s.",
+            (f"Privilege ceiling: ring-{self.max_ring}. "
+             + (f"Step budget: {self.max_steps} tool calls. "
+                if self.max_steps else "Step budget: unlimited. ")
+             + (f"Time budget: {self.time_budget_s}s."
+                if self.time_budget_s else "Time budget: unlimited.")),
         ]
         if self.allowed_tools is not None:
             lines.append("You may ONLY use these tools: " + ", ".join(self.allowed_tools) + ".")
@@ -249,10 +258,10 @@ def scope_check(task_id: str, tool_name: str, ring: int) -> tuple:
         steps = rec["steps"]
         sc = rec["scope"]
         spawned = rec["spawned"]
-    if steps > sc.max_steps:
+    if sc.max_steps and steps > sc.max_steps:
         return False, (f"subagent scope '{sc.name}': step budget "
                        f"({sc.max_steps}) exhausted")
-    if time.time() - spawned > sc.time_budget_s:
+    if sc.time_budget_s and time.time() - spawned > sc.time_budget_s:
         return False, (f"subagent scope '{sc.name}': time budget "
                        f"({sc.time_budget_s}s) exhausted")
     return sc.allows(tool_name, ring)

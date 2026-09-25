@@ -1,4 +1,17 @@
-"""The local seat gets the same round budget as Claude, with real safety instead.
+"""
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SUPERSEDED 2026-09-25. Stephen: "why 999? How about making it unlimited?"
+# and "I want no caps unless I set them myself in the cost metering UI."
+#
+# The tests below asserted the CAPS this file was written to raise. Raising a
+# cap and removing it are the same argument carried one step further: the
+# number was never a safety property, and the guards that are (the loop
+# detector, the Stop button) are kept and tested in test_no_builtin_caps.py.
+# Each assertion is inverted here rather than deleted, so the history of what
+# this file once guaranteed stays legible.
+# ═══════════════════════════════════════════════════════════════════════════
+The local seat gets the same round budget as Claude, with real safety instead.
 
 A local round costs no money, and a local reasoner such as Bonsai2 can reason
 across hundreds of rounds, so the local seat does not get a smaller budget.
@@ -32,8 +45,8 @@ import pytest
 
 def test_one_shared_default_exists():
     from agent_friday.services import turn_budget as tb
-    assert tb.ROUND_BUDGET_DEFAULT >= 999, (
-        "the shared round budget is %r; the local seat needs Claude's headroom"
+    assert tb.ROUND_BUDGET_DEFAULT is None, (
+        "there is no shared round budget any more; %r is a cap"
         % tb.ROUND_BUDGET_DEFAULT)
 
 
@@ -80,7 +93,8 @@ def test_the_shipped_settings_declare_the_budget():
     from agent_friday.core import DEFAULT_SETTINGS
     blk = DEFAULT_SETTINGS.get("turn_budget")
     assert isinstance(blk, dict), "turn_budget is not in DEFAULT_SETTINGS"
-    assert blk.get("rounds", {}).get("default", 0) >= 999
+    # SUPERSEDED: a figure here would be a built-in cap wearing a settings key.
+    assert blk.get("rounds") == {}, blk
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -162,7 +176,7 @@ def test_the_shipped_wall_clock_is_generous_enough_for_a_reasoner():
     """Bonsai2 on a busy card is slow. A wall clock tighter than a real turn
     would recreate the cliff this change removes."""
     from agent_friday.services import turn_budget as tb
-    assert tb.WALL_CLOCK_DEFAULT_S >= 900
+    assert tb.WALL_CLOCK_DEFAULT_S is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,13 +222,13 @@ def test_subagent_steps_are_raised_but_still_bounded():
     assert 'data.get("max_steps", 25)' not in src, (
         "subagents still default to 25 steps")
     from agent_friday.services import turn_budget as tb
-    assert 100 <= tb.SUBAGENT_STEP_DEFAULT <= tb.ROUND_BUDGET_DEFAULT
+    assert tb.SUBAGENT_STEP_DEFAULT is None
 
 
 def test_scheduled_work_keeps_a_cap():
     from agent_friday.services import turn_budget as tb
-    assert 0 < tb.SCHEDULED_ROUND_DEFAULT <= tb.ROUND_BUDGET_DEFAULT, (
-        "unattended work needs a bound: nobody is watching it")
+    assert tb.SCHEDULED_ROUND_DEFAULT is None, (
+        "a scheduled job's control is its cloud opt-in, not a round cap")
 
 
 # ---------------------------------------------------------------------------
@@ -254,8 +268,9 @@ def test_a_local_turn_can_exceed_fifty_rounds():
     50-round live drive: `rounds_for` is what the loop uses, and it must allow
     far more than the old cap."""
     from agent_friday.services import turn_budget as tb
-    assert tb.rounds_for("local") > 50
-    assert tb.rounds_for("local") >= 999
+    # SUPERSEDED: "more than fifty" became "no limit at all". None is the
+    # strongest possible form of the thing this test was asserting.
+    assert tb.rounds_for("local") is None
 
 
 def test_every_limit_branch_returns_a_continue_offer():
@@ -274,7 +289,7 @@ def test_every_limit_branch_returns_a_continue_offer():
 def test_an_interactive_turn_is_not_unattended():
     from agent_friday.services import turn_budget as tb
     assert tb.is_unattended() is False
-    assert tb.rounds_for("local") == tb.ROUND_BUDGET_DEFAULT
+    assert tb.rounds_for("local") is None
 
 
 def test_unattended_work_resolves_to_the_scheduled_cap(monkeypatch):
@@ -385,7 +400,7 @@ def test_the_token_budget_ignores_nonsense_counts():
 def test_the_shipped_token_budget_is_generous():
     """A ceiling an honest turn reaches is the 50-round cap all over again."""
     from agent_friday.services import turn_budget as tb
-    assert tb.TOKEN_BUDGET_DEFAULT >= 500_000
+    assert tb.TOKEN_BUDGET_DEFAULT is None
 
 
 def test_the_token_budget_is_configurable_per_seat(monkeypatch):
@@ -440,10 +455,10 @@ def test_the_token_check_is_not_inside_a_swallowing_try():
 def test_the_shipped_settings_declare_every_limit():
     from agent_friday.core import DEFAULT_SETTINGS
     blk = DEFAULT_SETTINGS.get("turn_budget") or {}
-    assert blk.get("rounds", {}).get("default", 0) >= 999
-    assert 0 < blk.get("rounds", {}).get("scheduled", 0) <= 999
-    assert blk.get("wall_clock_s", {}).get("default", 0) >= 900
-    assert blk.get("tokens", {}).get("default", 0) >= 500_000
+    # SUPERSEDED: every group ships empty; a figure appears only when set.
+    assert blk.get("rounds") == {}
+    assert blk.get("wall_clock_s") == {}
+    assert blk.get("tokens") == {}
 
 
 # ---------------------------------------------------------------------------
@@ -800,9 +815,9 @@ def test_a_chat_seat_setting_cannot_lift_the_unattended_cap(monkeypatch):
     import agent_friday.core as core
     monkeypatch.setattr(core, "_load_settings", lambda *a, **k: {
         "turn_budget": {"rounds": {"local": 999}}})
-    assert tb.rounds_for("local") == 999
+    assert tb.rounds_for("local") == 999          # he set this one
     with tb.unattended():
-        assert tb.rounds_for("local") == tb.SCHEDULED_ROUND_DEFAULT
+        assert tb.rounds_for("local") == 999      # and it is not overridden
 
 
 def test_a_tighter_seat_setting_still_applies_while_unattended(monkeypatch):

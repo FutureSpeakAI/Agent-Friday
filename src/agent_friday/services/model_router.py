@@ -638,6 +638,25 @@ def _trace_outgoing(where, pname, model, payload, extra=None):
 from agent_friday.services import turn_budget as _tbud
 
 
+def _served_ctx(model):
+    """The window the running seat will actually accept.
+
+    `_plan_num_ctx` returns the residency PLAN, which is measurably above what
+    llama-server serves -- 65,536 planned against 49,152 served for bonsai2 on
+    this machine. Sizing an output budget against the plan leaves less room for
+    the prompt than the arithmetic suggests, which is how a long tool
+    conversation walks into the end of its own context.
+    """
+    try:
+        from agent_friday.services.model_catalog import context_window_for
+        served = context_window_for(model)
+        if served:
+            return int(served)
+    except Exception:
+        pass
+    return _plan_num_ctx(model)
+
+
 def _call_ollama(messages, system=None, model=None, max_tokens=None,
                  # An orb's icon should say what the WORK is, not what
                  # transport carried it. A house default here makes every
@@ -696,6 +715,14 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
     # tool_integrity.find_pseudo_toolcalls already flags a reply that names
     # tools it never called — and the badge keeps naming whoever answered.
     _seat_notice = None
+
+    # Bounded deliberation for a thinking seat. Attached here rather than in
+    # the chat route because this is the one place both local transports pass
+    # through -- the Ollama path below and the llama-server forward -- and it
+    # must not reach a cloud seat, which has its own habits and its own prompt.
+    if _tbud.looks_like_reasoning_model(model or ""):
+        _seat_notice = ((_seat_notice + "\n\n") if _seat_notice else "") \
+            + _tbud.DELIBERATION_NUDGE
 
     # ── Descriptor-aware local dispatch, AFTER the seat gate. A
     # model declared by an enabled OpenAI-compatible LOCAL descriptor (the
@@ -846,7 +873,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                     _to = max(300, int(_est * 4) + 180)
                 except Exception:
                     pass
-                _ctx = _plan_num_ctx(model)
+                _ctx = _served_ctx(model)
                 resp = ollama.chat_completion(
                     _convo, model=model, tools=_oai_tools,
                     temperature=temperature if temperature is not None else 0.7,
@@ -1196,6 +1223,22 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
         out["_reasoning_traced"] = True
     if served_model:
         out["model"] = served_model
+    # A STREAM WITH NO `usage` IS NOT A TURN WITH NO TOKENS.
+    #
+    # llama.cpp reports its own counts on the final chunk as `timings`
+    # (`prompt_n` in, `predicted_n` out) whether or not the OpenAI-shaped
+    # `usage` was asked for. Those are the server's real numbers, not an
+    # estimate, so they are as good as `usage` -- and without this the local
+    # seat reported 0/0 while the ledger, the tray badge and the per-turn token
+    # ceiling all read zero for every streamed local turn.
+    if not usage and timings:
+        _in = timings.get("prompt_n")
+        _out = timings.get("predicted_n")
+        if isinstance(_in, int) or isinstance(_out, int):
+            usage = {"prompt_tokens": int(_in or 0),
+                     "completion_tokens": int(_out or 0),
+                     "total_tokens": int(_in or 0) + int(_out or 0),
+                     "_source": "llama.cpp timings"}
     if usage:
         out["usage"] = usage
     if timings:
@@ -1483,22 +1526,35 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # repeating a round that just spent everything on deliberation.
             _mt = int(_over.get("max_tokens") or max_tokens or 0) or None
             _no_think = bool(_over.get("no_reasoning"))
-            _ctx_for_budget = _plan_num_ctx(model) if local_bypass else None
+            _ctx_for_budget = _served_ctx(model) if local_bypass else None
             payload = {
                 "model": model,
                 "messages": _convo,
                 "temperature": temperature if temperature is not None else 0.7,
-                # The reasoning budget is for seats WE serve. A cloud model
-                # reached through this same dialect has its own limits and its
-                # own price per token, and nothing about Stephen's failure was
-                # cloud-side, so an empty model name keeps the ordinary 4096
-                # there rather than quietly multiplying somebody's bill.
-                "max_tokens": (
-                    _tbud.clamp_output(_mt, _ctx_for_budget)
-                    or _tbud.output_tokens_for(
-                        model if local_bypass else "",
-                        num_ctx=_ctx_for_budget)),
             }
+            # HOW BIG AN ANSWER THIS CALL MAY BE.
+            #
+            # A seat we serve is sized by the window it is actually served at.
+            # A cloud model is not ours to cap: it gets its own maximum from the
+            # catalog, and if the catalog does not know the model then no
+            # ceiling is sent at all and the provider applies its own.
+            #
+            # This used to pass an empty model id for every cloud call, on the
+            # reasoning that a bigger allowance could multiply somebody's bill.
+            # It could not -- `max_tokens` is a limit, not an allocation, and
+            # nothing is charged for headroom that goes unused. What it did
+            # instead was hold every cloud answer to 4,096 tokens and cut the
+            # long ones off mid-sentence. Spend belongs to the spending limit
+            # on the costs panel, which the owner sets; it was never this
+            # parameter's job.
+            if local_bypass:
+                payload["max_tokens"] = (
+                    _tbud.clamp_output(_mt, _ctx_for_budget)
+                    or _tbud.output_tokens_for(model, num_ctx=_ctx_for_budget))
+            else:
+                _cloud_mt = _mt or _tbud.cloud_output_tokens(model)
+                if _cloud_mt:
+                    payload["max_tokens"] = int(_cloud_mt)
             if _oai_tools:
                 payload["tools"] = _oai_tools
                 payload["tool_choice"] = "auto"
@@ -1561,6 +1617,14 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                         payload["reasoning_effort"] = _eff
                 except Exception:
                     pass
+            # ASK FOR THE TOKEN COUNTS. llama-server omits `usage` from an
+            # SSE stream unless it is requested, which is why every local
+            # streamed turn showed "0/0 tk" in the tray -- the counter was
+            # honest, it simply had nothing to count. `stream_options` is the
+            # OpenAI-standard way to ask; `_consume_sse_completion` also falls
+            # back to llama.cpp's own `timings`, which carry exact counts.
+            if payload.get("stream"):
+                payload.setdefault("stream_options", {})["include_usage"] = True
             _trace_outgoing("_call_openai", pname, model, payload,
                             {"local_bypass": bool(local_bypass),
                              "tools_in": len(tools or []),
@@ -1574,7 +1638,15 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                                        "cost_tier": auto_router_cost_tier()}]
                 # See AUTO_ROUTER_MIN_MAX_TOKENS: raise a too-small budget
                 # rather than let a routed reasoning model bill for silence.
-                if (payload.get("max_tokens") or 0) < AUTO_ROUTER_MIN_MAX_TOKENS:
+                #
+                # Only ever RAISES a ceiling that is already there. An absent
+                # `max_tokens` means no ceiling was chosen, and treating that
+                # absence as zero would turn "no limit" into a 1,024-token one
+                # -- the tightest cap in the file, on the one model id whose
+                # maximum the catalog cannot know.
+                if ("max_tokens" in payload
+                        and (payload["max_tokens"] or 0)
+                        < AUTO_ROUTER_MIN_MAX_TOKENS):
                     _log.info("auto-router: raising max_tokens %s -> %s so a "
                               "routed reasoning model can reach its answer",
                               payload.get("max_tokens"),

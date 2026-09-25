@@ -46,35 +46,53 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-#: Rounds a turn may take. Parity with the cloud path, which has run at 999
-#: without incident; the limits that matter are the ones below.
-ROUND_BUDGET_DEFAULT = 999
+#: NO BUILT-IN ROUND CAP.
+#:
+#: Stephen, 2026-09-25: "why 999? How about making it unlimited? I bet we get
+#: local models that can run way longer, and soon." And on the rest: "I want no
+#: caps unless I set them myself in the cost metering UI."
+#:
+#: 999 was never a safety property either -- it was the same guess as the 50 it
+#: replaced, one order of magnitude further out. A round on a local seat costs
+#: nothing but time the owner chose to spend, and on a cloud seat it costs money
+#: that is METERED rather than forbidden. What actually protects a turn is the
+#: stuck-loop detector below, the Stop button, and context compression; none of
+#: those is a number, and none of them gets in the way of a model that is
+#: genuinely working.
+#:
+#: `None` means unlimited. A figure here would be a cap by another name.
+ROUND_BUDGET_DEFAULT = None
 
-#: Wall clock for one turn. Generous on purpose: bonsai2 on a contended card is
-#: slow, and a clock tighter than a real turn would rebuild the cliff this module
-#: exists to remove. 30 minutes.
-WALL_CLOCK_DEFAULT_S = 1800
+#: NO BUILT-IN WALL CLOCK. Unlimited unless the owner sets one.
+#:
+#: It was also never the guard it looked like: it was only consulted BETWEEN
+#: rounds, so a single long round ran past it untouched. A limit that cannot
+#: interrupt the case it was written for is not worth the surprise it causes in
+#: the cases it can.
+WALL_CLOCK_DEFAULT_S = None
 
-#: A subagent has a narrower remit than a chat turn, so it keeps a cap -- just not
-#: one a competent model trips over. 25 was in the same era as the 50.
+#: NO BUILT-IN SUBAGENT STEP CAP. A delegated task is still the owner's work.
 #:
 #: This is only the FALLBACK. Every built-in scope in `subagents.py` names its own
 #: figure (15 to 40) alongside a `time_budget_s`, and both are enforced with a
 #: reason the caller can read. Those are deliberate per-role choices, not
 #: leftovers, so they stay as they are; this default is what a scope gets when it
 #: declares no budget at all.
-SUBAGENT_STEP_DEFAULT = 200
+SUBAGENT_STEP_DEFAULT = None
 
-#: Unattended work stays bounded: nobody is watching it, and a scheduled job that
-#: runs away spends money in the dark.
-SCHEDULED_ROUND_DEFAULT = 300
+#: NO SEPARATE CAP FOR UNATTENDED WORK EITHER.
+#:
+#: The privacy control on a scheduled job is its cloud OPT-IN -- whether it may
+#: leave the machine at all -- and that is untouched. Spend is the spending
+#: limit's business, and the owner sets that. Two different concerns; only one
+#: of them was ever mine to decide.
+SCHEDULED_ROUND_DEFAULT = None
 
-#: Tokens one turn may spend across all its rounds, in and out combined. The
-#: round cap no longer bounds spend now that it sits at parity, and on a
-#: cloud-compatible seat tokens are money. Generous enough that no honest turn
-#: reaches it: a million tokens is far past the point where something has gone
-#: wrong and worth stopping to ask.
-TOKEN_BUDGET_DEFAULT = 1_000_000
+#: NO BUILT-IN TOKEN CEILING. Tokens are metered, not rationed.
+#:
+#: On a local seat they cost nothing; on a cloud seat they cost money the
+#: spending limit governs, if the owner set one.
+TOKEN_BUDGET_DEFAULT = None
 
 #: How many identical calls before it is a loop rather than a retry. Two is a
 #: legitimate retry after a transient failure; three is a pattern.
@@ -83,11 +101,43 @@ REPEAT_LIMIT_DEFAULT = 3
 
 # ── Configuration ───────────────────────────────────────────────────────────
 
+#: The figures this module used to SHIP in DEFAULT_SETTINGS. They were never
+#: anybody's choice -- they were written into every install's settings.json the
+#: first time it saved, so removing them from the defaults is not enough on its
+#: own: an existing machine would keep the caps Stephen just abolished, and the
+#: whole change would be cosmetic for the one person running it.
+#:
+#: A value that still matches one of these exactly is therefore treated as the
+#: leftover it is. Anything else is a figure someone typed, and is obeyed.
+_SHIPPED_LEGACY = {
+    "rounds": {"default": 999, "scheduled": 300},
+    "wall_clock_s": {"default": 1800},
+    "tokens": {"default": 1000000},
+}
+
+
+def _drop_legacy(blk: Dict[str, Any]) -> Dict[str, Any]:
+    """Ignore a cap group that is still exactly what this module shipped.
+
+    The match is on the WHOLE group, not value by value. Value-by-value would
+    mean a 999 the owner typed himself was silently ignored forever, which is a
+    worse surprise than the one it fixes. An untouched group is the leftover; a
+    group with anything changed in it is his, and is obeyed in full.
+    """
+    out = {}
+    for group, vals in (blk or {}).items():
+        if isinstance(vals, dict) and vals == _SHIPPED_LEGACY.get(group):
+            out[group] = {}
+        else:
+            out[group] = vals
+    return out
+
+
 def _cfg() -> Dict[str, Any]:
     try:
         from agent_friday.core import _load_settings
         blk = (_load_settings() or {}).get("turn_budget") or {}
-        return blk if isinstance(blk, dict) else {}
+        return _drop_legacy(blk) if isinstance(blk, dict) else {}
     except Exception:
         return {}
 
@@ -143,8 +193,8 @@ def _positive(blk: Any, *keys) -> Optional[int]:
     return None
 
 
-def rounds_for(seat: str = "") -> int:
-    """Rounds allowed for `seat`, from settings, else the shared default.
+def rounds_for(seat: str = ""):
+    """Rounds allowed for `seat`. **None means unlimited**, which is the default.
 
     Per-seat because the seats differ in kind, not because the local one is less
     trusted: someone may want a tighter leash on an experimental local model
@@ -165,22 +215,35 @@ def rounds_for(seat: str = "") -> int:
     blk = (_cfg().get("rounds") or {})
     asked = _positive(blk, seat, "default")
     if is_unattended():
-        ceiling = _positive(blk, "scheduled") or SCHEDULED_ROUND_DEFAULT
-        return min(asked, ceiling) if asked else ceiling
-    return asked or ROUND_BUDGET_DEFAULT
+        ceiling = _positive(blk, "scheduled")
+        if asked and ceiling:
+            return min(asked, ceiling)
+        return asked or ceiling            # None when the owner set neither
+    return asked                           # None = unlimited
 
 
-def wall_clock_for(seat: str = "") -> int:
-    return _positive(_cfg().get("wall_clock_s") or {}, seat, "default") \
-        or WALL_CLOCK_DEFAULT_S
+def wall_clock_for(seat: str = ""):
+    return _positive(_cfg().get("wall_clock_s") or {}, seat, "default")
 
 
-def token_budget_for(seat: str = "") -> int:
-    return _positive(_cfg().get("tokens") or {}, seat, "default") \
-        or TOKEN_BUDGET_DEFAULT
+def token_budget_for(seat: str = ""):
+    return _positive(_cfg().get("tokens") or {}, seat, "default")
 
 
 # ── Loop detection ──────────────────────────────────────────────────────────
+
+def loop_guard_enabled() -> bool:
+    """Is the stuck-model guard on? Default yes; the owner may turn it off in
+    Settings > Spending."""
+    try:
+        from agent_friday.core import _load_settings
+        blk = (_load_settings() or {}).get("cost_budget") or {}
+        if "loop_guard_enabled" in blk:
+            return bool(blk["loop_guard_enabled"])
+    except Exception:
+        pass
+    return True
+
 
 class LoopGuard:
     """Counts identical (tool, arguments) calls within one turn.
@@ -191,11 +254,20 @@ class LoopGuard:
 
     Progress is never penalised: different arguments (paging, a new query) or a
     different tool reset nothing and count as work.
+
+    It also watches the SHAPE of the calls, so a model cycling through the same
+    few tools with slightly different arguments each pass is caught even though
+    no single call ever repeats. See `_cycling`.
     """
 
     def __init__(self, repeat_limit: int = REPEAT_LIMIT_DEFAULT):
         self.repeat_limit = max(2, int(repeat_limit or REPEAT_LIMIT_DEFAULT))
         self._seen: Dict[str, int] = {}
+        #: Tool names in call order, for the drifting-cycle check below.
+        self._sequence: list = []
+        #: The full (tool, args) key in the same order, so the cycle check can
+        #: ask whether the model is covering NEW ground or circling old.
+        self._keys: list = []
 
     @staticmethod
     def _key(name: str, args: Any) -> str:
@@ -206,13 +278,76 @@ class LoopGuard:
         return "%s(%s)" % (str(name or ""), blob)
 
     def observe(self, name: str, args: Any = None) -> Optional[str]:
-        """Record a call. Returns None, or a reason when it looks like a loop."""
+        """Record a call. Returns None, or a reason when it looks stuck."""
         key = self._key(name, args)
         n = self._seen.get(key, 0) + 1
         self._seen[key] = n
+        self._sequence.append(str(name or ""))
+        self._keys.append(key)
         if n >= self.repeat_limit:
             return ("%s was called %d times with the same arguments"
                     % (str(name or "a tool"), n))
+        return self._cycling()
+
+    # ── the same few tools, round and round, with the arguments drifting ────
+    #
+    # The identical-call check above needs ONE call to recur three times. A
+    # model bouncing between two searches and two files repeats a shape long
+    # before any single call reaches three, so the sequence is caught here
+    # first: two tools over two argument sets trips this at round eight, where
+    # the identical rule would wait for round nine, and wider pools of the same
+    # shape it would not reach for far longer.
+    #
+    # What this does NOT do is flag a model whose arguments are genuinely new
+    # each pass. search -> read -> search -> read over four new topics is
+    # research, and the novelty gate below lets it run for ever. That is
+    # deliberate: this exists to catch a model going nowhere, and a long run
+    # over new material is the behaviour the removed caps used to punish.
+    #
+    # This is deliberately a STUCK-MODEL guard, not a usage limit -- it is the
+    # one thing kept now that the round, time and token caps are gone, because
+    # it fires on a shape rather than on an amount. A model doing genuinely
+    # varied work never trips it: the pattern has to repeat unbroken.
+
+    #: How many times a short tool pattern must repeat back-to-back before it
+    #: is a cycle rather than a rhythm. Three passes of A-B is a coincidence a
+    #: real task can produce; four is a model going round.
+    CYCLE_REPEATS = 4
+
+    #: The longest pattern worth looking for. Beyond this a "cycle" is long
+    #: enough to be a legitimate multi-step routine the model is repeating over
+    #: different material.
+    CYCLE_MAX_LEN = 4
+
+    def _cycling(self) -> Optional[str]:
+        seq = self._sequence
+        for size in range(1, self.CYCLE_MAX_LEN + 1):
+            need = size * self.CYCLE_REPEATS
+            if len(seq) < need:
+                continue
+            tail = seq[-need:]
+            pattern = tail[:size]
+            if not all(tail[i:i + size] == pattern
+                       for i in range(0, need, size)):
+                continue
+            # SHAPE ALONE IS NOT STUCKNESS.
+            #
+            # search -> read -> search -> read over four new topics is
+            # research, and flagging it would punish exactly the behaviour a
+            # long-running agent is for. What makes a cycle stuck is that it
+            # covers no new ground, so the arguments decide: when the window's
+            # calls are mostly ones already made, it is circling; when most are
+            # new, it is working.
+            window = self._keys[-need:]
+            if len(set(window)) > need // 2:
+                continue
+            # A single tool repeated is the identical-call case's territory
+            # unless the arguments differ, which is exactly the gap this
+            # closes, so it is reported either way.
+            return ("the same %s ran %d times in a row without the "
+                    "conversation moving on (%s)"
+                    % ("call" if size == 1 else "sequence of %d calls" % size,
+                       self.CYCLE_REPEATS, " -> ".join(pattern)))
         return None
 
 
@@ -226,7 +361,15 @@ class TokenBudget:
     """
 
     def __init__(self, limit: Optional[int] = None):
-        self.limit = int(limit if limit else TOKEN_BUDGET_DEFAULT)
+        # There is no default ceiling any more, so a caller that constructs
+        # this without one is asking for a budget that cannot exist. Say so
+        # here rather than raising `int(None)` three frames away.
+        _limit = limit if limit else TOKEN_BUDGET_DEFAULT
+        if not _limit:
+            raise ValueError(
+                "TokenBudget needs an explicit limit: there is no built-in "
+                "token ceiling. Construct this only when the owner set one.")
+        self.limit = int(_limit)
         self.spent = 0
 
     def add(self, tokens_in: int = 0, tokens_out: int = 0) -> None:
@@ -244,7 +387,15 @@ class WallClock:
     """A per-turn deadline."""
 
     def __init__(self, seconds: Optional[float] = None):
-        self.seconds = float(seconds if seconds else WALL_CLOCK_DEFAULT_S)
+        # As TokenBudget: no default deadline exists, so a deadline-less
+        # construction is a caller bug and is named as one.
+        _secs = seconds if seconds else WALL_CLOCK_DEFAULT_S
+        if not _secs:
+            raise ValueError(
+                "WallClock needs an explicit number of seconds: there is no "
+                "built-in per-turn deadline. Construct this only when the "
+                "owner set one.")
+        self.seconds = float(_secs)
         self.started = time.time()
 
     def elapsed(self) -> float:
@@ -386,6 +537,22 @@ def output_tokens_for(model: str = "", *, num_ctx: Optional[int] = None,
     blk = _cfg().get("output_tokens") or {}
     asked = _positive(blk, seat, model, "default")
     if asked is None:
+        # A CLOUD MODEL GETS ITS OWN MAXIMUM.
+        #
+        # Stephen, 2026-09-25: "We're metering cloud calls, not limiting them."
+        # A `max_tokens` we pick is our cap, and one below the model's real
+        # ceiling truncates a long answer in a way that reads as the model
+        # giving up. So when the catalog knows the figure, that figure is used;
+        # spend is the spending limit's business, not this function's.
+        catalog_max = None
+        if num_ctx is None:            # no served window => not a seat we host
+            try:
+                from agent_friday.services.model_catalog import max_output_for
+                catalog_max = max_output_for(model)
+            except Exception:
+                catalog_max = None
+        if catalog_max:
+            return int(catalog_max)
         asked = (REASONING_OUTPUT_DEFAULT if looks_like_reasoning_model(model)
                  else OUTPUT_TOKENS_DEFAULT)
     if num_ctx:
@@ -397,6 +564,39 @@ def output_tokens_for(model: str = "", *, num_ctx: Optional[int] = None,
         except Exception:
             pass
     return int(asked)
+
+
+def cloud_output_tokens(model: str = "", *, seat: str = "") -> Optional[int]:
+    """What to send as `max_tokens` to a model WE DO NOT SERVE, or None to send
+    no ceiling at all.
+
+    Stephen, 2026-09-25: "We're metering cloud calls, not limiting them." A
+    `max_tokens` we choose IS our cap, and one below the model's real ceiling
+    truncates a long answer in a way that reads as the model giving up. So:
+
+      * a figure the owner typed wins, as everywhere else;
+      * otherwise the catalog's own maximum for that model;
+      * otherwise NOTHING -- the key is left out and the provider applies its
+        own maximum.
+
+    That last branch is the point. Falling back to a number of our own is how a
+    model the catalog has not learned yet (a new id, a provider we have not
+    priced) would silently inherit a 4,096-token ceiling -- which is exactly
+    the failure this whole change exists to remove. Not knowing a model's
+    maximum is a reason to impose nothing, not a reason to guess low.
+
+    Returning None is meaningful, so callers must OMIT the key rather than send
+    `max_tokens: null`; `_positive` already treats 0 as unset.
+    """
+    asked = _positive(_cfg().get("output_tokens") or {}, seat, model, "default")
+    if asked:
+        return int(asked)
+    try:
+        from agent_friday.services.model_catalog import max_output_for
+        known = max_output_for(model)
+    except Exception:
+        known = None
+    return int(known) if known else None
 
 
 def clamp_output(tokens: Optional[int], num_ctx: Optional[int]) -> Optional[int]:
@@ -445,3 +645,42 @@ def ran_long_message(*, model: str = "", rounds: int = 0) -> str:
         "mine to fix, not yours. Say “continue” and I will pick it up and "
         "answer from what I already worked out, or narrow it down and I will be "
         "quicker. (%s)" % (where, str(model or "the model")))
+
+
+# ── Bounded deliberation ────────────────────────────────────────────────────
+#
+# The budget fix gives a reasoning seat room to think AND answer. It does not
+# stop the seat from spending that room badly, and Stephen's trace showed
+# exactly that: the plan was already sound -- Higgsfield image, save_output, an
+# HTML resume in the creations folder, a relative path, offer PDF, and a
+# correct refusal to open files without permission -- and then the model kept
+# going. "Actually... Hmm... wait... Let me reconsider", over and over, on
+# whether to base64-embed a background image or reference it by relative path,
+# whether to offer PDF export, whether a brand stamp applied. It never emitted
+# a tool call.
+#
+# That is not a reasoning failure. Every one of those is a small, reversible
+# implementation choice with a reasonable default, and the deliberation was
+# worth less than the answer it displaced. So the nudge is narrow: it targets
+# RE-deliberation of settled minor details, and says what to do instead --
+# choose, say so in one line, act, and offer the alternative afterwards.
+#
+# Deliberately NOT "think less". A hard problem should still get hard thinking;
+# the seat is told where the ceiling is, not to stay away from it.
+DELIBERATION_NUDGE = (
+    "HOW TO SPEND YOUR THINKING. You have a generous but finite budget for one "
+    "reply, and the thinking comes out of it. Think as hard as the problem "
+    "genuinely deserves — then finish.\n"
+    "Watch for one specific trap: re-deciding a small implementation detail you "
+    "have already settled. File path or embedded data, one format or another, "
+    "whether to offer an export — these have reasonable defaults and are "
+    "reversible. When you notice yourself starting \"actually\", \"wait\" or "
+    "\"let me reconsider\" about a detail like that, stop: keep your first "
+    "reasonable choice, say which you chose in one line, and ACT.\n"
+    "Offer the alternatives after the work exists, not instead of it. A "
+    "delivered draft with a note saying \"I embedded the image; say the word "
+    "and I'll switch to a linked file\" is worth far more than flawless "
+    "reasoning the user never sees.\n"
+    "Never end a turn having only deliberated. If you have a plan, the next "
+    "thing you produce is a tool call or the answer itself."
+)
