@@ -143,6 +143,29 @@ def check_url(url: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def check_host_literal(host: str) -> tuple[bool, str]:
+    """The part of `check_url` that needs no DNS: names that are always this
+    machine or its network, and IP literals judged directly.
+
+    For checks that run on every request a page makes (Friday's browser
+    judges each subresource), where a DNS lookup per request is too slow. A
+    hostname that passes here can still resolve to a private address; the
+    full `check_url` stays the rule for every navigation.
+    """
+    h = (host or "").strip().strip("[]").lower()
+    if not h:
+        return False, "no host"
+    if h in _ALWAYS_REFUSE_HOSTS or h.endswith(_ALWAYS_REFUSE_SUFFIXES):
+        return False, f"{h!r} is this machine or the local network"
+    try:
+        ipaddress.ip_address(h)
+    except ValueError:
+        return True, "ok"
+    if not _address_is_safe(h):
+        return False, f"{h} is a private, loopback or link-local address"
+    return True, "ok"
+
+
 def assert_safe(url: str) -> None:
     """check_url, as an exception. For call sites that should not forget."""
     ok, why = check_url(url)

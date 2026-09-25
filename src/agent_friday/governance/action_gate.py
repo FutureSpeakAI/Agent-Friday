@@ -141,7 +141,12 @@ OUTWARD_TOOLS = frozenset({
 #: Tools whose handler raises its own approval card and cannot complete the
 #: action itself (draft_email only queues; gmail_send sends on approval).
 SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
-                        "career_update_tracker"})
+                        "career_update_tracker",
+                        # Friday's browser (services/browser_session.py): when
+                        # classified outward, the handler submits or fills
+                        # only on an approved card for exactly what the page
+                        # holds at that moment, and raises that card otherwise.
+                        "browser_click", "browser_type"})
 
 #: Friday's own tools that stay inside: reading, searching, drafting, local
 #: files the confirmation gate already asks about, memory writes the taint
@@ -185,6 +190,12 @@ INTERNAL_TOOLS = frozenset({
     # the folder its own evaluate mode writes to: never over an existing
     # report, nothing reads it as instructions, and deleting it undoes it.
     "career_status", "career_inbox", "career_tailor", "career_evaluate",
+    # Friday's browser: opening and reading a page is reading, like
+    # browse_web, with the same address rules (web_safety). Choosing an option
+    # changes nothing until the form is submitted, which browser_click and
+    # browser_type judge; sensitive questions are refused in the handler.
+    "browser_open", "browser_read", "browser_select", "browser_scroll",
+    "browser_close",
 })
 
 #: Classified by argument: run_command by its command, content_create_post by
@@ -199,7 +210,10 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          # switch, grant and kill switch are checked before
                          # this, in agent._governance_check.
                          "move_mouse", "click", "type_text", "press_key",
-                         "screenshot", "scroll"})
+                         "screenshot", "scroll",
+                         # Friday's browser, by the element acted on:
+                         # services/browser_session.classify.
+                         "browser_click", "browser_type"})
 
 _READ_VERBS = ("get", "list", "search", "read", "fetch", "query", "find", "check",
                "lookup", "describe", "show", "view", "count", "status", "explore",
@@ -390,6 +404,15 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
             return OUTWARD, f"the office command could not be classified ({e})"
     if tool_name == "write_file":
         return classify_write(a.get("path"))
+    if tool_name in ("browser_click", "browser_type"):
+        # A click that submits, sends, pays or confirms, typing into a payment
+        # field, and Enter in a form are outward; a password field is
+        # forbidden; an element Friday has not read is outward.
+        try:
+            from agent_friday.services import browser_session as _bs
+            return _bs.classify(tool_name, a)
+        except Exception as e:
+            return OUTWARD, f"the browser action could not be classified ({e})"
     if tool_name == "fill_pdf_form":
         # A new file in Friday's output folder is internal; replacing a file
         # or writing anywhere else is outward; over the source is refused.
