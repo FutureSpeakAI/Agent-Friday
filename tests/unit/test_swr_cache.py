@@ -14,6 +14,24 @@ def _clean():
     swr_cache.invalidate("")
 
 
+@pytest.fixture
+def clock(monkeypatch):
+    """The cache's clock, advanced only by the test.
+
+    Staleness is `now - computed_at > fresh_for`. On Windows the wall clock
+    advances in ~15 ms steps, so two back-to-back reads can see the same
+    `now` and a fresh_for=0 value is not yet stale; the tests that depend on
+    time passing say how much passes."""
+    import types
+    now = [1_758_000_000.0]
+    monkeypatch.setattr(swr_cache, "time",
+                        types.SimpleNamespace(time=lambda: now[0]))
+
+    def tick(seconds=1.0):
+        now[0] += seconds
+    return tick
+
+
 def _counter(values):
     calls = []
 
@@ -32,7 +50,7 @@ def test_cold_read_computes_once_then_serves_from_cache():
     assert len(calls) == 1
 
 
-def test_stale_read_returns_immediately_and_refreshes_in_background():
+def test_stale_read_returns_immediately_and_refreshes_in_background(clock):
     gate = threading.Event()
     state = {"n": 0}
 
@@ -43,6 +61,7 @@ def test_stale_read_returns_immediately_and_refreshes_in_background():
         return state["n"]
 
     swr_cache.get("k", compute, fresh_for=0)
+    clock()
     t0 = time.perf_counter()
     v, _ = swr_cache.get("k", compute, fresh_for=0)
     assert v == 1                              # the old value, not a wait
@@ -84,7 +103,7 @@ def test_invalidate_forces_recompute():
     assert swr_cache.get("repos.scan", compute, fresh_for=60)[0] == "new"
 
 
-def test_refresh_started_before_invalidate_does_not_write_back():
+def test_refresh_started_before_invalidate_does_not_write_back(clock):
     gate = threading.Event()
     state = {"n": 0}
 
@@ -96,6 +115,7 @@ def test_refresh_started_before_invalidate_does_not_write_back():
         return "v%d" % state["n"]
 
     swr_cache.get("k", compute, fresh_for=0)          # v1
+    clock()
     swr_cache.get("k", compute, fresh_for=0)          # stale -> refresh #2 starts
     swr_cache.invalidate("k")
     gate.set()
@@ -104,10 +124,10 @@ def test_refresh_started_before_invalidate_does_not_write_back():
     assert swr_cache.get("k", compute, fresh_for=60)[0] == "v3"
 
 
-def test_max_age_bounds_how_stale_a_served_value_can_be():
+def test_max_age_bounds_how_stale_a_served_value_can_be(clock):
     compute, calls = _counter(["a", "b"])
     swr_cache.get("k", compute, fresh_for=0)
-    time.sleep(0.05)
+    clock(0.05)
     assert swr_cache.get("k", compute, fresh_for=0, max_age=0.01)[0] == "b"
 
 
