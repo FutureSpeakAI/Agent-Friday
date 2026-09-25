@@ -128,6 +128,21 @@ def get_arbiter():
     return ARBITER
 
 
+def ensure_vision(model_id: str) -> bool:
+    """For a caller about to send an image to a local seat: load the seat's
+    projector if it was left out (vision on demand). True when the seat will
+    accept images, or when there is nothing to do."""
+    arb = ARBITER
+    llama = getattr(arb, "llama", None) if arb is not None else None
+    if llama is None:
+        return True
+    try:
+        return llama.ensure_vision(model_id)
+    except Exception as e:
+        print(f"  [arbiter] ensure_vision({model_id}) failed: {e}")
+        return False
+
+
 def endpoints_path() -> Path:
     return runtime_dir() / "residency" / "endpoints.json"
 
@@ -755,6 +770,8 @@ class LlamaServerBackend:
         # and a 27B takes a minute to come up, which is a wide enough window
         # for both to look, both to see nothing, and both to spawn.
         self._load_lock = threading.RLock()
+        self._last_load: dict = {}     # model_id -> the kwargs it was last loaded with
+        self._vision_wanted: set = set()
 
     def resident(self):
         return {m: 0 for m in self.procs}
@@ -827,6 +844,9 @@ class LlamaServerBackend:
         # Roles share a seat. That was always the intent — `self.procs` being
         # keyed by model is the proof — it simply was not enforced at the one
         # place that creates them.
+        self._last_load[model_id] = dict(
+            num_ctx=num_ctx, gguf_path=gguf_path, port=port, n_cpu_moe=n_cpu_moe,
+            timeout=timeout, lora_path=lora_path, mmproj_path=mmproj_path)
         with self._load_lock:
             existing = self._already_serving(model_id)
             if existing is not None:
@@ -1178,7 +1198,10 @@ class LlamaServerBackend:
         # binary rejects the flag, so a build that does not support it costs a
         # slower boot rather than the local seat.
         kv_type = self._kv_cache_type()
-        if kv_type and kv_type != "f16":
+        # A model that declared its own KV type (serve_args) keeps it: llama.cpp
+        # takes the LAST occurrence of a flag, so appending the global one
+        # after the declared one would silently undo the measurement.
+        if kv_type and kv_type != "f16" and "--cache-type-k" not in cmd:
             cmd += ["--cache-type-k", kv_type, "--cache-type-v", kv_type]
         # A seat with no chat template silently falls back to ChatML, which
         # leaks `<|im_end|>` into replies and — the part that matters — hands
@@ -1213,7 +1236,15 @@ class LlamaServerBackend:
         # resolved by `model_store.seat_files` to a local copy when one
         # exists); the extractor's side-file is the fallback for models that
         # were imported from Ollama before the store recorded projectors.
-        if mmproj_path:
+        if self._vision_on_demand(model_id) and model_id not in self._vision_wanted:
+            # VISION ON DEMAND (models.json `vision: "on_demand"`). The
+            # projector costs ~500 MiB of VRAM and, on a card already near
+            # full, it measured as the difference between 482 and 109 tok/s of
+            # prefill. The seat loads without it; the first request that
+            # carries an image calls `ensure_vision`, which reloads this seat
+            # with the projector.
+            pass
+        elif mmproj_path:
             cmd += ["--mmproj", str(mmproj_path)]
         else:
             try:
@@ -1361,6 +1392,41 @@ class LlamaServerBackend:
                     return None
                 return "adapter listed at scale %s" % scale
         return "adapter not in /lora-adapters (%d listed)" % len(rows)
+
+    @staticmethod
+    def _vision_on_demand(model_id):
+        """models.json declares `vision: "on_demand"` for this model."""
+        try:
+            from agent_friday.services import model_store as _ms
+            return str((_ms.get(model_id) or {}).get("vision") or "") == "on_demand"
+        except Exception:
+            return False
+
+    def ensure_vision(self, model_id, params=None):
+        """Make sure `model_id` is served WITH its projector. A no-op unless
+        the model declares vision on demand. Reloads the seat (same context,
+        same flags) when it is running without one; returns True when the
+        seat can take images afterwards."""
+        if not self._vision_on_demand(model_id):
+            return True
+        with self._load_lock:
+            if model_id in self._vision_wanted:
+                return True
+            params = dict(params or self._last_load.get(model_id) or {})
+            if not params.get("gguf_path") or not params.get("port"):
+                return False
+            self._vision_wanted.add(model_id)
+            print(f"  [arbiter] {model_id}: an image arrived; reloading with the "
+                  f"vision projector")
+            self.evict(model_id)
+            num_ctx = params.pop("num_ctx", None)
+            try:
+                self._load_locked(model_id, num_ctx, **params)
+            except Exception as e:
+                self._vision_wanted.discard(model_id)
+                print(f"  [arbiter] {model_id}: could not load the projector: {e}")
+                return False
+            return True
 
     def evict(self, model_id):
         entry = self.procs.pop(model_id, None)

@@ -30,6 +30,16 @@ A local seat's transcript never goes to another model to be summarised.
    (`models.json` `serve_num_ctx`, under `MAX_SEAT_NUM_CTX`);
 3. the residency plan, the catalog, `compaction.context_window`, 200,000.
 
+A model's `models.json` record can declare how it is served, and the
+declaration wins over the arbiter's global defaults: `serve_args` carrying
+`--cache-type-k`/`--cache-type-v` keeps its KV type (the global
+`kv_cache_type` is not appended over it), and `"vision": "on_demand"` loads
+the seat without its projector until `local_vision.describe` receives an
+image, which reloads the seat once with the projector at the same port and
+context. On the 12 GB card, Bonsai2 at 131,072 with q4_0 KV, `-ub 512` and
+no projector left 1,455 MiB free and prefilled 16K tokens at 511 tok/s; the
+live 49,152 q8_0 seat with its projector left 639 MiB and prefilled at 109.
+
 The 4-characters-per-token estimate under-counts tool output (JSON counts
 ~1.5x). Every round feeds the provider's own prompt-token count back
 (`compaction.observe`), and budgets use the calibrated count. Tool schemas and

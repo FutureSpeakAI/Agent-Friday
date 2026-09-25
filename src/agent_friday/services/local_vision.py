@@ -135,6 +135,14 @@ def describe(image_b64: str, *, mime: str = "image/png",
     if not cap.get("ok"):
         return {"ok": False, "text": None, "model": cap.get("model"),
                 "seconds": 0.0, "reason": cap.get("reason")}
+    # A seat declared `vision: "on_demand"` is served without its projector
+    # until an image arrives; this reloads it with one (same port, same
+    # context). A no-op for every other seat.
+    from agent_friday.services import residency_arbiter as _ra
+    if not _ra.ensure_vision(cap["model"]):
+        return {"ok": False, "text": None, "model": cap["model"], "seconds": 0.0,
+                "reason": f"{cap['model']} could not be reloaded with its "
+                          f"vision projector"}
 
     body = {
         "model": cap["model"],
