@@ -167,8 +167,8 @@ accessed by another user or process", then offers, defaulted to yes, to
 prints the passphrase to the terminal, and writes it next to the API keys in the
 same readable file. Anyone who can read `~/.friday/vault` can read `start.bat`.
 
-The maintainer's own machine has `friday_startup.bat` carrying `FRIDAY_PASSWORD=` in the
-clear at line 12. The value is not reproduced here.
+Older source checkouts can carry `FRIDAY_PASSWORD=` in the clear in a launcher such as
+`friday_startup.bat` for the same reason.
 
 > **Q-V2.** Should `_write_start_bat` be deleted outright, given the installer
 > ships `.cmd` launchers and `credential_store` already holds the keys? The only

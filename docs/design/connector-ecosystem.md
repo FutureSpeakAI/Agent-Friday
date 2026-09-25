@@ -60,10 +60,9 @@ Seven mechanisms (**VERIFIED** — each read during the audit):
 
 Mechanism 1 is the reference implementation and the only one that has had the
 health lesson applied. Its own header records why (`google_accounts.py:128-135`,
-**VERIFIED**): on 2026-09-09 both accounts sat at `needs_reauth` while the
-connectors page said "connected", because the page rendered *the presence of the
-record* — nine days of confidently wrong calendar answers, including a day with
-two job interviews reported as empty.
+**VERIFIED**): accounts can sit at `needs_reauth` while a connectors page says
+"connected", if the page renders *the presence of the record* — which produces
+days of confidently wrong calendar answers, with busy days reported as empty.
 
 Everything in §2 is that same lesson, unlearned somewhere else.
 
