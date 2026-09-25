@@ -33,10 +33,15 @@ from agent_friday.services import tool_budget as tb
 #: from the user's own wiki and vault, which are not fixed.
 MAX_SYSTEM_PROMPT_TOKENS = 6_000
 
-#: Measured 2026-09-18: 75 tools, ~12,821 tokens. This is the larger half of
-#: the standing cost and the one that grows every time a tool is added, which
-#: is exactly why it needs a number attached. Headroom to 16,000.
-MAX_TOOL_CATALOGUE_TOKENS = 16_000
+#: Every tool's full schema: ~17,959 tokens for 100 tools. This is what a turn
+#: pays only when the tool index is switched off (FRIDAY_TOOL_CATALOGUE=0), so
+#: it is the fallback's cost, and it still grows with every tool added.
+MAX_TOOL_CATALOGUE_TOKENS = 20_000
+
+#: What a turn actually sends by default: the tool index (name and one line
+#: per tool, services/tool_catalogue.py) plus the few resident tools. ~3,266
+#: tokens for 100 tools. This is the number that decides prompt-eval time.
+MAX_TOOL_OPENING_TOKENS = 4_500
 
 #: What the seat reads before the conversation starts. Measured ~17,071.
 #: At the 500 tokens/second this machine sustains, 22,000 is about 44 seconds
@@ -65,6 +70,16 @@ def test_the_system_prompt_stays_within_its_budget():
         "on every cache miss. If the growth is deliberate, raise the ceiling "
         "in this file and say why in the commit."
         % (got, MAX_SYSTEM_PROMPT_TOKENS, got / 500.0))
+
+
+def test_what_a_turn_sends_about_tools_stays_within_its_budget():
+    from agent_friday.services.agent import CLAUDE_TOOLS
+    from agent_friday.services import tool_catalogue as tc
+    assert tc.enabled(), "the tool index is on by default; this budget assumes it"
+    got = tb._tokens(tc.opening_set(CLAUDE_TOOLS))
+    assert got <= MAX_TOOL_OPENING_TOKENS, (
+        "the tool index plus resident tools is ~%d tokens against a ceiling of "
+        "%d. It is sent on every turn by every seat." % (got, MAX_TOOL_OPENING_TOKENS))
 
 
 def test_the_tool_catalogue_stays_within_its_budget():

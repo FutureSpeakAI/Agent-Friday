@@ -30,9 +30,8 @@ stays reachable, it simply arrives when asked for.
 The prior art is the session this was written in, where most tools are
 deferred and fetched on demand.
 
-OFF BY DEFAULT. This changes the hot path for every turn, so it is behind
-`FRIDAY_TOOL_CATALOGUE=1` until the ablation harness has measured it both ways
-on real tasks. A context saving that costs accuracy is not a saving.
+ON BY DEFAULT. `FRIDAY_TOOL_CATALOGUE=0` switches it off and sends every
+schema in full; see `enabled()` for why defaulting on is safe.
 """
 from __future__ import annotations
 
