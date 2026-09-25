@@ -97,10 +97,10 @@ def _without_sensitive_answers(plan: List[Dict[str, str]]) -> List[Dict[str, str
     """Blank every planned answer to a legal or demographic question. A field
     map that names one (an EEO block, a work-authorisation question) is the
     owner's to answer on the form."""
-    from agent_friday.services.pdf_forms import sensitive_category
+    from agent_friday.services.career_ops import sensitive_question
     out = []
     for row in plan:
-        cat = sensitive_category(row.get("field", ""), row.get("selector", ""))
+        cat = sensitive_question(f"{row.get('field', '')} {row.get('selector', '')}")
         if cat:
             row = dict(row, value_preview="", owner_answers=cat)
         out.append(row)

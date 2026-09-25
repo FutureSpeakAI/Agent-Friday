@@ -6120,6 +6120,209 @@ except Exception as _e:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  CAREER-OPS TOOLS — the owner's career-ops checkout. services/career_ops.py
+#  holds the rules; these are thin wrappers. career_update_tracker never
+#  writes: it raises the card, and the row is written on approval. Nothing
+#  here submits an application.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _career_out(obj) -> str:
+    return json.dumps(obj, default=str)[:60000]
+
+
+def _tool_career_status(_inp):
+    """What the career-ops folder has and what the owner still has to add."""
+    from agent_friday.services import career_ops as _co
+    try:
+        return _career_out(_co.status())
+    except Exception as e:
+        return f"career_status error: {e}"
+
+
+def _tool_career_run_script(inp):
+    """Run one career-ops node script (governed by argument)."""
+    from agent_friday.services import career_ops as _co
+    inp = inp or {}
+    try:
+        return _career_out(_co.run_script(str(inp.get("script") or "").strip().lower(),
+                                          dry_run=bool(inp.get("dry_run")),
+                                          urls=inp.get("urls")))
+    except _co.CareerError as e:
+        return f"career_run_script refused: {e}"
+    except Exception as e:
+        return f"career_run_script error: {e}"
+
+
+def _tool_career_scan(inp):
+    """Scan tracked companies' public job boards; optionally add to the pipeline."""
+    from agent_friday.services import career_ops as _co
+    inp = inp or {}
+    try:
+        res = _co.scan(companies=inp.get("companies"))
+        if inp.get("add_to_pipeline") and res["new"]:
+            res["pipeline"] = _co.add_to_pipeline(res["new"])
+        else:
+            res["pipeline"] = "unchanged"
+        return _career_out(res)
+    except _co.CareerError as e:
+        return f"career_scan refused: {e}"
+    except Exception as e:
+        return f"career_scan error: {e}"
+
+
+def _tool_career_evaluate(inp):
+    """Evaluate an offer against cv.md; saves a new report, tracker unchanged."""
+    from agent_friday.services import career_ops as _co
+    inp = inp or {}
+    try:
+        return _career_out(_co.evaluate(job_description=str(inp.get("job_description") or ""),
+                                        company=str(inp.get("company") or "").strip(),
+                                        role=str(inp.get("role") or "").strip(),
+                                        url=str(inp.get("url") or "").strip()))
+    except _co.CareerError as e:
+        return f"career_evaluate refused: {e}"
+    except Exception as e:
+        return f"career_evaluate error: {e}"
+
+
+def _tool_career_update_tracker(inp):
+    """Raise the approval card for one tracker change. Never writes by itself."""
+    from agent_friday.services import career_ops as _co
+    inp = inp or {}
+    try:
+        rec = _co.propose_tracker_change(
+            company=str(inp.get("company") or "").strip(),
+            role=str(inp.get("role") or "").strip(),
+            status=str(inp.get("status") or "").strip(),
+            notes=inp.get("notes"), score=str(inp.get("score") or "").strip(),
+            report=str(inp.get("report") or "").strip(), number=inp.get("number"))
+    except _co.CareerError as e:
+        return _career_out({"written": False, "queued": False, "reason": str(e)})
+    except Exception as e:
+        return _career_out({"written": False, "queued": False,
+                            "reason": f"career_update_tracker error: {e}"})
+    if rec.get("changed") is False:
+        return _career_out({"written": False, "queued": False,
+                            "reason": "the tracker row already says that; nothing to change"})
+    if rec.get("status") == "blocked":
+        return _career_out({"written": False, "queued": False,
+                            "reason": "the request was blocked by the harm check"})
+    return _career_out({
+        "written": False, "queued": True, "approval_id": rec.get("approval_id"),
+        "card": rec.get("action_description"),
+        "note": "WAITING FOR THE USER'S APPROVAL on a card; the tracker is unchanged "
+                "until they approve it there. Say so."})
+
+
+def _tool_career_tailor(inp):
+    """A new .docx CV or cover letter tailored to one job; cv.md is only read."""
+    from agent_friday.services import career_ops as _co
+    inp = inp or {}
+    try:
+        return _career_out(_co.tailor(job_description=str(inp.get("job_description") or ""),
+                                      company=str(inp.get("company") or "").strip(),
+                                      role=str(inp.get("role") or "").strip(),
+                                      kind=str(inp.get("kind") or "cv")))
+    except _co.CareerError as e:
+        return f"career_tailor refused: {e}"
+    except Exception as e:
+        return f"career_tailor error: {e}"
+
+
+def _tool_career_inbox(inp):
+    """Recruiter email matched to tracker rows, and follow-up nudges. Read-only."""
+    from agent_friday.services import career_ops as _co
+    inp = inp or {}
+    try:
+        return _career_out(_co.inbox(days=int(inp.get("days") or 14),
+                                     nudge_after_days=int(inp.get("nudge_after_days") or 7)))
+    except _co.CareerError as e:
+        return f"career_inbox refused: {e}"
+    except Exception as e:
+        return f"career_inbox error: {e}"
+
+
+_JD = {"type": "string", "description": "Job description text."}
+
+CLAUDE_TOOLS.extend([
+    {"name": "career_status",
+     "description": "What the career-ops job-search folder still needs (cv.md, "
+                    "profile, portals). Read-only.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "career_run_script",
+     "description": "Run a career-ops script. normalize/dedup/merge rewrite the "
+                    "tracker unless dry_run; liveness checks job URLs are open.",
+     "input_schema": {"type": "object", "properties": {
+         "script": {"type": "string", "enum": ["doctor", "verify", "sync-check", "normalize",
+                                               "dedup", "merge", "liveness"]},
+         "dry_run": {"type": "boolean"},
+         "urls": {"type": "array", "items": {"type": "string"}}},
+         "required": ["script"]}},
+    {"name": "career_scan",
+     "description": "Scan portals.yml companies' public job boards for new "
+                    "matching offers. add_to_pipeline saves them (asks first).",
+     "input_schema": {"type": "object", "properties": {
+         "companies": {"type": "array", "items": {"type": "string"}},
+         "add_to_pipeline": {"type": "boolean"}}}},
+    {"name": "career_evaluate",
+     "description": "Evaluate a job offer against cv.md (career-ops rubric); "
+                    "saves a new report, tracker unchanged.",
+     "input_schema": {"type": "object", "properties": {
+         "job_description": _JD, "company": {"type": "string"}, "role": {"type": "string"},
+         "url": {"type": "string"}},
+         "required": ["job_description", "company", "role"]}},
+    {"name": "career_update_tracker",
+     "description": "Propose a career-ops tracker row change or new row. Raises "
+                    "an approval card; nothing changes until the user approves.",
+     "input_schema": {"type": "object", "properties": {
+         "company": {"type": "string"}, "role": {"type": "string"},
+         "number": {"type": "string", "description": "Row number, if known."},
+         "status": {"type": "string", "description": "e.g. Applied, Interview, "
+                                                     "Offer, Rejected"},
+         "notes": {"type": "string"}, "score": {"type": "string"},
+         "report": {"type": "string"}},
+         "required": ["company"]}},
+    {"name": "career_tailor",
+     "description": "New .docx CV or cover letter tailored to one job from "
+                    "cv.md (never changed).",
+     "input_schema": {"type": "object", "properties": {
+         "job_description": _JD, "company": {"type": "string"}, "role": {"type": "string"},
+         "kind": {"type": "string", "enum": ["cv", "cover_letter"]}},
+         "required": ["job_description", "company", "role"]}},
+    {"name": "career_inbox",
+     "description": "Recruiter email for tracked companies: suggested tracker "
+                    "updates and follow-up nudges. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "days": {"type": "integer"}, "nudge_after_days": {"type": "integer"}}}},
+])
+
+CLAUDE_TOOL_HANDLERS.update({
+    "career_status": _tool_career_status,
+    "career_run_script": _tool_career_run_script,
+    "career_scan": _tool_career_scan,
+    "career_evaluate": _tool_career_evaluate,
+    "career_update_tracker": _tool_career_update_tracker,
+    "career_tailor": _tool_career_tailor,
+    "career_inbox": _tool_career_inbox,
+})
+
+TOOL_RINGS.update({
+    "career_status": 0,          # read-only
+    "career_run_script": 2,      # a local subprocess; tracker writers are outward
+    "career_scan": 2,            # reads public job boards over the network
+    "career_evaluate": 1,        # a model call and a new report file
+    "career_update_tracker": 1,  # raises an approval card; writes on approval
+    "career_tailor": 2,          # a model call and an officecli subprocess
+    "career_inbox": 2,           # searches Gmail, like search_email
+})
+
+try:        # registers the decision hook that writes an approved tracker change
+    from agent_friday.services import career_ops as _career_ops  # noqa: F401
+except Exception as _e:
+    print(f"[agent] career-ops tools unavailable: {_e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  CONTENT PIPELINE TOOLS — social publishing from chat/voice (spec §10.2/§11).
 #  Thin wrappers over services.content_pipeline / content_composer plus the
 #  routes-hosted §6.4 optimal-time resolver, so voice and chat drive the same

@@ -2697,6 +2697,11 @@ DEFAULT_SETTINGS = {
         "min_notice_hours": 12,
         "buffer_minutes": 15,
     },
+    # ── The career-ops checkout (services/career_ops.py) ──
+    # path: the folder; "" means <home>/Projects/career-ops.
+    "career_ops": {
+        "path": "",
+    },
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.

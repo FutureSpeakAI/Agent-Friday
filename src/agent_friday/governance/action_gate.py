@@ -133,11 +133,15 @@ OUTWARD_TOOLS = frozenset({
     "sign_pdf",
     # Changes the owner's Google Contacts, which sync to every device.
     "save_google_contact",
+    # The career-ops tracker is the owner's record. The tool only raises a
+    # card listing every field; services/career_ops writes on approval.
+    "career_update_tracker",
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
 #: action itself (draft_email only queues; gmail_send sends on approval).
-SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf"})
+SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
+                        "career_update_tracker"})
 
 #: Friday's own tools that stay inside: reading, searching, drafting, local
 #: files the confirmation gate already asks about, memory writes the taint
@@ -174,12 +178,22 @@ INTERNAL_TOOLS = frozenset({
     # Relationship memory: reads of the local timeline, and a local reminder
     # that is never sent to the person it is about.
     "person_timeline", "people_at", "set_follow_up",
+    # career-ops (services/career_ops.py). career_status and career_inbox
+    # only read (the inbox searches Gmail, like search_email). career_tailor
+    # writes a NEW .docx in Friday's documents folder and only reads cv.md.
+    # career_evaluate writes a NEW report into career-ops' reports/ folder,
+    # the folder its own evaluate mode writes to: never over an existing
+    # report, nothing reads it as instructions, and deleting it undoes it.
+    "career_status", "career_inbox", "career_tailor", "career_evaluate",
 })
 
 #: Classified by argument: run_command by its command, content_create_post by
-#: whether it schedules, write_file and fill_pdf_form by where they write.
+#: whether it schedules, write_file and fill_pdf_form by where they write,
+#: career_run_script by whether the script rewrites the tracker, career_scan
+#: by whether it adds to the pipeline file.
 BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          "write_file", "fill_pdf_form", "run_sandboxed",
+                         "career_run_script", "career_scan",
                          # Desktop control (ring 3), by the app it lands on:
                          # services/desktop_grants.py. The Computer Control
                          # switch, grant and kill switch are checked before
@@ -384,6 +398,16 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
             return _pf.classify(a)
         except Exception as e:
             return OUTWARD, f"the form fill could not be classified ({e})"
+    if tool_name in ("career_run_script", "career_scan"):
+        # A read-only check or a scan that writes nothing is internal; a
+        # script that rewrites the tracker, or adding offers to the pipeline
+        # file, is a change to the owner's records and waits.
+        try:
+            from agent_friday.services import career_ops as _co
+            return (_co.classify_script(a) if tool_name == "career_run_script"
+                    else _co.classify_scan(a))
+        except Exception as e:
+            return OUTWARD, f"the career-ops action could not be classified ({e})"
     if tool_name == "content_create_post":
         if a.get("publish_at") or a.get("optimal_time"):
             return OUTWARD, "it schedules a post to go out"
