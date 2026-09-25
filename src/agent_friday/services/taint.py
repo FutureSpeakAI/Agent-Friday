@@ -643,7 +643,8 @@ class Decision:
         }
 
 
-_ORDER = {"allow": 0, "ask": 1, "deny": 2}
+#: "note" ranks with allow: the flag is recorded and shown, nothing is held.
+_ORDER = {"allow": 0, "note": 0, "ask": 1, "deny": 2}
 
 
 def _stricter(a: str, b: str) -> str:
