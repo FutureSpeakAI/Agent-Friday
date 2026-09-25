@@ -30,6 +30,13 @@ you hit something that is not here, please open an issue.
 
 ## 2. Open defects
 
+- **With only an OpenRouter key, the top-bar model chip says "Anthropic:
+  Claude Sonnet 5".** The call goes through OpenRouter; the reply's own
+  label in chat and Settings → Spending name the route correctly.
+- **An outward action can be confirmed twice in chat.** When the model asks
+  "shall I?" on its own before calling the tool, your yes is not yet the
+  checkpoint's question; the checkpoint then asks once more for that exact
+  action.
 - **Built-in scheduled jobs on a cloud-only install wait for your answer.**
   With no local model serving they run on a cloud model only after you say yes
   (in the setup chat, or Settings → Spending); until then they stay paused,
