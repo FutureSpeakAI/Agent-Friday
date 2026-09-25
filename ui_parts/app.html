@@ -3699,20 +3699,6 @@ function KnowledgeWS() {
   }, v.label)))), h('div', {
     className: 'kw-body' + (stack && view === 'split' ? ' kw-stack' : '')
   }, h('div', {
-    ref: graphPaneRef,
-    className: 'kw-pane kw-graph' + (graphHidden ? ' kw-hidden' : '')
-  }, h(KnowledgeGraphWS, {
-    embedded: true,
-    toolbar: toolbar,
-    paused: graphHidden,
-    query: q,
-    highlightIds: textIds,
-    onReady: onReady,
-    onSelect: onSelect,
-    onOpen: onOpen,
-    onGraphLoaded: onGraphLoaded,
-    fullscreenEl: () => rootRef.current
-  })), h('div', {
     className: 'kw-pane kw-pages' + (pagesHidden ? ' kw-hidden' : '')
   }, h(KnowledgePages, {
     path: page,
@@ -3731,6 +3717,20 @@ function KnowledgeWS() {
       if (how === 'deleted') clearFocus();else if (path) pendingPath.current = path;
       if (S && S.reload) S.reload();
     }
+  })), h('div', {
+    ref: graphPaneRef,
+    className: 'kw-pane kw-graph' + (graphHidden ? ' kw-hidden' : '')
+  }, h(KnowledgeGraphWS, {
+    embedded: true,
+    toolbar: toolbar,
+    paused: graphHidden,
+    query: q,
+    highlightIds: textIds,
+    onReady: onReady,
+    onSelect: onSelect,
+    onOpen: onOpen,
+    onGraphLoaded: onGraphLoaded,
+    fullscreenEl: () => rootRef.current
   }))), h('div', {
     className: 'kw-bar',
     'data-kw-bar': '1',

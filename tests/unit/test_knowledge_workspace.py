@@ -282,3 +282,51 @@ def test_icon_only_buttons_carry_an_aria_label(ui):
                   "'Stop the tour':'Presentation tour'" if ui == "app.html"
                   else "\"aria-label\": touring ? 'Stop the tour' : 'Presentation tour'"):
         assert label in s, "%s: missing %r" % (ui, label)
+
+
+CSS_FILES = {"index.html": ROOT / "index.html", "head.html": ROOT / "ui_parts" / "head.html"}
+
+
+@pytest.mark.parametrize("ui", sorted(UI))
+def test_the_wiki_is_on_the_left_of_the_galaxy(ui):
+    """Side by side, the pages pane comes first (left) and the galaxy second."""
+    s = _text(ui)
+    body = s.index("className: 'kw-body'")
+    pages = s.index("className: 'kw-pane kw-pages'", body)
+    graph = s.index("className: 'kw-pane kw-graph'", body)
+    assert pages < graph, "%s: the galaxy is still left of the wiki" % ui
+
+
+@pytest.mark.parametrize("css", sorted(CSS_FILES))
+def test_stacked_the_galaxy_stays_on_top(css):
+    s = CSS_FILES[css].read_text(encoding="utf-8")
+    assert ".kw-body.kw-stack .kw-graph { order: -1; }" in s, css
+
+
+@pytest.mark.parametrize("css", sorted(CSS_FILES))
+def test_no_box_inside_the_pages_side_scrolls_on_its_own(css):
+    """Writing or proposing an entry never puts a scrollbar beside another:
+    a proposal's old/new text shows in full inside the page list, and the
+    editor takes the reader's height instead of scrolling inside it."""
+    s = CSS_FILES[css].read_text(encoding="utf-8")
+    diff = s[s.index(".kw-diff-old, .kw-diff-new {"):]
+    diff = diff[:diff.index("}")]
+    assert "overflow-y" not in diff and "max-height" not in diff, css
+    assert ".kw-doc:has(> .kw-editor) { flex: 1 1 0; }" in s, css
+    editor = s[s.index(".kw-editor {"):]
+    editor = editor[:editor.index("}")]
+    assert "resize: none" in editor and "flex: 1 1 0" in editor, css
+
+
+@pytest.mark.parametrize("css", sorted(CSS_FILES))
+def test_every_scroll_area_wears_the_apps_scrollbar(css):
+    """A global ::-webkit-scrollbar theme, and no global scrollbar-color in
+    Chromium (it would switch the per-area ::-webkit-scrollbar rules off)."""
+    s = CSS_FILES[css].read_text(encoding="utf-8")
+    assert "        ::-webkit-scrollbar { width: 4px; height: 4px; }" in s, css
+    assert "::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }" in s, css
+    code = re.sub(r"/\*.*?\*/", "", s, flags=re.S)
+    for line in code.splitlines():
+        if "scrollbar-color" in line:
+            assert "* { scrollbar-width: thin;" in line, (
+                "%s: scrollbar-color outside the Firefox-only block: %s" % (css, line.strip()))
