@@ -1058,12 +1058,18 @@ def build_catalog() -> dict:
     # running, served by llama-server processes the Arbiter owns, appear
     # nowhere at all. The picker must show the live residency plan, not a
     # dead daemon's guesses.
+    # Rows are COPIED before the sort key is written. The seat and store rows
+    # come from a shared snapshot cache, and two builds at once (the top-bar
+    # menu and Settings ask together) wrote and deleted `_ord` on the same
+    # dicts, so one build's cleanup broke the other's sort (KeyError '_ord').
     for e in _arbiter_seat_entries():
+        e = dict(e)
         seen.add((e["id"], e["provider"]))
         e["_ord"] = len(flat)
         flat.append(e)
     # Then everything else Friday holds on disk but has not seated.
     for e in _friday_store_entries(exclude={f["id"] for f in flat}):
+        e = dict(e)
         seen.add((e["id"], e["provider"]))
         e["_ord"] = len(flat)
         flat.append(e)
@@ -1112,6 +1118,7 @@ def build_catalog() -> dict:
                     and any(f["id"] == e["id"] for f in flat)):
                 continue
             seen.add(key)
+            e = dict(e)
             e["_ord"] = len(flat)  # declaration order — models render as declared
             flat.append(e)
 
