@@ -177,12 +177,24 @@ def _host(url: str) -> str:
         return ""
 
 
+def _browser_url() -> str:
+    try:
+        from agent_friday.services import browser_session
+        return browser_session.current_url()
+    except Exception:
+        return ""
+
+
 def describe_source(tool_name: str, tool_input: Optional[dict]) -> str:
     """Plain words for where a tool's output came from."""
     inp = tool_input or {}
     t = tool_name or "a tool"
     if t in ("browse_web", "save_output") or t.endswith("get_webpage"):
         h = _host(str(inp.get("url") or ""))
+        return "a web page" + (f" on {h}" if h else "")
+    if t.startswith("browser_"):
+        # Friday's own browser: the page it is on now, when the call named none.
+        h = _host(str(inp.get("url") or "") or _browser_url())
         return "a web page" + (f" on {h}" if h else "")
     if t in ("search_web", "search_news"):
         return "web search results"
@@ -288,7 +300,9 @@ ECHO_TOOLS = {"draft_email", "create_calendar_event", "update_calendar_event",
               "learn_skill", "correct_wiki", "propose_wiki_update", "navigate",
               "switch_model", "spawn_task", "open_url", "open_path",
               "revert_workspace", "create_workflow",
-              "hold_slots", "book_slot", "release_holds"}
+              "hold_slots", "book_slot", "release_holds",
+              # Their results echo what Friday typed or chose, not the page.
+              "browser_type", "browser_select", "browser_close"}
 
 
 def note_tool_output(key: str, tool_name: str, tool_input: Optional[dict], result: Any):
@@ -435,11 +449,19 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     # The tracker card shows every field; flags on these go onto it.
     "career_update_tracker": {"company": "detail", "role": "detail", "notes": "detail",
                               "status": "detail"},
+    # Friday's browser. What is typed or chosen is judged here; typing is
+    # reversible, so a flag rides along (browser_type and browser_select are
+    # self-carding) and lands on the card for the submit or payment field.
+    "browser_open": {"url": "fetch_url"},
+    "browser_type": {"text": "detail"},
+    "browser_select": {"option": "detail"},
+    "browser_read": {}, "browser_click": {}, "browser_scroll": {}, "browser_close": {},
 }
 
 #: Tools that create their own approval card. A flag on these goes ON that
 #: card instead of raising a second one.
-SELF_CARDING = {"draft_email", "call_by_phone", "sign_pdf", "career_update_tracker"}
+SELF_CARDING = {"draft_email", "call_by_phone", "sign_pdf", "career_update_tracker",
+                "browser_click", "browser_type", "browser_select"}
 
 #: Roles judged by overlap of word runs rather than exact match.
 FREE_TEXT_ROLES = {"command", "instruction", "memory_write", "publish_body"}
