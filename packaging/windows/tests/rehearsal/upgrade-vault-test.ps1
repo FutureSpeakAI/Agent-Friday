@@ -169,6 +169,20 @@ w._write_start_bat({
     "vault_password": os.environ["PASS"],
 })
 
+# From 5.6.6 the wizard no longer writes the passphrase into start.bat; the
+# base release stores it in its own durable homes (Credential Manager and a
+# DPAPI-wrapped file under ~/.friday/security). Store it the way the BASE
+# release does, with the base's own code, so the upgrade is tested against
+# where that release really keeps it. Credential Manager is per Windows
+# account, not per profile folder: this belongs on a throwaway machine.
+stored_via = "start.bat"
+bat = pathlib.Path(w.PROJ_ROOT) / "start.bat"
+if os.environ["PASS"] not in (bat.read_text(encoding="utf-8", errors="ignore") if bat.exists() else ""):
+    from agent_friday.services import vault_passphrase as base_vp
+    base_vp.store(os.environ["PASS"])
+    base_vp.reset_cache()
+    stored_via = "vault_passphrase.store (%s)" % (base_vp.resolve(use_cache=False)[1],)
+
 # A real vault artifact, encrypted the way the product encrypts.
 from agent_friday.privacy import vault_crypto as vc
 home  = pathlib.Path.home()
@@ -181,6 +195,7 @@ blob  = vc.encrypt(b"the maintainer's private note. If this decrypts, the vault 
 (vdir / "note.enc").write_bytes(blob)
 
 print(json.dumps({
+    "stored_via": stored_via,
     "start_bat": str(pathlib.Path(w.PROJ_ROOT) / "start.bat"),
     "vault_dir": str(vdir),
     "blob_sha": __import__("hashlib").sha256(blob).hexdigest(),
@@ -202,7 +217,10 @@ $beforeText = Get-Content -LiteralPath $startBat -Raw
 $beforeHasPass = $beforeText -match [regex]::Escape($PASS)
 Note "start.bat written : $startBat"
 Note "contains passphrase before upgrade : $beforeHasPass"
-if (-not $beforeHasPass) { throw "precondition failed: start.bat does not contain the passphrase" }
+Note "passphrase stored via : $($minted.stored_via)"
+if (-not $beforeHasPass -and "$($minted.stored_via)" -notmatch '^vault_passphrase\.store') {
+    throw "precondition failed: the passphrase is neither in start.bat nor in the base release's durable store"
+}
 
 function Get-AppVersion([string] $dir) {
     $pp = Join-Path $dir 'pyproject.toml'
@@ -239,7 +257,8 @@ home = pathlib.Path.home()
 vdir = home / ".friday" / "vault"
 out  = {"recovered_from": None, "decrypted": False, "plaintext": None, "error": None}
 
-# Recover the passphrase the way the product would: start.bat is its only home.
+# Recover the passphrase the way the product would: start.bat for a release
+# that kept it there, otherwise the upgraded product's own resolver.
 sb = pathlib.Path(os.environ["APPDIR"]) / "start.bat"
 pw = None
 if sb.exists():
@@ -248,7 +267,16 @@ if sb.exists():
         pw = m.group(1).strip()
         out["recovered_from"] = "start.bat"
 if pw is None:
-    out["error"] = "passphrase not recoverable: start.bat absent or has no FRIDAY_PASSWORD"
+    try:
+        from agent_friday.services import vault_passphrase as vp
+        vp.reset_cache()
+        got, src = vp.resolve(use_cache=False)
+        if got:
+            pw, out["recovered_from"] = got, src
+    except Exception as e:
+        out["error"] = "resolver failed: %s: %s" % (type(e).__name__, e)
+if pw is None:
+    out["error"] = out["error"] or "passphrase not recoverable from start.bat or any durable home"
 else:
     try:
         salt = bytes.fromhex(json.loads((vdir / ".vault_config.json").read_text(encoding="utf-8"))["salt_hex"])

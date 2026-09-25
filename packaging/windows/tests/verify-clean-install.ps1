@@ -146,8 +146,9 @@ try {
     Check 'schedules' $okSched ("local-only: " + ($local -join ', ') + "; update check enabled: " + $(if ($upd) { $upd.enabled } else { 'missing' }))
 
     $phone = Api '/api/phone/status'
-    Check 'phone' ((-not $phone.config.enabled) -and (-not $phone.ingress)) `
-          "enabled: $($phone.config.enabled); ingress running: $($phone.ingress)"
+    # ingress is an object ({running: false}); any object is truthy, so ask it.
+    Check 'phone' ((-not $phone.config.enabled) -and (-not $phone.ingress.running)) `
+          "enabled: $($phone.config.enabled); ingress running: $($phone.ingress.running)"
 
     # agent.<name>: the marked hosts block, then Friday's own listener.
     $la = Api '/api/local-address'
@@ -159,8 +160,16 @@ try {
     $serve = Api '/api/local-address/serve' 'POST' @{ on = $true }
     $named = $null
     try { $named = Invoke-WebRequest -Uri "http://$hostName/" -UseBasicParsing -TimeoutSec 20 } catch { }
-    Check 'address' (($null -ne $named) -and ($named.StatusCode -eq 200) -and ($named.Content -match 'FRIDAY')) `
-          ("http://$hostName/ -> " + $(if ($named) { $named.StatusCode } else { 'no answer' }) + "; listener ok: $($serve.ok)")
+    # Content is a byte array for some content types; read the raw body as text.
+    $body = ''
+    $title = ''
+    if ($named) {
+        $body = [System.Text.Encoding]::UTF8.GetString($named.RawContentStream.ToArray())
+        $t = [regex]::Match($body, '(?is)<title>(.*?)</title>')
+        if ($t.Success) { $title = $t.Groups[1].Value.Trim() }
+    }
+    Check 'address' (($null -ne $named) -and ($named.StatusCode -eq 200) -and ($body -match 'FRIDAY')) `
+          ("http://$hostName/ -> " + $(if ($named) { "$($named.StatusCode) $($named.Headers['Content-Type']); title: '$title'; server: $($named.Headers['Server'])" } else { 'no answer' }) + "; listener ok: $($serve.ok)")
 
     # Last, because it finishes first-run setup: "Set up later" from the
     # first stage completes setup with defaults.
