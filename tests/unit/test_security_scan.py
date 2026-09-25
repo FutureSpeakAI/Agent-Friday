@@ -108,3 +108,17 @@ def test_license_attribution_files_skip_only_the_contact_rules(tmp_path, monkeyp
     cats = [f[2] for f in scan.detect(whole_tree=True)]
     assert "Personal email (PII)" not in cats
     assert any("API key" in c for c in cats)
+
+
+def test_a_personal_author_email_is_refused():
+    personal = "someone" + "@" + "gmail.com"
+    found = scan.identity_findings([("GIT_AUTHOR_IDENT", personal)])
+    assert found and found[0][2] == "Personal email as commit author"
+    assert personal not in found[0][3], "the report masks the address"
+
+
+def test_a_work_or_noreply_author_email_passes():
+    assert scan.identity_findings([
+        ("GIT_AUTHOR_IDENT", "someone@futurespeak.ai"),
+        ("GIT_COMMITTER_IDENT", "someone@users.noreply.github.com"),
+    ]) == []

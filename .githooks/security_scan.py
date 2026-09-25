@@ -332,6 +332,35 @@ def mask(value: str) -> str:
     return f"{v[:4]}...{v[-2:]} ({len(v)} chars)"
 
 
+def _commit_identities() -> list:
+    """The author and committer this commit will carry, from git itself."""
+    import subprocess
+    out = []
+    for var in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+        try:
+            ident = subprocess.run(["git", "var", var], capture_output=True, text=True,
+                                   check=True).stdout.strip()
+        except Exception:
+            continue
+        m = re.search(r"<([^>]*)>", ident)
+        if m:
+            out.append((var, m.group(1)))
+    return out
+
+
+def identity_findings(identities: list) -> list:
+    """A commit's metadata is published with it. A personal mail address as
+    author or committer is refused; set `git config user.email` to a work or
+    GitHub no-reply address for this repository."""
+    found = []
+    for var, email in identities:
+        if _is_personal_email(email):
+            who = "author" if "AUTHOR" in var else "committer"
+            found.append(("(commit " + who + ")", 0, "Personal email as commit " + who,
+                          mask(email)))
+    return found
+
+
 def detect(whole_tree: bool = False) -> list:
     """Scan staged additions (default) or every line of every tracked file
     (whole_tree=True, used by CI to prove the public tree is clean).
@@ -343,6 +372,8 @@ def detect(whole_tree: bool = False) -> list:
     # The committer's own account name and hostname. Commit time only: on a CI
     # runner these are the runner's, not a person's.
     identity = set() if whole_tree else _machine_identity()
+    if not whole_tree:
+        findings.extend(identity_findings(_commit_identities()))
     for path in files:
         if SENSITIVE_FILE_RE.search(path.replace("\\", "/")):
             findings.append((path, 0, "Sensitive file type", path.rsplit("/", 1)[-1]))
