@@ -541,18 +541,25 @@ def resumable_after_boot() -> List[Dict[str, Any]]:
     return out
 
 
-def announce(resumable: List[Dict[str, Any]]) -> None:
+def announce(resumable: List[Dict[str, Any]], resumed: Optional[List[str]] = None) -> None:
     """Tell the user what survived. Separate from task_journal's interruption
     notice, which correctly says nothing was resumed - this one says what
-    still CAN be."""
+    still CAN be, and what is already being picked back up."""
     items = [r for r in resumable if r.get("resumable")]
     if not items:
         return
+    resumed = set(resumed or [])
     gated = [r for r in items if r.get("needs_confirmation")]
     names = ", ".join((r.get("name") or r["task_id"])[:40] for r in items[:5])
     more = f" and {len(items) - 5} more" if len(items) > 5 else ""
-    body = (f"{names}{more} stopped midstream but their work is saved and can "
-            f"be picked up where they left off.")
+    if resumed and len(resumed) == len(items):
+        body = (f"{names}{more} stopped midstream; their work was saved and they "
+                f"are being picked back up where they left off.")
+    else:
+        body = (f"{names}{more} stopped midstream but their work is saved and can "
+                f"be picked up where they left off.")
+        if resumed:
+            body += f" {len(resumed)} of them are already being resumed."
     if gated:
         body += (f" {len(gated)} had a tool running at the moment of the crash "
                  f"and will ask before re-running it.")

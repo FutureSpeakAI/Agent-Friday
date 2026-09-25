@@ -46,6 +46,7 @@ from agent_friday.core import ANTHROPIC_MODEL_DEFAULT, _load_settings
 
 _CHARS_PER_TOKEN = 4
 _SUMMARY_PREFIX = "[Context Summary]"
+_LEDGER_MARK = "[Task Ledger]"
 # The summary is written in the task ledger's sections so it can be absorbed
 # into the ledger (services/task_ledger.py).
 from agent_friday.services.task_ledger import SUMMARY_SECTIONS as _SECTIONS  # noqa: E402
@@ -249,11 +250,26 @@ def served_context(model):
     return n_ctx
 
 
+def _declared_serving_window(model):
+    """The window the arbiter would load a llama-server seat at: the model
+    store's measured `serve_num_ctx`, under the arbiter's class ceiling.
+    None for a model with no declaration (cloud models, Ollama tags)."""
+    try:
+        from agent_friday.services.residency_arbiter import LlamaServerBackend as _L
+        if _L._declared_num_ctx(model):
+            return int(_L.seat_cap(model))
+    except Exception:
+        pass
+    return None
+
+
 def resolve_context_window(model=None, cfg=None):
     """The context window to budget against, in tokens (decision D3).
 
     Precedence:
       0. what a local llama-server seat reports it is SERVING (`/props`),
+      0b. when it is not serving: the window the arbiter would load it at
+          (models.json `serve_num_ctx`, under the arbiter's ceiling),
       1. the residency plan's context for the seat,
       2. the model's REAL window from the catalog,
       3. the configured `compaction.context_window`,
@@ -269,6 +285,12 @@ def resolve_context_window(model=None, cfg=None):
         served = served_context(model)
         if served:
             return int(served)
+        declared = _declared_serving_window(model)
+        if declared:
+            # Not serving right now, but the arbiter will load it at no more
+            # than this -- the plan's rung and the descriptor's
+            # context_window can both say more.
+            return int(declared)
         try:
             # The residency PLAN next. It knows the context a seat is being
             # served at — `num_ctx` is chosen per-seat and applied on every
@@ -508,8 +530,12 @@ def _take_prior_summary(head):
     out = []
     for m in head:
         c = m.get("content")
-        if isinstance(c, str) and _SUMMARY_PREFIX in c:
-            i = c.index(_SUMMARY_PREFIX)
+        marks = [c.index(k) for k in (_SUMMARY_PREFIX, _LEDGER_MARK)
+                 if isinstance(c, str) and k in c]
+        if marks:
+            # A continuation leg's first message carries the ledger too; it
+            # is folded in like an earlier summary, not left as a stale copy.
+            i = min(marks)
             prior = c[i:]
             rest = c[:i].rstrip()
             if not rest:
@@ -592,16 +618,24 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
     keep_tail = int(cfg.get("keep_tail", 10))
     max_tokens = int(cfg.get("summary_max_tokens", 400))
 
-    # The verbatim tail may use at most half the budget. On a small seat a
-    # fixed "last 10 messages" of tool output is larger than the window
-    # itself, which leaves nothing for summarising to shrink.
+    # The verbatim tail may use at most a quarter of the budget. On a small
+    # seat a fixed "last 10 messages" of tool output is larger than the window
+    # itself, which leaves nothing for summarising to shrink; and a tail near
+    # the budget means compacting again on the very next round.
     while keep_tail > 2:
         _h, _t = _safe_cuts(messages, keep_head, keep_tail)
-        if estimate_tokens(messages[_t:]) * factor <= budget // 2:
+        if estimate_tokens(messages[_t:]) * factor <= budget // 4:
             break
         keep_tail -= 1
     head_end, tail_start = _safe_cuts(messages, keep_head, keep_tail)
     head, prior = _take_prior_summary(messages[:head_end])
+    if ledger is not None:
+        # The ledger is the authoritative record of what the task has learned.
+        # The summarizer always starts from ALL of it -- whatever the head
+        # happens to hold -- because its FACTS replace the ledger's: a summary
+        # written without them would erase every fact it was not shown.
+        from agent_friday.services import task_ledger as _tl
+        prior = _tl.render(ledger)
     middle = messages[head_end:tail_start]
     tail = messages[tail_start:]
 

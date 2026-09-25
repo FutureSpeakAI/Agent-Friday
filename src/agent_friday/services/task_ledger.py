@@ -176,6 +176,14 @@ def record_step(ledger: Dict[str, Any], name: str, args: Any, result: Any) -> No
     if ledger is None:
         return
     ledger["rounds"] = int(ledger.get("rounds") or 0) + 1
+    # Distinct steps: the same call with the same arguments again is not
+    # progress, and a job that only repeats itself must be seen to.
+    import hashlib as _hl
+    sig = _hl.sha256((str(name) + "|" + _one_line(args, 2000)).encode("utf-8", "replace")).hexdigest()[:16]
+    seen = ledger.setdefault("step_sigs", [])
+    if sig not in seen:
+        seen.append(sig)
+    ledger["distinct_steps"] = len(seen)
     ledger.setdefault("done", []).append(
         "%d. %s(%s) -> %s" % (ledger["rounds"], name, _one_line(args, 160), _one_line(result, 200)))
     files = ledger.setdefault("files", [])

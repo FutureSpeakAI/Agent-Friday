@@ -139,3 +139,39 @@ def test_stats_record_seat_and_savings():
     s = comp.get_stats()
     assert s["compactions"] == before + 1 and s["by_seat"].get("local", 0) >= 1
     assert s["tokens_saved"] > 0
+
+
+def test_facts_from_earlier_legs_survive_a_new_legs_first_compaction():
+    """A continuation leg starts with the ledger in its first message (the
+    head, never summarised). Its first compaction used to summarise only the
+    new middle -- and a summary's FACTS replace the ledger's -- so every fact
+    from earlier legs was erased and the job re-did them in a loop."""
+    import re
+    from agent_friday.services import task_ledger as tl
+    ledger = tl.new("inspect every batch")
+    ledger["facts"] = ["0:3,1:5,2:8"]
+
+    def summarize(text, n):
+        return "FACTS: " + ",".join(sorted(set(re.findall(r"\d+:\d", text))))
+    convo = [{"role": "system", "content": "sys"},
+             {"role": "user", "content": tl.continuation_prompt("inspect every batch", ledger,
+                                                               "the previous stretch reached its rounds limit")}]
+    for i in range(3, 23):
+        convo += [{"role": "assistant", "content": None, "tool_calls": [
+                      {"id": "c%d" % i, "type": "function", "function": {"name": "t", "arguments": "{}"}}]},
+                  {"role": "tool", "tool_call_id": "c%d" % i, "content": "%d:%d " % (i, i % 10) + "x" * 2000}]
+    out = comp.maybe_compact(convo, window=6000, summarizer=summarize, ledger=ledger, task_id=None)
+    facts = " ".join(ledger["facts"])
+    for old in ("0:3", "1:5", "2:8"):
+        assert old in facts, "a fact from an earlier leg was erased"
+    head = json.dumps(out[:2])
+    assert head.count("[Task Ledger]") == 1, "a stale ledger copy stayed in the head"
+
+
+def test_repeating_the_same_step_is_not_progress():
+    from agent_friday.services import task_ledger as tl
+    led = tl.new("g")
+    tl.record_step(led, "fetch", {"b": 1}, "r")
+    tl.record_step(led, "fetch", {"b": 1}, "r")
+    tl.record_step(led, "fetch", {"b": 2}, "r")
+    assert led["rounds"] == 3 and led["distinct_steps"] == 2

@@ -3136,7 +3136,23 @@ def _restore_tasks_from_journal(announce=True, limit=200):
             tj.announce_interrupted(summary.get('interrupted') or [])
             try:
                 from agent_friday.services import task_resume as _tr2
-                _tr2.announce(summary.get('resumable') or [])
+                # AFTER A RESTART, KEEP GOING. reconcile.run_at_boot only sees
+                # tasks still "running" in memory, which after a real restart
+                # is none of them -- they come back from the journal already
+                # "interrupted". So auto-resume happens here, where the
+                # resumable ones are known. A task whose in-flight step is not
+                # safe to repeat is left for a person.
+                _auto = _tr2.auto_enabled()
+                _picked = []
+                if _auto:
+                    from agent_friday.services import reconcile as _rc
+                    for _r in summary.get('resumable') or []:
+                        if _r.get('needs_confirmation'):
+                            continue
+                        _rc._resume_in_background(_r['task_id'])
+                        _picked.append(_r['task_id'])
+                summary['auto_resumed'] = _picked
+                _tr2.announce(summary.get('resumable') or [], resumed=_picked)
             except Exception:
                 pass
         try:
@@ -3480,7 +3496,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                     workspace='task', on_route=_log_route, tools=_tools_override,
                 )
 
-        _rounds_before = int((_ledger or {}).get("rounds") or 0)
+        _rounds_before = int((_ledger or {}).get("distinct_steps") or 0)
         _tbud.take_last_stop()          # nothing stale from an earlier turn
         reply, tool_trace = _leg(messages)
         # A LONG JOB DOES NOT STOP AT A PER-TURN LIMIT. When a leg ends on the
@@ -3497,10 +3513,11 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
             if _tj.stop_requested(task_id):
                 break
             _led_now = _task_ledger.load(task_id)
-            _rounds_now = int((_led_now or {}).get("rounds") or 0)
+            # Progress is NEW distinct steps; repeating calls already made is not.
+            _rounds_now = int((_led_now or {}).get("distinct_steps") or 0)
             if _led_now is None or _rounds_now <= _rounds_before:
-                _task_log(task_id, 'Stopped: the last stretch made no progress, '
-                                   'so starting another would repeat it.')
+                _task_log(task_id, 'Stopped: the last stretch took no step it had '
+                                   'not already taken, so another would repeat it.')
                 break
             _legs += 1
             _rounds_before = _rounds_now
