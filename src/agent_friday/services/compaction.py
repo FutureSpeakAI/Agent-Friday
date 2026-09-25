@@ -465,19 +465,44 @@ def seat_summarizer(send_fn):
     return _summarize
 
 
-def claude_summarizer(client, model):
+def claude_summarizer(client, model, *, session_ctx=None, on_cost=None):
     """A summarizer for the Anthropic loop: the transcript is already bound
-    for Anthropic, so the summary is written there too, with no tools."""
+    for Anthropic, so the summary is written there too, with no tools.
+
+    The request is a cloud call like any round: it goes through
+    `model_router._seal_or_block` (spending cap, size ceiling, egress seal)
+    and is metered. A send the chokepoint refuses is no summary -- compaction
+    then falls back to trimming, and nothing is sent. `on_cost(usd)` lets the
+    loop charge the call to its task budget.
+    """
     def _summarize(text, max_tokens=400):
         try:
-            resp = client.messages.create(
-                model=model, max_tokens=max(1024, int(max_tokens) * 4),
-                messages=[{"role": "user", "content": _SUMMARY_INSTRUCTION.format(n=max_tokens, text=text)}])
-            return "".join(getattr(b, "text", "") or "" for b in resp.content
-                           if getattr(b, "type", None) == "text").strip()
+            from agent_friday.services import model_router as _mr
+            kwargs = _mr._seal_or_block({
+                "model": model, "max_tokens": max(1024, int(max_tokens) * 4),
+                "messages": [{"role": "user", "content": _SUMMARY_INSTRUCTION.format(
+                    n=max_tokens, text=text)}]}, "anthropic")
+        except Exception as e:
+            print(f"  [compaction] summary not sent (egress chokepoint): {e}")
+            return ""
+        try:
+            t0 = time.time()
+            resp = client.messages.create(**kwargs)
         except Exception as e:
             print(f"  [compaction] claude summarizer failed: {e}")
             return ""
+        try:
+            from agent_friday.services import cost_meter as _cm
+            usd = _cm.meter("anthropic", kwargs.get("model") or model,
+                            getattr(resp, "usage", None),
+                            duration_ms=int((time.time() - t0) * 1000),
+                            session_ctx=session_ctx, kind="compaction")
+            if on_cost is not None:
+                on_cost(usd)
+        except Exception as e:
+            print(f"  [compaction] metering the summary failed: {e}")
+        return "".join(getattr(b, "text", "") or "" for b in resp.content
+                       if getattr(b, "type", None) == "text").strip()
     return _summarize
 
 

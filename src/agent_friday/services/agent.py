@@ -9575,7 +9575,14 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     # already going -- never by a model somewhere else (services/compaction.py). ──
     from agent_friday.services import compaction as _compaction
     from agent_friday.services import task_ledger as _task_ledger
-    _claude_summary = _compaction.claude_summarizer(client, model or ANTHROPIC_MODEL_DEFAULT)
+    _summary_budget = []          # the task budget, once it is entered below
+
+    def _charge_summary(usd):
+        if _summary_budget and _summary_budget[0] is not None:
+            _summary_budget[0].charge_usd(usd)
+    _claude_summary = _compaction.claude_summarizer(
+        client, model or ANTHROPIC_MODEL_DEFAULT, session_ctx=session_ctx,
+        on_cost=_charge_summary)
     _ledger_task = _journal().resolve_task_id(session_ctx)
     _ledger = _task_ledger.ensure(_ledger_task, _task_ledger.goal_of(convo)) if _ledger_task else None
 
@@ -9698,6 +9705,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         _budget = _pc.task_budget(label=orb_label or "agent task").__enter__()
     except Exception:
         _budget = None
+    _summary_budget.append(_budget)
 
     try:
         iter_count = 0
