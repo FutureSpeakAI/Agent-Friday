@@ -114,6 +114,7 @@ A capability that is not in the defaults is removed on the next save.
 | Key | Default | Meaning |
 |---|---|---|
 | `offline_auto_local` | `true` | Route to local models while this PC is offline. |
+| `network_probe` | `"route"` | How Friday tells whether it is offline, every 30 seconds. `"route"` checks this PC's routing table and sends nothing; `"internet"` connects to public DNS resolvers (`dns.google`, `8.8.8.8`, `1.1.1.1`); `"off"` does not check. |
 | `offline_queue_cloud_tasks` | `true` | Queue cloud content tasks while offline. |
 
 ### Chat and context
