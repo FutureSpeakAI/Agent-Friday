@@ -14496,6 +14496,71 @@ function SettingsTabSigning() {
     onClick: () => send('/api/documents/signing/certificate', null, 'Certificate removed', 'DELETE')
   }, "Remove")))));
 }
+// ── Settings → Accounts & Keys → Friday's browser. Friday drives a visible
+// window on her own profile (services/browser_session.py), never the owner's
+// normal browser. Sign-ins made in that window stay in that profile until they
+// are cleared here. Every route behind this is refused off this computer.
+function SettingsTabBrowser() {
+  const [st, setSt] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const refresh = useCallback(() => {
+    apiFetch('/api/browser/status').then(r => r.json()).then(j => {
+      if (j && j.ok) setSt(j);else setMsg('✗ ' + (j && j.error || 'Browser status unavailable'));
+    }).catch(() => setMsg('✗ Could not reach the server.'));
+  }, []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+  const post = (url, ok) => {
+    setBusy(true);
+    setMsg('');
+    return apiFetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: '{}'
+    }).then(r => r.json()).then(j => {
+      setMsg(j.ok ? '✓ ' + ok : '✗ ' + (j.error || 'Failed'));
+      if (j.ok) setSt(j);
+    }).catch(() => setMsg('✗ Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const clear = () => {
+    if (!window.confirm("Delete Friday's browser profile? Every site you signed in to in Friday's window will ask you to sign in again.")) return;
+    post('/api/browser/profile/clear', "Friday's browser profile cleared");
+  };
+  const size = b => (b || 0) > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round((b || 0) / 1024) + ' KB';
+  const running = !!(st && st.running);
+  return /*#__PURE__*/React.createElement("div", {
+    id: "settings-browser"
+  }, msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 12,
+      color: msg[0] === '✓' ? '#00ff80' : '#ff6b8a'
+    }
+  }, msg), /*#__PURE__*/React.createElement(StSection, {
+    title: "FRIDAY'S BROWSER",
+    desc: "Friday works in web pages in her own window, which you can watch. It uses her own profile, never your normal browser. She never types passwords: when a site needs you to sign in, she stops and asks you to do it in that window. Anything that submits, sends or pays waits for your approval card."
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Window",
+    desc: running ? 'Open: ' + (st.url || 'a blank page') : 'Closed. It opens when Friday needs it and closes itself after 15 minutes idle.'
+  }, running && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy,
+    onClick: () => post('/api/browser/close', "Friday's browser closed")
+  }, "Close")), /*#__PURE__*/React.createElement(StRow, {
+    label: "Sign-ins and cookies",
+    desc: st && st.profile_exists ? 'Kept in Friday’s profile on this computer (' + size(st.profile_bytes) + '). Clearing it signs Friday out of every site.' : 'Nothing stored yet.'
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !(st && st.profile_exists),
+    "aria-label": "Clear Friday's browser profile",
+    onClick: clear
+  }, "Clear Friday's browser profile"))));
+}
 // ── Settings → Accounts & Keys → Phone (Twilio). Off by default. Secrets go in, never come back:
 // the server reports "stored"/"missing"/"unreadable" for each one. Every
 // route behind this tab is refused unless the request comes from this computer.
@@ -15955,7 +16020,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
