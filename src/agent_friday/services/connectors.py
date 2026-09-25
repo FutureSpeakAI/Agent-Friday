@@ -242,10 +242,32 @@ CONNECTOR_DEFS: dict[str, dict] = {
                       "off until you name them in enabled_tools, and then act "
                       "only in apps you grant under Computer Control.",
     },
+    "higgsfield": {
+        "name": "Higgsfield",
+        "icon": "🎬",
+        "category": "Creative",
+        "kind": "mcp",
+        "blurb": "Image, video and audio generation on your Higgsfield account "
+                 "via Higgsfield's official hosted MCP server. Paid generations "
+                 "still ask before they run.",
+        "capabilities": ["image", "video", "audio"],
+        "workspaces": ["creative", "studio"],
+        # The server name the provider registry probes for availability
+        # (provider_registry: type "higgsfield" reads mgr.servers["higgsfield"]).
+        "mcp_server": "higgsfield",
+        # Official remote (Streamable HTTP) server: OAuth 2.1 in the browser,
+        # tokens stored encrypted by mcp_oauth, no key to paste.
+        "mcp_template": {"url": "https://mcp.higgsfield.ai/mcp"},
+        "fields": [],
+        "docs_url": "https://higgsfield.ai",
+        "setup_hint": "One-click: opens your browser to approve access to your "
+                      "Higgsfield account.",
+    },
 }
 
 # Connectors are ordered for the UI: the working one first, then the stubs.
-CONNECTOR_ORDER = ["google", "slack", "github", "linear", "notion", "discord"]
+CONNECTOR_ORDER = ["google", "slack", "github", "linear", "notion", "discord",
+                   "higgsfield"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
