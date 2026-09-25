@@ -262,6 +262,8 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   the heartbeat read the task's state just before it completed; the task
   then showed as stalled. The heartbeat now checks and writes under the
   journal lock.
+- Two notifications raised in the same second list newest first every
+  time; the order between them used to be arbitrary.
 - Approval cards say what will happen (the card's description) instead of
   repeating the title and printing the internal kind and policy class, and
   give the expiry in plain words.

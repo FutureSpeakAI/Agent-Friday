@@ -215,16 +215,18 @@ def list_notifications(
         items = _load()
     if not include_dismissed:
         items = [n for n in items if not n.get("dismissed")]
-    items.sort(
-        key=lambda n: (
-            PRIORITY_ORDER.get(n.get("priority", "medium"), 9),
-            -_iso_ts(n.get("created_at", "")),
-        )
+    # Priority, then newest first. created_at has one-second resolution, so
+    # two notifications in the same second tie; new entries are appended, so
+    # the later position in the stored list is the newer one.
+    order = sorted(
+        enumerate(items),
+        key=lambda pair: (
+            PRIORITY_ORDER.get(pair[1].get("priority", "medium"), 9),
+            -_iso_ts(pair[1].get("created_at", "")),
+            -pair[0],
+        ),
     )
-    # Re-sort newest first within priority
-    items.sort(key=lambda n: n.get("created_at", ""), reverse=True)
-    items.sort(key=lambda n: PRIORITY_ORDER.get(n.get("priority", "medium"), 9))
-    return items[:limit]
+    return [n for _, n in order][:limit]
 
 
 def _iso_ts(s: str) -> float:

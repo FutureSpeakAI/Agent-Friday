@@ -213,22 +213,13 @@ class TestListNotifications:
         result = list_notifications(limit=3)
         assert len(result) <= 3
 
-    @pytest.mark.xfail(
-        reason=(
-            "_now_iso() strips microseconds (1-second resolution), so two pushes "
-            "within the same wall-clock second get identical timestamps and the "
-            "newer-first secondary sort is unstable. This is a known limitation "
-            "of the current timestamp implementation, not a test error."
-        ),
-        strict=True,
-    )
-    def test_same_priority_newer_first(self):
-        import time
+    def test_same_priority_newer_first(self, monkeypatch):
+        """created_at has one-second resolution; two notifications in the same
+        second still list newest first."""
+        monkeypatch.setattr(ne, "_now_iso", lambda: "2026-01-01T00:00:00Z")
         e1 = _push(title="Older", priority="medium")
-        time.sleep(0.01)  # 10ms — sub-second, same ISO string
         e2 = _push(title="Newer", priority="medium")
-        result = list_notifications()
-        ids = [n["id"] for n in result]
+        ids = [n["id"] for n in list_notifications()]
         assert ids.index(e2["id"]) < ids.index(e1["id"])
 
 
