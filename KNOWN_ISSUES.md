@@ -159,18 +159,19 @@ or Windows credential protection.
 - **`web_safety.py`, the SSRF guard, has no tests of its own.**
 - **Dependencies are declared with `>=` floors.** A `uv.lock` is committed
   but nothing installs from it.
-- **Open dependency advisories, none reachable in the default install:**
-  - *ChromaDB (two critical, three high).* The advisories concern ChromaDB's
+- **Open dependency advisories, none reachable in the default install.** Each
+  is explained in [docs/security/dependency-advisories.md](docs/security/dependency-advisories.md).
+  - *ChromaDB (two critical, two high).* The advisories concern ChromaDB's
     HTTP server and its multi-tenant authorisation. Friday uses ChromaDB only
     as an embedded library (`PersistentClient` in `conversation_memory.py`) and
     never starts that server. No fixed version exists yet.
   - *Lightning and Hydra (high).* Code execution when loading an untrusted
     model checkpoint or config. Both arrive only with NVIDIA NeMo, the optional
     GPU voice extra (`voice-local-gpu`), which the Windows installer does not
-    install. NeMo loads NVIDIA's own published voice models by name; do not
-    point it at a `.nemo` or `.ckpt` file from anywhere else. The fixed
-    versions (Lightning 2.6.6, Hydra 1.3.4) cannot be installed with the NeMo
-    versions Friday supports.
+    install. NeMo loads only NVIDIA's own published models; a model name from
+    anywhere else falls back to the default. The fixed versions (Lightning
+    2.6.6, Hydra 1.3.4) cannot be installed with the NeMo versions Friday
+    supports.
   - *NLTK (high).* Path checks in its model-artifact helpers. It also arrives
     only with the GPU voice extra, for NeMo's English pronunciation step;
     Friday's own code does not import it. No fixed version exists yet.
