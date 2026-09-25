@@ -42,7 +42,7 @@ import threading
 import time
 
 import agent_friday.core as core
-from agent_friday.core import _load_settings
+from agent_friday.core import ANTHROPIC_MODEL_DEFAULT, _load_settings
 
 _CHARS_PER_TOKEN = 4
 _SUMMARY_PREFIX = "[Context Summary]"
@@ -539,7 +539,7 @@ def compress_new_output(messages, start, model=None, seat=None):
             return messages
         from agent_friday.services.model_router import _get_context_compressor
         return _get_context_compressor(cfg).compress_new(
-            messages, start, model=model or "claude-opus-5-5", seat=seat)
+            messages, start, model=model or ANTHROPIC_MODEL_DEFAULT, seat=seat)
     except Exception as e:
         print(f"  [compaction] headroom skipped: {e}")
         return messages
