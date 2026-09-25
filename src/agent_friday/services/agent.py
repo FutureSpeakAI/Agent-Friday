@@ -3230,7 +3230,20 @@ def _evaluate_output(task_id, goal, output, *, model):
     return "GRADE: %s\nREASON: %s" % (grade.group(1).upper(), reason_text[:300])
 
 
-TASK_TIMEOUT_SECONDS = int(os.environ.get('FRIDAY_TASK_TIMEOUT', 1800))  # 30 min default
+# No built-in task timeout: a limit is one the owner set (the
+# `task_timeout_seconds` setting or FRIDAY_TASK_TIMEOUT), otherwise None.
+TASK_TIMEOUT_SECONDS = (int(os.environ['FRIDAY_TASK_TIMEOUT'])
+                        if os.environ.get('FRIDAY_TASK_TIMEOUT') else None)
+
+
+def _task_timeout_s():
+    """The owner's task time limit in seconds, or None for unlimited."""
+    v = _load_settings().get('task_timeout_seconds', TASK_TIMEOUT_SECONDS)
+    try:
+        v = float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+    return v if v and v > 0 else None
 
 
 def _summarize_task_outcome(name, reply, tool_trace, status='complete'):
@@ -3351,9 +3364,8 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
 
     Heuristic log lines come from inspecting the tool_trace returned by
     _call_claude_agent so the UI can show what the agent did step-by-step.
-    Timeout guard: if the task runs longer than TASK_TIMEOUT_SECONDS (default
-    30 min, configurable via FRIDAY_TASK_TIMEOUT env var or settings), it is
-    terminated gracefully.
+    Timeout guard: only when the owner set one (`task_timeout_seconds` or
+    FRIDAY_TASK_TIMEOUT); by default a task runs until it finishes.
 
     tools: optional list of CLAUDE_TOOLS NAMES (not schemas) this task may
         use — a scheduled task that knows its own job is narrow (see
@@ -3364,7 +3376,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         None (default) or an empty/all-unmatched list keeps today's
         behavior — the full registry, via _generate_agent's own default.
     """
-    timeout = _load_settings().get('task_timeout_seconds', TASK_TIMEOUT_SECONDS)
+    timeout = _task_timeout_s()
     # Task journal (task-visibility.md TV3/TV7): every emitter below this
     # frame — in the loops, the gate, the spend guard, the approval queue —
     # resolves its task from this thread-local; the heartbeat proves the
@@ -3373,7 +3385,8 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
     _tj.push_task(task_id)
     _heartbeat = _tj.Heartbeat(task_id).start()
     _task_set(task_id, status='running', started=_time.time())
-    _task_log(task_id, f'Spawning agent: {name} (timeout: {timeout}s)')
+    _task_log(task_id, f'Spawning agent: {name}'
+                       + (f' (timeout: {int(timeout)}s)' if timeout else ''))
     if description:
         _task_log(task_id, description)
     try:
@@ -3548,7 +3561,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
 
         # ── Timeout check ──
         _task_elapsed = _time.time() - (TASKS.get(task_id, {}).get('started') or _time.time())
-        if _task_elapsed > timeout:
+        if timeout and _task_elapsed > timeout:
             _task_log(task_id, f'TIMEOUT after {int(_task_elapsed)}s — terminating gracefully')
             _task_set(task_id, status='timeout',
                       result=_summarize_task_outcome(name, reply, tool_trace, status='timeout'),
@@ -3564,7 +3577,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         while _drain_iters < 5:
             # Check timeout before each steer iteration
             _task_elapsed = _time.time() - (TASKS.get(task_id, {}).get('started') or _time.time())
-            if _task_elapsed > timeout:
+            if timeout and _task_elapsed > timeout:
                 _task_log(task_id, f'TIMEOUT during steer loop after {int(_task_elapsed)}s')
                 _task_set(task_id, status='timeout',
                           result=_summarize_task_outcome(name, combined_reply, combined_trace, status='timeout'),
