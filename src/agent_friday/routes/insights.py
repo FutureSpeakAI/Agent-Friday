@@ -60,13 +60,42 @@ insights_bp = Blueprint('insights', __name__)
 #  LIVE DATA ENDPOINTS
 # ═══════════════════════════════════════════════════════════════
 
+def _career_root():
+    from agent_friday.services import career_ops
+    return career_ops.root()
+
+
+@insights_bp.route('/api/career-ops/status')
+def career_status():
+    """What the career-ops folder has and what the owner still has to add."""
+    from agent_friday.services import career_ops
+    return jsonify(career_ops.status())
+
+
+@insights_bp.route('/api/career-ops/path', methods=['POST'])
+@login_required
+def career_set_path():
+    """Owner sets the career-ops folder; an empty path means the default."""
+    from agent_friday.services import career_ops
+    data = request.get_json(silent=True) or {}
+    try:
+        career_ops.set_root(str(data.get('path') or ''))
+    except career_ops.CareerError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(career_ops.status())
+
+
 @insights_bp.route('/api/career-ops/tracker')
 def career_tracker():
-    candidates = [
-        WIKI_PROFESSIONAL_DIR / 'application-log.md',
-        HOME / 'Projects' / 'career-ops' / 'data' / 'applications.md',
-    ]
-    tracker_path = next((p for p in candidates if p.is_file()), None)
+    from agent_friday.services import career_ops
+    wiki_log = WIKI_PROFESSIONAL_DIR / 'application-log.md'
+    ops = career_ops.tracker_path()
+    if not wiki_log.is_file() and ops.is_file():
+        t = career_ops.read_tracker()
+        entries = [dict(r, raw=[r.get(k, '') for k in career_ops.FIELDS]) for r in t['rows']]
+        return jsonify({'status': 'ok', 'entries': entries, 'total': len(entries),
+                        'raw': ops.read_text(encoding='utf-8'), 'source': str(ops)})
+    tracker_path = wiki_log if wiki_log.is_file() else None
     if tracker_path:
         content = tracker_path.read_text(encoding='utf-8')
         lines = content.strip().split('\n')
@@ -83,7 +112,7 @@ def career_tracker():
 def career_pipeline():
     candidates = [
         WIKI_PROFESSIONAL_DIR / 'job-search.md',
-        HOME / 'Projects' / 'career-ops' / 'data' / 'pipeline.md',
+        _career_root() / 'data' / 'pipeline.md',
     ]
     pipe_path = next((p for p in candidates if p.is_file()), None)
     if pipe_path:
@@ -101,7 +130,7 @@ def career_reports():
                 reports.append({'name': f.name, 'size': f.stat().st_size, 'source': 'wiki'})
                 seen.add(f.name)
     # career-ops/reports/ is fallback — add any files not already in wiki
-    fallback_dir = HOME / 'Projects' / 'career-ops' / 'reports'
+    fallback_dir = _career_root() / 'reports'
     if fallback_dir.is_dir():
         for f in sorted(fallback_dir.iterdir(), reverse=True):
             if f.suffix == '.md' and f.name not in seen:
@@ -112,9 +141,12 @@ def career_reports():
 
 @insights_bp.route('/api/career-ops/report/<filename>')
 def career_report(filename):
+    # A bare file name only: on Windows a backslash would walk out of the folder.
+    if '\\' in filename or '/' in filename or '..' in filename or ':' in filename:
+        return jsonify({'status': 'not_found'}), 400
     candidates = [
         WIKI_PROFESSIONAL_DIR / filename,
-        HOME / 'Projects' / 'career-ops' / 'reports' / filename,
+        _career_root() / 'reports' / filename,
     ]
     report_path = next((p for p in candidates if p.is_file()), None)
     if report_path:
