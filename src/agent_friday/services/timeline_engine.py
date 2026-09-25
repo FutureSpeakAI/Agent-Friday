@@ -144,7 +144,7 @@ def validate_timeline(tl: Optional[Dict[str, Any]]) -> Tuple[bool, List[str]]:
 
 def _creations_roots() -> list:
     """Both creations roots, gallery first. DAILY_CREATIONS_DIR grew media
-    subfolders (project folders like storybook-robin/) once agent sessions
+    subfolders (project folders like storybook-dragon/) once agent sessions
     started building there — the storybook E2E test's compose_timeline call
     failed precisely because this resolver never looked in them."""
     roots = [CREATIONS_DIR]

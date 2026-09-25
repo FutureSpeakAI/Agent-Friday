@@ -48,7 +48,7 @@ PAGE = """
   <ul>
     <li><a href="https://example-news.com/senate-vote">Senate votes on the bill</a></li>
   </ul>
-  <h3>KUT</h3>
+  <h3>Denver Post</h3>
   <ul>
     <li><a href="https://example-local.com/denver-council">Denver city council meets</a></li>
   </ul>

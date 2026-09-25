@@ -387,7 +387,7 @@ TOOLS = [
             "bytes are real media, writes provenance + manifest). Use this "
             "instead of shell curl for saving Higgsfield or other generation "
             "outputs. 'folder' is an optional subfolder under the daily "
-            "creations directory (e.g. 'storybook-robin/clips'); 'filename' "
+            "creations directory (e.g. 'storybook-dragon/clips'); 'filename' "
             "optionally renames the saved file."),
         "input_schema": {
             "type": "object",

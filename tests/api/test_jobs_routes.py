@@ -12,7 +12,7 @@ RAW_LISTINGS = [
     {
         "title": "Senior AI Engineer",
         "company": "Initech",
-        "location": "Denver, TX",
+        "location": "Denver, CO",
         "url": "https://example.org/jobs/123",
         "id": "ext-123",
         "remote": True,

@@ -2415,10 +2415,9 @@ routed through the existing cLaws governance + egress gate.
 
 ### Removed
 
-- **Removed the personal Household/FAM workspace and `fam_monitor` skill from the
-  public release.** The household platform monitor, its custody-calendar
-  tracking, and the related draft mode were personal to the original author and
-  are not part of the open-source distribution.
+- **Removed a personal workspace and its monitoring skill from the public
+  release.** They were personal to the original author and are not part of the
+  open-source distribution.
 
 ---
 
@@ -2433,10 +2432,9 @@ strips the founder's personal content out of source so a fresh user starts clean
 - **Stub workspaces.** `FinanceWS` and `HealthWS` (vault-gated placeholders with
   no real integrations) are removed, UI + routes (`/api/finance/*`,
   `/api/health/*`). They can return later as Seeds/plugins.
-- **Personal Household workspace, removed entirely.** The dedicated workspace
-  component, its API routes, the platform message loader + notification monitor,
-  the related calendar keywords, the message-classification lane, and its draft
-  mode are all gone. (Sensitive personal data was always gitignored and never
+- **A personal workspace, removed entirely.** Its component, API routes,
+  message loader and notification monitor, calendar keywords,
+  message-classification lane and draft mode are all gone. (Sensitive personal data was always gitignored and never
   shipped.)
 - **Redundant dock entries.** `FamilyWS`, `TrustWS` (trust is now a tab in
   News + Contacts), and `StudioWS` (functions live in Dev Studio and the Sites

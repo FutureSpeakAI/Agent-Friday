@@ -39,7 +39,7 @@ SAMPLE_JOB = {
     "job_id": "job-001",
     "title": "Senior Software Engineer",
     "company": "Acme Corp",
-    "location": "Denver, TX",
+    "location": "Denver, CO",
     "remote": False,
     "hybrid": False,
     "salary_min": 150_000,
@@ -111,7 +111,7 @@ class TestJobOneLiner:
         result = _job_one_liner(SAMPLE_JOB)
         assert "Senior Software Engineer" in result
         assert "Acme Corp" in result
-        assert "Denver, TX" in result
+        assert "Denver, CO" in result
         assert "$150K" in result
         assert "$200K" in result
 

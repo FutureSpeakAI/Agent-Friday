@@ -223,8 +223,8 @@ bodies.
 
 | date | production | what it establishes |
 |---|---|---|
-| 2026-08-19 | "Princess Robin and the Storm Dragon", 85s, 115.92 credits | supervised; user overrode the analytical voice pick |
-| 2026-08-20 | "Robin and the Masterless Storm", 198s, ~227 credits | supervised; user feedback *during* production drove the permanent `setpts` fix in `build_film.py` |
+| 2026-08-19 | "The Princess and the Storm Dragon", 85s, 115.92 credits | supervised; user overrode the analytical voice pick |
+| 2026-08-20 | "The Masterless Storm", 198s, ~227 credits | supervised; user feedback *during* production drove the permanent `setpts` fix in `build_film.py` |
 | 2026-08-20 | "Ember and the Big Dark", 47s, 3 pages | **"FIRST FULLY AUTONOMOUS RUN"** |
 
 **INFERRED, and it is the single most useful precedent in this document:** the autonomous
