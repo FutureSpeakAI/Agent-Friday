@@ -3,15 +3,14 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Latest published release:
-> **5.13.0**; 5.14.0 is the release candidate.
+> **Note:** Pre-1.0 releases have been archived. Current release: **5.14.0**.
 >
 > Entries for 5.7.0 and 5.8.1 are not recorded here — those releases were
 > tagged without a changelog entry.
 
 ---
 
-## [5.14.0] - unreleased
+## [5.14.0] - 2026-09-24
 
 Everything since the 5.13.0 tag. The plain-language summary is in
 [RELEASE_NOTES.md](RELEASE_NOTES.md).

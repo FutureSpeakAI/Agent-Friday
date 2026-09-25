@@ -1,6 +1,6 @@
 # Agent Friday 5.14.0
 
-*Draft. Date to be set at release. FutureSpeak.AI*
+*24 September 2026. FutureSpeak.AI*
 
 This release is about trust. Friday now asks before every outward action, from
 every surface, and keeps a signed receipt of each decision. A new install
