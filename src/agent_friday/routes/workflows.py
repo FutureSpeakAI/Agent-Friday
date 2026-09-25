@@ -831,3 +831,55 @@ def workflow_chain_run(name):
         "steps": len(chain.get('steps') or []),
         "message": f"Chain '{chain.get('name')}' started — watch the Task Tray.",
     })
+
+
+# ═══ THE WORKFLOWS SCREEN ═════════════════════════════════════
+# One list for saved workflows and the schedules that run them, a
+# plain-language draft step, and save/remove that keep the two stores in step.
+# See services/workflow_overview.py.
+@workflows_bp.route('/api/workflows/overview', methods=['GET'])
+def workflows_overview():
+    from agent_friday.services import workflow_overview as _wo
+    try:
+        return jsonify(dict(_wo.overview(), status="ok"))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@workflows_bp.route('/api/workflows/draft', methods=['POST'])
+@login_required
+def workflows_draft():
+    """Body: {text}. A draft to review; nothing is saved."""
+    from agent_friday.services import workflow_overview as _wo
+    data = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"status": "ok",
+                        "draft": _wo.draft_from_text(data.get('text'), generate=_generate_text)})
+    except ValueError as ve:
+        return jsonify({"status": "error", "message": str(ve)}), 400
+
+
+@workflows_bp.route('/api/workflows/save', methods=['POST'])
+@login_required
+def workflows_save():
+    """Body: a reviewed draft {name, description, steps, when, enabled,
+    slug?, schedule_id?}."""
+    from agent_friday.services import workflow_overview as _wo
+    try:
+        return jsonify(dict(_wo.save(request.get_json(silent=True) or {}), status="ok"))
+    except ValueError as ve:
+        return jsonify({"status": "error", "message": str(ve)}), 400
+
+
+@workflows_bp.route('/api/workflows/remove', methods=['POST'])
+@login_required
+def workflows_remove():
+    """Body: {slug?, schedule_id?}. Removes the workflow and its schedule."""
+    from agent_friday.services import workflow_overview as _wo
+    data = request.get_json(silent=True) or {}
+    try:
+        gone = _wo.delete(slug=data.get('slug'), schedule_id=data.get('schedule_id'))
+    except ValueError as ve:
+        return jsonify({"status": "error", "message": str(ve)}), 400
+    return jsonify({"status": "ok" if gone else "not_found"}), (200 if gone else 404)

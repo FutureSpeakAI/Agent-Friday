@@ -371,6 +371,22 @@ def _spec_hm(spec):
     return int(spec.get("hour", 9)), int(spec.get("minute", 0))
 
 
+def _spec_weekdays(spec):
+    """The days a weekly schedule fires on, Monday=0.
+
+    `weekdays` (a list) lets one schedule say "every weekday" or "Monday and
+    Thursday"; a record with only the older single `weekday` keeps meaning
+    exactly that one day.
+    """
+    days = spec.get("weekdays")
+    if isinstance(days, (list, tuple)):
+        out = sorted({int(d) for d in days if str(d).lstrip("-").isdigit()
+                      and 0 <= int(d) <= 6})
+        if out:
+            return out
+    return [int(spec.get("weekday", 6))]
+
+
 #: How long the user must be away before idle work starts, and the default
 #: window. Overridable per schedule via `spec`, and globally in settings.
 _IDLE_DEFAULT_AFTER_S = 600          # 10 minutes away
@@ -542,7 +558,7 @@ def _is_due(rec, now) -> bool:
     if trig == "daily":
         return (now.hour, now.minute) >= _spec_hm(spec)
     if trig == "weekly":
-        if now.weekday() != int(spec.get("weekday", 6)):
+        if now.weekday() not in _spec_weekdays(spec):
             return False
         return (now.hour, now.minute) >= _spec_hm(spec)
     return False
@@ -572,12 +588,15 @@ def _next_run_ts(rec, now):
                 cand = cand + timedelta(days=1)
             return cand.timestamp()
         if trig == "weekly":
-            wd = int(spec.get("weekday", 6))
-            days_ahead = (wd - now.weekday()) % 7
-            cand = cand + timedelta(days=days_ahead)
-            if cand <= now:
-                cand = cand + timedelta(days=7)
-            return cand.timestamp()
+            today = now.strftime("%Y-%m-%d")
+            best = None
+            for wd in _spec_weekdays(spec):
+                c = cand + timedelta(days=(wd - now.weekday()) % 7)
+                if c <= now or (c.date() == now.date()
+                                and rec.get("last_run_date") == today):
+                    c = c + timedelta(days=7)
+                best = c if best is None or c < best else best
+            return best.timestamp()
     except Exception:
         return None
     return None
@@ -823,6 +842,8 @@ def _run_task(rec):
                             raise SkippedRun(str(exc)) from exc
                         _paused(rec, str(exc))
             return meta["fn"]()
+    if kind == "workflow":
+        return _run_workflow(rec, task)
     # agent_prompt — run through the existing background-task machinery so the
     # scheduled run gets its own fresh vault context, orbs, and verification.
     prompt = task.get("prompt") or ""
@@ -918,6 +939,62 @@ def _run_task(rec):
             return snap.get("result") or snap.get("status")
         _time.sleep(2)
     raise TimeoutError(f"agent task exceeded {timeout}s")
+
+
+#: How often a scheduled workflow's progress is read, and how long it may sit
+#: with no step running before the run counts as stopped. The grace covers
+#: the moment between one step finishing and the next being spawned.
+WORKFLOW_POLL_S = 3.0
+WORKFLOW_STALL_S = 90.0
+
+
+def _run_workflow(rec, task):
+    """Run a saved multi-step workflow and wait until its last step settles.
+
+    The schedule's run covers the whole workflow, so its history says whether
+    the workflow finished rather than whether step one started. Steps run as
+    ordinary background tasks: an outward action in any of them is held by the
+    governance checkpoint and waits on an approval card, exactly as it would
+    in a single scheduled prompt.
+    """
+    from agent_friday.services import agent as _agent
+    slug = (task.get("ref") or "").strip()
+    if not slug:
+        raise RuntimeError("workflow schedule has no workflow to run")
+    tid = _agent.run_workflow_chain(slug)
+    if not tid:
+        raise RuntimeError(f"the workflow {slug!r} is missing or has no steps")
+    deadline = _time.time() + int(rec.get("timeout_seconds", 1800))
+    seen_failed = False
+    stalled_since = None
+    while _time.time() < deadline:
+        st = _agent.chain_run_status(slug) or {}
+        state = st.get("state")
+        steps = st.get("steps") or []
+        if state == "completed":
+            tail = (steps[-1].get("result_tail") or "").strip() if steps else ""
+            return tail or f"All {len(steps)} steps finished."
+        if state == "failed":
+            # A failed step may be about to retry itself; only a failure that
+            # is still there on the next read ends the run.
+            if seen_failed:
+                bad = next((x for x in steps if x.get("status") == "failed"), {})
+                raise RuntimeError(
+                    f"step {int(bad.get('index', 0)) + 1} ({bad.get('name') or 'unnamed'}) "
+                    f"failed: {(bad.get('reason') or bad.get('result_tail') or '').strip()[:300]}")
+            seen_failed = True
+        else:
+            seen_failed = False
+        if state == "running":
+            stalled_since = None
+        elif state != "failed":
+            stalled_since = stalled_since or _time.time()
+            if _time.time() - stalled_since >= WORKFLOW_STALL_S:
+                done = sum(1 for x in steps if x.get("status") == "completed")
+                raise RuntimeError(
+                    f"the workflow stopped after {done} of {len(steps)} steps")
+        _time.sleep(WORKFLOW_POLL_S)
+    raise TimeoutError("the workflow did not finish in time")
 
 
 def dispatch(rec, *, manual=False):

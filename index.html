@@ -21241,69 +21241,722 @@ function TrustWS() {
     }, "Evidence: ", p.evidence && Array.isArray(p.evidence) ? p.evidence.length : 0, " records")));
   }));
 }
-function WorkflowsWS() {
-  const [tab, setTab] = useState('workflows');
-  const [chains, setChains] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [runStatus, setRunStatus] = useState(null);
-  const [watching, setWatching] = useState(null);
-  const [showNew, setShowNew] = useState(false);
-  const [busy, setBusy] = useState('');
-  const [draft, setDraft] = useState({
-    name: '',
-    description: '',
-    seat: '',
-    steps: [{
-      name: '',
-      prompt: ''
-    }]
+// ═══ WORKFLOWS ═══
+// One list of everything Friday does on her own: what it does, when, and how
+// it last went. New ones start as a plain-language request that Friday turns
+// into a draft to review; nothing is saved until the owner says so. Outward
+// actions inside a workflow are held by the governance checkpoint and wait on
+// an approval card; this screen says so up front and links to the cards.
+// Data: /api/workflows/overview (services/workflow_overview.py).
+const WF_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const WF_DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const WF_EXAMPLES = ['Every weekday at 7:30am, check the city council site for new agendas and tell me what changed', 'Every Friday at 4pm, pull together the reader tips from my inbox and sort them by beat', 'Every morning, give me a one-paragraph summary of overnight news on my beats'];
+const WF_STATUS = {
+  finished: {
+    color: '#00ff80',
+    label: 'Finished'
+  },
+  failed: {
+    color: '#ff5f7a',
+    label: "Didn't finish"
+  },
+  running: {
+    color: '#00d4ff',
+    label: 'Running now'
+  },
+  stopped: {
+    color: '#f59e0b',
+    label: 'Stopped partway'
+  },
+  skipped: {
+    color: '#a8a8b4',
+    label: 'Skipped'
+  }
+};
+const WF_CSS = `
+.wfx{color:#e6e6ee;font-family:'Inter',sans-serif;font-size:13px;line-height:1.5}
+.wfx *{box-sizing:border-box}
+.wfx-h{font-family:'Orbitron',monospace;font-size:11px;letter-spacing:.08em;color:rgba(0,212,255,.92);margin:18px 0 8px;text-transform:uppercase}
+.wfx-in{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.16);border-radius:6px;color:#eee;padding:8px 10px;font-size:13px;width:100%;font-family:'Inter',sans-serif}
+.wfx-in:focus{outline:none;border-color:rgba(0,212,255,.6);box-shadow:0 0 0 2px rgba(0,212,255,.15)}
+.wfx-ask{min-height:78px;resize:vertical;font-size:14px;line-height:1.5}
+.wfx-chip{display:inline-block;border:1px solid rgba(0,212,255,.25);background:rgba(0,212,255,.05);color:#9fe8ff;border-radius:14px;padding:4px 10px;font-size:12px;cursor:pointer;margin:0 6px 6px 0;text-align:left;font-family:'Inter',sans-serif}
+.wfx-chip:hover{background:rgba(0,212,255,.12);color:#fff}
+.wfx-go{border-color:rgba(0,212,255,.55)!important;color:#00d4ff!important;font-weight:600}
+.wfx-go:hover{background:rgba(0,212,255,.14)!important;color:#fff!important}
+.wfx-save{border-color:rgba(0,255,128,.5)!important;color:#00ff80!important;font-weight:600}
+.wfx-save:hover{background:rgba(0,255,128,.12)!important}
+.wfx-card{padding:12px 14px;margin-bottom:10px}
+.wfx-name{font-size:14.5px;font-weight:600;color:#fff}
+.wfx-desc{color:#b8b8c6;font-size:12.5px;margin-top:2px}
+.wfx-meta{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:12px;color:#c9c9d6}
+.wfx-meta b{font-weight:600;color:#fff}
+.wfx-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+.wfx-shield{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#ffd08a;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:4px;padding:2px 8px;margin-top:8px}
+.wfx-row{display:flex;align-items:center;gap:8px}
+.wfx-grow{flex:1;min-width:0}
+.wfx-sw{position:relative;width:38px;height:22px;border-radius:11px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);cursor:pointer;flex:none;padding:0;transition:background .2s,border-color .2s}
+.wfx-sw::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#a8a8b4;transition:left .2s,background .2s}
+.wfx-sw[aria-checked="true"]{background:rgba(0,255,128,.18);border-color:rgba(0,255,128,.55)}
+.wfx-sw[aria-checked="true"]::after{left:18px;background:#00ff80}
+.wfx-promise{display:flex;gap:10px;align-items:flex-start;border:1px solid rgba(245,158,11,.28);background:rgba(245,158,11,.06);border-radius:8px;padding:10px 12px;margin-bottom:14px;color:#f3dcb4;font-size:12.5px}
+.wfx-steps{counter-reset:wfs;margin:6px 0 0;padding:0;list-style:none}
+.wfx-steps>li{position:relative;padding:2px 0 6px 26px;color:#d6d6e0;font-size:12.5px}
+.wfx-steps>li::before{counter-increment:wfs;content:counter(wfs);position:absolute;left:0;top:2px;width:18px;height:18px;border-radius:50%;background:rgba(0,212,255,.12);color:#00d4ff;font-size:11px;text-align:center;line-height:18px;font-weight:600}
+.wfx-step{border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px;margin-bottom:8px;background:rgba(255,255,255,.02)}
+.wfx-lbl{font-size:11.5px;color:#a8a8b4;margin-bottom:4px;display:block}
+.wfx-daybtn{min-width:40px;padding:5px 0;border-radius:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.03);color:#c9c9d6;cursor:pointer;font-size:12px}
+.wfx-daybtn[aria-pressed="true"]{border-color:rgba(0,212,255,.6);background:rgba(0,212,255,.14);color:#fff}
+.wfx-link{background:none;border:none;color:#00d4ff;cursor:pointer;font-size:12px;padding:0;text-decoration:underline}
+.wfx-quiet{color:#a8a8b4;font-size:12px}
+.wfx-err{color:#ff8fae;font-size:12.5px;margin-top:6px}
+.wfx-icon{background:none;border:1px solid transparent;color:#a8a8b4;cursor:pointer;border-radius:4px;padding:2px 6px;font-size:13px}
+.wfx-icon:hover{border-color:rgba(255,255,255,.2);color:#fff}
+`;
+function wfClock(h, m) {
+  h = Number(h) || 0;
+  m = Number(m) || 0;
+  if (h === 12 && m === 0) return 'noon';
+  if (h === 0 && m === 0) return 'midnight';
+  const hh = h % 12 || 12,
+    ap = h < 12 ? 'AM' : 'PM';
+  return m ? hh + ':' + String(m).padStart(2, '0') + ' ' + ap : hh + ' ' + ap;
+}
+function wfJoin(a) {
+  return a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+}
+// Mirrors workflow_overview.describe_when, so the editor can show the sentence
+// as it changes; the server's own sentence is what the list shows.
+function wfDescribe(w) {
+  if (!w || !w.trigger) return 'Only when you run it';
+  const sp = w.spec || {},
+    hm = wfClock(sp.hour === undefined ? 9 : sp.hour, sp.minute || 0);
+  if (w.trigger === 'daily') return 'Every day at ' + hm;
+  if (w.trigger === 'weekly') {
+    const d = (sp.weekdays && sp.weekdays.length ? sp.weekdays : [sp.weekday === undefined ? 6 : sp.weekday]).slice().sort();
+    if (d.join() === '0,1,2,3,4') return 'Every weekday at ' + hm;
+    if (d.join() === '5,6') return 'Every Saturday and Sunday at ' + hm;
+    if (d.length === 7) return 'Every day at ' + hm;
+    return 'Every ' + wfJoin(d.map(i => WF_DAY_NAMES[i])) + ' at ' + hm;
+  }
+  if (w.trigger === 'interval') {
+    const mins = Math.max(1, Number(sp.every_minutes) || 60);
+    if (mins % 60 === 0) return mins === 60 ? 'Every hour' : 'Every ' + mins / 60 + ' hours';
+    return 'Every ' + mins + ' minutes';
+  }
+  if (w.trigger === 'once') {
+    const d = new Date((sp.at || 0) * 1000);
+    return 'Once, on ' + d.toLocaleDateString(undefined, {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric'
+    }) + ' at ' + wfClock(d.getHours(), d.getMinutes());
+  }
+  return w.trigger;
+}
+function wfAgo(ts) {
+  if (!ts) return '';
+  const s = Date.now() / 1000 - ts;
+  if (s < 60) return 'just now';
+  if (s < 3600) {
+    const m = Math.round(s / 60);
+    return m + (m === 1 ? ' minute ago' : ' minutes ago');
+  }
+  if (s < 86400) {
+    const h = Math.round(s / 3600);
+    return h + (h === 1 ? ' hour ago' : ' hours ago');
+  }
+  const d = new Date(ts * 1000),
+    y = new Date();
+  y.setDate(y.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'yesterday at ' + wfClock(d.getHours(), d.getMinutes());
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric'
   });
-  const [schedules, setSchedules] = useState([]);
-  const [showNewSched, setShowNewSched] = useState(false);
-  const [sdraft, setSdraft] = useState({
-    name: '',
+}
+function wfNext(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000),
+    now = new Date(),
+    tm = new Date();
+  tm.setDate(tm.getDate() + 1);
+  const at = ' at ' + wfClock(d.getHours(), d.getMinutes());
+  if (d.toDateString() === now.toDateString()) return 'today' + at;
+  if (d.toDateString() === tm.toDateString()) return 'tomorrow' + at;
+  if (d - now < 6 * 86400000) return WF_DAY_NAMES[(d.getDay() + 6) % 7] + at;
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric'
+  }) + at;
+}
+// The editor's "when" controls <-> a scheduler trigger/spec.
+function wfWhenToUi(w) {
+  const base = {
+    repeat: 'manual',
+    time: '09:00',
+    days: [0, 1, 2, 3, 4],
+    hours: 2,
+    date: ''
+  };
+  if (!w || !w.trigger) return base;
+  const sp = w.spec || {};
+  const time = String(sp.hour === undefined ? 9 : sp.hour).padStart(2, '0') + ':' + String(sp.minute || 0).padStart(2, '0');
+  if (w.trigger === 'daily') return Object.assign(base, {
+    repeat: 'daily',
+    time
+  });
+  if (w.trigger === 'weekly') {
+    const d = (sp.weekdays && sp.weekdays.length ? sp.weekdays : [sp.weekday === undefined ? 6 : sp.weekday]).slice().sort();
+    return Object.assign(base, {
+      repeat: d.join() === '0,1,2,3,4' ? 'weekdays' : 'days',
+      time,
+      days: d
+    });
+  }
+  if (w.trigger === 'interval') return Object.assign(base, {
+    repeat: 'hours',
+    hours: Math.max(1, Math.round((sp.every_minutes || 60) / 60))
+  });
+  if (w.trigger === 'once') {
+    const d = new Date((sp.at || 0) * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    return Object.assign(base, {
+      repeat: 'once',
+      date: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()),
+      time: pad(d.getHours()) + ':' + pad(d.getMinutes())
+    });
+  }
+  return base;
+}
+function wfUiToWhen(u) {
+  const [h, m] = (u.time || '09:00').split(':').map(Number);
+  if (u.repeat === 'daily') return {
     trigger: 'daily',
-    hour: 9,
-    minute: 0,
-    weekday: 6,
-    every: 60,
-    at: '',
-    prompt: ''
+    spec: {
+      hour: h,
+      minute: m
+    }
+  };
+  if (u.repeat === 'weekdays') return {
+    trigger: 'weekly',
+    spec: {
+      weekdays: [0, 1, 2, 3, 4],
+      hour: h,
+      minute: m
+    }
+  };
+  if (u.repeat === 'days') return {
+    trigger: 'weekly',
+    spec: {
+      weekdays: u.days.length ? u.days.slice().sort() : [0],
+      hour: h,
+      minute: m
+    }
+  };
+  if (u.repeat === 'hours') return {
+    trigger: 'interval',
+    spec: {
+      every_minutes: Math.max(1, Number(u.hours) || 1) * 60
+    }
+  };
+  if (u.repeat === 'once') {
+    const at = u.date ? new Date(u.date + 'T' + (u.time || '09:00')).getTime() / 1000 : 0;
+    return {
+      trigger: 'once',
+      spec: {
+        at: Math.floor(at)
+      }
+    };
+  }
+  return null;
+}
+function wfOpenApprovals() {
+  const t = {
+    workspace: 'system',
+    tab: 'approvals'
+  };
+  if (window.fridayOpenWorkspace) window.fridayOpenWorkspace(t);else fridayNavigate(t);
+}
+function wfPost(url, body) {
+  return apiFetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body || {})
+  }).then(r => r.json().catch(() => ({})).then(d => r.ok ? d : Promise.reject(new Error(d.message || 'HTTP ' + r.status))));
+}
+function WfSwitch({
+  on,
+  onChange,
+  label
+}) {
+  return /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    role: "switch",
+    "aria-checked": !!on,
+    "aria-label": label,
+    title: on ? 'On — click to pause' : 'Paused — click to turn on',
+    className: "wfx-sw",
+    onClick: onChange
   });
-  const loadChains = () => {
-    fetch('/api/workflows/chains').then(r => r.json()).then(d => {
-      setChains(d.chains || []);
-      setLoading(false);
-    }).catch(() => {
-      setError(true);
-      setLoading(false);
+}
+function WfEditor({
+  initial,
+  onCancel,
+  onSaved
+}) {
+  const [name, setName] = useState(initial.name || '');
+  const [desc, setDesc] = useState(initial.description || '');
+  const [steps, setSteps] = useState((initial.steps && initial.steps.length ? initial.steps : [{
+    name: '',
+    prompt: ''
+  }]).map(s => ({
+    name: s.name || '',
+    prompt: s.prompt || ''
+  })));
+  const [ui, setUi] = useState(wfWhenToUi(initial.when));
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const setU = (k, v) => setUi(Object.assign({}, ui, {
+    [k]: v
+  }));
+  const setS = (i, k, v) => {
+    const n = steps.slice();
+    n[i] = Object.assign({}, n[i], {
+      [k]: v
+    });
+    setSteps(n);
+  };
+  const move = (i, d) => {
+    const n = steps.slice();
+    const t = n[i];
+    n[i] = n[i + d];
+    n[i + d] = t;
+    setSteps(n);
+  };
+  const when = wfUiToWhen(ui);
+  const isNew = !initial.slug && !initial.schedule_id;
+  const save = () => {
+    setErr('');
+    const clean = steps.filter(s => s.prompt.trim()).map((s, i) => ({
+      name: s.name.trim() || 'Step ' + (i + 1),
+      prompt: s.prompt.trim()
+    }));
+    if (!name.trim()) {
+      setErr('Give it a name.');
+      return;
+    }
+    if (!clean.length) {
+      setErr('Say what Friday should do in at least one step.');
+      return;
+    }
+    if (ui.repeat === 'once' && !ui.date) {
+      setErr('Pick the day it should run.');
+      return;
+    }
+    setBusy(true);
+    wfPost('/api/workflows/save', {
+      name: name.trim(),
+      description: desc.trim(),
+      steps: clean,
+      when,
+      slug: initial.slug || null,
+      schedule_id: initial.schedule_id || null,
+      enabled: initial.enabled === undefined ? true : initial.enabled
+    }).then(d => {
+      setBusy(false);
+      onSaved(d, name.trim());
+    }).catch(e => {
+      setBusy(false);
+      setErr(e.message);
     });
   };
-  const loadSchedules = () => {
-    fetch('/api/schedules').then(r => r.json()).then(d => {
-      setSchedules(d.schedules || []);
-    }).catch(() => {});
-  };
-  // This panel only ever reflects a saved chain's OWN run status (fetched
-  // on demand via the "Status" button) — it has no idea whether anything
-  // else is running. A generate_video task can be executing while every
-  // saved workflow shows idle/pending, which is technically correct (none
-  // of them has been run) but reads as "Friday is doing nothing" right next
-  // to visible proof she is. This polls the
-  // same task registry the Task Tray uses and surfaces anything active that
-  // ISN'T one of this panel's own chain runs, so the panel stops implying a
-  // silence that isn't there.
+  const ask = initial.asks_first || [];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card wfx-card",
+    style: {
+      borderColor: 'rgba(0,212,255,.35)'
+    },
+    "data-testid": "wf-editor"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      marginBottom: 10
+    }
+  }, isNew ? 'Check the draft, then save' : 'Edit workflow'), initial.source === 'simple' && isNew && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-quiet",
+    style: {
+      marginBottom: 10
+    }
+  }, "Friday couldn't reach a model to break this into steps, so it's one step with your words. You can add steps below."), /*#__PURE__*/React.createElement("label", {
+    className: "wfx-lbl",
+    htmlFor: "wf-name"
+  }, "Name"), /*#__PURE__*/React.createElement("input", {
+    id: "wf-name",
+    className: "wfx-in",
+    value: name,
+    onChange: e => setName(e.target.value),
+    placeholder: "e.g. Council agenda watch"
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "wfx-lbl",
+    htmlFor: "wf-desc",
+    style: {
+      marginTop: 10
+    }
+  }, "What it's for ", /*#__PURE__*/React.createElement("span", {
+    className: "wfx-quiet"
+  }, "(optional)")), /*#__PURE__*/React.createElement("input", {
+    id: "wf-desc",
+    className: "wfx-in",
+    value: desc,
+    onChange: e => setDesc(e.target.value),
+    placeholder: "One line, for you"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-h",
+    style: {
+      marginTop: 16
+    }
+  }, "When"), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-row",
+    style: {
+      flexWrap: 'wrap',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("select", {
+    "aria-label": "How often",
+    className: "wfx-in",
+    style: {
+      width: 'auto',
+      flex: '1 1 180px'
+    },
+    value: ui.repeat,
+    onChange: e => setU('repeat', e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "manual"
+  }, "Only when I run it"), /*#__PURE__*/React.createElement("option", {
+    value: "daily"
+  }, "Every day"), /*#__PURE__*/React.createElement("option", {
+    value: "weekdays"
+  }, "Every weekday (Mon\u2013Fri)"), /*#__PURE__*/React.createElement("option", {
+    value: "days"
+  }, "On certain days"), /*#__PURE__*/React.createElement("option", {
+    value: "hours"
+  }, "Every few hours"), /*#__PURE__*/React.createElement("option", {
+    value: "once"
+  }, "Once")), ui.repeat === 'once' && /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Date",
+    type: "date",
+    className: "wfx-in",
+    style: {
+      width: 'auto'
+    },
+    value: ui.date,
+    onChange: e => setU('date', e.target.value)
+  }), ['daily', 'weekdays', 'days', 'once'].includes(ui.repeat) && /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Time",
+    type: "time",
+    className: "wfx-in",
+    style: {
+      width: 'auto'
+    },
+    value: ui.time,
+    onChange: e => setU('time', e.target.value)
+  }), ui.repeat === 'hours' && /*#__PURE__*/React.createElement("span", {
+    className: "wfx-row"
+  }, "every ", /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Hours between runs",
+    type: "number",
+    min: "1",
+    max: "24",
+    className: "wfx-in",
+    style: {
+      width: 64
+    },
+    value: ui.hours,
+    onChange: e => setU('hours', e.target.value)
+  }), " hours")), ui.repeat === 'days' && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-row",
+    style: {
+      gap: 4,
+      marginTop: 8,
+      flexWrap: 'wrap'
+    }
+  }, WF_DAYS.map((d, i) => /*#__PURE__*/React.createElement("button", {
+    key: d,
+    type: "button",
+    className: "wfx-daybtn",
+    "aria-pressed": ui.days.includes(i),
+    onClick: () => setU('days', ui.days.includes(i) ? ui.days.filter(x => x !== i) : ui.days.concat([i]))
+  }, d))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      color: '#9fe8ff',
+      fontSize: 12.5
+    },
+    "data-testid": "wf-when-sentence"
+  }, "\uD83D\uDD52 ", wfDescribe(when)), initial.when_note && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-err",
+    style: {
+      color: '#ffd08a'
+    }
+  }, initial.when_note), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-h",
+    style: {
+      marginTop: 16
+    }
+  }, "What Friday does"), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-quiet",
+    style: {
+      marginBottom: 8
+    }
+  }, "Steps run in order. Each step gets what the step before it found."), steps.map((s, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "wfx-step"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wfx-row",
+    style: {
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#00d4ff',
+      fontWeight: 600,
+      fontSize: 12
+    }
+  }, "Step ", i + 1), /*#__PURE__*/React.createElement("input", {
+    "aria-label": 'Step ' + (i + 1) + ' name',
+    className: "wfx-in wfx-grow",
+    style: {
+      padding: '5px 8px'
+    },
+    value: s.name,
+    onChange: e => setS(i, 'name', e.target.value),
+    placeholder: "Short name"
+  }), i > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-icon",
+    title: "Move up",
+    "aria-label": 'Move step ' + (i + 1) + ' up',
+    onClick: () => move(i, -1)
+  }, "\u2191"), i < steps.length - 1 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-icon",
+    title: "Move down",
+    "aria-label": 'Move step ' + (i + 1) + ' down',
+    onClick: () => move(i, 1)
+  }, "\u2193"), steps.length > 1 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-icon",
+    title: "Remove this step",
+    "aria-label": 'Remove step ' + (i + 1),
+    onClick: () => setSteps(steps.filter((_, j) => j !== i))
+  }, "\u2715")), /*#__PURE__*/React.createElement("textarea", {
+    "aria-label": 'Step ' + (i + 1) + ' instructions',
+    className: "wfx-in",
+    style: {
+      minHeight: 60,
+      resize: 'vertical'
+    },
+    value: s.prompt,
+    onChange: e => setS(i, 'prompt', e.target.value),
+    placeholder: "Tell Friday what to do, the way you'd tell a colleague."
+  }))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    onClick: () => setSteps(steps.concat([{
+      name: '',
+      prompt: ''
+    }]))
+  }, "+ Add a step"), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-promise",
+    style: {
+      marginTop: 14,
+      marginBottom: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, "\uD83D\uDEE1\uFE0F"), /*#__PURE__*/React.createElement("div", null, ask.length ? /*#__PURE__*/React.createElement("span", null, "This looks like it will ", /*#__PURE__*/React.createElement("b", null, wfJoin(ask)), ". Friday won't do that on her own: when a step gets there, she stops and asks you with an approval card.") : /*#__PURE__*/React.createElement("span", null, "If a step ever tries to send, post, buy, delete or change something outside your computer, Friday stops and asks you first with an approval card."))), err && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-err",
+    role: "alert"
+  }, err), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-row",
+    style: {
+      marginTop: 14,
+      justifyContent: 'flex-end'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    onClick: onCancel
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn wfx-save",
+    disabled: busy,
+    onClick: save
+  }, busy ? 'Saving…' : isNew ? 'Save workflow' : 'Save changes')));
+}
+function WfCard({
+  w,
+  onRun,
+  onToggle,
+  onEdit,
+  onDelete,
+  busy
+}) {
+  const [open, setOpen] = useState(false);
+  const last = w.last_run;
+  const st = w.running ? WF_STATUS.running : last ? WF_STATUS[last.status] || WF_STATUS.finished : null;
+  const paused = w.when && !w.enabled;
+  const what = w.description || w.steps[0] && w.steps[0].prompt || '';
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card wfx-card",
+    "data-testid": "wf-card",
+    style: paused ? {
+      opacity: 0.72
+    } : null
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wfx-row",
+    style: {
+      alignItems: 'flex-start'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wfx-grow"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wfx-name"
+  }, w.name), what && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-desc",
+    style: open ? null : {
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, what)), w.when && /*#__PURE__*/React.createElement(WfSwitch, {
+    on: w.enabled,
+    label: 'Run ' + w.name + ' on its schedule',
+    onChange: () => onToggle(w)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-meta"
+  }, /*#__PURE__*/React.createElement("span", {
+    title: "When it runs"
+  }, "\uD83D\uDD52 ", /*#__PURE__*/React.createElement("b", null, w.when_text), paused ? ' · paused' : ''), /*#__PURE__*/React.createElement("span", {
+    title: "Last run"
+  }, st ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "wfx-dot",
+    style: {
+      background: st.color,
+      boxShadow: '0 0 6px ' + st.color
+    }
+  }), w.running ? 'Running now' : st.label + ' ' + wfAgo(last.at)) : /*#__PURE__*/React.createElement("span", {
+    className: "wfx-quiet"
+  }, "Hasn't run yet")), w.when && w.enabled && w.next_run && !w.running && /*#__PURE__*/React.createElement("span", {
+    title: "Next run"
+  }, "Next: ", wfNext(w.next_run)), w.steps.length > 1 && /*#__PURE__*/React.createElement("span", {
+    className: "wfx-quiet"
+  }, w.steps.length, " steps")), w.asks_first && w.asks_first.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-shield",
+    title: "Friday stops and asks you before doing these"
+  }, "\uD83D\uDEE1\uFE0F Asks you before it can ", wfJoin(w.asks_first)), open && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      borderTop: '1px solid rgba(255,255,255,.08)',
+      paddingTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("ol", {
+    className: "wfx-steps"
+  }, w.steps.map((s, i) => {
+    const ls = last && last.steps && last.steps[i];
+    return /*#__PURE__*/React.createElement("li", {
+      key: i
+    }, /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: '#fff',
+        fontWeight: 600
+      }
+    }, s.name), ls && ls.status && ls.status !== 'pending' ? /*#__PURE__*/React.createElement("span", {
+      className: "wfx-quiet"
+    }, " \u2014 last time: ", ls.status === 'completed' ? 'done' : ls.status) : null, /*#__PURE__*/React.createElement("div", {
+      className: "wfx-quiet",
+      style: {
+        whiteSpace: 'pre-wrap'
+      }
+    }, s.prompt));
+  })), last && last.summary && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "wfx-lbl",
+    style: {
+      display: 'inline'
+    }
+  }, "Last result: "), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: last.status === 'failed' ? '#ff8fae' : '#d6d6e0',
+      fontSize: 12.5,
+      whiteSpace: 'pre-wrap'
+    }
+  }, last.summary))), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-row",
+    style: {
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn wfx-go",
+    disabled: busy || w.running,
+    onClick: () => onRun(w)
+  }, busy ? 'Starting…' : w.running ? 'Running…' : '▶ Run now'), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    onClick: () => onEdit(w)
+  }, "Edit"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-link",
+    onClick: () => setOpen(!open),
+    "aria-expanded": open
+  }, open ? 'Hide details' : 'Details'), /*#__PURE__*/React.createElement("span", {
+    className: "wfx-grow"
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-icon",
+    title: "Delete this workflow",
+    "aria-label": 'Delete ' + w.name,
+    onClick: () => onDelete(w)
+  }, "\uD83D\uDDD1")));
+}
+function WorkflowsWS() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [ask, setAsk] = useState('');
+  const [composing, setComposing] = useState(false);
+  const [drafting, setDrafting] = useState(false);
+  const [draftErr, setDraftErr] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [showRoutines, setShowRoutines] = useState(false);
   const [otherActivity, setOtherActivity] = useState([]);
+  const load = () => fetch('/api/workflows/overview').then(r => r.json()).then(d => {
+    if (d.status !== 'ok') throw new Error(d.message || 'error');
+    setData(d);
+    setError('');
+  }).catch(e => setError(e.message || 'error'));
+  useEffect(() => {
+    load();
+  }, []);
+  const anyRunning = !!(data && data.workflows.some(w => w.running));
+  useEffect(() => {
+    const t = setInterval(load, anyRunning ? 4000 : 20000);
+    return () => clearInterval(t);
+  }, [anyRunning]);
+  // Background work that isn't one of these workflows still shows here, so an
+  // idle list never reads as "Friday is doing nothing" while she is busy.
   useEffect(() => {
     let alive = true;
-    const tick = () => {
-      fetch('/api/tasks').then(r => r.json()).then(d => {
-        if (!alive) return;
-        const running = (d.tasks || d || []).filter(t => t.status === 'running' && !t.chain);
-        setOtherActivity(running);
-      }).catch(() => {});
-    };
+    const tick = () => fetch('/api/tasks').then(r => r.json()).then(d => {
+      if (alive) setOtherActivity((d.tasks || d || []).filter(t => t.status === 'running' && !t.chain && !String(t.description || '').startsWith('scheduled:')));
+    }).catch(() => {});
     tick();
     const t = setInterval(tick, 5000);
     return () => {
@@ -21311,597 +21964,275 @@ function WorkflowsWS() {
       clearInterval(t);
     };
   }, []);
-  useEffect(() => {
-    loadChains();
-    loadSchedules();
-  }, []);
-  useEffect(() => {
-    if (!watching) return;
-    let alive = true;
-    const tick = () => {
-      fetch('/api/workflows/chains/' + watching + '/status').then(r => r.json()).then(d => {
-        if (alive && d.run) {
-          setRunStatus(d.run);
-        }
-      }).catch(() => {});
-    };
-    tick();
-    const t = setInterval(tick, 4000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [watching]);
-  const runChain = slug => {
-    setBusy(slug);
-    apiFetch('/api/workflows/chains/' + slug + '/run', {
-      method: 'POST'
-    }).then(r => r.json()).then(() => {
+  const draft = () => {
+    if (!ask.trim()) {
+      setDraftErr('Describe what you want Friday to do.');
+      return;
+    }
+    setDrafting(true);
+    setDraftErr('');
+    wfPost('/api/workflows/draft', {
+      text: ask
+    }).then(d => {
+      setDrafting(false);
+      setEditing(d.draft);
+    }).catch(e => {
+      setDrafting(false);
+      setDraftErr(e.message);
+    });
+  };
+  const saved = (d, name) => {
+    setEditing(null);
+    setAsk('');
+    setComposing(false);
+    load();
+    fridayToast('Saved “' + name + '”.');
+  };
+  const run = w => {
+    setBusy(w.id);
+    const url = w.schedule_id ? '/api/schedules/' + w.schedule_id + '/run-now' : '/api/workflows/chains/' + encodeURIComponent(w.slug) + '/run';
+    wfPost(url).then(() => {
+      fridayToast('Started “' + w.name + '”.');
+    }).catch(e => fridayToast(/already running/i.test(e.message) ? '“' + w.name + '” is already running.' : 'Could not start it: ' + e.message)).then(() => {
       setBusy('');
-      setWatching(slug);
-    }).catch(() => setBusy(''));
-  };
-  const deleteChain = slug => {
-    if (!confirm('Delete workflow "' + slug + '"?')) return;
-    apiFetch('/api/workflows/chains/' + slug, {
-      method: 'DELETE'
-    }).then(() => loadChains());
-  };
-  const saveChain = () => {
-    const steps = draft.steps.filter(s => (s.prompt || '').trim());
-    if (!draft.name.trim() || !steps.length) {
-      fridayToast('A workflow needs a name and at least one step with a prompt.');
-      return;
-    }
-    apiFetch('/api/workflows/chains', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: draft.name,
-        description: draft.description,
-        seat: draft.seat || null,
-        steps
-      })
-    }).then(r => r.json()).then(d => {
-      if (d.status === 'ok') {
-        setShowNew(false);
-        setDraft({
-          name: '',
-          description: '',
-          seat: '',
-          steps: [{
-            name: '',
-            prompt: ''
-          }]
-        });
-        loadChains();
-      } else fridayToast(d.message || 'Save failed');
+      setTimeout(load, 1200);
     });
   };
-  const setStep = (i, k, v) => {
-    const s = draft.steps.slice();
-    s[i] = Object.assign({}, s[i], {
-      [k]: v
-    });
-    setDraft(Object.assign({}, draft, {
-      steps: s
-    }));
-  };
-  const stepColor = st => st === 'completed' ? '#2ecc71' : st === 'running' ? '#00d4ff' : st === 'queued' ? '#f1c40f' : st === 'failed' ? '#ff0080' : '#666';
-  const fmtTrig = s => {
-    const sp = s.spec || {};
-    if (s.trigger === 'interval') return 'every ' + (sp.every_minutes || 60) + ' min';
-    if (s.trigger === 'daily') return 'daily ' + String(sp.hour || 0).padStart(2, '0') + ':' + String(sp.minute || 0).padStart(2, '0');
-    if (s.trigger === 'weekly') return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][sp.weekday === undefined ? 6 : sp.weekday] + ' ' + String(sp.hour || 0).padStart(2, '0') + ':' + String(sp.minute || 0).padStart(2, '0');
-    if (s.trigger === 'once') return 'once @ ' + new Date((sp.at || 0) * 1000).toLocaleString();
-    return s.trigger;
-  };
-  const toggleSched = s => {
-    apiFetch('/api/schedules/' + s.id, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        enabled: !s.enabled
-      })
-    }).then(() => loadSchedules());
-  };
-  const runSched = s => {
-    apiFetch('/api/schedules/' + s.id + '/run-now', {
-      method: 'POST'
-    }).then(() => setTimeout(loadSchedules, 1500));
-  };
-  const deleteSched = s => {
-    if (!confirm('Delete schedule "' + (s.name || s.id) + '"?')) return;
-    apiFetch('/api/schedules/' + s.id, {
-      method: 'DELETE'
-    }).then(() => loadSchedules());
-  };
-  const saveSched = () => {
-    if (!sdraft.name.trim() || !sdraft.prompt.trim()) {
-      fridayToast('A schedule needs a name and a prompt.');
-      return;
-    }
-    const spec = sdraft.trigger === 'interval' ? {
-      every_minutes: Number(sdraft.every) || 60
-    } : sdraft.trigger === 'weekly' ? {
-      weekday: Number(sdraft.weekday),
-      hour: Number(sdraft.hour),
-      minute: Number(sdraft.minute)
-    } : sdraft.trigger === 'once' ? {
-      at: Math.floor(new Date(sdraft.at || Date.now()).getTime() / 1000)
-    } : {
-      hour: Number(sdraft.hour),
-      minute: Number(sdraft.minute)
-    };
-    apiFetch('/api/schedules', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: sdraft.name,
-        trigger: sdraft.trigger,
-        spec,
-        task: {
-          kind: 'agent_prompt',
-          prompt: sdraft.prompt
-        },
-        enabled: true
-      })
-    }).then(r => r.json()).then(() => {
-      setShowNewSched(false);
-      setSdraft({
-        name: '',
-        trigger: 'daily',
-        hour: 9,
-        minute: 0,
-        weekday: 6,
-        every: 60,
-        at: '',
-        prompt: ''
-      });
-      loadSchedules();
-    });
-  };
-  const inp = {
-    background: 'rgba(255,255,255,.06)',
-    border: '1px solid rgba(255,255,255,.15)',
-    borderRadius: 6,
-    color: '#eee',
-    padding: '6px 8px',
-    fontSize: 13,
-    width: '100%',
-    boxSizing: 'border-box'
-  };
-  if (loading) return /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#999',
-      textAlign: 'center',
-      padding: 40
-    }
-  }, "Loading workflows...");
-  if (error) return /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#ff0080',
-      textAlign: 'center',
-      padding: 40
-    }
-  }, "\u26A0\uFE0F Unable to load workflows ", /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: () => {
-      setError(false);
-      setLoading(true);
-      loadChains();
-    }
-  }, "Retry"));
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
-    text: chains.length + ' workflows, ' + schedules.length + ' scheduled tasks. Fire one, or build a new pipeline.'
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      marginBottom: 12
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: tab === 'workflows' ? {
-      borderColor: '#00d4ff',
-      color: '#00d4ff'
-    } : {},
-    onClick: () => setTab('workflows')
-  }, "\uD83E\uDDE9 Workflows"), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: tab === 'schedules' ? {
-      borderColor: '#00d4ff',
-      color: '#00d4ff'
-    } : {},
-    onClick: () => setTab('schedules')
-  }, "\u23F0 Scheduled Tasks")), tab === 'workflows' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "card-title",
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "Workflows \u2014 multi-step agent pipelines"), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: () => setShowNew(!showNew)
-  }, showNew ? 'Cancel' : '+ New workflow')), showNew && /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {
-      padding: 12
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: 8,
-      marginBottom: 8
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    style: inp,
-    placeholder: "Workflow name",
-    value: draft.name,
-    onChange: e => setDraft(Object.assign({}, draft, {
-      name: e.target.value
-    }))
-  }), /*#__PURE__*/React.createElement("input", {
-    style: inp,
-    placeholder: "Seat override (model id, optional)",
-    value: draft.seat,
-    onChange: e => setDraft(Object.assign({}, draft, {
-      seat: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("input", {
-    style: Object.assign({}, inp, {
-      marginBottom: 8
-    }),
-    placeholder: "Description (optional)",
-    value: draft.description,
-    onChange: e => setDraft(Object.assign({}, draft, {
-      description: e.target.value
-    }))
-  }), draft.steps.map((s, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      border: '1px solid rgba(255,255,255,.1)',
-      borderRadius: 8,
-      padding: 8,
-      marginBottom: 8
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    style: Object.assign({}, inp, {
-      marginBottom: 6
-    }),
-    placeholder: 'Step ' + (i + 1) + ' name',
-    value: s.name,
-    onChange: e => setStep(i, 'name', e.target.value)
-  }), /*#__PURE__*/React.createElement("textarea", {
-    style: Object.assign({}, inp, {
-      minHeight: 64
-    }),
-    placeholder: "What should Friday do in this step? She has all her tools \u2014 generation, inspect_image / inspect_audio for self-checks, save_output, files, shell.",
-    value: s.prompt,
-    onChange: e => setStep(i, 'prompt', e.target.value)
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: () => setDraft(Object.assign({}, draft, {
-      steps: draft.steps.concat([{
-        name: '',
-        prompt: ''
-      }])
-    }))
-  }, "+ Step"), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      borderColor: '#2ecc71',
-      color: '#2ecc71'
+  const toggle = w => apiFetch('/api/schedules/' + w.schedule_id, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json'
     },
-    onClick: saveChain
-  }, "Save workflow"))), otherActivity.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {
-      padding: '10px 12px',
-      marginBottom: 10,
-      border: '1px solid rgba(255,180,0,.3)',
-      background: 'rgba(255,180,0,.06)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: '#e0a030',
-      fontWeight: 600
-    }
-  }, "Friday is also working on this right now — not part of any saved workflow:"), otherActivity.map(t => /*#__PURE__*/React.createElement("div", {
-    key: t.task_id,
-    style: {
-      fontSize: 12,
-      color: '#ccc',
-      marginTop: 2
-    }
-  }, "● ", t.name || t.description || t.task_id))), chains.map(c => /*#__PURE__*/React.createElement("div", {
-    key: c.slug,
-    className: "card",
-    style: {
-      padding: '10px 12px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 600
-    }
-  }, c.name, " ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#777',
-      fontWeight: 400,
-      fontSize: 12
-    }
-  }, "\xB7 ", c.steps, " steps")), c.description ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#999',
-      fontSize: 12,
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    }
-  }, c.description) : null), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    disabled: busy === c.slug,
-    onClick: () => runChain(c.slug)
-  }, busy === c.slug ? 'Starting…' : '▶ Run'), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: () => setWatching(c.slug)
-  }, "Status"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Delete this workflow', title: 'Delete this workflow', 
-    className: "btn",
-    style: {
-      color: '#ff5f7a'
-    },
-    onClick: () => deleteChain(c.slug)
-  }, "\uD83D\uDDD1"))), !chains.length && !showNew && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#888',
-      padding: 20,
-      textAlign: 'center'
-    }
-  }, "No workflows yet. Build one \u2014 each step is a full agent run with all of Friday's tools."), runStatus && /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {
-      padding: 12,
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-title"
-  }, "Run: ", runStatus.name, " \u2014 ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: stepColor(runStatus.state === 'completed' ? 'completed' : runStatus.state === 'failed' ? 'failed' : 'running')
-    }
-  }, runStatus.state)), runStatus.steps.map(s => /*#__PURE__*/React.createElement("div", {
-    key: s.index,
-    style: {
-      display: 'flex',
-      gap: 8,
-      alignItems: 'flex-start',
-      padding: '6px 0',
-      borderBottom: '1px solid rgba(255,255,255,.06)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: stepColor(s.status),
-      fontSize: 18,
-      lineHeight: '18px'
-    }
-  }, "\u25CF"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13
-    }
-  }, s.index + 1, ". ", s.name, " ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#888',
-      fontSize: 11
-    }
-  }, "(", s.status, ")")), s.status === 'running' && s.log_tail && s.log_tail.length ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#7fd4ff',
-      fontSize: 11
-    }
-  }, s.log_tail[s.log_tail.length - 1]) : null, s.status === 'failed' && s.result_tail ? /*#__PURE__*/React.createElement("div", {
+    body: JSON.stringify({
+      enabled: !w.enabled
+    })
+  }).then(load);
+  const remove = w => {
+    if (!confirm('Delete “' + w.name + '”? This removes it and its schedule, and can’t be undone.')) return;
+    wfPost('/api/workflows/remove', {
+      slug: w.slug,
+      schedule_id: w.schedule_id
+    }).then(load).catch(e => fridayToast(e.message));
+  };
+  if (error && !data) return /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#ff8fae',
-      fontSize: 11
+      textAlign: 'center',
+      padding: 40
     }
-  }, s.result_tail) : null))))), tab === 'schedules' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "Couldn't load your workflows (", error, "). ", /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: load
+  }, "Try again"));
+  if (!data) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#a8a8b4',
+      textAlign: 'center',
+      padding: 40
+    }
+  }, "Loading workflows\u2026");
+  const wfs = data.workflows,
+    routines = data.routines || [],
+    pending = data.pending_approvals || 0;
+  const onCount = routines.filter(r => r.enabled).length;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "wfx"
+  }, /*#__PURE__*/React.createElement("style", null, WF_CSS), !editing && /*#__PURE__*/React.createElement("div", {
+    className: "card wfx-card",
+    style: {
+      borderColor: 'rgba(0,212,255,.3)',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "wf-ask",
     className: "card-title",
     style: {
-      display: 'flex',
-      justifyContent: 'space-between',
+      display: 'block',
+      marginBottom: 6
+    }
+  }, "New workflow \u2014 say what, and when"), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-row",
+    style: {
+      alignItems: 'flex-end'
+    }
+  }, /*#__PURE__*/React.createElement("textarea", {
+    id: "wf-ask",
+    className: "wfx-in wfx-ask wfx-grow",
+    rows: composing ? 3 : 1,
+    style: {
+      minHeight: composing ? 72 : 38,
+      height: composing ? undefined : 38,
+      resize: composing ? 'vertical' : 'none',
+      overflow: composing ? 'auto' : 'hidden',
+      whiteSpace: composing ? undefined : 'nowrap'
+    },
+    value: ask,
+    onChange: e => setAsk(e.target.value),
+    onFocus: () => setComposing(true),
+    onKeyDown: e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        draft();
+      }
+    },
+    placeholder: "e.g. Every weekday at 7:30am, check the council site and tell me what changed"
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn wfx-go",
+    style: {
+      height: 38,
+      whiteSpace: 'nowrap'
+    },
+    disabled: drafting,
+    onClick: draft
+  }, drafting ? 'Drafting…' : 'Draft it →')), (composing || !wfs.length) && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "wfx-quiet",
+    style: {
+      marginTop: 8
+    }
+  }, "Use your own words. Friday writes a draft for you to check; nothing is saved until you say so."), !ask && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8
+    }
+  }, WF_EXAMPLES.map(x => /*#__PURE__*/React.createElement("button", {
+    key: x,
+    type: "button",
+    className: "wfx-chip",
+    onClick: () => setAsk(x)
+  }, x))), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-row",
+    style: {
+      marginTop: 4
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-link",
+    onClick: () => setEditing({
+      name: '',
+      steps: [],
+      when: null
+    })
+  }, "Or build it step by step"), /*#__PURE__*/React.createElement("span", {
+    className: "wfx-grow"
+  }), composing && wfs.length > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-link",
+    style: {
+      color: '#a8a8b4'
+    },
+    onClick: () => {
+      setComposing(false);
+      setAsk('');
+      setDraftErr('');
+    }
+  }, "Close"))), draftErr && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-err",
+    role: "alert"
+  }, draftErr)), editing && /*#__PURE__*/React.createElement(WfEditor, {
+    key: editing.slug || editing.schedule_id || editing.request || 'new',
+    initial: editing,
+    onCancel: () => setEditing(null),
+    onSaved: saved
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-promise",
+    "data-testid": "wf-promise",
+    style: {
+      padding: '8px 12px',
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "Scheduled tasks"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, "\uD83D\uDEE1\uFE0F"), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-grow"
+  }, "Workflows run on their own, but Friday ", /*#__PURE__*/React.createElement("b", null, "asks you first"), " before any of them sends, posts, buys or deletes anything."), pending > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "btn",
-    onClick: () => setShowNewSched(!showNewSched)
-  }, showNewSched ? 'Cancel' : '+ New schedule')), showNewSched && /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderColor: 'rgba(245,158,11,.6)',
+      color: '#ffd08a',
+      whiteSpace: 'nowrap'
+    },
+    onClick: wfOpenApprovals
+  }, pending === 1 ? '1 waiting for your OK' : pending + ' waiting for your OK', " \u2192")), otherActivity.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-quiet",
+    style: {
+      marginBottom: 10
+    }
+  }, "Also working on right now: ", otherActivity.map(t => t.name || t.description || t.task_id).join(', ')), /*#__PURE__*/React.createElement("div", {
+    className: "wfx-h"
+  }, "Your workflows", wfs.length ? ' (' + wfs.length + ')' : ''), !wfs.length && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-quiet",
+    style: {
+      padding: '14px 2px'
+    }
+  }, "Nothing yet. Describe one above \u2014 for example, a daily check of a website you watch, or a weekly roundup of your notes."), wfs.map(w => /*#__PURE__*/React.createElement(WfCard, {
+    key: w.id,
+    w: w,
+    busy: busy === w.id,
+    onRun: run,
+    onToggle: toggle,
+    onDelete: remove,
+    onEdit: x => {
+      setEditing(Object.assign({}, x, {
+        when_note: ''
+      }));
+      setTimeout(() => {
+        const el = document.querySelector('[data-testid="wf-editor"]');
+        if (el) el.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+      }, 60);
+    }
+  })), routines.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "wfx-h wfx-link",
+    style: {
+      textDecoration: 'none',
+      display: 'block',
+      marginTop: 20
+    },
+    "aria-expanded": showRoutines,
+    onClick: () => setShowRoutines(!showRoutines)
+  }, showRoutines ? '▾' : '▸', " Friday's built-in routines (", onCount, " of ", routines.length, " on)"), showRoutines && /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
-      padding: 12
+      padding: '4px 12px'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "wfx-quiet",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '2fr 1fr',
-      gap: 8,
-      marginBottom: 8
+      padding: '6px 0'
     }
-  }, /*#__PURE__*/React.createElement("input", {
-    style: inp,
-    placeholder: "Schedule name",
-    value: sdraft.name,
-    onChange: e => setSdraft(Object.assign({}, sdraft, {
-      name: e.target.value
-    }))
-  }), /*#__PURE__*/React.createElement("select", {
-    style: inp,
-    value: sdraft.trigger,
-    onChange: e => setSdraft(Object.assign({}, sdraft, {
-      trigger: e.target.value
-    }))
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "daily"
-  }, "daily"), /*#__PURE__*/React.createElement("option", {
-    value: "weekly"
-  }, "weekly"), /*#__PURE__*/React.createElement("option", {
-    value: "interval"
-  }, "interval"), /*#__PURE__*/React.createElement("option", {
-    value: "once"
-  }, "once"))), sdraft.trigger === 'interval' ? /*#__PURE__*/React.createElement("input", {
-    style: Object.assign({}, inp, {
-      marginBottom: 8
-    }),
-    type: "number",
-    placeholder: "Every N minutes",
-    value: sdraft.every,
-    onChange: e => setSdraft(Object.assign({}, sdraft, {
-      every: e.target.value
-    }))
-  }) : sdraft.trigger === 'once' ? /*#__PURE__*/React.createElement("input", {
-    style: Object.assign({}, inp, {
-      marginBottom: 8
-    }),
-    type: "datetime-local",
-    value: sdraft.at,
-    onChange: e => setSdraft(Object.assign({}, sdraft, {
-      at: e.target.value
-    }))
-  }) : /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: sdraft.trigger === 'weekly' ? '1fr 1fr 1fr' : '1fr 1fr',
-      gap: 8,
-      marginBottom: 8
-    }
-  }, sdraft.trigger === 'weekly' && /*#__PURE__*/React.createElement("select", {
-    style: inp,
-    value: sdraft.weekday,
-    onChange: e => setSdraft(Object.assign({}, sdraft, {
-      weekday: e.target.value
-    }))
-  }, ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d, i) => /*#__PURE__*/React.createElement("option", {
-    key: d,
-    value: i
-  }, d))), /*#__PURE__*/React.createElement("input", {
-    style: inp,
-    type: "number",
-    min: "0",
-    max: "23",
-    placeholder: "Hour",
-    value: sdraft.hour,
-    onChange: e => setSdraft(Object.assign({}, sdraft, {
-      hour: e.target.value
-    }))
-  }), /*#__PURE__*/React.createElement("input", {
-    style: inp,
-    type: "number",
-    min: "0",
-    max: "59",
-    placeholder: "Minute",
-    value: sdraft.minute,
-    onChange: e => setSdraft(Object.assign({}, sdraft, {
-      minute: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("textarea", {
-    style: Object.assign({}, inp, {
-      minHeight: 56,
-      marginBottom: 8
-    }),
-    placeholder: "What should Friday do when this fires? (full agent run with tools)",
-    value: sdraft.prompt,
-    onChange: e => setSdraft(Object.assign({}, sdraft, {
-      prompt: e.target.value
-    }))
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      borderColor: '#2ecc71',
-      color: '#2ecc71'
-    },
-    onClick: saveSched
-  }, "Save schedule")), schedules.map(s => /*#__PURE__*/React.createElement("div", {
-    key: s.id,
-    className: "card",
-    style: {
-      padding: '10px 12px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 600
-    }
-  }, s.name || s.id, " ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#777',
-      fontWeight: 400,
-      fontSize: 12
-    }
-  }, "\xB7 ", fmtTrig(s), s.source === 'builtin' ? ' · builtin' : '')), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: s.last_status === 'error' ? '#ff8fae' : '#999',
-      fontSize: 12,
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    }
-  }, s.last_status ? 'last: ' + s.last_status + (s.last_summary ? ' — ' + s.last_summary : '') : 'never run')), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: s.enabled ? {
-      borderColor: '#2ecc71',
-      color: '#2ecc71'
-    } : {
-      color: '#888'
-    },
-    onClick: () => toggleSched(s)
-  }, s.enabled ? 'On' : 'Off'), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: () => runSched(s)
-  }, "\u25B6 Now"), s.source !== 'builtin' && /*#__PURE__*/React.createElement("button", { "aria-label": 'Delete this schedule', title: 'Delete this schedule', 
-    className: "btn",
-    style: {
-      color: '#ff5f7a'
-    },
-    onClick: () => deleteSched(s)
-  }, "\uD83D\uDDD1"))), !schedules.length && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#888',
-      padding: 20,
-      textAlign: 'center'
-    }
-  }, "No schedules yet.")));
+  }, "Jobs that come with Friday, like the news briefings. You can switch them on or off."), routines.map(r => {
+    const st = r.running ? WF_STATUS.running : r.last_run ? WF_STATUS[r.last_run.status] || WF_STATUS.finished : null;
+    return /*#__PURE__*/React.createElement("div", {
+      key: r.schedule_id,
+      className: "wfx-row",
+      style: {
+        padding: '8px 0',
+        borderTop: '1px solid rgba(255,255,255,.06)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "wfx-grow"
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: r.enabled ? '#fff' : '#a8a8b4',
+        fontWeight: 500
+      }
+    }, r.name), /*#__PURE__*/React.createElement("div", {
+      className: "wfx-quiet"
+    }, r.when_text, st ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("span", {
+      className: "wfx-dot",
+      style: {
+        background: st.color
+      }
+    }), r.running ? 'running now' : st.label.toLowerCase() + ' ' + wfAgo(r.last_run.at)) : '')), /*#__PURE__*/React.createElement(WfSwitch, {
+      on: r.enabled,
+      label: 'Run ' + r.name,
+      onChange: () => toggle(r)
+    }));
+  }))));
 }
 function SitesWS() {
   // Sites — general-purpose portfolio & deploy manager (wraps FSStudio).
