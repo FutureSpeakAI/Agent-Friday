@@ -114,6 +114,11 @@ a cloud model. RELEASE_NOTES.md explains who it could affect.
 - A fresh profile is not held for a rules re-pin; only a `.friday` folder
   moved from another PC or account is.
 
+- Standing Friday down released nothing: it called a method the arbiter
+  does not have, and boot re-pinned the seat 20 s later. It now stops every
+  seat Friday owns and unloads the daemon's models, and boot, loads and
+  grants leave the GPU alone while stood down; resume reloads the seats.
+
 ### Reverted
 
 - The restyled file-picker button and the reworked approval-card lines from

@@ -140,6 +140,9 @@ for them on every page load.
   cannot register the key.
 - **Friday's voice no longer hangs on a busy graphics card.** One spoken reply
   is limited in time and length, and Friday recovers by herself.
+- **"I need my machine" really frees the graphics card.** Standing Friday
+  down now stops her local models, and a restart while she is stood down no
+  longer loads them again. Resuming loads them back.
 - **A new install is never held for "re-confirm the rules"**; that only
   applies when a `.friday` folder is moved from another PC.
 - **Menus and screens.** The top bar's menus open fully on a narrow window,
