@@ -120,18 +120,31 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "capabilities": ["issues", "pull_requests", "repos", "search"],
         "workspaces": ["code", "career"],
         "mcp_server": "github",
+        # GitHub's own server (github/github-mcp-server), run from its
+        # published container image. `-e NAME` with no value hands the token
+        # over from the environment Friday spawns docker with, so the token
+        # stays in the encrypted env block and never appears on a command
+        # line. GitHub also hosts the same server remotely
+        # (https://api.githubcopilot.com/mcp/), but that form carries the
+        # token in a request header, and headers are not encrypted at rest
+        # in mcp_servers.json; the container form keeps it in the env.
+        # Pushes, merges and other writes stay outward: connector tools are
+        # classified per call by governance/action_gate.py.
         "mcp_template": {
-            "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-github"],
+            "command": "docker",
+            "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+                     "ghcr.io/github/github-mcp-server"],
             "env": {},
         },
         "fields": [
             {"key": "GITHUB_PERSONAL_ACCESS_TOKEN", "label": "Personal Access Token",
-             "secret": True, "placeholder": "ghp_…", "required": True},
+             "secret": True, "placeholder": "github_pat_…", "required": True},
         ],
-        "docs_url": "https://github.com/settings/tokens",
-        "setup_hint": "Create a fine-grained PAT with repo + read:org scopes "
-                      "and paste it here.",
+        "docs_url": "https://github.com/github/github-mcp-server",
+        "setup_hint": "Needs Docker Desktop running. Create a fine-grained "
+                      "personal access token with only the repositories and "
+                      "permissions you want Friday to use, and paste it here. "
+                      "The first connect pulls GitHub's server image.",
     },
     "linear": {
         "name": "Linear",
@@ -192,6 +205,42 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "docs_url": "https://discord.com/developers/applications",
         "setup_hint": "Create a Discord application + bot, invite it to your "
                       "server, and paste its token.",
+    },
+    # ── Windows desktop through the accessibility tree ────────────────────
+    # Windows-MCP (MIT, github.com/CursorTouch/Windows-MCP) reads the UI
+    # Automation tree, so Friday can see controls by name instead of guessing
+    # at pixels. READ-ONLY FIRST: `enabled_tools` is an allowlist, and only
+    # the observing tools are on it. Every other tool the server offers --
+    # clicking, typing, shell, launching apps, clipboard, web scraping -- is
+    # not registered until the owner adds its name to `enabled_tools` in
+    # mcp_servers.json. A tool this list does not name is off, so a tool a
+    # later version adds is off too. Once enabled, its pointer and keyboard
+    # tools are held to the per-app grants in services/desktop_grants.py and
+    # the rest always need a decision.
+    "windows_desktop": {
+        "name": "Windows desktop",
+        "icon": "🪟",
+        "category": "Productivity",
+        "kind": "mcp",
+        "blurb": "Lets Friday read what is on screen through Windows' "
+                 "accessibility tree (Windows-MCP). Starts read-only.",
+        "capabilities": ["desktop_state", "accessibility_tree"],
+        "workspaces": ["home"],
+        "mcp_server": "windows_desktop",
+        "mcp_template": {
+            "command": "uvx",
+            "args": ["windows-mcp"],
+            "env": {},
+            "enabled_tools": ["State-Tool", "Snapshot", "State",
+                              "Screenshot", "Wait-Tool", "Wait"],
+        },
+        "fields": [],
+        "docs_url": "https://github.com/CursorTouch/Windows-MCP",
+        "setup_hint": "Install uv first; connecting runs `uvx windows-mcp`, "
+                      "which fetches Windows-MCP from PyPI the first time. "
+                      "Only its read tools are switched on. Action tools stay "
+                      "off until you name them in enabled_tools, and then act "
+                      "only in apps you grant under Computer Control.",
     },
 }
 
@@ -729,7 +778,7 @@ def _connect_mcp(key: str, defn: dict, data: dict) -> dict:
         merged_env = dict(tmpl.get("env") or {})
         merged_env.update(existing.get("env") or {})
         merged_env.update(env_update)   # new tokens win
-        servers[server_name] = {
+        entry = {
             "command": existing.get("command") or tmpl.get("command"),
             "args": existing.get("args") or list(tmpl.get("args") or []),
             "env": merged_env,
@@ -737,6 +786,14 @@ def _connect_mcp(key: str, defn: dict, data: dict) -> dict:
             "note": existing.get("note")
             or f"{defn['name']} connector (managed by Friday's connector registry).",
         }
+        # A tool allowlist the owner has already edited is theirs; the
+        # template's list is only the starting point.
+        for k in ("enabled_tools", "disabled_tools"):
+            if k in existing:
+                entry[k] = existing[k]
+            elif k in tmpl:
+                entry[k] = list(tmpl[k])
+        servers[server_name] = entry
         agent_svc._save_mcp_servers(full)
         reload_result = agent_svc._mcp_reload()
     except Exception as e:
