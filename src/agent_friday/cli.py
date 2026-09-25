@@ -1487,29 +1487,8 @@ examples:
 
 
 # ── Export and backup ────────────────────────────────────────────
-# What `friday export` leaves out, by reason. A data export holds the owner's
-# data, not the keys that decrypt their credentials: anyone holding the
-# keystore root key and the credential blobs can use every stored API key and
-# account token. Those go only into a full backup, which is itself encrypted
-# with a passphrase the owner types.
-_EXPORT_TRANSIENT_PARTS = {"audio-cache", "vibe-code-logs", "__pycache__"}
-# Downloaded model weights and caches: large, and fetched again on demand.
-_EXPORT_DOWNLOAD_TOPS = {"runtime", "local_voice", "models", "cache"}
-_EXPORT_SECRET_DIRS = (
-    ("security",),                 # keystore root key, DPAPI passphrase copy
-    ("providers", "keys"),         # provider API keys
-    ("google_accounts", "tokens"),
-    ("mcp_oauth",),
-    ("phone", "secrets"),
-)
-_EXPORT_SECRET_NAMES = {
-    "secret_key",                  # web session secret
-    ".governance-key", ".attestation-key-ed25519",
-    "ledger_signing.key",
-    "key.pem", "ca-key.pem",       # TLS and local-address private keys
-}
-_EXPORT_SECRET_SUFFIXES = (".key", ".dpapi", ".cred", ".oauth.enc",
-                           ".token.enc", "-key.pem")
+# What an export leaves out is decided in services/data_export.py, shared
+# with the Settings export button.
 
 # Full backup container: magic, 16-byte Argon2id salt, then a vault_crypto
 # AES-256-GCM blob of the zip.
@@ -1521,24 +1500,6 @@ _BACKUP_MIN_PASSPHRASE = 12
 def _backup_profile():
     from agent_friday.privacy import vault_crypto as vc
     return vc.DEFAULT_PROFILE
-
-
-def _export_skip_reason(rel: Path, full: bool) -> str | None:
-    """Why a file under ~/.friday is left out of an export, or None."""
-    parts = rel.parts
-    if set(parts) & _EXPORT_TRANSIENT_PARTS:
-        return "transient"
-    if parts and parts[0] in _EXPORT_DOWNLOAD_TOPS:
-        return "download"
-    if full:
-        return None
-    for prefix in _EXPORT_SECRET_DIRS:
-        if parts[:len(prefix)] == prefix:
-            return "secret"
-    name = rel.name
-    if name in _EXPORT_SECRET_NAMES or name.endswith(_EXPORT_SECRET_SUFFIXES):
-        return "secret"
-    return None
 
 
 def _documents_dir() -> Path:
@@ -1605,13 +1566,14 @@ def _export_destination(out: str | None, filename: str) -> Path | None:
 def _write_export_zip(dest, full: bool) -> dict:
     """Zip ~/.friday into `dest` (a path or file object). Returns counts by reason."""
     import zipfile
+    from agent_friday.services.data_export import skip_reason
     counts = {"files": 0, "transient": 0, "download": 0, "secret": 0, "error": 0}
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(FRIDAY_DIR.rglob("*")):
             if not path.is_file():
                 continue
             rel = path.relative_to(FRIDAY_DIR)
-            reason = _export_skip_reason(rel, full)
+            reason = skip_reason(rel, full)
             if reason:
                 counts[reason] += 1
                 continue

@@ -13257,7 +13257,7 @@ function SettingsTabPrivacy({s,save}){
       <button className="settings-btn" style={{width:'100%',fontSize:12,marginTop:6}} onClick={()=>window.open('/api/context/export','_blank')}>Export conversation log (ZIP)</button>
     </StSection>
     <StSection title="Your data">
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Everything Friday knows lives on this device. Take it with you, or erase it completely — no server copy exists.</div>
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Everything Friday knows lives on this device. Take it with you, or erase it completely — no server copy exists. The export leaves out stored API keys, account sign-ins and the key that decrypts them; for a backup that includes them, run “friday export --full”, which encrypts it with a passphrase you choose.</div>
       <button className="settings-btn" style={{width:'100%',fontSize:12,marginBottom:10}} onClick={()=>window.open('/api/data/export','_blank')}>Export all my data (ZIP)</button>
       <div style={{fontSize:11,color:'rgba(255,180,180,0.75)',marginBottom:6,lineHeight:1.6}}>Permanently delete ALL local data — vault, wiki, memory, chat, credentials, identity. This cannot be undone. Type <b>ERASE</b> to confirm.</div>
       <div style={{display:'flex',gap:6}}>
