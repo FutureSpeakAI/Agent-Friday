@@ -29812,6 +29812,157 @@ function HealthWS() {
     onClick: () => copyText(m.name)
   }, "Copy"))))));
 }
+// -- Relationship memory (services/relationship_memory.py) -------------------
+// Who the owner has been in touch with, built locally from mail and calendar
+// headers; follow-ups; the LinkedIn import; and the per-account consent to
+// save contacts to Google. Mirrored in ui_parts/app.html.
+function RelationshipPanel({ onImported }) {
+  const e = React.createElement;
+  const [cfg, setCfg] = useState(null);
+  const [info, setInfo] = useState({});
+  const [follow, setFollow] = useState([]);
+  const [accts, setAccts] = useState([]);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState('');
+  const [consent, setConsent] = useState(null);
+  const fileRef = useRef(null);
+  const load = () => {
+    fetch('/api/relationships/config').then(r => r.json()).then(d => {
+      if (d.status === 'ok') { setCfg(d.config); setInfo({ last_sync: d.last_sync, interactions: d.interactions }); }
+    }).catch(() => {});
+    fetch('/api/relationships/follow-ups').then(r => r.json()).then(d => setFollow(d.follow_ups || [])).catch(() => {});
+    fetch('/api/contacts/google-write').then(r => r.json()).then(d => setAccts(d.accounts || [])).catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
+  const saveCfg = async patch => {
+    try {
+      const r = await fetch('/api/relationships/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+      const d = await r.json();
+      if (d.status === 'ok') setCfg(d.config); else setMsg(d.message || 'Could not save.');
+    } catch (err) { setMsg('Could not save.'); }
+  };
+  const syncNow = async () => {
+    setBusy('sync'); setMsg('');
+    try {
+      const r = await fetch('/api/relationships/sync', { method: 'POST' });
+      const d = await r.json();
+      if (d.status === 'ok') {
+        const res = d.result || {};
+        setMsg('Added ' + (res.added || 0) + ' interactions' + ((res.errors || []).length ? ' · ' + res.errors.length + ' account error(s): ' + res.errors.map(x => x.error).join('; ') : '') + ((res.truncated_accounts || []).length ? ' · some mail not read yet, sync again' : ''));
+        load();
+      } else setMsg(d.message || 'Sync failed.');
+    } catch (err) { setMsg('Sync failed.'); }
+    setBusy('');
+  };
+  const importFile = async f => {
+    if (!f) return;
+    setBusy('import'); setMsg('');
+    try {
+      const text = await f.text();
+      const r = await fetch('/api/contacts/import/linkedin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ csv: text }) });
+      const d = await r.json();
+      if (d.status === 'ok') {
+        const x = d.result;
+        setMsg('LinkedIn: ' + x.created + ' added, ' + x.updated + ' updated' + (x.skipped_count ? ', ' + x.skipped_count + ' rows skipped' : '') + (x.skipped_forgotten ? ', ' + x.skipped_forgotten + ' forgotten people left out' : '') + '.');
+        if (onImported) onImported();
+      } else setMsg(d.message || 'Import failed.');
+    } catch (err) { setMsg('Import failed.'); }
+    setBusy('');
+  };
+  const allowSaving = async a => {
+    setMsg('');
+    try {
+      const r = await fetch('/api/google/accounts/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: a.id, email: a.email, include_contacts_write: true }) });
+      const d = await r.json();
+      if (d.status === 'ok' && d.auth_url) setConsent({ url: d.auth_url, brief: d.prebrief || '', email: a.email });
+      else setMsg(d.message || 'Could not start sign-in.');
+    } catch (err) { setMsg('Could not start sign-in.'); }
+  };
+  const done = async id => {
+    try { await fetch('/api/relationships/follow-ups/' + encodeURIComponent(id) + '/done', { method: 'POST' }); } catch (err) {}
+    load();
+  };
+  const small = { fontSize: 11 };
+  const readOnly = accts.filter(a => !a.can_save);
+  return e("div", { className: "card", style: { marginBottom: 10 } },
+    e("div", { className: "card-title" }, "Relationship memory"),
+    e("div", { style: { fontSize: 11, color: '#999', marginBottom: 8, lineHeight: 1.5 } },
+      "Friday keeps a timeline of who you have emailed and met, from mail and calendar headers only, never message text. It stays on this computer.",
+      info.last_sync ? " Last sync " + String(info.last_sync).slice(0, 16).replace('T', ' ') + " · " + (info.interactions || 0) + " interactions." : ""),
+    cfg && e("div", { style: { display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 8 } },
+      e("label", { style: { ...small, display: 'flex', gap: 4, alignItems: 'center' } },
+        e("input", { type: "checkbox", checked: !!cfg.sync_enabled, onChange: ev => saveCfg({ sync_enabled: ev.target.checked }) }),
+        "Build the timeline from mail and calendar"),
+      e("label", { style: { ...small, display: 'flex', gap: 4, alignItems: 'center' } },
+        "Nudge me when nobody has replied after",
+        e("input", { className: "input", type: "number", min: 0, max: 90, value: cfg.cold_after_days, style: { width: 56, fontSize: 11, padding: '2px 4px' },
+          onChange: ev => saveCfg({ cold_after_days: ev.target.value === '' ? 0 : Number(ev.target.value) }) }),
+        "days (0 = off)")),
+    e("div", { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 } },
+      e("button", { className: "btn", style: small, disabled: !!busy, onClick: syncNow }, busy === 'sync' ? 'Syncing…' : '↻ Sync now'),
+      e("input", { ref: fileRef, type: "file", accept: ".csv,text/csv", style: { display: 'none' },
+        onChange: ev => { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; importFile(f); } }),
+      e("button", { className: "btn", style: small, disabled: !!busy, title: "LinkedIn → Settings → Data privacy → Get a copy of your data → Connections",
+        onClick: () => fileRef.current && fileRef.current.click() }, busy === 'import' ? 'Importing…' : '⬆ Import LinkedIn connections (CSV)'),
+      readOnly.map(a => e("button", { key: a.id, className: "btn", style: small, title: "Friday can only read contacts on this account. Saving still waits for your approval each time.",
+        onClick: () => allowSaving(a) }, "Allow saving to Google Contacts: " + (a.email || a.label)))),
+    consent && e("div", { style: { fontSize: 11, color: '#bbb', margin: '6px 0', lineHeight: 1.5 } },
+      consent.brief ? e("div", { style: { marginBottom: 4 } }, consent.brief) : null,
+      "Google will ask ", consent.email, " to allow creating and editing contacts. ",
+      e("button", { className: "btn", style: small, onClick: () => { window.open(consent.url, '_blank', 'noopener'); setConsent(null); } }, "Continue to Google"),
+      " ",
+      e("button", { className: "btn", style: small, onClick: () => setConsent(null) }, "Cancel")),
+    msg && e("div", { style: { fontSize: 11, color: '#00d4ff', marginTop: 4 } }, msg),
+    follow.length > 0 && e("div", { style: { marginTop: 8 } },
+      e("div", { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, "Follow-ups"),
+      follow.slice(0, 8).map(f => e("div", { key: f.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, fontSize: 11, padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' } },
+        e("span", null, e("b", null, f.person), f.note ? " — " + f.note : "", e("span", { style: { color: '#999' } }, " · due " + String(f.due || '').slice(0, 10))),
+        e("button", { className: "btn", style: { fontSize: 10 }, onClick: () => done(f.id) }, "Done")))));
+}
+function PersonTimelineCard({ name }) {
+  const e = React.createElement;
+  const [t, setT] = useState(null);
+  const [note, setNote] = useState('');
+  const [days, setDays] = useState(3);
+  const [msg, setMsg] = useState('');
+  const load = () => {
+    fetch('/api/relationships/person/' + encodeURIComponent(name)).then(r => r.json()).then(d => setT(d.status === 'ok' ? d.timeline : null)).catch(() => setT(null));
+  };
+  useEffect(() => { if (name) load(); }, [name]);
+  const addFollowUp = async () => {
+    setMsg('');
+    try {
+      const r = await fetch('/api/relationships/follow-ups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ person: name, note, in_days: Number(days) || 0 }) });
+      const d = await r.json();
+      if (d.status === 'ok') { setNote(''); setMsg('Friday will remind you on ' + String(d.follow_up.due).slice(0, 10) + '.'); load(); }
+      else setMsg(d.message || 'Could not set the follow-up.');
+    } catch (err) { setMsg('Could not set the follow-up.'); }
+  };
+  const when = s => s ? String(s).slice(0, 10) : '—';
+  return e("div", { className: "card", style: { marginBottom: 10 } },
+    e("div", { className: "card-title" }, "Timeline"),
+    !t ? e("div", { style: { fontSize: 11, color: '#999' } }, "Loading…") :
+    !t.count ? e("div", { style: { fontSize: 11, color: '#999' } }, t.ambiguous ? "More than one person matches: " + t.ambiguous.join(', ') : "No emails or meetings recorded with them yet.") :
+    e(React.Fragment, null,
+      e("div", { style: { fontSize: 11, color: '#bbb', marginBottom: 6, lineHeight: 1.6 } },
+        "Last contact ", e("b", null, when(t.last_contact)),
+        " · they last wrote ", when(t.last_heard_from),
+        " · you last wrote ", when(t.last_wrote_to),
+        " · ", t.emails_received, " received, ", t.emails_sent, " sent, ", t.meetings, " meetings"),
+      (t.interactions || []).slice(0, 10).map((x, i) => e("div", { key: i, style: { display: 'flex', gap: 8, fontSize: 11, padding: '2px 0' } },
+        e("span", { style: { color: '#999', fontFamily: 'JetBrains Mono', width: 80, flexShrink: 0 } }, when(x.at)),
+        e("span", { style: { color: x.kind === 'meeting' ? '#f59e0b' : x.direction === 'out' ? '#00ff80' : '#00d4ff', width: 60, flexShrink: 0 } }, x.kind === 'meeting' ? 'meeting' : x.direction === 'out' ? 'you wrote' : 'email'),
+        e("span", { style: { color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, x.subject || x.title || '')))),
+    t && (t.follow_ups || []).length > 0 && e("div", { style: { fontSize: 11, color: '#f59e0b', marginTop: 6 } },
+      "Follow-up due ", when(t.follow_ups[0].due), t.follow_ups[0].note ? ": " + t.follow_ups[0].note : ""),
+    e("div", { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 } },
+      e("input", { className: "input", style: { flex: 1, fontSize: 11 }, value: note, placeholder: "Follow up about…", onChange: ev => setNote(ev.target.value) }),
+      e("span", { style: { fontSize: 11, color: '#999' } }, "in"),
+      e("input", { className: "input", type: "number", min: 0, max: 365, value: days, style: { width: 50, fontSize: 11, padding: '2px 4px' }, onChange: ev => setDays(ev.target.value) }),
+      e("span", { style: { fontSize: 11, color: '#999' } }, "days"),
+      e("button", { className: "btn", style: { fontSize: 11 }, onClick: addFollowUp }, "Remind me")),
+    msg && e("div", { style: { fontSize: 11, color: '#00d4ff', marginTop: 4 } }, msg));
+}
 function ContactsWS() {
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -30024,6 +30175,7 @@ function ContactsWS() {
         /*#__PURE__*/React.createElement("b", null, forgetReport.knowledge_graph.relationships),
         forgetReport.knowledge_graph.relationships === 1 ? " link to other things, and " : " links to other things, and ",
         /*#__PURE__*/React.createElement("b", null, forgetReport.people_graph.present ? "a contact record" : "no contact record"),
+        forgetReport.relationships ? ", plus " + forgetReport.relationships.interactions + " timeline entries and " + forgetReport.relationships.follow_ups + " follow-ups" : "",
         ". Removing them also stops her building the same records again."),
       forgetReport.sources && forgetReport.sources.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: '#f59e0b', marginBottom: 8, lineHeight: 1.5 }
@@ -30055,7 +30207,9 @@ function ContactsWS() {
         style: { fontSize: 12, color: '#bbb', marginBottom: 6, lineHeight: 1.5 }
       }, "Contact record: ", forgetReceipt.removed.people_graph,
         " · map entries: ", forgetReceipt.removed.kg_entities,
-        " · links: ", forgetReceipt.removed.kg_relationships),
+        " · links: ", forgetReceipt.removed.kg_relationships,
+        " · timeline entries: ", (forgetReceipt.removed.timeline_removed || 0) + (forgetReceipt.removed.timeline_edited || 0),
+        " · follow-ups: ", forgetReceipt.removed.follow_ups_removed || 0),
       /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: '#999', lineHeight: 1.5 }
       }, forgetReceipt.note),
@@ -30103,7 +30257,9 @@ function ContactsWS() {
         width: pct + '%',
         background: col
       }
-    }))), detailLoad ? /*#__PURE__*/React.createElement("div", {
+    }))), /*#__PURE__*/React.createElement(PersonTimelineCard, {
+      name: selected.name
+    }), detailLoad ? /*#__PURE__*/React.createElement("div", {
       style: {
         color: '#999',
         fontSize: 11,
@@ -30248,7 +30404,9 @@ function ContactsWS() {
       fontSize: 11
     },
     onClick: loadList
-  }, "↻ Refresh")), toast && /*#__PURE__*/React.createElement("div", {
+  }, "↻ Refresh")), /*#__PURE__*/React.createElement(RelationshipPanel, {
+    onImported: loadList
+  }), toast && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#00d4ff',
