@@ -208,3 +208,22 @@ def catalog(profile: dict) -> list:
             "est_load_s": rc.est_load_s(artifact, profile, is_moe),
         })
     return out
+
+
+def offline_machine(monkeypatch) -> None:
+    """Keep an Arbiter under test off the real machine.
+
+    `Arbiter.grant()` asks the card what is free (`hardware_profile.
+    detect_gpus`, i.e. nvidia-smi), sizes the display reserve from the attached
+    monitors (PowerShell), and planning reads model capabilities from the
+    Ollama daemon (`residency_catalog._show`). On a host whose GPU is busy
+    (another test worker, another session, the owner's own models) grants are
+    refused and the fixture profiles stop meaning anything. These stand-ins
+    answer the way a machine with no GPU, no monitors and no daemon does,
+    which is what CI already is.
+    """
+    from agent_friday.services import hardware_profile as hwp
+    monkeypatch.setattr(hwp, "detect_gpus", lambda *a, **k: [])
+    monkeypatch.setattr(hwp, "detect_displays", lambda *a, **k: {
+        "count": 0, "hidpi": 0, "indirect": 0, "adapters": [], "ok": True})
+    monkeypatch.setattr(rc, "_show", lambda *a, **k: {})

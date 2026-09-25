@@ -26,6 +26,8 @@ def _reference_turn_size(monkeypatch):
     monkeypatch.setattr(context_budget, "injected_tokens",
                         lambda: (context_budget.MEASURED_INJECTED_TOKENS, "reference"))
     context_budget.reset_cache()
+    # And off the real GPU, displays and daemon (see offline_machine).
+    fx.offline_machine(monkeypatch)
     yield
     context_budget.reset_cache()
 

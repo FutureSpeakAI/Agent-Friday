@@ -1,9 +1,11 @@
 """Arbiter.run_chain — executing a ChainPlan stage by stage (headroom.md
 §6.5, §12 Phase 3.3).
 
-Offline: `machine_monitor.sample`/`verdict` are monkeypatched so this suite
-never shells out to nvidia-smi/PowerShell, matching the sibling
-test_residency_arbiter.py's own "Offline" rule.
+Offline: `machine_monitor.sample`/`verdict` are monkeypatched, and
+`residency_fixtures.offline_machine` stands in for the GPU, display and
+daemon probes, so this suite never shells out to nvidia-smi/PowerShell or
+asks a real daemon, matching the sibling test_residency_arbiter.py's own
+"Offline" rule.
 """
 from __future__ import annotations
 
@@ -85,6 +87,7 @@ def _ok_verdict(status="ok"):
 def isolated_store(monkeypatch, tmp_path):
     monkeypatch.setattr(rc, "store_path", lambda: tmp_path / "m.json")
     rc.reset_cache()
+    fx.offline_machine(monkeypatch)
 
 
 @pytest.fixture
