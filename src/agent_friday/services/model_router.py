@@ -2322,12 +2322,22 @@ def _generate_session_summary(date_str, force=False):
                 vault_control=_gated_vault_control())
         except Exception:
             system_prompt = None
-        summary = _generate_text(
-            [{"role": "user", "content": prompt}],
-            system=system_prompt,
-            model=_load_settings().get('subagent_model') or 'claude-sonnet-5',
-            workspace='chat',
-        )
+        # The day's transcript includes local-only conversations, so the note
+        # is written on this machine or not at all, like every summary path
+        # with no seat of its own (services/compaction._default_summarizer).
+        # No model hint: a cloud model name handed to the local leg would be
+        # asked of the local daemon.
+        from agent_friday.services import local_only_guard as _log_guard
+        with _log_guard.local_only("the end-of-day summary"):
+            summary = _generate_text(
+                [{"role": "user", "content": prompt}],
+                system=system_prompt,
+                workspace='chat',
+            )
+        if is_refusal(summary):
+            print(f"  [SUMMARY] no local model wrote the {date_str} summary: "
+                  f"{str(summary)[:120]}")
+            return None
         summary = (summary or "").strip()
         if not summary:
             return None

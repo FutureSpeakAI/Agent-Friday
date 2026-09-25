@@ -17,7 +17,14 @@ summary is therefore written where the transcript already is:
 |---|---|
 | OpenAI-format loop (Ollama, llama-server, OpenRouter) | the same seat, through the loop's own `send_fn` |
 | Anthropic loop | Claude, through the loop's client |
-| anything else (`_default_summarizer`, chat's pre-routing `_compress_trajectory`) | a local model only: runs under `local_only_guard.local_only`; with no local model there is no summary |
+| anything else (`_default_summarizer`, chat's pre-routing `_compress_trajectory`, the 23:30 end-of-day summary) | a local model only: runs under `local_only_guard.local_only`; with no local model there is no summary |
+
+A Claude-written summary is a cloud call like any round: it passes
+`model_router._seal_or_block` (spending cap, size ceiling, egress seal) and is
+metered. A refusal the router returns instead of generated text
+(`model_router.RoutedRefusal`) is never taken as a summary, and summary and
+ledger text is registered with the taint record as outside content
+(`taint.note_carried`), under the task's own key.
 
 A local seat's transcript never goes to another model to be summarised.
 
