@@ -5424,6 +5424,33 @@ def _cc_check():
     return True, None
 
 
+def _cc_map_point(x, y):
+    """Screenshot-space coordinates -> real screen pixels (see _CC_LAST_SHOT)."""
+    return (x * _CC_LAST_SHOT["scale_x"], y * _CC_LAST_SHOT["scale_y"])
+
+
+def _cc_app_ok(tool_name, inp):
+    """(ok, refusal) -- the per-app grant, looked at again just before acting.
+
+    The checkpoint (desktop_grants.classify, via action_gate) already ruled on
+    this call; the window under the pointer or in front can change between
+    that ruling and now, and a grant for one app must not be spent on another.
+    """
+    try:
+        from agent_friday.services import desktop_grants as _dg
+        ok, why = _dg.recheck(tool_name, inp or {})
+    except Exception as e:
+        ok, why = False, f"the target app could not be checked ({e})"
+    return (True, None) if ok else (False, f"Not done: {why}")
+
+
+try:
+    from agent_friday.services import desktop_grants as _dg_boot
+    _dg_boot.set_point_mapper(_cc_map_point)
+except Exception as _e:
+    _log.warning("desktop grants unavailable: %s", _e)
+
+
 def _cc_rate_ok():
     now = _time.time()
     with _CC_ACTION_LOCK:
@@ -5436,6 +5463,9 @@ def _cc_rate_ok():
 
 def _tool_move_mouse(inp):
     ok, err = _cc_check()
+    if not ok:
+        return err
+    ok, err = _cc_app_ok("move_mouse", inp)
     if not ok:
         return err
     if not _cc_rate_ok():
@@ -5454,6 +5484,9 @@ def _tool_move_mouse(inp):
 
 def _tool_click(inp):
     ok, err = _cc_check()
+    if not ok:
+        return err
+    ok, err = _cc_app_ok("click", inp)
     if not ok:
         return err
     if not _cc_rate_ok():
@@ -5476,6 +5509,9 @@ def _tool_type_text(inp):
     ok, err = _cc_check()
     if not ok:
         return err
+    ok, err = _cc_app_ok("type_text", inp)
+    if not ok:
+        return err
     text = (inp or {}).get('text', '')
     if not text:
         return "No text provided."
@@ -5495,6 +5531,9 @@ def _tool_press_key(inp):
     ok, err = _cc_check()
     if not ok:
         return err
+    ok, err = _cc_app_ok("press_key", inp)
+    if not ok:
+        return err
     key = ((inp or {}).get('key') or '').strip()
     if not key:
         return "No key provided."
@@ -5510,6 +5549,9 @@ def _tool_press_key(inp):
 
 def _tool_screenshot(_inp):
     ok, err = _cc_check()
+    if not ok:
+        return err
+    ok, err = _cc_app_ok("screenshot", _inp)
     if not ok:
         return err
     try:
@@ -5548,6 +5590,9 @@ def _tool_screenshot(_inp):
 
 def _tool_scroll(inp):
     ok, err = _cc_check()
+    if not ok:
+        return err
+    ok, err = _cc_app_ok("scroll", inp)
     if not ok:
         return err
     if not _cc_rate_ok():
@@ -8468,6 +8513,18 @@ def _make_mcp_handler(server_name: str, tool_name: str):
         if _MCP_MANAGER is None:
             return "[mcp error] MCP manager not initialized"
         payload = _mcp_fit_envelope(server_name, tool_name, inp or {})
+        # A desktop tool acts on whatever app is under the pointer or in
+        # front NOW; the checkpoint looked a moment ago. Look again.
+        try:
+            from agent_friday.services import desktop_grants as _dg
+            if _dg.is_desktop_server(server_name):
+                ok, why = _dg.recheck(
+                    f"mcp_{_mcp_sanitize(server_name)}_{_mcp_sanitize(tool_name)}",
+                    payload)
+                if not ok:
+                    return f"Not done: {why}"
+        except Exception as e:
+            return f"Not done: the target app could not be checked ({e})"
         if _mcp_is_remote(server_name):
             ok, explanation = _mcp_gate_args(server_name, tool_name, payload)
             if not ok:
@@ -8546,12 +8603,20 @@ def _mcp_register_server_tools(server_name: str, tools: list) -> list:
     rather than blocking boot. Returns the registered tool names.
     """
     registered: list[str] = []
+    allowed = _mcp_tool_filter(server_name)
+    try:
+        from agent_friday.services import desktop_grants as _dg
+        desktop_server = _dg.is_desktop_server(server_name)
+    except Exception:
+        desktop_server = False
     with _MCP_REG_LOCK:
         # Clear any stale registration for this server first (idempotent reload).
         _mcp_unregister_server_tools(server_name, _locked=True)
         for t in tools or []:
             raw = t.get("name")
             if not raw:
+                continue
+            if not allowed(raw):
                 continue
             full = f"mcp_{_mcp_sanitize(server_name)}_{_mcp_sanitize(raw)}"[:64]
             desc = t.get("description") or f"{raw} via the {server_name} connector"
@@ -8564,7 +8629,11 @@ def _mcp_register_server_tools(server_name: str, tools: list) -> list:
             CLAUDE_TOOLS.append({"name": full, "description": desc,
                                  "input_schema": schema})
             CLAUDE_TOOL_HANDLERS[full] = _make_mcp_handler(server_name, raw)
-            TOOL_RINGS[full] = 2  # network ring — requires authenticated session
+            # Network ring -- requires an authenticated session. A desktop
+            # server's tools drive this machine's mouse and keyboard, so they
+            # sit in ring 3 with Friday's own: the Computer Control switch,
+            # grant and kill switch apply to them exactly as to `click`.
+            TOOL_RINGS[full] = 3 if desktop_server else 2
             _MCP_TOOL_MAP[full] = (server_name, raw)
             registered.append(full)
         _MCP_SERVER_TOOLS[server_name] = registered
@@ -8572,6 +8641,36 @@ def _mcp_register_server_tools(server_name: str, tools: list) -> list:
         print(f"  [mcp:{server_name}] registered {len(registered)} tool(s) "
               f"into the agent registry")
     return registered
+
+
+def _mcp_tool_filter(server_name: str):
+    """Which of a server's tools may be registered, from its config.
+
+    `enabled_tools` is an allowlist: when a server's config has one, only the
+    tools it names are registered, so a tool the server adds later is off
+    until the owner names it. `disabled_tools` removes named tools. Names
+    compare without case. A config that cannot be read registers everything,
+    as before this existed -- except for a server whose template ships an
+    allowlist, where an unreadable config registers nothing.
+    """
+    try:
+        spec = (_load_mcp_servers().get("servers") or {}).get(server_name) or {}
+    except Exception:
+        spec = None
+    if spec is None:
+        try:
+            from agent_friday.services import desktop_grants as _dg
+            if _dg.is_desktop_server(server_name):
+                return lambda raw: False
+        except Exception:
+            return lambda raw: False
+        return lambda raw: True
+    enabled = spec.get("enabled_tools")
+    disabled = {str(x).lower() for x in (spec.get("disabled_tools") or [])}
+    if isinstance(enabled, list):
+        allow = {str(x).lower() for x in enabled}
+        return lambda raw: str(raw).lower() in allow and str(raw).lower() not in disabled
+    return lambda raw: str(raw).lower() not in disabled
 
 
 def _mcp_unregister_server_tools(server_name: str, _locked: bool = False) -> None:

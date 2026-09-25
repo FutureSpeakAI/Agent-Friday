@@ -84,6 +84,40 @@ def cc_permission():
     return jsonify({"error": "action must be 'grant' or 'revoke'"}), 400
 
 
+@control_bp.route('/api/control/app-grants', methods=['GET', 'POST'])
+@login_required
+def cc_app_grants():
+    """Per-app desktop-control grants (services/desktop_grants.py).
+
+    GET: {apps: {exe: tier}, tiers, origin}.
+    POST {app, tier}: set one app's tier (none | observe | act).
+    POST {app, remove: true}: take the app off the list.
+
+    Owner-only: there is no tool that writes this list, so no model can
+    grant itself an app.
+    """
+    from agent_friday.services import desktop_grants as _dg
+    if request.method == 'GET':
+        cur = _dg.load()
+        return jsonify({"apps": cur["apps"], "tiers": list(_dg.TIERS),
+                        "origin": cur["origin"]})
+    data = request.get_json(force=True, silent=True) or {}
+    app = data.get('app', '')
+    try:
+        if data.get('remove'):
+            apps = _dg.remove_grant(app)
+            _log_context("cc_action", {"action": "app_grant_removed",
+                                       "app": _dg.normalize_app(app)})
+        else:
+            apps = _dg.set_grant(app, str(data.get('tier') or ''))
+            _log_context("cc_action", {"action": "app_grant_set",
+                                       "app": _dg.normalize_app(app),
+                                       "tier": data.get('tier')})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"apps": apps, "tiers": list(_dg.TIERS)})
+
+
 @control_bp.route('/api/control/kill', methods=['POST'])
 @login_required
 def cc_kill():

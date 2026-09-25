@@ -300,8 +300,13 @@ def list_outward_tools():
     exactly what the gate would otherwise hold."""
     from agent_friday.governance import action_gate
     from agent_friday.services import agent as _agent
+    from agent_friday.services import desktop_grants as _dg
     out = []
     for name in sorted(_agent.CLAUDE_TOOL_HANDLERS):
+        if _dg.is_desktop_tool(name):
+            # Desktop control is granted per app (Computer Control), not per
+            # job, and classifying it here would probe the live desktop.
+            continue
         probe = {"publish_at": "x"} if name == "content_create_post" else \
                 {"command": "Remove-Item x"} if name == "run_command" else {}
         try:

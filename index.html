@@ -38838,7 +38838,7 @@ function CcGrantPanel({
   }), /*#__PURE__*/React.createElement(Line, {
     ok: st.granted,
     label: "Session grant",
-    detail: st.granted ? 'Held. Friday can control this computer. This grant persists across restarts until revoked.' : 'Not held. Press Grant below. Once given, the grant persists across restarts until revoked.'
+    detail: st.granted ? 'Held. Friday can control the apps listed under Apps below. This grant persists across restarts until revoked.' : 'Not held. Press Grant below. Once given, the grant persists across restarts until revoked.'
   }), st.killed && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
@@ -38869,6 +38869,166 @@ function CcGrantPanel({
     },
     onClick: () => act('revoke')
   }, "Revoke")), err && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#ff6b8a',
+      marginTop: 8,
+      fontFamily: 'JetBrains Mono',
+      lineHeight: 1.5
+    }
+  }, err), /*#__PURE__*/React.createElement(CcAppGrants, null));
+}
+/* PER-APP DESKTOP GRANTS (services/desktop_grants.py). Which apps Computer
+   Control may look at (Observe) or click and type in (Act); "*" is every app
+   not listed. A new install lists none. Password fields and controls named
+   Delete / Send / Pay / Submit ask first whatever the tier. */
+function CcAppGrants() {
+  const h = React.createElement;
+  const [apps, setApps] = useState(null);
+  const [name, setName] = useState('');
+  const [tier, setTier] = useState('observe');
+  const [err, setErr] = useState('');
+  const load = useCallback(() => apiFetch('/api/control/app-grants').then(r => r.json()).then(d => setApps(d.apps || {})).catch(() => setApps({})), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const send = async body => {
+    setErr('');
+    try {
+      const r = await apiFetch('/api/control/app-grants', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+      const d = await r.json();
+      if (!r.ok || d.error) {
+        setErr(String(d.error || 'Request failed'));
+        return false;
+      }
+      setApps(d.apps || {});
+      return true;
+    } catch (e) {
+      setErr('Could not reach the server.');
+      return false;
+    }
+  };
+  const label = a => a === '*' ? 'All other apps (*)' : a;
+  const dim = {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.38)',
+    lineHeight: 1.5
+  };
+  const pick = (value, onChange, aria) => h("select", {
+    className: "input",
+    value,
+    'aria-label': aria,
+    style: {
+      fontSize: 11,
+      width: 88
+    },
+    onChange: e => onChange(e.target.value)
+  }, h("option", {
+    value: "observe"
+  }, "Observe"), h("option", {
+    value: "act"
+  }, "Act"), h("option", {
+    value: "none"
+  }, "None"));
+  const rows = Object.keys(apps || {}).sort();
+  const add = async () => {
+    if (await send({
+      app: name.trim(),
+      tier
+    })) setName('');
+  };
+  return h("div", {
+    style: {
+      marginTop: 14,
+      paddingTop: 12,
+      borderTop: '1px solid rgba(255,255,255,0.06)'
+    }
+  }, h("div", {
+    style: {
+      fontSize: 12,
+      color: 'rgba(255,255,255,0.78)',
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 2
+    }
+  }, "Apps"), h("div", {
+    style: {
+      ...dim,
+      marginBottom: 8
+    }
+  }, "Friday can only look at (Observe) or click and type in (Act) the apps listed here. Typing into a password field, and clicking anything named Delete, Send, Pay or Submit, always asks you first."), apps === null ? h("div", {
+    style: dim
+  }, "Loading…") : rows.length === 0 ? h("div", {
+    style: {
+      ...dim,
+      marginBottom: 6
+    }
+  }, "No apps yet.") : rows.map(a => h("div", {
+    key: a,
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: 4
+    }
+  }, h("span", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono',
+      color: 'rgba(255,255,255,0.7)',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, label(a)), pick(apps[a], t => send({
+    app: a,
+    tier: t
+  }), `Access for ${label(a)}`), h("button", {
+    className: "settings-btn",
+    'aria-label': `Remove ${label(a)}`,
+    style: {
+      fontSize: 11,
+      padding: '3px 8px'
+    },
+    onClick: () => send({
+      app: a,
+      remove: true
+    })
+  }, "×"))), h("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 8
+    }
+  }, h("input", {
+    className: "input",
+    value: name,
+    placeholder: "notepad.exe",
+    'aria-label': "App program name",
+    style: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 12
+    },
+    onChange: e => setName(e.target.value),
+    onKeyDown: e => {
+      if (e.key === 'Enter' && name.trim()) add();
+    }
+  }), pick(tier, setTier, "Access for the new app"), h("button", {
+    className: "settings-btn",
+    disabled: !name.trim(),
+    style: {
+      fontSize: 12
+    },
+    onClick: add
+  }, "Add")), err && h("div", {
     style: {
       fontSize: 11,
       color: '#ff6b8a',
