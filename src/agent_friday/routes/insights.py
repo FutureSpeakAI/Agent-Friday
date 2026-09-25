@@ -153,16 +153,39 @@ def career_report(filename):
         return jsonify({'status': 'ok', 'content': report_path.read_text(encoding='utf-8'), 'filename': filename, 'source': str(report_path)})
     return jsonify({'status': 'not_found'})
 
+#: The desktop scene's own bookkeeping (first launch date, pinned scene).
+#: It is not personality.json: core._is_existing_install() reads that file as
+#: proof that first-run setup finished, and this route runs on every page
+#: load, including the very first one.
+EVOLUTION_FILE = FRIDAY_DIR / "evolution.json"
+
+
+def _read_json(path):
+    try:
+        if path.exists():
+            d = json.loads(path.read_text(encoding='utf-8'))
+            return d if isinstance(d, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
 @insights_bp.route('/api/evolution', methods=['GET', 'POST'])
 def get_evolution():
-    """Return evolution day count and structure index based on first_launch in personality.json.
-    POST with {preferred_scene_index: N} to pin a structure (null to clear and return to auto)."""
+    """Return evolution day count and structure index based on the first launch date.
+    POST with {preferred_scene_index: N} to pin a structure (null to clear and return to auto).
+
+    Writes go to evolution.json only. Values an older install kept in
+    personality.json (and the scene first-run setup records there) are read
+    underneath it, so nothing already chosen is lost."""
     from datetime import date as _date
     pfile = FRIDAY_DIR / "personality.json"
-    data = {}
-    if pfile.exists():
+    own = _read_json(EVOLUTION_FILE)
+    data = {**_read_json(pfile), **own}
+
+    def _save_own():
         try:
-            data = json.loads(pfile.read_text(encoding='utf-8'))
+            EVOLUTION_FILE.write_text(json.dumps(own, indent=2), encoding='utf-8')
         except Exception:
             pass
 
@@ -170,25 +193,18 @@ def get_evolution():
         body = request.get_json(silent=True) or {}
         if 'preferred_scene_index' in body:
             val = body['preferred_scene_index']
-            if val is None:
-                data.pop('preferred_scene_index', None)
-            else:
-                data['preferred_scene_index'] = int(val)
-            try:
-                pfile.write_text(json.dumps(data, indent=2), encoding='utf-8')
-            except Exception:
-                pass
-        return jsonify({'status': 'ok', 'preferred_scene_index': data.get('preferred_scene_index')})
+            # An explicit null is kept, so a pin recorded in personality.json
+            # stays cleared.
+            own['preferred_scene_index'] = None if val is None else int(val)
+            _save_own()
+        return jsonify({'status': 'ok', 'preferred_scene_index': own.get('preferred_scene_index')})
 
     today = _date.today()
     first_launch_str = data.get('first_launch')
     if not first_launch_str:
         first_launch_str = today.isoformat()
-        data['first_launch'] = first_launch_str
-        try:
-            pfile.write_text(json.dumps(data, indent=2), encoding='utf-8')
-        except Exception:
-            pass
+        own['first_launch'] = first_launch_str
+        _save_own()
     try:
         first_launch = _date.fromisoformat(first_launch_str)
     except Exception:

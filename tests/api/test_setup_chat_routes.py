@@ -188,3 +188,37 @@ def test_skipping_a_checklist_item_is_remembered(client, home):
 def test_the_secret_shapes_are_served_without_values(client, home):
     d = client.get("/api/setup-chat/secret-shapes").get_json()
     assert d["ok"] and len(d["shapes"]) >= 15 and d["generic"]["pattern"]
+
+
+def test_loading_the_desktop_does_not_finish_first_run_setup(client, home, monkeypatch):
+    """Every page load asks /api/evolution for the scene. That must not leave
+    behind the file core._is_existing_install() reads as a finished setup,
+    or a reload before setup ends skips the setup chat for good."""
+    from agent_friday.routes import core_routes, insights
+    monkeypatch.setattr(core, "SETTINGS_FILE", home["path"] / "settings.json")
+    monkeypatch.setattr(core_routes, "_SETUP_MARKER", home["path"] / ".setup_complete")
+    monkeypatch.setattr(insights, "FRIDAY_DIR", home["path"])
+    monkeypatch.setattr(insights, "EVOLUTION_FILE", home["path"] / "evolution.json",
+                        raising=False)
+    assert client.get("/api/setup/status").get_json()["initialized"] is False
+    first = client.get("/api/evolution").get_json()
+    client.post("/api/evolution", json={"preferred_scene_index": 2})
+    assert client.get("/api/setup/status").get_json()["initialized"] is False
+    assert not (home["path"] / "personality.json").exists()
+    again = client.get("/api/evolution").get_json()
+    assert again["first_launch"] == first["first_launch"]
+    assert again["preferred_scene_index"] == 2
+
+
+def test_an_older_install_keeps_its_first_launch_date(client, home, monkeypatch):
+    from agent_friday.routes import insights
+    monkeypatch.setattr(insights, "FRIDAY_DIR", home["path"])
+    monkeypatch.setattr(insights, "EVOLUTION_FILE", home["path"] / "evolution.json",
+                        raising=False)
+    (home["path"] / "personality.json").write_text(
+        json.dumps({"first_launch": "2026-01-01", "preferred_scene_index": 4}),
+        encoding="utf-8")
+    d = client.get("/api/evolution").get_json()
+    assert d["first_launch"] == "2026-01-01" and d["preferred_scene_index"] == 4
+    client.post("/api/evolution", json={"preferred_scene_index": None})
+    assert client.get("/api/evolution").get_json()["preferred_scene_index"] is None
