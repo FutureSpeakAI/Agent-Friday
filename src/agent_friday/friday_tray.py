@@ -74,6 +74,13 @@ def _health_url() -> str:
     return _server_url() + "/api/health"
 
 
+def _meetings_status_url() -> str:
+    return _server_url() + "/api/meetings/status"
+
+
+TRAY_TITLE = "Agent Friday by FutureSpeak.AI"
+
+
 # Real cold start measured at ~143s (wiki merge, model discovery, embedding
 # load, judgment probe battery). The previous 30s budget was structurally
 # guaranteed to expire before a HEALTHY server finished booting, so the tray
@@ -441,6 +448,7 @@ class FridayTray:
         """
         while True:
             time.sleep(5)
+            self._update_meeting_title()
             proc = self.server_proc
             alive = (proc is not None and proc.poll() is None) or _port_in_use(_port())
             if alive != self.running:
@@ -459,12 +467,40 @@ class FridayTray:
                     except Exception:
                         pass
 
+    def _meeting_status(self) -> dict:
+        try:
+            import json
+            with urllib.request.urlopen(_meetings_status_url(), timeout=2.0) as r:
+                return json.load(r) or {}
+        except Exception:
+            return {}
+
+    def _update_meeting_title(self) -> None:
+        """While a meeting is recording, the tray tooltip says so, with the time.
+
+        The UI shows the same thing as a red dot; this is the one place that
+        stays visible when every Friday window is closed.
+        """
+        if self.icon is None:
+            return
+        try:
+            from agent_friday.services.meeting_capture import tray_tooltip
+            tip = tray_tooltip(self._meeting_status()) if self.running else None
+        except Exception:
+            tip = None
+        title = tip or TRAY_TITLE
+        try:
+            if self.icon.title != title:
+                self.icon.title = title
+        except Exception:
+            pass
+
     def run(self) -> None:
         image = Image.open(ICON_PATH)
         self.icon = pystray.Icon(
             "friday_desktop",
             image,
-            "Agent Friday by FutureSpeak.AI",
+            TRAY_TITLE,
             menu=self._build_menu(),
         )
 

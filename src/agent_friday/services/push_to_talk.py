@@ -132,11 +132,20 @@ class WaveInRecorder:
     Buffers are handed back as they fill, so a level meter can move while
     someone is still speaking and the recording can be abandoned mid-sentence
     without waiting for anything.
+
+    ``on_chunk`` streams each buffer to the caller instead of keeping it, so
+    a long recording (a meeting) never holds its audio in this object; stop()
+    then returns only what was not streamed, which is nothing. ``max_seconds``
+    replaces the one-sentence ceiling for such a caller.
     """
 
-    def __init__(self, rate=CAPTURE_RATE, on_level=None):
+    def __init__(self, rate=CAPTURE_RATE, on_level=None, on_chunk=None,
+                 max_seconds=None, thread_name="ptt-capture"):
         self.rate = int(rate)
         self.on_level = on_level
+        self.on_chunk = on_chunk
+        self.max_seconds = float(max_seconds) if max_seconds else MAX_RECORD_S
+        self.thread_name = thread_name
         self._chunks = []
         self._stop = threading.Event()
         self._thread = None
@@ -150,16 +159,25 @@ class WaveInRecorder:
         self._stop.clear()
         self._chunks = []
         self._error = ""
-        self._thread = threading.Thread(target=self._run, name="ptt-capture",
+        self._thread = threading.Thread(target=self._run, name=self.thread_name,
                                         daemon=True)
         self._thread.start()
 
     def stop(self):
-        """Stop and return the PCM captured so far."""
+        """Stop and return the PCM captured so far (none when streaming)."""
         self._stop.set()
         if self._thread:
             self._thread.join(3.0)
         return b"".join(self._chunks)
+
+    def _keep(self, data):
+        if self.on_chunk is None:
+            self._chunks.append(data)
+            return
+        try:
+            self.on_chunk(data)
+        except Exception as e:  # a consumer fault must not kill capture
+            log.warning("capture consumer failed: %s", e)
 
     # -- the winmm plumbing ------------------------------------------------
     def _run(self):
@@ -228,10 +246,14 @@ class WaveInRecorder:
             WHDR_DONE = 0x00000001
             started = time.monotonic()
             while not self._stop.is_set():
-                if time.monotonic() - started > MAX_RECORD_S:
-                    self._error = ("stopped after %d seconds — push-to-"
-                                   "transcribe is for a sentence"
-                                   % MAX_RECORD_S)
+                if time.monotonic() - started > self.max_seconds:
+                    if self.max_seconds == MAX_RECORD_S:
+                        self._error = ("stopped after %d seconds — push-to-"
+                                       "transcribe is for a sentence"
+                                       % MAX_RECORD_S)
+                    else:
+                        self._error = ("stopped after %d seconds"
+                                       % self.max_seconds)
                     break
                 idle = True
                 for i, hdr in enumerate(hdrs):
@@ -239,7 +261,7 @@ class WaveInRecorder:
                         n = int(hdr.dwBytesRecorded)
                         if n:
                             data = bufs[i].raw[:n]
-                            self._chunks.append(data)
+                            self._keep(data)
                             if self.on_level:
                                 try:
                                     self.on_level(_rms(data))
@@ -268,7 +290,7 @@ class WaveInRecorder:
                 for i, hdr in enumerate(hdrs):
                     n = int(hdr.dwBytesRecorded)
                     if n:
-                        self._chunks.append(bufs[i].raw[:n])
+                        self._keep(bufs[i].raw[:n])
                     winmm.waveInUnprepareHeader(h, ctypes.byref(hdr),
                                                 ctypes.sizeof(hdr))
                 winmm.waveInClose(h)
