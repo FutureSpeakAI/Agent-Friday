@@ -117,7 +117,9 @@ def test_eviction_stops_the_worker_and_notices(broker):
                        on_evicted=lambda wk: seen.append(wk.stage)).start()
     broker["leases"][w.lease_id]["state"] = "evicted"
     assert _wait(lambda: not w.alive(), 6.0)
-    assert seen == ["ear"]
+    # The child exits first; the watchdog thread fires the notice once its
+    # wait on the child returns, so the notice can trail the exit slightly.
+    assert _wait(lambda: seen == ["ear"], 5.0), seen
     assert w._exit_reason == "evicted"
 
 
