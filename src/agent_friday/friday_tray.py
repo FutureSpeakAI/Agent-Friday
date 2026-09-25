@@ -23,7 +23,7 @@ from pathlib import Path
 import pystray
 from PIL import Image
 
-from agent_friday.paths import friday_home
+from agent_friday.paths import clear_server_port, friday_home, server_port
 
 # No console windows from anything this process spawns. The tray outlives the
 # server — it is what starts Friday and what keeps running after Friday is
@@ -56,9 +56,24 @@ log = logging.getLogger(__name__)
 
 VOICE_LOG = friday_home() / "voice_debug.log"
 SERVER_STDERR_LOG = friday_home() / "server_stderr.log"
-SERVER_URL = "http://localhost:3000"
-HEALTH_URL = f"{SERVER_URL}/api/health"
-PORT = 3000
+
+
+# The server's port comes from the same source the server uses (FRIDAY_PORT,
+# else 3000), overridden by the port the running server recorded after
+# binding, which differs when the requested port was busy. Resolved on every
+# use, because the server may publish a new port after the tray starts.
+def _port() -> int:
+    return server_port()
+
+
+def _server_url() -> str:
+    return "http://localhost:%d" % _port()
+
+
+def _health_url() -> str:
+    return _server_url() + "/api/health"
+
+
 # Real cold start measured at ~143s (wiki merge, model discovery, embedding
 # load, judgment probe battery). The previous 30s budget was structurally
 # guaranteed to expire before a HEALTHY server finished booting, so the tray
@@ -114,7 +129,7 @@ def _wait_for_health(timeout: float = SERVER_START_TIMEOUT_S,
             return False, (f"FAILED TO START (exit {proc.returncode}) - "
                            f"see {SERVER_STDERR_LOG.name}")
         try:
-            with urllib.request.urlopen(HEALTH_URL, timeout=3.0) as r:
+            with urllib.request.urlopen(_health_url(), timeout=3.0) as r:
                 if r.status < 500:
                     return True, "healthy"
         except Exception:
@@ -133,11 +148,16 @@ def _wait_for_health(timeout: float = SERVER_START_TIMEOUT_S,
 class PushToTranscribe:
     """Holds the hotkey service and keeps it in step with the settings."""
 
-    def __init__(self, server_url=SERVER_URL):
-        self.server_url = server_url
+    def __init__(self, server_url=None):
+        # None follows the server's current port on every request.
+        self._fixed_url = server_url
         self.service = None
         self.indicator = None
         self.detail = "not started"
+
+    @property
+    def server_url(self) -> str:
+        return self._fixed_url or _server_url()
 
     # -- settings ---------------------------------------------------------
     def _settings(self) -> dict:
@@ -269,11 +289,14 @@ class FridayTray:
         with self._lock:
             if self.server_proc and self.server_proc.poll() is None:
                 return
-            if _port_in_use(PORT):
+            if _port_in_use(_port()):
                 # Server already running externally — treat as healthy.
                 self.running = True
                 self._last_failure = None
                 return
+            # A port recorded by an earlier server no longer applies; the
+            # child records the port it binds as soon as it has chosen one.
+            clear_server_port()
             python_exe = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
             # Child stdout+stderr are appended to a file, never discarded: a
             # server that dies during import (before its own file logging is
@@ -337,13 +360,15 @@ class FridayTray:
     # ── Menu actions ──────────────────────────────────────────────────
     def _open_ui(self, _icon, _item) -> None:
         # Friday's own address (https://agent.<name>, services/local_address)
-        # when it is proven to reach the same Friday as SERVER_URL; SERVER_URL
-        # otherwise. Checked on a thread so a slow answer never freezes the menu.
+        # when it is proven to reach the same Friday as the loopback URL; the
+        # loopback URL otherwise. Checked on a thread so a slow answer never
+        # freezes the menu.
         def go():
-            url = SERVER_URL
+            base = _server_url()
+            url = base
             try:
                 from agent_friday.services.local_address import open_url
-                url = open_url(SERVER_URL)
+                url = open_url(base)
             except Exception:
                 pass
             webbrowser.open(url)
@@ -417,7 +442,7 @@ class FridayTray:
         while True:
             time.sleep(5)
             proc = self.server_proc
-            alive = (proc is not None and proc.poll() is None) or _port_in_use(PORT)
+            alive = (proc is not None and proc.poll() is None) or _port_in_use(_port())
             if alive != self.running:
                 crashed = self.running and not alive
                 self.running = alive
@@ -439,7 +464,7 @@ class FridayTray:
         self.icon = pystray.Icon(
             "friday_desktop",
             image,
-            "Agent Friday by FutureSpeak.AI — Running on port 3000",
+            "Agent Friday by FutureSpeak.AI",
             menu=self._build_menu(),
         )
 

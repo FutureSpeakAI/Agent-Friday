@@ -162,6 +162,57 @@ def runtime_dir() -> Path:
         return friday_home() / "runtime"
 
 
+DEFAULT_SERVER_PORT = 3000
+
+
+def configured_server_port() -> int:
+    """The port the server is asked to bind: FRIDAY_PORT, else 3000.
+
+    The server may bind a later port when this one is busy; the port it
+    actually bound is published by `write_server_port` and read back by
+    `server_port`.
+    """
+    try:
+        port = int(os.environ.get("FRIDAY_PORT", "") or DEFAULT_SERVER_PORT)
+    except ValueError:
+        return DEFAULT_SERVER_PORT
+    return port if 0 < port < 65536 else DEFAULT_SERVER_PORT
+
+
+def server_port_file() -> Path:
+    """Where the running server records the port it bound."""
+    return friday_home() / "friday_server.port"
+
+
+def write_server_port(port: int) -> None:
+    """Record the bound port for the tray and other local clients. Best-effort."""
+    try:
+        p = server_port_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("%d\n" % int(port), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def clear_server_port() -> None:
+    """Forget a previously recorded port (before starting a new server)."""
+    try:
+        server_port_file().unlink()
+    except Exception:
+        pass
+
+
+def server_port() -> int:
+    """The port the server bound, when it recorded one; else the configured port."""
+    try:
+        port = int(server_port_file().read_text(encoding="utf-8").split()[0])
+        if 0 < port < 65536:
+            return port
+    except Exception:
+        pass
+    return configured_server_port()
+
+
 def voice_assets_dir() -> Path:
     """Directory for voice-related assets Friday manages.
 

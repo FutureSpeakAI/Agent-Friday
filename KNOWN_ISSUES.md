@@ -30,9 +30,6 @@ you hit something that is not here, please open an issue.
 
 ## 2. Open defects
 
-- **The tray assumes port 3000.** If `FRIDAY_PORT` is set, or 3000 was busy and
-  the server took the next free port, the tray's health check, "Open Friday
-  Desktop" and push-to-transcribe cannot reach the server.
 - **OfficeCLI is not installed by the installer.** Documents need a manual
   download and a checksum file; see [Documents](docs/user-guide/documents.md).
 - **Built-in scheduled jobs do not run on a cloud-only install.** They are

@@ -597,10 +597,8 @@ def _resolve_bind_port():
     not crash with a raw traceback. Returns (port, requested, fell_back).
     """
     import socket as _socket
-    try:
-        requested = int(os.environ.get('FRIDAY_PORT', '3000'))
-    except ValueError:
-        requested = 3000
+    from agent_friday.paths import configured_server_port
+    requested = configured_server_port()
 
     def _free(p):
         # NOTE: do NOT set SO_REUSEADDR here. On Windows SO_REUSEADDR lets a
@@ -857,6 +855,9 @@ if __name__ == '__main__':
     # notably the Google OAuth redirect_uri — follow the fallback instead of
     # staying pinned to 3000 and failing with redirect_uri_mismatch.
     core.set_server_port(_port)
+    # The tray reads this file to find the server after a fallback.
+    from agent_friday.paths import write_server_port as _write_server_port
+    _write_server_port(_port)
     _url = f"http://localhost:{_port}"
     print()
     print("  ╔══════════════════════════════════════════════╗")
