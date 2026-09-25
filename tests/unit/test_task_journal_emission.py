@@ -387,9 +387,9 @@ def test_a_beat_never_overwrites_a_status_written_while_it_runs(monkeypatch):
     def read_then_finish(task_id):
         st = real_read(task_id)
         if threading.current_thread().name.startswith("heartbeat") and not fired:
-            fired.append(1)
             done = dict(st, status="complete")
             t = threading.Thread(target=tj.write_state, args=(TID, done))
+            fired.append(t)
             t.start()
             t.join(0.3)          # the worker's write lands now, if nothing holds it back
         return st
@@ -400,6 +400,9 @@ def test_a_beat_never_overwrites_a_status_written_while_it_runs(monkeypatch):
     hb.stop()
     monkeypatch.setattr(tj, "read_state", real_read)
     assert fired, "the beat never ran"
+    # The worker's write may still be queued on the journal lock; wait for it
+    # before reading the outcome (locks are not fair on a slow machine).
+    fired[0].join(5)
     assert tj.read_state(TID)["status"] == "complete"
 
 
