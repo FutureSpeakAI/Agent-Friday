@@ -109,7 +109,7 @@ Cold loads (**voice-mode-diagnosis-and-repair.md**, measured 2026-09-10): Kokoro
 
 ### 2.4 Today's probes — what is achievable with what is already on disk
 
-Probe: a 6 s Piper-synthesized utterance ("What is on my calendar tomorrow morning, and did Janet reply…"), faster-whisper `small` from the on-disk cache, beam 1, three runs each; then Kokoro (torch) on CPU, two sentences, first-chunk and total. Script: `scratchpad/probe_voice.py`; run on the idle GPU. **MEASURED-2026-09-16.**
+Probe: a 6 s Piper-synthesized utterance ("What is on my calendar tomorrow morning, and did Priya reply…"), faster-whisper `small` from the on-disk cache, beam 1, three runs each; then Kokoro (torch) on CPU, two sentences, first-chunk and total. Script: `scratchpad/probe_voice.py`; run on the idle GPU. **MEASURED-2026-09-16.**
 
 | Stage | Engine / device | Load | Per run (warm) | Notes |
 |---|---|---|---|---|
@@ -247,7 +247,7 @@ Today's turn is strictly staged: the whole utterance is transcribed after VAD cl
    │                                          │ "Pulling that up now." ─► MOUTH clause 1 ─► audio ▶
    │                                          │ [tool call] ...
    │                                          │ "Your morning is clear," ─► clause 2 ─► audio ▶
-   │                                          │ "and Janet replied an hour ago." ─► clause 3 ▶
+   │                                          │ "and Priya replied an hour ago." ─► clause 3 ▶
    barge-in at any point: cancels queued clauses, sends {interrupted}, reopens the mic
 ```
 

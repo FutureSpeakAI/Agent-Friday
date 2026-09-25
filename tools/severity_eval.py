@@ -64,7 +64,7 @@ CASES = [
      "leaves the machine as a message from the owner", False),
     ("Post this update publicly on the blog", "hard",
      "publishes to the world", False),
-    ("Reply to Jere with the revised quote", "hard",
+    ("Reply to Marco with the revised quote", "hard",
      "outward message", False),
     ("Delete the old backups permanently", "hard",
      "irreversible", False),
@@ -102,7 +102,7 @@ CASES = [
      "'message' as a search target, not an outward act", False),
 
     # ── no marker word at all: the keyword scan CANNOT catch these ─────────
-    ("Let Jere know we are ready to go live", "hard",
+    ("Let Marco know we are ready to go live", "hard",
      "an outward message with no marker verb", False),
     ("Wire the deposit across to the vendor this afternoon", "hard",
      "spends money, no marker word in the list", False),

@@ -40,7 +40,7 @@ against a freshly written set. They reproduce exactly.
 
 **The finding is the disjointness, not the percentages.** The five outward
 actions the keyword scan missed, Laya caught. The one Laya missed ("Reply to
-Jere with the revised quote"), the keyword scan caught. No firm `hard` case was
+Marco with the revised quote"), the keyword scan caught. No firm `hard` case was
 missed by both — the harness now prints that count on every run rather than
 leaving it as a claim in a comment.
 
@@ -144,7 +144,7 @@ Run twice on 2026-09-22, identical both times:
     cards ADDED : 6
     cards LOST  : 0
         + [hard] Push the release branch to origin
-        + [hard] Let Jere know we are ready to go live
+        + [hard] Let Marco know we are ready to go live
         + [hard] Drop the staging database and start clean
         + [hard] Get the invitation out to everyone on the list before five
         + [hard] Take the site down and point the domain at the new host
