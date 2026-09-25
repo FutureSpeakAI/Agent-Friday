@@ -765,6 +765,24 @@ class TestControlPermission:
         assert resp.status_code == 400
 
 
+class TestControlAppGrants:
+    def test_set_change_and_remove_an_app(self, client):
+        resp = client.post("/api/control/app-grants",
+                           json={"app": "Notepad.exe", "tier": "observe"})
+        assert resp.status_code == 200
+        assert resp.get_json()["apps"]["notepad.exe"] == "observe"
+        client.post("/api/control/app-grants", json={"app": "notepad.exe", "tier": "act"})
+        assert client.get("/api/control/app-grants").get_json()["apps"]["notepad.exe"] == "act"
+        resp = client.post("/api/control/app-grants", json={"app": "notepad.exe", "remove": True})
+        assert "notepad.exe" not in resp.get_json()["apps"]
+
+    def test_junk_is_refused(self, client):
+        assert client.post("/api/control/app-grants",
+                           json={"app": "a;b", "tier": "act"}).status_code == 400
+        assert client.post("/api/control/app-grants",
+                           json={"app": "x.exe", "tier": "all"}).status_code == 400
+
+
 class TestControlKill:
     def test_kill_revokes_permission(self, client):
         resp = client.post("/api/control/kill")

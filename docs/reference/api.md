@@ -1004,8 +1004,16 @@ Placeholder — returns a stub response (`{ "status": "placeholder", ... }`); no
 ### `POST /api/control/permission`
 Get or set computer control permissions (Ring 3).
 
+### `GET /api/control/app-grants`
+### `POST /api/control/app-grants`
+Per-app desktop-control grants. `GET` returns `{apps: {exe: tier}, tiers, origin}`.
+`POST {app, tier}` sets one app (`notepad.exe`, or `*` for every app not listed) to
+`none`, `observe` or `act`; `POST {app, remove: true}` takes it off the list. Ring-3
+tools and the Windows desktop connector's pointer and keyboard tools are refused in an
+app without a sufficient grant (`services/desktop_grants.py`).
+
 ### `POST /api/control/kill`
-Kill a running process.
+Emergency stop: revokes the Computer Control grant and sets the kill switch.
 
 ---
 

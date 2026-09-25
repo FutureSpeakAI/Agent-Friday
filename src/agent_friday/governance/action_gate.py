@@ -163,8 +163,6 @@ INTERNAL_TOOLS = frozenset({
     "content_repurpose", "knowledge_query", "knowledge_related",
     "knowledge_communities", "inspect_image", "inspect_audio", "save_output",
     "speak_text", "list_voices", "read_session_output", "load_tools",
-    # Ring 3: governed by the Computer Control grant, checked per call below.
-    "move_mouse", "click", "type_text", "press_key", "screenshot", "scroll",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
     # find_free_slots reads free/busy only. release_holds deletes nothing but
@@ -181,7 +179,13 @@ INTERNAL_TOOLS = frozenset({
 #: Classified by argument: run_command by its command, content_create_post by
 #: whether it schedules, write_file and fill_pdf_form by where they write.
 BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
-                         "write_file", "fill_pdf_form"})
+                         "write_file", "fill_pdf_form",
+                         # Desktop control (ring 3), by the app it lands on:
+                         # services/desktop_grants.py. The Computer Control
+                         # switch, grant and kill switch are checked before
+                         # this, in agent._governance_check.
+                         "move_mouse", "click", "type_text", "press_key",
+                         "screenshot", "scroll"})
 
 _READ_VERBS = ("get", "list", "search", "read", "fetch", "query", "find", "check",
                "lookup", "describe", "show", "view", "count", "status", "explore",
@@ -352,6 +356,11 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
     a = args or {}
     if tool_name == "run_command":
         return classify_command(str(a.get("command") or ""))
+    from agent_friday.services import desktop_grants as _dg
+    if _dg.is_desktop_tool(tool_name):
+        # Before the generic connector rule below: a desktop connector tool
+        # is judged by the app it lands on, like Friday's own `click`.
+        return _dg.classify(tool_name, a)
     if tool_name == "office":
         # By argument, like run_command: the verb and the target decide.
         # Reading a document and building a new one inside Friday's own
