@@ -108,8 +108,24 @@ def test_headlines_land_in_a_known_beat():
             assert beat in beats, f"{headline!r} -> {beat!r}, not a known beat"
 
 
-def test_a_local_headline_is_classified_local():
-    assert ne._classify_brutalist_headline("Austin city council meets") == "Local"
+def test_a_local_headline_is_classified_local(monkeypatch):
+    monkeypatch.setattr(ne, "_local_area", lambda: "Springfield, Illinois")
+    assert ne._classify_brutalist_headline("Springfield city council meets") == "Local"
+
+
+def test_with_no_area_set_no_headline_is_local_and_the_beat_is_empty(monkeypatch):
+    monkeypatch.setattr(ne, "_local_area", lambda: "")
+    assert ne._classify_brutalist_headline("Springfield city council meets") != "Local"
+    meta = ne.category_meta("Local")
+    assert meta["feeds"] == [] and meta["query"] == ""
+
+
+def test_the_local_beat_follows_the_owners_area(monkeypatch):
+    monkeypatch.setattr(ne, "_local_area", lambda: "Portland, Oregon")
+    meta = ne.category_meta("Local")
+    assert meta["query"] == "Portland, Oregon local news today"
+    assert len(meta["feeds"]) == 1 and "Portland" in meta["feeds"][0]
+    assert ne.category_meta("Business") is ne.NEWS_CATEGORIES["Business"]
 
 
 def test_classification_never_raises_on_odd_input():

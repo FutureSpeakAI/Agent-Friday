@@ -79,7 +79,9 @@ PLACEHOLDER_VALUES = (
 
 # Email domains / local-parts that are fine to commit (docs, business, no-reply).
 EMAIL_ALLOW = (
-    "@example.com", "@example.org", "@example.net", "@futurespeak.ai",
+    "@example.com", "@example.org", "@example.net",
+    # The project's published role addresses only, not the whole domain.
+    "security@futurespeak.ai", "conduct@futurespeak.ai", "hello@futurespeak.ai",
     "@domain.com", "@email.com", "@test.com", "@yourdomain.com",
     "noreply@", "no-reply@", "user@", "you@", "your-email@", "name@",
 )

@@ -472,9 +472,9 @@ def test_first_person_floor_does_not_fire_on_third_party_news(text, expected):
     assert jg.looks_first_person(text) is expected, text
 
 
-def test_stephen_substance_requires_the_scrub_to_actually_separate(judging,
+def test_user_substance_requires_the_scrub_to_actually_separate(judging,
                                                                    monkeypatch):
-    """The judge can correctly answer STEPHEN_SUBSTANCE for "My custody
+    """The judge can correctly answer USER_SUBSTANCE for "My custody
     hearing is on the 14th..." while the scrubber finds NOTHING to replace,
     because the sentence has no name, number or address. It is pure
     first-person substance. verify_outgoing passes it (it blocks at
@@ -482,7 +482,7 @@ def test_stephen_substance_requires_the_scrub_to_actually_separate(judging,
     called the user's own private material travels verbatim.
 
     A scrub that replaced nothing did not separate identity from substance."""
-    judging(jg.STEPHEN_SUBSTANCE, "the user's own affairs")
+    judging(jg.USER_SUBSTANCE, "the user's own affairs")
     probe = ("My custody hearing is on the 14th and my lawyer says my ex will "
              "contest the settlement figure I proposed for our daughter.")
     out, _err = _seal(probe)
