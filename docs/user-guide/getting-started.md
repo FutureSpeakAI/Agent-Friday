@@ -9,8 +9,8 @@ full installer reference, including source installs, is in
 - Windows 10 or 11, 64-bit.
 - About 8 GB of free disk for the application, plus room for any local model
   you choose (a local model is typically 7 to 19 GB).
-- **For cloud-only use:** 16 GB of RAM is comfortable, and you need an API key
-  from Anthropic (or another supported provider).
+- **For cloud-only use:** 16 GB of RAM is comfortable, and one API key (see
+  [One key is enough](#one-key-is-enough)).
 - **For a local model:** an NVIDIA graphics card. Friday reads your card's
   memory and offers the largest model that fits:
 
@@ -24,6 +24,27 @@ full installer reference, including source installs, is in
 
 AMD and Intel graphics cards are not detected. Local image generation needs an
 NVIDIA card with about 8.5 GB or more.
+
+### One key is enough
+
+If Friday thinks in the cloud, she needs exactly one AI key. Either of these
+works on its own; you do not need both.
+
+- **Anthropic (recommended).** Claude, from the company that makes it. You pay
+  Anthropic for what you use. Get a key at
+  <https://console.anthropic.com/settings/keys>.
+- **OpenRouter (the alternative).** One account that reaches Claude and many
+  other models. You buy credit up front and pay per use. Get a key at
+  <https://openrouter.ai/keys>.
+
+With that one key, chat, tools, briefings, the front page, scheduled jobs and
+research all work. With an OpenRouter key and no Anthropic key, Friday uses
+the same Claude model through OpenRouter. If you have both, Anthropic is used.
+
+Paste the key into the secure field on its card in the setup chat, or in
+**Settings → Accounts & Keys**. It is stored encrypted on this PC and never
+goes into a conversation. Friday checks the key with one tiny request as soon
+as you save it and tells you whether she can think.
 
 ## Install
 

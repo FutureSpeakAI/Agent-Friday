@@ -31,7 +31,7 @@ keep Friday). Then the basics:
 ### 2. Connect everything
 
 A checklist of every service Friday can use, grouped: AI models (Anthropic,
-OpenAI, OpenRouter, Google Gemini, Hugging Face and the other supported
+OpenRouter, OpenAI, Google Gemini, Hugging Face and the other supported
 providers, plus local models), your Google account (Gmail, Calendar, Drive,
 Docs, Sheets, Contacts, Tasks), the phone (Twilio), GitHub, social and
 publishing accounts (YouTube, LinkedIn, Instagram, Reddit, Mastodon, X,
@@ -59,6 +59,27 @@ sent anywhere; Friday offers the secure field for it instead.
 
 Anything you skip waits in **Settings → Accounts & Keys → Setup checklist**,
 with the same cards.
+
+#### One key is enough
+
+If you chose the cloud, and no model is installed on this computer, Friday
+says so at this step: she needs one AI key to think with, and one is enough.
+
+- **Anthropic** comes first: Claude, from the company that makes it, paid as
+  you go. Get a key at <https://console.anthropic.com/settings/keys>.
+- **OpenRouter** is the alternative: one account for Claude and many other
+  models, paid from credit you buy up front. Get a key at
+  <https://openrouter.ai/keys>.
+
+Paste the key into the Anthropic or OpenRouter card, not the chat. When you
+save it, Friday sends one tiny request with it and tells you plainly whether
+it worked and whether she can think now. If the provider rejects the key, or
+the account has no credit, she says which.
+
+If you leave this step with no key, Friday tells you what will not work until
+you add one: chat, briefings, the front page, scheduled jobs and research.
+The rest of setup still works, using simple rules. The checklist, here and in
+Settings, shows which key Friday is using and that it is enough.
 
 ### Who reads your answers
 
