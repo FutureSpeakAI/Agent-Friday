@@ -326,7 +326,7 @@ either by the installer or on first use, and are governed by their own terms.
 
 * **MediaPipe camera_utils / face_detection / hands** 0.3.1675466862 / 0.4.1646425229 / 0.4.1675469240 - Apache-2.0. no (loaded from cdn.jsdelivr.net only when the user turns on head or hand tracking; not in payload)
 * **Orbitron, Inter, JetBrains Mono** - OFL-1.1. Shipped in `static/fonts/` (`Orbitron-Variable.ttf`, `Inter-Variable.ttf`, `JetBrainsMono-Variable.ttf`, from github.com/google/fonts), each with its OFL-1.1 text beside it. With the files present the page never requests Google Fonts.
-* **OfficeCLI (officecli-win-x64.exe)** v1.0.152 - Apache-2.0. no (not bundled, not downloaded by any installer/script in the tree; manually provisioned to ~/.friday/runtime/officecli, sha256-pinned)
+* **OfficeCLI (officecli-win-x64.exe)** v1.0.152 - Apache-2.0. Not in the archive; downloaded by the installer from the OfficeCLI GitHub release into ~/.friday/runtime/officecli, sha256-pinned in `packaging/windows/lib/OfficeCli.ps1`.
 * **llama.cpp llama-server (runtime/llama.cpp, llama.cpp-bonsai, llama.cpp-ollama)** unrecorded - MIT. no (operator-provisioned under ~/.friday/runtime; no downloader in the tree)
 * **ComfyUI** unrecorded - GPL-3.0-only. no (operator-provisioned under ~/.friday/runtime/ComfyUI; driven over HTTP)
 * **ComfyUI-GGUF / ComfyUI-CogVideoXWrapper custom nodes** unrecorded - Apache-2.0 (both, upstream) - confirm. no (operator-provisioned)

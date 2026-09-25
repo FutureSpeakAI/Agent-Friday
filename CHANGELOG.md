@@ -10,6 +10,21 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **The installer installs OfficeCLI**, the document engine, from its GitHub
+  release, checked against a SHA-256 fingerprint built into the installer.
+  `-SkipOfficeCli` leaves it out.
+- **Friday's typefaces ship with it** (Orbitron, Inter and JetBrains Mono, SIL
+  OFL 1.1), so the page never requests Google Fonts.
+
+### Security
+
+- The pre-commit scan refuses a personal mail address as a commit's author or
+  committer.
+
 ## [5.14.0] - 2026-09-24
 
 Everything since the 5.13.0 tag. The plain-language summary is in

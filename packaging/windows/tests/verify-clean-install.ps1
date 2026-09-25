@@ -21,6 +21,7 @@
       setup-later "Set up later" completes setup with defaults (run last)
       schedules scheduled jobs default to a local seat; the update check is off
       phone     the phone is off until someone configures it
+      officecli the document engine is installed and matches its pinned SHA-256
       address   agent.<name> answers once its hosts entry exists and Friday's
                 listener is on (the same marked hosts block the elevated step
                 in Settings writes). Trusting Friday's certificate raises a
@@ -149,6 +150,15 @@ try {
     # ingress is an object ({running: false}); any object is truthy, so ask it.
     Check 'phone' ((-not $phone.config.enabled) -and (-not $phone.ingress.running)) `
           "enabled: $($phone.config.enabled); ingress running: $($phone.ingress.running)"
+
+    # The document engine: installed, and the file matches the pin its record names.
+    $ocDir = Join-Path $FridayDir 'runtime\officecli'
+    $ocExe = Join-Path $ocDir 'officecli.exe'
+    $ocRec = $null
+    try { $ocRec = Get-Content (Join-Path $ocDir 'INSTALL.json') -Raw | ConvertFrom-Json } catch { }
+    $ocHash = if (Test-Path $ocExe) { (Get-FileHash $ocExe -Algorithm SHA256).Hash.ToLower() } else { '' }
+    $ocOk = ($null -ne $ocRec) -and $ocHash -and ($ocHash -eq [string]$ocRec.sha256)
+    Check 'officecli' $ocOk ("installed: $(Test-Path $ocExe); pinned: $(if ($ocRec) { $ocRec.pinned_version } else { 'no record' }); hash matches: $($ocHash -eq [string]$ocRec.sha256)")
 
     # agent.<name>: the marked hosts block, then Friday's own listener.
     # GitHub's Windows images run IIS, which answers port 80 through http.sys

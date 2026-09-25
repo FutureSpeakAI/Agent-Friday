@@ -56,6 +56,11 @@ param(
     # refused on a metered connection without refusing memory as well.
     [switch] $SkipJudgment,
 
+    # Skip OfficeCLI, the document engine (about 33 MB from its GitHub
+    # release). Friday works without it and says so when asked for an Office
+    # file. For offline or metered installs.
+    [switch] $SkipOfficeCli,
+
     # Skip Ollama entirely. For test runs and for machines that already have
     # a managed Ollama the installer should not touch.
     [switch] $SkipOllama,
@@ -76,6 +81,7 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $Here 'lib\Ollama.ps1')
 . (Join-Path $Here 'lib\Shortcuts.ps1')
 . (Join-Path $Here 'lib\Heal.ps1')
+. (Join-Path $Here 'lib\OfficeCli.ps1')
 
 Initialize-Console
 
@@ -826,6 +832,25 @@ if (-not $SkipJudgment) {
     }
 } else {
     Write-Log 'Judgment tier skipped by request (-SkipJudgment).' 'INFO'
+}
+
+# ── Document engine: Word, Excel and PowerPoint files ──────────────────────
+if (-not $SkipOfficeCli) {
+    Say-Step 'Installing the document engine'
+    Say-Detail 'It lets Friday make and edit Word, Excel and PowerPoint files on this PC.'
+    Say-Detail 'About 33 MB, checked against a fingerprint built into this installer.'
+    $null = Invoke-Step -Id 'deps.officecli' -Title 'Installing the document engine' -Quiet `
+        -Optional `
+        -VerifyDescription 'officecli.exe matches its pinned SHA-256 and INSTALL.json records it' `
+        -Action { Install-OfficeCli } `
+        -Verify { Test-OfficeCliInstalled }
+    if (Test-OfficeCliInstalled) {
+        Say-Ok 'Done. Friday can make Office documents.'
+    } else {
+        Say-Note 'That part did not install. Friday works; she will say the document engine is missing if you ask for an Office file.'
+    }
+} else {
+    Write-Log 'OfficeCLI skipped by request (-SkipOfficeCli).' 'INFO'
 }
 
 if ($DepsOnly) {

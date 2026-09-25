@@ -29,8 +29,6 @@ you hit something that is not here, please open an issue.
 
 ## 2. Open defects
 
-- **OfficeCLI is not installed by the installer.** Documents need a manual
-  download and a checksum file; see [Documents](docs/user-guide/documents.md).
 - **Built-in scheduled jobs do not run on a cloud-only install.** They are
   local-only by default and are skipped when no local model is serving. There
   is no switch in Workflows to allow a job the cloud; edit `schedules.json`.

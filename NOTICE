@@ -105,9 +105,12 @@ OfficeCLI (https://github.com/iOfficeAI/OfficeCLI)
     Bundles DocumentFormat.OpenXml (MIT), System.CommandLine (MIT) and the
     .NET runtime (MIT).
   Agent Friday can run OfficeCLI to create and edit .docx, .xlsx and .pptx
-  files locally. OfficeCLI is not in this repository or in the installer.
-  A pinned release binary is placed in ~/.friday/runtime/officecli/ and
-  checked against the sha256 recorded in INSTALL.json before it runs.
+  files locally. OfficeCLI is not in this repository or in the installer
+  archive. The installer downloads the pinned release binary from the
+  OfficeCLI GitHub releases at install time, places it in
+  ~/.friday/runtime/officecli/, and checks it against the sha256 pinned in
+  packaging/windows/lib/OfficeCli.ps1; Friday re-checks it against
+  INSTALL.json before it runs.
 
 -------------------------------------------------------------------------
 4. Models and voices

@@ -33,9 +33,12 @@ See [Approvals and receipts](approvals-and-receipts.md).
 
 ## Setting it up
 
-The Windows installer does not install OfficeCLI yet. Until it does, Friday
-reports that the engine is not installed when you ask for an Office file. To
-enable it:
+The Windows installer installs OfficeCLI 1.0.152 into
+`%USERPROFILE%\.friday\runtime\officecli\`. It downloads the release from
+GitHub, checks it against a SHA-256 fingerprint built into the installer, and
+discards it if they differ. If that step was skipped (`-SkipOfficeCli`) or
+failed, Friday reports that the engine is not installed when you ask for an
+Office file; run the installer again, or set it up by hand:
 
 1. Download `officecli-win-x64.exe` version **1.0.152** from the OfficeCLI
    GitHub releases page.
