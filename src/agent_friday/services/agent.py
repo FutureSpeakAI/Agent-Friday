@@ -3331,6 +3331,30 @@ def _task_local_only_label(task_id, rec):
         return None
 
 
+def _compaction_taint_key(session_ctx):
+    """The taint key a loop's tool calls are judged under, for compaction to
+    register its summary in."""
+    try:
+        from agent_friday.services import taint as _taint
+        return _taint.ledger_key(session_ctx)
+    except Exception:
+        return None
+
+
+def _carry_ledger_provenance(task_id, ledger):
+    """A leg starting from the ledger starts from text written out of what the
+    task read. Register it as outside content under the task's taint key, so
+    a value planted in it is still flagged after a restart or after hundreds
+    of later results (services/taint.py). The goal is not included."""
+    try:
+        from agent_friday.services import taint as _taint
+        from agent_friday.services import task_ledger as _tl
+        _taint.note_carried(_taint.ledger_key({"task_id": task_id}), "ledger",
+                            _tl.carried_text(ledger))
+    except Exception as e:
+        print(f"  [taint] could not record the ledger's provenance: {e}")
+
+
 def _task_schedule_id(task_id):
     """The schedule a task runs for, as recorded by `_spawn_task`, or None."""
     with TASKS_LOCK:
@@ -3545,6 +3569,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
 
         _rounds_before = int((_ledger or {}).get("distinct_steps") or 0)
         _tbud.take_last_stop()          # nothing stale from an earlier turn
+        _carry_ledger_provenance(task_id, _ledger)
         reply, tool_trace = _leg(messages)
         # A LONG JOB DOES NOT STOP AT A PER-TURN LIMIT. When a leg ends on the
         # round, clock or token limit (or ran long) with the job unfinished,
@@ -3570,6 +3595,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
             _rounds_before = _rounds_now
             _task_log(task_id, 'Continuing in a fresh context (stretch %d, %d steps so far) '
                                'from the task ledger' % (_legs, _rounds_now))
+            _carry_ledger_provenance(task_id, _led_now)
             _more_reply, _more_trace = _leg([{"role": "user", "content": _task_ledger.continuation_prompt(
                 prompt, _led_now, "the previous stretch reached its %s limit" % _why,
                 max_chars=_ledger_view_chars_for(subagent_model))}])
@@ -9636,7 +9662,8 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 reserve_tokens=int(max_tokens or 0) + int(
                     (_compaction.schema_tokens(CLAUDE_TOOLS) + _compaction.schema_tokens(safe_system))
                     * _compaction.calibration(model or ANTHROPIC_MODEL_DEFAULT)),
-                seat="cloud", ledger=_ledger, task_id=_ledger_task)
+                seat="cloud", ledger=_ledger, task_id=_ledger_task,
+                taint_key=_compaction_taint_key(session_ctx))
             if _new is not convo:
                 convo[:] = _new
         except Exception as _ce:
@@ -10222,7 +10249,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 _new, model=model, summarizer=_seat_summary,
                 reserve_tokens=int(max_tokens or 0) + int(
                     _schema_tokens[0] * _compaction.calibration(model)),
-                seat=_compact_seat, force=force, ledger=_ledger, task_id=_ledger_task)
+                seat=_compact_seat, force=force, ledger=_ledger, task_id=_ledger_task,
+                taint_key=_compaction_taint_key(session_ctx))
             if _new is not convo:
                 convo[:] = _new
         except Exception as _ce:

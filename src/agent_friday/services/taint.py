@@ -100,6 +100,11 @@ class _Entry:
 class Ledger:
     def __init__(self):
         self.entries: List[_Entry] = []
+        # Text Friday carries forward from earlier work (a task's ledger, a
+        # compaction summary), one entry per carrier, replaced on each
+        # re-registration and exempt from the count and age limits: it is
+        # derived from things Friday read, and it outlives them.
+        self.carried: Dict[str, _Entry] = {}
 
     def _prune(self):
         cut = time.time() - TTL_SECONDS
@@ -121,8 +126,12 @@ def ledger_key(session_ctx: Optional[dict]) -> str:
     so the fallback errs toward flagging, never toward trusting.
     """
     sc = session_ctx or {}
-    return str(sc.get("taint_key") or sc.get("session_id")
-               or sc.get("conversation_id") or "default")
+    key = sc.get("taint_key") or sc.get("session_id") or sc.get("conversation_id")
+    if not key and sc.get("task_id"):
+        # A background task reads, compacts and resumes on its own; one shared
+        # ledger let every other task's results push its sources out.
+        key = "task:%s" % sc["task_id"]
+    return str(key or "default")
 
 
 def _ledger(key: str) -> Ledger:
@@ -152,6 +161,27 @@ def note_user_message(key: str, text: str):
     if text and str(text).strip():
         raw = str(text)
         _ledger(key).add(_Entry("user", "you", raw, normalize(raw), time.time()))
+
+
+#: How carried-forward text is described on a card.
+CARRIED_LABELS = {
+    "ledger": "the task's working notes (written from what it read earlier)",
+    "summary": "a summary of earlier work (written from what was read then)",
+}
+
+
+def note_carried(key: str, carrier: str, text: str):
+    """Record text Friday carries forward -- a task ledger, a compaction
+    summary -- as something Friday READ. It is written from tool output, so a
+    value in it keeps that provenance; unregistered, it would count as the
+    model's own. Re-registering the same carrier replaces the previous text."""
+    if not text or not str(text).strip():
+        return
+    raw = str(text)
+    label = CARRIED_LABELS.get(carrier, carrier)
+    led = _ledger(key)
+    with _LOCK:
+        led.carried[carrier] = _Entry("content", label, raw, normalize(raw), time.time())
 
 
 # Tools whose output is the user's own data rather than something written by
@@ -341,7 +371,8 @@ def origin_of(key: str, value: Any, *, free_text: bool = False) -> Origin:
     n = normalize(s)
     led = _ledger(key)
     with _LOCK:
-        entries = list(led.entries)
+        # Carried text first, so a real source read later names itself.
+        entries = list(led.carried.values()) + list(led.entries)
     if free_text:
         sh = _shingles(s)
         if not sh:

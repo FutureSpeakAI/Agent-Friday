@@ -608,7 +608,8 @@ def compress_new_output(messages, start, model=None, seat=None):
 
 
 def maybe_compact(messages, model=None, summarizer=None, *, window=None,
-                  reserve_tokens=0, seat=None, force=False, ledger=None, task_id=None):
+                  reserve_tokens=0, seat=None, force=False, ledger=None, task_id=None,
+                  taint_key=None):
     """Return a (possibly) compacted copy of ``messages``.
 
     No-op (returns the original list) when compaction is disabled or the
@@ -685,6 +686,20 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
                 _tl.absorb_summary(ledger, summary)
                 _tl.save(task_id, ledger)
                 body = _tl.render(ledger, ledger_view_chars(model, window))
+            # The summary (or the ledger it updated) is written from what was
+            # read: register it as outside content, or a value an email planted
+            # in it would come back as the model's own (services/taint.py).
+            _key = taint_key or ("task:%s" % task_id if task_id else None)
+            if _key:
+                try:
+                    from agent_friday.services import taint as _taint
+                    if ledger is not None:
+                        from agent_friday.services import task_ledger as _tl
+                        _taint.note_carried(_key, "ledger", _tl.carried_text(ledger))
+                    else:
+                        _taint.note_carried(_key, "summary", summary)
+                except Exception as e:
+                    print(f"  [compaction] could not record the summary's provenance: {e}")
             summary_msg = {
                 "role": "user",
                 "content": f"{_SUMMARY_PREFIX} Earlier in this session ("

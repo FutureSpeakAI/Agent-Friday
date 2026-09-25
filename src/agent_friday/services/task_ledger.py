@@ -283,6 +283,23 @@ def _render(ledger: Dict[str, Any], keep_steps: Optional[int]) -> str:
     return "\n".join(lines)
 
 
+def carried_text(ledger: Optional[Dict[str, Any]]) -> str:
+    """Everything the ledger carries forward EXCEPT its goal and run record:
+    the parts written from what the task read (steps, facts, plan, files,
+    next). This is what the taint record registers as outside content; the
+    goal is the task's own instruction and is not."""
+    if not ledger:
+        return ""
+    parts = []
+    for key in ("plan", "facts", "files"):
+        parts.extend(str(x) for x in (ledger.get(key) or []))
+    parts.extend(str(x) for x in (ledger.get("done") or []))
+    for key in ("next", "pending"):
+        if ledger.get(key):
+            parts.append(str(ledger[key]))
+    return "\n".join(p for p in parts if p.strip())
+
+
 def continuation_prompt(goal: str, ledger: Optional[Dict[str, Any]], why: str,
                         max_chars: Optional[int] = None) -> str:
     """The first message of a fresh leg: the task, its ledger, and why a new
