@@ -746,6 +746,7 @@ def chat():
                 "tool_trace": [{"name": "navigate", "input": {"workspace": _nav_ws},
                                 "result": _nav_reply}],
                 "actions": [{"type": "navigate", "workspace": _nav_ws}],
+                "seat_events": _seat_events,
             })
 
         # ── Computer Control: deterministic open-file/folder/app intent ──
@@ -772,6 +773,7 @@ def chat():
             return jsonify({
                 "response": _open_reply, "user_msg": _u, "friday_msg": _f,
                 "sources": [], "tool_trace": [{"tool": "open_path", "result": _open_reply}],
+                "seat_events": _seat_events,
             })
 
         # ── Vision capture. THE ROUTING MODE IS CHECKED BEFORE THE SEND. ──
@@ -907,7 +909,8 @@ def chat():
                 except Exception:
                     pass
                 return jsonify({"response": _dr, "user_msg": _u, "friday_msg": _f,
-                                "sources": [], "demo_mode": True, "tool_trace": []})
+                                "sources": [], "demo_mode": True, "tool_trace": [],
+                                "seat_events": _seat_events})
         except Exception as _de:
             print(f"  [DEMO] skipped: {_de}")
 
@@ -1092,6 +1095,7 @@ def chat():
                         "friday_msg": friday_msg, "sources": [], "tool_trace": [],
                         "seat_missing": {"model": _want,
                                          "conversation_id": _conversation_id},
+                        "seat_events": _seat_events,
                     })
 
             _route_info = _router.route(messages, task_context={
@@ -1186,6 +1190,9 @@ def chat():
                 "response": _warn, "user_msg": user_msg, "friday_msg": friday_msg,
                 "sources": [], "tool_trace": [], "vault_blocked": _vault_access,
                 "offer_cloud_switch": _offer_cloud_switch,
+                # The seat change that caused this refusal is exactly the one
+                # the user most needs to see; it rides every turn response.
+                "seat_events": _seat_events,
             })
 
         if _vault_access and _routed_local:
@@ -1408,6 +1415,7 @@ def chat():
                     "friday_msg": friday_msg, "sources": [], "tool_trace": [],
                     "model": None, "seat": "cloud",
                     "cloud_only_no_key": True,
+                    "seat_events": _seat_events,
                 })
             try:
                 from agent_friday.routing.ollama_manager import get_manager
@@ -1577,6 +1585,7 @@ def chat():
                         "friday_msg": friday_msg, "sources": [], "tool_trace": [],
                         "model": _route_info.get('model'), "seat": "local",
                         "local_only_refused": True,
+                        "seat_events": _seat_events,
                     })
                 print(f"  [ROUTER] local inference failed, falling back to cloud: {_ole}")
                 # He chose a local seat. Answering from the cloud instead is a
