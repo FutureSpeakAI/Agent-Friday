@@ -54,7 +54,6 @@ from agent_friday.core import (
     _network_is_offline,
     ANTHROPIC_MODEL_DEFAULT,
     CREATIONS_DIR,
-    DECISION_BOM_FILE,
     FRIDAY_DIR,
     FRIDAY_VAULT_PASSPHRASE,
     _VAULT_ENCRYPTION_STATE,
@@ -7390,37 +7389,33 @@ def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = Non
         reason = f"unknown ring level {ring}"
         policy = "cLaw:UnknownRing"
 
-    # Build and sign the BOM entry — canonicalization via vault_crypto.sign_entry()
-    # so there is one shared HMAC scheme instead of an inline duplicate.
+    # One receipt file, one signer: the entry goes through the governance
+    # checkpoint's own _receipt, which signs it and appends it to
+    # ~/.friday/decision-bom.jsonl, and raises if either step fails. No entry
+    # is ever written unsigned. When the receipt cannot be written, a call
+    # this check would allow at ring 2 or above is held, as the checkpoint
+    # holds an outward action; ring 0-1 work continues so Friday can still
+    # read and say what happened.
     args_str = json.dumps(args or {}, sort_keys=True, default=str)
     args_hash = _hashlib.sha256(args_str.encode("utf-8")).hexdigest()
-    ts = datetime.utcnow().isoformat() + "Z"
-    entry: dict = {
-        "timestamp": ts,
-        "tool": tool_name,
-        "ring": ring,
-        "args_hash": args_hash,
-        "policy": policy,
-        "decision": "allow" if allowed else "deny",
-        "reason": reason,
-    }
     try:
-        if _HAS_VAULT_CRYPTO and _vc is not None:
-            entry = _vc.sign_entry(entry, _get_governance_key())
-        else:
-            canonical = json.dumps(entry, sort_keys=True).encode("utf-8")
-            entry["hmac"] = _hmac.new(_get_governance_key(), canonical, _hashlib.sha256).hexdigest()
-    except Exception as _sign_err:
+        from agent_friday.governance import action_gate as _ag
+        _ag._receipt({
+            "kind": "ring_check",
+            "tool": tool_name,
+            "ring": ring,
+            "args_hash": args_hash,
+            "policy": policy,
+            "decision": "allow" if allowed else "deny",
+            "reason": reason,
+        })
+    except Exception as _rec_err:
         import logging as _log
-        _log.getLogger(__name__).error("BOM signing failed: %s", _sign_err)
-
-    try:
-        DECISION_BOM_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(DECISION_BOM_FILE, "a", encoding="utf-8") as _f:
-            _f.write(json.dumps(entry) + "\n")
-    except Exception as _e:
-        import logging as _log
-        _log.getLogger(__name__).error("AUDIT WRITE FAILED: %s", _e)
+        _log.getLogger(__name__).error("ring-check receipt failed: %s", _rec_err)
+        if allowed and ring >= 2:
+            allowed = False
+            reason = (f"the signed receipt could not be written ({_rec_err}); "
+                      f"ring-{ring} actions are held")
 
     if not allowed:
         print(f"  [GOV] DENY  {tool_name} (ring={ring}): {reason}")

@@ -103,7 +103,7 @@ Other records you may want:
 
 | File | What it records |
 |---|---|
-| `.friday\vault\decision-bom.jsonl` | The earlier privilege-ring check for each tool call |
+| `.friday\vault\decision-bom.jsonl` | History only: privilege-ring checks from earlier versions. Current ring checks are signed into `.friday\decision-bom.jsonl` |
 | `.friday\decisions.jsonl` | What the approval scanner decided for ambiguous actions |
 | `.friday\vault\egress-log.jsonl` | What the egress gate withheld or redacted from cloud calls |
 | `.friday\traces\ledger.jsonl` | Reasoning traces (encrypted; open them from the Ledger) |

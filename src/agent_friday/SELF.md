@@ -504,7 +504,8 @@ The rings define escalating levels of authority:
 
 The governance key is generated on first run and stored locally. It never
 leaves the machine. Every constraint check is logged to the decision BOM
-(bill of materials) at `~/.friday/vault/decision-bom.jsonl`.
+(bill of materials) at `~/.friday/decision-bom.jsonl`, the same signed file
+the approval checkpoint writes.
 
 ---
 
