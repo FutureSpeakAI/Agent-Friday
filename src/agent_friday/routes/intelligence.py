@@ -603,7 +603,7 @@ def local_models_catalog(profile: dict, sizes: dict) -> dict:
 
     voice = [
         row(rp.DEFAULT_STT_MODEL, "stt", "Whisper (small, CPU speech-to-text)",
-            fm._whisper_installed(lv.DEFAULT_WHISPER_MODEL)),
+            fm._whisper_installed(lv.WHISPER_MODEL_ON_GPU)),
         row(rp.DEFAULT_TTS_MODEL, "tts", "Piper (CPU text-to-speech)",
             fm._piper_installed(lv.DEFAULT_PIPER_VOICE)),
         row(nv.NEMO_ASR_MODEL, "stt", "NeMo streaming ASR (GPU speech-to-text)",

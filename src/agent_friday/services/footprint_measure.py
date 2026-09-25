@@ -238,7 +238,8 @@ def measure_voice_host_ram(*, whisper_model: str | None = None,
     from agent_friday.services import residency_catalog as rc
     from agent_friday.services import hardware_profile as hwp
 
-    whisper_model = whisper_model or lv.DEFAULT_WHISPER_MODEL
+    # This measures the CPU (int8) load, so "auto" means the CPU size.
+    whisper_model = lv.resolve_whisper_model(whisper_model or lv.DEFAULT_WHISPER_MODEL, "cpu")
     piper_voice = piper_voice or lv.DEFAULT_PIPER_VOICE
     profile = hwp.get()
     fp_key = rc.profile_fingerprint(profile)

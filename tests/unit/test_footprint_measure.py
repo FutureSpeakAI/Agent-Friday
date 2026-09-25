@@ -214,7 +214,7 @@ def test_voice_measurement_blocked_when_neither_engine_is_installed(
     assert result["tts"]["status"] == "blocked"
     assert "never downloads" in result["stt"]["reason"]
     assert "never downloads" in result["tts"]["reason"]
-    assert _store_is_empty_for("faster-whisper-small-int8")
+    assert _store_is_empty_for("faster-whisper-base-int8")
     assert _store_is_empty_for("piper-en_US-amy-medium")
 
 
@@ -240,7 +240,8 @@ def test_voice_measurement_records_rss_delta_when_installed(
         monkeypatch, tmp_path):
     whisper_dir = tmp_path / "whisper"
     piper_dir = tmp_path / "piper"
-    (whisper_dir / "models--Systran--faster-whisper-small").mkdir(
+    # The default is "auto"; this measures the CPU load, which is "base".
+    (whisper_dir / "models--Systran--faster-whisper-base").mkdir(
         parents=True)
     piper_dir.mkdir(parents=True)
     (piper_dir / "en_US-amy-medium.onnx").write_bytes(b"x")
@@ -264,7 +265,7 @@ def test_voice_measurement_records_rss_delta_when_installed(
     assert result["tts"]["status"] == "measured"
     assert result["tts"]["host_ram_mib"] == pytest.approx(50.0)
 
-    stored = rc.footprint("faster-whisper-small-int8", P1)
+    stored = rc.footprint("faster-whisper-base-int8", P1)
     assert stored["host_ram_mib"] == pytest.approx(150.0)
     assert stored["device"] == "cpu"
 
