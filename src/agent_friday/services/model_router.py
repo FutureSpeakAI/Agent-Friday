@@ -941,6 +941,7 @@ _TOOL_NARRATION = {
     "query_trust_graph": "Checking what I know about them",
     "open_url": "Opening that in your browser",
     "run_command": "Running that command",
+    "run_sandboxed": "Running that code in the sandbox",
 }
 
 

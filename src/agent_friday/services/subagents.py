@@ -115,7 +115,7 @@ BUILTIN_SCOPES = {
     "recipe-runner": {
         "name": "recipe-runner",
         "description": "Recipe execution — full read/search/write, no shell or task spawn",
-        "denied_tools": ["run_command", "install_package", "spawn_task"],
+        "denied_tools": ["run_command", "run_sandboxed", "install_package", "spawn_task"],
         "max_ring": 2,
         "max_steps": 30,
         "time_budget_s": 1200,

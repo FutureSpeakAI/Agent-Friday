@@ -179,7 +179,7 @@ INTERNAL_TOOLS = frozenset({
 #: Classified by argument: run_command by its command, content_create_post by
 #: whether it schedules, write_file and fill_pdf_form by where they write.
 BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
-                         "write_file", "fill_pdf_form",
+                         "write_file", "fill_pdf_form", "run_sandboxed",
                          # Desktop control (ring 3), by the app it lands on:
                          # services/desktop_grants.py. The Computer Control
                          # switch, grant and kill switch are checked before
@@ -356,6 +356,9 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
     a = args or {}
     if tool_name == "run_command":
         return classify_command(str(a.get("command") or ""))
+    if tool_name == "run_sandboxed":
+        from agent_friday.services import code_sandbox as _sbx
+        return _sbx.classify(a)
     from agent_friday.services import desktop_grants as _dg
     if _dg.is_desktop_tool(tool_name):
         # Before the generic connector rule below: a desktop connector tool

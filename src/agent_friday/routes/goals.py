@@ -330,6 +330,7 @@ _GRANT_LABELS = {
     "delete_task": "Delete tasks",
     "install_package": "Install software",
     "run_command": "Run commands that change things",
+    "run_sandboxed": "Run Python code in the sandbox",
     "spawn_interactive_session": "Start a terminal session",
     "send_to_session": "Type into an open terminal session",
 }
