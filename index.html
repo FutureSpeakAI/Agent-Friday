@@ -9361,8 +9361,13 @@ function CareerWS() {
   const [reportContent, setReportContent] = useState('');
   const [evalUrl, setEvalUrl] = useState('');
   const [engineJobs, setEngineJobs] = useState([]);
+  const [coStatus, setCoStatus] = useState(null);
+  const [coPath, setCoPath] = useState('');
   useEffect(() => {
-    Promise.all([fetch('/api/career-ops/tracker').then(r => r.json()).then(setTracker).catch(() => null), fetch('/api/career-ops/reports').then(r => r.json()).then(d => setReports(d.reports || [])).catch(() => []), fetch('/api/career-ops/pipeline').then(r => r.json()).then(d => setPipeline(d.content || '')).catch(() => ''), fetch('/api/jobs').then(r => r.json()).then(d => setJobs(d.content || d.raw || '')).catch(() => ''), fetch('/api/pipeline/jobs').then(r => r.json()).then(d => setEngineJobs(d.jobs || [])).catch(() => [])]).then(() => setLoading(false));
+    Promise.all([fetch('/api/career-ops/status').then(r => r.json()).then(d => {
+      setCoStatus(d);
+      setCoPath(d.configured ? d.path : '');
+    }).catch(() => null), fetch('/api/career-ops/tracker').then(r => r.json()).then(setTracker).catch(() => null),fetch('/api/career-ops/reports').then(r => r.json()).then(d => setReports(d.reports || [])).catch(() => []), fetch('/api/career-ops/pipeline').then(r => r.json()).then(d => setPipeline(d.content || '')).catch(() => ''), fetch('/api/jobs').then(r => r.json()).then(d => setJobs(d.content || d.raw || '')).catch(() => ''), fetch('/api/pipeline/jobs').then(r => r.json()).then(d => setEngineJobs(d.jobs || [])).catch(() => [])]).then(() => setLoading(false));
   }, []);
   const loadReport = name => {
     fetch('/api/career-ops/report/' + name).then(r => r.json()).then(d => {
@@ -9370,6 +9375,7 @@ function CareerWS() {
       setView('report');
     }).catch(() => {});
   };
+  const coCwd = () => coStatus && coStatus.path || '~\\Projects\\career-ops';
   const launchEval = () => {
     if (!evalUrl.trim()) return;
     fetch('/api/vibe-code/launch', {
@@ -9379,7 +9385,7 @@ function CareerWS() {
       },
       body: JSON.stringify({
         tasks: ['Evaluate this job: ' + evalUrl],
-        cwd: '~\\Projects\\career-ops'
+        cwd: coCwd()
       })
     }).then(() => {
       setEvalUrl('');
@@ -9394,9 +9400,48 @@ function CareerWS() {
       },
       body: JSON.stringify({
         tasks: ['Run portal scan'],
-        cwd: '~\\Projects\\career-ops'
+        cwd: coCwd()
       })
     }).then(() => fridayToast('Scan launched')).catch(() => {});
+  };
+  const saveCoPath = () => {
+    fetch('/api/career-ops/path', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        path: coPath
+      })
+    }).then(r => r.json()).then(d => {
+      if (d.error) {
+        fridayToast(d.error);
+        return;
+      }
+      setCoStatus(d);
+      fridayToast('Career-ops folder saved');
+    }).catch(() => {});
+  };
+  const engineScan = () => {
+    fetch('/api/pipeline/scan', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: '{}'
+    }).then(r => r.json()).then(() => fetch('/api/pipeline/jobs')).then(r => r.json()).then(d => {
+      setEngineJobs(d.jobs || []);
+      fridayToast('Scan finished');
+    }).catch(() => {});
+  };
+  const engineApply = id => {
+    fetch('/api/pipeline/jobs/' + id + '/apply', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: '{}'
+    }).then(r => r.json()).then(d => fridayToast(d.status === 'prepared' ? 'Prepared. Friday does not submit applications: submit it yourself on the employer’s site.' : 'Not prepared: ' + ((d.quality_gates_failed || []).join(', ') || d.error || d.status))).catch(() => {});
   };
   if (loading) return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -9414,7 +9459,58 @@ function CareerWS() {
     text: entries.length + ' evaluated, ' + applied + ' applied, ' + interviewing + ' interviewing, ' + reports.length + ' reports.'
   }) : /*#__PURE__*/React.createElement(FridaySays, {
     text: "Career-ops ready. Paste a job URL below to evaluate, or scan portals for new opportunities."
-  }), /*#__PURE__*/React.createElement("div", {
+  }), coStatus && !coStatus.ready && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 12,
+      padding: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title"
+  }, "Set up career-ops"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#aaa',
+      marginBottom: 6
+    }
+  }, coStatus.summary), (coStatus.items || []).filter(i => !i.present || i.problem).map(i => /*#__PURE__*/React.createElement("div", {
+    key: i.file,
+    style: {
+      fontSize: 11,
+      color: '#bbb',
+      padding: '3px 0'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: i.required ? '#f59e0b' : '#888'
+    }
+  }, i.file), i.problem ? ' — ' + i.problem : i.required ? ' — missing' : ' — optional', /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#888'
+    }
+  }, i.fix))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      flex: 1
+    },
+    value: coPath,
+    onChange: e => setCoPath(e.target.value),
+    placeholder: coStatus.default_path || 'career-ops folder',
+    "aria-label": "career-ops folder"
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11
+    },
+    onClick: saveCoPath
+  }, "Save folder"))), /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginBottom: 12,
@@ -9493,7 +9589,7 @@ function CareerWS() {
       fontSize: 12,
       color: '#aaa'
     }
-  }, "Job Scanner engine \u2014 ", engineJobs.length, " tracked. Scoring, dedup and resume A/B variants run locally; applications default to dry-run."), /*#__PURE__*/React.createElement("button", {
+  }, "Job Scanner engine \u2014 ", engineJobs.length, " tracked. Scoring, dedup and resume A/B variants run locally. Friday prepares applications; you submit them."),/*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 11
@@ -9546,7 +9642,7 @@ function CareerWS() {
       flexShrink: 0
     },
     onClick: () => engineApply(j.job_id)
-  }, "Dry-run Apply"))))), view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "Prepare"))))),view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
@@ -9719,13 +9815,18 @@ function CareerWS() {
         fontWeight: 600,
         fontSize: 12
       }
-    }, e.company), /*#__PURE__*/React.createElement("span", {
+    }, e.company, e.role ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: '#888',
+        fontWeight: 400
+      }
+    }, " \xB7 ", e.role) : null), /*#__PURE__*/React.createElement("span", {
       style: {
         fontFamily: 'Orbitron',
         fontSize: 13,
         color
       }
-    }, e.score)), /*#__PURE__*/React.createElement("div", {
+    }, e.score)),/*#__PURE__*/React.createElement("div", {
       className: "progress-bar",
       style: {
         marginTop: 3
