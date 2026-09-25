@@ -127,6 +127,7 @@ A capability that is not in the defaults is removed on the next save.
 | `include_sources` | `true` | Ask the model to include sources. |
 | `cite_sources` | `false` | Inline citation on every factual claim. |
 | `news_priorities` | `["AI/Tech", "Politics", "Media", "Local", "Business"]` | News topics Friday prioritises in conversation. Does not control the news feeds. |
+| `news_local_area` | `""` | The place the Local news beat covers, for example `"Portland, Oregon"`. Friday searches Google News for it. Empty means no Local beat. |
 | `memory_recall_enabled` | `true` | Recall from past conversations. |
 | `compaction` | on; trigger at 70% of a 200,000-token window; keep 3 head and 10 tail messages | Summarises the middle of a long transcript. |
 | `context_pruning` | on; over 50 turns keep the 4 most recent and the 10 most relevant | Keeps relevant past turns by meaning (MiniLM embeddings). |

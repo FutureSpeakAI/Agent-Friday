@@ -109,7 +109,7 @@ Three ways they materially disagree today:
 *Calendar* as connected off that single check, consulting neither account's
 `services` map nor whether the API in question works at all. Measured the same
 day: both accounts carry `drive: true` and every Drive call returns
-`403 Google Drive API has not been used in project 449982820564` (**VERIFIED**).
+`403 Google Drive API has not been used in project 123456789012` (**VERIFIED**).
 The surface says the service is on; the service is off at Google.
 
 **(b) Presence read as health.** `PlatformAdapter.status()` (`base.py:249`,

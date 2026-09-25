@@ -98,7 +98,7 @@ def test_nothing_is_sticky():
 # ── rule 4: the backend's own words survive ─────────────────────────────────
 
 def test_the_detail_is_carried_through():
-    d = "Google Drive API has not been used in project 449982820564"
+    d = "Google Drive API has not been used in project 123456789012"
     assert d in H.from_connector_status({"status": "error", "detail": d}).detail
     assert d in H.from_provider_health({"status": "down", "detail": d}).detail
     assert d in H.from_capability_state({"state": "present_failing",

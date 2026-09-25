@@ -2066,6 +2066,8 @@ DEFAULT_SETTINGS = {
     "auto_open_created_files": False,
     "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
+    # The place Local news covers ("Portland, Oregon"); empty means no Local beat.
+    "news_local_area": "",
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
     "tts_voice": "Aoede",                  # any of the 30 Gemini-TTS voices

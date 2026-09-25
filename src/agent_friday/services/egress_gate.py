@@ -673,15 +673,15 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
             continue                                  # floor does not move
 
         # A first-person span cannot be third-party material, whatever the
-        # model says. Downgraded rather than dropped: STEPHEN_SUBSTANCE still
+        # model says. Downgraded rather than dropped: USER_SUBSTANCE still
         # allows a send once the scrub has actually separated something, so
         # this costs capability only where identity is inseparable anyway.
         if verdict == jg.ABOUT_THE_WORLD and jg.looks_first_person(para):
             _log(provider, field, det_tier, "redact",
                  "judgment said ABOUT_THE_WORLD on a FIRST-PERSON span — "
-                 "overruled to STEPHEN_SUBSTANCE; a span about the user's own "
+                 "overruled to USER_SUBSTANCE; a span about the user's own "
                  "affairs is never somebody else's", log_path)
-            verdict = jg.STEPHEN_SUBSTANCE
+            verdict = jg.USER_SUBSTANCE
 
         # A favourable verdict earns a SCRUB ATTEMPT, not a send.
         try:
@@ -690,10 +690,10 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
         except Exception:
             continue                                  # cannot scrub → cannot send
 
-        # ── STEPHEN_SUBSTANCE requires that the scrub ACTUALLY separated
+        # ── USER_SUBSTANCE requires that the scrub ACTUALLY separated
         # something ──
         #
-        # §5.2 defines STEPHEN_SUBSTANCE as "the user's material, where the
+        # §5.2 defines USER_SUBSTANCE as "the user's material, where the
         # SUBSTANCE matters and the IDENTITY can be separated", treated by
         # "scrubbed — identifying spans replaced by placeholders — then
         # re-verified, then sent". The leak this prevents: for
@@ -701,7 +701,7 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
         #   "My custody hearing is on the 14th and my lawyer says my ex will
         #    contest it."
         #
-        # the judge correctly answers STEPHEN_SUBSTANCE — and the scrubber
+        # the judge correctly answers USER_SUBSTANCE — and the scrubber
         # finds NOTHING to replace, because the sentence carries no name,
         # number or address. It is pure first-person substance. verify_outgoing
         # then passes it, since it blocks at SENSITIVE and this classifies
@@ -713,9 +713,9 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
         # definition of NEVER_SEND, so the span is withheld. ABOUT_THE_WORLD is
         # unaffected — third-party material has no identity of the user's to
         # separate, which is the whole point of the verdict.
-        if verdict == jg.STEPHEN_SUBSTANCE and not _sub:
+        if verdict == jg.USER_SUBSTANCE and not _sub:
             _log(provider, field, det_tier, "redact",
-                 "judgment=STEPHEN_SUBSTANCE but the scrub replaced nothing — "
+                 "judgment=USER_SUBSTANCE but the scrub replaced nothing — "
                  "identity could not be separated from substance, so the span "
                  "is withheld", log_path)
             continue

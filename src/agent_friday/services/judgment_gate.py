@@ -56,9 +56,9 @@ _log = logging.getLogger("friday.judgment")
 
 # ── Verdicts (§5.2) ───────────────────────────────────────────────────────────
 ABOUT_THE_WORLD = "ABOUT_THE_WORLD"      # third-party published material
-STEPHEN_SUBSTANCE = "STEPHEN_SUBSTANCE"  # the user's, but identity is separable
+USER_SUBSTANCE = "USER_SUBSTANCE"  # the user's, but identity is separable
 NEVER_SEND = "NEVER_SEND"                # identity and substance inseparable
-_VALID_VERDICTS = {ABOUT_THE_WORLD, STEPHEN_SUBSTANCE, NEVER_SEND}
+_VALID_VERDICTS = {ABOUT_THE_WORLD, USER_SUBSTANCE, NEVER_SEND}
 
 # Judging is itself a model call. If that call ever routed cloudward it would
 # re-enter the gate and recurse forever, so a thread-local flag makes the gate
@@ -216,7 +216,7 @@ def never_send_hits(text: str) -> list[str]:
 #
 # So the rule does not live in the prompt; it is code: a span that speaks in
 # the first person about the user's own affairs CANNOT be judged third-party
-# material. The model may still call it STEPHEN_SUBSTANCE (which then requires
+# material. The model may still call it USER_SUBSTANCE (which then requires
 # a scrub that actually replaces something) or NEVER_SEND. It simply may not
 # call it somebody else's.
 # CASE-SENSITIVE on purpose. With IGNORECASE this matches "US" in "Trump asks
@@ -235,7 +235,7 @@ def looks_first_person(text: str) -> bool:
     """True when the span speaks about the user's own affairs.
 
     Deliberately generous: a false positive here costs one span of capability
-    (it degrades to STEPHEN_SUBSTANCE, which can still send once scrubbed), and
+    (it degrades to USER_SUBSTANCE, which can still send once scrubbed), and
     a false negative costs the user's privacy. Third-party news, which is what the
     ABOUT_THE_WORLD verdict exists to rescue, is written in the third person
     and is unaffected.
@@ -334,17 +334,17 @@ def verify_outgoing(text: str, *, reclassify: bool = True) -> ScrubVerdict:
 
 _JUDGE_SYSTEM = """You classify text spans for a privacy gate. You are the appeals court: every span you see was already blocked by keyword rules, and your job is to say which ones were blocked by mistake.
 
-The user is a working journalist whose beat is courts, government, money and health policy. Keyword rules block anything mentioning "court", "legal", "medical", "income" — which blocks their ordinary professional reading along with their actual private affairs. You exist to tell those apart.
+The user may read and write about courts, government, money and health as part of their work or interests. Keyword rules block anything mentioning "court", "legal", "medical", "income" — which blocks that ordinary reading along with the user's actual private affairs. You exist to tell those apart.
 
 For each span, answer the single question: is this the user's OWN private material, or material about the world?
 
 Verdicts:
 - ABOUT_THE_WORLD — third-party material: published facts, news, other people's public actions, court records of other parties, quotes from public sources, general reference material, technical or product text.
-- STEPHEN_SUBSTANCE — the user's own material where the substance matters but their identity can be separated from it: "my client in the housing case", "my doctor said", their own finances or family discussed in a way that survives having names and numbers removed.
+- USER_SUBSTANCE — the user's own material where the substance matters but their identity can be separated from it: "my client in the housing case", "my doctor said", their own finances or family discussed in a way that survives having names and numbers removed.
 - NEVER_SEND — the user's material where identity and substance cannot be separated: the span IS the private fact and removing identifiers would leave nothing meaningful, or it contains credentials, account numbers or medical/legal records of their own.
 
 Rules:
-- When uncertain, answer STEPHEN_SUBSTANCE. Never guess ABOUT_THE_WORLD to be helpful.
+- When uncertain, answer USER_SUBSTANCE. Never guess ABOUT_THE_WORLD to be helpful.
 - First person about their own affairs ("my", "I owe", "our custody") is NEVER ABOUT_THE_WORLD.
 - Third person about named public figures or organizations is normally ABOUT_THE_WORLD even when the topic is legal, medical or financial.
 - Judge the span, not the topic. A sensitive TOPIC is not a private FACT.

@@ -197,24 +197,10 @@ NEWS_CATEGORIES = {
     },
     "Local": {
         "color": "local",
-        # The Local beat defaults to one metro's feeds (Denver, TX).
-        # Every feed below is a live RSS/Atom source verified to return
-        # same-day Denver stories:
-        #   - KUT (Denver NPR, UT-Denver's Moody College) — index.rss
-        #   - KXAN (NBC Denver affiliate) — /feed/
-        #   - KVUE (ABC Denver affiliate) — local-desk syndication feed
-        #   - The Texas Tribune (statewide, HQ'd in Denver) — main feed
-        # Denver Monitor is deliberately absent: it stopped publishing in
-        # 2025 and is not a live source.
-        # To use a different city, replace the four feeds below and the
-        # query string; nothing else in the pipeline assumes Denver.
-        "query": "Denver Texas local news today",
-        "feeds": [
-            "https://www.kut.org/index.rss",
-            "https://www.kxan.com/feed/",
-            "https://www.kvue.com/feeds/syndication/rss/news/local",
-            "https://feeds.texastribune.org/feeds/main/",
-        ],
+        # Built at read time from the `news_local_area` setting (see
+        # category_meta). With no area set there is no Local beat.
+        "query": "",
+        "feeds": [],
     },
     "Business": {
         "color": "business",
@@ -684,7 +670,7 @@ def _news_items_from_archive(categories, limit_per, banned=None, boosted=None):
     boosted = set(boosted or _load_boosted_sources())
     items, idx = [], 0
     for cat in categories:
-        meta = NEWS_CATEGORIES.get(cat)
+        meta = category_meta(cat)
         if not meta:
             continue
         kept = 0
@@ -785,7 +771,7 @@ def _fetch_news_items(categories=None, limit_per=4):
             _news_items_from_archive(categories, limit_per, banned, boosted))
     items, idx = [], 0
     for cat in categories:
-        meta = NEWS_CATEGORIES.get(cat)
+        meta = category_meta(cat)
         if not meta:
             continue
         # RSS is primary; Brave Search is an optional supplemental fallback only
@@ -941,7 +927,7 @@ def _gather_live_briefing_context():
             # banned domains excluded. No-ops cleanly when no API key is set.
             news_blocks = []
             for cat in (cats or ["AI/Tech"])[:2]:
-                meta = NEWS_CATEGORIES.get(cat) or {}
+                meta = category_meta(cat) or {}
                 lines = []
                 for r in _brave_results(meta.get("query", f"latest {cat} news today"), limit=5):
                     dom = r.get("source") or _extract_domain(r.get("url", ""))
@@ -1129,7 +1115,7 @@ def _gather_front_page_pool(per_cat=14):
             if prefs.get("categories_enabled", {}).get(c, True)]
     pool, seen = [], set()
     for cat in cats:
-        meta = NEWS_CATEGORIES.get(cat) or {}
+        meta = category_meta(cat) or {}
         results = _rss_results(meta.get("feeds", []), limit=per_cat)
         if not results:
             results = _brave_results(meta.get("query", ""), limit=per_cat)
@@ -1185,7 +1171,6 @@ _BRUTALIST_URL = "https://brutalist.report/"
 # links need one to satisfy the archive record schema). Checked top to
 # bottom; first match wins.
 _BRUTALIST_CATEGORY_RULES = [
-    ("Local", re.compile(r"\b(denver|texas|travis county|atx)\b", re.I)),
     ("Media", re.compile(r"\b(journalism|journalist|newsroom|press freedom|"
                           r"media industry|reporter|editor|publisher|"
                           r"disinformation|misinformation)\b", re.I)),
@@ -1201,11 +1186,41 @@ _BRUTALIST_CATEGORY_RULES = [
 ]
 
 
+def _local_area() -> str:
+    """The area the owner named for Local news, or "" when none is set."""
+    try:
+        from agent_friday.core import _load_settings
+        return str((_load_settings() or {}).get("news_local_area") or "").strip()[:80]
+    except Exception:
+        return ""
+
+
+def category_meta(cat):
+    """A category's feeds and query. Local is built from the owner's area:
+    a Google News search for that place, and nothing at all when no area is
+    set, so no install reads another city's news by default."""
+    meta = NEWS_CATEGORIES.get(cat)
+    if not meta or cat != "Local":
+        return meta
+    area = _local_area()
+    if not area:
+        return dict(meta, feeds=[], query="")
+    from urllib.parse import quote_plus
+    return dict(meta, query=f"{area} local news today",
+                feeds=[_GOOGLE_NEWS + quote_plus(f"{area} local news") + "+when:24h"])
+
+
 def _classify_brutalist_headline(title):
     """Best-effort category for one scraped headline. Defaults to AI/Tech —
     brutalist.report's own source mix (Hacker News, The Verge, ArsTechnica,
     LWN, Techmeme, etc.) is overwhelmingly tech, so an unmatched headline is
     more likely tech than anything else."""
+    area = _local_area()
+    if area:
+        words = [w for w in re.split(r"[\s,]+", area) if len(w) > 2]
+        if words and re.search(r"\b(" + "|".join(map(re.escape, words)) + r")\b",
+                               title or "", re.I):
+            return "Local"
     for cat, rx in _BRUTALIST_CATEGORY_RULES:
         if rx.search(title or ""):
             return cat
@@ -1942,7 +1957,7 @@ def _generate_front_page(slot="morning"):
             continue
         sections.append({
             "title": cat,
-            "color": (NEWS_CATEGORIES.get(cat) or {}).get("color", "tech"),
+            "color": (category_meta(cat) or {}).get("color", "tech"),
             "context": (editorial["section_context"].get(cat) or "").strip(),
             "articles": group,
         })

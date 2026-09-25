@@ -608,7 +608,7 @@ mechanical treatments:
 | Verdict | Meaning | Treatment |
 |---|---|---|
 | **ABOUT_THE_WORLD** | Third-party material: published facts, other people's public actions, quotes from public sources | Sends, after the deterministic identifier sweep (§5.5) — judgment never exempts a span from the scrubber |
-| **STEPHEN_SUBSTANCE** | His material, where the *substance* matters and the *identity* can be separated: "my client in the housing case" | Scrubbed — identifying spans replaced by the existing tagged placeholders — then re-verified, then sent; rehydrated on the response |
+| **USER_SUBSTANCE** | His material, where the *substance* matters and the *identity* can be separated: "my client in the housing case" | Scrubbed — identifying spans replaced by the existing tagged placeholders — then re-verified, then sent; rehydrated on the response |
 | **NEVER_SEND** | Material where identity and substance cannot be separated, plus everything on the never-list (§5.3) | Redacted or dropped exactly as today. The gate's floor does not move |
 
 ### 5.3 The never-list — what no verdict can override
@@ -635,7 +635,7 @@ Mechanical, short, and not subject to judgment:
   discipline as §3.3: no tool registry, no persona, one structured call per payload with all
   flagged spans batched in and verdicts out. The core question, stated in the prompt: *"Is
   this span the maintainer's private material, or material about the world? When uncertain, say
-  STEPHEN_SUBSTANCE."* Each verdict returns with a one-sentence reason; the sentence goes to
+  USER_SUBSTANCE."* Each verdict returns with a one-sentence reason; the sentence goes to
   the ledger (§5.8), because a judgment that cannot explain itself cannot be audited.
 - **When it runs:** the judgment gate is an appeals court, not a first instance. Payloads
   whose deterministic classification is PUBLIC everywhere skip it entirely — nothing to
@@ -661,7 +661,7 @@ changes is what happens inside:
    → all PUBLIC?                           send. Judgment never consulted.
 3. Judgment                                12b verdict per flagged span (§5.4).
    ABOUT_THE_WORLD                         span passes (already identifier-scrubbed).
-   STEPHEN_SUBSTANCE                       span re-scrubbed with watchlist + NER aids,
+   USER_SUBSTANCE                       span re-scrubbed with watchlist + NER aids,
                                            placeholder map extended.
    NEVER_SEND                              span redacted/dropped as today.
 4. Verification of the scrub               deterministic, and this is the step that makes
