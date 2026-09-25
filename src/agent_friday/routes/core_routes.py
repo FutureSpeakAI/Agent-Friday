@@ -343,6 +343,14 @@ def decisions_gate_status():
         out["explain"] = (
             "Both scanners are serving. An action is held for your sign-off "
             "when either one says it should be.")
+        slow = int((out["laya"] or {}).get("slow_answers") or 0)
+        if slow:
+            # A laptop CPU can be too slow for the second opinion. The gate
+            # does not wait for it, and the panel says how often that happened.
+            out["explain"] += (
+                " Laya was too slow to answer %d time%s on this PC; each of "
+                "those was decided by the keyword scan alone."
+                % (slow, "" if slow == 1 else "s"))
     else:
         out["explain"] = "The keyword scan alone is deciding."
     return jsonify(out)

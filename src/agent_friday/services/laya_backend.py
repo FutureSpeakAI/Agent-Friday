@@ -35,7 +35,9 @@ THREE THINGS THAT MUST STAY TRUE
 
   * It never blocks a verdict. Loading takes ~42 s the first time; that
     happens on a warm-up thread, and any decision arriving before the model is
-    ready is answered by `keyword` rather than waiting.
+    ready is answered by `keyword` rather than waiting. Once loaded, an
+    answer is waited for at most `_SCORE_TIMEOUT_S`; a slower one (a laptop
+    CPU) is answered by `keyword` too, and counted in `status()`.
   * It never raises into the gate. `decisions.decide` already falls back to
     `keyword` on a backend exception, and shadow scoring is fire-and-forget.
   * It runs on CPU. bonsai2 owns ~10 GB of the 12 GB card. A decision that
@@ -112,6 +114,20 @@ _BOOT_SETTLE_S = 45.0
 _load_attempts = 0
 _last_attempt_ts = 0.0
 
+#: How long a decision waits for Laya's answer before taking the keyword half
+#: of the union. ~300 ms on a desktop CPU; a laptop CPU can take several times
+#: that, and the gate asks inside a chat turn. Past this bound the decision is
+#: answered exactly as it is while the model loads, and the miss is counted so
+#: the Settings panel can say the second opinion is too slow on this PC.
+_SCORE_TIMEOUT_S = 2.5
+#: At most this many scorings in flight. A call that finds them all busy (a
+#: model still grinding on states it was handed earlier) does not queue behind
+#: them; it takes the keyword half at once.
+_MAX_SCORING = 2
+_scoring = threading.BoundedSemaphore(_MAX_SCORING)
+_slow_answers = 0
+_last_slow_ts: Optional[float] = None
+
 
 # ---------------------------------------------------------------------------
 #  LOADING
@@ -134,6 +150,11 @@ def status() -> dict:
         "error": _load_error,
         "shadow": shadow_backend(),
         "device": "cpu",
+        # Decisions Laya did not answer within _SCORE_TIMEOUT_S; each was
+        # decided by the keyword scan alone.
+        "slow_answers": int(_slow_answers),
+        "last_slow_ts": _last_slow_ts,
+        "score_timeout_s": _SCORE_TIMEOUT_S,
     }
 
 
@@ -313,6 +334,49 @@ def _answer(state: str) -> tuple:
     }
 
 
+class LayaTooSlow(TimeoutError):
+    """Laya did not answer within `_SCORE_TIMEOUT_S`."""
+
+
+def _answer_bounded(state: str) -> tuple:
+    """`_answer`, waiting at most `_SCORE_TIMEOUT_S`.
+
+    The scoring runs on its own daemon thread. On timeout the caller stops
+    waiting and the thread finishes on its own, holding one of the
+    `_MAX_SCORING` slots until it does, so a stuck model is never handed an
+    ever-growing backlog.
+    """
+    global _slow_answers, _last_slow_ts
+    slot = _scoring
+    if not slot.acquire(blocking=False):
+        _slow_answers += 1
+        _last_slow_ts = time.time()
+        raise LayaTooSlow("laya is still busy with earlier actions (too slow on this PC)")
+    box: Dict[str, Any] = {}
+    done = threading.Event()
+
+    def _run():
+        try:
+            box["result"] = _answer(state)
+        except BaseException as e:  # noqa: BLE001 - re-raised on the caller's thread
+            box["error"] = e
+        finally:
+            slot.release()
+            done.set()
+
+    threading.Thread(target=_run, name="laya-score", daemon=True).start()
+    if not done.wait(_SCORE_TIMEOUT_S):
+        _slow_answers += 1
+        _last_slow_ts = time.time()
+        _log.info("laya took longer than %.1fs; the keyword scan decided",
+                  _SCORE_TIMEOUT_S)
+        raise LayaTooSlow("laya took longer than %.1fs (too slow on this PC)"
+                          % _SCORE_TIMEOUT_S)
+    if "error" in box:
+        raise box["error"]
+    return box["result"]
+
+
 def laya_backend(question: str, state: str, **kw):
     """`decisions.py` backend signature: (answer, confidence, detail).
 
@@ -424,7 +488,12 @@ def union_backend(question: str, state: str, **kw):
                                      reason="laya still loading"
                                      if _loading else "laya not loaded")
     try:
-        severity, conf, detail = _answer(state)
+        # BOUNDED. This runs inside a chat turn; a laptop CPU must not turn
+        # the second opinion into a stall. Too slow is answered like loading.
+        severity, conf, detail = _answer_bounded(state)
+    except LayaTooSlow as e:
+        return kw_answer, None, dict(kw_detail, union="keyword-only",
+                                     reason=str(e))
     except Exception as e:
         return kw_answer, None, dict(kw_detail, union="keyword-only",
                                      reason="laya error: %s" % e)

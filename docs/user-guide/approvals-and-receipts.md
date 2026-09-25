@@ -86,6 +86,12 @@ local model (Laya) can add a card the rules would have missed; it can only add
 a card, never remove one. **Settings → Privacy & Approvals** offers Off, Shadow
 (it scores decisions and changes nothing) and On.
 
+Laya runs on the CPU and loads in the background after Friday starts (about a
+minute from a cold start). Nothing waits for it: until it is ready, and
+whenever it takes longer than a couple of seconds to answer (as it can on a
+laptop), the keyword rules decide alone. The status line in that Settings
+section says which is happening and how often Laya was too slow.
+
 ## Receipts
 
 Every decision the checkpoint makes is appended to a receipt file:
