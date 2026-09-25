@@ -225,9 +225,12 @@ Gemini Live (`voice_engine: "gemini"`) tuning: `tts_voice` (`"Aoede"`),
 
 Cloud voices: `elevenlabs_model` (`"eleven_flash_v2_5"`), `elevenlabs_voice_id`,
 `inworld_model` (`"inworld-tts-2-flash"`), `inworld_voice_id`,
-`inworld_plan_tier` (`"on_demand"`). `elevenlabs_api_key` and `inworld_api_key`
-are **stored in plain text** in `settings.json`; prefer the
-`ELEVENLABS_API_KEY` and `INWORLD_API_KEY` environment variables.
+`inworld_plan_tier` (`"on_demand"`). The two API keys are stored encrypted
+when you add them on the setup checklist or in Settings > Accounts & Keys. An
+older `elevenlabs_api_key` or `inworld_api_key` found in `settings.json` is still
+read, and is moved into the encrypted store the first time it is used. The
+`ELEVENLABS_API_KEY` and `INWORLD_API_KEY` environment variables take
+precedence over both.
 
 ### Appearance, dock and tracking
 
@@ -269,6 +272,7 @@ These keys exist in `DEFAULT_SETTINGS` but nothing acts on them: `setup`,
 | `~/.friday/channels.json` | Telegram and Discord bridges. |
 | `~/.friday/providers/*.json` or `*.yaml` | Custom OpenAI-compatible provider descriptors, loaded automatically. |
 | `~/.friday/onboarding.json` | Your first-run answers, including the update-check choice. |
+| `~/.friday/setup_chat.json` | Where the setup chat is and your non-personal choices in it; no secrets or answers. See [the setup chat](setup-chat.md). |
 
 The Privacy Shield always redacts, with no configuration: SSNs, card numbers
 that pass the Luhn check, phone numbers, email addresses (except yours) and US
@@ -422,7 +426,8 @@ encrypted at rest on this disk.
 | `runtime/`, `local_voice/`, `models/` | Local runtimes and model weights | Not personal data |
 | `local-address/`, `tls/` | Local-address certificate authority and certificate | Private keys stored as plain files |
 | `logs/`, `friday.log`, `server_stderr.log` | Logs | Plain text |
-| `SOUL.md`, `personality.json` | Friday's persona | Plain text |
+| `SOUL.md`, `personality.json` | Friday's persona, including the first-run style section | Plain text |
+| `profile/` | Your setup-chat answers, the setup conversation, research waiting for review | Encrypted |
 
 Backing up and restoring this folder, and what is lost without the vault
 passphrase, is covered in [backup and restore](backup-and-restore.md).

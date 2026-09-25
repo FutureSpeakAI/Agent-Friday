@@ -15,6 +15,9 @@
       localhost Friday answers on http://127.0.0.1:<port>/ with no login
       consent   first run opens on the vault-first consent flow, and the
                 weekly update check is a question, not a default
+      setup-chat the setup chat starts at its first stage
+      connections the checklist lists the services and no secret
+      setup-later "Set up later" completes setup with defaults (run last)
       schedules scheduled jobs default to a local seat; the update check is off
       phone     the phone is off until someone configures it
       address   agent.<name> answers once its hosts entry exists and Friday's
@@ -106,6 +109,24 @@ try {
     Check 'consent' (($order[0] -eq 'collects') -and ($order[1] -eq 'vault') -and ($order -contains 'updates')) `
           ("screens: " + ($order -join ', '))
 
+    # After the consent screens, the setup chat: it starts at its first stage
+    # and nothing has been said yet.
+    $chat = Api '/api/setup-chat/state'
+    Check 'setup-chat' (($chat.stage -eq 'welcome') -and (-not $chat.consent_done) -and (-not $chat.completed)) `
+          "stage: $($chat.stage); consent done: $($chat.consent_done); completed: $($chat.completed)"
+
+    # The connection checklist lists the services, and never a secret.
+    $raw = (Invoke-WebRequest -Uri "$base/api/setup/connections" -Headers $hdr -UseBasicParsing -TimeoutSec 60).Content
+    $list = $raw | ConvertFrom-Json
+    $ids = @($list.items | ForEach-Object { $_.id })
+    $want = @('provider:anthropic', 'provider:openai', 'provider:openrouter', 'google', 'twilio',
+              'connector:github', 'channel:telegram', 'platform:youtube', 'connector:notion',
+              'provider:brave', 'provider:elevenlabs', 'cloudflare')
+    $missing = @($want | Where-Object { $ids -notcontains $_ })
+    $secretShaped = $raw -match '(sk-ant-|sk-or-|AIza[0-9A-Za-z_\-]{20}|ghp_[0-9A-Za-z]{20}|xox[baprs]-)'
+    Check 'connections' (($missing.Count -eq 0) -and ($ids.Count -ge 30) -and (-not $secretShaped)) `
+          ("$($ids.Count) services; missing: " + ($missing -join ', ') + "; key-shaped text present: $secretShaped")
+
     # Scheduled jobs: seeded at boot into ~/.friday/schedules.json.
     $schedFile = Join-Path $FridayDir 'schedules.json'
     $sched = @()
@@ -133,6 +154,14 @@ try {
     try { $named = Invoke-WebRequest -Uri "http://$hostName/" -UseBasicParsing -TimeoutSec 20 } catch { }
     Check 'address' (($null -ne $named) -and ($named.StatusCode -eq 200) -and ($named.Content -match 'FRIDAY')) `
           ("http://$hostName/ -> " + $(if ($named) { $named.StatusCode } else { 'no answer' }) + "; listener ok: $($serve.ok)")
+
+    # Last, because it finishes first-run setup: "Set up later" from the
+    # first stage completes setup with defaults.
+    $null = Api '/api/setup-chat/begin' 'POST' @{ routing_mode = 'local_only' }
+    $done = Api '/api/setup-chat/skip-all' 'POST' @{}
+    $status = Api '/api/setup/status'
+    Check 'setup-later' ($done.completed -and $status.initialized -and (Test-Path (Join-Path $FridayDir '.setup_complete'))) `
+          "completed: $($done.completed); initialized: $($status.initialized)"
 }
 finally {
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
