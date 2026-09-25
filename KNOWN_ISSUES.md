@@ -135,9 +135,11 @@ or Windows credential protection.
 
 ## 7. Security posture
 
-- **Some keys live in `settings.json` in plain text** when set there:
-  `elevenlabs_api_key`, `inworld_api_key` and `model_routing.openai_api_key`.
-  Prefer environment variables or the encrypted store.
+- **One key can live in `settings.json` in plain text** when set there:
+  `model_routing.openai_api_key`. Prefer the environment or the encrypted
+  store. An ElevenLabs or Inworld key found in `settings.json` is moved into
+  the encrypted store the first time it is read, and the plaintext copy is
+  blanked.
 - **The credential keystore is unwrapped by default.** Its root key sits in
   `.friday\security\keystore.json` behind an owner-only file ACL, so anything
   running as you can decrypt stored credentials, and a folder copy of
@@ -152,6 +154,21 @@ or Windows credential protection.
 - **`web_safety.py`, the SSRF guard, has no tests of its own.**
 - **Dependencies are declared with `>=` floors.** A `uv.lock` is committed
   but nothing installs from it.
+- **Open dependency advisories, none reachable in the default install:**
+  - *ChromaDB (two critical, three high).* The advisories concern ChromaDB's
+    HTTP server and its multi-tenant authorisation. Friday uses ChromaDB only
+    as an embedded library (`PersistentClient` in `conversation_memory.py`) and
+    never starts that server. No fixed version exists yet.
+  - *Lightning and Hydra (high).* Code execution when loading an untrusted
+    model checkpoint or config. Both arrive only with NVIDIA NeMo, the optional
+    GPU voice extra (`voice-local-gpu`), which the Windows installer does not
+    install. NeMo loads NVIDIA's own published voice models by name; do not
+    point it at a `.nemo` or `.ckpt` file from anywhere else. The fixed
+    versions (Lightning 2.6.6, Hydra 1.3.4) cannot be installed with the NeMo
+    versions Friday supports.
+  - *NLTK (high).* Path checks in its model-artifact helpers. It also arrives
+    only with the GPU voice extra, for NeMo's English pronunciation step;
+    Friday's own code does not import it. No fixed version exists yet.
 - **The 5.12.0 and 5.13.0 installer zips include files that are not part of
   the repository**, copied from a build machine's working tree. They are inert.
   The build now refuses any payload that is not the committed tree.
