@@ -6,10 +6,21 @@ where jobs run, what they cost, and what they may do without you.
 
 ## Where to find them
 
-Open the **Workflows** workspace. Each job shows its schedule, its last run
-and whether it is on, with buttons to run it now, pause it or delete it. You
-can create your own jobs there, or ask Friday in chat ("every weekday at 8,
-summarise my unread mail").
+Open the **Workflows** workspace. Your own workflows are one list: each says
+what it does, when it runs ("Every weekday at 7:30 AM"), how its last run went
+and when the next one is, with a switch to pause it and buttons to run it now,
+edit it or delete it. **Details** shows its steps and its last result.
+Friday's built-in jobs are in a separate list below, **Friday's built-in
+routines**, where they can be switched on or off.
+
+To make a new one, type what you want and when in your own words ("every
+weekday at 8, summarise my unread mail") and choose **Draft it**. Friday
+writes a draft: a name, the timing and the steps. Check and edit it; nothing
+is saved until you choose **Save workflow**. The timing is read by fixed
+rules, so the sentence under **When** is exactly what the schedule will do.
+A workflow may have several steps; each step gets what the one before it
+found. Leave the timing as **Only when I run it** for a workflow you start by
+hand. You can also ask Friday in chat.
 
 Jobs are stored in `%USERPROFILE%\.friday\schedules.json`, and each run is
 recorded in `schedule_runs.jsonl`.
@@ -83,7 +94,15 @@ Create a grant in **Settings → Privacy & Approvals → Scheduled jobs: what th
 may do on their own**: choose the job, tick the actions, and set an expiry
 (1, 7 or 30 days) and a number of uses. A grant is tied to that job's own runs
 and cannot be used by anything else. Email is never covered by a grant; each
-message gets its own card. See [Approvals and receipts](approvals-and-receipts.md).
+message gets its own card. A grant does not reach the steps of a workflow
+saved on the Workflows screen: their outward actions always wait on a card,
+even when a grant names that workflow's schedule. See
+[Approvals and receipts](approvals-and-receipts.md).
+
+The Workflows screen says this at the top, marks a workflow whose steps look
+likely to ask ("Asks you before it can send email"), and shows a button when
+cards are waiting. The mark is a guess from the wording of the steps; the
+approval card is what actually holds the action.
 
 ## Cost
 

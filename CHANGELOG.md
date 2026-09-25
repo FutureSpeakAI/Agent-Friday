@@ -10,27 +10,6 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
-## [Unreleased]
-
-### Changed
-
-- **A new Workflows screen.** One list replaces the separate Workflows and
-  Scheduled Tasks tabs. Each workflow shows, in plain words, what it does,
-  when it runs ("Every weekday at 7:30 AM"), how its last run went and when
-  the next one is, with an on/off switch. A new workflow starts as a
-  plain-language request; Friday turns it into a draft (name, timing, steps)
-  to check and edit, and nothing is saved until Save. The screen states that
-  workflows ask before sending, posting, buying or deleting, marks the
-  workflows likely to ask, and links to waiting approval cards. Friday's
-  built-in routines sit in their own collapsed list, switchable on or off.
-
-### Added
-
-- **Workflows with several steps can run on a schedule**, and a weekly
-  schedule can name several days ("every weekday", "Monday and Thursday").
-  A scheduled workflow's run covers all of its steps; its steps' outward
-  actions wait on approval cards like any background task.
-
 ## [5.14.1] - 2026-09-25
 
 Cloud-only installs now fully work. The plain-language summary is in
@@ -58,6 +37,23 @@ Cloud-only installs now fully work. The plain-language summary is in
 - **Friday's typefaces ship with it**: the unmodified files Google Fonts
   serves, with Google's own rules, so the page renders exactly as before and
   never requests Google Fonts.
+- **Workflows with several steps can run on a schedule**, and a weekly
+  schedule can name several days ("every weekday", "Monday and Thursday").
+  A scheduled workflow's run covers all of its steps. Its steps' outward
+  actions wait on approval cards; a grant made for its schedule does not
+  reach them.
+
+### Changed
+
+- **A new Workflows screen.** One list replaces the separate Workflows and
+  Scheduled Tasks tabs. Each workflow shows, in plain words, what it does,
+  when it runs ("Every weekday at 7:30 AM"), how its last run went and when
+  the next one is, with an on/off switch. A new workflow starts as a
+  plain-language request; Friday turns it into a draft (name, timing, steps)
+  to check and edit, and nothing is saved until Save. The screen states that
+  workflows ask before sending, posting, buying or deleting, marks the
+  workflows likely to ask, and links to waiting approval cards. Friday's
+  built-in routines sit in their own collapsed list, switchable on or off.
 
 ### Fixed
 

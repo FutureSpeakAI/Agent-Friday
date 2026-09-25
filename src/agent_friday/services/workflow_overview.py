@@ -274,7 +274,12 @@ def _strip(raw, spans):
 _OBJ = r"(?:it|this|that|them|me|him|her|us|the|a|an|my|each|every|all|to|back)"
 _PLATFORMS = r"(?:bluesky|linkedin|facebook|instagram|threads|mastodon|substack|twitter|x)"
 _ASKS = [
-    ("send email", rf"\be-?mail(?:s|ing)?\s+{_OBJ}\b|\b(?:send|forward)\w*\b[^.]{{0,40}}\be-?mails?\b"
+    # "email" is a verb only where a verb goes (start of a clause, after
+    # "and"/"then"/"to"/"please"): "emails that are tips" and "the email the
+    # reporter sent" are nouns.
+    ("send email", rf"(?:^|[,;.:]|\band\b|\bthen\b|\bto\b|\bplease\b)\s*e-?mail(?:ing)?\s+{_OBJ}\b"
+                   r"|\b(?:send|forward)\w*\b[^.]{0,40}\be-?mails?\b"
+                   r"|\b(?:compose|write|draft)\w*\s+an?\s+e-?mail\b[^.]*\bsend\b"
                    r"|\b(?:reply|respond)(?:ing)?\s+to\b|\bwrite back\b"),
     ("post or publish online", rf"\b(?:post|tweet|publish|share)(?:s|ing)?\s+(?:it|this|that|them|the|a|an|my|our)\b"
                                rf"|\b(?:to|on)\s+{_PLATFORMS}\b"),
@@ -293,7 +298,8 @@ _ASKS = [
 
 def asks_first(texts) -> list:
     """Plain names for the outward actions these words point to."""
-    joined = " ".join(t for t in texts if t).lower()
+    # Each text is its own sentence, so a step's opening verb stays a verb.
+    joined = ". ".join(t for t in texts if t).lower()
     return [label for label, rx in _ASKS if re.search(rx, joined)]
 
 

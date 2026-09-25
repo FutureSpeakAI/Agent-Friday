@@ -148,6 +148,10 @@ def test_reading_and_summarizing_asks_nothing():
     "Sort the tips in order of urgency",
     "Remove duplicates from the list of tips",
     "Search my inbox for reader tips",
+    # Wording a live model wrote for a workflow that only drafts a memo.
+    "Search the inbox for emails that are reader tips (submissions, story leads, "
+    "or suggestions from readers) and collect them",
+    "Summarize the email the reporter sent this morning",
 ])
 def test_topics_are_not_mistaken_for_actions(text):
     assert wo.asks_first([text]) == []
@@ -157,6 +161,10 @@ def test_topics_are_not_mistaken_for_actions(text):
     ("check the agendas and email me what changed", "send email"),
     ("Forward the best tip emails to my editor", "send email"),
     ("Reply to each reader who sent a tip", "send email"),
+    ("Email it to my editor", "send email"),
+    # A live model's wording for the last step of a legislature digest.
+    ("Compose an email containing the ranked list of bills with their summaries "
+     "and send it to the editor.", "send email"),
     ("Share it on LinkedIn", "post or publish online"),
     ("Text her the address", "send text messages"),
     ("Add the hearing to my calendar", "change your calendar or invite people"),
