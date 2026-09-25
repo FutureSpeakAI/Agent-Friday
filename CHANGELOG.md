@@ -258,6 +258,10 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   good: the page's scene bookkeeping wrote `personality.json`, which marks a
   finished install. That bookkeeping now lives in `evolution.json`, and an
   older install's first-launch date and pinned scene are kept.
+- A finished task could be put back to "running" by its own heartbeat, if
+  the heartbeat read the task's state just before it completed; the task
+  then showed as stalled. The heartbeat now checks and writes under the
+  journal lock.
 - Approval cards say what will happen (the card's description) instead of
   repeating the title and printing the internal kind and policy class, and
   give the expiry in plain words.
