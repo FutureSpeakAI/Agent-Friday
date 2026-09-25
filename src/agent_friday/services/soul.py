@@ -130,6 +130,19 @@ def render_personality() -> str:
     whole body if the structure isn't recognized.
     """
     text = load_soul()
+    # The first-run style block (services/setup_profile.py) is re-checked on
+    # every render, because SOUL.md is hand-editable: a style may tune tone,
+    # never honesty or the approval policy, and it always carries the honesty
+    # floor. Lazy import keeps this a leaf module.
+    try:
+        from agent_friday.services.setup_profile import guard_block_in
+        text = guard_block_in(text)
+    except Exception:
+        # Fail closed: a block that cannot be checked is not rendered.
+        start = text.find("<!-- friday:first-run-style:start -->")
+        end = text.find("<!-- friday:first-run-style:end -->")
+        if start >= 0:
+            text = text[:start] + (text[end + 35:] if end > start else "")
     lines = text.splitlines()
     out = []
     skipping_note = False
