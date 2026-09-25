@@ -27,14 +27,14 @@ JavaScript and CSS vendored under static/vendor/:
     Copyright (c) 2006, Ivan Sagalaev and other contributors.
     BSD 3-Clause License.
 
-Fonts under static/fonts/, each under the SIL Open Font License 1.1, whose
-text is beside each file (OFL-<family>.txt). From github.com/google/fonts:
+Fonts under static/fonts/g/, each under the SIL Open Font License 1.1, whose
+text is in static/fonts/ (OFL-<family>.txt). The .woff2 files are the ones
+Google Fonts serves for the page's font request (fonts.gstatic.com), unmodified:
 
-  Orbitron-Variable.ttf ....... Orbitron, Copyright 2018 The Orbitron Project
-                                Authors
-  Inter-Variable.ttf .......... Inter, Copyright 2020 The Inter Project Authors
-  JetBrainsMono-Variable.ttf .. JetBrains Mono, Copyright 2020 The JetBrains
-                                Mono Project Authors
+  Orbitron-*.woff2 ....... Orbitron, Copyright 2018 The Orbitron Project Authors
+  Inter-*.woff2 .......... Inter, Copyright 2020 The Inter Project Authors
+  JetBrainsMono-*.woff2 .. JetBrains Mono, Copyright 2020 The JetBrains Mono
+                           Project Authors
 
 Inside the Windows installer archive:
 
