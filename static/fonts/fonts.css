@@ -1,0 +1,36 @@
+/* Friday's typefaces, served from this PC.
+
+   Each face tries, in order: the family installed on this PC, the font file
+   in /static/fonts (the files and their licences are listed in NOTICE),
+   then a system face with a similar feel. A missing file falls through to
+   the next source, so the page never needs a font from the network. */
+
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: local('Orbitron'),
+       url('/static/fonts/Orbitron-Variable.ttf') format('truetype'),
+       local('Bahnschrift'), local('Segoe UI Semibold'), local('Arial');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: local('Inter'), local('Inter Variable'),
+       url('/static/fonts/Inter-Variable.ttf') format('truetype'),
+       local('Segoe UI'), local('Helvetica Neue'), local('Arial');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: local('JetBrains Mono'),
+       url('/static/fonts/JetBrainsMono-Variable.ttf') format('truetype'),
+       local('Cascadia Mono'), local('Consolas'), local('Menlo'), local('Courier New');
+}

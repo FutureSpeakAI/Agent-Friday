@@ -8028,7 +8028,7 @@ function buildDraftHtml(text,mode,promptText){
     '<!DOCTYPE html><html lang="en"><head>',
     '<meta charset="UTF-8">',
     `<title>FRIDAY DRAFT — ${esc(label)}</title>`,
-    '<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">',
+    '<link href="/static/fonts/fonts.css" rel="stylesheet">',
     '<style>',
     '* { margin: 0; padding: 0; box-sizing: border-box; }',
     "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }",
@@ -13302,6 +13302,9 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="Cloud mode">
       <StToggle label="Unrestricted Cloud" value={!!(s.model_routing||{}).unrestricted_cloud} onChange={()=>save({model_routing:{...(s.model_routing||{}),unrestricted_cloud:!(s.model_routing||{}).unrestricted_cloud}})} desc="Off (default): cloud sends are still tier-classified, redacted, and PII-scrubbed. On: no privacy safeguard holds anything back from the cloud — full tier content, no redaction, no PII scrub, the never-send list included. Every send is still logged to the egress ledger either way. This is a standing posture, not a one-time consent — leave it off unless you specifically want frontier cloud models to see everything, unfiltered, on every call."/>
+    </StSection>
+    <StSection title="Fonts">
+      <StToggle label="Load fonts from Google Fonts" value={s.web_fonts_from_google!==false} onChange={()=>save({web_fonts_from_google:s.web_fonts_from_google===false})} desc="Only used while Friday's own font files are not installed in static\fonts. On, every page load asks Google for the typefaces, which shows Google this PC's address. Off, Friday uses similar fonts already on this PC. Takes effect when the page reloads."/>
     </StSection>
     <StSection title="What needs your sign-off">
       <ApprovalScannerPanel s={s} save={save}/>

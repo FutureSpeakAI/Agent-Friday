@@ -1,6 +1,7 @@
 # Background Network Activity
 
-> Status: current for 5.14.0. Last verified against the code: 2026-09-24.
+> Status: current for 5.14.0. Last verified against the code: 2026-09-24,
+> after the connectivity probe, fonts, MediaPipe and embedding-model changes.
 
 This page lists every network connection Agent Friday makes on its own, without
 you asking for something in the moment: what it connects to, how often, what it
@@ -21,8 +22,8 @@ conversation content, vault data or personal details.
 | Update check (opt-in) | `api.github.com` | At most once a week, only if you said yes | First-run question, or Settings → About |
 | Connectivity probe | Nothing by default (a routing-table lookup on this PC); `dns.google`, `8.8.8.8`, `1.1.1.1` (TCP 443) only if you opt in | Every 30 seconds | `network_probe` in `settings.json` |
 | News feeds | Built-in RSS feeds (news sites, Google News) | Every 5 minutes | Turn news categories off in the News workspace |
-| Web fonts | `fonts.googleapis.com`, `fonts.gstatic.com` | Every page load | Not configurable yet |
-| MediaPipe scripts | `cdn.jsdelivr.net` | Every page load; model files only when tracking is on | Tracking off stops the model downloads; the scripts still load |
+| Web fonts | `fonts.googleapis.com`, `fonts.gstatic.com` | Every page load, only while Friday's font files are not installed and the setting is on (it is on by default) | Settings → Privacy & Approvals → Fonts |
+| MediaPipe scripts and models | `cdn.jsdelivr.net` | Only when you turn on head or hand tracking | Leave tracking off |
 | Embedding model | `huggingface.co` | Never at startup. Once, the first time a feature needs it and it is not already on disk, with a notification | Pre-fetched by the installer's memory tier |
 | Local voice models | `huggingface.co` | First use of local voice, if not already downloaded | Leave local voice off |
 | Connector health | Your connected services (Google, MCP servers) | About every 2 minutes | Disconnect the connector |
@@ -89,14 +90,26 @@ nothing from your conversations.
 
 ## 4. Web fonts and MediaPipe
 
-`index.html` loads its typefaces from Google Fonts and three MediaPipe scripts
-(for head and hand tracking) from `cdn.jsdelivr.net` on every page load. The
-script tags carry integrity hashes. The tracking model files are fetched from
-jsdelivr only when you turn tracking on in Settings → Voice & Tracking.
-Three.js and the rest of the interface are served locally.
+**Fonts.** The page's typefaces (Orbitron, Inter, JetBrains Mono) are declared
+in `static/fonts/fonts.css`, served by Friday itself. Each tries a copy
+installed on the PC, then a font file in `static/fonts`, then a similar system
+font. This release does not ship those font files. While they are missing,
+Friday also adds Google Fonts to the page, so every page load asks
+`fonts.googleapis.com` and `fonts.gstatic.com` for them, unless you turn off
+**Settings → Privacy & Approvals → Fonts → Load fonts from Google Fonts**
+(or set `web_fonts_from_google` to `false`). With it off, Friday uses fonts
+already on the PC and makes no font request. Once the font files are in
+`static/fonts`, Google Fonts is never requested, whatever the setting says.
+The login page for remote access and saved draft pages use only the local
+stylesheet.
 
-These requests reveal your IP address to Google and jsDelivr. Serving them
-locally is not done yet; see [KNOWN_ISSUES.md](../../KNOWN_ISSUES.md).
+**MediaPipe.** The three MediaPipe scripts for head and hand tracking are not
+loaded with the page. They are fetched from `cdn.jsdelivr.net` (with integrity
+hashes) the first time you turn tracking on in Settings → Voice & Tracking,
+followed by the tracking model files. With tracking off, nothing is fetched.
+
+Three.js and the rest of the interface are served locally. These requests,
+when they happen, reveal your IP address to Google or jsDelivr.
 
 ## 5. Model downloads on first use
 

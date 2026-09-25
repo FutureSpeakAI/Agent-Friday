@@ -162,6 +162,12 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   routing table instead of connecting to Google's and Cloudflare's DNS
   servers every 30 seconds. `network_probe: "internet"` restores the old
   probe; `"off"` disables it.
+- **A page load no longer fetches MediaPipe**; the tracking scripts load from
+  jsDelivr only when you turn tracking on. Typefaces come from a local
+  stylesheet (`static/fonts/fonts.css`) with system-font fallbacks; Google
+  Fonts is added only while the font files are missing and can be turned
+  off in Settings > Privacy & Approvals > Fonts. The remote-access login
+  page and saved drafts no longer load Google Fonts.
 - **Startup never downloads the embedding model.** It is loaded at boot only
   when already cached; a missing model is downloaded by the first feature
   that needs it, with a notification before and after.

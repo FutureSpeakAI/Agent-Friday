@@ -113,8 +113,11 @@ Listed separately from "broken". These are not claims that things work.
 No telemetry, analytics, crash reporting or license check. The connections
 Friday makes on its own are listed, with how to turn each off, in
 [docs/user-guide/background-network.md](docs/user-guide/background-network.md).
-Two of them contradict the local-first posture and are not yet fixed: Google
-Fonts and the MediaPipe scripts load from public CDNs on every page load.
+One contradicts the local-first posture by default: this release does not
+ship its font files, so each page load asks Google Fonts for them until you
+turn that off in Settings → Privacy & Approvals → Fonts (Friday then uses
+fonts already on the PC). MediaPipe loads from jsDelivr only when you turn
+on head or hand tracking.
 
 Also outside the egress gate: OfficeCLI's preview renderer may fetch Mermaid,
 KaTeX, three.js or web fonts from public CDNs for documents that use them.

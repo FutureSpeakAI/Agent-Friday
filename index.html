@@ -54,10 +54,10 @@ window.addEventListener('DOMContentLoaded',function(){
   }
 });
 </script>
-<!-- Async font load: media="print" defers the render-blocking fetch, onload
-     flips it live. On dead/stalling wifi the app paints instantly with system
-     fallbacks and Orbitron swaps in only if the network delivers. -->
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'"/>
+<!-- Typefaces from this PC: static/fonts, then system faces. The server adds
+     Google Fonts to <head> only when the font files are missing and the
+     owner has not turned it off (services/web_fonts.py). -->
+<link href="/static/fonts/fonts.css" rel="stylesheet"/>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; cursor: default; }
         canvas { display: block; }
@@ -3191,13 +3191,17 @@ window.addEventListener('DOMContentLoaded',function(){
       })();
     </script>
 
-    <!-- MediaPipe — async so a dead/stalling CDN never blocks first paint.
-         The Hands/FaceDetection/Camera globals are only instantiated lazily
-         when the user enables face/hand tracking, so load order is free; if
-         the fetch fails, tracking is unavailable but the app is unaffected. -->
-    <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" integrity="sha384-q1KhAZhJcJXr3zfC3Tz07pBqQSabwFIZhXlmlUAB8s0zk4ETWERkIKGBCFQ5Jc3e" crossorigin="anonymous"></script>
-    <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/face_detection.js" integrity="sha384-oO3wOXOXIGBvHXjKwoF69nDtnGjqWIBuT+yCjjIAZmDek7qgjztCwK+WjCuL9O0a" crossorigin="anonymous"></script>
-    <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" integrity="sha384-oHwoZ9HyKv5ark5VOH+XWdbNfmhYtptAOBuV8plz6mAfXvTA6d8fULuYllWouEK2" crossorigin="anonymous"></script>
+    <!-- MediaPipe (head and hand tracking) is NOT loaded with the page. The
+         three scripts below are fetched from jsDelivr, with these integrity
+         hashes, only when the user turns tracking on (loadMediaPipe() in the
+         vision engine), so a page load contacts no CDN for it. -->
+    <script>
+      window.__FRIDAY_MEDIAPIPE_SCRIPTS__ = [
+        ['https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js', 'sha384-q1KhAZhJcJXr3zfC3Tz07pBqQSabwFIZhXlmlUAB8s0zk4ETWERkIKGBCFQ5Jc3e'],
+        ['https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/face_detection.js', 'sha384-oO3wOXOXIGBvHXjKwoF69nDtnGjqWIBuT+yCjjIAZmDek7qgjztCwK+WjCuL9O0a'],
+        ['https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js', 'sha384-oHwoZ9HyKv5ark5VOH+XWdbNfmhYtptAOBuV8plz6mAfXvTA6d8fULuYllWouEK2']
+      ];
+    </script>
 
     <!-- Three.js + Post-Processing — vendored (static/vendor/, SRI-verified
          against the pinned r128 CDN builds) so the holo scene renders offline. -->
@@ -3798,6 +3802,25 @@ window.addEventListener('DOMContentLoaded',function(){
         let dwellAnchorX = 0, dwellAnchorY = 0, dwellStart = 0, dwellFired = false;
         const PINCH_HOLD_TIME = 1000; // ms for right click
 
+        // Fetch the MediaPipe scripts the first time tracking is turned on,
+        // never with the page. One promise for all callers; a failure clears
+        // it so the next attempt can retry.
+        let mediaPipeLoading = null;
+        function loadMediaPipe() {
+            if (typeof Camera !== 'undefined' && typeof Hands !== 'undefined' &&
+                typeof FaceDetection !== 'undefined') return Promise.resolve();
+            if (mediaPipeLoading) return mediaPipeLoading;
+            const list = window.__FRIDAY_MEDIAPIPE_SCRIPTS__ || [];
+            mediaPipeLoading = Promise.all(list.map(([src, sri]) => new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = src; s.integrity = sri; s.crossOrigin = 'anonymous'; s.async = true;
+                s.onload = () => resolve();
+                s.onerror = () => reject(new Error('could not load ' + src));
+                document.head.appendChild(s);
+            }))).catch(err => { mediaPipeLoading = null; throw err; });
+            return mediaPipeLoading;
+        }
+
         async function startSharedCamera() {
             if (!cameraMP) {
                 cameraMP = new Camera(videoElement, {
@@ -3816,6 +3839,8 @@ window.addEventListener('DOMContentLoaded',function(){
             isHandTrackingMode = !isHandTrackingMode;
             const cursor = document.getElementById('hand-cursor');
             if (isHandTrackingMode) {
+                try { await loadMediaPipe(); }
+                catch (e) { console.warn('[tracking] hand tracking unavailable:', e); isHandTrackingMode = false; return; }
                 if (cursor) cursor.classList.add('active');
                 if (!handsMP) {
                     handsMP = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
@@ -3864,6 +3889,8 @@ window.addEventListener('DOMContentLoaded',function(){
         async function toggleHologram() {
             isHologramMode = !isHologramMode;
             if (isHologramMode) {
+                try { await loadMediaPipe(); }
+                catch (e) { console.warn('[tracking] head tracking unavailable:', e); isHologramMode = false; updateCameraIndicator(false); return; }
                 if (!faceDetectionMP) {
                     faceDetectionMP = new FaceDetection({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`});
                     faceDetectionMP.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
@@ -28335,7 +28362,7 @@ function buildDraftHtml(text, mode, promptText) {
   const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const paras = (text || '').split(/\n\n+/).filter(Boolean);
   const paraHtml = paras.map((p, i) => `<p${i === 0 ? ' style="font-size:18px;color:#e8e8f0"' : ''}>${esc(p).replace(/\n/g, '<br>')}</p>`).join('\n    ');
-  return ['<!DOCTYPE html><html lang="en"><head>', '<meta charset="UTF-8">', `<title>FRIDAY DRAFT — ${esc(label)}</title>`, '<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">', '<style>', '* { margin: 0; padding: 0; box-sizing: border-box; }', "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }", '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }', '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }', ".header h1 { font-family: 'Orbitron', monospace; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }", '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }', ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }", '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }', ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7c3aed; border: 1px solid rgba(124,58,237,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }", ".prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }", '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }', ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }", '</style></head><body>', '<div class="container">', '  <div class="header"><h1>FRIDAY DRAFT</h1><div class="neon-line"></div>', `  <div class="subtitle">${esc(label)}</div><div class="date">${esc(now)}</div></div>`, promptText ? `  <div class="prompt-ctx">Prompt: ${esc((promptText || '').substring(0, 200))}</div>` : '', `  <div class="mode-tag">${esc(label.toUpperCase())}</div>`, `  <div class="draft-body">\n    ${paraHtml}\n  </div>`, '  <div class="footer">Generated by FRIDAY · FutureSpeak.AI</div>', '</div></body></html>'].join('\n');
+  return ['<!DOCTYPE html><html lang="en"><head>', '<meta charset="UTF-8">', `<title>FRIDAY DRAFT — ${esc(label)}</title>`, '<link href="/static/fonts/fonts.css" rel="stylesheet">', '<style>', '* { margin: 0; padding: 0; box-sizing: border-box; }', "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }", '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }', '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }', ".header h1 { font-family: 'Orbitron', monospace; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }", '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }', ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }", '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }', ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7c3aed; border: 1px solid rgba(124,58,237,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }", ".prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }", '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }', ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }", '</style></head><body>', '<div class="container">', '  <div class="header"><h1>FRIDAY DRAFT</h1><div class="neon-line"></div>', `  <div class="subtitle">${esc(label)}</div><div class="date">${esc(now)}</div></div>`, promptText ? `  <div class="prompt-ctx">Prompt: ${esc((promptText || '').substring(0, 200))}</div>` : '', `  <div class="mode-tag">${esc(label.toUpperCase())}</div>`, `  <div class="draft-body">\n    ${paraHtml}\n  </div>`, '  <div class="footer">Generated by FRIDAY · FutureSpeak.AI</div>', '</div></body></html>'].join('\n');
 }
 function openDraftTab(text, mode, promptText) {
   const html = buildDraftHtml(text, mode, promptText);
@@ -43258,6 +43285,15 @@ function SettingsTabPrivacy({
   }, /*#__PURE__*/React.createElement(WikiEncryptedSections, {
     s: s,
     save: save
+  })), /*#__PURE__*/React.createElement(StSection, {
+    title: "Fonts"
+  }, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Load fonts from Google Fonts",
+    value: s.web_fonts_from_google !== false,
+    onChange: () => save({
+      web_fonts_from_google: s.web_fonts_from_google === false
+    }),
+    desc: "Only used while Friday's own font files are not installed in static\\fonts. On, every page load asks Google for the typefaces, which shows Google this PC's address. Off, Friday uses similar fonts already on this PC. Takes effect when the page reloads."
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "What needs your sign-off"
   }, /*#__PURE__*/React.createElement(ApprovalScannerPanel, {

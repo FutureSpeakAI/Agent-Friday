@@ -688,7 +688,7 @@ LOGIN_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FRIDAY — Authenticate</title>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+<link href="/static/fonts/fonts.css" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a0f;color:#e0e0ff;font-family:'Orbitron',monospace;display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden}
@@ -2040,6 +2040,10 @@ DEFAULT_SETTINGS = {
     # table lookup, nothing sent), "internet" (TCP to public DNS resolvers
     # every 30 s) or "off".
     "network_probe": "route",
+    # Whether the page may load its typefaces from Google Fonts while the
+    # font files are missing from static/fonts (services/web_fonts.py). Once
+    # they are there, Google Fonts is never requested.
+    "web_fonts_from_google": True,
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,

@@ -137,6 +137,15 @@ def _local_address_script() -> str:
     return f'<script>window.__FRIDAY_LOCAL_ADDRESS__={data};</script>'
 
 
+def _web_fonts_head() -> str:
+    """The Google Fonts link, only when services/web_fonts says to add it."""
+    try:
+        from agent_friday.services import web_fonts as _wf
+        return _wf.head_html()
+    except Exception:
+        return ''
+
+
 def _serve_index(extra_head: str = ''):
     try:
         with open('index.html', encoding='utf-8') as _f:
@@ -145,7 +154,8 @@ def _serve_index(extra_head: str = ''):
             f'<script>window.__FRIDAY_API_TOKEN="{core._current_api_token()}";</script>'  # pragma: allowlist secret
         )
         # Inject early in <head> so the token is available before any fetch calls.
-        _html = _html.replace('<head>', f'<head>\n{_token_script}{_local_address_script()}{extra_head}', 1)
+        _html = _html.replace('<head>', f'<head>\n{_token_script}{_local_address_script()}'
+                                        f'{_web_fonts_head()}{extra_head}', 1)
         return Response(_html, content_type='text/html')
     except FileNotFoundError:
         return ("index.html not found. It is tracked in git — restore it with "
@@ -201,6 +211,7 @@ def serve_widget():
     _head = (
         f'<script>window.__FRIDAY_API_TOKEN="{core._current_api_token()}";'  # pragma: allowlist secret
         'window.__FRIDAY_WIDGET=true;</script>'
+        + _web_fonts_head() +
         '<link rel="manifest" href="/widget/manifest.json">'
         '<meta name="theme-color" content="#04070e">'
     )
