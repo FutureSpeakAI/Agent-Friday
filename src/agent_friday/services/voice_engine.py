@@ -117,13 +117,63 @@ def _tool_get_source_trust(inp):
         return json.dumps({"error": str(e)})
 
 
+# ── Short-lived reads for a live conversation ───────────────────────────────
+#
+# Calendar and mail are live Google API calls, measured at 3-7 s each. In a
+# spoken turn that is dead air. A Live session warms them in the background
+# the moment it opens (warm_voice_reads), and a tool call inside VOICE_READ_TTL_S
+# of the last read answers from memory. Governance is unchanged: the tool call
+# still goes through _execute_tool; only the Google round trip is reused.
+
+VOICE_READ_TTL_S = 90
+_VOICE_READS: dict = {}
+_VOICE_READS_LOCK = threading.Lock()
+
+
+def _voice_read(key, fetch, ttl=VOICE_READ_TTL_S):
+    now = _time.time()
+    with _VOICE_READS_LOCK:
+        hit = _VOICE_READS.get(key)
+    if hit is not None and now - hit[0] < ttl:
+        return hit[1]
+    value = fetch()
+    with _VOICE_READS_LOCK:
+        _VOICE_READS[key] = (_time.time(), value)
+    return value
+
+
+def _voice_mail():
+    return _voice_read("mail", lambda: _collect_messages(limit=25))
+
+
+def _voice_calendar():
+    return _voice_read("calendar", _fetch_calendar_today)
+
+
+def warm_voice_reads():
+    """Fetch calendar, mail and news in the background. Never blocks."""
+    def run():
+        for key, fetch in (("calendar", _fetch_calendar_today),
+                           ("mail", lambda: _collect_messages(limit=25))):
+            try:
+                _voice_read(key, fetch, ttl=0)
+            except Exception as e:
+                _log.info("voice warm-up: %s not fetched (%s)", key, e)
+        try:
+            from agent_friday.services.news_engine import warm_news_cache
+            warm_news_cache(8)
+        except Exception as e:
+            _log.info("voice warm-up: news not fetched (%s)", e)
+    threading.Thread(target=run, name="voice-warm", daemon=True).start()
+
+
 def _tool_query_calendar(_inp):
     """Voice tool: today's + tomorrow's calendar as a spoken-ready JSON string.
 
     Powers global voice commands like 'what's next on my calendar?' from any
     workspace. Returns {connected, count, events:[{title,start,end,location,
     attendees}]} or a note when Google isn't linked."""
-    events = _fetch_calendar_today()
+    events = _voice_calendar()
     err = _google_section_error(events)
     if err:
         return json.dumps({"connected": False, "note": err, "events": []})
@@ -150,7 +200,7 @@ def _tool_check_email(inp):
     except Exception:
         limit = 12
     try:
-        cards, source = _collect_messages(limit=limit)
+        cards, source = _voice_mail()
     except Exception as e:
         return json.dumps({"connected": False, "note": str(e), "messages": []})
     if source == "empty":

@@ -674,7 +674,7 @@ def _news_items_from_archive(categories, limit_per, banned=None, boosted=None):
         if not meta:
             continue
         kept = 0
-        for a in _read_archive(category=cat):
+        for a in _iter_archive(category=cat):
             domain = a.get("source") or _extract_domain(a.get("url", ""))
             if not domain or domain in banned:
                 continue
@@ -769,16 +769,46 @@ def _fetch_news_items(categories=None, limit_per=4):
     if _network_is_offline():
         return _register_news_provenance(
             _news_items_from_archive(categories, limit_per, banned, boosted))
-    items, idx = [], 0
-    for cat in categories:
+
+    def _category_results(cat):
         meta = category_meta(cat)
         if not meta:
-            continue
+            return None
         # RSS is primary; Brave Search is an optional supplemental fallback only
         # when RSS came back empty (e.g. every feed in the category timed out).
         results = _rss_results(meta.get("feeds", []), limit=max(limit_per * 4, 12))
         if not results:
             results = _brave_results(meta["query"], limit=max(limit_per * 2, 8))
+        return meta, results
+
+    # Categories are fetched IN PARALLEL. Each one may wait up to _rss_results'
+    # 20 s ceiling for a slow feed; in sequence that was six ceilings end to
+    # end (a voice turn measured 20-48 s for one search_news call). In
+    # parallel the whole feed costs the slowest category, not the sum. The
+    # items are still assembled in category order below, so the feed reads
+    # exactly as before. Same explicit-shutdown rule as _rss_results: never a
+    # `with` block, whose unbounded join would undo the ceiling.
+    fetched = {}
+    pool = ThreadPoolExecutor(max_workers=max(1, min(8, len(categories))))
+    try:
+        futures = {pool.submit(_category_results, c): c for c in categories}
+        try:
+            for fut in as_completed(futures, timeout=30):
+                try:
+                    fetched[futures[fut]] = fut.result()
+                except Exception:
+                    fetched[futures[fut]] = None
+        except TimeoutError:
+            pass
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    items, idx = [], 0
+    for cat in categories:
+        got = fetched.get(cat)
+        if not got:
+            continue
+        meta, results = got
         kept = 0
         for r in results:
             domain = r.get("source") or _extract_domain(r.get("url", ""))
@@ -818,6 +848,85 @@ def _fetch_news_items(categories=None, limit_per=4):
         if cached:
             return _register_news_provenance(cached)
     return _register_news_provenance(items)
+
+
+# ── Fast feed for conversational callers ────────────────────────────────────
+#
+# A spoken "what's in the news?" cannot wait for forty RSS feeds. The agent and
+# voice tools read the feed through news_items_fast(), which serves:
+#
+#   fresh    (younger than NEWS_FRESH_S)  immediately;
+#   stale    (younger than NEWS_STALE_S)  immediately, and refreshes in the
+#            background so the next ask is fresh;
+#   nothing  waits up to `wait_s` for a live fetch, then answers from the
+#            on-disk archive while the fetch finishes into the cache.
+#
+# The News workspace keeps calling _fetch_news_items() directly: it shows a
+# loading state, and its users expect a live pull.
+
+NEWS_FRESH_S = 300
+NEWS_STALE_S = 3600
+_NEWS_CACHE: dict = {}          # limit_per -> (fetched_at, items)
+_NEWS_INFLIGHT: dict = {}       # limit_per -> threading.Event, set when done
+_NEWS_LOCK = threading.Lock()
+
+
+def _news_refresh(limit_per: int) -> threading.Event:
+    """Start (or join) one background fetch for this cache key."""
+    with _NEWS_LOCK:
+        ev = _NEWS_INFLIGHT.get(limit_per)
+        if ev is not None:
+            return ev
+        ev = threading.Event()
+        _NEWS_INFLIGHT[limit_per] = ev
+
+    def run():
+        try:
+            items = _fetch_news_items(limit_per=limit_per)
+            if items:
+                with _NEWS_LOCK:
+                    _NEWS_CACHE[limit_per] = (_time.time(), items)
+        except Exception as e:
+            logging.getLogger("friday.news").warning("news refresh failed: %s", e)
+        finally:
+            with _NEWS_LOCK:
+                _NEWS_INFLIGHT.pop(limit_per, None)
+            ev.set()
+
+    threading.Thread(target=run, name="news-refresh", daemon=True).start()
+    return ev
+
+
+def news_items_fast(limit_per: int = 8, wait_s: float = 6.0) -> list:
+    """The current feed for a conversation: never a long wait. See above."""
+    now = _time.time()
+    with _NEWS_LOCK:
+        hit = _NEWS_CACHE.get(limit_per)
+    if hit is not None:
+        age = now - hit[0]
+        if age < NEWS_FRESH_S:
+            return hit[1]
+        if age < NEWS_STALE_S:
+            _news_refresh(limit_per)
+            return hit[1]
+    ev = _news_refresh(limit_per)
+    if ev.wait(timeout=max(0.0, wait_s)):
+        with _NEWS_LOCK:
+            hit = _NEWS_CACHE.get(limit_per)
+        if hit is not None:
+            return hit[1]
+    prefs = _load_briefing_prefs()
+    cats = [c for c in NEWS_CATEGORIES if prefs["categories_enabled"].get(c, True)]
+    return _register_news_provenance(_news_items_from_archive(
+        cats, limit_per, set(_load_banned_sources()), set(_load_boosted_sources())))
+
+
+def warm_news_cache(limit_per: int = 8) -> None:
+    """Fetch in the background if the cache is missing or stale. Never blocks."""
+    with _NEWS_LOCK:
+        hit = _NEWS_CACHE.get(limit_per)
+    if hit is None or _time.time() - hit[0] >= NEWS_FRESH_S:
+        _news_refresh(limit_per)
 
 
 def _gather_live_briefing_context():
@@ -1460,7 +1569,12 @@ def _read_archive(category="", source="", date_from="", date_to=""):
 
     Day files are walked newest-first and each day is sorted newest-first
     internally, so the concatenation is globally newest-first."""
-    out = []
+    return list(_iter_archive(category, source, date_from, date_to))
+
+
+def _iter_archive(category="", source="", date_from="", date_to=""):
+    """_read_archive, lazily: a caller that needs the newest few stops early
+    instead of loading every day file (the archive runs to 100+ MB)."""
     for date_str, _path in _archive_day_files():
         if date_from and date_str < date_from:
             continue
@@ -1474,8 +1588,7 @@ def _read_archive(category="", source="", date_from="", date_to=""):
                 continue
             if source and source not in (a.get("source") or "").lower():
                 continue
-            out.append(a)
-    return out
+            yield a
 
 
 def _news_archiver_tick():

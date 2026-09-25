@@ -167,6 +167,10 @@ def _seed_for(domain):
     return seed
 
 
+#: path -> ((mtime_ns, size), parsed data); see SourceTrustGraph._load_readonly.
+_READ_CACHE: dict = {}
+
+
 class SourceTrustGraph:
     def __init__(self, friday_dir=None):
         self.friday_dir = Path(friday_dir or friday_home())
@@ -187,6 +191,31 @@ class SourceTrustGraph:
             return data
         except Exception:
             return {"sources": {}, "meta": {"version": "1.0"}}
+
+    def _load_readonly(self):
+        """The parsed file, reused until it changes on disk. READERS ONLY.
+
+        source_trust.json runs to megabytes, and the news feed looks up a
+        trust score for every item it shows: parsing the whole file per lookup
+        cost about 115 ms each, 15-20 s for one feed, and a spoken "what's in
+        the news?" waited through all of it. The parse is now keyed on the
+        file's mtime and size, so any write (ours or anyone's) is seen on the
+        next read. Writers still call _load() for a private copy they mutate.
+        Callers must not mutate what this returns.
+        """
+        try:
+            st = self.path.stat()
+        except OSError:
+            return {"sources": {}, "meta": {"version": "1.0"}}
+        key = (st.st_mtime_ns, st.st_size)
+        with self._lock:
+            hit = _READ_CACHE.get(str(self.path))
+            if hit is not None and hit[0] == key:
+                return hit[1]
+        data = self._load()
+        with self._lock:
+            _READ_CACHE[str(self.path)] = (key, data)
+        return data
 
     def _save(self, data):
         data.setdefault("meta", {})["updated_at"] = datetime.now().isoformat(timespec="seconds")
@@ -323,12 +352,13 @@ class SourceTrustGraph:
     # ── reads ──────────────────────────────────────────────────────
 
     def all_sources(self):
-        data = self._load()
-        return list(data["sources"].values())
+        data = self._load_readonly()
+        return [dict(r) for r in data["sources"].values()]
 
     def get(self, domain):
-        data = self._load()
-        return data["sources"].get(_extract_domain(domain))
+        data = self._load_readonly()
+        rec = data["sources"].get(_extract_domain(domain))
+        return dict(rec) if rec is not None else None
 
     def score_for(self, domain):
         """Composite trust score for a domain (seed value if never observed)."""

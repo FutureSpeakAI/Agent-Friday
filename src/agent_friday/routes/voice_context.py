@@ -90,7 +90,9 @@ def _vc_calendar():
 
 def _vc_news(limit=5):
     try:
-        items = _fetch_news_items(limit_per=2)[:limit]
+        # A spoken context block must not wait on forty RSS feeds.
+        from agent_friday.services.news_engine import news_items_fast
+        items = news_items_fast(limit_per=2)[:limit]
         if not items:
             return ""
         cached = " (cached — I'm offline)" if items[0].get("cached") else ""

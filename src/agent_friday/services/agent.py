@@ -1921,7 +1921,10 @@ def _tool_search_news(inp):
     limit = max(1, min(25, limit))
 
     try:
-        pool = _fetch_news_items(limit_per=8)
+        # The conversational read: cached, never a forty-feed wait mid-turn
+        # (news_engine.news_items_fast).
+        from agent_friday.services.news_engine import news_items_fast
+        pool = news_items_fast(limit_per=8)
     except Exception as e:
         return f"search_news error fetching feed: {e}"
 

@@ -116,6 +116,9 @@ PLAYBACK_CHUNK_BYTES = 9600
 # silent upstream is definitively a sick connection — and a false positive
 # only costs a handle-based renewal the user never hears.
 LIVE_STALL_SECONDS = 40
+#: A voice tool slower than this is logged as a warning: it is time the
+#: caller spent listening to silence.
+VOICE_TOOL_SLOW_S = 5.0
 # RMS floor that counts a mic chunk as "speech" for the stall watchdog.
 # Room noise / speaker echo sits well below this; normal speech well above.
 LIVE_SPEECH_RMS = 400
@@ -420,6 +423,25 @@ def _voice_reply_cap(settings=None) -> int:
         return _VOICE_REPLY_TOKENS_DEFAULT
     # A cap larger than the seat can hold is the same defect with a nicer name.
     return max(64, min(n, 2048))
+
+
+async def _run_calls_concurrently(calls, one):
+    """Run `one(call)` for every call at once; results in call order.
+
+    Gemini waits for every function response in a tool-call message before it
+    speaks, so the silence is the slowest call when they run together and the
+    SUM of them when they run one after another (a 9 s mail check followed by a
+    31 s news search was 40 s of dead air). A call that raises is logged and
+    dropped; the others still answer. `None` results are dropped too.
+    """
+    got = await asyncio.gather(*(one(c) for c in calls), return_exceptions=True)
+    out = []
+    for g in got:
+        if isinstance(g, BaseException):
+            _log.error("voice tool call crashed: %s", g)
+        elif g is not None:
+            out.append(g)
+    return out
 
 
 VOICE_TOOL_CHOREOGRAPHY = (
@@ -2538,6 +2560,17 @@ if sock is not None:
         if _supports_resumption:
             live_cfg_kwargs["session_resumption"] = types.SessionResumptionConfig()
 
+        # Calendar, mail and news are the reads a spoken session asks for
+        # first, and each is a multi-second network round trip. Start them now,
+        # in the background, so the first "what's on today?" answers from
+        # memory instead of from Google while the caller waits.
+        if live_voice_tools:
+            try:
+                from agent_friday.services.voice_engine import warm_voice_reads
+                warm_voice_reads()
+            except Exception as _we:
+                _log.info("voice warm-up not started: %s", _we)
+
         # The per-attempt LiveConnectConfig is built inside runner() from
         # live_cfg_kwargs (affective/proactive stripped per endpoint+model).
 
@@ -2637,6 +2670,13 @@ if sock is not None:
             _barged_turn = [False]            # swallow this turn's remaining audio
             _last_barge_ts = [0.0]
             _tool_inflight = [0]              # voice tool runs currently executing
+            _tool_tasks = set()               # their asyncio tasks (kept referenced)
+            # Turn timing, logged at INFO for every turn: how long after the
+            # user's last transcribed words the first audio came back. A stall
+            # like the 40 s one this replaced is then one grep away.
+            _user_words_ts = [0.0]
+            _turn_timed = [True]
+            _turn_tools = []
             # The barge window must track CLIENT PLAYBACK, not model streaming:
             # Gemini generates faster than real-time, so the turn often finishes
             # streaming seconds before Friday's voice finishes coming out of the
@@ -2784,9 +2824,16 @@ if sock is not None:
                         # then send_tool_response() the results back so the model
                         # speaks from real data. Side effects (UI navigate, citation
                         # chips) are emitted to the browser from inside _voice_tool_run.
+                        #
+                        # The calls in one message run CONCURRENTLY. Gemini
+                        # can ask for several at once ("any urgent email, and
+                        # what's in the news?") and waits for every answer
+                        # before it speaks, so running them one after another
+                        # made the silence the SUM of the tools (measured: 9 s
+                        # + 31 s = 40 s) instead of the slowest one.
                         fcs = getattr(tc, 'function_calls', None) or []
-                        frs = []
-                        for fc in fcs:
+
+                        async def _one(fc):
                             fname = getattr(fc, 'name', '') or ''
                             try:
                                 fargs = dict(getattr(fc, 'args', None) or {})
@@ -2799,6 +2846,7 @@ if sock is not None:
                             # so without this a voice tool call (or its
                             # failure) is invisible after the fact.
                             _log.info("voice tool call: %s(%s)", fname, fargs)
+                            _turn_tools.append(fname)
                             _safe_send({"type": "status", "text": f"⚙ {fname}"})
                             # PROCESS ORB -- the execution receipt. Every text
                             # tool call registers one (services/agent.py
@@ -2829,16 +2877,23 @@ if sock is not None:
                             # NeverSendBlocked verdict fall through to the
                             # ungated result).
                             result = _gate_voice_tool_result(result, fname)
-                            _log.info("voice tool result: %s -> %d chars", fname, len(result or ''))
-                            _voice_orb_finish(_orb_id, fname, fargs, result,
-                                              (_time.time() - _orb_t0) * 1000.0)
+                            _took = _time.time() - _orb_t0
+                            _log.info("voice tool result: %s -> %d chars in %.2fs",
+                                      fname, len(result or ''), _took)
+                            if _took > VOICE_TOOL_SLOW_S:
+                                _log.warning("voice tool %s took %.1fs; the caller heard "
+                                             "silence for that long", fname, _took)
+                            _voice_orb_finish(_orb_id, fname, fargs, result, _took * 1000.0)
                             _kw = {"name": fname, "response": {"result": result}}
                             if fid is not None:
                                 _kw["id"] = fid
                             try:
-                                frs.append(types.FunctionResponse(**_kw))
+                                return types.FunctionResponse(**_kw)
                             except Exception as _fe:
                                 _vlog(f'FunctionResponse build failed: {_fe}')
+                                return None
+
+                        frs = await _run_calls_concurrently(fcs, _one)
                         if frs:
                             try:
                                 await sess.send_tool_response(function_responses=frs)
@@ -3029,7 +3084,9 @@ if sock is not None:
                                             _grace = max(0.5, min(_secs if _secs is not None else 3.0, 8.0))
                                             _goaway_drain_deadline[0] = _time.time() + _grace
                                             _vlog(f'GoAway from Gemini (time_left={_tl}) — draining ≤{_grace:.1f}s, then renewing via resumption handle')
-                                            if not _model_speaking[0]:
+                                            # A tool still running would answer a
+                                            # dead leg: drain it too, within the grace.
+                                            if not _model_speaking[0] and _tool_inflight[0] == 0:
                                                 sdone.set()
                                                 return
                                         if _gemini_chunks_received <= 5 or _gemini_chunks_received % 20 == 0:
@@ -3048,6 +3105,8 @@ if sock is not None:
                                                 _vlog(f'input_transcription: {in_tr.text!r}')
                                                 in_buf.append(in_tr.text)
                                                 _safe_send({"type": "input_transcript", "text": in_tr.text})
+                                                _user_words_ts[0] = _time.time()
+                                                _turn_timed[0] = False
                                             mt = getattr(sc, 'model_turn', None)
                                             if mt and getattr(mt, 'parts', None):
                                                 for part in mt.parts:
@@ -3068,6 +3127,13 @@ if sock is not None:
                                                             # approximation of audio onset).
                                                             _barge.reset_turn()
                                                         _model_speaking[0] = True
+                                                        if not _turn_timed[0]:
+                                                            _turn_timed[0] = True
+                                                            _log.info(
+                                                                "voice turn: first audio %.2fs after the user's last words (%s)%s",
+                                                                _time.time() - _user_words_ts[0], model_name,
+                                                                (" after tools " + ", ".join(_turn_tools)) if _turn_tools else "")
+                                                            _turn_tools.clear()
                                                         _audio_bytes_from_gemini += len(il.data)
                                                         if _barged_turn[0]:
                                                             # User barged in — swallow the
@@ -3118,12 +3184,24 @@ if sock is not None:
                                             # (blocking) tool call for a dead
                                             # upstream and tear down the leg
                                             # mid-run.
+                                            #
+                                            # The tools run as a TASK, not inline:
+                                            # awaiting them here stopped this loop
+                                            # reading Gemini for as long as they
+                                            # ran, so transcripts, interruptions and
+                                            # GoAway all queued behind a slow tool.
                                             _tool_inflight[0] += 1
-                                            try:
-                                                await _run_tool_calls(sess, _tc)
-                                            finally:
-                                                _tool_inflight[0] -= 1
-                                                _last_gemini_ts[0] = _time.time()
+
+                                            async def _tool_job(_s=sess, _c=_tc):
+                                                try:
+                                                    await _run_tool_calls(_s, _c)
+                                                finally:
+                                                    _tool_inflight[0] -= 1
+                                                    _last_gemini_ts[0] = _time.time()
+
+                                            _tj = asyncio.create_task(_tool_job())
+                                            _tool_tasks.add(_tj)
+                                            _tj.add_done_callback(_tool_tasks.discard)
                                         # Tool-call cancellation (barge-in during a
                                         # tool run): nothing to undo server-side —
                                         # the next turn supersedes it.
@@ -3131,7 +3209,7 @@ if sock is not None:
                                         # finished (or the grace ran out) so the renewal
                                         # can happen before Google hard-closes the socket.
                                         if _goaway_drain_deadline[0] is not None and (
-                                                not _model_speaking[0]
+                                                (not _model_speaking[0] and _tool_inflight[0] == 0)
                                                 or _time.time() >= _goaway_drain_deadline[0]):
                                             _vlog('GoAway drain complete — ending leg for renewal')
                                             sdone.set()
@@ -3206,6 +3284,8 @@ if sock is not None:
                                     and speech_after_quiet
                                     and 8.0 <= speech_ended_s <= 90.0):
                                 _vlog(f'liveness watchdog: user speaking but no Gemini traffic for {quiet_s:.0f}s — forcing leg renewal')
+                                _log.warning("voice: no answer from Gemini %.0fs after the user spoke; "
+                                             "renewing the session (%s)", quiet_s, model_name)
                                 _safe_send({"type": "status", "text": "connection stalled — renewing"})
                                 sdone.set()
                                 return
@@ -3489,6 +3569,7 @@ if sock is not None:
                             _safe_send({"type": "status", "text": "reconnecting"})
                         leg += 1
                         _vlog(f'voice session leg ended without browser close — renewing (total renewals: {leg})')
+                        _log.info("voice: Gemini session leg ended; renewing (renewal #%d)", leg)
 
                     break  # conversation over on this model — don't try fallbacks
                 except Exception as e:
