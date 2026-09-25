@@ -130,6 +130,73 @@ def _cfg():
         return {}
 
 
+# ── what the model really counts ─────────────────────────────────────────────
+# 4 chars/token is right for English prose and badly wrong for tool output:
+# measured on JSON tool results, a BPE tokenizer counts ~1.55x the estimate,
+# so a transcript "at 67% of budget" was already past a local seat's window.
+# Every provider reports the prompt tokens it actually counted; the loops
+# feed that back here and the estimate is scaled per model.
+_CAL_LOCK = threading.Lock()
+_CALIBRATION = {}            # model -> tokens-per-estimated-token (EMA)
+_CAL_MIN, _CAL_MAX = 0.5, 4.0
+
+
+def calibration(model):
+    with _CAL_LOCK:
+        return _CALIBRATION.get(model or "", 1.0)
+
+
+def observe(model, estimated, actual):
+    """Record that a request estimated at `estimated` tokens was counted as
+    `actual` by the model. Leans toward the larger ratio, because
+    under-counting overflows the seat and over-counting only compacts early."""
+    try:
+        estimated, actual = int(estimated or 0), int(actual or 0)
+    except (TypeError, ValueError):
+        return
+    if estimated < 200 or actual <= 0:
+        return
+    ratio = max(_CAL_MIN, min(_CAL_MAX, actual / estimated))
+    with _CAL_LOCK:
+        old = _CALIBRATION.get(model or "")
+        _CALIBRATION[model or ""] = ratio if old is None else (
+            max(ratio, old * 0.7 + ratio * 0.3))
+
+
+def is_context_overflow(err):
+    """A provider's "this prompt is longer than the context" refusal."""
+    t = str(err).lower()
+    return any(k in t for k in ("exceed_context_size", "exceeds the available context",
+                                "context length", "context_length_exceeded",
+                                "prompt is too long", "maximum context", "too many tokens"))
+
+
+def observe_overflow(model, estimated, err):
+    """Calibrate from an overflow refusal: use the counts when the provider
+    states them ("8519 > 8192"), else assume we under-counted by half."""
+    import re
+    m = re.search(r"(\d{3,})\s*>\s*(\d{3,})", str(err))
+    if m:
+        observe(model, estimated, int(m.group(1)))
+    else:
+        observe(model, estimated, int((estimated or 0) * calibration(model) * 1.5))
+
+
+def schema_tokens(obj):
+    """Estimated tokens of something sent alongside the transcript (tool
+    schemas, a system prompt) -- same 4-chars basis as `estimate_tokens`."""
+    if not obj:
+        return 0
+    try:
+        return len(obj if isinstance(obj, str) else json.dumps(obj, default=str)) // _CHARS_PER_TOKEN
+    except Exception:
+        return 0
+
+
+def effective_tokens(messages, model=None):
+    return int(estimate_tokens(messages) * calibration(model))
+
+
 # ── the window a seat is really served at ────────────────────────────────────
 
 _SERVED_CACHE = {}          # base url -> (at, n_ctx or None)
@@ -235,7 +302,7 @@ def should_compact(messages, model=None, cfg=None, *, window=None, reserve_token
     if len(messages or []) <= keep_head + keep_tail + 1:
         return False
     window = window or resolve_context_window(model, cfg)
-    return estimate_tokens(messages) > _budget(window, cfg, reserve_tokens)
+    return effective_tokens(messages, model) > _budget(window, cfg, reserve_tokens)
 
 
 def _merge_adjacent(messages):
@@ -383,7 +450,7 @@ def claude_summarizer(client, model):
 
 # ── trimming what summarising cannot reach ───────────────────────────────────
 
-def _trim_tail_results(messages, budget, keep_chars=4000):
+def _trim_tail_results(messages, budget, keep_chars=4000, factor=1.0):
     """Cut oversized tool results in the tail (newest untouched last) until
     the transcript fits. Summarising cannot shrink the tail, and one large
     tool result there is enough to overflow a local seat. Returns
@@ -392,10 +459,10 @@ def _trim_tail_results(messages, budget, keep_chars=4000):
     trimmed = 0
     order = sorted(range(len(out)), key=lambda i: -len(_content_text(out[i])))
     for i in order:
-        if estimate_tokens(out) <= budget:
+        if estimate_tokens(out) * factor <= budget:
             break
-        if i == len(out) - 1 and len(out) > 1:
-            continue                          # the newest message stays whole
+        if i == len(out) - 1 and len(out) > 1 and not _is_tool_reply(out[i]):
+            continue                          # the user's newest words stay whole
         m = out[i]
         c = m.get("content")
         if m.get("role") == "tool" and isinstance(c, str) and len(c) > keep_chars:
@@ -479,7 +546,7 @@ def compress_new_output(messages, start, model=None, seat=None):
 
 
 def maybe_compact(messages, model=None, summarizer=None, *, window=None,
-                  reserve_tokens=0, seat=None):
+                  reserve_tokens=0, seat=None, force=False):
     """Return a (possibly) compacted copy of ``messages``.
 
     No-op (returns the original list) when compaction is disabled or the
@@ -491,7 +558,8 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
 
     `window` overrides the resolved context window; `reserve_tokens` is the
     room the reply needs (a reasoning seat's thinking counts). `seat` labels
-    the stats ("local" / "cloud").
+    the stats ("local" / "cloud"). `force` compacts to well under the budget
+    even when the estimate says it fits -- the seat has just refused it.
     """
     if not messages:
         return messages
@@ -500,14 +568,25 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
         return messages
     window = window or resolve_context_window(model, cfg)
     budget = _budget(window, cfg, reserve_tokens)
-    before = estimate_tokens(messages)
-    if before <= budget:
+    factor = calibration(model)
+    before = int(estimate_tokens(messages) * factor)
+    if force:
+        budget = min(budget, int(before * 0.6))
+    elif before <= budget:
         return messages
 
     keep_head = int(cfg.get("keep_head", 3))
     keep_tail = int(cfg.get("keep_tail", 10))
     max_tokens = int(cfg.get("summary_max_tokens", 400))
 
+    # The verbatim tail may use at most half the budget. On a small seat a
+    # fixed "last 10 messages" of tool output is larger than the window
+    # itself, which leaves nothing for summarising to shrink.
+    while keep_tail > 2:
+        _h, _t = _safe_cuts(messages, keep_head, keep_tail)
+        if estimate_tokens(messages[_t:]) * factor <= budget // 2:
+            break
+        keep_tail -= 1
     head_end, tail_start = _safe_cuts(messages, keep_head, keep_tail)
     head, prior = _take_prior_summary(messages[:head_end])
     middle = messages[head_end:tail_start]
@@ -539,11 +618,14 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
 
     result = compacted if compacted is not None else list(messages)
     trimmed = 0
-    if estimate_tokens(result) > budget:
-        result, trimmed = _trim_tail_results(result, budget)
+    for keep_chars in (4000, 2000, 1000, 500):
+        if estimate_tokens(result) * factor <= budget:
+            break
+        result, n = _trim_tail_results(result, budget, keep_chars=keep_chars, factor=factor)
+        trimmed += n
     if compacted is None and not trimmed:
         return messages          # nothing permitted could shrink it
-    after = estimate_tokens(result)
+    after = int(estimate_tokens(result) * factor)
     _record(compacted=compacted is not None, before=before, after=after,
             model=model, window=window, seat=seat, trimmed=trimmed)
     try:

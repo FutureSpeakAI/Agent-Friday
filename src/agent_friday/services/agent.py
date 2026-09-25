@@ -9491,7 +9491,10 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 convo, _hr_mark[0], model=model or ANTHROPIC_MODEL_DEFAULT, seat="cloud")
             _new = _compaction.maybe_compact(
                 _new, model=model or ANTHROPIC_MODEL_DEFAULT, summarizer=_claude_summary,
-                reserve_tokens=int(max_tokens or 0), seat="cloud")
+                reserve_tokens=int(max_tokens or 0) + int(
+                    (_compaction.schema_tokens(CLAUDE_TOOLS) + _compaction.schema_tokens(safe_system))
+                    * _compaction.calibration(model or ANTHROPIC_MODEL_DEFAULT)),
+                seat="cloud")
             if _new is not convo:
                 convo[:] = _new
         except Exception as _ce:
@@ -9737,6 +9740,17 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             resp = client.messages.create(**kwargs)
             _rtrace.after_anthropic_response(resp, model=kwargs.get("model"), seat="cloud",
                                              thinking_requested=bool(_thinking_cfg))
+            try:
+                _u = getattr(resp, "usage", None)
+                _compaction.observe(model or ANTHROPIC_MODEL_DEFAULT,
+                                    _compaction.estimate_tokens(convo)
+                                    + _compaction.schema_tokens(kwargs.get("tools"))
+                                    + _compaction.schema_tokens(kwargs.get("system")),
+                                    sum(int(getattr(_u, _k, 0) or 0) for _k in (
+                                        "input_tokens", "cache_read_input_tokens",
+                                        "cache_creation_input_tokens")))
+            except Exception:
+                pass
             # B4: accumulate token counts for the activity-ledger record.
             _iter_tok_in = _iter_tok_out = 0
             try:
@@ -10046,8 +10060,11 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     _seat_summary = _compaction.seat_summarizer(send_fn)
 
     _hr_mark = [len(convo)]
+    # The tool schemas ride in every request but are not part of the
+    # transcript compaction can shrink; they are reserved like the reply.
+    _schema_tokens = [_compaction.schema_tokens(oai_tools)]
 
-    def _compact_convo():
+    def _compact_convo(force=False):
         try:
             # Headroom first, over what the last round added; then summarise
             # only if the transcript is still over budget.
@@ -10055,13 +10072,39 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                                                    seat=_compact_seat)
             _new = _compaction.maybe_compact(
                 _new, model=model, summarizer=_seat_summary,
-                reserve_tokens=int(max_tokens or 0), seat=_compact_seat)
+                reserve_tokens=int(max_tokens or 0) + int(
+                    _schema_tokens[0] * _compaction.calibration(model)),
+                seat=_compact_seat, force=force)
             if _new is not convo:
                 convo[:] = _new
         except Exception as _ce:
             print(f"  [compaction] skipped: {_ce}")
         _hr_mark[0] = len(convo)
     _compact_convo()
+
+    # Every round teaches compaction what this model really counts (the
+    # 4-chars estimate under-counts tool output by ~1.5x), and a round the
+    # seat refuses as too long is compacted harder and sent once more rather
+    # than ending the run.
+    _raw_send = send_fn
+
+    def send_fn(_c, _tools, **_kw):
+        _schema_tokens[0] = _compaction.schema_tokens(_tools)
+        _est = _compaction.estimate_tokens(_c) + _schema_tokens[0]
+        try:
+            _r = _raw_send(_c, _tools, **_kw)
+        except Exception as _se:
+            if not _compaction.is_context_overflow(_se):
+                raise
+            _compaction.observe_overflow(model, _est, _se)
+            _compact_convo(force=True)
+            _est = _compaction.estimate_tokens(_c) + _schema_tokens[0]
+            _r = _raw_send(_c, _tools, **_kw)
+        try:
+            _compaction.observe(model, _est, ((_r or {}).get("usage") or {}).get("prompt_tokens"))
+        except Exception:
+            pass
+        return _r
     # The full registry, for `load_tools` to draw from. None means progressive
     # disclosure is off and the loop behaves exactly as it always has.
     from agent_friday.services import tool_catalogue as _TC
