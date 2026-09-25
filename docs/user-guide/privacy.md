@@ -55,9 +55,12 @@ medicine and law. It does not understand meaning. "She started sertraline last
 month" contains nothing that looks like a medical record and would be sent. In
 cloud mode, assume the provider can read what you type.
 
-**Unrestricted cloud.** On a PC that cannot run local models, first-run setup
-may ask you to accept unrestricted cloud explicitly. Only that recorded choice
-turns the gate's safeguards off; nothing else does.
+**Unrestricted cloud.** After first-run setup, Friday asks how much the cloud
+should see. On a PC that can run local models, the answers are private
+(local), cloud with the safeguards on, or unrestricted cloud. On a PC that
+cannot, the answers are cloud with the safeguards on, or unrestricted cloud.
+Only a recorded "unrestricted" turns the gate's safeguards off; nothing else
+does. You can change the answer in Settings › Privacy & Approvals.
 
 **File grants.** To send one specific document to a cloud model on purpose,
 create a file grant: it is pinned to that file's content and expires. See

@@ -38215,6 +38215,7 @@ function CloudConsentGate({ onDone }) {
   const capable = !!cap.capable;
   const roleLabel = { text: 'Reasoning (chat)', voice: 'Voice',
     image: 'Image generation', video: 'Video generation' };
+  const failing = Object.entries(cap.roles || {}).filter(([, r]) => !r.ok);
 
   const submit = (picked) => {
     setSaving(true);
@@ -38246,45 +38247,61 @@ function CloudConsentGate({ onDone }) {
     React.createElement('h1', {
       style: { fontSize: 26, fontWeight: 600, marginBottom: 22, color: '#fff' }
     }, capable ? 'Private, or unrestricted?'
-              : 'This machine needs the cloud for part of the work'),
+              : 'How much should the cloud see?'),
 
     !capable && React.createElement(React.Fragment, null,
       React.createElement('p', { style: para },
-        'Unrestricted cloud access — every privacy safeguard off — is a ' +
-        'decision you make, not a default you land in. On this machine, ' +
-        'part of the work Friday does cannot run privately, locally:'),
-      React.createElement('ul', { style: { marginBottom: 18, paddingLeft: 20 } },
-        Object.entries(cap.roles || {}).filter(([, r]) => !r.ok).map(([role, r]) =>
-          React.createElement('li', { key: role, style: { ...para, marginBottom: 8 } },
-            React.createElement('b', null, roleLabel[role] || role), ': ',
-            r.why))),
-      !cap.chain_ok && cap.chain_why && React.createElement('p', { style: para },
-        cap.chain_why),
+        'Some of what Friday does cannot run on this computer, so that part ' +
+        'will use the cloud:'),
+      React.createElement('ul', { style: { marginBottom: 12, paddingLeft: 20 } },
+        failing.map(([role]) =>
+          React.createElement('li', { key: role, style: { ...para, marginBottom: 4 } },
+            roleLabel[role] || role)),
+        !failing.length && !cap.chain_ok && cap.chain_why &&
+          React.createElement('li', { key: 'chain', style: { ...para, marginBottom: 4 } },
+            cap.chain_why.charAt(0).toUpperCase() + cap.chain_why.slice(1) + '.')),
+      (failing.length > 0 || cap.chain_why) && React.createElement('details', {
+        style: { marginBottom: 18, fontSize: 12, color: '#9aa5b1' }
+      },
+        React.createElement('summary', { style: { cursor: 'pointer' } }, 'Technical detail'),
+        React.createElement('ul', { style: { paddingLeft: 20, marginTop: 8, lineHeight: 1.6 } },
+          failing.map(([role, r]) => React.createElement('li', { key: role },
+            (roleLabel[role] || role) + ': ' + (r.why || 'no reason given'))),
+          !cap.chain_ok && cap.chain_why && React.createElement('li', { key: 'chain' },
+            cap.chain_why))),
       React.createElement('p', { style: para },
-        'Continuing sends full, unredacted context to your configured ' +
-        'cloud provider for that work — no safeguard held back. You can ' +
-        'revisit this in Settings if your hardware or provider changes.'),
+        'The question is how much the cloud gets to see. With the safeguards ' +
+        'on, Friday holds back money, health, legal and identity details and ' +
+        'tells you when she has. Unrestricted sends everything as written. ' +
+        'You can change this later in Settings.'),
       err && React.createElement('div', {
         style: { color: '#ff0080', fontSize: 12, marginBottom: 12 }
       }, err),
-      React.createElement('button', {
-        className: 'btn', disabled: saving,
-        onClick: () => submit('cloud_unrestricted')
-      }, saving ? 'Recording…' : 'I understand — use the cloud, unrestricted')),
+      React.createElement('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
+        React.createElement('button', {
+          className: 'btn', disabled: saving,
+          onClick: () => submit('cloud_guarded')
+        }, saving ? 'Recording…' : 'Keep the safeguards on'),
+        React.createElement('button', {
+          className: 'btn', disabled: saving, style: { opacity: 0.8 },
+          onClick: () => submit('cloud_unrestricted')
+        }, 'Use the cloud unrestricted'))),
 
     capable && React.createElement(React.Fragment, null,
       React.createElement('p', { style: para },
         'This machine can run reasoning, voice, image, and video ' +
         'generation locally — private, never leaving this device. Or you ' +
-        'can choose unrestricted cloud access instead, with no safeguard ' +
-        'held back. Either is a real choice; whichever you pick is what ' +
-        'you get.'),
+        'can use the cloud, with the safeguards on or with none held ' +
+        'back. Each is a real choice; whichever you pick is what you get.'),
       err && React.createElement('div', {
         style: { color: '#ff0080', fontSize: 12, marginBottom: 12 }
       }, err),
       [
         { mode: 'local_private', label: 'Private (local)',
           detail: 'Reasoning, voice, image, and video stay on this device.' },
+        { mode: 'cloud_guarded', label: 'Cloud, safeguards on',
+          detail: 'The cloud helps where it is useful; money, health, legal ' +
+                  'and identity details are held back.' },
         { mode: 'cloud_unrestricted', label: 'Unrestricted (cloud)',
           detail: 'Full context reaches your configured cloud provider — ' +
                   'no safeguard held back.' },
@@ -42759,7 +42776,8 @@ function CloudConsentRow({ consent, onChanged, compact }) {
   const when = c.at ? new Date(c.at) : null;
   const whenTxt = when && !isNaN(when) ? when.toLocaleDateString() : (c.source === 'legacy_unrestricted_cloud_flag' ? 'legacy flag' : 'never');
   const choiceTxt = c.answered === false || !c.choice ? 'not answered (gated)'
-    : c.choice === 'cloud_unrestricted' ? 'unrestricted' : 'local, private';
+    : c.choice === 'cloud_unrestricted' ? 'unrestricted'
+    : c.choice === 'cloud_guarded' ? 'cloud, safeguards on' : 'local, private';
   const cap = assess && assess.capability;
   return E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11 } },
     E('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
@@ -42780,8 +42798,10 @@ function CloudConsentRow({ consent, onChanged, compact }) {
         cap && cap.capable ? 'This machine can run private-local today.'
           : 'This machine still cannot run the full private-local set: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'no reason given') + '.'),
       E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-        E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('local_private') },
+        cap && cap.capable && E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('local_private') },
           'Keep it local and private'),
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('cloud_guarded') },
+          'Cloud with safeguards on'),
         E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('cloud_unrestricted') },
           'Allow unrestricted cloud'),
         E('button', { className: 'settings-btn', disabled: busy, onClick: () => setAssess(null),

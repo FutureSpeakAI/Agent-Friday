@@ -27,19 +27,25 @@ guess at what the machine can do:
 
   * **Capable hardware** — a genuine choice between "local_private" and
     "cloud_unrestricted". Either answer is durable once given.
-  * **Insufficient hardware** — no local option is offered at all. The
-    machine's actual limits are stated plainly, and unrestricted cloud is
-    still something the user consents to, not something they land in by
-    silence.
+  * **Insufficient hardware** — no local option is offered. The machine's
+    actual limits are stated plainly, and the choice is between
+    "cloud_guarded" (the cloud does the work it has to, with every
+    safeguard left on) and "cloud_unrestricted". Unrestricted cloud is
+    something the user consents to, never something they land in by
+    silence, and never the only button on the screen.
+
+Either shape can also be answered "cloud_guarded"; it is the way to say no
+to unrestricted access without claiming anything about the hardware.
 
 What ``cloud_consent`` means
 -----------------------------
 ``model_routing.cloud_consent`` is a record, not a flag:
-``{"answered": bool, "choice": "local_private" | "cloud_unrestricted" | None,
+``{"answered": bool, "choice": "local_private" | "cloud_unrestricted" |
+"cloud_guarded" | None,
 "at": iso-str | None, "capability_snapshot": dict | None}``.
 ``is_unrestricted_cloud()`` (below) is True iff ``answered`` is True AND
 ``choice == "cloud_unrestricted"``. Everything else — unanswered, answered
-"local_private", or any read failure — is gated. Choosing "local_private"
+"local_private" or "cloud_guarded", or any read failure — is gated. Choosing "local_private"
 does not mean local-only routing is force-enabled elsewhere; it means the
 one flag capable of turning every safeguard off at once stays off.
 
@@ -88,7 +94,13 @@ _log = logging.getLogger("friday.privacy.cloud_consent")
 
 CHOICE_LOCAL = "local_private"
 CHOICE_CLOUD = "cloud_unrestricted"
-VALID_CHOICES = (CHOICE_LOCAL, CHOICE_CLOUD)
+#: "Use the cloud where it is needed, with every safeguard left on." The
+#: answer for anyone who does not want unrestricted access, and the only
+#: refusal available on hardware that cannot offer local_private. It is
+#: valid on any machine because it promises nothing about the hardware:
+#: sensitive material is held back exactly as it is while unanswered.
+CHOICE_GUARDED = "cloud_guarded"
+VALID_CHOICES = (CHOICE_LOCAL, CHOICE_CLOUD, CHOICE_GUARDED)
 
 #: The bar for "this machine can actually run local models for the work in
 #: question", not merely "this machine can load the weights". `fits` (HR1/
@@ -292,15 +304,12 @@ def assess_local_capability(profile: dict | None = None) -> dict:
                                     if st.get("where") in ("cloud", "refused")]
                 if cloud_or_refused:
                     chain_ok = False
-                    st = cloud_or_refused[0]
-                    chain_why = ("a %s turn's own resource plan sends its %s "
-                                "stage to %s on this hardware, not a local "
-                                "seat" % (name, st.get("role"), st.get("where")))
+                    chain_why = _chain_sentence(name, cloud_or_refused[0])
                     break
                 if result.get("contract_ok") is False:
                     chain_ok = False
-                    chain_why = ("a %s turn's resource plan reports "
-                                "contract_ok=False on this hardware" % name)
+                    chain_why = ("%s cannot all be held in this machine's "
+                                "memory at once" % _turn_phrase(name))
                     break
         except Exception as exc:
             chain_ok, chain_why = False, "chain planning failed (%s)" % exc
@@ -315,6 +324,36 @@ def assess_local_capability(profile: dict | None = None) -> dict:
                 "roles": {r: {"ok": False, "why": "capability check failed"}
                           for r in ("text", "voice", "image", "video")},
                 "chain_ok": False, "chain_why": "capability check failed"}
+
+
+#: Plain words for the planner's turn and stage names. The consent screen
+#: shows ``chain_why`` to the person deciding, so it is a sentence, never
+#: the planner's identifiers.
+_TURN_WORDS = {
+    "voice_only": "a spoken conversation",
+    "with_image": "a spoken conversation that also makes a picture",
+}
+_STAGE_WORDS = {
+    "interactive_brain": "the thinking",
+    "text": "the thinking",
+    "image": "the picture",
+    "video": "the video",
+    "stt": "understanding speech",
+    "tts": "the spoken voice",
+    "voice": "the voice",
+}
+
+
+def _turn_phrase(name: str) -> str:
+    return _TURN_WORDS.get(name) or ("a %s conversation" % str(name).replace("_", " "))
+
+
+def _chain_sentence(name: str, stage: dict) -> str:
+    part = _STAGE_WORDS.get(stage.get("role")) or "one step"
+    turn = _turn_phrase(name)
+    if stage.get("where") == "cloud":
+        return "in %s, %s would have to be done in the cloud" % (turn, part)
+    return "in %s, this machine cannot do %s at all" % (turn, part)
 
 
 class ConsentRejected(RuntimeError):

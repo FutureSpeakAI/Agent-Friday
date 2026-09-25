@@ -2543,7 +2543,8 @@ DEFAULT_SETTINGS = {
         # tool-capable floor exists to avoid.
         "local_model": _FLOOR_MODEL,
         # ── Explicit cloud-consent record ──
-        # {"answered": bool, "choice": "local_private"|"cloud_unrestricted"|None,
+        # {"answered": bool,
+        #  "choice": "local_private"|"cloud_unrestricted"|"cloud_guarded"|None,
         #  "at": iso-str|None, "capability_snapshot": dict|None}. The ONLY thing
         # `privacy.cloud_consent.is_unrestricted_cloud()` reads to decide whether
         # every safeguard is off. See `privacy/cloud_consent.py` for why this
