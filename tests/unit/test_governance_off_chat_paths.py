@@ -377,6 +377,8 @@ REVIEWED_BUILTINS = {
     "content_publisher": "publishes posts the owner scheduled; new text needs a card",
     "content_analytics": "reads post metrics from connected platforms",
     "content_insights": "summarises local post metrics",
+    "relationship_sync": "reads the owner's mail and calendar headers, writes the "
+                         "local timeline, and raises local notifications only",
 }
 
 
@@ -398,9 +400,12 @@ def test_every_scheduler_builtin_is_reviewed():
 # ── Side-effect sinks outside the tool path ─────────────────────────────────
 
 _SRC = Path(agent.__file__).resolve().parents[1]
-_GOOGLE_RESOURCES = {"messages", "threads", "drafts", "labels", "events"}
+_GOOGLE_RESOURCES = {"messages", "threads", "drafts", "labels", "events", "people",
+                     "contactGroups"}
 _GOOGLE_WRITES = {"send", "modify", "trash", "untrash", "delete", "batchModify",
-                  "batchDelete", "create", "update", "patch", "insert"}
+                  "batchDelete", "create", "update", "patch", "insert",
+                  "createContact", "updateContact", "deleteContact",
+                  "batchCreateContacts", "batchUpdateContacts", "batchDeleteContacts"}
 _DIRECT_SINKS = {"send_sms", "create_call", "update_call", "_send_sms_now"}
 
 
@@ -510,6 +515,8 @@ REVIEWED_SINKS = {
         "the owner's click in the calendar",
     ("services/publisher.py", "_run_target"):
         "a post the owner scheduled; rewritten text needs a card",
+    ("services/google_contacts_write.py", "save_contact"):
+        "the save_google_contact tool, which is outward; refuses accounts without the contacts scope",
 }
 
 
@@ -527,3 +534,9 @@ def test_the_sink_scanner_catches_a_planted_send():
     tree = ast.parse("def sneaky(svc):\n    svc.users().messages().send(userId='me', body={}).execute()\n")
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
     assert any(_sink(c) == "google messages.send" for c in calls)
+
+
+def test_the_sink_scanner_catches_a_planted_contact_write():
+    tree = ast.parse("def sneaky(svc):\n    svc.people().createContact(body={}).execute()\n")
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+    assert any(_sink(c) == "google people.createContact" for c in calls)

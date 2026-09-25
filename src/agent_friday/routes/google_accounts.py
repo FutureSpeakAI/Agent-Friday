@@ -146,6 +146,9 @@ def connect_google_account():
     include_modify = bool(body.get("include_modify"))
     if body.get("mailbox"):
         include_send = include_modify = True
+    # Saving to Google Contacts: only from the Contacts workspace's explicit
+    # button, never inherited by a reconnect.
+    include_contacts_write = bool(body.get("include_contacts_write"))
     existing = None
     if account_id:
         existing = ga.get_account(account_id)
@@ -154,7 +157,8 @@ def connect_google_account():
             label = label or (existing.get("label") or "")
     try:
         flow, redirect_uri, client_type = ga.build_auth_flow(
-            include_send=include_send, include_modify=include_modify)
+            include_send=include_send, include_modify=include_modify,
+            include_contacts_write=include_contacts_write)
         auth_kwargs = {
             "access_type": "offline",
             "include_granted_scopes": "true",
@@ -178,7 +182,8 @@ def connect_google_account():
                                # exchanged for a different scope set than the
                                # one the person just approved.
                                "include_send": include_send,
-                               "include_modify": include_modify}
+                               "include_modify": include_modify,
+                               "include_contacts_write": include_contacts_write}
             # prune stale (>15 min) pending entries
             for s in [k for k, v in _PENDING.items() if _time.time() - v["ts"] > 900]:
                 _PENDING.pop(s, None)
@@ -196,6 +201,7 @@ def connect_google_account():
                 "client_kind": _kind,
                 "requesting_send": include_send,
                 "requesting_modify": include_modify,
+                "requesting_contacts_write": include_contacts_write,
                 "requested_scopes": [x for x in ga.mailbox_scopes(
                                         (existing or {}).get("scopes") if existing else None)
                                      if (x["scope"] != ga.GMAIL_SEND or include_send)
@@ -255,7 +261,8 @@ def google_account_callback():
     try:
         flow, _, _ = ga.build_auth_flow(
             state=state, include_send=bool(pending.get("include_send")),
-            include_modify=bool(pending.get("include_modify")))
+            include_modify=bool(pending.get("include_modify")),
+            include_contacts_write=bool(pending.get("include_contacts_write")))
         # Replay the verifier the START leg generated — the freshly rebuilt
         # flow above has none of its own (it never called authorization_url()).
         flow.code_verifier = pending["verifier"]
@@ -280,6 +287,12 @@ def google_account_callback():
                 if can_modify else
                 "<p>Mailbox changes were <b>not</b> granted; archive and labels "
                 "stay in Friday only.</p>")
+        if pending.get("include_contacts_write"):
+            send_line += (
+                "<p>Friday <b>can save contacts</b> to this account — each save "
+                "still waits for your approval.</p>"
+                if ga.CONTACTS_RW in (rec.get("scopes") or []) else
+                "<p>Saving contacts was <b>not</b> granted; contacts stay read-only.</p>")
         return (
             "<h2>✅ Google account connected</h2>"
             f"<p><b>{rec.get('email','')}</b> ({rec.get('label','')}) is now linked "

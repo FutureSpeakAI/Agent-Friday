@@ -6620,6 +6620,129 @@ TOOL_RINGS.update({
     "knowledge_communities": 0,
 })
 
+
+# ══════════════════════════════════════════════════════════════
+#  RELATIONSHIP MEMORY — who the owner talks to, when, and follow-ups
+# ══════════════════════════════════════════════════════════════
+# The timeline is built locally from mail and calendar HEADERS by a scheduler
+# builtin (services/relationship_memory.py). The first three tools only read
+# or write that local store. save_google_contact changes the owner's Google
+# account and is outward (governance/action_gate.py).
+
+def _tool_person_timeline(inp):
+    from agent_friday.services import relationship_memory as rm
+    inp = inp or {}
+    who = (inp.get("person") or "").strip()
+    if not who:
+        return "person_timeline needs a name or an email address."
+    return json.dumps(rm.person_timeline(who, limit=inp.get("limit") or 20),
+                      ensure_ascii=False, default=str)
+
+
+def _tool_people_at(inp):
+    from agent_friday.services import relationship_memory as rm
+    inp = inp or {}
+    org = (inp.get("organisation") or inp.get("organization") or "").strip()
+    if not org:
+        return "people_at needs an organisation name or an email domain."
+    return json.dumps(rm.people_at(org, limit=inp.get("limit") or 50),
+                      ensure_ascii=False, default=str)
+
+
+def _tool_set_follow_up(inp):
+    from agent_friday.services import relationship_memory as rm
+    inp = inp or {}
+    return json.dumps(rm.set_follow_up(inp.get("person") or "", note=inp.get("note") or "",
+                                       due=(inp.get("due") or "").strip() or None,
+                                       in_days=inp.get("in_days")),
+                      ensure_ascii=False, default=str)
+
+
+def _tool_save_google_contact(inp):
+    from agent_friday.services import google_contacts_write as gcw
+    inp = inp or {}
+    res = gcw.save_contact(
+        account_id=inp.get("account_id") or "", resource_name=inp.get("resource_name") or "",
+        name=inp.get("name") or "", email=inp.get("email") or "",
+        phone=inp.get("phone") or "", company=inp.get("company") or "",
+        job_title=inp.get("job_title") or "")
+    return json.dumps(res, ensure_ascii=False, default=str)
+
+
+CLAUDE_TOOLS.extend([
+    {
+        "name": "person_timeline",
+        "description": (
+            "When the owner last talked to someone, and how: every email and "
+            "meeting recorded with that person (dates, subjects, meeting titles, "
+            "direction), first and last contact, when they last wrote and when "
+            "the owner last wrote, and open follow-ups. Built locally from mail "
+            "and calendar headers; message bodies are never recorded. Use for "
+            "'when did I last talk to X' and 'what have X and I been discussing'."),
+        "input_schema": {"type": "object", "properties": {
+            "person": {"type": "string", "description": "A name or an email address."},
+            "limit": {"type": "integer", "description": "Interactions to return (default 20, max 100)."},
+        }, "required": ["person"]},
+    },
+    {
+        "name": "people_at",
+        "description": (
+            "Who the owner knows at an organisation, and when they last talked: "
+            "matched by email domain (e.g. 'acme' or 'acme.com') and by the "
+            "company on imported contacts. Use for 'who at Acme have I talked to'."),
+        "input_schema": {"type": "object", "properties": {
+            "organisation": {"type": "string", "description": "Company name or email domain."},
+            "limit": {"type": "integer"},
+        }, "required": ["organisation"]},
+    },
+    {
+        "name": "set_follow_up",
+        "description": (
+            "Set a local reminder to follow up with a person; Friday notifies the "
+            "owner when it is due. Nothing is sent to the person. Resolve who "
+            "'the recruiter from Tuesday' is with person_timeline or search_email "
+            "first, then pass their name or address."),
+        "input_schema": {"type": "object", "properties": {
+            "person": {"type": "string", "description": "Name or email address."},
+            "note": {"type": "string", "description": "What to follow up about."},
+            "due": {"type": "string", "description": "YYYY-MM-DD or an ISO datetime."},
+            "in_days": {"type": "integer", "description": "Alternative to due; default 3."},
+        }, "required": ["person"]},
+    },
+    {
+        "name": "save_google_contact",
+        "description": (
+            "Create a contact in the owner's Google Contacts, or update one "
+            "(pass resource_name, e.g. people/c123). This changes the owner's "
+            "Google account, so it waits for the owner's approval. It needs an "
+            "account the owner allowed to save contacts; if none is, say so "
+            "plainly and point them to Contacts -> Allow saving to Google Contacts."),
+        "input_schema": {"type": "object", "properties": {
+            "name": {"type": "string"},
+            "email": {"type": "string"},
+            "phone": {"type": "string"},
+            "company": {"type": "string"},
+            "job_title": {"type": "string"},
+            "account_id": {"type": "string", "description": "Which connected account; required when more than one can save."},
+            "resource_name": {"type": "string", "description": "Only to update an existing contact."},
+        }},
+    },
+])
+
+CLAUDE_TOOL_HANDLERS.update({
+    "person_timeline": _tool_person_timeline,
+    "people_at": _tool_people_at,
+    "set_follow_up": _tool_set_follow_up,
+    "save_google_contact": _tool_save_google_contact,
+})
+
+TOOL_RINGS.update({
+    "person_timeline": 0,         # reads the local timeline
+    "people_at": 0,
+    "set_follow_up": 1,           # writes a local reminder
+    "save_google_contact": 2,     # writes to Google; outward in action_gate
+})
+
 # ══════════════════════════════════════════════════════════════
 #  CAPABILITY PREFLIGHT — a tool whose dependency is missing is REMOVED
 # ══════════════════════════════════════════════════════════════

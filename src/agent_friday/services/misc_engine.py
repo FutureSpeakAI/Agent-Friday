@@ -527,6 +527,8 @@ def _contacts_list():
             "overall": overall,
             "last_interaction": p.get('last_interaction'),
             "evidence_count": len(p.get('evidence') or []),
+            "company": p.get('company') or '',
+            "sources": p.get('sources') or [],
         })
     contacts.sort(key=lambda c: c.get('overall') or 0, reverse=True)
     return contacts

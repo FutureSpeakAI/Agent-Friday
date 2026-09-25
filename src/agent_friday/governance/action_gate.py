@@ -131,6 +131,8 @@ OUTWARD_TOOLS = frozenset({
     # A signature binds the owner. The tool only raises a card naming the
     # file, page and placement; services/pdf_signing signs on approval.
     "sign_pdf",
+    # Changes the owner's Google Contacts, which sync to every device.
+    "save_google_contact",
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
@@ -171,6 +173,9 @@ INTERNAL_TOOLS = frozenset({
     # so it undoes Friday's own earlier work and reaches no one.
     "find_free_slots", "release_holds",
     "list_pdf_fields",              # reads a form's fields
+    # Relationship memory: reads of the local timeline, and a local reminder
+    # that is never sent to the person it is about.
+    "person_timeline", "people_at", "set_follow_up",
 })
 
 #: Classified by argument: run_command by its command, content_create_post by

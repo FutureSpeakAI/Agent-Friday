@@ -271,6 +271,95 @@ def people_forgotten():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# -- Relationship memory -------------------------------------------------------
+#
+# The timeline of who the owner has been in touch with, follow-ups, and the
+# LinkedIn import. services/relationship_memory.py holds the rules; these
+# routes are the owner's own clicks in the Contacts workspace.
+
+@contacts_bp.route('/api/relationships/person/<path:name>')
+def relationships_person(name):
+    from agent_friday.services import relationship_memory as rm
+    try:
+        return jsonify({"status": "ok", "timeline": rm.person_timeline(name, limit=30)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@contacts_bp.route('/api/relationships/config', methods=['GET', 'POST'])
+def relationships_config():
+    from agent_friday.services import relationship_memory as rm
+    try:
+        if request.method == 'POST':
+            cfg = rm.set_config(request.get_json(silent=True) or {})
+        else:
+            cfg = rm.get_config()
+        tl = rm._load_timeline()
+        return jsonify({"status": "ok", "config": cfg, "last_sync": tl.get("last_sync"),
+                        "interactions": len(tl.get("interactions") or [])})
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "numbers only"}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@contacts_bp.route('/api/relationships/sync', methods=['POST'])
+def relationships_sync():
+    """Sync now: reads the owner's own mail and calendar headers."""
+    from agent_friday.services import relationship_memory as rm
+    try:
+        return jsonify({"status": "ok", "result": rm.sync()})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@contacts_bp.route('/api/relationships/follow-ups', methods=['GET', 'POST'])
+def relationships_follow_ups():
+    from agent_friday.services import relationship_memory as rm
+    if request.method == 'GET':
+        return jsonify({"status": "ok", "follow_ups": rm.list_follow_ups("open")})
+    data = request.get_json(silent=True) or {}
+    res = rm.set_follow_up(data.get('person') or '', note=data.get('note') or '',
+                           due=(data.get('due') or '').strip() or None,
+                           in_days=data.get('in_days'))
+    if not res.get("ok"):
+        return jsonify({"status": "error", "message": res.get("error")}), 400
+    return jsonify({"status": "ok", "follow_up": res["follow_up"]})
+
+
+@contacts_bp.route('/api/relationships/follow-ups/<fid>/done', methods=['POST'])
+def relationships_follow_up_done(fid):
+    from agent_friday.services import relationship_memory as rm
+    if not rm.complete_follow_up(fid):
+        return jsonify({"status": "error", "message": "No open follow-up with that id"}), 404
+    return jsonify({"status": "ok"})
+
+
+@contacts_bp.route('/api/contacts/import/linkedin', methods=['POST'])
+def contacts_import_linkedin():
+    """Import LinkedIn's Connections.csv. The file is data, read as text only."""
+    from agent_friday.services import relationship_memory as rm
+    data = request.get_json(silent=True) or {}
+    res = rm.import_linkedin_csv(data.get('csv'))
+    if not res.get("ok"):
+        return jsonify({"status": "error", "message": res.get("error")}), 400
+    return jsonify({"status": "ok", "result": res})
+
+
+@contacts_bp.route('/api/contacts/google-write')
+def contacts_google_write():
+    """Which connected accounts may save contacts, for the Allow button."""
+    try:
+        from agent_friday.services import google_accounts as ga
+        from agent_friday.services import google_contacts_write as gcw
+        ok = {a["id"] for a in gcw.writable_accounts()}
+        return jsonify({"status": "ok", "accounts": [
+            {"id": r.get("id"), "email": r.get("email"), "label": r.get("label"),
+             "can_save": r.get("id") in ok} for r in ga.list_accounts()]})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "accounts": []}), 500
+
+
 @contacts_bp.route('/api/contacts')
 def get_contacts():
     """Merged contact list built from trust_graph.json."""
