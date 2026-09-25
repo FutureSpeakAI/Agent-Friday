@@ -1961,8 +1961,8 @@ def _compress_trajectory(messages, model=None):
     """Return a shorter version of the message list.
 
     Splits into 'old' and 'recent' halves.  If the old half is large enough to
-    warrant compression, summarises it via a quick Claude call and replaces it
-    with a synthetic memory block.  Otherwise returns messages unchanged.
+    warrant compression, summarises it on a local model and replaces it with a
+    synthetic memory block.  Otherwise returns messages unchanged.
 
     `model` is optional and additive: callers that know which model the
     trajectory is bound for get a window-appropriate threshold; callers that
@@ -1986,19 +1986,16 @@ def _compress_trajectory(messages, model=None):
         transcript_lines.append(f"{role}: {text}")
     transcript = '\n'.join(transcript_lines)
 
-    try:
-        summary = _generate_text(
-            messages=[{"role": "user", "content":
-                f"Compress the following conversation transcript into a dense, "
-                f"factual memory block (max 600 words). Preserve all decisions, "
-                f"facts, and open questions. Use bullet points.\n\n{transcript}"}],
-            system="You are a lossless conversation compressor. Extract every salient fact.",
-            max_tokens=4096,
-            temperature=0.1,
-        )
-    except Exception as e:
-        print(f"  [TRAJ] Compression failed: {e} — sending truncated history")
-        return messages[-_TRAJ_KEEP_VERBATIM * 2:]  # fallback: just truncate
+    # This runs before the turn is routed, so nothing yet says which seat the
+    # history is bound for. The summary is therefore written only by a LOCAL
+    # model (compaction._default_summarizer runs under the local-only guard);
+    # with none available the history is left whole, and the agent loop
+    # compacts it later with the seat that actually serves the turn.
+    from agent_friday.services.compaction import _default_summarizer
+    summary = _default_summarizer(transcript, max_tokens=800)
+    if not summary:
+        print("  [TRAJ] no local summarizer answered; history left for the loop to compact")
+        return messages
 
     compressed_block = [
         {"role": "user",

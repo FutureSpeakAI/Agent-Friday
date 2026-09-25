@@ -43,14 +43,21 @@ context_bp = Blueprint('context', __name__)
 @context_bp.route('/api/context/compression-stats')
 def context_compression_stats():
     """Cumulative Headroom compression savings (tokens before/after/saved,
-    ratios, availability). The compressor has tracked these since day one —
-    this endpoint finally surfaces them."""
+    ratios, availability, and why it is unavailable when it is), plus the
+    agent loops' transcript compaction under `compaction`. Settings card:
+    "Context Compression (Headroom)"."""
+    cfg = (_load_settings() or {}).get('context_compression') or {}
     try:
-        from agent_friday.services.model_router import _get_context_compressor
-        stats = _get_context_compressor().get_stats()
+        stats = _get_context_compressor(cfg).get_stats()
     except Exception as e:
         stats = {"available": False, "error": str(e)}
-    return jsonify({"status": "ok", "compression": stats})
+    try:
+        from agent_friday.services import compaction as _compaction
+        compaction_stats = _compaction.get_stats()
+    except Exception as e:
+        compaction_stats = {"error": str(e)}
+    return jsonify({"status": "ok", "compression": stats,
+                    "compaction": compaction_stats})
 
 
 @context_bp.route('/api/context/search', methods=['POST'])

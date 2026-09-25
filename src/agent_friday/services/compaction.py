@@ -1,4 +1,4 @@
-﻿"""Transcript auto-compaction (Part C of Self-Sufficient Friday).
+"""Transcript auto-compaction (Part C of Self-Sufficient Friday).
 
 Long voice/chat sessions and long-running ``agent_prompt`` tasks can grow a
 message list past the model's context window. This module compacts the *live
@@ -12,7 +12,24 @@ and the tail (recent turns) verbatim.
 
 Triggering is by **estimated token count** of the assembled transcript (turn
 count is a poor proxy — one big tool dump can blow the budget), firing at
-``trigger_ratio`` × the model context window.
+``trigger_ratio`` × the context window the seat is actually served at, less
+the room reserved for the reply.
+
+The agent loops call this before the first round AND between tool rounds, so
+a run of hundreds of rounds stays inside the window instead of only being
+checked once at the start.
+
+WHO WRITES THE SUMMARY IS A PRIVACY DECISION. The middle of a transcript holds
+whatever its seat was allowed to see: vault reads, local-only conversation,
+tool results that never left the machine. Summarising it on a different model
+sends it wherever that model lives. So:
+
+  * the loops pass their own summarizer — the OpenAI-format loop asks the
+    SAME seat through its own transport (`seat_summarizer`), the Anthropic
+    loop asks Claude, where that transcript is already going;
+  * the default summarizer, for a caller that does not say, runs inside
+    `local_only_guard.local_only`, so it can only ever reach a local model
+    and otherwise degrades to no compaction.
 
 Lossless where it matters: this operates on a *copy* assembled for the model
 call. ``CHAT_HISTORY`` / ``chat_history.json`` keep the full transcript, and
@@ -21,21 +38,64 @@ semantically retrievable even after the middle is summarized in-context.
 """
 
 import json
+import threading
+import time
 
 import agent_friday.core as core
 from agent_friday.core import _load_settings
 
 _CHARS_PER_TOKEN = 4
 _SUMMARY_PREFIX = "[Context Summary]"
+_TRIM_MARKER = "... [{n} characters of this tool result were trimmed to fit the context window]"
+
+# Cumulative, per process — surfaced by GET /api/context/compression-stats.
+_STATS_LOCK = threading.Lock()
+STATS = {
+    "compactions": 0,        # summaries inserted
+    "tokens_before": 0,      # estimated tokens of transcripts that were compacted
+    "tokens_after": 0,       # estimated tokens after compaction
+    "tokens_saved": 0,
+    "trimmed_results": 0,    # oversized tool results cut down in the tail
+    "skipped_no_summary": 0, # over budget, but no permitted summarizer answered
+    "by_seat": {},           # "local" | "cloud" -> compactions
+    "last": None,            # {"at", "model", "window", "before", "after", "seat"}
+}
+
+
+def _record(**kw):
+    with _STATS_LOCK:
+        if kw.get("compacted"):
+            STATS["compactions"] += 1
+            STATS["tokens_before"] += kw["before"]
+            STATS["tokens_after"] += kw["after"]
+            STATS["tokens_saved"] += max(0, kw["before"] - kw["after"])
+            seat = kw.get("seat") or "unknown"
+            STATS["by_seat"][seat] = STATS["by_seat"].get(seat, 0) + 1
+            STATS["last"] = {"at": time.time(), "model": kw.get("model"),
+                             "window": kw.get("window"), "before": kw["before"],
+                             "after": kw["after"], "seat": seat}
+        STATS["trimmed_results"] += kw.get("trimmed", 0)
+        STATS["skipped_no_summary"] += kw.get("skipped", 0)
+
+
+def get_stats():
+    with _STATS_LOCK:
+        s = json.loads(json.dumps(STATS))
+    tb = s["tokens_before"]
+    s["compression_ratio"] = (s["tokens_saved"] / tb) if tb else 0.0
+    return s
 
 
 def _content_text(msg):
-    """Flatten a message's content to text for estimation/summarization."""
+    """Flatten a message's content to text for estimation/summarization.
+
+    Both wire formats: Anthropic content blocks (text / tool_use /
+    tool_result) and OpenAI-format assistant `tool_calls`."""
     c = msg.get("content")
+    parts = []
     if isinstance(c, str):
-        return c
-    if isinstance(c, list):
-        parts = []
+        parts.append(c)
+    elif isinstance(c, list):
         for b in c:
             if isinstance(b, dict):
                 if b.get("type") == "text":
@@ -43,11 +103,16 @@ def _content_text(msg):
                 elif b.get("type") == "tool_result":
                     parts.append(str(b.get("content", ""))[:2000])
                 elif b.get("type") == "tool_use":
-                    parts.append(f"[tool_use {b.get('name', '')}]")
+                    parts.append(f"[tool_use {b.get('name', '')} "
+                                 f"{json.dumps(b.get('input'), default=str)[:300]}]")
             else:
                 parts.append(str(b))
-        return "\n".join(parts)
-    return str(c or "")
+    elif c is not None:
+        parts.append(str(c))
+    for tc in msg.get("tool_calls") or []:
+        fn = (tc or {}).get("function") or {}
+        parts.append(f"[tool_call {fn.get('name', '')} {str(fn.get('arguments', ''))[:300]}]")
+    return "\n".join(parts)
 
 
 def estimate_tokens(messages):
@@ -65,14 +130,56 @@ def _cfg():
         return {}
 
 
+# ── the window a seat is really served at ────────────────────────────────────
+
+_SERVED_CACHE = {}          # base url -> (at, n_ctx or None)
+_SERVED_TTL_S = 60.0
+
+
+def served_context(model):
+    """The per-request context a local llama-server seat is serving `model`
+    at, read from its own `/props`. None when the model has no verified local
+    endpoint or the server does not say.
+
+    This is the number that decides whether a request fits: a seat started
+    with `-c 49152 -np 2` serves 24,576 tokens per request, whatever the
+    model card or the plan says the model supports.
+    """
+    if not model:
+        return None
+    try:
+        from agent_friday.services.local_call import seat_endpoint
+        base = seat_endpoint(model)
+    except Exception:
+        base = None
+    if not base:
+        return None
+    now = time.time()
+    hit = _SERVED_CACHE.get(base)
+    if hit and now - hit[0] < _SERVED_TTL_S:
+        return hit[1]
+    n_ctx = None
+    try:
+        import urllib.request
+        root = base[:-3] if base.rstrip("/").endswith("/v1") else base
+        with urllib.request.urlopen(root.rstrip("/") + "/props", timeout=3) as r:
+            props = json.loads(r.read().decode("utf-8"))
+        n_ctx = int(((props or {}).get("default_generation_settings") or {}).get("n_ctx") or 0) or None
+    except Exception:
+        n_ctx = None
+    _SERVED_CACHE[base] = (now, n_ctx)
+    return n_ctx
+
+
 def resolve_context_window(model=None, cfg=None):
     """The context window to budget against, in tokens (decision D3).
 
     Precedence:
-      1. the model's REAL window from the catalog (model_discovery already
-         fetches and caches these; nothing read them before D3),
-      2. the configured `compaction.context_window`,
-      3. the 200_000 default.
+      0. what a local llama-server seat reports it is SERVING (`/props`),
+      1. the residency plan's context for the seat,
+      2. the model's REAL window from the catalog,
+      3. the configured `compaction.context_window`,
+      4. the 200_000 default.
 
     `model` was already threaded into should_compact/maybe_compact but was only
     ever passed to the summarizer — the window itself was a flat constant, so a
@@ -81,15 +188,17 @@ def resolve_context_window(model=None, cfg=None):
     """
     cfg = cfg if cfg is not None else _cfg()
     if model:
+        served = served_context(model)
+        if served:
+            return int(served)
         try:
-            # The residency PLAN first. It is the only component that knows the
-            # context a seat is actually being served at — `num_ctx` is chosen
-            # per-seat and applied on every dispatch. model_catalog asks the
-            # Ollama daemon, which returns None when the daemon is stopped, and
-            # compaction then budgeted gemma4:12b against a 200,000-token
-            # default while the seat was really serving 131,072. Budgeting 53%
-            # more window than exists means compacting too LATE, which
-            # overflows the seat instead of protecting it.
+            # The residency PLAN next. It knows the context a seat is being
+            # served at — `num_ctx` is chosen per-seat and applied on every
+            # dispatch. model_catalog asks the Ollama daemon, which returns
+            # None when the daemon is stopped, and compaction then budgeted
+            # gemma4:12b against a 200,000-token default while the seat was
+            # really serving 131,072. Budgeting more window than exists means
+            # compacting too LATE, which overflows the seat.
             from agent_friday.services.residency_policy import num_ctx_for_model
             planned = num_ctx_for_model(model, default=0)
             if planned:
@@ -106,7 +215,17 @@ def resolve_context_window(model=None, cfg=None):
     return int(cfg.get("context_window", 200000))
 
 
-def should_compact(messages, model=None, cfg=None):
+def _budget(window, cfg, reserve_tokens=0):
+    """Tokens the transcript may use before compaction fires: the trigger
+    ratio of the window, and never more than the window less the reply."""
+    ratio = float(cfg.get("trigger_ratio", 0.70))
+    budget = int(window * ratio)
+    if reserve_tokens and reserve_tokens > 0:
+        budget = min(budget, int(window - reserve_tokens) - 256)
+    return max(512, budget)
+
+
+def should_compact(messages, model=None, cfg=None, *, window=None, reserve_tokens=0):
     cfg = cfg if cfg is not None else _cfg()
     if not cfg or cfg.get("enabled") is False:
         return False
@@ -115,9 +234,8 @@ def should_compact(messages, model=None, cfg=None):
     # Need at least one message in the middle to be worth compacting.
     if len(messages or []) <= keep_head + keep_tail + 1:
         return False
-    window = resolve_context_window(model, cfg)
-    ratio = float(cfg.get("trigger_ratio", 0.70))
-    return estimate_tokens(messages) > window * ratio
+    window = window or resolve_context_window(model, cfg)
+    return estimate_tokens(messages) > _budget(window, cfg, reserve_tokens)
 
 
 def _merge_adjacent(messages):
@@ -128,7 +246,8 @@ def _merge_adjacent(messages):
     for m in messages:
         if (out and out[-1].get("role") == m.get("role")
                 and isinstance(out[-1].get("content"), str)
-                and isinstance(m.get("content"), str)):
+                and isinstance(m.get("content"), str)
+                and not out[-1].get("tool_calls") and not m.get("tool_calls")):
             out[-1] = {"role": m["role"],
                        "content": out[-1]["content"] + "\n\n" + m["content"]}
         else:
@@ -136,34 +255,75 @@ def _merge_adjacent(messages):
     return out
 
 
-def _default_summarizer(text, max_tokens=400):
-    """Summarize via the cheapest available model (subagent or local), no tools.
+# ── tool-call pairs must not be split ────────────────────────────────────────
 
-    The compaction call is itself metered (Part D) and tagged kind="compaction".
-    Returns '' on any failure so compaction degrades to a no-op.
+def _is_tool_reply(msg):
+    """A message that answers a tool call made in the message before it."""
+    if msg.get("role") == "tool":
+        return True
+    c = msg.get("content")
+    return (msg.get("role") == "user" and isinstance(c, list)
+            and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c))
+
+
+def _calls_tools(msg):
+    if msg.get("role") != "assistant":
+        return False
+    if msg.get("tool_calls"):
+        return True
+    c = msg.get("content")
+    return isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_use" for b in c)
+
+
+def _safe_cuts(messages, keep_head, keep_tail):
+    """(head_end, tail_start) moved so neither cut separates a tool call from
+    its results. A provider rejects a tool result whose call is gone, and a
+    call whose results are gone."""
+    n = len(messages)
+    head_end = min(keep_head, n)
+    # The head may not end on a call whose results would fall in the middle.
+    while head_end > 0 and _calls_tools(messages[head_end - 1]):
+        head_end -= 1
+    tail_start = max(head_end, n - keep_tail) if keep_tail else n
+    # The tail may not open on a result whose call would fall in the middle.
+    while tail_start < n and _is_tool_reply(messages[tail_start]):
+        tail_start += 1
+    return head_end, tail_start
+
+
+# ── summarizers ──────────────────────────────────────────────────────────────
+
+_SUMMARY_INSTRUCTION = (
+    "Summarize the following conversation excerpt into a compact factual "
+    "note that preserves decisions made, open questions, key entities, exact "
+    "figures and identifiers, what each tool call found, and any state the "
+    "assistant must remember to continue. Be terse; no preamble. Limit to "
+    "about {n} tokens.\n\n=== EXCERPT ===\n{text}\n=== END ===")
+
+
+def _default_summarizer(text, max_tokens=400):
+    """Summarize on a LOCAL model, for a caller that did not say where its
+    transcript may go.
+
+    Runs inside `local_only_guard.local_only`, so every cloud transport
+    refuses; when no local model answers, compaction degrades to a no-op.
+    The call is metered and tagged kind="compaction". Returns '' on failure.
     """
     try:
         from agent_friday.services.model_router import _generate_text
-        settings = _load_settings()
-        model = settings.get("subagent_model")
-        prompt = (
-            "Summarize the following conversation excerpt into a compact factual "
-            "note that preserves decisions made, open questions, key entities, "
-            "and any state the assistant must remember to continue. Be terse; "
-            f"no preamble. Limit to about {max_tokens} tokens.\n\n"
-            "=== EXCERPT ===\n" + text + "\n=== END ==="
-        )
-        # kind tag flows via a thread-local attribution so the meter labels it.
+        from agent_friday.services import local_only_guard as _log
+        prompt = _SUMMARY_INSTRUCTION.format(n=max_tokens, text=text)
         try:
             from agent_friday.services import cost_meter as _cm
             _cm.push_attribution(kind="compaction")
         except Exception:
             _cm = None
         try:
-            out = _generate_text([{"role": "user", "content": prompt}],
-                                 model=model, max_tokens=max_tokens,
-                                 orb_label="🗜 Compacting context",
-                                 workspace="system")
+            with _log.local_only("context compaction"):
+                out = _generate_text([{"role": "user", "content": prompt}],
+                                     max_tokens=max_tokens,
+                                     orb_label="🗜 Compacting context",
+                                     workspace="system")
         finally:
             try:
                 if _cm:
@@ -176,51 +336,221 @@ def _default_summarizer(text, max_tokens=400):
         return ""
 
 
-def maybe_compact(messages, model=None, summarizer=None):
+def seat_summarizer(send_fn):
+    """A summarizer that asks the SAME seat, through the loop's own transport.
+
+    `send_fn(convo, tools)` is the OpenAI-format loop's round sender; it
+    already knows the seat's endpoint, credentials and served model, so the
+    summary is written wherever the transcript already lives. Streamed text
+    is kept out of the user's reply.
+    """
+    def _summarize(text, max_tokens=400):
+        try:
+            from agent_friday.services import model_router as _mr
+            token = _mr.DELTA_SINK.set(None)
+            try:
+                resp = send_fn([
+                    {"role": "system", "content": "You compress transcripts for an assistant that must keep working. Output only the note."},
+                    {"role": "user", "content": _SUMMARY_INSTRUCTION.format(n=max_tokens, text=text)},
+                ], None)
+            finally:
+                _mr.DELTA_SINK.reset(token)
+            choices = (resp or {}).get("choices") or []
+            msg = (choices[0].get("message") if choices else {}) or {}
+            out = msg.get("content")
+            return out.strip() if isinstance(out, str) else ""
+        except Exception as e:
+            print(f"  [compaction] seat summarizer failed: {e}")
+            return ""
+    return _summarize
+
+
+def claude_summarizer(client, model):
+    """A summarizer for the Anthropic loop: the transcript is already bound
+    for Anthropic, so the summary is written there too, with no tools."""
+    def _summarize(text, max_tokens=400):
+        try:
+            resp = client.messages.create(
+                model=model, max_tokens=max(1024, int(max_tokens) * 4),
+                messages=[{"role": "user", "content": _SUMMARY_INSTRUCTION.format(n=max_tokens, text=text)}])
+            return "".join(getattr(b, "text", "") or "" for b in resp.content
+                           if getattr(b, "type", None) == "text").strip()
+        except Exception as e:
+            print(f"  [compaction] claude summarizer failed: {e}")
+            return ""
+    return _summarize
+
+
+# ── trimming what summarising cannot reach ───────────────────────────────────
+
+def _trim_tail_results(messages, budget, keep_chars=4000):
+    """Cut oversized tool results in the tail (newest untouched last) until
+    the transcript fits. Summarising cannot shrink the tail, and one large
+    tool result there is enough to overflow a local seat. Returns
+    (messages, trimmed_count)."""
+    out = [dict(m) for m in messages]
+    trimmed = 0
+    order = sorted(range(len(out)), key=lambda i: -len(_content_text(out[i])))
+    for i in order:
+        if estimate_tokens(out) <= budget:
+            break
+        if i == len(out) - 1 and len(out) > 1:
+            continue                          # the newest message stays whole
+        m = out[i]
+        c = m.get("content")
+        if m.get("role") == "tool" and isinstance(c, str) and len(c) > keep_chars:
+            cut = len(c) - keep_chars
+            m["content"] = c[:keep_chars] + "\n" + _TRIM_MARKER.format(n=cut)
+            trimmed += 1
+        elif isinstance(c, list):
+            changed = False
+            new = []
+            for b in c:
+                if (isinstance(b, dict) and b.get("type") == "tool_result"
+                        and isinstance(b.get("content"), str) and len(b["content"]) > keep_chars):
+                    cut = len(b["content"]) - keep_chars
+                    b = dict(b, content=b["content"][:keep_chars] + "\n" + _TRIM_MARKER.format(n=cut))
+                    changed = True
+                new.append(b)
+            if changed:
+                m["content"] = new
+                trimmed += 1
+    return out, trimmed
+
+
+def _take_prior_summary(head):
+    """Split an earlier compaction's summary out of the head.
+
+    A summary is merged into the head's last user message (strict-alternation
+    templates reject two user messages in a row), so without this every
+    compaction would stack another summary into the head and a run of hundreds
+    of rounds would grow its head without bound. The prior summary is folded
+    into the next one instead."""
+    prior = ""
+    out = []
+    for m in head:
+        c = m.get("content")
+        if isinstance(c, str) and _SUMMARY_PREFIX in c:
+            i = c.index(_SUMMARY_PREFIX)
+            prior = c[i:]
+            rest = c[:i].rstrip()
+            if not rest:
+                continue
+            m = dict(m, content=rest)
+        out.append(m)
+    return out, prior
+
+
+def _rolling_summary(summarize, prior, transcript, max_tokens, window):
+    """Summarize `transcript` in chunks that fit the summarizing seat, carrying
+    the running summary forward, so nothing is dropped for being too long to
+    read in one request. Returns '' if any chunk fails (never a partial
+    summary that silently lost the rest)."""
+    cap_chars = max(4000, (window - max_tokens * 3 - 1024) * _CHARS_PER_TOKEN)
+    running = prior
+    for start in range(0, len(transcript), cap_chars):
+        chunk = transcript[start:start + cap_chars]
+        text = (("PRIOR SUMMARY (fold everything in it into the new note):\n"
+                 + running + "\n\n") if running else "") + chunk
+        running = summarize(text, max_tokens)
+        if not running:
+            return ""
+    return running
+
+
+def compress_new_output(messages, start, model=None, seat=None):
+    """Run Headroom over what a round just added (messages[start:]).
+
+    Headroom rewrites bulky tool output (JSON, logs, tables) into a denser
+    form in-process -- no model call, nothing leaves the machine -- keeping
+    roles and tool-call ids. The agent loops call this between rounds, before
+    `maybe_compact`, so summarising is needed later and less often. A no-op
+    when compression is off or Headroom cannot compress."""
+    try:
+        cfg = (_load_settings() or {}).get("context_compression") or {}
+        if cfg.get("enabled", True) is False:
+            return messages
+        from agent_friday.services.model_router import _get_context_compressor
+        return _get_context_compressor(cfg).compress_new(
+            messages, start, model=model or "claude-opus-5-5", seat=seat)
+    except Exception as e:
+        print(f"  [compaction] headroom skipped: {e}")
+        return messages
+
+
+def maybe_compact(messages, model=None, summarizer=None, *, window=None,
+                  reserve_tokens=0, seat=None):
     """Return a (possibly) compacted copy of ``messages``.
 
-    No-op (returns the original list) when compaction is disabled, the transcript
-    is below threshold, or summarization yields nothing. Idempotent: a prior
-    "[Context Summary]" message in the middle is folded into the new summary
-    rather than re-summarized on top of itself.
+    No-op (returns the original list) when compaction is disabled or the
+    transcript is below budget. Over budget with nothing a permitted
+    summarizer can write, it still trims oversized tool results rather than
+    let the request overflow. Idempotent: a prior "[Context Summary]" message
+    in the middle is folded into the new summary rather than re-summarized on
+    top of itself.
+
+    `window` overrides the resolved context window; `reserve_tokens` is the
+    room the reply needs (a reasoning seat's thinking counts). `seat` labels
+    the stats ("local" / "cloud").
     """
     if not messages:
         return messages
     cfg = _cfg()
-    if not should_compact(messages, model=model, cfg=cfg):
+    if not cfg or cfg.get("enabled") is False:
+        return messages
+    window = window or resolve_context_window(model, cfg)
+    budget = _budget(window, cfg, reserve_tokens)
+    before = estimate_tokens(messages)
+    if before <= budget:
         return messages
 
     keep_head = int(cfg.get("keep_head", 3))
     keep_tail = int(cfg.get("keep_tail", 10))
     max_tokens = int(cfg.get("summary_max_tokens", 400))
 
-    head = messages[:keep_head]
-    tail = messages[-keep_tail:] if keep_tail else []
-    middle = messages[keep_head: len(messages) - keep_tail] if keep_tail \
-        else messages[keep_head:]
-    if not middle:
-        return messages
+    head_end, tail_start = _safe_cuts(messages, keep_head, keep_tail)
+    head, prior = _take_prior_summary(messages[:head_end])
+    middle = messages[head_end:tail_start]
+    tail = messages[tail_start:]
 
-    transcript_lines = []
-    for m in middle:
-        role = m.get("role", "?")
-        text = _content_text(m)
-        if not text.strip():
-            continue
-        transcript_lines.append(f"{role.upper()}: {text}")
-    transcript = "\n\n".join(transcript_lines)
-    if not transcript.strip():
-        return messages
+    compacted = None
+    if middle:
+        transcript_lines = []
+        for m in middle:
+            role = m.get("role", "?")
+            text = _content_text(m)
+            if not text.strip():
+                continue
+            transcript_lines.append(f"{role.upper()}: {text}")
+        transcript = "\n\n".join(transcript_lines)
+        summary = ""
+        if transcript.strip():
+            summary = _rolling_summary(summarizer or _default_summarizer, prior,
+                                       transcript, max_tokens, window)
+        if summary:
+            summary_msg = {
+                "role": "user",
+                "content": f"{_SUMMARY_PREFIX} Earlier in this session ("
+                           f"{len(middle)} messages condensed): {summary}",
+            }
+            compacted = _merge_adjacent(list(head) + [summary_msg] + list(tail))
+        else:
+            _record(skipped=1)
 
-    summarize = summarizer or _default_summarizer
-    summary = summarize(transcript, max_tokens)
-    if not summary:
-        return messages   # degrade to no-op — never lose the middle silently
-
-    summary_msg = {
-        "role": "user",
-        "content": f"{_SUMMARY_PREFIX} Earlier in this session ("
-                   f"{len(middle)} turns condensed): {summary}",
-    }
-    compacted = _merge_adjacent(list(head) + [summary_msg] + list(tail))
-    return compacted
+    result = compacted if compacted is not None else list(messages)
+    trimmed = 0
+    if estimate_tokens(result) > budget:
+        result, trimmed = _trim_tail_results(result, budget)
+    if compacted is None and not trimmed:
+        return messages          # nothing permitted could shrink it
+    after = estimate_tokens(result)
+    _record(compacted=compacted is not None, before=before, after=after,
+            model=model, window=window, seat=seat, trimmed=trimmed)
+    try:
+        from agent_friday.services import reasoning_trace as _rt
+        _rt.note("Context compacted for %s: ~%d → ~%d tokens (window %d)%s"
+                 % (model or "model", before, after, window,
+                    ", %d oversized tool result(s) trimmed" % trimmed if trimmed else ""))
+    except Exception:
+        pass
+    return result

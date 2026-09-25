@@ -9474,13 +9474,30 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     convo = list(safe_messages)
 
     # ── Auto-compaction (Part C): summarize the middle of a long transcript
-    # (head + tail preserved) before dispatch so a long session/task can't
-    # overflow the context window. No-op below threshold. ──
-    try:
-        from agent_friday.services import compaction as _compaction
-        convo = _compaction.maybe_compact(convo, model=model)
-    except Exception:
-        pass
+    # (head + tail preserved) before dispatch AND between tool rounds, so a
+    # long session/task can't overflow the context window. No-op below
+    # threshold. The summary is written by Claude, where this transcript is
+    # already going -- never by a model somewhere else (services/compaction.py). ──
+    from agent_friday.services import compaction as _compaction
+    _claude_summary = _compaction.claude_summarizer(client, model or ANTHROPIC_MODEL_DEFAULT)
+
+    _hr_mark = [len(convo)]
+
+    def _compact_convo():
+        try:
+            # Headroom first, over what the last round added; then summarise
+            # only if the transcript is still over budget.
+            _new = _compaction.compress_new_output(
+                convo, _hr_mark[0], model=model or ANTHROPIC_MODEL_DEFAULT, seat="cloud")
+            _new = _compaction.maybe_compact(
+                _new, model=model or ANTHROPIC_MODEL_DEFAULT, summarizer=_claude_summary,
+                reserve_tokens=int(max_tokens or 0), seat="cloud")
+            if _new is not convo:
+                convo[:] = _new
+        except Exception as _ce:
+            print(f"  [compaction] skipped: {_ce}")
+        _hr_mark[0] = len(convo)
+    _compact_convo()
 
     # ── Process orb registration — frontend renders an orb per active agent.
     # Registered FIRST so the behavioral monitor session below can carry the
@@ -9587,6 +9604,8 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             if _rounds_left is not None:
                 _rounds_left -= 1
             iter_count += 1
+            if iter_count > 1:
+                _compact_convo()
             # ── Operator filesystem controls ───────────────────────────
             # Drop ~/.friday/AGENT_STOP to kill a runaway agent immediately.
             _stop_path = FRIDAY_DIR / "AGENT_STOP"
@@ -10017,12 +10036,32 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             model, _meter_as, _led_seat, (_time.time() - _led_t0) * 1000,
             _led_tok["in"], _led_tok["out"], orb_id, session_ctx,
         )
-    # Auto-compaction (Part C): condense a long transcript before the loop.
-    try:
-        from agent_friday.services import compaction as _compaction
-        convo = _compaction.maybe_compact(convo, model=model)
-    except Exception:
-        pass
+    # Auto-compaction (Part C): condense a long transcript before the loop AND
+    # between tool rounds, so a run of hundreds of rounds stays inside the
+    # window the seat is really served at. The summary is written by the SAME
+    # seat through its own transport: a local seat's transcript never goes to
+    # another model to be summarised (services/compaction.py).
+    from agent_friday.services import compaction as _compaction
+    _compact_seat = "local" if _led_seat == "local" else "cloud"
+    _seat_summary = _compaction.seat_summarizer(send_fn)
+
+    _hr_mark = [len(convo)]
+
+    def _compact_convo():
+        try:
+            # Headroom first, over what the last round added; then summarise
+            # only if the transcript is still over budget.
+            _new = _compaction.compress_new_output(convo, _hr_mark[0], model=model,
+                                                   seat=_compact_seat)
+            _new = _compaction.maybe_compact(
+                _new, model=model, summarizer=_seat_summary,
+                reserve_tokens=int(max_tokens or 0), seat=_compact_seat)
+            if _new is not convo:
+                convo[:] = _new
+        except Exception as _ce:
+            print(f"  [compaction] skipped: {_ce}")
+        _hr_mark[0] = len(convo)
+    _compact_convo()
     # The full registry, for `load_tools` to draw from. None means progressive
     # disclosure is off and the loop behaves exactly as it always has.
     from agent_friday.services import tool_catalogue as _TC
@@ -10131,6 +10170,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # bigger allowance and the thinking OFF -- repeating it unchanged is
         # what turned a 19-minute turn into no answer at all. Senders that
         # predate the override still work: they simply do not take one.
+        if _round > 1:
+            _compact_convo()
         if _retry_over:
             try:
                 resp = send_fn(convo, oai_tools, **_retry_over)

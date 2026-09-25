@@ -22,9 +22,35 @@ call errors, we fall back to the original, uncompressed messages so a chat is
 never blocked on compression.
 """
 
+import os
+
 # Rough chars-per-token estimate used only to decide whether a payload is big
 # enough to be worth compressing. Token-accurate counting is Headroom's job.
 _CHARS_PER_TOKEN = 4
+
+
+def _pin_headroom_environment():
+    """Settings Headroom reads at import, fixed before it is imported.
+
+    * HEADROOM_TELEMETRY=off -- opt-in upstream, forced off here.
+    * HEADROOM_CCR_BACKEND=memory -- Headroom 0.3x keeps the ORIGINAL
+      uncompressed content so it can be retrieved later, and by default in a
+      plaintext SQLite file under ~/.headroom. That would put vault reads and
+      local-only tool output on disk outside the vault. In memory it lives
+      only as long as this process.
+    * HEADROOM_WORKSPACE_DIR -- anything else it writes stays in Friday's home.
+    * TIKTOKEN_CACHE_DIR -- the tokenizer vocabulary is cached in Friday's
+      home, so once present it is never fetched again.
+    """
+    os.environ["HEADROOM_TELEMETRY"] = "off"
+    os.environ["HEADROOM_CCR_BACKEND"] = "memory"
+    try:
+        from agent_friday.paths import friday_home
+        home = friday_home()
+        os.environ.setdefault("HEADROOM_WORKSPACE_DIR", str(home / "headroom"))
+        os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(home / "cache" / "tiktoken"))
+    except Exception:
+        pass
 
 
 class ContextCompressor:
@@ -42,6 +68,8 @@ class ContextCompressor:
         self._min_tokens = int(min_tokens_to_compress)
         self._headroom = None        # lazy-loaded `compress` callable
         self._import_failed = False  # don't retry a broken import every call
+        self._unavailable_reason = None
+        self._version = None
         self._stats = {
             'calls': 0,            # successful compression calls
             'tokens_saved': 0,     # cumulative tokens eliminated
@@ -50,6 +78,8 @@ class ContextCompressor:
             'compression_ratio': 0.0,  # overall saved / before (0.0 – 1.0)
             'last_ratio': 0.0,     # ratio of the most recent call
             'errors': 0,           # compression attempts that fell back
+            'passthrough': 0,      # calls Headroom returned without compressing
+            'by_seat': {},         # "local" | "cloud" -> compressions
         }
 
     # ── Construction from settings ──────────────────────────────────────
@@ -83,12 +113,14 @@ class ContextCompressor:
             return False
         return self._estimate_tokens(messages) >= self._min_tokens
 
-    def compress(self, messages, model='claude-opus-5-5'):
-        """Compress messages using Headroom before sending to Anthropic.
+    def compress(self, messages, model='claude-opus-5-5', seat=None):
+        """Compress messages using Headroom before they go to the model.
 
         Returns the compressed messages list. On any failure (import error,
         compression error, unexpected return shape) the ORIGINAL messages are
         returned unchanged — compression is never allowed to break a chat.
+        A call Headroom returns without compressing counts as a pass-through,
+        not as a compression. `seat` ("local" / "cloud") labels the stats.
         """
         if not self._enabled or not messages:
             return messages
@@ -106,6 +138,11 @@ class ContextCompressor:
             return messages
 
         compressed = self._extract_messages(result, fallback=messages)
+        if compressed is messages and not getattr(result, 'tokens_before', 0):
+            # Headroom handed the input back untouched (the 0.20.15 wheel does
+            # this when its native core is missing). Not a compression.
+            self._stats['passthrough'] += 1
+            return messages
         # Prefer Headroom's own (tiktoken-accurate) accounting; fall back to our
         # cheap char-based estimate only when the result doesn't expose counts.
         before_tokens = self._coerce_int(getattr(result, 'tokens_before', None), est_before)
@@ -124,6 +161,8 @@ class ContextCompressor:
         tb = self._stats['tokens_before']
         self._stats['compression_ratio'] = (self._stats['tokens_saved'] / tb) if tb else 0.0
         self._stats['last_ratio'] = (saved / before_tokens) if before_tokens else 0.0
+        if seat:
+            self._stats['by_seat'][seat] = self._stats['by_seat'].get(seat, 0) + 1
 
         pct = round(self._stats['last_ratio'] * 100)
         # Keep the required "{before} → {after}" log line, but never let a console
@@ -140,8 +179,30 @@ class ContextCompressor:
         s = dict(self._stats)
         s['enabled'] = self._enabled
         s['min_tokens_to_compress'] = self._min_tokens
+        if self._headroom is None and not self._import_failed and self._enabled:
+            self._load_headroom()      # answer "is it available?" truthfully
         s['available'] = self._headroom is not None and not self._import_failed
+        s['by_seat'] = dict(self._stats['by_seat'])
+        if self._unavailable_reason:
+            s['reason'] = self._unavailable_reason
+        if self._version:
+            s['version'] = self._version
         return s
+
+    def compress_new(self, messages, start, model='claude-opus-5-5', seat=None):
+        """Compress only messages[start:] (what a round just added) and return
+        the whole list. Earlier messages were compressed when they were new;
+        compressing them again every round costs time and changes a prefix
+        the provider may be caching."""
+        if not self._enabled or start >= len(messages or []):
+            return messages
+        new = list(messages[start:])
+        if not self.should_compress(new):
+            return messages
+        out = self.compress(new, model=model, seat=seat)
+        if out is new:
+            return messages
+        return list(messages[:start]) + list(out)
 
     # ── Internals ───────────────────────────────────────────────────────
 
@@ -151,12 +212,33 @@ class ContextCompressor:
             return self._headroom
         if self._import_failed:
             return None
+        _pin_headroom_environment()
+        try:
+            import headroom as _hr
+            self._version = getattr(_hr, '__version__', None)
+        except Exception as exc:
+            self._import_failed = True
+            self._unavailable_reason = "headroom-ai is not installed (%s)" % exc
+            print(f"  [HEADROOM] library unavailable, compression disabled: {exc}")
+            return None
+        try:
+            # Without its native core Headroom's compress() quietly returns
+            # its input, which read as a working compressor saving 0%.
+            import headroom._core  # noqa: F401
+        except Exception:
+            self._import_failed = True
+            self._unavailable_reason = (
+                "headroom-ai %s is installed without its native core "
+                "(headroom._core), so it cannot compress" % (self._version or "?"))
+            print(f"  [HEADROOM] {self._unavailable_reason}")
+            return None
         try:
             from headroom import compress
             self._headroom = compress
             return compress
         except Exception as exc:
             self._import_failed = True
+            self._unavailable_reason = "headroom-ai failed to load (%s)" % exc
             print(f"  [HEADROOM] library unavailable, compression disabled: {exc}")
             return None
 
