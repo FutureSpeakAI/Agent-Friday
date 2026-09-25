@@ -28,6 +28,10 @@ import os
 # enough to be worth compressing. Token-accurate counting is Headroom's job.
 _CHARS_PER_TOKEN = 4
 
+#: The Headroom release the pins name (requirements.txt, pyproject.toml, the
+#: Windows installer) and the suite runs against.
+TESTED_HEADROOM_VERSION = "0.38.0"
+
 # Attempts after which a Headroom that has compressed nothing stops claiming
 # to be available. Each attempt is a payload large enough to be worth
 # compressing (see `should_compress`), so three with no saving at all is a
@@ -38,7 +42,18 @@ _NOTHING_COMPRESSED_AFTER = 3
 def _pin_headroom_environment():
     """Settings Headroom reads at import, fixed before it is imported.
 
-    * HEADROOM_TELEMETRY=off -- opt-in upstream, forced off here.
+    Nothing Headroom does may leave this machine except the tokenizer
+    vocabulary download below. Headroom 0.3x has three separate switches:
+
+    * HEADROOM_BEACON=off and DO_NOT_TRACK=1 -- the UPLOAD beacon (an
+      anonymous session summary sent to Headroom Labs). It is ON by default
+      upstream; either variable turns it off, and both are set.
+    * HEADROOM_TELEMETRY=off (and the older HEADROOM_TELEMETRY_DISABLED=1) --
+      local aggregate stats for Headroom's own /stats endpoint. They never
+      leave the machine and Friday does not use them.
+    * HEADROOM_OTEL_METRICS_ENABLED=false -- OpenTelemetry metrics export
+      (off upstream unless configured; pinned so a stray environment cannot
+      turn it on). HEADROOM_TELEMETRY_WARN=off drops its startup notice.
     * HEADROOM_CCR_BACKEND=memory -- Headroom 0.3x keeps the ORIGINAL
       uncompressed content so it can be retrieved later, and by default in a
       plaintext SQLite file under ~/.headroom. That would put vault reads and
@@ -48,7 +63,12 @@ def _pin_headroom_environment():
     * TIKTOKEN_CACHE_DIR -- the tokenizer vocabulary is cached in Friday's
       home, so once present it is never fetched again.
     """
+    os.environ["HEADROOM_BEACON"] = "off"
+    os.environ["DO_NOT_TRACK"] = "1"
     os.environ["HEADROOM_TELEMETRY"] = "off"
+    os.environ["HEADROOM_TELEMETRY_DISABLED"] = "1"
+    os.environ["HEADROOM_OTEL_METRICS_ENABLED"] = "false"
+    os.environ["HEADROOM_TELEMETRY_WARN"] = "off"
     os.environ["HEADROOM_CCR_BACKEND"] = "memory"
     try:
         from agent_friday.paths import friday_home

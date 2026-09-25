@@ -171,3 +171,69 @@ def test_the_installed_headroom_really_compresses(monkeypatch, tmp_path_factory)
     assert s["available"] is True, s.get("reason")
     assert s["calls"] == 1 and s["tokens_saved"] > 0, s
     assert "INC-00399" in json.dumps(out)
+
+
+# ── nothing is uploaded ────────────────────────────────────────────────────
+
+_UPLOAD_SWITCHES = {"HEADROOM_BEACON": "off", "DO_NOT_TRACK": "1",
+                    "HEADROOM_TELEMETRY": "off", "HEADROOM_TELEMETRY_DISABLED": "1",
+                    "HEADROOM_OTEL_METRICS_ENABLED": "false"}
+
+
+def test_the_upload_beacon_is_switched_off_before_import(monkeypatch):
+    """Headroom 0.3x uploads an anonymous session beacon by default; it is a
+    different switch from HEADROOM_TELEMETRY (local stats only)."""
+    monkeypatch.setenv("HEADROOM_BEACON", "on")
+    monkeypatch.setenv("HEADROOM_OTEL_METRICS_ENABLED", "true")
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    seen = {}
+
+    def _compress(msgs, model=None):
+        import os
+        seen.update({k: os.environ.get(k) for k in _UPLOAD_SWITCHES})
+        return types.SimpleNamespace(messages=[{"role": "user", "content": "short"}],
+                                     tokens_before=2000, tokens_after=10, tokens_saved=1990)
+    _fake_headroom(monkeypatch, with_core=True, compress=_compress)
+    ContextCompressor().compress([{"role": "user", "content": "x" * 8000}])
+    assert seen == _UPLOAD_SWITCHES
+
+
+def test_the_installed_headroom_agrees_its_beacon_is_off(monkeypatch):
+    import importlib.util
+    if importlib.util.find_spec("headroom") is None:
+        pytest.skip("headroom-ai is not installed in this environment")
+    for k in _UPLOAD_SWITCHES:
+        monkeypatch.delenv(k, raising=False)
+    import os
+    for k in _UPLOAD_SWITCHES:          # restored by monkeypatch after the test
+        monkeypatch.setenv(k, os.environ.get(k, ""))
+    ccmod._pin_headroom_environment()
+    from headroom.telemetry import beacon
+    assert beacon.is_beacon_enabled() is False
+    assert beacon.is_telemetry_enabled() is False
+
+
+def test_every_pin_names_the_tested_version():
+    """requirements.txt, pyproject.toml and the Windows installer install the
+    same Headroom, and it is the one installed here (the one the suite ran)."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    pins = {
+        "requirements.txt": (root / "requirements.txt").read_text(encoding="utf-8"),
+        "pyproject.toml": (root / "pyproject.toml").read_text(encoding="utf-8"),
+        "recommended.txt": (root / "packaging" / "windows" / "requirements"
+                            / "recommended.txt").read_text(encoding="utf-8"),
+    }
+    found = {name: re.findall(r"^\s*\"?headroom-ai(\[[^\]]*\])?\s*([=<>!~]=?)\s*([\w.]+)",
+                              text, re.M) for name, text in pins.items()}
+    for name, hits in found.items():
+        assert hits, "%s does not pin headroom-ai" % name
+        for extra, op, ver in hits:
+            assert op == "==" and ver == ccmod.TESTED_HEADROOM_VERSION, (name, extra, op, ver)
+    try:
+        from importlib.metadata import version
+        installed = version("headroom-ai")
+    except Exception:
+        return
+    assert installed == ccmod.TESTED_HEADROOM_VERSION
