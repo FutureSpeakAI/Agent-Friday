@@ -5,9 +5,9 @@ Covers:
   - _coerce_int: type coercion with fallback for bad/bool/negative values.
   - _extract_messages: pulls list from .messages attribute or bare list.
   - should_compress: gating on enabled flag and token threshold.
-  - compress: graceful-passthrough when headroom is absent (the common case
-    in this test environment — headroom-ai has no Windows wheel, so
-    _import_failed is set and the original messages are returned unchanged).
+  - compress: graceful-passthrough when headroom is absent or fails (the
+    original messages are returned unchanged). The installed library itself
+    is exercised in test_headroom_wrapper.py.
   - get_stats: dict shape and 'available' flag.
   - from_settings / configure: construction from config dict.
 

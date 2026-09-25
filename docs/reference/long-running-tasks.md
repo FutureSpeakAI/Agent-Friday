@@ -57,7 +57,11 @@ output in-process before any of this. It is pinned to telemetry off, an
 in-memory store (0.3x otherwise keeps uncompressed originals in plaintext
 SQLite under `~/.headroom`), and Friday-owned workspace/tokenizer caches. A
 wheel without the native core (`headroom._core`) reports itself unavailable
-with the reason; it is not counted as compressing. Savings:
+with the reason; it is not counted as compressing. A call that removes no
+tokens is a pass-through, and a Headroom that has made nothing smaller after
+three attempts reports itself unavailable too. The pin is `headroom-ai==0.38.0`
+(base package; the `[all]` extra adds ~30 integrations). Its first use
+downloads a tokenizer vocabulary (tiktoken) into Friday's home. Savings:
 `GET /api/context/compression-stats` (`compression` for Headroom, `compaction`
 for summaries and trims).
 

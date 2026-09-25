@@ -28,6 +28,12 @@ import os
 # enough to be worth compressing. Token-accurate counting is Headroom's job.
 _CHARS_PER_TOKEN = 4
 
+# Attempts after which a Headroom that has compressed nothing stops claiming
+# to be available. Each attempt is a payload large enough to be worth
+# compressing (see `should_compress`), so three with no saving at all is a
+# broken compressor, not an unlucky run.
+_NOTHING_COMPRESSED_AFTER = 3
+
 
 def _pin_headroom_environment():
     """Settings Headroom reads at import, fixed before it is imported.
@@ -152,6 +158,11 @@ class ContextCompressor:
         )
         saved = self._coerce_int(getattr(result, 'tokens_saved', None),
                                  max(0, before_tokens - after_tokens))
+        if saved <= 0:
+            # Counts reported, nothing removed: still a pass-through, however
+            # the result is shaped. Only a saving is a compression.
+            self._stats['passthrough'] += 1
+            return messages
 
         # Roll the stats forward.
         self._stats['calls'] += 1
@@ -182,6 +193,16 @@ class ContextCompressor:
         if self._headroom is None and not self._import_failed and self._enabled:
             self._load_headroom()      # answer "is it available?" truthfully
         s['available'] = self._headroom is not None and not self._import_failed
+        attempts = self._stats['passthrough'] + self._stats['errors']
+        if s['available'] and not self._stats['calls']                 and attempts >= _NOTHING_COMPRESSED_AFTER:
+            # Loaded, called, and never once made anything smaller. Saying
+            # "available" here is how 0.20.15 looked like a working 0%.
+            s['available'] = False
+            s['reason'] = (
+                "headroom-ai %s loaded but compressed nothing in %d attempts "
+                "(%d returned unchanged, %d failed)" % (
+                    self._version or "?", attempts,
+                    self._stats['passthrough'], self._stats['errors']))
         s['by_seat'] = dict(self._stats['by_seat'])
         if self._unavailable_reason:
             s['reason'] = self._unavailable_reason

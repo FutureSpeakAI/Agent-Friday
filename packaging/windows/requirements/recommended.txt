@@ -44,11 +44,12 @@ mutagen>=1.47
 
 # --- Context compression. Degrades to passthrough if absent. --------------
 #
-# NOTE 1: requirements.txt at the repo root says this "builds from sdist
-# (Rust + MSVC on Windows)". That is out of date - a cp312 win_amd64 wheel
-# is published, verified by downloading it.
+# NOTE 1: pinned to 0.38.0, which publishes a cp310-abi3 win_amd64 wheel
+# carrying the native core (`headroom._core`). 0.20.15's wheel had no core,
+# so it installed cleanly and compressed nothing. The wrapper now reports a
+# missing core as "unavailable" with the reason instead.
 #
-# NOTE 2, and this one matters: the repo pins `headroom-ai[all]`. On a real
+# NOTE 2, and this one matters: the repo used to pin `headroom-ai[all]`. On a real
 # install, measured on Windows 11, that [all] extra pulls in
 #
 #   torch (490 MB on disk), transformers, sentence-transformers, datasets,
@@ -66,4 +67,4 @@ mutagen>=1.47
 # want the full extra, move this line to memory.txt where a 2 GB download is
 # announced and consented to, rather than arriving inside "voice and PDF
 # reading".
-headroom-ai>=0.22
+headroom-ai==0.38.0
