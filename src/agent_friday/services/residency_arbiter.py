@@ -1965,6 +1965,18 @@ class Arbiter:
             except Exception as e:
                 print(f"  [arbiter] daemon reconciliation failed: {e}")
 
+            # THE GPU MAY NOT BE OURS. A restart while Friday is stood down
+            # (or while another program declared the GPU) adopted whatever the
+            # previous process left running -- and must now let go of it, not
+            # re-pin it. Resume (or the hold ending) calls reclaim_gpu().
+            _why = self.gpu_not_ours()
+            if _why:
+                self._release_gpu_locked(_why)
+                self.state = STATE_DEFAULT
+                self._record("held", "plan", None, 0.0)
+                print("  [arbiter] not loading any seat: %s" % _why)
+                return self.plan
+
             if measure_baseline:
                 # The one moment we can honestly measure the idle GPU floor.
                 self.ollama.evict_all()
@@ -1972,35 +1984,108 @@ class Arbiter:
                 time.sleep(2)
                 hwp.refresh_baseline(self.profile, assert_idle=True)
             self.compute_plan()
-            self.state = STATE_TRANSITIONING
             t0 = time.time()
-            try:
-                already = self.ollama.resident()
-                for role in ("interactive_brain", "sidekick"):
-                    seat = (self.plan["seats"] or {}).get(role)
-                    if not seat or seat.get("status") != "pinned":
-                        continue
-                    if seat["model_id"] in already:
-                        self._record("adopt", role, seat["model_id"], 0.0)
-                        continue
-                    self._load_pinned(seat, role)
-                emb = (self.plan["seats"] or {}).get("embedder")
-                if emb and str(emb.get("device", "")).startswith("gpu"):
-                    self._load_leased(emb, "embedder")
-                self.state = STATE_DEFAULT
-            except Exception as e:
-                self.state = STATE_ROLLING_BACK
-                self._rollback()
-                self.state = STATE_DEGRADED
-                raise TransitionError("boot failed: %s" % e)
+            self._load_default_seats()
             self._record("boot", "plan", None, round(time.time() - t0, 2))
             return self.plan
+
+    def _load_default_seats(self):
+        """Load the plan's pinned seats (and a GPU embedder). Caller holds
+        the lock."""
+        self.state = STATE_TRANSITIONING
+        try:
+            already = self.ollama.resident()
+            for role in ("interactive_brain", "sidekick"):
+                seat = (self.plan["seats"] or {}).get(role)
+                if not seat or seat.get("status") != "pinned":
+                    continue
+                if seat["model_id"] in already:
+                    self._record("adopt", role, seat["model_id"], 0.0)
+                    continue
+                self._load_pinned(seat, role)
+            emb = (self.plan["seats"] or {}).get("embedder")
+            if emb and str(emb.get("device", "")).startswith("gpu"):
+                self._load_leased(emb, "embedder")
+            self.state = STATE_DEFAULT
+        except Exception as e:
+            self.state = STATE_ROLLING_BACK
+            self._rollback()
+            self.state = STATE_DEGRADED
+            raise TransitionError("boot failed: %s" % e)
+
+    # ── whose GPU it is ─────────────────────────────────────────────────────
+
+    def gpu_not_ours(self):
+        """Why Friday may not put a model on the GPU right now, or None.
+
+        Two things make the card not Friday's: the owner stood Friday down
+        ("I need my machine"), or another program declared it with a foreign
+        `gpu_exclusive` hold (the "I'm training" preset). Every load path and
+        every lease asks this first, including boot, so a restart honours it.
+        Reads state only -- no side effects -- because it is asked under the
+        lock."""
+        try:
+            from agent_friday.services import stand_down as _sd
+            if _sd.is_active_now():
+                return "Friday is stood down (the owner asked for the machine)"
+        except Exception:
+            pass
+        try:
+            from agent_friday.services import arbiter as _res
+            for hold in _res.held("gpu_exclusive") or []:
+                if hold.get("holder_kind") == "foreign":
+                    return "the GPU is held by %s" % (hold.get("holder") or "another program")
+        except Exception:
+            pass
+        return None
+
+    def release_gpu(self, reason="released"):
+        """Let go of the card: stop every seat Friday owns (spawned or
+        adopted), unload the daemon's models, stop an image job."""
+        with self._lock:
+            return self._release_gpu_locked(reason)
+
+    def _release_gpu_locked(self, reason):
+        t0 = time.time()
+        stopped = sorted(self.llama.procs)
+        try:
+            self.llama.evict_all()
+        except Exception as e:
+            print("  [arbiter] could not stop a seat: %s" % e)
+        try:
+            self.ollama.evict_all()
+        except Exception as e:
+            print("  [arbiter] could not unload the daemon's models: %s" % e)
+        if self.lease is not None:
+            try:
+                self.comfy.stop()
+            except Exception:
+                pass
+            self.lease = None
+        self._record("release-gpu", reason, None, round(time.time() - t0, 2))
+        return {"ok": True, "stopped": stopped, "reason": reason}
+
+    def reclaim_gpu(self):
+        """Load the default seats again once the card is Friday's (Resume,
+        an expired stand-down window, a released foreign hold)."""
+        with self._lock:
+            why = self.gpu_not_ours()
+            if why:
+                return {"ok": False, "reason": why}
+            self.compute_plan()
+            t0 = time.time()
+            self._load_default_seats()
+            self._record("reclaim-gpu", "plan", None, round(time.time() - t0, 2))
+            return {"ok": True, "seats": sorted(self.llama.procs)}
 
     # ── leases ──────────────────────────────────────────────────────────────
 
     def grant(self, kind, *, role=None, ttl_s=300):
         """Grant a capability lease, executing its transition serially."""
         with self._lock:
+            _why = self.gpu_not_ours()
+            if _why:
+                return {"ok": False, "error": "the GPU is not Friday's right now: %s" % _why}
             if self.lease is not None:
                 return {"ok": False, "error": "lease %s already held"
                         % self.lease["kind"]}
@@ -2513,6 +2598,9 @@ class Arbiter:
 
     def _load_pinned(self, seat, role):
         """R9: a pinned seat is a process we own, not a request to a daemon."""
+        if self.gpu_not_ours():
+            self._record("held", role, seat["model_id"], 0.0)
+            return 0.0
         entry = self._entry(seat["model_id"])
         files = self._seat_files(seat["model_id"])
         gguf = files.get("gguf")
@@ -2586,6 +2674,9 @@ class Arbiter:
         R8. llama-server also takes explicit --n-cpu-moe and -c, which is the
         control the offload placement needs.
         """
+        if self.gpu_not_ours():
+            self._record("held", role, seat["model_id"], 0.0)
+            return 0.0
         entry = self._entry(seat["model_id"])
         files = self._seat_files(seat["model_id"])
         gguf = files.get("gguf")

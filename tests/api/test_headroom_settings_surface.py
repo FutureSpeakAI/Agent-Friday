@@ -47,7 +47,12 @@ def test_machine_level_now_enforces(client):
     client.post("/api/machine/level", json={"level": "working"})
 
 def test_machine_level_defaults_to_yield_with_no_body(client):
-    r = client.post("/api/machine/level")
-    assert r.status_code == 200
-    d = r.get_json()
-    assert d["level_requested"] == "yield"
+    try:
+        r = client.post("/api/machine/level")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["level_requested"] == "yield"
+    finally:
+        # A stood-down state persists in the test home and keeps every later
+        # test's GPU lease from being granted.
+        client.post("/api/machine/level", json={"level": "working"})

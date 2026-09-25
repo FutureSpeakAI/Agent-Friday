@@ -94,13 +94,20 @@ def _write(st: Dict[str, Any]) -> None:
 def _release_gpu() -> None:
     """Unload every local model Friday owns. Patched out in tests.
 
-    `adopt_or_reap(set())` is the existing mechanism: the plan wants nothing, so
-    everything Friday owns is reaped. Laya is not on the card (CPU encoder), so
-    it is untouched by this and keeps working.
+    Through the arbiter's own release: every seat it owns, spawned or adopted,
+    is stopped. (This used to call `adopt_or_reap(set())` on the Arbiter, which
+    has no such method -- it is the llama-server backend's -- so every
+    stand-down logged an error and released nothing; and that method spares a
+    seat a local provider routes to, which Friday's own seat is.) Laya is not on
+    the card (CPU encoder), so it keeps working.
     """
     try:
         from agent_friday.services.residency_arbiter import get_arbiter
-        report = get_arbiter().adopt_or_reap(set())
+        arb = get_arbiter()
+        if arb is None:
+            _log.info("stand-down: no arbiter in this process; nothing to release")
+            return
+        report = arb.release_gpu("stood down")
         _log.info("stand-down released the GPU: %s", report)
     except Exception as exc:
         # Report it; do NOT fail the stand-down. The user asked for the machine
@@ -108,19 +115,50 @@ def _release_gpu() -> None:
         _log.error("stand-down could not release the GPU: %s", exc)
 
 
-def state() -> Dict[str, Any]:
-    """Current state, with an expired auto-resume already applied."""
+def _in_background(fn) -> None:
+    """Loading a 27B takes a minute; nobody waits on it. Inline in tests."""
+    threading.Thread(target=fn, daemon=True, name="friday-reclaim-gpu").start()
+
+
+def _reclaim_gpu() -> None:
+    """Give Friday its seats back (Resume, or the window ran out)."""
+    try:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        arb = get_arbiter()
+        if arb is None:
+            return
+        report = arb.reclaim_gpu()
+        _log.info("resume reloaded the seats: %s", report)
+    except Exception as exc:
+        _log.error("resume could not reload the seats: %s", exc)
+
+
+def _expired(st: Dict[str, Any]) -> bool:
+    try:
+        return bool(st.get("active") and st.get("auto_resume_at")
+                    and float(st["auto_resume_at"]) <= time.time())
+    except Exception:
+        return False
+
+
+def is_active_now() -> bool:
+    """Stood down right now, with no side effects (the arbiter asks this
+    under its lock; `state()` may reload seats when a window has expired)."""
     st = _read()
-    if st.get("active") and st.get("auto_resume_at"):
-        try:
-            if float(st["auto_resume_at"]) <= time.time():
-                st = {"active": False, "since": 0.0,
-                      "requested_by": st.get("requested_by") or "",
-                      "auto_resume_at": None}
-                _write(st)
-                _log.info("stand-down auto-resumed on its own window")
-        except Exception:
-            pass
+    return bool(st.get("active")) and not _expired(st)
+
+
+def state() -> Dict[str, Any]:
+    """Current state, with an expired auto-resume already applied (and the
+    seats reloaded, as Resume would)."""
+    st = _read()
+    if _expired(st):
+        st = {"active": False, "since": 0.0,
+              "requested_by": st.get("requested_by") or "",
+              "auto_resume_at": None}
+        _write(st)
+        _log.info("stand-down auto-resumed on its own window")
+        _in_background(_reclaim_gpu)
     return st
 
 
@@ -154,6 +192,7 @@ def resume(*, requested_by: str = "") -> Dict[str, Any]:
           "requested_by": (requested_by or "").strip(), "auto_resume_at": None}
     _write(st)
     _log.info("Friday resumed (by=%r)", requested_by)
+    _in_background(_reclaim_gpu)
     return st
 
 
