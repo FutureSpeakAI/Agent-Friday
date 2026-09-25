@@ -282,6 +282,17 @@ def provider_key_source(prov: dict | None) -> str:
     return "none"
 
 
+def key_presence(key: str | None) -> str:
+    """What a LOG LINE may say about a key: whether there is one. Nothing more.
+
+    Logs outlive the key and travel further than the screen (support bundles,
+    pasted tracebacks, a stderr file that is 40 MB of history). Not a prefix,
+    not a tail: no character of the key belongs in one. For telling two keys
+    apart on screen, mask_key() below.
+    """
+    return "present" if (key or "").strip() else "MISSING"
+
+
 def mask_key(key: str | None) -> str:
     """Enough of a key to recognise it. Never enough to use it.
 

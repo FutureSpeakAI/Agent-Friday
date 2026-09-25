@@ -724,8 +724,9 @@ def cmd_config(args):
         key = getattr(args, "key", None)
         # Mask API keys
         def _mask(k, v):
-            if "api_key" in k and isinstance(v, str) and len(v) > 12:
-                return v[:12] + "..." + "*" * 8
+            if "api_key" in k and isinstance(v, str) and v:
+                from agent_friday.routing.provider_descriptors import mask_key
+                return mask_key(v)
             return v
 
         t = Table(box=box.SIMPLE, padding=(0, 2), show_header=True,

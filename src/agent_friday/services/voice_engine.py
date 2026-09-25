@@ -1018,14 +1018,19 @@ except Exception as _e:
 #  FRIDAY LIVE — Gemini Live API bridge over WebSocket
 # ═══════════════════════════════════════════════════════════════
 
-LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-2.5-flash-native-audio-latest")
+# gemini-3.8-live is Google's stable default Live model. Measured with Friday's
+# own session config (tools/voice_bench/live_latency.py --friday): first audio
+# 0.9 s against 2.2 s on the 2.5 native-audio model, and it answers a resumed
+# session in ~0.55 s. It takes neither proactivity nor thinking_config; the
+# bridge strips both per model (see the helpers below).
+LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-3.8-live")
 # Graceful-degradation chain. All three IDs below are verified by an actual
 # bidiGenerateContent connect (open+close) against the live API —
 # models.list presence alone is NOT sufficient proof, and an unverified ID in
 # this chain recreates the exact 1008-misread-as-auth-failure incident this
 # block exists to prevent. If you change any of these, re-verify with a real
 # connect, not just models.list.
-LIVE_MODEL_FALLBACK = "gemini-2.5-flash-native-audio-preview-09-2025"
+LIVE_MODEL_FALLBACK = "gemini-2.5-flash-native-audio-latest"
 LIVE_MODEL_FALLBACK2 = "gemini-3.1-flash-live-preview"
 # Verified the ONLY way this block accepts: a real
 # bidiGenerateContent connect (open, one server message, close) against
@@ -1033,8 +1038,10 @@ LIVE_MODEL_FALLBACK2 = "gemini-3.1-flash-live-preview"
 # ("gemini-3.8-live-does-not-exist") that failed 1008 — so the OK is
 # evidence, not the probe rubber-stamping everything handed to it.
 # gemini-3.8-live is the 2026-09-15 stable release: 131072 in / 65536 out,
-# bidirectional audio, no shutdown date. It goes LAST so a working session
-# never changes model underneath a user who did not ask for it.
+# bidirectional audio, no shutdown date. It is now LIVE_MODEL, the default;
+# the 2.5 native-audio models follow it in the chain (all re-verified by a
+# real connect and a spoken answer on 2026-09-25, beside a fake id that
+# failed 1008).
 #
 # Its sibling gemini-3.8-live-extended-thinking is deliberately NOT in this
 # chain. It is real (models.get: bidiGenerateContent, same limits) but a
@@ -1044,7 +1051,7 @@ LIVE_MODEL_FALLBACK2 = "gemini-3.1-flash-live-preview"
 # an attempt and reports a config error as if the previous model's failure
 # continued. It is selectable in the catalogue instead, where
 # _live_thinking_config_for() supplies the required level.
-LIVE_MODEL_FALLBACK3 = "gemini-3.8-live"
+LIVE_MODEL_FALLBACK3 = "gemini-2.5-flash-native-audio-preview-09-2025"
 
 # Model IDs that fail a live connect with 1008 "not found" (which reads like
 # an auth failure). validate_live_model() reports them as status "retired" so
@@ -1198,14 +1205,15 @@ def resolve_gemini_key(update_core=True):
         if first_bad is not None:
             picked = first_bad
     if update_core and picked["key"] and picked["key"] != core.GEMINI_API_KEY:
-        _old = (core.GEMINI_API_KEY[:8] + "...") if core.GEMINI_API_KEY else "MISSING"
+        from agent_friday.routing.provider_descriptors import key_presence
+        _old = key_presence(core.GEMINI_API_KEY)
         core.GEMINI_API_KEY = picked["key"]  # pragma: allowlist secret
         try:
             core._genai_client = None  # rebuild lazily with the fresh key
         except Exception:
             pass
-        _log.info("GEMINI_API_KEY refreshed from %s: was=%s now=%s... (valid=%s)",
-                  picked["source"], _old, picked["key"][:8], picked["valid"])
+        _log.info("GEMINI_API_KEY replaced from %s (previous key %s, valid=%s)",
+                  picked["source"], _old, picked["valid"])
     return picked
 
 

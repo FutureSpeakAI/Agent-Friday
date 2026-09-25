@@ -348,18 +348,17 @@ def _compose_final_voice_error(attempt_errors, key_source):
     models_tried = ", ".join(dict.fromkeys(m for m, _a, _k, _e in attempt_errors))
     if "auth" in kinds:
         key = core.GEMINI_API_KEY or ""
-        kp = (key[:10] + "...") if key else "MISSING"
         try:
             ok, detail = validate_gemini_key(key, force=True)
         except Exception as _ve:
             ok, detail = False, f"validation error: {_ve}"
         if ok:
             return (f"Gemini Live refused the connection with an auth-style error, "
-                    f"but the key (starts {kp}, from {key_source}) passes a REST "
+                    f"but the key (from {key_source}) passes a REST "
                     f"check — so the configured voice model is likely stale or "
                     f"renamed. Models tried: {models_tried}. Pick a current Live "
                     f"model in Settings → Voice.")
-        return (f"Gemini API key invalid or revoked (starts {kp}, loaded from "
+        return (f"Gemini API key invalid or revoked (loaded from "
                 f"{key_source}; Google says: {detail}). Update the key at that "
                 f"source, or paste a fresh key from aistudio.google.com into "
                 f"Settings → Accounts & Keys → Google Gemini — it takes effect on the "
@@ -2123,7 +2122,8 @@ if sock is not None:
         # of the resume cache and renewal rights; any earlier handler still
         # alive on a half-open socket becomes a fenced-off zombie.
         _conn_gen = _live_conn_next()
-        _key_preview = (core.GEMINI_API_KEY[:10] + '...') if core.GEMINI_API_KEY else 'MISSING'
+        from agent_friday.routing.provider_descriptors import key_presence as _key_presence
+        _key_preview = _key_presence(core.GEMINI_API_KEY)
         print(f'[live] WS connect from {request.remote_addr} | auth={session.get("authenticated")} local={_is_local_request()} | GEMINI_KEY={_key_preview}', flush=True)
         _vlog(f'session.authenticated={session.get("authenticated")} local={_is_local_request()} GEMINI_KEY={_key_preview}')
 
@@ -2185,11 +2185,10 @@ if sock is not None:
             _key_source = _key_info.get('source') or 'unknown'
             if _key_info.get('key'):
                 print(f"[live] gemini key ← {_key_source} "
-                      f"valid={_key_info.get('valid')} {_key_info['key'][:8]}...",
-                      flush=True)
+                      f"valid={_key_info.get('valid')}", flush=True)
                 _vlog(f"key resolved from {_key_source} "
                       f"valid={_key_info.get('valid')} "
-                      f"({_key_info.get('detail', '')}): {_key_info['key'][:8]}...")
+                      f"({_key_info.get('detail', '')})")
         except Exception as _kre:
             _vlog(f'key resolution failed (using existing core key): {_kre}')
         if not core.GEMINI_API_KEY:
@@ -3584,7 +3583,8 @@ if sock is not None:
                     traceback.print_exc()
                     if _kind == 'auth':
                         _live_key_now = core.GEMINI_API_KEY
-                        _key_diag = (_live_key_now[:10] + '...') if _live_key_now else 'MISSING'
+                        from agent_friday.routing.provider_descriptors import key_presence as _kp2
+                        _key_diag = _kp2(_live_key_now)
                         print(f'[live] auth error on {model_name} (api={api_version or "v1beta"}). KEY={_key_diag} (from {_key_source}).', flush=True)
                     elif _kind == 'model-missing':
                         print(f'[live] model unavailable: {model_name} (api={api_version or "v1beta"}) — NOT an auth/key problem.', flush=True)
