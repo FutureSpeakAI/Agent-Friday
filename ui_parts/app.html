@@ -12767,6 +12767,12 @@ function SetupChat({ onDone }) {
             </div>
           )}
           {err && card !== 'research_seeds' && <div role="alert" className="sc-msgline bad">{err}</div>}
+          {busy && (
+            <div className="sc-sub" role="status" style={{ margin: '6px 0 0' }}>
+              {(st.stage === 'questions' && st.reader && st.reader.kind !== 'rules')
+                ? 'Reading your answers with ' + st.reader.badge + '…' : 'One moment…'}
+            </div>
+          )}
           {st.stage !== 'done' && (
             <form className="sc-form" onSubmit={send}>
               <label htmlFor="sc-input" className="sc-sr">Your answer</label>

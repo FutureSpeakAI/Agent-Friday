@@ -542,11 +542,22 @@ def run_job(job_id: str, engine: ResearchEngine, task_id=None) -> dict:
                        "and not stored." % (len(candidates), sum(dropped.values())))}
 
 
+#: A job still marked running this long after it last wrote anything was cut
+#: off (Friday restarted mid-run). It is reported as interrupted rather than
+#: left spinning; a normal run finishes well inside this.
+STALE_RUNNING_S = 1800
+
+
 def public_view(job_id: str) -> dict | None:
     """What the review card shows. Seeds are not included."""
     job = load_job(job_id)
     if job is None:
         return None
+    if job.get("status") == "running" and \
+            time.time() - float(job.get("updated") or job.get("created") or 0) > STALE_RUNNING_S:
+        job["status"] = "failed"
+        job["error"] = ("It was interrupted before it finished (Friday may have "
+                        "restarted). Nothing from it was kept; you can run it again.")
     return {"job_id": job["id"], "status": job.get("status"),
             "task_id": job.get("task_id"), "reader": job.get("reader"),
             "candidates": [c for c in job.get("candidates") or []

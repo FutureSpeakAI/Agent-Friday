@@ -39553,7 +39553,13 @@ function SetupChat({
   }, c.label))), err && card !== 'research_seeds' && /*#__PURE__*/React.createElement("div", {
     role: "alert",
     className: "sc-msgline bad"
-  }, err), st.stage !== 'done' && /*#__PURE__*/React.createElement("form", {
+  }, err), busy && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub",
+    role: "status",
+    style: {
+      margin: '6px 0 0'
+    }
+  }, st.stage === 'questions' && st.reader && st.reader.kind !== 'rules' ? 'Reading your answers with ' + st.reader.badge + '…' : 'One moment…'), st.stage !== 'done' && /*#__PURE__*/React.createElement("form", {
     className: "sc-form",
     onSubmit: send
   }, /*#__PURE__*/React.createElement("label", {
