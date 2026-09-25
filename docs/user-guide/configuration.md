@@ -283,7 +283,7 @@ Set these for the process that starts Friday. Provider keys are listed under
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FRIDAY_PORT` | `3000` | Port. If it is busy the server tries the next ten. (The tray assumes 3000; see [KNOWN_ISSUES.md](../../KNOWN_ISSUES.md).) |
+| `FRIDAY_PORT` | `3000` | Port. If it is busy the server tries the next ten. The server records the port it bound in `~/.friday/friday_server.port`, and the tray follows it. |
 | `FRIDAY_BIND_HOST` | `127.0.0.1` | Bind address. Binding to anything else needs a login key unless `FRIDAY_ALLOW_KEYLESS_BIND` is set. |
 | `FRIDAY_TLS_CERT`, `FRIDAY_TLS_KEY` | unset | Serve HTTPS directly. `FRIDAY_REQUIRE_TLS` refuses to start remotely without it; `FRIDAY_SKIP_TLS_WARN` silences the warning. |
 | `FRIDAY_USERNAME` | `admin` | Login username for remote access. |
