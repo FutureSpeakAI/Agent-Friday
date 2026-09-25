@@ -142,9 +142,14 @@ Step by step: [Getting started](docs/user-guide/getting-started.md).
   sensitive meaning in ordinary words can get through. In "On this computer
   only" mode, if no local model is running, Friday refuses the turn and offers
   to answer it in the cloud; nothing is sent until you choose.
-- **What leaves on its own:** a connectivity probe, news feeds, web fonts,
-  MediaPipe scripts and, only if you said yes, the weekly update check. Each is
-  listed in [Background network activity](docs/user-guide/background-network.md).
+- **What leaves on its own:** news feeds; health checks for services you
+  connected; the page's fonts from Google Fonts, because this release does
+  not ship the font files (Settings → Privacy & Approvals → Fonts turns that
+  off); and, only if you said yes, the weekly update check. The connectivity
+  probe sends nothing unless you opt in. MediaPipe and the embedding model
+  are fetched only the first time you use the feature that needs them. Each
+  is listed, with how to turn it off, in
+  [Background network activity](docs/user-guide/background-network.md).
 - **Remote access:** Friday listens only on this PC. A request that comes
   through a tunnel or proxy is never treated as you.
 
