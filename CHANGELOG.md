@@ -15,6 +15,29 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 Cloud-only installs now fully work. The plain-language summary is in
 [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
+### Privacy
+
+A privacy leak in 5.14.0: text meant to stay on the PC could be summarised by
+a cloud model. RELEASE_NOTES.md explains who it could affect.
+
+- Compaction summarised a local seat's transcript with
+  `_generate_text(model=subagent_model)` and no seat context, so the middle
+  turns (vault reads, local-only tool output) went to the cloud whenever the
+  router answered cloud or the local leg failed; chat's pre-routing
+  trajectory summariser had the same shape. A seat's transcript is now
+  summarised by that seat, and a caller with no summarizer of its own gets
+  one that runs under `local_only_guard`: a local model or no summary.
+- The 23:30 session summary sent the day's conversation, local-only chats
+  included, through the ordinary router with a cloud model hint. It runs
+  under `local_only_guard` and stores no router refusal as a summary.
+- `local_only_guard` is thread-local, and a local-only scheduled
+  `agent_prompt` ran on a worker thread outside it. The worker, its
+  continuation legs and any resume re-enter it.
+- Ollama `:cloud` / `-cloud` tags, which the local daemon relays to
+  ollama.com, count as cloud calls.
+- A router refusal returned in place of a summary is no summary: in
+  local-only mode with no local model it had replaced 113 of 153 messages.
+
 ### Added
 
 - **Scheduled jobs on a cloud-only PC.** With no local model serving, the
