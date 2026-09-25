@@ -69,17 +69,14 @@ def _settings():
 
 
 def _api_key():
-    """Resolve the key from core, the live env, then settings.json."""
+    """Resolve the key the one way keys resolve: cloud_voice._api_key (core,
+    the live env, the credential store, then legacy settings.json)."""
     try:
-        from agent_friday import core
-        key = getattr(core, "ELEVENLABS_API_KEY", "") or ""
+        from agent_friday.services.cloud_voice import _api_key as _resolve
+        return _resolve("elevenlabs")
     except Exception:
-        key = ""
-    if not key:
         key = os.environ.get("ELEVENLABS_API_KEY", "") or ""
-    if not key:
-        key = _settings().get("elevenlabs_api_key", "") or ""
-    return key.strip()
+        return key.strip()
 
 
 _NO_KEY = (
