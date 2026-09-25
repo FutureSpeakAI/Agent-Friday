@@ -171,6 +171,15 @@ def test_the_job_is_encrypted_at_rest(home):
     assert b"Acme" not in raw and b"Sam" not in raw
 
 
+def test_a_run_cut_off_by_a_restart_is_reported_not_left_spinning(home, monkeypatch):
+    out = R.start(SEEDS, READER, engine=FakeEngine(), spawn=lambda n, p, runner: "task-x")
+    assert R.public_view(out["job_id"])["status"] == "running"
+    real = R.time.time
+    monkeypatch.setattr(R.time, "time", lambda: real() + R.STALE_RUNNING_S + 5)
+    view = R.public_view(out["job_id"])
+    assert view["status"] == "failed" and "interrupted" in view["error"]
+
+
 def test_the_default_engine_fences_the_page_and_passes_no_tools(monkeypatch):
     from agent_friday.services import setup_reader
     seen = {}
