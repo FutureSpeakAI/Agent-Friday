@@ -119,11 +119,16 @@ account asks you to sign in again, do so in Settings → Accounts & Keys.
 **After a move, outward actions may be held.** Friday's governance signing key
 is kept in Windows Credential Manager, so a new PC or account gets a new key,
 and the pinned signature of Friday's rules no longer matches. Friday then
-holds outward actions (reads keep working). To accept the new key, quit Friday,
-delete `%USERPROFILE%\.friday\governance\claws.pin.json`, and start Friday; it
-pins the rules again under the new key. Receipts signed before the move can
-only be verified with the old key. This is listed in
-[KNOWN_ISSUES.md](../../KNOWN_ISSUES.md).
+holds outward actions (reads keep working). To accept the new key, open
+Settings → Privacy & Approvals → Friday's rules on this PC, check that it says
+the signature does not match, and choose **Re-confirm Friday's rules on this
+PC**. The control works only from Friday's own page on this PC. Receipts
+signed before the move can only be verified with the old key.
+
+**A passphrase-protected keystore needs the passphrase.** If you turned on
+Settings → Privacy & Approvals → Stored keys, the restored keystore opens only
+with your vault passphrase, so run `vault-setup` (step 3 above) before
+starting Friday.
 
 ## Erasing everything
 
