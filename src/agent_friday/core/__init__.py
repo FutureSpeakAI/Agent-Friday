@@ -2035,6 +2035,11 @@ DEFAULT_SETTINGS = {
     # wiki write and delete (services/wiki_engine._wiki_mirror_dir). Empty =
     # off. A cloud-synced folder sends every mirrored page off the machine.
     "wiki_mirror_dir": "",
+    # How the offline monitor decides whether this PC is online
+    # (services/notifications._network_probe): "route" (default; a routing-
+    # table lookup, nothing sent), "internet" (TCP to public DNS resolvers
+    # every 30 s) or "off".
+    "network_probe": "route",
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,

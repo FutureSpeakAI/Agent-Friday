@@ -609,13 +609,57 @@ def _notification_trigger_loop():
 # has switched to local inference. The _load_settings offline overlay does the
 # actual provider switch — this loop just drives the state + side effects.
 
+# The probe is chosen by the `network_probe` setting:
+#   "route"    (default) asks this PC's routing table whether a non-loopback
+#              route exists. A UDP socket "connected" to a documentation
+#              address (RFC 5737 / RFC 3849) sends no packet; the OS only picks
+#              the interface it would use. Nothing leaves the machine. It sees
+#              a cable unplugged, Wi-Fi off or airplane mode, not a captive
+#              portal or an upstream outage.
+#   "internet" opens a TCP connection to NETWORK_PROBE_HOSTS (public DNS
+#              resolvers run by Google and Cloudflare) every 30 seconds. More
+#              accurate; reveals this PC's address and that Friday runs.
+#   "off"      no probe; Friday treats the PC as online.
 NETWORK_PROBE_HOSTS = [("dns.google", 443), ("8.8.8.8", 443), ("1.1.1.1", 443)]
 NETWORK_PROBE_INTERVAL = 30        # seconds between probes
 NETWORK_PROBE_TIMEOUT = 3.0        # per-host connect timeout
+_ROUTE_PROBE_TARGETS = (("192.0.2.1", 9), ("2001:db8::1", 9))
+
+
+def _network_probe_mode() -> str:
+    try:
+        mode = str((core._load_settings() or {}).get("network_probe") or "route")
+    except Exception:
+        mode = "route"
+    mode = mode.strip().lower()
+    return mode if mode in ("route", "internet", "off") else "route"
+
+
+def _route_probe():
+    """(ok, None, "local route"): is there a non-loopback route? Sends nothing."""
+    import ipaddress
+    import socket
+    for host, port in _ROUTE_PROBE_TARGETS:
+        fam = socket.AF_INET6 if ":" in host else socket.AF_INET
+        try:
+            with socket.socket(fam, socket.SOCK_DGRAM) as s:
+                s.connect((host, port))           # a routing lookup, no packet
+                local = s.getsockname()[0]
+            ip = ipaddress.ip_address(str(local).split("%")[0])
+            if not (ip.is_loopback or ip.is_unspecified):
+                return True, None, "local route"
+        except (OSError, ValueError):
+            continue
+    return False, None, "local route"
 
 
 def _network_probe():
-    """Try a fast TCP connect to a reliable host. Returns (ok, latency_ms, host)."""
+    """Returns (ok, latency_ms, host) using the configured probe (see above)."""
+    mode = _network_probe_mode()
+    if mode == "off":
+        return True, None, "not checked"
+    if mode != "internet":
+        return _route_probe()
     import socket
     for host, port in NETWORK_PROBE_HOSTS:
         t0 = _time.time()

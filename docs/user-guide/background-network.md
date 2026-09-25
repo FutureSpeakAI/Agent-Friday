@@ -19,7 +19,7 @@ conversation content, vault data or personal details.
 | What | Destination | When | Turn it off |
 |---|---|---|---|
 | Update check (opt-in) | `api.github.com` | At most once a week, only if you said yes | First-run question, or Settings → About |
-| Connectivity probe | `dns.google`, `8.8.8.8`, `1.1.1.1` (TCP 443) | Every 30 seconds | Cannot be switched off (see below) |
+| Connectivity probe | Nothing by default (a routing-table lookup on this PC); `dns.google`, `8.8.8.8`, `1.1.1.1` (TCP 443) only if you opt in | Every 30 seconds | `network_probe` in `settings.json` |
 | News feeds | Built-in RSS feeds (news sites, Google News) | Every 5 minutes | Turn news categories off in the News workspace |
 | Web fonts | `fonts.googleapis.com`, `fonts.gstatic.com` | Every page load | Not configurable yet |
 | MediaPipe scripts | `cdn.jsdelivr.net` | Every page load; model files only when tracking is on | Tracking off stops the model downloads; the scripts still load |
@@ -52,18 +52,27 @@ can change your answer in Settings → About.
 
 ## 2. Connectivity probe
 
-**What it does:** Opens a TCP connection to port 443 of `dns.google`, falling
-back to `8.8.8.8` and then `1.1.1.1`, every 30 seconds (first probe about 5
-seconds after startup), to tell whether this PC is online.
+**What it does:** Every 30 seconds (first check about 5 seconds after startup)
+Friday decides whether this PC is online. The `network_probe` setting chooses
+how:
+
+- `"route"` (the default): asks this PC's routing table whether it has a
+  network route. It "connects" a UDP socket to a reserved documentation
+  address, which sends no packet. **Nothing leaves the machine.** It notices a
+  cable unplugged, Wi-Fi off or airplane mode; it does not notice a captive
+  portal or an outage further upstream.
+- `"internet"` (opt-in): opens a TCP connection to port 443 of `dns.google`,
+  falling back to `8.8.8.8` and then `1.1.1.1`. A bare handshake with no
+  payload, but it reveals your IP address to Google or Cloudflare, and that
+  Friday is running.
+- `"off"`: no check; Friday treats the PC as online.
 
 **Why:** It drives the offline badge and, if `offline_auto_local` is on, the
 switch to a local model while offline.
 
-**Data sent:** A bare TCP handshake. No payload, no headers. It reveals your IP
-address and that Friday is running.
-
-**Turn it off:** There is no switch today. Setting `offline_auto_local` to
-`false` stops the automatic switch to local models; the probe keeps running.
+**Turn it off or change it:** set `"network_probe"` in `settings.json` while
+Friday is stopped. Setting `offline_auto_local` to `false` stops the automatic
+switch to local models.
 
 ## 3. News feeds
 
