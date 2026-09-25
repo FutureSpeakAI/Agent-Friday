@@ -18,6 +18,17 @@ Everything since the 5.13.0 tag. The plain-language summary is in
 
 ### Added
 
+- **A setup chat on first run.** After the privacy screens, Friday holds a
+  short conversation: what to call you, which services to connect (each
+  through its official sign-in or a secure key field, never a password in
+  the chat, every item skippable and listed in Settings > Accounts & Keys >
+  Setup checklist), optional public-web research about you from starting
+  points you give, reviewed item by item before anything is kept, and 8-12
+  skippable questions that set her first speaking style. Answers are stored
+  encrypted on this computer; only the resulting style reaches the prompt.
+  The profile can be viewed, edited, deleted or re-run from Settings >
+  General > Your profile. The honesty and approval rules cannot be tuned
+  away by it.
 - **Approvals for every outward action.** One fail-closed checkpoint
   (`governance/action_gate.py`) now sits in front of every tool call from
   every surface: chat, voice, scheduled jobs, background tasks and phone.
@@ -89,6 +100,36 @@ Everything since the 5.13.0 tag. The plain-language summary is in
 - 3D views for Code, News, Contacts, Trust, Messages, Calendar and the model
   library; a 3D file browser in Studio; head-coupled perspective when
   tracking is on.
+- **Deep research.** A `deep_research` tool that runs as a visible background
+  task, keeps sealed snapshots of its sources, cites them, and resumes after
+  a restart. Fetched pages are treated as untrusted input.
+- **"What Friday did"**: a morning summary built from the signed decision
+  receipts.
+- **Relationship memory.** A local timeline of who you correspond with, with
+  follow-up reminders, shown in Contacts. Stored encrypted.
+- **PDF forms, signing and OCR.** Friday lists and fills PDF form fields,
+  signs a PDF only after an approval card, and reads scanned PDFs and images
+  with on-device OCR.
+- **Interview scheduling.** Friday finds free times across all connected
+  calendars, holds them, and books one; each calendar write names its
+  account and waits for approval.
+- **Career workspace tools** built on career-ops: status, inbox, tailoring
+  and evaluation run freely; changes to the application tracker wait for an
+  approval card. The workspace says which career-ops files still need
+  filling in.
+- **Friday's own browser.** A separate, watched browser profile for web
+  tasks; every form submission waits for an approval card. Settings can
+  close it and clear its profile.
+- **Meeting capture.** Record a meeting, transcribe it on this computer and
+  take notes on a local seat, from the Calendar. A recording indicator shows
+  on every screen while it runs.
+- **Desktop control per app.** Mouse and keyboard control is granted one
+  application at a time, and risky actions still ask first. The Windows
+  desktop connector starts read-only.
+- **Sandboxed Python.** `run_sandboxed` runs code in a contained process
+  instead of the host shell.
+- **Connectors**: GitHub's official MCP server and Higgsfield as one-click
+  connectors. ElevenLabs and Inworld voice keys live in the credential store.
 
 ### Changed
 
@@ -106,6 +147,12 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   mid-flight.
 - **Friday says which model answered** on every chat surface, and announces
   a tool only once the checkpoint lets it run.
+- **The news Local beat is opt-in.** It appears only when
+  `news_local_area` is set in `settings.json` (see the configuration
+  reference); there is no built-in city.
+- **The standing latency budget measures what a turn sends**: the system
+  prompt plus the tool index (about 6,900 tokens for 107 tools), with the
+  full tool catalogue budgeted separately as the fallback's cost.
 - **The action permission policy ends every system prompt** and cannot be
   overridden by anything assembled before it, including voice context.
 - Tools are sent to the model as an index with schemas loaded on demand,
@@ -189,6 +236,12 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   longer keeps its own file, and it never writes an unsigned entry: when a
   receipt cannot be signed and written, a network or OS-control call is held.
   `.friday\vault\decision-bom.jsonl` from earlier versions is left as history.
+- **The cloud-consent question always has a way to say no.** On a PC that
+  cannot run the full private-local set, the only answer offered was
+  unrestricted cloud. A new answer, "cloud, safeguards on", records the
+  decision and leaves every safeguard in place; it is offered first, on any
+  hardware, and in Settings. The screen's reasons are plain sentences, with
+  the technical detail behind a disclosure.
 - **Re-confirm Friday's rules on this PC** (Settings > Privacy & Approvals).
   After moving `.friday` to another PC or Windows account, or an update that
   changes the rules text, outward actions are held; this control shows the
@@ -201,6 +254,13 @@ Everything since the 5.13.0 tag. The plain-language summary is in
 
 ### Fixed
 
+- Reloading the desktop before first-run setup finished ended setup for
+  good: the page's scene bookkeeping wrote `personality.json`, which marks a
+  finished install. That bookkeeping now lives in `evolution.json`, and an
+  older install's first-launch date and pinned scene are kept.
+- Approval cards say what will happen (the card's description) instead of
+  repeating the title and printing the internal kind and policy class, and
+  give the expiry in plain words.
 - A yes in chat approves the exact action it was asked about and no other,
   and a question already answered is not asked again; a second ask becomes
   an approval card instead of a loop.
@@ -243,6 +303,9 @@ Everything since the 5.13.0 tag. The plain-language summary is in
 
 ### Removed
 
+- Modules nothing imports, components nothing renders, CSS rules nothing
+  uses, icon files nothing loads, settings nothing reads, and one-off
+  scripts; each was checked for references before removal.
 - **The Friday Edition** and the **Home** workspace. The desktop is the
   landing screen; the briefings carry the morning read.
 - **The Lessac Piper voice** is no longer offered: its training data is
@@ -257,16 +320,6 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   copyleft packages the default installation brings in, and each model's
   license. `THIRD_PARTY_LICENSES.md` lists every component with version,
   delivery and license.
-
-### Landing for 5.14.0 (to be confirmed at release)
-
-Work in progress on other branches at the time of writing. Confirm each item
-is on `main` before tagging, and delete any that is not.
-
-- PDF form fill, signing and OCR.
-- Interview scheduling.
-- Safety fixes from the crew-0 review.
-- Dead-code removal.
 
 ---
 

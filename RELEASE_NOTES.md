@@ -3,7 +3,8 @@
 *Draft. Date to be set at release. FutureSpeak.AI*
 
 This release is about trust. Friday now asks before every outward action, from
-every surface, and keeps a signed receipt of each decision. It also gains a
+every surface, and keeps a signed receipt of each decision. A new install
+starts with a short setup conversation instead of a form. Friday also gains a
 proper mail client, a phone line you control, real Office documents, dictation
 anywhere in Windows, and a Settings screen reorganised around what you are
 trying to do. Full detail is in the [CHANGELOG](CHANGELOG.md); what is not
@@ -12,6 +13,17 @@ right yet is in [KNOWN_ISSUES](KNOWN_ISSUES.md).
 ---
 
 ## What's new
+
+**A setup chat on first run.** After the privacy screens, Friday talks you
+through setup: what to call you, which services to connect, optional research
+about you on the public web, and a few questions (every one skippable) that
+shape how she speaks to you. Keys go into secure fields that store them
+encrypted, never into the chat, and Friday never reads your browser's saved
+passwords. Anything you skip waits in Settings → Accounts & Keys → Setup
+checklist. Research runs only if you ask, uses only starting points you give,
+and nothing it finds is kept until you accept it line by line. Your answers
+stay encrypted on your PC; you can view, edit or delete them in Settings →
+General → Your profile.
 
 **Friday asks before it acts.** Reading, searching and drafting run on their
 own. Sending, publishing, calendar changes, installing, overwriting your files
@@ -59,6 +71,15 @@ its own. [Phone](docs/user-guide/phone.md)
 **Reasoning traces.** See how Friday reasoned through a turn, with its tool
 calls, nested under the conversation; archived encrypted on your PC.
 
+**More that Friday can do, each behind the same approvals:** deep research
+with cited, saved sources; PDF forms filled and (after a card) signed, and
+scanned documents read on your PC; interview times found across all your
+calendars and booked; a meeting recorded and transcribed on your PC; a
+timeline of who you are in touch with and who needs a follow-up; career-ops
+tools in the Career workspace; a separate browser Friday uses for web tasks,
+where every form submission waits for you; desktop control granted one app at
+a time; and Python run in a sandbox instead of your shell.
+
 **Also:** workspaces in their own browser tabs, a chat sidebar with projects,
 a stop button for a running reply, a floating widget when the window is small,
 task resume after a crash, keyless local web search, an optional hard spending
@@ -83,6 +104,9 @@ cap, and Claude Opus 5.5 in the model picker.
   landing screen, and the briefings carry the morning read.
 - **Requests through a tunnel or proxy are never treated as you.** They must
   log in.
+- **You choose how much the cloud sees.** Once, after setup, Friday asks
+  whether cloud models get your words with the privacy safeguards on or with
+  none held back. "Safeguards on" is always offered, and is the first choice.
 - **Sonnet 5 costs are metered at the published $2 / $10 per million tokens**
   (they were overstated by half), so reported spend drops.
 
@@ -106,11 +130,19 @@ cap, and Claude Opus 5.5 in the model picker.
   change something on its own now waits on a card until you give it a grant.
 - **Documents need OfficeCLI**, which the installer does not yet provide; see
   [Documents](docs/user-guide/documents.md).
+- **The News "Local" section needs a place.** It no longer has a built-in
+  city; set `news_local_area` (see the
+  [configuration reference](docs/user-guide/configuration.md)) to bring it
+  back.
+- **You may be asked the cloud question once** after upgrading, if you never
+  answered it. "Keep the safeguards on" changes nothing about how Friday
+  works today.
 
 ## Known issues
 
-The most likely to affect you: the tray assumes port 3000; the first-run
-routing screen describes "On this computer only" as falling back to the cloud,
-when it actually refuses and offers the cloud; and moving your `.friday` folder
-to another PC holds outward actions until you re-pin. All of them, with
+The most likely to affect you: the installer does not include OfficeCLI, so
+documents need a manual install; the built-in scheduled jobs do not run on a
+cloud-only install until you add a local model or allow a job the cloud; and
+moving your `.friday` folder to another PC holds outward actions until you
+re-pin. All of them, with
 workarounds, are in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
