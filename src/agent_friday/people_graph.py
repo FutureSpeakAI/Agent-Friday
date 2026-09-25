@@ -139,6 +139,8 @@ class PeopleGraph:
                 "overall": overall,
                 "last_interaction": p.get("last_interaction"),
                 "evidence_count": len(p.get("evidence") or []),
+                "company": p.get("company") or "",
+                "sources": p.get("sources") or [],
             })
         contacts.sort(key=lambda c: c.get("overall") or 0, reverse=True)
         return contacts
@@ -213,6 +215,56 @@ class PeopleGraph:
             }
             self.save(graph)
             return key, None
+
+    #: Profile fields an import may set. Everything else on a record (scores,
+    #: evidence) belongs to the owner's own judgement and is never touched.
+    PROFILE_FIELDS = ("company", "position", "linkedin_url", "connected_on")
+
+    def merge_profile(self, name, *, emails=None, source=None, **fields):
+        """Create or enrich a contact from an import. Returns (key, created).
+
+        Additive only: an email is appended if new, a profile field is set
+        only when the record has none, and ``source`` joins ``sources``. An
+        import never overwrites what the owner typed or what is already there.
+        """
+        name = (name or "").strip()
+        if not name:
+            return None, False
+        with self._lock:
+            graph = self.load()
+            people = graph.setdefault("people", {})
+            if not isinstance(people, dict):
+                people = {self._key_for(p.get("name", f"p{i}")): p
+                          for i, p in enumerate(people) if isinstance(p, dict)}
+                graph["people"] = people
+            key = self._key_for(name)
+            created = key not in people
+            if created:
+                now = datetime.now().isoformat()
+                people[key] = {
+                    "name": name, "aliases": [], "entity_type": "human",
+                    "scores": dict(_DEFAULT_SCORES), "evidence": [],
+                    "domains": [], "last_interaction": None, "created": now,
+                }
+            person = people[key]
+            have = [str(e).lower() for e in (person.get("emails") or [])]
+            for e in emails or []:
+                e = (e or "").strip().lower()
+                if e and e not in have:
+                    have.append(e)
+            if have:
+                person["emails"] = have
+            for f in self.PROFILE_FIELDS:
+                v = fields.get(f)
+                if v and not person.get(f):
+                    person[f] = v
+            if source:
+                srcs = list(person.get("sources") or [])
+                if source not in srcs:
+                    srcs.append(source)
+                person["sources"] = srcs
+            self.save(graph)
+            return key, created
 
     def edit(self, person_key, scores=None, add_evidence=None):
         """Update a contact's dimension scores and/or append evidence.

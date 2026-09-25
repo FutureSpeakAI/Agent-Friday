@@ -28,7 +28,8 @@ So forgetting is a **tombstone plus a purge**, in that order:
 
   1. the name (and its aliases) go into ``~/.friday/forgotten-people.json``;
   2. the derived records are removed from the people graph, its legacy mirror,
-     and the knowledge-graph artifacts;
+     the knowledge-graph artifacts, and the relationship timeline and
+     follow-ups (services/relationship_memory.py);
   3. the indexer consults the tombstone list on every run, so the person is
      never re-derived.
 
@@ -113,6 +114,19 @@ def forgotten_names() -> set:
         for n in [entry.get("name", "")] + list(entry.get("aliases") or []):
             if _norm(n):
                 out.add(_norm(n))
+    return out
+
+
+def forgotten_emails() -> set:
+    """Every address recorded against a tombstoned person, lowercased.
+
+    The relationship timeline is keyed by address, not name, so a later sync
+    needs these to avoid writing the person straight back.
+    """
+    out = set()
+    for entry in _load_tombstones()["forgotten"]:
+        if isinstance(entry, dict):
+            out |= {str(e).strip().lower() for e in (entry.get("emails") or []) if e}
     return out
 
 
@@ -261,10 +275,13 @@ def find(name: str) -> dict:
     reports = [c for c in _read_kg("community_reports")
                if any(n in json.dumps(c).lower() for n in names)]
     sources = _sources_mentioning(names)
+    emails = _person_emails(names, person)
+    rel = _relationships_count(names, emails)
 
     return {
         "name": name,
-        "found": bool(person or entities or rels or reports or sources),
+        "found": bool(person or entities or rels or reports or sources
+                      or rel["interactions"] or rel["follow_ups"]),
         "forgotten": is_forgotten(name),
         "people_graph": {
             "present": person is not None,
@@ -276,8 +293,28 @@ def find(name: str) -> dict:
             "relationships": len(rels),
             "community_reports": len(reports),
         },
+        "relationships": rel,
         "sources": sources,
     }
+
+
+def _person_emails(names: list, person) -> set:
+    """Addresses that belong to the person: their record's, and any address
+    the relationship timeline has seen under one of their names."""
+    own = [str(e).lower() for e in ((person or {}).get("emails") or []) if e]
+    try:
+        from agent_friday.services import relationship_memory as rm
+        return rm.emails_for(names, own)
+    except Exception:
+        return set(own)
+
+
+def _relationships_count(names: list, emails: set) -> dict:
+    try:
+        from agent_friday.services import relationship_memory as rm
+        return rm.count_for(names, emails)
+    except Exception:
+        return {"interactions": 0, "follow_ups": 0}
 
 
 # -- forgetting ---------------------------------------------------------------
@@ -313,21 +350,36 @@ def forget(name: str) -> dict:
     """
     with _LOCK:
         names = _matching_names(name)
+        _, person = _people_graph_entry(name)
+        # Read before the people-graph record is removed: it may be the only
+        # place an address for this person is written down.
+        emails = _person_emails(names, person)
 
-        # 1. Tombstone first.
+        # 1. Tombstone first, with the addresses, so a timeline sync that
+        #    runs mid-purge already skips them.
         data = _load_tombstones()
         if not is_forgotten(name):
-            _, person = _people_graph_entry(name)
             from datetime import datetime, timezone
             data["forgotten"].append({
                 "name": (person or {}).get("name") or name,
                 "aliases": list((person or {}).get("aliases") or []),
+                "emails": sorted(emails),
                 "forgotten_at": datetime.now(timezone.utc).isoformat(),
             })
             _save_tombstones(data)
+        elif emails:
+            target = set(names)
+            for entry in data["forgotten"]:
+                if isinstance(entry, dict) and (
+                        _norm(entry.get("name", "")) in target
+                        or any(_norm(a) in target for a in (entry.get("aliases") or []))):
+                    entry["emails"] = sorted(set(entry.get("emails") or []) | emails)
+            _save_tombstones(data)
 
         removed = {"people_graph": 0, "kg_entities": 0,
-                   "kg_relationships": 0, "kg_reports_scrubbed": 0}
+                   "kg_relationships": 0, "kg_reports_scrubbed": 0,
+                   "timeline_removed": 0, "timeline_edited": 0,
+                   "follow_ups_removed": 0}
 
         # 2. The people graph and its legacy mirror. Both, or the person stays
         #    alive in every server.py context builder that reads the mirror.
@@ -379,6 +431,16 @@ def forget(name: str) -> dict:
                 _write_kg("community_reports", scrubbed)
                 removed["kg_reports_scrubbed"] = sum(
                     1 for a, b in zip(reports, scrubbed) if a != b)
+
+        # 5. The relationship timeline and follow-ups. Entries shared with
+        #    other people keep the others and lose this person.
+        try:
+            from agent_friday.services import relationship_memory as rm
+            removed.update(rm.forget(names, emails))
+        except Exception as e:
+            # Said in the receipt rather than swallowed: the tombstone above
+            # already stops new entries, but existing ones are still there.
+            removed["timeline_error"] = str(e)[:200]
 
         return {
             "name": name,

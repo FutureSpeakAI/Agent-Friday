@@ -1271,6 +1271,20 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] context_log_retention unavailable: {e}")
 
+    # relationship memory — reads mail and calendar HEADERS from the owner's
+    # own accounts into the local timeline, then raises local reminders
+    # (due follow-ups, and cold threads only when the owner set a threshold).
+    # Silent: the task pushes its own notifications, and a sync with nothing
+    # new is not news.
+    try:
+        from agent_friday.services.relationship_memory import tick as _rel_tick
+        register_builtin_task("relationship_sync", _rel_tick,
+                              label="Relationship timeline sync",
+                              default_trigger="interval",
+                              default_spec={"every_minutes": 60}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] relationship_sync unavailable: {e}")
+
 
 def _afternoon_briefing_job():
     """Synthesize the afternoon briefing markdown and persist it (so the

@@ -94,6 +94,12 @@ GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 # changes and drafts the owner makes, each of which can be undone.
 GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
 
+# Creating and editing the owner's Google Contacts. Like send, it is asked for
+# only from an explicit "Allow saving to Google Contacts" in the Contacts
+# workspace, never on an ordinary connect or reconnect; every save still
+# waits for the owner's decision (services/google_contacts_write.py).
+CONTACTS_RW = "https://www.googleapis.com/auth/contacts"
+
 # What the Reconnect-with-sending consent asks for, in plain words, shown in
 # Settings before Google's own screen so the two can be compared line by line.
 _SCOPE_PLAIN = {
@@ -106,6 +112,7 @@ _SCOPE_PLAIN = {
     SHEETS_READ: "Read Sheets",
     TASKS_RW: "Google Tasks",
     CONTACTS_READ: "Read contacts",
+    CONTACTS_RW: "Create and edit contacts. Each save still waits for your approval.",
     USERINFO_EMAIL: "See your email address",
 }
 
@@ -1561,7 +1568,7 @@ def active_client_kind() -> str:
 
 
 def build_auth_flow(state: str | None = None, include_send: bool = False,
-                    include_modify: bool = False):
+                    include_modify: bool = False, include_contacts_write: bool = False):
     """Construct an OAuth Flow for a new account connection. Returns
     (flow, redirect_uri, client_type) or raises with a clear message.
 
@@ -1570,7 +1577,8 @@ def build_auth_flow(state: str | None = None, include_send: bool = False,
     have "Send email on your behalf" appear in the consent screen they are
     clicking through at speed. BOTH legs of the OAuth round-trip must pass the
     same value — the callback rebuilds this flow from scratch, and a mismatch
-    changes what the token is exchanged for.
+    changes what the token is exchanged for. `include_contacts_write` adds
+    CONTACTS_RW on the same terms.
     """
     # Bundled client first-resort, the user's own always winning -- see
     # services/google_oauth_client.active_client for why that order matters.
@@ -1594,6 +1602,8 @@ def build_auth_flow(state: str | None = None, include_send: bool = False,
         scopes.append(GMAIL_SEND)
     if include_modify:
         scopes.append(GMAIL_MODIFY)
+    if include_contacts_write:
+        scopes.append(CONTACTS_RW)
     flow = Flow.from_client_config(
         cfg, scopes=scopes, redirect_uri=redirect_uri, state=state
     )
