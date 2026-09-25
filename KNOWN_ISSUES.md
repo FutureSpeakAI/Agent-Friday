@@ -1,6 +1,6 @@
 # Known Issues
 
-**As of 2026-09-24, for 5.14.0.**
+**As of 2026-09-25, for 5.14.1.**
 
 This file lists what is broken, unverified, or deliberately limited in a way
 you may hit. Each entry was checked against the code on that date. Fixed
@@ -30,10 +30,12 @@ you hit something that is not here, please open an issue.
 
 ## 2. Open defects
 
-- **Built-in scheduled jobs do not run on a cloud-only install.** They are
-  local-only by default and are skipped when no local model is serving. There
-  is no switch in Workflows to allow a job the cloud; edit `schedules.json`.
-  See [Scheduled jobs](docs/user-guide/scheduled-jobs.md).
+- **Built-in scheduled jobs on a cloud-only install wait for your answer.**
+  With no local model serving they run on a cloud model only after you say yes
+  (in the setup chat, or Settings → Spending); until then they stay paused,
+  with one notice. The in-app activity indicator for such a run still names
+  the orchestrator model rather than the cloud model actually used. See
+  [Scheduled jobs](docs/user-guide/scheduled-jobs.md).
 - **No receipt viewer.** Signed receipts are written to
   `.friday\decision-bom.jsonl` but there is no screen for them.
 - **The provenance ledger is in memory.** Where an argument came from is

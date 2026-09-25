@@ -3,22 +3,59 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current release: **5.14.0**.
+> **Note:** Pre-1.0 releases have been archived. Current release: **5.14.1**.
 >
 > Entries for 5.7.0 and 5.8.1 are not recorded here — those releases were
 > tagged without a changelog entry.
 
 ---
 
-## [Unreleased]
+## [5.14.1] - 2026-09-25
+
+Cloud-only installs now fully work. The plain-language summary is in
+[RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 ### Added
 
+- **Scheduled jobs on a cloud-only PC.** With no local model serving, the
+  morning news, evening front page, afternoon briefing, daily creation and
+  heartbeat were skipped. The setup chat now asks once whether they may use a
+  cloud model and shows the estimated monthly cost (about $9 with the
+  defaults: Claude Haiku 4.5 for every job, the heartbeat every 4 hours from
+  08:00 to 20:00). Yes runs them on that model, locked to it; no, or no
+  answer, keeps them paused with one notice. Settings > Spending shows the
+  answer, the models and the estimate, and changes it. A PC with a local
+  model is unchanged: the jobs run there.
+- **One key is enough.** A cloud install works with only an Anthropic key or
+  only an OpenRouter key: chat, tools, briefings, research and the setup
+  chat's own reader. The setup chat offers Anthropic first and OpenRouter as
+  the alternative, links to both key pages, checks a saved key with one token
+  and says whether Friday can think.
 - **The installer installs OfficeCLI**, the document engine, from its GitHub
   release, checked against a SHA-256 fingerprint built into the installer.
   `-SkipOfficeCli` leaves it out.
-- **Friday's typefaces ship with it** (Orbitron, Inter and JetBrains Mono, SIL
-  OFL 1.1), so the page never requests Google Fonts.
+- **Friday's typefaces ship with it**: the unmodified files Google Fonts
+  serves, with Google's own rules, so the page renders exactly as before and
+  never requests Google Fonts.
+
+### Fixed
+
+- The default heartbeat was never local-only: a fresh install ran it hourly
+  on a cloud model. It is local-only like the other built-in jobs; on a
+  cloud-only PC it follows the new question above.
+- A slow second opinion (Laya on a laptop CPU) no longer holds up a decision:
+  after 2.5 seconds the keyword check decides, as it does while Laya loads,
+  and Settings says how often that happened.
+- Local speech recognition on a PC without a capable GPU runs Whisper "base"
+  on the CPU with int8 (the GPU keeps "small"); the CPU fallback no longer
+  loads onto the GPU.
+- A fresh profile is not held for a rules re-pin; only a `.friday` folder
+  moved from another PC or account is.
+
+### Reverted
+
+- The restyled file-picker button and the reworked approval-card lines from
+  5.14.0: both look as they did before.
 
 ### Security
 
