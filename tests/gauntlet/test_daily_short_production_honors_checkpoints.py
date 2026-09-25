@@ -9,13 +9,10 @@ the work is published". It was the ONLY caller of this template that ran
 unattended with no human ever reviewing before the expensive stage or
 before publishing to the user's Desktop.
 
-The maintainer: "fix it... a checkpoint that exists and is skipped is the placebo
-pattern in a different costume... it should do what it says" (2026-09-04,
-git history checked first per his own instruction -- no deliberate reason
-for the bypass was found: the line was simply how this mode was originally
-written, not a considered later decision).
+A checkpoint that exists and is skipped is a placebo: it must do what it
+says. (Git history shows no deliberate reason for the bypass.)
 
-This probe proves the daily short-production path now stops at its first
+This probe proves the daily short-production path stops at its first
 checkpoint instead of auto-advancing through all three, records that day
 as handled (not falling through to an unrelated text creation, and not
 starting a second production tomorrow while this one waits), and fires a

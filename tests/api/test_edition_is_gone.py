@@ -1,15 +1,14 @@
 """The Friday Edition is removed, and nothing it stood in front of went with it.
 
-Stephen, 2026-09-24: "Edition sucks, and it's the first thing that appears when I
-load the Friday desktop. Let's eliminate it entirely. We'll lean on the briefings
-instead."
+The Edition was the first thing to appear on loading the desktop; the briefings
+cover the same need, so the Edition is removed entirely.
 
 The removal has to be precise, because **two different things were called
 "edition"** and only one of them is going:
 
   * THE FRIDAY EDITION (E0) -- `services/edition_engine.py`,
     `routes/edition.py`, the `edition` dock icon, `EditionWS` in the UI. This is
-    what he means. It was first in the dock and auto-opened on load.
+    what goes. It was first in the dock and auto-opened on load.
   * THE NEWS FRONT PAGE'S MORNING/EVENING EDITIONS -- `news_engine`'s own
     vocabulary ("the two daily editions", "Friday's Front Page - Morning
     edition"), served from `/api/news/front-page/*` whose JSON field is literally
@@ -24,9 +23,8 @@ The cost ledger agrees: zero rows in `costs.db` match `edition` on any of
 workspace, kind, schedule_id, run_id or model. So removing it frees no spend;
 it removes a surface, not a bill.
 
-His existing editions are NOT deleted. They stay at `~/.friday/edition/`
-(charter.md, verbs.jsonl, editions/ -- 40 files, ~500 KB). Nothing reads them any
-more.
+Existing editions are NOT deleted. They stay at `~/.friday/edition/`
+(charter.md, verbs.jsonl, editions/). Nothing reads them any more.
 """
 
 import importlib
@@ -141,8 +139,8 @@ def test_neither_edition_nor_home_is_in_the_dock(path, pattern):
 
 def test_the_desktop_auto_opens_nothing():
     """The desktop hero IS the landing screen now -- the greeting, the countdown
-    ticker and START MY DAY. Auto-opening a workspace window over it is exactly
-    what was complained about, first for Edition and then for Home."""
+    ticker and START MY DAY. No workspace window (Edition, Home or any other)
+    auto-opens over it."""
     src = INDEX.read_text(encoding="utf-8", errors="replace")
     assert "openWs('edition')" not in src
     assert "openWs('home')" not in src, (
@@ -185,7 +183,7 @@ def test_the_front_pages_list_still_works(client):
 
 
 def test_the_briefings_still_work(client):
-    """The surface Stephen said he wants to lean on instead."""
+    """The surface that replaces the Edition."""
     assert client.get("/api/briefings").status_code == 200
     assert client.get("/api/briefing/status").status_code == 200
 
@@ -203,11 +201,11 @@ def test_the_surviving_workspaces_still_serve_as_tabs(client, ws):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# His data is left alone.
+# The user's data is left alone.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_nothing_deletes_the_existing_edition_data():
-    """Stephen asked for the surface gone, not his archive. No shipped code may
+    """The surface is gone, not the user's archive. No shipped code may
     remove `~/.friday/edition`."""
     suspects = []
     for p in (REPO / "src").rglob("*.py"):

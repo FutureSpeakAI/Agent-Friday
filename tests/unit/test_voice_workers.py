@@ -334,12 +334,11 @@ def test_build_mouth_serves_piper_when_kokoro_is_refused(broker, monkeypatch):
 
 
 def test_worker_loads_before_its_reader_thread_exists():
-    """Measured 2026-09-18: with the reader thread already blocked on the
-    stdin pipe, the engine's first `import numpy` inside load() never
-    returned (py-spy: main thread parked in numpy/__config__, 0.3 s CPU),
-    so both GPU engines died on the parent's load timeout and every
-    session fell to the CPU. The first frame is now read and the load run
-    before any other thread is started; the reply reports the thread
+    """With the reader thread already blocked on the stdin pipe, the
+    engine's first `import numpy` inside load() never returns (py-spy: main
+    thread parked in numpy/__config__, 0.3 s CPU), so both GPU engines die
+    on the parent's load timeout and every session falls to the CPU. The
+    first frame is read and the load run before any other thread is started; the reply reports the thread
     count at load so this cannot silently regress."""
     import json, struct
     hdr = struct.Struct(">cI")

@@ -1,4 +1,4 @@
-"""Gauntlet finding Q6 part (c) / cost-metering batch (2026-09-04): the
+"""Gauntlet finding Q6 part (c) / cost-metering batch: the
 Gemini Live voice websocket (routes/voice.py `ws_live`) makes real, billed
 Gemini Live API calls with ZERO cost_meter integration anywhere in the
 file, despite `cost_meter.PRICING` already carrying entries for exactly
@@ -9,11 +9,9 @@ Q6).
 `ws_live` is a closure nested inside a Flask-Sock route registration
 function, deeply inside an async Gemini Live streaming session -- not an
 independently callable module-level function, and not something a test
-can reach without mocking that whole session. The ORIGINAL version of
-this probe (kept here as historical record of the correction) pinned the
-inline block's source text instead -- real today, silently defeated
-tomorrow by a rename or reformat with the underlying behavior completely
-unaffected either way (weak-probe audit, 2026-09-05).
+can reach without mocking that whole session. Pinning the inline block's
+source text instead would be silently defeated by a rename or reformat
+with the underlying behavior unaffected either way.
 
 Fix: the metering logic itself (read usage_metadata, call cost_meter.
 meter(), never raise) is now voice.py's own module-level

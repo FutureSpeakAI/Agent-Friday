@@ -30,9 +30,9 @@ from agent_friday.services.nemo_voice import (
 
 def test_nemo_deps_status_shape():
     d = nemo_deps_status()
-    # nltk belongs here: FastPitch's g2p imports it, and its absence surfaced
+    # nltk belongs here: FastPitch's g2p imports it, and its absence surfaces
     # as NeMo's "unsafe target" SECURITY error rather than a missing module,
-    # which kept GPU voice silent while health reported it ready (2026-08-25).
+    # which keeps GPU voice silent while health reports it ready.
     assert set(d) == {"nemo", "torch", "nltk"}
     assert all(isinstance(v, bool) for v in d.values())
 

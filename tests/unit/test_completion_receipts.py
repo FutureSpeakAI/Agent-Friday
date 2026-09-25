@@ -139,11 +139,11 @@ class TestValidatorIntegration:
         assert out_trace == trace
 
 
-# ── Fabricated CONSTRAINTS (2026-08-16) ──────────────────────────────────────
+# ── Fabricated CONSTRAINTS ───────────────────────────────────────────────────
 #
 # The three existing axes all ask "did she claim to have DONE something she
 # didn't". None could see the mirror image: claiming she CANNOT do something
-# for a reason that does not exist. Audited on 2026-08-16 — there is no content
+# for a reason that does not exist. There is no content
 # filter in the Z-Image weights, none in ComfyUI, and no filter node in the
 # graph, so both sentences below were invented.
 
@@ -180,7 +180,7 @@ def test_honest_limits_and_refusals_are_not_flagged(reply):
     assert find_fabricated_constraints(reply) == [], reply
 
 
-# ── File operations naming a path (2026-08-16) ───────────────────────────────
+# ── File operations naming a path ────────────────────────────────────────────
 #
 # "I've opened friday_local_00005.png for you" was false and matched nothing:
 # the saved-image axis covers MAKING a file, not touching one that exists.

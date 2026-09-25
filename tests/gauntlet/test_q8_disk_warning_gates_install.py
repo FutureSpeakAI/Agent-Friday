@@ -1,4 +1,4 @@
-"""Q8 (gauntlet audit 2026-09-03): the installer computed a real disk-space
+"""Q8 (gauntlet audit): the installer computed a real disk-space
 warning for the model it was about to download, printed it, and then
 downloaded anyway.
 

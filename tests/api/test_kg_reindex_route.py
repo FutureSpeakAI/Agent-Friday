@@ -26,7 +26,7 @@ def test_reindex_tier_b_sync(client, seeded_wiki, patch_app, monkeypatch):
     # return a parseable extraction so the pass produces entities.
     patch_app("_generate_text",
               lambda *a, **k: canned)
-    # The 2026-09-03 fail-fast checks whether a local model is actually
+    # The indexer's fail-fast checks whether a local model is actually
     # installed before running (real Ollama, unmocked otherwise) -- this
     # test exercises the "local" default's happy path, not that check.
     from agent_friday.services.knowledge_graph import indexer

@@ -82,9 +82,9 @@ class TestLocalSearch:
 
     def test_no_viable_mode_degrades_instead_of_500ing(
             self, seeded_store, monkeypatch):
-        """2026-09-03 regression: _resolve_model started raising
-        LocalIndexingUnavailable/CloudIndexingDisabled once it actually
-        checked whether a local model is installed. A QUERY is a read, not
+        """Regression: _resolve_model raises
+        LocalIndexingUnavailable/CloudIndexingDisabled when it checks
+        whether a local model is installed. A QUERY is a read, not
         an index run -- it must degrade to "no answer", the same shape as
         an empty index, not bubble an unhandled exception into a 500 for
         every user whose chosen mode isn't currently viable."""
@@ -133,7 +133,7 @@ class TestGlobalSearch:
 
     def test_no_viable_mode_at_reduce_stage_degrades_instead_of_500ing(
             self, seeded_store):
-        """2026-09-03 regression, reduce-stage half: the map stage's
+        """Regression, reduce-stage half: the map stage's
         existing `except Exception: continue` already swallows a resolve
         failure per-report, but the reduce call sits outside that loop and
         had no equivalent guard -- an indexing_mode that stops being viable

@@ -72,7 +72,7 @@ def test_p1_pinned_pair_fits_the_budget_with_room_to_spare():
     avail = p["budgets"]["gpus"][0]["available_mib"]
     # The 12b at 131072 (7814) beside the e2b at 32768 (1811). Quadrupling the
     # brain's window over the old 32768 placement cost 96 MiB.
-    # Figures moved 2026-08-18 when injected memory/source context entered
+    # Injected memory/source context is part of
     # the overhead count (22,309 -> 47,309 tokens). Seats now size one rung
     # larger to hold a real turn, so the sidekick is 1,875 MiB at 65,536
     # rather than 1,811 at 32,768.
@@ -168,7 +168,7 @@ def test_p4_gpu0_stays_within_budget():
     p = _plan("P4")
     g0 = [g for g in p["budgets"]["gpus"] if g["index"] == 0][0]
     # 1811 = the e2b at the 32768 tool-seat context (was 1763 at 8192).
-    # Figures moved 2026-08-18 when injected memory/source context entered
+    # Injected memory/source context is part of
     # the overhead count (22,309 -> 47,309 tokens). Seats now size one rung
     # larger to hold a real turn, so the sidekick is 1,875 MiB at 65,536
     # rather than 1,811 at 32,768.
@@ -351,7 +351,7 @@ def test_disk_floor_scales_with_a_very_large_artifact():
 def test_every_rule_has_a_stable_id_and_text():
     assert [r["id"] for r in rp.RULES] == \
         ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10",
-         # R11 added 2026-08-18 with the seven working roles: an unassigned
+         # R11 comes with the seven working roles: an unassigned
          # orchestrator or memory manager is refused BY NAME rather than left
          # as a silently empty seat.
          "R11"]
@@ -406,7 +406,7 @@ def test_kv_slope_comes_from_the_models_own_rows():
     e = [x for x in fx.catalog(fx.ALL_PROFILES["P1"])
          if x["model_id"] == "gemma4:12b"][0]
     slope = rp.kv_slope_mib_per_token(e)
-    # 7750 -> 7814 MiB across 65536 -> 131072, measured 2026-08-15.
+    # 7750 -> 7814 MiB across 65536 -> 131072, from the KV sweep.
     assert slope is not None and 0.0009 < slope < 0.0011
 
 
@@ -452,9 +452,9 @@ def test_a_model_whose_own_window_is_below_the_floor_says_so():
 
 # ── R10 — the sidekick survives every lease ──────────────────────────────────
 #
-# The maintainer, 2026-08-15: "keep e2b awake so Friday is always alive." Before this,
-# a lease stood down the whole pinned set, so asking for depth made Friday mute
-# for the duration and the machine looked hung rather than busy.
+# Keep e2b awake so Friday is always alive. A lease that stands down the whole
+# pinned set makes Friday mute for the duration of a request for depth, and the
+# machine looks hung rather than busy.
 
 def test_the_lease_budget_is_the_gpu_minus_the_retained_sidekick():
     p = _plan("P1")
@@ -468,7 +468,7 @@ def test_an_image_lease_takes_everything_except_the_sidekick():
     s = _plan("P1")["seats"]["image"]
     assert s["exclusive"] is True
     assert s["displaces"] == "all seats except sidekick"
-    # Figures moved 2026-08-18 when injected memory/source context entered
+    # Injected memory/source context is part of
     # the overhead count (22,309 -> 47,309 tokens). Seats now size one rung
     # larger to hold a real turn, so the sidekick is 1,875 MiB at 65,536
     # rather than 1,811 at 32,768.
@@ -476,7 +476,7 @@ def test_an_image_lease_takes_everything_except_the_sidekick():
 
 
 def test_the_offload_point_comes_from_a_sweep_under_r10_conditions():
-    """Measured 2026-08-15 with the sidekick resident, which is the condition
+    """Measured with the sidekick resident, which is the condition
     R10 created and therefore the one the number has to hold under.
 
     18 layers lands the heavy model at 7973 MiB, inside the 8186 MiB lease
@@ -506,14 +506,13 @@ def test_a_budget_below_the_whole_sweep_says_it_is_extrapolating():
 # ── R11: one model, several roles, charged once ──────────────────────────────
 #
 # Every golden above plans with NO overrides, so `_apply_overrides` — the whole
-# path the maintainer's settings travel through — was uncovered. That is not incidental
-# to the bug these tests pin: R11's second sentence ("One model may hold several
-# roles and is counted ONCE against the budget") was documented from the start
-# and never implemented, and nothing failed, because nothing ever supplied an
-# override. Measured live 2026-08-23: `gemma4:12b` pinned as interactive_brain
-# was charged its full 7,750 MiB again for orchestrator, again for sidekick and
+# path the user's settings travel through — needs its own coverage. R11's
+# second sentence ("One model may hold several roles and is counted ONCE against
+# the budget") can go unimplemented with nothing failing, because nothing else
+# supplies an override. Without it, `gemma4:12b` pinned as interactive_brain is
+# charged its full 7,750 MiB again for orchestrator, again for sidekick and
 # again for sidekick_fast, producing five of thirteen refusals in Settings →
-# Intelligence about a model that was loaded and answering.
+# Intelligence about a model that is loaded and answering.
 
 def _plan_with_overrides(key, overrides):
     profile = fx.ALL_PROFILES[key]
@@ -695,8 +694,8 @@ def test_a_ram_shortfall_degrades_runs_well_never_refuses_it(
 
 def test_the_real_measured_z_image_footprint_is_a_verdict_not_a_guess(
         isolated_catalog_store):
-    """The headline number from §12 Phase 2 item 4: measured 2026-09-04
-    under the Arbiter's own image_job lease. On P1's honest budget (12,282 -
+    """The headline number from §12 Phase 2 item 4: measured under the
+    Arbiter's own image_job lease. On P1's honest budget (12,282 -
     1,024 R3 slack - 2,560 display reserve = 8,698 MiB, §6.3) even a fully
     exclusive lease does not clear a ~10.1 GB real footprint — a genuine,
     MEASURED refusal, not a guessed one."""

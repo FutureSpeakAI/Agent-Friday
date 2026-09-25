@@ -8,7 +8,7 @@ are plain module-level functions, so these are real behavioral tests:
 monkeypatch the HTTP layer to scripted 2xx responses, call the real
 functions, and assert `cost_meter.record()` was invoked -- not a
 source-text pin. Firecrawl bills in CREDITS (no single public $/credit
-rate across its plan tiers), so this fix records a conservative,
+rate across its plan tiers), so the code records a conservative,
 worst-case-tier USD estimate rather than a fabricated precise figure --
 these tests assert that estimate is actually being computed and recorded,
 not that it is authoritative.

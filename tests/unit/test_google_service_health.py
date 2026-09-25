@@ -1,9 +1,9 @@
 """Per-service Google health: an account being fine does not mean every
 service on it works.
 
-Measured 2026-09-19: both accounts connected, tokens valid, `drive: true` on
+The failure shape: both accounts connected, tokens valid, `drive: true` on
 both — and every Drive call returning `403 Google Drive API has not been used
-in project 449982820564 before or it is disabled`. The API had never been
+in project <number> before or it is disabled`. The API had never been
 switched on for the Cloud project. Nothing recorded that, so the connectors
 page showed Drive as on and the 403 was thrown away inside an errors list.
 
@@ -53,7 +53,7 @@ def test_no_accounts_at_all_is_absent(store):
 # ── question 2: are the accounts usable ─────────────────────────────────────
 
 def test_a_broken_account_is_not_hidden_by_a_healthy_one(store):
-    """The 2026-09-09 shape: an aggregate that reports fine because SOMETHING
+    """The aggregate-hides-a-failure shape: an aggregate that reports fine because SOMETHING
     is fine. One account needing reauthorisation is a thing the user must act
     on, whatever the other one is doing."""
     _acct(store, "good@b.c", "connected")
@@ -83,13 +83,13 @@ def test_a_provider_refusal_makes_one_service_degraded(store):
     G.note_service_result(
         "drive", False,
         "<HttpError 403 ... Google Drive API has not been used in project "
-        "449982820564 before or it is disabled")
+        "123456789012 before or it is disabled")
     drive = G.service_health("drive")
     gmail = G.service_health("gmail")
 
     assert drive.state == ch.DEGRADED
     assert drive.action == "enable_api"
-    assert "449982820564" in drive.detail, "the provider's own words were dropped"
+    assert "123456789012" in drive.detail, "the provider's own words were dropped"
     # Degraded is USABLE: refusing the whole account over one dead capability
     # would be a worse lie than the one this exists to stop.
     assert drive.healthy is True

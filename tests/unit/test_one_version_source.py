@@ -1,6 +1,6 @@
 """Guard: exactly ONE place in the shipped Python reads the app's version.
 
-WHY. On 2026-08-30 there were three answers to "what version is this?":
+WHY. There were once three answers to "what version is this?":
 
   * cli.py                — a regex over pyproject.toml, falling back to package
                             metadata, falling back to the string "unknown"

@@ -1,8 +1,8 @@
 """Unit tests for services/response_provenance.py — FR-3, only executed-
 tool-result URLs render clickable (docs: toolcall-integrity-v5).
 
-2026-08-12: the "start my day" confabulation minted a fake Google Calendar
-URL that rendered as an indistinguishable, clickable [web:...] citation.
+A confabulated reply (e.g. to "start my day") can mint a fake Google Calendar
+URL that renders as an indistinguishable, clickable [web:...] citation.
 This module is the server-side ground truth: a citation is only left
 clickable if the URL is backed by something an executed tool actually
 touched or returned this turn.

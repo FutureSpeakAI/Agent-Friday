@@ -1,29 +1,21 @@
 """The local seat gets the same round budget as Claude, with real safety instead.
 
-Stephen, 2026-09-24: "Why does the local model seat only get 50 rounds? Bonsai2
-can reason across hundreds."
+A local round costs no money, and a local reasoner such as Bonsai2 can reason
+across hundreds of rounds, so the local seat does not get a smaller budget.
 
-Confirmed in code before changing anything:
+A CLOUD path at 999 rounds beside a LOCAL path at 50 is a 20x difference with
+no stated reason -- a leftover from small models that would loop. For a 27B
+reasoner, 50 rounds is a cliff it can fall off mid-task, producing only a
+truncated answer with "Raise max_iters".
 
-    agent.py:7750   _call_claude_agent(..., max_iters=999, ...)
-    agent.py:8216   _oai_agentic_loop(..., max_iters=50, ...)
-    model_router.py:610, :1142   _call_ollama / _call_openai ... max_iters=50
-    subagents.py:41 self.max_steps = int(data.get("max_steps", 25))
-
-So the CLOUD path got 999 rounds and the LOCAL path got 50 — a 20x difference
-with no stated reason, almost certainly left over from the gemma3:4b era when a
-small model would loop. Bonsai2 is a 27B reasoner; 50 rounds is a cliff it can
-fall off mid-task, and the only thing it produced was a truncated answer with
-"Raise max_iters".
-
-50 was never safety, it was a proxy for safety. Real safety is:
+A round cap is not safety, it is a proxy for safety. Real safety is:
 
   * LOOP DETECTION — the same tool with the same arguments, over and over, is the
     failure 50 was guarding against. Catching it directly stops a genuine loop in
     seconds instead of after 50 expensive rounds, AND stops punishing a model that
     is making progress.
   * A WALL CLOCK, so a turn cannot run forever even while doing new things.
-  * The spend ceiling and the AGENT_STOP kill file, which already existed.
+  * The spend ceiling and the AGENT_STOP kill file.
 
 And when a limit is reached, Friday says WHICH limit and offers to continue,
 rather than truncating and blaming `max_iters`.
@@ -424,8 +416,8 @@ def test_the_loop_consults_the_token_budget():
 def test_the_token_check_is_not_inside_a_swallowing_try():
     """A ceiling an `except Exception: pass` can skip is not a ceiling.
 
-    The first version of this sat inside the activity-ledger try block, where a
-    bad usage payload would have silently disabled it.
+    Inside the activity-ledger try block, a bad usage payload would silently
+    disable it.
     """
     src = _oai_loop_source()
     lines = src.split("\n")
@@ -636,8 +628,8 @@ def _drive_loop(monkeypatch, rounds_of_tools, *, settings=None):
 
 
 def test_a_local_turn_really_runs_past_fifty_rounds(monkeypatch):
-    """Stephen's ask, driven: sixty tool rounds on the LOCAL loop, which used to
-    stop dead at fifty and blame `max_iters`."""
+    """Driven: sixty tool rounds on the LOCAL loop must not stop dead at fifty
+    and blame `max_iters`."""
     text, trace, calls = _drive_loop(monkeypatch, 60)
     assert calls == 61, "the loop stopped early: %d model calls" % calls
     assert "Done after 60 rounds." in text, text[:300]
@@ -646,8 +638,8 @@ def test_a_local_turn_really_runs_past_fifty_rounds(monkeypatch):
 
 
 def test_the_old_cap_would_have_stopped_it(monkeypatch):
-    """The same drive with max_iters=50 explicitly: this is what he saw, and it
-    is still available to a caller that wants a short leash."""
+    """The same drive with max_iters=50 explicitly: the old cliff is still
+    available to a caller that wants a short leash."""
     from agent_friday.services import agent as ag
     import agent_friday.core as core
     monkeypatch.setattr(core, "_load_settings", lambda *a, **k: {})
@@ -671,7 +663,7 @@ def test_the_old_cap_would_have_stopped_it(monkeypatch):
 
 
 def test_a_genuine_loop_is_stopped_with_a_clear_message(monkeypatch):
-    """The other half of his ask. The SAME call every round -- the failure the
+    """The other half of parity. The SAME call every round -- the failure the
     50-round cap was standing in for -- and it stops in three, not fifty."""
     from agent_friday.services import agent as ag
     import agent_friday.core as core
@@ -709,12 +701,10 @@ def test_a_genuine_loop_is_stopped_with_a_clear_message(monkeypatch):
 # The user's Stop — the limit that needs no justification
 # ---------------------------------------------------------------------------
 #
-# This one was absent, not merely low. The cloud loop honoured the AGENT_STOP
-# kill file and a background task could be stopped from the tasks tray, but an
-# interactive chat turn had nothing: `task_journal.stop_requested(None)` is
-# always False, and a chat turn has no task id. So the 50-round cap WAS the
-# stop, and raising it without adding one would have removed a brake and put
-# nothing in its place.
+# The cloud loop honours the AGENT_STOP kill file and a background task can be
+# stopped from the tasks tray, but `task_journal.stop_requested(None)` is always
+# False and a chat turn has no task id. Without a per-turn stop, a round cap is
+# the only brake on an interactive turn; raising the cap requires this stop.
 
 def test_a_turn_can_be_asked_to_stop():
     import agent_friday.core as core
@@ -783,7 +773,7 @@ def test_the_stop_message_does_not_ask_if_he_meant_it():
     assert "37 rounds" in msg, msg
     assert "bonsai2:27b" in msg
     assert "continue" not in low, (
-        "the stop message asks him to confirm a decision he already made: %r"
+        "the stop message asks the user to confirm a decision already made: %r"
         % msg)
     assert "background" in low, (
         "a stop must say nothing is still running: %r" % msg)
@@ -802,8 +792,8 @@ def test_the_chat_ui_offers_a_stop_while_a_turn_is_in_flight():
 
 
 def test_a_chat_seat_setting_cannot_lift_the_unattended_cap(monkeypatch):
-    """The seat keys are shared with interactive turns. Raising `local` for his
-    own chat must not silently raise every scheduled job with it -- the reason a
+    """The seat keys are shared with interactive turns. Raising `local` for the
+    user's own chat must not silently raise every scheduled job with it -- the reason a
     scheduled job is bounded is that nobody is watching, which has nothing to do
     with which seat serves it."""
     from agent_friday.services import turn_budget as tb

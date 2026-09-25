@@ -50,18 +50,18 @@ def test_core_and_v5_endpoints_registered():
 
 
 # ── Zero-skip guards ──────────────────────────────────────────────────────
-# Added 2026-08-20. The two tests above did NOT catch a real seven-week
-# regression: routes/jobs.py failed to import on ~70 consecutive starts while
-# 'jobs' stayed in ROUTE_MODULES (so the manifest test passed) and no checked
-# path was a pipeline route (so the endpoint test passed). The server logged one
-# WARNING and reported itself healthy. See docs/history/audits/server-death-forensics.md.
+# The two tests above cannot catch a route module that fails to import: it stays
+# in ROUTE_MODULES (so the manifest test passes) and, unless a checked path
+# belongs to it, the endpoint test passes too. The server logs one WARNING and
+# reports itself healthy; routes/jobs.py stayed broken for ~70 consecutive
+# starts that way.
 #
 # These assert the thing that actually matters: every route module that exists
 # must actually register. Cheapest durable guard we have.
 
 
 def test_no_blueprint_was_skipped():
-    """Every route module imported cleanly. This is the July-1 catcher."""
+    """Every route module imported cleanly."""
     skipped = server.BLUEPRINT_REPORT.get("skipped") or []
     assert skipped == [], (
         "Route module(s) failed to import and were silently skipped: "

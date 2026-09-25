@@ -1,8 +1,8 @@
-"""The workflow proposal — Friday proposes, the maintainer disposes.
+"""The workflow proposal — Friday proposes, the user disposes.
 
-The maintainer, 2026-08-15: "The user decides when a task is heavy." These pin that
-Friday's judgement only ever raises the question, that the three executions he
-named are the menu, that the vault constrains the MENU rather than being
+The user decides when a task is heavy. These pin that Friday's judgement only
+ever raises the question, that the three executions (when away, now local,
+now cloud) are the menu, that the vault constrains the MENU rather than being
 applied silently afterwards, and that "choose for me" says what it chose.
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ def _tasks(n=2, vault=False, cls="heavy"):
 
 # ── the menu ─────────────────────────────────────────────────────────────────
 
-def test_the_three_options_are_the_ones_stephen_named():
+def test_the_three_options_are_the_ones_the_owner_named():
     p = wp.build("refactor", _tasks())
     assert p["options"] == ["when_away", "now_local", "now_cloud"]
 
@@ -55,7 +55,7 @@ def test_choosing_a_blocked_option_is_refused_with_its_reason():
 
 
 def test_a_per_task_cloud_choice_on_vault_work_is_refused_not_downgraded():
-    """He asked for something specific and is owed either it or a reason."""
+    """A user who asks for something specific is owed either it or a reason."""
     p = wp.build("mixed", _tasks(vault=True))
     vault_task = [t for t in p["tasks"] if t["touches_vault"]][0]
     out = wp.decide(p["id"], "now_local",
@@ -69,7 +69,7 @@ def test_a_per_task_cloud_choice_on_vault_work_is_refused_not_downgraded():
 # ── choose for me ────────────────────────────────────────────────────────────
 
 def test_choose_for_me_records_that_friday_chose_and_why():
-    """"Friday chose" is not something the maintainer can disagree with. "Friday chose
+    """"Friday chose" is not something the user can disagree with. "Friday chose
     local because two steps read your vault" is."""
     p = wp.build("thing", _tasks(vault=True))
     out = wp.decide(p["id"], choose_for_me=True)
@@ -136,4 +136,4 @@ def test_heaviness_only_ever_raises_the_question():
     assert wp.looks_heavy("refactor every call site") is True
     assert wp.looks_heavy("what time is it") is False
     # And nothing in this module acts on it — build() takes the classes it is
-    # given. The signal reaches the maintainer, not the scheduler.
+    # given. The signal reaches the user, not the scheduler.

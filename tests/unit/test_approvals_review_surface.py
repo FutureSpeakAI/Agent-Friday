@@ -1,14 +1,12 @@
 """The approval queue's "Review" affordance must land on a surface that
 exists.
 
-Found 2026-09-06 (audit "durable goals has a backend and no UI"): every
-pending approval card pushed a notification whose only action was
-{"workspace": "system", "tab": "approvals"} -- and no workspace handled that
-tab, and no HTML file referenced /api/approvals at all. Verified against the
-code before fixing which way it failed: gate_action() returns "pending" and
-every caller STOPS (agent.py's Google-connect tool, goals.py's milestone
-gate), so the gap was a silent permanent block, not a leak -- the card sat
-until `expires_at` and then expired into denied with nobody ever shown it.
+A pending approval card pushes a notification whose action is
+{"workspace": "system", "tab": "approvals"}; if no workspace handles that tab,
+the card is never shown. gate_action() returns "pending" and every caller
+STOPS (agent.py's Google-connect tool, goals.py's milestone gate), so such a
+gap is a silent permanent block, not a leak -- the card sits until
+`expires_at` and then expires into denied with nobody ever shown it.
 
 These tests pin three things:
   1. the notification carries a `target` (the shape the tray's click handler

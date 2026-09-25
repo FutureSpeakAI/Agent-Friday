@@ -150,8 +150,7 @@ def test_resolve_image_model_maps_catalog_ids():
     assert ce.resolve_image_model("gemini-nano-banana-2") == "gemini-3.1-flash-image"
     # The bare alias used to reach the ORIGINAL 2.5-era Nano Banana
     # (gemini-2.5-flash-image). Google shuts that model down 2026-10-02, so
-    # on 2026-09-22 the unversioned nickname was repointed to the current
-    # Nano Banana. It must NOT resolve to the retiring id.
+    # the unversioned nickname points at the current Nano Banana. It must NOT resolve to the retiring id.
     assert ce.resolve_image_model("nano-banana") == "gemini-3.1-flash-image"
     assert ce.resolve_image_model("nano-banana") != "gemini-2.5-flash-image"
     # Default + None
@@ -174,8 +173,8 @@ def test_resolve_video_model_maps_catalog_ids():
     assert ce.resolve_video_model(None) == "veo-3.1-generate-preview"
     # Gemini Omni Flash rides the video picker but dispatches via the
     # Interactions API. It used to resolve to gemini-omni-flash-preview;
-    # that model shuts down 2026-09-30 and the alias was repointed to the GA
-    # gemini-omni-1.1-flash on 2026-09-22.
+    # that model shuts down 2026-09-30, so the alias points at the GA
+    # gemini-omni-1.1-flash.
     assert ce.resolve_video_model("gemini-omni-flash") == "gemini-omni-1.1-flash"
     # The retired id itself resolves FORWARD rather than 404ing, so a
     # settings.json or saved creation that still names it keeps working.

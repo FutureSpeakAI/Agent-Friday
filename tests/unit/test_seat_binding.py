@@ -118,10 +118,9 @@ def test_the_image_seat_binds_the_local_provider(all_green):
 # ── gate-checked binding ─────────────────────────────────────────────────────
 
 def test_an_ungated_local_model_is_bound_anyway(monkeypatch):
-    """No gate. 2026-08-15: a seat used to require both battery axes green,
-    which left heavy_hitter, local and subagent permanently unbound on
-    the maintainer's machine — the plan computed them and then refused to apply them.
-    Any installed model binds to any seat."""
+    """No gate. Requiring both battery axes green leaves heavy_hitter, local
+    and subagent permanently unbound — the plan computes them and then
+    refuses to apply them. Any installed model binds to any seat."""
     monkeypatch.setattr(
         "agent_friday.services.model_seat_gate.axis_status",
         lambda m, p="local": {"structural": "ungated", "gates": False})
@@ -197,9 +196,9 @@ def test_the_image_seat_updates_its_flat_mirror(all_green):
     """core._sync_capability_routing DERIVES capability_routing from the flat
     keys, so a capability written without its mirror is silently reverted.
 
-    Caught live 2026-08-15: the image seat became provider `local-comfyui`
-    with model `gemini-nano-banana-2` — a Google model on the on-device
-    provider — because `creative_model` still named the Gemini one.
+    Without the mirror, the image seat becomes provider `local-comfyui` with
+    model `gemini-nano-banana-2` — a Google model on the on-device provider —
+    because `creative_model` still names the Gemini one.
     """
     s = _settings()
     s["creative_model"] = "gemini-nano-banana-2"
@@ -211,7 +210,7 @@ def test_the_image_seat_updates_its_flat_mirror(all_green):
 # exists to keep an OLD `*_model` setting congruent with the canonical entry;
 # a capability introduced after that era never had one to disagree with.
 #
-# Verified rather than assumed, 2026-08-19: assigning `orchestrator` and
+# Verified rather than assumed: assigning `orchestrator` and
 # `memory_manager` then running `_sync_capability_routing` twice — once with
 # `capability_routing` in `changed`, once with only an unrelated key — leaves
 # both assignments intact. `_sync` rebuilds from DEFAULT_SETTINGS (where these

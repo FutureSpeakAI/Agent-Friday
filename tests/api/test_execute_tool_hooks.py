@@ -28,7 +28,7 @@ def test_unknown_tool():
 def test_misnamed_tool_resolves_to_the_real_one():
     """A model that embellishes a tool name still reaches the right tool.
 
-    Observed: the seat called `mcp_higgsfield_get_balance` when the registered
+    Example: a seat calls `mcp_higgsfield_get_balance` when the registered
     name was `mcp_higgsfield_balance`. Resolution happens only when exactly one
     registered tool matches, so an ambiguous guess still fails rather than
     running something nobody asked for.

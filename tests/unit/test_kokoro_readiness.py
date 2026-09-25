@@ -2,7 +2,7 @@
 
 Every test here guards one specific way this subsystem previously lied. If the
 enforcement each names is removed, the test fails -- that is the point of it.
-Context: docs/history/audits/2026-09-04-five-dead-settings.md.
+A setting that reads as on while nothing honours it is worse than no setting.
 """
 import sys
 
@@ -412,7 +412,7 @@ def test_real_synthesis_handles_out_of_dictionary_proper_nouns():
     """
     tts = kv.KokoroTTS()
     tts.load()
-    for text in ("Kokoro", "Jere", "This is Kokoro.",
-                 "Robin, Jere and Janet are on the call."):
+    for text in ("Kokoro", "Aoife", "This is Kokoro.",
+                 "Siobhan, Aoife and Tadhg are on the call."):
         audio = tts.synthesize(text)
         assert audio, "no audio for %r" % text

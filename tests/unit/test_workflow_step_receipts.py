@@ -53,8 +53,8 @@ class TestDefectAFaultSignatures:
 
 
 @pytest.mark.skip(
-    reason="Phase 0 scope hardening not shipped (docs/rsi/phase0-verdict.md:"
-    " FAILED); the workflow-step scope does not exist yet"
+    reason="Phase 0 scope hardening not shipped; the workflow-step scope"
+    " does not exist yet"
 )
 class TestPhase0Dependency:
     def test_workflow_step_scope_exists(self):

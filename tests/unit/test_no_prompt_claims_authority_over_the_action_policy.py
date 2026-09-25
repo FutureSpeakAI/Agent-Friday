@@ -1,27 +1,25 @@
 """Nothing in an assembled system prompt may override the action policy.
 
-Friday, serving on bonsai2, quoted two of its own directives back at Stephen:
+An assembled prompt can carry two directives that contradict each other:
 
   (A) "You have FULL authority to take multi-step actions without pausing for
       permission... Never ask 'should I continue?' mid-task."
   (B) "Before you take any real-world action... you MUST ask permission first
       and wait."
 
-Stephen's decision, 2026-09-24: **B wins.** "It must ask."
+**B wins.** Friday must ask before a real-world action.
 
-What the investigation found, and what this file pins:
+What this file pins:
 
 * (A) lives in exactly one place, `FRIDAY_SYSTEM_PROMPT`'s "== AUTONOMOUS
-  OPERATION ==" block in `services/model_router.py`. Provenance is two ordinary
-  human commits by Stephen -- `69e9f271` (2026-06-21, initial public release)
-  and `b15f1fdf` (2026-06-27). It did NOT come from ingested content: every hit
-  in `~/.friday` was a transcript of Friday quoting it.
+  OPERATION ==" block in `services/model_router.py`. It is human-authored
+  prompt text, not ingested content.
 
-* (B) was bolted onto TWO surfaces. Thirty call sites build the system prompt
-  and only the two chat endpoints appended `ACTION_PERMISSION_POLICY`. Every
-  other path -- background tasks, news, briefings, voice, research -- carried
-  the full-authority text with no action policy at all. That asymmetry is the
-  actual defect: the override was global and the rule was local.
+* (B) must not be bolted onto only some surfaces. Thirty call sites build the
+  system prompt; if only the chat endpoints append `ACTION_PERMISSION_POLICY`,
+  every other path -- background tasks, news, briefings, voice, research --
+  carries the full-authority text with no action policy at all. That asymmetry
+  is the defect: the override is global and the rule is local.
 
 So the policy belongs to the assembler, not to its callers, and no prompt may
 contain text that claims authority over it. Working through internal, reversible
@@ -103,8 +101,8 @@ def test_the_base_prompt_constant_claims_no_authority_over_actions():
 
 
 def test_the_base_prompt_still_permits_uninterrupted_internal_work():
-    """The legitimate half of (A) must survive. Stephen does not want
-    "should I continue?" nagging between internal, reversible steps -- he wants
+    """The legitimate half of (A) must survive. The user does not want
+    "should I continue?" nagging between internal, reversible steps -- only
     a stop before real-world actions. Removing the contradiction must not turn
     Friday into something that asks permission to think."""
     low = mr.FRIDAY_SYSTEM_PROMPT.lower()
@@ -129,9 +127,8 @@ def test_no_assembled_prompt_overrides_the_policy(provider):
 def test_every_assembled_prompt_carries_the_action_policy(provider):
     """The policy belongs to the assembler.
 
-    Before this change only `/api/chat` and `/api/chat/send` appended it, so a
-    background task or a voice turn ran with the full-authority text and no rule
-    at all. Any of the 30 call sites is a path to a real-world action.
+    If only `/api/chat` and `/api/chat/send` append it, a background task or a
+    voice turn runs with the full-authority text and no rule at all. Any of the 30 call sites is a path to a real-world action.
     """
     text = _assemble(provider)
     assert POLICY_MARKER in text, (

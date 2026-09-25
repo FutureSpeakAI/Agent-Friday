@@ -57,7 +57,7 @@ def _patch_service(monkeypatch, made):
 
 
 def test_it_is_on_and_system_wide_by_default():
-    """Stephen asked for system-wide, not for an opt-in."""
+    """System-wide by default, not an opt-in."""
     from agent_friday.core import DEFAULT_SETTINGS
     assert DEFAULT_SETTINGS["push_to_transcribe"] is True
     assert DEFAULT_SETTINGS["push_to_transcribe_hotkey"] == "alt+t", (

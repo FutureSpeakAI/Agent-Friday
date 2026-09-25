@@ -281,10 +281,9 @@ def test_observer_token_can_be_minted_and_revoked_from_the_system_workspace(rel)
 
 @pytest.mark.parametrize("rel", ("index.html", "ui_parts/head.html"))
 def test_every_rendered_task_state_has_a_visible_colour(rel):
-    """Found in the browser 2026-09-06: INTERRUPTED and STOPPED rendered in
-    black on the dark panel because only running/complete/failed had a
-    colour rule. The label text was pinned and green; the pixels were not.
-    Every state TaskCard can render must have a .task-card-status rule."""
+    """A state without a colour rule renders black on the dark panel, so
+    pinning the label text is not enough. Every state TaskCard can render
+    must have a .task-card-status rule."""
     css = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
     for state in ("running", "complete", "failed", "interrupted", "cancelled", "running.stalled"):
         assert re.search(r"\.task-card\." + re.escape(state) + r" \.task-card-status \{ color:", css), \

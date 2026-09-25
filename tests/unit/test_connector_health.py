@@ -65,8 +65,8 @@ def test_a_local_key_fault_is_not_a_revoked_grant():
 
 
 def test_an_unreadable_key_is_not_reported_as_missing():
-    """The Firecrawl incident. The key was present and unopenable, and the
-    surface told the user to supply one he had already supplied."""
+    """A key that is present but unopenable must not tell the user to supply
+    one they have already supplied."""
     unreadable = H.from_provider_key_status("present_but_unreadable", "firecrawl")
     missing = H.from_provider_key_status("missing", "firecrawl")
     assert unreadable.state == H.UNREADABLE
@@ -87,8 +87,8 @@ def test_a_handshake_in_flight_is_not_guessed_either_way():
 
 def test_nothing_is_sticky():
     """Derived at the moment it is asked for. The stored status is an input,
-    never the answer - the bug fixed in credentials_for on 2026-09-19 was a
-    verdict that could only ever get worse."""
+    never the answer - otherwise a verdict can only ever get worse, as it
+    once did in credentials_for."""
     rec = {"status": "needs_reauth"}
     assert H.from_google_account(rec).healthy is False
     rec["status"] = "connected"
@@ -219,8 +219,7 @@ def test_the_worst_verdict_is_the_one_with_something_to_do():
 
 
 def test_one_sick_account_does_not_hide_behind_a_healthy_one():
-    """The 2026-09-09 shape: an aggregate that reports fine because SOMETHING
-    is fine."""
+    """An aggregate must not report fine merely because SOMETHING is fine."""
     s = H.summarise([H.from_google_account({"status": "connected"}),
                      H.from_google_account({"status": "needs_reauth"})])
     assert s["total"] == 2 and s["healthy"] == 1

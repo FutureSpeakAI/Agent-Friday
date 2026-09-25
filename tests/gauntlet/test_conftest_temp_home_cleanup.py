@@ -1,16 +1,12 @@
 """Gauntlet: tests/conftest.py's temp-home leak.
 
 tests/conftest.py's `_TEST_HOME` is created fresh by every pytest process
-via `tempfile.mkdtemp()` and, before this fix, was never removed by
-anything -- confirmed (2026-09-04, by an independent verification pass) to
-have accumulated 3,858 such directories since June, up to 781MB each. That
-drove the real C: drive to 0 bytes free with the live app running and
-crashed it with a stack overflow (2026-09-03 08:13); the verifier's cleanup
-alone freed ~153GB. This is not a hypothetical -- it is the confirmed root
-cause of a real production crash, found by a test harness that itself never
-noticed anything wrong (every suite run was green).
+via `tempfile.mkdtemp()`. Left unremoved, these directories (up to ~780MB
+each) accumulate by the thousand, fill the disk with the live app running,
+and crash it -- while every suite run stays green, because the leak is a side
+effect of the run, not a test outcome.
 
-Two mechanisms now close this:
+Two mechanisms close this:
   * `pytest_sessionfinish` removes the CURRENT run's own temp home on a
     normal exit -- a suite that runs to completion leaks nothing.
   * `_sweep_stale_test_homes` removes any left behind by a run that never

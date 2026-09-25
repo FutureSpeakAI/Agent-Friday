@@ -1,28 +1,21 @@
 """A restart must not invalidate a signed store.
 
-At 07:27 on 2026-09-24 Friday told Stephen the file-permission ledger was
-corrupted and every file grant was suspended. It was not corrupted, and it was
-not tampered with. Forensics on the untouched file (mtime Aug 25 17:53, one
-480-byte line, valid JSON, trailing newline present):
+The failure this pins: Friday reports the file-permission ledger as corrupted
+and suspends every file grant, when the content is intact and its HMAC is
+correct -- under the PREVIOUS key. `core._load_or_create_secret()` prefers the
+`FRIDAY_SECRET_KEY` environment variable over the persisted
+`~/.friday/secret_key`, so removing that variable from a launcher silently
+swaps the HMAC key, and every line signed under the old one stops verifying at
+the next boot.
 
-    line 1 VERIFIES under: launcher FRIDAY_SECRET_KEY (pre-removal)
-    line 1 does NOT verify under: persisted ~/.friday/secret_key
-
-The content was intact and its HMAC was correct -- under the PREVIOUS key. The
-cause was mine: removing the hardcoded `FRIDAY_SECRET_KEY` from the launchers
-during the tunnel work. `core._load_or_create_secret()` prefers the environment
-variable over the persisted `~/.friday/secret_key`, so deleting the launcher line
-silently swapped the HMAC key, and every line signed under the old one stopped
-verifying at the next boot.
-
-The design fault this exposes is not the launcher edit. It is that a LEDGER
-SIGNING KEY was the same value as the Flask SESSION secret. Those have opposite
+The design fault is that a LEDGER SIGNING KEY must not be the same value as
+the Flask SESSION secret. Those have opposite
 requirements: a session secret is allowed -- even encouraged -- to rotate, since
 rotating it just logs everyone out; a ledger signing key must never change or
 the ledger's own history becomes unreadable. Sharing one value means any
 rotation of the session secret silently destroys the ledger's verifiability.
 
-So the signing key is now its own persisted secret, stored through
+So the signing key is its own persisted secret, stored through
 `credential_store` (vault/DPAPI), never read from the environment and never
 derived from the session secret.
 
@@ -48,8 +41,8 @@ def grants(tmp_path, monkeypatch):
     `_ledger_path()` and `_signing_key_path()` read it at CALL time, so one patch
     drives both AND survives the `importlib.reload` that the restart tests do.
     Patching the helpers themselves does not -- reload rebuilds the module's
-    attributes and silently drops the monkeypatch, which is what made the first
-    version of these tests fail for a reason that had nothing to do with the bug.
+    attributes and silently drops the monkeypatch, so the tests would fail for
+    a reason that has nothing to do with the bug.
     """
     import agent_friday.core as core
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
@@ -68,7 +61,7 @@ def grants(tmp_path, monkeypatch):
 
 def test_the_signing_key_is_not_the_session_secret(grants, monkeypatch):
     """The bug, stated directly. Changing the session secret -- which is exactly
-    what removing the launcher line did -- must not change the ledger key."""
+    what removing a launcher line does -- must not change the ledger key."""
     before = grants._secret_bytes()
 
     monkeypatch.setenv("FRIDAY_SECRET_KEY", "a-completely-different-session-secret")
@@ -82,7 +75,7 @@ def test_the_signing_key_is_not_the_session_secret(grants, monkeypatch):
 
 def test_the_signing_key_is_stable_across_a_restart(grants, monkeypatch):
     """A 'restart' here is a module reload with caches cleared and the
-    environment rebuilt -- the same thing that broke it live."""
+    environment rebuilt."""
     first = grants._secret_bytes()
 
     # A restart, as this module experiences one: every in-process cache cold and
@@ -95,7 +88,7 @@ def test_the_signing_key_is_stable_across_a_restart(grants, monkeypatch):
 
 
 def test_a_grant_written_before_a_restart_still_verifies(grants, monkeypatch):
-    """End to end: the exact thing Stephen lost."""
+    """End to end: a grant written before a restart survives it."""
     grants._append_event({
         "event": "grant_file", "id": "g-restart-1",
         "path": r"C:\Users\someone\Downloads\a.pdf", "sha256": "0" * 64,
@@ -177,7 +170,7 @@ def test_a_failed_line_is_never_auto_resigned(grants):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_unverified_lines_can_be_listed_for_review(grants):
-    """Stephen cannot confirm what he cannot see. A dropped line's CONTENT is
+    """The user cannot confirm what they cannot see. A dropped line's CONTENT is
     reviewable, clearly marked unverified."""
     grants._append_event({"event": "grant_file", "id": "g-3", "path": "c.pdf"})
     p = grants._ledger_path()
@@ -202,7 +195,7 @@ def test_reattesting_writes_a_new_signed_line_with_provenance(grants):
                  encoding="utf-8")
 
     pending = grants.list_unverified()
-    out = grants.reattest(pending[0]["line_sha256"], confirmed_by="stephen")
+    out = grants.reattest(pending[0]["line_sha256"], confirmed_by="owner")
     assert out["ok"] is True
 
     state = grants._load_state(force=True)
@@ -215,13 +208,13 @@ def test_reattesting_writes_a_new_signed_line_with_provenance(grants):
     new = [e for e in state.grants.values() if e.get("reattested_from")]
     assert new, "re-attestation did not produce a verifiable grant"
     assert new[0]["reattested_from"] == pending[0]["line_sha256"]
-    assert new[0]["reattested_by"] == "stephen"
+    assert new[0]["reattested_by"] == "owner"
 
     q = grants._quarantine_path()
     assert q.exists(), "the unverifiable line was not preserved"
     kept = json.loads(q.read_text(encoding="utf-8").strip())
     assert kept["line_sha256"] == pending[0]["line_sha256"]
-    assert kept["quarantined_by"] == "stephen"
+    assert kept["quarantined_by"] == "owner"
     assert '"hmac":"2222' in kept["line"] or "2" * 8 in kept["line"], (
         "the quarantined copy is not the original line verbatim")
 
@@ -241,5 +234,5 @@ def test_reattesting_requires_a_confirmation(grants):
 
 
 def test_reattesting_an_unknown_line_is_refused(grants):
-    out = grants.reattest("f" * 64, confirmed_by="stephen")
+    out = grants.reattest("f" * 64, confirmed_by="owner")
     assert out["ok"] is False

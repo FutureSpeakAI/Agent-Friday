@@ -124,13 +124,11 @@ def test_credentials_round_trip_and_status(audit_calls):
 
     # A LIVE token, not an expired one.
     #
-    # This fixture used to hardcode `expires_at: 2026-09-01`, which went into
-    # the past on that date and then asserted `connected is True` anyway - so
-    # the test was pinning the defect in place: a token that expired in August
-    # reporting as connected in September. `PlatformAdapter.status()` computed
-    # `connected` from whether a credential EXISTED and never once consulted
-    # the `expires_at` it stored and displayed. Fixed 2026-09-19; this test
-    # asserted the old behaviour and had to move with it.
+    # The expiry is computed relative to now: a hardcoded date goes into the
+    # past and would pin the defect in place (an expired token reporting as
+    # connected). `PlatformAdapter.status()` must derive `connected` from the
+    # `expires_at` it stores and displays, not just from whether a credential
+    # EXISTS.
     future = datetime.now(timezone.utc) + timedelta(days=30)
     blob = {"account": "@friday", "scopes": ["write"],
             "expires_at": future.isoformat()}

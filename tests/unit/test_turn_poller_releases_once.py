@@ -2,21 +2,20 @@
 
 The chat's liveness poller runs inside a setInterval whose callback is async.
 setInterval does not wait for that callback, so when a poll takes longer than
-the 15-second tick -- routine while the server is busy -- ticks overlap. The
-staleness guard sat entirely BEFORE the await, so every overlapping tick had
-already passed it by the time its answer arrived, and every one of them
-released the chat and appended its own notice.
+the 15-second tick -- routine while the server is busy -- ticks overlap. A
+staleness guard placed entirely BEFORE the await is passed by every
+overlapping tick before its answer arrives, and every one of them releases the
+chat and appends its own notice.
 
-Measured on the reference machine, 2026-09-22. "Please start my day" ran
-15:12:16 -> 15:18:19 on bonsai2:27b, streamed its full 3,043-character reply,
-called search_email and open_url throughout, and finished normally. The turn
-was never dead. Stephen saw about a dozen identical "that turn ended without
-producing a reply" notices stacked in the thread.
+So a six-minute local turn that streams its full reply, calls tools
+throughout and finishes normally -- a turn that is never dead -- can leave
+about a dozen identical "that turn ended without producing a reply" notices
+stacked in the thread.
 
-The same overlap broke the four-miss rule: `misses` was incremented by
-CONCURRENT polls, so four in-flight failures inside a single window counted as
-four consecutive ones and tripped the hang message a dropped packet was never
-supposed to trigger.
+The same overlap breaks the four-miss rule: if `misses` is incremented by
+CONCURRENT polls, four in-flight failures inside a single window count as
+four consecutive ones and trip the hang message a dropped packet must never
+trigger.
 
 These tests run the real block out of index.html under node with a fake clock
 and a fake fetch, rather than asserting on its text.

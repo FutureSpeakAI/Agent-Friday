@@ -132,8 +132,8 @@ class TestTheNumbersAreReal:
         assert _res(arb.status(), "gpu_vram")["available_units"] == 1024
 
     def test_reserve_is_subtracted_from_availability(self, monkeypatch):
-        """Enforces `reserve_units`. The desktop compositor starving is one of
-        tonight's incidents; the reserve is what stops Friday causing it."""
+        """Enforces `reserve_units`. A starved desktop compositor is a real
+        failure mode; the reserve is what stops Friday causing it."""
         _stub_machine(monkeypatch, gpu_vram={"total": 8192,
                                              "measured_free": 8192})
         r = _res(arb.status(), "gpu_vram")
@@ -271,7 +271,7 @@ class TestEvictAndRestore:
 
     def test_refusal_offers_an_eviction_with_a_stated_cost(self, monkeypatch):
         """The interactive case: the language seat holds four gigabytes and
-        Stephen asks for an image. The right answer is an offer, not a no."""
+        the user asks for an image. The right answer is an offer, not a no."""
         _stub_machine(monkeypatch, gpu_vram={"total": 12288,
                                              "measured_free": 12288})
         arb.acquire("gpu_vram", 10240, "llama-seat", purpose="qwen3-14b",

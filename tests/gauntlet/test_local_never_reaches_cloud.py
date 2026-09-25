@@ -1,6 +1,6 @@
 """`local` terminates. It never falls through to a cloud provider.
 
-Settled 2026-09-09, and the more important half of the `auto` fix in
+This is the more important half of the `auto` fix in
 test_resolve_engine_auto_never_cloud.py.
 
 The defect this pins: a user selected the mode named "local", did not install

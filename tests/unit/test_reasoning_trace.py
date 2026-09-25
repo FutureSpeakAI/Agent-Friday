@@ -131,7 +131,7 @@ def test_a_trace_with_no_events_is_not_archived(rt):
 
 # ── archive ──────────────────────────────────────────────────────────────────
 
-def _finished(rt, text="secret reasoning about Janet's appointment"):
+def _finished(rt, text="secret reasoning about Priya's appointment"):
     tid = rt.start("chat", "q", model="bonsai2:27b", seat="local", parent_id=None)
     with rt.activate(tid):
         rt.reasoning(text)
@@ -146,7 +146,7 @@ def test_archive_is_encrypted_chained_and_verifies(rt):
     tid, receipt = _finished(rt)
     assert receipt and receipt["seq"] == 1
     raw = rt.ledger_path().read_text(encoding="utf-8")
-    assert "Janet" not in raw and "calendar_list" not in raw
+    assert "Priya" not in raw and "calendar_list" not in raw
     from agent_friday.services import credential_store as cs
     body = base64.b64decode(_lines(rt)[0]["body"])
     assert cs.looks_protected(body) is not None
@@ -249,4 +249,4 @@ def test_activity_ledger_gets_a_metadata_only_row(rt, tmp_path, monkeypatch):
     tid, receipt = _finished(rt)
     rows = al.read(kind="reasoning_trace")
     assert rows and rows[0]["trace_id"] == tid and rows[0]["ledger_seq"] == receipt["seq"]
-    assert "Janet" not in json.dumps(rows)
+    assert "Priya" not in json.dumps(rows)

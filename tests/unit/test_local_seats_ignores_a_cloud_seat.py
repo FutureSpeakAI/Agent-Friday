@@ -1,23 +1,22 @@
 """A cloud seat pick is not a missing local model.
 
-Observed live 2026-09-24. `capability_routing.reasoning.model` was
-`claude-opus-5-5` -- a cloud model, deliberately chosen in the picker.
-`local_seats._configured("brain")` returned that string, `resolve()` asked
-whether it was in the LOCALLY INSTALLED list, and of course it was not, so it
-"healed" the seat onto a local model and said so:
+When `capability_routing.reasoning.model` is `claude-opus-5-5` -- a cloud
+model, deliberately chosen in the picker -- `local_seats._configured("brain")`
+returns that string. If `resolve()` then asks whether it is in the LOCALLY
+INSTALLED list, it is not, so it "heals" the seat onto a local model and says so:
 
     [seats] brain: 'claude-opus-5-5' is not installed — using 'bonsai2:27b' instead
 
 Every word after the model name is wrong. Opus 5.5 is not installable on this
-machine and was never meant to be; nothing was missing and nothing needed
+machine and is never meant to be; nothing is missing and nothing needs
 healing. `local_seats` exists to choose among LOCAL seats, so a cloud id is
 simply not a question it has been asked.
 
-The damage was not only cosmetic. `_ANNOUNCED` dedupes on
+The damage is not only cosmetic. `_ANNOUNCED` dedupes on
 `(role, wanted, got)`, so that sentence is emitted once per process and every
 later substitution is silent, and the consumers of `resolve("brain")`
-(`capability_state`, `voice_engine`, `voice_manifest`) went on reporting a local
-brain for a machine whose reasoning seat was a cloud model.
+(`capability_state`, `voice_engine`, `voice_manifest`) go on reporting a local
+brain for a machine whose reasoning seat is a cloud model.
 """
 
 import pytest

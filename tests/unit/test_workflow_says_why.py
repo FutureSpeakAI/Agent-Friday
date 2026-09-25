@@ -1,23 +1,18 @@
 """A workflow step that dies must say why, where the person is looking.
 
-THE EVENING THIS COST. On 2026-09-19 an RSI workflow's implementation step came
-back "interrupted" twice. Hours went into theorising - was the local 27B not
-capable enough, was the spec written for the wrong audience, did the prompt
-need rewriting for a smaller model. All plausible. All wrong.
+A workflow step that comes back as a bare "interrupted" invites hours of
+plausible, wrong theories (is the local model capable enough, is the spec
+written for the wrong audience, does the prompt need rewriting). When a
+server restart kills a step, `reconcile_tasks` records the reason:
+"Interrupted by a restart - this was a free-form run and its state lived in a
+process that no longer exists." That reason has to reach the person:
 
-The step had been killed by a server restart, and `reconcile_tasks` wrote the
-reason down BOTH TIMES: "Interrupted by a restart - this was a free-form run
-and its state lived in a process that no longer exists."
-
-Two separate failures kept that from reaching anyone:
-
-  1. `chain_run_status` reported a step's STATUS and nothing else, so
-     `workflow_status` handed the model the bare word "interrupted". The
-     assistant reading it said it could not see why. That was true, and it was
-     the bug.
-  2. `_spawn_task` had no `conversation_id`, so `reconcile._report` fell
-     through `conv.resolve(None)` to Main. The explanation was filed in a
-     conversation nobody was reading.
+  1. `chain_run_status` reports the reason, not only the STATUS, so
+     `workflow_status` does not hand the model the bare word "interrupted"
+     and leave it unable to say why.
+  2. `_spawn_task` carries a `conversation_id`, so `reconcile._report` does
+     not fall through `conv.resolve(None)` to Main and file the explanation
+     in a conversation nobody is reading.
 
 A dead end is where invented explanations come from.
 """
@@ -33,31 +28,21 @@ from agent_friday.services import reconcile as R
 def tasks():
     """The live task ledger, emptied around the test.
 
-    This fixture used to do `monkeypatch.setattr(core, "TASKS", store,
-    raising=False)`, matching what `reconcile_tasks` then imported. Both were
-    wrong in the same direction, and they hid each other:
+    Do not `monkeypatch.setattr(core, "TASKS", store, raising=False)`:
 
       * TASKS and TASKS_LOCK live in `services.agent`, never in `core`.
-      * `raising=False` on a name that does not exist CREATES it. So the
-        fixture manufactured `core.TASKS` moments before the function tried to
-        import it, the import succeeded, and these tests passed - inside a
-        world that existed only while they ran.
-      * In production there was no fixture. The import raised ImportError on
-        every boot, `reconcile_tasks` swallowed it and returned
+      * `raising=False` on a name that does not exist CREATES it. Such a
+        fixture manufactures `core.TASKS` moments before a function imports
+        it, the import succeeds, and the tests pass - inside a world that
+        exists only while they run.
+      * In production there is no fixture. A `reconcile_tasks` importing from
+        `core` raises ImportError on every boot, swallows it and returns
         `{"interrupted": []}`, and the function whose whole purpose is "a job
-        that stopped must say it stopped" had never marked a single task in
-        its life.
+        that stopped must say it stopped" never marks a single task.
 
-    That is why the evening described at the top of this file was lost twice:
-    the reason was NOT written down both times. It was never written at all.
-    The status tool had a second, real bug, which is what the later tests here
-    cover - but this half of the story was a test keeping its own subject
-    asleep.
-
-    Fixed 2026-09-22 (services/reconcile now imports from services.agent).
-    Patching where production actually reads means these tests exercise the
-    real registry, which is also why the fixture has to clear it rather than
-    swap it.
+    services/reconcile imports from services.agent. Patching where production
+    actually reads means these tests exercise the real registry, which is
+    also why the fixture has to clear it rather than swap it.
     """
     from agent_friday.services.agent import TASKS, TASKS_LOCK
     with TASKS_LOCK:

@@ -1,12 +1,9 @@
-"""Gauntlet finding F74 (2026-09-04, seam 13/SkillOpt investigation,
-externally sourced): skill_capture.capture()'s success signal never
-reached SkillOpt's composite score, so a real chat turn Friday considered
-a total failure and a real chat turn she considered a full success scored
-IDENTICALLY.
+"""Gauntlet finding F74 (seam 13/SkillOpt, from an external review):
+skill_capture.capture()'s success signal never reached SkillOpt's
+composite score, so a real chat turn Friday considered a total failure and
+a real chat turn she considered a full success scored IDENTICALLY.
 
-Two coupled claims from an outside review the maintainer commissioned (it read
-the public v5.10.0 repo, both reproduced there by executing the scoring
-functions -- re-verified here against current code before trusting them):
+Two coupled claims, both reproduced by executing the scoring functions:
 
   (a) capture() called record_skill_run(..., metrics={"quality": score,
       "success": score}, ...), but skillopt_engine.composite_score() only
@@ -34,12 +31,11 @@ rather than "count a bad signal for more": composite_score() reads the
 accuracy/user_satisfaction/completeness keys, and a producer that writes
 anything else is invisible to it.
 
-CORRECTION (F75, the maintainer's direct ruling, 2026-09-05): claim (b) itself
-is now partially fixed too -- not with the real task-verification design
-work the maintainer explicitly deferred (a genuine product decision about what
-"success" should mean per skill/task type, specified as follow-up work
-in skill_capture.py itself, not decided here), but with the "minimum
-honest change" he did rule on: _success_score() no longer returns
+F75: claim (b) itself is partially fixed too -- not with real
+task-verification design work (a genuine product decision about what
+"success" should mean per skill/task type, deferred and specified as
+follow-up work in skill_capture.py itself), but with the minimum honest
+change: _success_score() no longer returns
 SUCCESS_SCORE (1.0) for a merely-plausible reply. It returns
 UNVERIFIED_SCORE (0.5) instead -- a third state for "no confirmed
 failure, but also no confirmed success," since the absence of a bad
@@ -137,13 +133,13 @@ class TestCaptureSuccessSignalReachesScore:
 
 
 class TestSuccessScoreNowReturnsUnverifiedNotSuccess:
-    """F75 (the maintainer's direct ruling, 2026-09-05): replaces the old
+    """F75: replaces the old
     TestSuccessScoreStillMeasuresReplyShapeOnly, which pinned the BUG
     (a plausible reply scoring a confirmed SUCCESS_SCORE with zero
     evidence) as accepted, current behavior. That bug is fixed -- a
     plausible reply now scores UNVERIFIED_SCORE, a distinct third value
     that is neither a confirmed failure nor a confirmed success. What is
-    NOT fixed, deliberately, per the same ruling: real completion
+    NOT fixed, deliberately: real completion
     verification (so SUCCESS_SCORE could ever actually be reached) is
     real design work, not decided here -- see skill_capture.py's own
     follow-up note. Kept as its own class so that future, deliberate work

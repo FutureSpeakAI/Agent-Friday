@@ -1,11 +1,9 @@
 """Phase 2 hard gate — adversarial egress test for the knowledge indexer.
 
-Rewritten 2026-09-03, same day as the routing redesign this file used to
-test the OLD shape of: `gated_cloud` pinned TIER_2/3 chunks local no matter
-what the user chose, so the indexer was itself a second privacy gate on top
-of the egress gate. That per-tier override is gone — "he is not asking for
-a system that decides for people, he's asking for one that does what the
-person picked." `indexing_mode` ("local"/"cloud") is now a strict per-user
+The indexer is not a second privacy gate. An older `gated_cloud` shape
+pinned TIER_2/3 chunks local no matter what the user chose; that per-tier
+override is gone, because the system does what the person picked rather
+than deciding for them. `indexing_mode` ("local"/"cloud") is now a strict per-user
 routing choice, uniform across sensitivity; what content is actually SAFE
 to put on the wire is entirely the egress gate's decision, the same as
 every other cloud call in the app.
@@ -160,9 +158,8 @@ class TestAdversarialEgress:
 
     def test_dead_gate_in_cloud_mode_refuses_rather_than_degrading(
             self, seeded_home, tmp_path, monkeypatch):
-        """2026-09-03: no more silent degrade-to-local when the gate is
-        down -- that was exactly the shape of silent failure the day's
-        instruction named. A dead gate in "cloud" mode must refuse the pass
+        """No silent degrade-to-local when the gate is down: that is a
+        silent failure. A dead gate in "cloud" mode must refuse the pass
         outright, before any chunk is attempted."""
         import agent_friday.services.egress_gate as eg
         monkeypatch.setattr(eg, "gate_operational", lambda: False)

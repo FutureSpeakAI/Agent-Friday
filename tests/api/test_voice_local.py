@@ -30,16 +30,13 @@ def test_nemo_provider_registered_and_gpu_gated(monkeypatch):
     assert set(p["capabilities"]) == {"asr", "tts"}
     # Availability is gated on the GPU stack (torch+NeMo+nltk+CUDA+VRAM).
     #
-    # This used to assert a flat False "because CI has no GPU stack", which
-    # made the test a statement about the MACHINE rather than about the gate.
-    # On a developer box with an RTX 4070 and the stack installed it failed
-    # permanently — and a test that is red for a correct reason is a test
-    # nobody reads, which is how it sat red while GPU voice was genuinely
-    # broken for an unrelated reason (missing nltk). Assert the GATE: whatever
+    # Assert the GATE, not the machine: a flat False "because CI has no GPU
+    # stack" fails permanently on a box with a GPU and the stack installed,
+    # and a test that is red for a correct reason stops being read. Whatever
     # gpu_tier_ready() says, availability must say the same, both ways.
-    # Availability is now SNAPSHOT-CACHED for 60s, because the real probe
-    # imports torch (2.8s) and used to run on the request path -- part of
-    # why the model picker took 18s to open. The gate is unchanged; a flip
+    # Availability is SNAPSHOT-CACHED for 60s, because the real probe
+    # imports torch (2.8s) and must stay off the request path -- otherwise
+    # the model picker takes many seconds to open. The gate is unchanged; a flip
     # of gpu_tier_ready is simply not observed through a cached verdict, so
     # drop it between the halves instead of asserting through it.
     from agent_friday.services import swr_cache
@@ -83,8 +80,8 @@ def test_ws_voice_local_route_registered(app):
 
 def test_ws_voice_and_its_alias_share_one_implementation(app):
     """flask-sock's decorator returns None, so an alias function that called
-    the decorated name called None: every /ws/voice connect was an HTTP 500
-    (observed 2026-09-18) while /ws/voice-local worked. Both paths must wrap
+    the decorated name calls None: every /ws/voice connect is an HTTP 500
+    while /ws/voice-local works. Both paths must wrap
     the SAME undecorated handler."""
     by_rule = {r.rule: r.endpoint for r in app.url_map.iter_rules()}
     a = app.view_functions[by_rule["/ws/voice"]]
@@ -137,11 +134,10 @@ def test_session_info_cloud_opt_in(client, monkeypatch):
 def test_session_info_local_terminates_when_local_missing(client, monkeypatch):
     """`local` TERMINATES; it never falls through to the cloud.
 
-    Settled 2026-09-09 (local-voice-repair-and-native-audio.md R4.1;
-    cloud-voice-providers.md §6.3) and restated by voice-system-clean-sheet.md
-    §1.3. This test used to assert the opposite -- that a user who picked the
-    mode named "local", with the deps missing and a Gemini key present, was
-    routed to Gemini Live. That is the silent cloud promotion C1/C2 forbid.
+    See local-voice-repair-and-native-audio.md R4.1, cloud-voice-providers.md
+    §6.3 and voice-system-clean-sheet.md §1.3. A user who picked the mode
+    named "local", with the deps missing and a Gemini key present, must NOT be
+    routed to Gemini Live: that is the silent cloud promotion C1/C2 forbid.
     """
     import agent_friday.routes.voice as rv
     monkeypatch.setattr(rv, "get_local_voice_engine", lambda: _FakeEngine(False, False))

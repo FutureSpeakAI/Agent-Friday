@@ -1,15 +1,15 @@
 """content_policies <-> moderation must not call each other in a loop.
 
-MEASURED 2026-09-22. `content_policies.evaluate_content` called
-`moderation.scan` for the H1-H4 floor; `moderation.scan` called
-`evaluate_content` back for subscribed-pack rules; neither had a depth guard,
-and both call sites sit inside `except Exception: pass`. One approval card
-cost 250 round-trips ending in a swallowed RecursionError - and the swallowing
-is the reason it went unnoticed, since the caller just saw "clean".
+`content_policies.evaluate_content` calls `moderation.scan` for the H1-H4
+floor; `moderation.scan` calls `evaluate_content` back for subscribed-pack
+rules. Without a depth guard, and with both call sites inside
+`except Exception: pass`, one approval card costs 250 round-trips ending in a
+swallowed RecursionError - and the swallowing hides it, since the caller just
+sees "clean".
 
-It was NOT a Law-1 hole, and the distinction matters enough to pin: the floor
-runs before the pack step, so genuinely harmful content blocked at stack depth
-2 and never reached the recursion. Only benign content went deep. These tests
+That loop is NOT a Law-1 hole, and the distinction matters enough to pin: the
+floor runs before the pack step, so genuinely harmful content is blocked at
+stack depth 2 and never reaches the recursion. Only benign content went deep. These tests
 assert both halves - the loop is gone, AND the verdicts did not move - because
 a recursion fix that quietly changed what gets blocked would be far worse than
 the recursion.

@@ -125,7 +125,7 @@ def test_post_processors_are_never_generation_picks(mid, name, otype):
 
 
 def test_audio_splits_music_from_speech():
-    """The maintainer's premise was 'music aplenty'. Measured: exactly one music
+    """The catalog does not have 'music aplenty': it has exactly one music
     model; the rest are speech. They must not share a bucket."""
     from agent_friday.services.provider_registry import ROLE_VOICE
     out = hc.normalize([
@@ -299,7 +299,7 @@ def test_missing_mcp_manager_is_a_status_not_a_crash(monkeypatch):
 
 
 def test_explore_recovers_first_document_from_a_multi_block_reply(monkeypatch):
-    """Live 2026-09-06: models_explore answered image/video/audio requests
+    """Live, models_explore answers image/video/audio requests
     with MORE than one MCP content block. mcp_client.MCPManager.call() joins
     those with "\\n" rather than assuming exactly one, so `_explore` received
     two complete JSON documents back to back and a bare json.loads raised

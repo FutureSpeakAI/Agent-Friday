@@ -2,10 +2,9 @@
 
 Three things here are load-bearing and each has a way of going quietly wrong:
 
-  * A project's default seat has to reach a turn. Per-chat bindings were
-    decoration for months because the send path read a field nothing resolved
-    (fixed 2026-09-18); a project default inherited through that same path is
-    the identical trap one level up, so it is tested from the resolver the
+  * A project's default seat has to reach a turn. A per-chat binding is
+    decoration if the send path reads a field nothing resolves; a project
+    default inherited through that same path is the identical trap one level up, so it is tested from the resolver the
     send path actually calls rather than from the stored field.
 
   * The default must be LIVE, not a stamp. Changing a project's model has to
@@ -28,9 +27,8 @@ def store(tmp_path, monkeypatch):
     """Point both stores at a temp dir.
 
     Patched on each MODULE, not via an env var: `FRIDAY_DIR` is imported into
-    these modules at import time and setting the environment does nothing.
-    Learned the hard way on 2026-09-19, when a test run that thought it was
-    sandboxed wrote four conversations into the real ~/.friday.
+    these modules at import time and setting the environment does nothing:
+    a test run that only sets the env var writes into the real ~/.friday.
     """
     monkeypatch.setattr(C, "FRIDAY_DIR", str(tmp_path))
     monkeypatch.setattr(P, "FRIDAY_DIR", str(tmp_path))
@@ -137,9 +135,9 @@ def test_filing_and_pinning_do_not_restamp_last_active(store):
 
 def test_thread_pinning_does_not_collide_with_message_pinning(store):
     """`pinned` at the conversation level holds pinned MESSAGE ids and drives
-    clear/prune. Thread pinning is `pinned_at`. They were one word before
-    2026-09-19, and the list endpoint flattened the message list to a boolean
-    that read as "this thread is pinned" and was always False."""
+    clear/prune. Thread pinning is `pinned_at`. Sharing one word lets the list
+    endpoint flatten the message list to a boolean that reads as "this thread
+    is pinned" and is always False."""
     c = C.create("x")
     C.append(c["id"], {"role": "user", "text": "keep me", "pinned": True})
     C.append(c["id"], {"role": "user", "text": "drop me"})

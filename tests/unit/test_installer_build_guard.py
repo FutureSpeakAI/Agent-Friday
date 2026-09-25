@@ -1,14 +1,13 @@
 """The installer build must ship the committed tree, nothing else.
 
-Audited 2026-09-06: the published 5.12.0 and 5.13.0 zips each carried ~290
-files that existed only on the developer's machine (a second git repo with
-its own .git/, seven gitignored token files, Claude memory, PowerShell
-caches, local-only handoff docs). The copy loop snapshots the working tree
+The published 5.12.0 and 5.13.0 zips each carried ~290 files that existed
+only in a developer's working tree (a second git repo with its own .git/,
+gitignored token files, agent memory, PowerShell caches, local-only notes). The copy loop snapshots the working tree
 and the exclusion lists only catch what someone already named.
 
 build-installer.ps1 now refuses to build unless every payload file is
-tracked at HEAD and no tracked file is modified. Proven live: on the dirty
-developer tree the build aborted at step 2/5 naming 268 strays; on a clean
+tracked at HEAD and no tracked file is modified. On a dirty developer tree
+the build aborted at step 2/5 naming 268 strays; on a clean
 worktree it passed. This test pins the guard's presence and its position
 (before the credential scan, so a stray can never be "cleared" by a later
 step) so it cannot be quietly removed.

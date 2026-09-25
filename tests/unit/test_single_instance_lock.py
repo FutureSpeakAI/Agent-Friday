@@ -1,7 +1,7 @@
-"""Unit tests for the single-instance lock + loud-fail helper added to
-server.py (docs: toolcall-integrity-v5, 2026-08-13 double-launch incident:
-two server processes born the same second; the loser sat alive at ~4MB/0%
-CPU with nothing logged, because it never got far enough to log anything).
+"""Unit tests for the single-instance lock + loud-fail helper in server.py.
+Without them, two server processes born the same second leave the loser
+alive at ~4MB/0% CPU with nothing logged, because it never gets far enough
+to log anything.
 
 _acquire_single_instance_lock() is the authoritative guard — checked first,
 before any heavy startup work — so a losing process fails in milliseconds.

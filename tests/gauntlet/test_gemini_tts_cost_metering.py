@@ -1,10 +1,7 @@
-"""Gauntlet finding Q6 part (c) / cost-metering batch (2026-09-04): Gemini
-TTS (services/voice_engine.py `_synthesize_tts_wav_gemini`) makes a real,
-billed Gemini API call with ZERO cost_meter integration anywhere in the
-file, despite `cost_meter.PRICING` already carrying entries for the
-sibling Gemini Live models -- clear evidence the original intent was to
-track these calls, just never wired for TTS specifically (docs/audits/
-gauntlet-2026-09-03/findings.jsonl, Q6).
+"""Gauntlet finding Q6 part (c): Gemini TTS (services/voice_engine.py
+`_synthesize_tts_wav_gemini`) makes a real, billed Gemini API call and
+must be metered like the sibling Gemini Live models that
+`cost_meter.PRICING` already carries (findings.jsonl, Q6).
 
 `_synthesize_tts_wav_gemini` is a plain module-level function (not a
 closure with no call surface, unlike the websocket routes), so this is a

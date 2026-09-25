@@ -2,14 +2,13 @@
 
 WHAT WENT WRONG, and why this module exists. Credentials were encrypted with a
 key derived from whatever `vault_passphrase.resolve()` returned, and that
-resolver walks five sources in priority order. On 2026-09-19 Stephen's machine
-held TWO DIFFERENT passphrases - one in friday_startup.bat, another in the
+resolver walks five sources in priority order. A machine can hold TWO
+DIFFERENT passphrases - one in friday_startup.bat, another in the
 Windows keychain - and the resolver prefers the keychain. So every credential
-written before that keychain entry appeared became unreadable the moment it
-did: four provider API keys and an MCP OAuth token, silently. The health
-surface reported Firecrawl as "no API key set" when the key was right there
-and merely unopenable, and both Google accounts had to be reconnected every
-morning.
+written before that keychain entry appears becomes unreadable the moment it
+does: provider API keys and MCP OAuth tokens, silently. The health surface
+then reports a provider as "no API key set" when the key is right there and
+merely unopenable, and Google accounts have to be reconnected every morning.
 
 The fix is one random root key in one file that every process finds the same
 way, no keychain and no DPAPI in the path. These tests hold the properties

@@ -1,4 +1,4 @@
-"""Gauntlet finding F60 (claim-corpus sweep, 2026-09-04): ambient_awareness's
+"""Gauntlet finding F60 (claim-corpus sweep): ambient_awareness's
 module docstring claimed three adaptive behaviors -- shorter replies,
 suppressed interruptions, and a holo-scene tint. Verified against the real
 frontend (index.html) and call graph:

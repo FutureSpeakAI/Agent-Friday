@@ -48,11 +48,11 @@ def mgr():
 class TestRecommendModels:
     """recommend_models is entirely pure: it maps hardware specs to model tiers.
 
-    2026-09-03: rewritten for the Gemma-4-only ladder (e2b/e4b/12b/26b) —
-    Qwen is gone from `model_plan.BRAIN_MODELS`, and this function now
-    DERIVES its thresholds and names from that table live rather than
-    hardcoding its own copy (that duplication was exactly the "scattered
-    choice" that let this file and the KG indexer's default drift apart).
+    The ladder is Gemma-4-only (e2b/e4b/12b/26b) — Qwen is not in
+    `model_plan.BRAIN_MODELS`, and this function DERIVES its thresholds and
+    names from that table live rather than hardcoding its own copy (a
+    duplicate copy is the "scattered choice" that lets this file and the KG
+    indexer's default drift apart).
     Thresholds below are computed the same way the function computes them:
     ceil(vram_gib + DISPLAY_RESERVE_GIB) for VRAM, min_ram_gib for RAM.
 
@@ -193,7 +193,7 @@ class TestRecommendModels:
         assert isinstance(recs, list)
 
     def test_no_qwen_anywhere_in_a_recommendation(self, mgr):
-        """2026-09-03 product decision: Qwen is not shipped, ever, at any
+        """Product decision: Qwen is not shipped, ever, at any
         hardware tier — only Gemma 4 (a placeholder family, Apache 2.0, no
         licensing entanglement, until FutureSpeak's own model replaces it)."""
         for vram, ram in ((0, 0), (6, 0), (11, 0), (20, 0), (48, 128)):
@@ -486,12 +486,11 @@ class TestChatCompletionGraceful:
     def test_every_request_goes_native_with_a_bounded_seat(self, mgr, monkeypatch):
         """/v1 is never used, and no request may seat a model unbounded.
 
-        Rewritten 2026-08-17. This used to assert /v1 was tried FIRST and
-        /api/chat was the fallback. That ordering was the defect: /v1 silently
-        discards `options.num_ctx`, so a caller naming no context seated the
-        model at its declared maximum -- 262144 for gemma4, 9.9 GB on a 12 GB
-        card, with the compositor starved behind it. Every request now carries
-        a context and a bounded keep_alive, so native is the only path.
+        Trying /v1 FIRST with /api/chat as the fallback is the defect: /v1
+        silently discards `options.num_ctx`, so a caller naming no context
+        seats the model at its declared maximum -- 262144 for gemma4, 9.9 GB
+        on a 12 GB card, with the compositor starved behind it. Every request
+        carries a context and a bounded keep_alive, so native is the only path.
         """
         call_paths = []
 

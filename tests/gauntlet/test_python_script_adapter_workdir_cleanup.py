@@ -1,18 +1,15 @@
-"""Gauntlet finding F71 (2026-09-04): PythonScriptAdapter._run() created a
-fresh tempfile.mkdtemp(prefix="friday_worker_") per worker job and never
+"""Gauntlet finding F71: PythonScriptAdapter._run() created a fresh
+tempfile.mkdtemp(prefix="friday_worker_") per worker job and never
 removed it -- not on success, not on failure, not on timeout, not on any
 exception. Unconditional, permanent, in production code (not test
-infrastructure), on every single invocation, forever.
+infrastructure), on every single invocation.
 
-Found investigating "stop patching instances, find the owner" for the
-temp-directory leak F47/F51/F65 each independently fixed a DIFFERENT,
-much smaller leak class for (friday_test_home_*, 4 directories currently).
-A full accounting of %TEMP%'s friday_*-prefixed directories found
-friday_worker_* responsible for 1,533 of ~1,569 -- the actual dominant
-leak, never previously named, sitting in the codebase's dual-role
-orchestration worker adapter, not its test isolation.
+F47/F51/F65 each fixed a DIFFERENT, much smaller leak class
+(friday_test_home_*). An accounting of %TEMP%'s friday_*-prefixed
+directories attributed 1,533 of ~1,569 to friday_worker_* -- the dominant
+leak, in the orchestration worker adapter rather than test isolation.
 
-This probe proves the fix behaviorally: a real worker run's own workdir
+This probe checks the fix behaviorally: a real worker run's own workdir
 survives immediately after (so a caller can still read `artifacts`), but
 an ARTIFICIALLY AGED workdir from a prior run gets swept the next time
 any worker runs -- the same "sweep anything past the retention window"

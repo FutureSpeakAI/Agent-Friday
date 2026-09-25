@@ -9,22 +9,14 @@ Directly visiting /api/google/auth in a browser, or running
 scripts/friday_google_connect.py, is already an explicit human action and
 is out of scope for this gate.
 
-CORRECTION (second cold-verification pass, 2026-09-05, real live-system
-contact -- treated as urgent): TestOpenUrlToolGatesGoogleOauth's four tests
-called agent_mod._tool_open_url() with a real "http://localhost:3000/..."
-URL and mocked approvals.gate_action, but never mocked _validate_url --
-which, by default (check_reachable=True), makes a REAL requests.head() call
-to whatever the URL says. localhost:3000 is this application's own default
-port. Confirmed directly: these tests started failing the moment something
-was actually listening there and answered with a real HTTP 404 (per
-_url_head_ok()'s own documented contract, a 404 is treated as a "definite
-dead-link signal" and _tool_open_url() returns its refusal message BEFORE
-ever reaching the gate_action code under test) -- meaning these tests had
-been silently, unintentionally making live network requests to whatever
-real process happens to be running on this machine's own default port the
-whole time, and had only ever passed because nothing was listening there
-often enough that nobody noticed. A test suite must never depend on, or
-reach out to, the state of a real external process. Fixed by mocking
+NO LIVE NETWORK: TestOpenUrlToolGatesGoogleOauth's tests call
+agent_mod._tool_open_url() with a real "http://localhost:3000/..." URL.
+Unmocked, _validate_url (check_reachable=True) makes a REAL requests.head()
+call to it, and localhost:3000 is this application's own default port: when
+something is listening there and answers 404, _url_head_ok() treats that as a
+"definite dead-link signal" and _tool_open_url() refuses BEFORE reaching the
+gate_action code under test. A test suite must never depend on, or reach out
+to, the state of a real external process, so these tests mock
 _validate_url directly, matching this file's own established mock-the-
 collaborator style -- these tests are about the approval gate, not about
 URL reachability (which has its own separate, real tests elsewhere).
@@ -63,8 +55,8 @@ class TestOpenUrlToolGatesGoogleOauth:
         assert opened == []
         assert "approval request" in result
         # The message must name the surface that actually exists: the
-        # Approvals card in the System workspace (2026-09-06). It used to say
-        # "Settings > Approvals", which never existed.
+        # Approvals card in the System workspace, not "Settings > Approvals",
+        # which does not exist.
         assert "Approvals card" in result and "System workspace" in result
 
     def test_auto_approved_opens_immediately(self, monkeypatch):
@@ -95,7 +87,7 @@ class TestOpenUrlToolGatesGoogleOauth:
         """The card must say what THIS connection does and does not grant.
 
         It used to assert the words "gmail.send" alongside a claim that
-        Friday never requests it. On 2026-09-20 that claim stopped being
+        Friday never requests it. That claim is no longer
         true — sending exists now, as a separate opt-in scope — so an
         assertion that pins the old sentence would have been pinning a lie
         into place (cf. test_content_platforms_base's hardcoded expiry).

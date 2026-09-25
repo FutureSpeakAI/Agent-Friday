@@ -89,7 +89,7 @@ class TestParsing:
 
 
 class TestModelResolution:
-    """2026-09-03: indexing_mode is a strict PER-USER choice, not a per-tier
+    """indexing_mode is a strict PER-USER choice, not a per-tier
     override. The old `gated_cloud` mode pinned TIER_2/3 chunks local no
     matter what the user picked; "cloud" now routes every sensitivity to the
     gated cloud default uniformly, and "local" pins every sensitivity to
@@ -129,8 +129,8 @@ class TestModelResolution:
 
 
 class TestAvailableLocalModel:
-    """`_available_local_model()` -- the 2026-09-03 fix for the default that
-    was broken for everyone: `_local_model()` names a PREFERENCE with no
+    """`_available_local_model()` -- the fix for a default that was broken
+    for everyone: `_local_model()` names a PREFERENCE with no
     check it is installed. This is what actually asks Ollama."""
 
     def _fake_manager(self, names):
@@ -386,7 +386,7 @@ class TestIndexPass:
 
 
 class TestFailFast:
-    """2026-09-03, item #1: a mode that can't run must say so once, before
+    """A mode that can't run must say so once, before
     any chunk is attempted -- not fail per-chunk 348 times. These exercise
     the REAL default path (`llm=None`, i.e. `call is _llm`) deliberately --
     the checks are gated on that so an injected test/caller llm is never

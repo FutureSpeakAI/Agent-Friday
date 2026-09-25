@@ -4,11 +4,11 @@ This is the operation with the worst downside in the codebase. A bad run means
 re-authorising every Google account, every MCP server, every platform and every
 provider key - and the plaintext exists nowhere else to check against.
 
-The rescue path is tested too, because it is not hypothetical: five of
-Stephen's seven credentials were ALREADY unopenable on 2026-09-19, encrypted
-under a passphrase the resolver had stopped preferring. Migration is what
-recovered them, and "Firecrawl needs an API key" turned out to mean "Friday has
-your Firecrawl key and cannot read it".
+The rescue path is tested too, because it is not hypothetical: credentials
+can ALREADY be unopenable, encrypted under a passphrase the resolver has
+stopped preferring. Migration is what recovers them; otherwise "Firecrawl
+needs an API key" really means "Friday has your Firecrawl key and cannot read
+it".
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def test_a_readable_credential_is_rewritten_and_still_opens(home, monkeypatch):
 
 
 def test_a_credential_under_an_old_passphrase_is_rescued(home, monkeypatch):
-    """THE CRUX. Five of Stephen's seven were in exactly this state."""
+    """THE CRUX. Most credentials on an affected install are in this state."""
     monkeypatch.setattr(cs, "_VAULT_CONFIG_FILE",
                         home / "vault" / ".vault_config.json")
     blob = _legacy_blob(b"fc-secret", "the-old-one", home)

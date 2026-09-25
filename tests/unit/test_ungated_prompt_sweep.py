@@ -1,4 +1,4 @@
-"""Unit tests for the WO-2 sweep (2026-08-25 followup): eight more prompt-
+"""Unit tests for the WO-2 sweep: eight more prompt-
 build sites that skipped provider/vault_control gating, matching the same bug
 class already fixed elsewhere (agent.py's _task_worker, calendar.py,
 workflows.py, workspace_studio.py, creations.py, content_composer.py,

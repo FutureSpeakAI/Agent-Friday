@@ -6,12 +6,11 @@ that both open friday.log. The stock RotatingFileHandler raises that failure
 through handleError, which prints "--- Logging error ---" plus a full
 traceback to stderr for every record it could not write.
 
-Measured on the reference machine, 2026-09-22: friday.log froze at
-10,485,736 bytes at 15:10 and never advanced again. Every subsequent log line
-became a stderr traceback instead, and server_stderr.log grew at 5.6 GB/hour.
-Three hours with no application log at all -- which is also exactly the signal
-a reader uses to decide the process has silently hung, so the app looked dead
-while it was working.
+The result: friday.log freezes at 10,485,736 bytes and never advances again.
+Every subsequent log line becomes a stderr traceback instead, and
+server_stderr.log grows at about 5.6 GB/hour. Hours with no application log at
+all is also exactly the signal a reader uses to decide the process has
+silently hung, so the app looks dead while it is working.
 
 An oversized log is a far smaller problem than no log. These tests pin that
 trade: the records still land, the failure is reported once, and nothing

@@ -1,7 +1,6 @@
 """Gauntlet finding Q7 part (a): music_engine.py's Lyria calls had ZERO
 cost_meter references (grep-confirmed); cost_meter.PRICING also had no
-concept of Lyria's flat per-generation pricing (docs/audits/
-gauntlet-2026-09-03/findings.jsonl, Q7).
+concept of Lyria's flat per-generation pricing (findings.jsonl, Q7).
 
 `_generate_music_cloud` is a plain module-level function, so this is a
 real behavioral test: call it directly with a fake `client`/`types`

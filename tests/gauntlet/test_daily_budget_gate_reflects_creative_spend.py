@@ -1,45 +1,33 @@
-"""Gauntlet finding Q7 part (b) — resolved under the maintainer's 2026-09-04
-delegation (docs/history/audits/gauntlet-2026-09-03/progress.md; findings.jsonl Q7).
+"""Gauntlet finding Q7 part (b) (findings.jsonl Q7).
 
-The original finding: creations.py's _daily_budget_remaining() computes
-`ceiling - cost_meter._rolling_spend()[0]` (today's total spend), which is
-correct arithmetic -- but since creative_engine.py/music_engine.py never
-called into cost_meter at all, _rolling_spend() structurally excluded every
-dollar of real creative-generation spend, so the gate looked functional
-while its number was silently wrong (always near-zero), and it would keep
-offering the most expensive autonomous mode no matter how much media had
-actually been generated that day.
+creations.py's _daily_budget_remaining() computes
+`ceiling - cost_meter._rolling_spend()[0]` (today's total spend). That is
+correct arithmetic only if creative generation writes to cost_meter:
+otherwise _rolling_spend() structurally excludes every dollar of
+creative-generation spend, the gate's number is silently near-zero, and it
+keeps offering the most expensive autonomous mode no matter how much media
+has been generated that day.
 
-Q7 part (a) (a separate fix, already landed -- see findings.jsonl) wired
-cost_meter.meter()/record() into every creative_engine.py and
-music_engine.py call site named by this finding. _rolling_spend() itself
-was never broken: it sums ALL rows in cost_calls for today, with no filter
-on provider or kind (cost_meter.py's _rolling_spend, verified by reading
-it), so it was always going to pick up creative spend automatically once
-something started writing it.
+Q7 part (a) wires cost_meter.meter()/record() into every creative_engine.py
+and music_engine.py call site. _rolling_spend() sums ALL rows in cost_calls
+for today, with no filter on provider or kind, so it picks up creative
+spend automatically once something writes it.
 
 This test proves that end-to-end, without mocking cost_meter: it records a
 real creative-generation charge through the same public API creative_engine
-now calls, then asserts _daily_budget_remaining() reflects it. If this ever
-regresses (e.g. a future refactor makes _rolling_spend provider-specific,
-or _daily_budget_remaining starts reading a different source), this fails
-and says so directly rather than looking green while quietly lying again.
+calls, then asserts _daily_budget_remaining() reflects it. If this ever
+regresses (e.g. a refactor makes _rolling_spend provider-specific, or
+_daily_budget_remaining starts reading a different source), this fails and
+says so directly rather than looking green while quietly lying.
 
-CORRECTION (second cold-verification pass, 2026-09-05): this test used to
-call cost_meter.record() against the REAL, SHARED cost_meter.DB_PATH (the
-same on-disk costs.db every other test in the same pytest PROCESS reads),
-with no cleanup afterward -- so every run of this test permanently added
-$0.25 to "today"'s cumulative spend for the rest of that process's tests.
-Invisible when tests/gauntlet/ runs as its own separate pytest invocation
-(a fresh isolated temp home every time), but a genuine, self-inflicted
-order-dependent failure the moment this file shares a process with any
-other test that reads today's spend -- exactly what a bare `pytest`
-(pytest.ini's own documented, testpaths=tests invocation) does. This is
-the same class of bug F66's test file (test_cost_meter_timeseries_handles_
-unpriced_calls.py) already root-caused and fixed for a different pair of
-tests, via the same isolation primitive cost_meter.py itself ships for
-exactly this purpose: reset_for_tests() plus a monkeypatched, disposable
-DB_PATH. Applied here too, rather than inventing a second mechanism.
+Isolation: cost_meter.record() must not write to the REAL, SHARED
+cost_meter.DB_PATH (the on-disk costs.db every other test in the same
+pytest PROCESS reads). Each run would permanently add $0.25 to today's
+spend for the rest of the process -- invisible when tests/gauntlet/ runs on
+its own, but an order-dependent failure under a bare `pytest`
+(testpaths=tests). The fix is the isolation primitive cost_meter.py ships
+for this purpose, as in test_cost_meter_timeseries_handles_unpriced_calls.py:
+reset_for_tests() plus a monkeypatched, disposable DB_PATH.
 """
 from __future__ import annotations
 

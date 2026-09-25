@@ -28,7 +28,7 @@ def test_dead_setting_voice_engine_is_read_by_the_resolver(monkeypatch):
     monkeypatch.setattr(rv, "resolve_gemini_key", lambda: {"valid": True})
     assert rv._resolve_voice_engine({"voice_engine": "local"})["engine"] == "local"
     assert rv._resolve_voice_engine({"voice_engine": "gemini"})["engine"] == "gemini"
-    # `auto` is a synonym for local (settled 2026-09-09; removed from the picker)
+    # `auto` is a synonym for local (not offered in the picker)
     assert rv._resolve_voice_engine({"voice_engine": "auto"})["engine"] == "local"
 
 

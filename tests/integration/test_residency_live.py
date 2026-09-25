@@ -33,8 +33,8 @@ REAL_HOME = pathlib.Path(os.environ.get("FRIDAY_REAL_HOME")
 GGUF_DIR = REAL_HOME / ".friday" / "runtime" / "models" / "gguf"
 BLOBS = REAL_HOME / ".ollama" / "models" / "blobs"
 
-# llama-server loads Ollama's content-addressed blobs directly (verified
-# 2026-08-14), so pinned seats cost no extra disk.
+# llama-server loads Ollama's content-addressed blobs directly, so pinned
+# seats cost no extra disk.
 PINNED_GGUF = {
     "gemma4:12b": BLOBS / ("sha256-1278394b693672ac2799eadc9a83fd98259a6a88"
                            "a40acfb1dcaa6c6fc895a606"),

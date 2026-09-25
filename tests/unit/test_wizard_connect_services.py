@@ -1,29 +1,24 @@
 """The wizard must not report a connection it did not make.
 
 "CONNECT SERVICES (optional)" is step 9 of the installer's setup wizard.
-The maintainer, after installing Friday on a second user's laptop 2026-08-26:
-
-    "The connect services portion of the installer, once the gui comes up,
-     should be interactive. I could not click to connect my accounts and
-     would like to."
-
-He is describing a dead end, and it was worse than inert. Answering "yes"
-to "Enable Gmail?" ran:
+A user who cannot click to connect an account there hits a dead end, and a
+step that fakes the connection is worse than inert. The failure shape is
+answering "yes" to "Enable Gmail?" and running:
 
     connected[cid] = {"enabled": True}
     console.print("(Full Gmail setup runs on first use via the UI)")
 
-No OAuth. No browser. No account. It wrote `enabled: True` into
+No OAuth. No browser. No account. That writes `enabled: True` into
 ~/.friday/config.yaml, a key NOTHING in the tree reads — the real Google
 accounts live in services/google_accounts.py behind credential_store, and
 the real connector registry is services/connectors.py. So the wizard
-recorded a connection in a file no code consults, and on the next run
-rendered a green ● beside a service that had never been connected.
+records a connection in a file no code consults, and on the next run
+renders a green ● beside a service that has never been connected.
 
 That is Friday claiming a capability she does not have, which is the one
 thing this codebase refuses to do anywhere else — no-receipt-no-render on
 the capability manifest on /api/health, the tool receipts on
-every chat turn. The wizard was the gap.
+every chat turn.
 
 Genuinely clicking to connect is gated on Friday shipping an OAuth client
 (docs/design/active/google-oauth-onboarding.md). Until that is decided, the step
@@ -73,9 +68,9 @@ def test_the_step_says_where_connecting_actually_happens(always_yes, capsys):
     wiz.step_connectors(10, {})
     said = capsys.readouterr().out.lower()
     assert "settings" in said, "the step must name where the connect flow lives"
-    # The old copy promised setup would "run on first use via the UI" — it did
-    # not, and that sentence is what sent the second user looking for a screen that
-    # would have asked her for a JSON file.
+    # Promising setup will "run on first use via the UI" is false — nothing
+    # runs — and it sends the user looking for a screen that would ask them
+    # for a JSON file.
     assert "on first use" not in said
 
 

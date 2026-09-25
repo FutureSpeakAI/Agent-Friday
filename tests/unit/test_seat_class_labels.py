@@ -1,8 +1,8 @@
-"""2026-08-14 defect #7 — a local OpenAI-compatible provider (the llama.cpp
-brain at 127.0.0.1) must classify and render as LOCAL, not cloud.
+"""A local OpenAI-compatible provider (the llama.cpp brain at 127.0.0.1) must
+classify and render as LOCAL, not cloud.
 
-Live evidence: seat lines said "orchestrator seat (cloud)
-qwen3.6-35b-a3b-iq4nl" and the routing panel said "· cloud" for a model
+The failure shape: seat lines saying "orchestrator seat (cloud)
+qwen3.6-35b-a3b-iq4nl" and the routing panel saying "· cloud" for a model
 served on-device at port 8081.
 """
 from __future__ import annotations

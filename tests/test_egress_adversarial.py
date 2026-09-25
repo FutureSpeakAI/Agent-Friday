@@ -15,13 +15,9 @@ import sys
 from pathlib import Path
 
 # Isolation comes from tests/conftest.py, which pytest always imports before
-# any test module under tests/ -- this file used to mint its OWN separate
-# isolated home via tempfile.mkdtemp(prefix="friday_egress_adv_") with no
-# cleanup of any kind. Found 327 leaked directories (262MB, dating back to
-# 2026-06-28 -- nearly two and a half months) while chasing down the SAME
-# leak class in tests/test_judgment_gate.py (findings.jsonl F49) and doing
-# the broader sweep across tests/ that finding's own "fix the pattern, not
-# the instance" lesson called for. Logged as F51.
+# any test module under tests/. This file must not mint its own isolated home
+# with tempfile.mkdtemp(): with no cleanup, that pattern leaked hundreds of
+# directories (findings.jsonl F49, F51).
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SRC = _ROOT / "src"
@@ -453,18 +449,12 @@ def test_tier3_keyword_batch(phrase, expected):
 
 
 # ── TIER_2: strong phrases and context-gated common words ────────────────────
-# The 2026-08-19 strong/common split (sensitivity_classifier._TIER2_STRONG /
+# The strong/common split (sensitivity_classifier._TIER2_STRONG /
 # _TIER2_COMMON) is the contract these two tests pin. A multi-word phrase like
 # "phone number" is unconditional. A COMMON word — contact, family, daughter —
 # rates PRIVATE only inside a possessive/personal frame, because a bare mention
 # carries no personal data: "family picture-book aesthetic" is a style note, and
-# treating it as private vault-forced whole turns onto the local seat until that
-# split landed.
-#
-# This replaced a single batch asserting every TIER_2 keyword was PRIVATE by
-# bare substring. That was the pre-2026-08-19 rule; it had been stale ever
-# since, and only surfaced now because a collection error stopped CI running
-# any test at all.
+# treating it as private vault-forces whole turns onto the local seat.
 
 @pytest.mark.parametrize("phrase", [
     # _TIER2_STRONG — unconditional, no determiner needed.
@@ -526,9 +516,9 @@ class TestSealOutboundOutputFormat:
     def test_sensitive_content_becomes_empty_string(self, tmp_path):
         """TIER_3 message content → withheld marker with zero original text.
 
-        (Name kept for history: this asserted `== ""` until 2026-07-06, when
-        empty message content was found to 400 every sealed Anthropic call.
-        The cloud still receives none of the user's words.)
+        (The name predates the marker: empty message content makes every
+        sealed Anthropic call return 400. The cloud still receives none of
+        the user's words.)
         """
         payload = {"messages": [
             {"role": "user", "content": "my SSN is 123-45-6789"}  # pragma: allowlist secret
@@ -610,10 +600,9 @@ class TestSealOutboundTools:
     def test_sensitive_tool_description_withheld(self, tmp_path):
         """Gating is scoped to MCP tools — see test_egress_gate.py for why.
 
-        This asserted a first-party description ("vault_read") was withheld and
-        failed: first-party descriptions are static repo text, not user data,
-        and _gate_tools deliberately stopped classifying them on 2026-08-21.
-        The third-party half of that contract is what actually protects
+        First-party descriptions ("vault_read") are static repo text, not user
+        data, and _gate_tools deliberately does not classify them. The
+        third-party half of that contract is what actually protects
         anything, so it is what gets asserted here.
         """
         payload = {

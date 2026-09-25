@@ -39,8 +39,8 @@ os.environ.setdefault("FRIDAY_REAL_HOME", str(Path.home()))
 
 
 # ── No console windows from the test suite ───────────────────────────────────
-# EIGHT CONSOLE WINDOWS POP UP ON THE DESKTOP EVERY TIME THE SUITE RUNS, and
-# the cause is the console-suppression fix rather than the absence of one.
+# Without this, every xdist worker pops a console window on the desktop when
+# the suite is launched from the Friday server.
 #
 # services/no_console.install() patches subprocess.Popen inside the Friday
 # server process, so the `python -m pytest` it spawns is created with
@@ -78,28 +78,20 @@ def _silence_child_consoles() -> None:
 def _sweep_stale_test_homes(base: Path, max_age_seconds: float = 3600) -> None:
     """Best-effort cleanup of temp homes orphaned by a prior run.
 
-    CORRECTION (gauntlet-2026-09-03 F65): this used to say the only case it
-    catches is a process that never reached `pytest_sessionfinish` (Ctrl+C,
-    OOM kill, a hard crash). That undersold it. A NORMAL exit that touches
+    Catches a process that never reached `pytest_sessionfinish` (Ctrl+C,
+    OOM kill, a hard crash), and also a NORMAL exit whose temp home could
+    not be removed (gauntlet findings.jsonl F65): a run that touches
     `conversation_memory` (ChromaDB's HNSW index writer, `data_level0.bin`
-    under `.friday/memory/conversations/<uuid>/`) reliably leaves that file
+    under `.friday/memory/conversations/<uuid>/`) can leave that file
     Windows-locked past `pytest_sessionfinish`'s whole retry budget (~0.75s
-    total) too -- confirmed directly, reproducibly, on ordinary
-    `pytest tests/gauntlet/` runs that never crashed, and a `gc.collect()`
-    before the retry loop does NOT fix it (tested), meaning this isn't a
-    Python-refcount/GC-timing gap -- something holds the OS-level handle
-    open past that whole window. This sweep is therefore this suite's REAL
-    backstop for that case too, not just a crash-recovery fallback -- it's
-    also the only thing that removes a normal ChromaDB-touching run's own
-    temp home if it fails.
+    total). A `gc.collect()` before the retry loop does NOT fix it -- the
+    OS-level handle is held past that window -- so this sweep is a real
+    backstop, not just a crash-recovery fallback.
 
-    Originally: accumulated 3,858 such directories since June (up to 781MB
-    each), which drove the real disk to 0 bytes free and crashed the live
-    app with a stack overflow (2026-09-03, see docs/audits/
-    gauntlet-2026-09-03). Swept here, at collection time rather than only
-    at exit, so a machine that never runs a suite to completion still
-    self-heals on the next run -- which, per the correction above, now
-    includes "ran to completion normally but ChromaDB kept a handle open."
+    Unswept, these directories (up to ~780MB each) accumulate by the
+    thousand and can fill the disk, which takes the live app down with them.
+    Swept here, at collection time rather than only at exit, so a machine
+    that never runs a suite to completion still self-heals on the next run.
     """
     try:
         for entry in base.glob("friday_test_home_*"):
@@ -120,17 +112,14 @@ if _EXISTING_TEST_HOME.startswith(_PID_TAG):
     # -- any test doing `import tests.conftest` re-runs this whole file).
     # Reuse the temp home the FIRST execution already created and
     # registered with pytest, instead of minting a brand new one here.
-    # Before this guard, every second execution created its own real
-    # tempfile.mkdtemp() directory that pytest's plugin system never knew
+    # Without this guard, every second execution creates its own real
+    # tempfile.mkdtemp() directory that pytest's plugin system never knows
     # about -- only the FIRST (pytest-registered) module instance's
-    # pytest_sessionfinish ever runs, so this second directory was
-    # orphaned on every single run that imported tests.conftest anywhere,
-    # a 100%-reproducible leak (unlike the Windows-file-lock race the
-    # retry logic below defends against) -- confirmed directly: a
-    # controlled before/after directory count showed exactly +1 per run
-    # of a test file that imports tests.conftest, with zero relation to
-    # how heavy that test otherwise was (docs/audits/
-    # gauntlet-2026-09-03/findings.jsonl F47).
+    # pytest_sessionfinish ever runs, so that second directory is orphaned
+    # on every run that imports tests.conftest anywhere: exactly +1
+    # directory per run, a deterministic leak (unlike the Windows-file-lock
+    # race the retry logic below defends against). See
+    # docs/history/audits/gauntlet-2026-09-03/findings.jsonl F47.
     #
     # The PID prefix matters: this env var is inherited by any subprocess
     # a test spawns (e.g. one that shells out to `pytest` itself, per
@@ -214,9 +203,8 @@ def pytest_addoption(parser):
     # The honesty corpus asks a real model real questions and judges the
     # answers. It needs a seat, takes minutes, and is not deterministic - the
     # same three reasons the two above are opt-in. Gating commits on it would
-    # make the suite slow and flaky; the alternative, which is what actually
-    # happened, is that the fixtures sat unread for weeks. Opt-in is the
-    # middle: runnable on demand, and its absence from a green default run is
+    # make the suite slow and flaky; never running it leaves the fixtures
+    # unread. Opt-in is the middle: runnable on demand, and its absence from a green default run is
     # not mistaken for a pass.
     parser.addoption(
         "--run-honesty", action="store_true", default=False,
@@ -250,18 +238,14 @@ def pytest_collection_modifyitems(config, items):
 def pytest_sessionfinish(session, exitstatus):
     """Best-effort: try to remove this run's temp home on a normal exit.
 
-    CORRECTION (gauntlet-2026-09-03 F65, root-caused; now actually closed
-    rather than just documented -- the maintainer's ruling 2026-09-04 that a
-    residual which grew from 268MB to 3.3GB since F71 needed a real fix,
-    not a bigger bound): `_sweep_stale_test_homes()`'s corrected docstring
-    above still applies to a CRASHED run (this function never gets to run
-    at all) or any OTHER handle this repo doesn't yet know to close
-    explicitly -- but for the one root cause that WAS identified
-    (ChromaDB's HNSW index file staying Windows-locked past this retry
-    loop's entire budget on a completely normal exit), explicitly closing
-    the conversation-memory singleton's ChromaDB client BEFORE attempting
-    the rmtree below removes the actual cause instead of hoping the OS
-    releases it in time. chromadb's own Client.close() docstring names
+    Root cause of gauntlet finding F65: ChromaDB's HNSW index file stays
+    Windows-locked past this retry loop's entire budget on a completely
+    normal exit. Explicitly closing the conversation-memory singleton's
+    ChromaDB client BEFORE attempting the rmtree below removes that cause
+    instead of hoping the OS releases it in time; a growing residual needs
+    a real fix, not a bigger bound. `_sweep_stale_test_homes()` above still
+    covers a CRASHED run (this function never runs at all) and any OTHER
+    handle this repo does not yet know to close explicitly. chromadb's own Client.close() docstring names
     this exact SQLite-file-locking-on-Windows scenario as the reason it
     exists. Best-effort and import-guarded: a session that never touched
     conversation_memory at all must not fail teardown importing it for

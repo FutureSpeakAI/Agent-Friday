@@ -1,12 +1,10 @@
-"""Gauntlet finding (the maintainer's direct instruction, 2026-09-04): investigate
-Settings > Appearance's "Scene" dropdown (writes `scene_name`, options
+"""Settings > Appearance's "Scene" dropdown (writes `scene_name`, options
 nebula/matrix/void/aurora/cosmos/midnight/prism/circuit/ocean/ember,
-described as "Holographic background scene") and remove it if genuinely
-wired to nothing -- but leave it alone and report back if it touches the
-real holographic backgrounds at all, since those are developed work
-The maintainer explicitly values.
+described as "Holographic background scene") is removed because it is
+wired to nothing. The real holographic backgrounds are developed work and
+must not be touched by that removal.
 
-Investigation confirmed `scene_name` is completely disconnected from the
+`scene_name` is completely disconnected from the
 real holo-structure system: `preferred_scene_index` (an index into
 `EVOLUTION_PATH`, a list of 13 named 3D structures -- GENESIS LATTICE,
 SACRED SPHERE, etc.) is the actual, extensively-wired mechanism that
@@ -20,9 +18,9 @@ across the whole repo; the one other "scene_name" hit, in
 setup_wizard.py, is an unrelated local variable computed from
 `preferred_scene_index`, not this settings key). The actual Three.js
 scene setup (fog color, particle theme, bloom pass) is hardcoded and
-never varies by this setting. Removed the dead dropdown from both files;
+never varies by this setting. The dead dropdown is gone from both files;
 the real EVOLUTION_PATH/preferred_scene_index holographic-structure
-system is completely untouched.
+system stays intact.
 """
 from __future__ import annotations
 

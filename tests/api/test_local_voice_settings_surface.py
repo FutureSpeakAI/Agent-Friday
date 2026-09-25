@@ -1,8 +1,7 @@
 ﻿"""The local-voice settings surface: every control, its enforcement, and a test
 that fails if the enforcement is removed.
 
-The failure this guards against has a name in this repo:
-docs/history/audits/2026-09-04-five-dead-settings.md -- a control that reports
+The failure this guards against is a dead setting: a control that reports
 success and changes nothing.
 """
 import pytest

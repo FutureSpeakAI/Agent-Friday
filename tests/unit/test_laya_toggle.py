@@ -1,6 +1,6 @@
 """The Settings switch, and the safety property in its SHIPPED position.
 
-Laya ships ON as of 2026-09-22 - Stephen's call, with the eval in hand. That
+Laya ships ON, a decision made with the eval in hand. That
 moves the burden: the property that made the union safe to offer now has to
 hold in the configuration that actually leaves the building, not in one a test
 constructs for itself.
@@ -18,11 +18,11 @@ The rest pins the switch itself:
     a mapping that will disagree with itself;
   * a hand-edited settings file reports `custom` rather than being rounded to
     the nearest switch position;
-  * flipping it ANNOUNCES itself through the same path a seat change uses - he
-    always knows which scanners are serving him;
+  * flipping it ANNOUNCES itself through the same path a seat change uses - the
+    user always knows which scanners are serving them;
   * and it never blocks: selecting Laya while the model is absent or still
     loading degrades to the keyword scan and says so, rather than stalling the
-    gate or failing closed on his mail.
+    gate or failing closed on the user's mail.
 """
 from __future__ import annotations
 
@@ -103,9 +103,9 @@ class TestTheShippedConfiguration:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestDegradation:
-    """"If the model is missing, corrupt, or mid-load, Friday must fall back to
+    """If the model is missing, corrupt, or mid-load, Friday must fall back to
     the keyword scanner and say so, never stall the gate and never fail closed
-    on his mail." Each clause is a test."""
+    on the user's mail. Each clause is a test."""
 
     def test_a_missing_model_behaves_exactly_like_today(self, monkeypatch):
         _settings_are(monkeypatch, core.DEFAULT_SETTINGS)
@@ -251,8 +251,8 @@ class TestTheThreeStates:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestTheChangeAnnouncesItself:
-    """"He always knows which scanners are serving him, so a state change
-    should be announced the same way seat changes are, never silent." """
+    """The user always knows which scanners are serving them, so a state
+    change is announced the same way seat changes are, never silent."""
 
     @pytest.fixture(autouse=True)
     def _state(self, tmp_path, monkeypatch):
@@ -284,8 +284,8 @@ class TestTheChangeAnnouncesItself:
             % text)
 
     def test_it_is_not_announced_as_a_seat_change(self):
-        """He would read "Seat change" as a model swap. What moved is what
-        guards his outbound mail."""
+        """A user reads "Seat change" as a model swap. What moved is what
+        guards their outbound mail."""
         self._observe("off")
         events = self._observe("on")
         assert not any(e["text"].startswith("Seat change") for e in events)

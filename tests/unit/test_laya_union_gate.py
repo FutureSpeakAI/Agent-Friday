@@ -14,7 +14,7 @@ never authorise one.
 
 WHY THESE TESTS DRIVE `approvals.classify`, NOT `union_backend`
 
-The primitive is easy to test and proves the wrong thing. What Stephen
+The primitive is easy to test and proves the wrong thing. What the user
 experiences is a card, and a card is `classify(...)["gated"]` — the end of a
 chain that runs union_backend -> decide() -> the policy table, any link of
 which could drop an escalation while `union_backend` itself stayed correct.

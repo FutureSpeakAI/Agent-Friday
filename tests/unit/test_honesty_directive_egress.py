@@ -1,4 +1,4 @@
-"""Unit tests for WO-1 item 1 (2026-08-25): the anti-fabrication directive
+"""Unit tests for WO-1 item 1: the anti-fabrication directive
 must survive cloud egress gating intact.
 
 BUG: `REFUSAL_HONESTY_DIRECTIVE` was ONE paragraph — its 7 items joined by a

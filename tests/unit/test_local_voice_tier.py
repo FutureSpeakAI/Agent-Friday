@@ -237,14 +237,14 @@ def test_capability_router_nemo_unlock_hint():
 
 
 # ── the spoken-reply cap ──────────────────────────────────────────────────────
-# Regression for 2026-08-25: the local voice handler called _generate_agent with
-# no max_tokens, inheriting its TEXT default of 16,384. llama.cpp counts the
-# requested generation against the window, so a voice turn asked gemma4:12b for
-# 13,669 (prompt) + 11,131 (67 tool schemas) + 16,384 (reply) = 41,184 against a
-# served 32,768 and got "500 Context size has been exceeded". A vault-touching
-# turn may not retry on a cloud provider, so that 500 was the entire turn — no
-# tool ran. The same request at 300 succeeded in 19s. "Voice can't call tools"
-# and "voice drones on" were one defect: an unset spoken-reply length.
+# A local voice turn calling _generate_agent with no max_tokens inherits the
+# TEXT default of 16,384. llama.cpp counts the requested generation against the
+# window, so a voice turn asks gemma4:12b for 13,669 (prompt) + 11,131 (67 tool
+# schemas) + 16,384 (reply) = 41,184 against a served 32,768 and gets "500
+# Context size has been exceeded". A vault-touching turn may not retry on a
+# cloud provider, so that 500 is the entire turn — no tool runs. The same
+# request at 300 succeeds in 19s. "Voice can't call tools" and "voice drones
+# on" are one defect: an unset spoken-reply length.
 
 def test_voice_reply_cap_never_returns_unlimited():
     from agent_friday.routes.voice import _voice_reply_cap
@@ -272,16 +272,15 @@ def test_voice_reply_cap_honors_setting_but_clamps():
 
 
 # ── the voice path must carry an authenticated session ────────────────────────
-# Regression for 2026-08-25: the maintainer asked local voice for the news and was told
-# it was prohibited "even though we were using local". The VAULT allowed it and
-# logged so (`[VAULT] ALLOW provider=cloud tier=TIER_1 check_action:search_news`).
-# What actually refused was governance ring policy: ring 2 is every network tool,
-# `is_auth = ctx["authenticated"] or ctx["is_background_task"]`, and the local
-# voice handler passed NO session_ctx at all — so the gate saw {} and denied
-# search_news and search_web with "ring-2 network op requires authenticated
-# session". Friday relayed a governance refusal and it read as a vault refusal.
-# routes/chat.py had always passed this; voice was the only tool-using surface
-# that did not, which is why the same question worked in text chat.
+# A local voice request for the news must not be refused as "prohibited". The
+# VAULT allows it and logs so (`[VAULT] ALLOW provider=cloud tier=TIER_1
+# check_action:search_news`). The refusal comes from governance ring policy:
+# ring 2 is every network tool, `is_auth = ctx["authenticated"] or
+# ctx["is_background_task"]`, and a voice handler that passes NO session_ctx
+# makes the gate see {} and deny search_news and search_web with "ring-2
+# network op requires authenticated session" — which Friday relays and which
+# reads as a vault refusal. routes/chat.py passes the context; voice must too,
+# or the same question works in text chat and fails in voice.
 
 def test_ring2_network_tool_denied_without_session_ctx():
     from agent_friday.services.agent import _governance_check

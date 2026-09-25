@@ -88,8 +88,8 @@ def test_observer_can_read_every_read_route(client):
                  "/api/activity", "/api/tasks/retention"):
         r = client.get(path, headers=_obs(tok))
         assert r.status_code == 200, (path, r.status_code, r.get_data(as_text=True)[:200])
-    # Routes that do not seal their free text are refused, not served raw
-    # (2026-09-06 audit: orb logs and worker outputs were on the allowlist).
+    # Routes that do not seal their free text (orb logs, worker outputs) are
+    # refused, not served raw.
     for path in ("/api/processes", "/api/orchestrator/status", "/api/orchestrator/workers",
                  "/api/orchestrator/results/w1"):
         r = client.get(path, headers=_obs(tok))

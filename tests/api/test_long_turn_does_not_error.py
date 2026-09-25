@@ -1,31 +1,29 @@
 """A turn that is still running never shows as a connection error.
 
-Stephen, 2026-09-24: "I sent a chat message just now to Bonsai2 and got a
-connection error message, even though the Bonsai2 process appears to be executing.
-I can see it running a calendar query right now in response to my question."
+A chat to a local model that is visibly still working (e.g. running a calendar
+query) must not show a connection error.
 
-THE CAUSE, from `routes/chat.chat_stream`:
+A stream loop of the form:
 
     yield ": open" + SEP
     while True:
         kind, val = q.get()        # no timeout -- blocks silently
 
-The stream opened, then went **completely silent** for as long as the model took
-to produce its first token. On bonsai2 that is a long reasoning phase plus a
-calendar tool call, over a GPU the monitor was reporting as thrashing (166 MiB
-free against a 2560 MiB display reserve, `nvidia-smi` timing out). A silent
-connection through the local Caddy proxy gets dropped, and then the client made it
-worse:
+opens, then goes **completely silent** for as long as the model takes to
+produce its first token. On a local reasoning model that can be a long
+reasoning phase plus a tool call, on a GPU with little free memory. A silent
+connection through the local Caddy proxy gets dropped, and a client fallback of
+the form:
 
     if (got) throw e;          // half a turn already happened
     const r = await fetch('/api/chat', ...)   // <-- RE-RUNS the turn
 
-`got` only becomes true once a delta has arrived, so a stream that dies during the
-silent phase re-sent the whole turn. That is the second Bonsai2 execution he was
-watching, and the comment above it claims "The turn is NEVER sent twice."
+makes it worse: `got` only becomes true once a delta has arrived, so a stream
+that dies during the silent phase re-sends the whole turn and the model runs it
+twice.
 
-Separately, `fridayChatTurn` used bare `fetch`, so no `X-Friday-Token` went with
-either request -- unlike every neighbouring call, which uses `apiFetch`.
+`fridayChatTurn` must also use `apiFetch`, like every neighbouring call, so the
+`X-Friday-Token` goes with each request; bare `fetch` sends none.
 
 So: keepalives during silence, no blind re-send, and the token attached.
 """

@@ -149,9 +149,9 @@ def test_main_runs_tray_when_os_mode_explicitly_off(monkeypatch):
 
 # ── Single-instance guard ────────────────────────────────────────────────
 #
-# Two trays were found running on 2026-09-18, both created in the same second,
-# each having started its own server. The guard that was supposed to stop that
-# was a bare socket bind, which fails open on Windows. These tests are about
+# Two trays created in the same second each start their own server unless the
+# guard holds, and a bare socket bind fails open on Windows, so the guard is a
+# named mutex. These tests are about
 # the guard itself rather than about OS mode, so they do NOT take the autouse
 # stub above at face value - each drives `_acquire_single_instance` directly.
 

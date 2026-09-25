@@ -1,36 +1,24 @@
 """The four costly jobs run on the local seat, and never quietly on a paid one.
 
-Stephen, 2026-09-24: "daily creation, briefings, and news/front page should
-default to the local reasoning model to eliminate cost. So should the heartbeat."
-With it: they must NOT silently fall back to cloud. If the local model is down or
-busy they wait and retry inside their window, then skip with a visible reason.
-Cloud only if a job is explicitly opted in.
+Daily creation, the briefings, the news front page and the heartbeat default to
+the local reasoning model so they cost nothing. They must NOT silently fall back
+to cloud: if the local model is down or busy they wait and retry inside their
+window, then skip with a visible reason. Cloud only if a job is explicitly opted
+in.
 
-WHAT THE LEDGER ACTUALLY SHOWED, before writing any of this. `local_only` already
-existed for **agent_prompt** schedules and already worked:
+`local_only` on an **agent_prompt** schedule (the heartbeat) keeps it on the
+local seat at $0.00 per run. This file pins the two ways that flag can still be
+bypassed.
 
-    sch_heartbeat         before 2026-09-18: n=2357  $438.76
-                          after  2026-09-18: n=47    $0.42
-    sch_job_intelligence  before 2026-09-18: n=1352  $378.82
-                          after  2026-09-18: n=0     $0      (schedule removed)
-
-46 of those 47 heartbeat runs served on `arbiter-local/bonsai2:27b` at $0.00. So
-the $818 the brief targets is HISTORICAL and had already stopped when
-`local_only: true` was set on the heartbeat on 2026-09-18 -- Stephen's own earlier
-request ("I don't want to keep getting charged by Anthropic for checking my email
-and calendar").
-
-Two real gaps remained, and they are what this file pins.
-
-1. `local_only` was read ONLY on the agent_prompt path. Every BUILTIN schedule --
-   daily creation, the briefings, the news front page -- ignored it, because
-   `_run_task` just calls `meta["fn"]()` and each job picks its own model.
+1. `local_only` must be honoured on BUILTIN schedules too -- daily creation, the
+   briefings, the news front page. `_run_task` just calls `meta["fn"]()` and each
+   job picks its own model, so without the guard the flag is ignored.
 
 2. Pinning a model at spawn is not forbidding cloud for the whole run.
    `_generate_agent`'s fallback ladder can retry a failed leg on another provider.
-   ONE heartbeat run did exactly that on 2026-09-22 for $0.42 -- of which almost
-   all was 112,045 CACHE-WRITE tokens, i.e. the price of shipping the full system
-   prompt, not of the 99 tokens it produced.
+   One such fallback costs about $0.42, almost all of it ~112,000 CACHE-WRITE
+   tokens -- the price of shipping the full system prompt, not of the ~100 tokens
+   it produces.
 """
 
 import pytest
@@ -189,7 +177,7 @@ def test_a_refused_cloud_call_becomes_a_visible_skip(monkeypatch):
 
 @pytest.mark.parametrize("sid", TARGET_SCHEDULES)
 def test_the_four_jobs_ship_local_only(sid):
-    """Stephen's decision, as a default rather than something he must remember to
+    """The owner's decision, as a default rather than something to remember to
     tick on every fresh install."""
     from agent_friday.services import scheduler
     defaults = getattr(scheduler, "LOCAL_ONLY_BY_DEFAULT", None)
@@ -212,9 +200,8 @@ LOCAL_DESCRIPTORS = [
 @pytest.mark.parametrize("desc", LOCAL_DESCRIPTORS)
 def test_a_local_descriptor_dict_is_allowed(desc):
     """`_call_openai` takes `provider` as EITHER a registry name or a full
-    descriptor dict. The first version of the guard did `str(provider or ...)`,
-    which stringified the dict, so Friday's OWN LOCAL SEAT read as cloud and was
-    refused. Seen live within half an hour of shipping:
+    descriptor dict. `str(provider or ...)` stringifies the dict, so Friday's
+    OWN LOCAL SEAT would read as cloud and be refused:
 
         refused a cloud call inside a local-only run: Daily creation is
         local-only, so it will not call {'name': 'arbiter-local', ...}
@@ -239,8 +226,8 @@ def test_a_cloud_descriptor_dict_is_still_refused(desc):
 
 
 def test_the_refusal_names_the_provider_not_a_dict_dump():
-    """The live message read '...will not call {'name': 'arbiter-local', ...}',
-    which is both wrong and unreadable."""
+    """A message like '...will not call {'name': 'arbiter-local', ...}' is both
+    wrong and unreadable."""
     from agent_friday.services import local_only_guard as g
     with g.local_only("Daily creation"):
         with pytest.raises(g.CloudRefused) as exc:

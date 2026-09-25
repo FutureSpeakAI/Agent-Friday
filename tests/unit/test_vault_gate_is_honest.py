@@ -93,11 +93,9 @@ class TestPartialModelRoutingSaveKeepsItsSiblings:
         round trip, not a mock of it) -- so it must put `model_routing` back
         exactly as it found it, or every test after it in the same session
         inherits `mode: "local_preferred"` instead of the real default,
-        silently routing chat local instead of cloud (gauntlet-2026-09-03
-        F64: caught this exact class recurring -- test_kg_indexer.py's
-        `restore_kg_settings` fixture already exists for the identical
-        reason on a different settings block; this test just hadn't been
-        given the same treatment yet)."""
+        silently routing chat local instead of cloud (findings.jsonl F64;
+        test_kg_indexer.py's `restore_kg_settings` fixture exists for the
+        identical reason on a different settings block)."""
         original = core._load_settings().get("model_routing")
         yield
         core._save_settings({"model_routing": original or {}})

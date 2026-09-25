@@ -1,19 +1,18 @@
 """`/api/code/apply` must consult the gates that already existed to stop it.
 
-`services/boot_guard.py` has shipped two refusal functions since 2026-08-17 and
-**neither had a single caller anywhere in `src/`** (`docs/design/active/grow-button.md`
-§18.2, findings F2 and F3):
+`services/boot_guard.py` provides two refusal functions, and a refusal function
+with no caller refuses nothing (`docs/design/active/grow-button.md` §18.2,
+findings F2 and F3):
 
   * `check_self_edit(path)` refuses a write to any `BOOT_CRITICAL` file, on the
     grounds that *"a Friday that cannot start cannot undo it"*;
   * `check_scope(paths)` refuses a single change touching more than five files,
-    written against the nine-identical-images incident — *"the model did what it
-    thought was asked, at a scale nobody wanted, and nothing stopped to check."*
+    because otherwise *"the model did what it thought was asked, at a scale
+    nobody wanted, and nothing stopped to check."*
 
-`code_apply` was the one write path in the system that should have called both,
-and it called neither: it resolved each path through `_safe_project_path` and
-wrote the file. Every test in this file failed at `30cb426` except the two
-marked GUARD, which pin behaviour the change must not break.
+`code_apply` is the write path that must call both, not merely resolve each path
+through `_safe_project_path` and write the file. The two tests marked GUARD pin
+behaviour the gates must not break.
 """
 from __future__ import annotations
 

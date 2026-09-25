@@ -6,11 +6,10 @@ made an absolute privacy promise the code does not currently keep.
   provider whenever Ollama is unreachable or no local model fits the task
   -- on two of its three branches the fallback_to_cloud setting is either
   dead code or unchecked entirely, and setup_wizard.py never sets it False
-  for local_only anyway. The underlying router behavior is queued for
-  the maintainer (a real product decision on whether local_only should fail
-  closed or fall back -- see progress.md's top-priority queue item), but
-  the copy itself was simply false regardless of which way that decision
-  goes, so it was corrected directly.
+  for local_only anyway. Whether local_only should fail closed or fall
+  back is a separate product decision about router behavior; the copy was
+  false regardless of which way that decision goes, so it is corrected
+  directly.
 
 - VAULT_LOCATION said the passphrase is stored "not in any file you could
   open." services/vault_passphrase.py's own docstring says it writes BOTH
@@ -33,9 +32,8 @@ _OLD_LOCAL_ONLY_CLAIM = "Nothing is sent anywhere, ever."
 # multi-line string, and the real pre-fix text wrapped exactly between "you"
 # and "could" ("...not in any file you\ncould open..."), so that longer
 # substring never matched the real string on either side of the fix and
-# this probe passed vacuously both before and after (found 2026-09-04 while
-# actually running the revert-check this probe had never been given --
-# see findings.jsonl F11). Kept to a substring that stays on one physical
+# such a probe passes vacuously both before and after the fix (see
+# findings.jsonl F11). Kept to a substring that stays on one physical
 # source line so a future rewrap can't quietly reintroduce the same gap.
 _OLD_VAULT_CLAIM = "not in any file"
 

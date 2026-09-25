@@ -38,8 +38,8 @@ cf.crash_log_path = lambda: __import__("pathlib").Path({log!r})
 assert cf.install(argv=["crasher", "--on-purpose"]) is True
 
 def the_function_that_dies():
-    # A genuine access violation, the same class as the five seen in
-    # python313.dll on 2026-09-22 - not sys.exit, not an exception.
+    # A genuine access violation, the same class as a native crash in
+    # python313.dll - not sys.exit, not an exception.
     faulthandler._sigsegv()
 
 the_function_that_dies()
@@ -110,7 +110,7 @@ def test_xet_is_disabled_when_nothing_says_otherwise(monkeypatch):
 
 
 def test_an_explicit_setting_wins_and_is_left_alone(monkeypatch):
-    """Reversible without a code change: if he wants Xet back, the env says so
+    """Reversible without a code change: if the user wants Xet back, the env says so
     and this must not argue."""
     monkeypatch.setenv("HF_HUB_DISABLE_XET", "0")
     assert cf.disable_hf_xet() is False

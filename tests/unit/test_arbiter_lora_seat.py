@@ -1,11 +1,10 @@
 """The Arbiter can own a base + LoRA + mmproj seat, and never serves the
 base under the fine-tune's name (docs/design/active/model-soup.md §7.2).
 
-Before 2026-09-17 `residency_arbiter.py` contained the word `lora` zero
-times. The FridayWeaver seat had only ever been started by hand, and
-`_load_pinned` fell through to an Ollama daemon holding zero models whenever
-no GGUF was mapped, which produced a DEGRADED boot with nothing in the log
-that said why. Each test names the line whose removal makes it fail.
+Without these rules the FridayWeaver seat can only be started by hand, and
+`_load_pinned` falls through to an Ollama daemon holding zero models whenever
+no GGUF is mapped, which produces a DEGRADED boot with nothing in the log
+that says why. Each test names the line whose removal makes it fail.
 """
 from __future__ import annotations
 
@@ -49,7 +48,7 @@ class RecordingLlama:
 
 
 class NoModelsOllama(FakeOllama):
-    """The daemon on Stephen's machine on 2026-09-17: running, zero models."""
+    """A daemon that is running but holds zero models."""
 
     def __init__(self):
         super().__init__()
@@ -226,7 +225,7 @@ def test_adapter_present_at_scale_one_is_accepted(monkeypatch):
 
 def test_unmapped_pin_with_no_daemon_model_is_an_absent_seat_not_a_daemon_load():
     """Delete the `_daemon_has` branch in `_load_pinned` and the seat is
-    handed to a daemon with zero models, which is the 2026-09-17 boot."""
+    handed to a daemon with zero models: a DEGRADED boot."""
     ollama = NoModelsOllama()
     a = _arbiter(RecordingLlama(), ollama=ollama, gguf_paths={})
     role, seat = _pinned_seat(a)

@@ -2,9 +2,9 @@
 
 The constraint is not incidental. A stored turn is a record of something the
 user or Friday actually said; deleting it destroys history and hides that a
-correction ever happened. On 2026-09-09 the entry that needed neutralising was
-Stephen repeating, in good faith, what a broken settings page had told him --
-which is worth keeping precisely because it explains how the error travelled.
+correction ever happened. A typical entry that needs neutralising is the user
+repeating, in good faith, what a broken settings page told them -- which is
+worth keeping precisely because it explains how the error travelled.
 """
 
 import pytest

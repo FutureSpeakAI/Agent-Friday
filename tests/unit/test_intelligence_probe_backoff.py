@@ -1,6 +1,6 @@
 """A dead Ollama daemon must cost one slow probe, not one per request.
 
-Measured on Windows 2026-08-28: a connection to a CLOSED localhost port does
+Measured on Windows: a connection to a CLOSED localhost port does
 not fail instantly the way the loopback interface suggests it should. It costs
 about 2 seconds, because the stack retries the SYN before giving up. A
 black-holed address costs the full 3-second timeout.

@@ -1,34 +1,26 @@
-"""The tasks tray must not lie about what it knows (2026-09-22).
+"""The tasks tray must not lie about what it knows.
 
-Two complaints, one theme. From the maintainer, watching bonsai2 build his
-news front page:
+Two failure modes, one theme: the panel asserting something it has no basis
+for. The user must be able to see what a running task is doing, and its
+progress must never read 0% just because the fraction is unknown.
 
-  "the task in the notifications tray shows '- no journal yet -' as the
-   reasoning output, so I cannot actually see what it is doing (I want to).
-   Similarly, the process says 0% complete even after letting it run a long
-   time"
-
-Both were the panel asserting something it had no basis for.
-
-**"— no journal yet —"** appeared for every row whose id is an ORB pid rather
-than a task id — which is most of what the tray lists, because
+**"— no journal yet —"** must not appear for a row whose id is an ORB pid
+rather than a task id — which is most of what the tray lists, because
 ``routes/tasks.list_tasks`` merges live PROCESSES in alongside real tasks. A
-live process is not a journalled task and never will have one, so "yet" was a
-promise that could not be kept. Meanwhile the row already carried the orb's
-own ``log`` and ``steps``, and a ``linked_task_id`` when the orb is backed by
-a real task. The renderer read none of it. This is the same defect family as
-the "— waiting for activity —" bug documented in routes/tasks.py, which was
-raised five times before anyone noticed that the row being clicked was the orb
-and not the task.
+live process is not a journalled task and never will have one, so "yet" is a
+promise that cannot be kept. The row carries the orb's own ``log`` and
+``steps``, and a ``linked_task_id`` when the orb is backed by a real task; the
+renderer must use them. Same defect family as the "— waiting for activity —"
+case documented in routes/tasks.py, where the row being clicked is the orb and
+not the task.
 
-**0% forever** was simpler and worse. ``progress`` is a fraction and a
-fraction needs a denominator; an agent loop has none, since it runs until the
-model stops asking for tools and ``max_iters`` is 999. The Anthropic loop
-reported ``0.05 + 0.1 * (iteration - 1)`` — a straight line to 90% that
-quietly asserts "about ten steps" — and the local loop reported nothing at
-all, so a local task sat at 0 for its whole life however well it was going.
-The row then defaulted ``progress`` to 0 on the way out, turning "unknown"
-into "none done".
+**0% forever**: ``progress`` is a fraction and a fraction needs a denominator;
+an agent loop has none, since it runs until the model stops asking for tools
+and ``max_iters`` is 999. A formula like ``0.05 + 0.1 * (iteration - 1)`` is a
+straight line to 90% that quietly asserts "about ten steps"; a loop that
+reports nothing leaves a local task at 0 for its whole life however well it is
+going; and defaulting ``progress`` to 0 on the way out turns "unknown" into
+"none done".
 
 So: ``step_n`` is what is actually known, ``step_total`` is None when unknown,
 and ``progress`` stays None unless something can compute a real fraction.
@@ -133,8 +125,8 @@ def test_the_cloud_loop_reports_real_steps_and_invents_no_fraction(monkeypatch):
 
 
 def test_the_local_loop_reports_steps_too(monkeypatch):
-    """This is the one the complaint was actually about: bonsai2 runs on the
-    OpenAI-shaped loop, which reported no progress at any point."""
+    """Local models such as bonsai2 run on the OpenAI-shaped loop, which must
+    report steps as well."""
     seen = []
     monkeypatch.setattr(ag, "_execute_tool", lambda n, a, **k: "ok")
     rounds = {"n": 0}
@@ -163,8 +155,8 @@ def test_the_local_loop_reports_steps_too(monkeypatch):
 # ── the route carries it ─────────────────────────────────────────────────────
 
 def test_the_tray_row_passes_unknown_through_instead_of_zeroing_it(client):
-    """The row used to do progress=p.get('progress', 0), which turned every
-    unknown into a confident 0%."""
+    """progress=p.get('progress', 0) would turn every unknown into a
+    confident 0%."""
     core.process_register("p-row", label="Working", category="monitoring")
     core.process_update("p-row", step_n=5)
     rows = client.get("/api/tasks").get_json()["tasks"]

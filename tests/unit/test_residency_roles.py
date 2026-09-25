@@ -1,6 +1,6 @@
 ﻿"""The seven working roles, and the arithmetic that lets them share models.
 
-The maintainer, 2026-08-18: seven roles -- memory manager, function manager,
+Seven roles -- memory manager, function manager,
 embeddings manager, orchestrator, sidekick, researcher, heavy hitter -- with
 one model allowed to hold several, and a warning BEFORE a selection overflows
 the card rather than a refusal after it.
@@ -150,7 +150,7 @@ def test_seven_roles_fit_when_residency_is_respected(entries, profile):
 
 def test_a_resident_12b_beside_a_sidekick_does_not_fit_and_says_so(entries,
                                                                    profile):
-    """Measured 2026-08-17 and encoded here: once the compositor's 2.8 GB is
+    """Measured and encoded here: once the compositor's 2.8 GB is
     honestly reserved, a 12B cannot be RESIDENT beside the sidekick. This is
     the arithmetic that forces the orchestrator to be a small model."""
     view = rp.preview_assignment({"orchestrator": "gemma4:12b",
@@ -208,7 +208,7 @@ def test_an_overflowing_selection_warns_and_says_what_would_give(entries,
 
 
 def test_it_advises_rather_than_refuses(entries, profile):
-    """A model he selects wins. This returns advice, never an exception."""
+    """A model the user selects wins. This returns advice, never an exception."""
     view = rp.preview_assignment({"orchestrator": "gemma4:26b",
                                   "sidekick": "gemma4:26b"}, entries, profile)
     assert isinstance(view, dict)
@@ -268,9 +268,8 @@ def test_an_unmeasured_model_is_not_counted_as_free(entries, profile):
     """The most expensive wrong answer this advisory could give.
 
     Coercing an unknown VRAM figure to 0 makes a lineup "fit" precisely because
-    nobody knows what it costs. Caught 2026-08-18 running the real catalog:
-    qwen3.5:9b had no measured row and the lineup came back FITS=True with the
-    9B reading 0 MiB.
+    nobody knows what it costs: a 9B with no measured row comes back
+    FITS=True, reading 0 MiB.
     """
     entries = entries + [{"model_id": "brand-new:9b", "backend": "llama-server",
                           "can_generate": True, "is_embedding": False,
@@ -295,11 +294,10 @@ def test_a_measured_model_still_reports_a_number(entries, profile):
 
 
 # ── one artifact, one id ─────────────────────────────────────────────────────
-# Found 2026-08-18: the same 0.6B embedder was registered as
-# `qwen3-embed:0.6b-q8` (Friday's store) and `qwen3-embedding:0.6b` (Ollama).
-# installed_entries deduped on an exact id match, so models present in BOTH
-# stores under the SAME name collapsed correctly and this pair did not -- and
-# the picker would have offered two rows for one model.
+# The same 0.6B embedder can be registered as `qwen3-embed:0.6b-q8` (Friday's
+# store) and `qwen3-embedding:0.6b` (Ollama). Deduping on an exact id match
+# collapses models present in BOTH stores under the SAME name but not this
+# pair -- and the picker offers two rows for one model.
 
 def _emb_entries():
     e = _entry("qwen3-embedding:0.6b", {2048: 640}, embedding=True)
@@ -382,9 +380,9 @@ def test_an_already_aliased_pair_is_not_reported_twice():
 
 
 def test_a_finetune_is_not_mistaken_for_its_base_model():
-    """Regression for a false positive found on the live inventory 2026-08-18.
+    """Regression for a false positive on a real inventory.
 
-    A 2% relative tolerance flagged gemma4:12b (7,381,382,048 bytes) as a
+    A 2% relative tolerance flags gemma4:12b (7,381,382,048 bytes) as a
     duplicate of the HauhauCS 12B finetune (7,516,192,768). They are genuinely
     different weights, and merging them in the picker would HIDE a model --
     worse than showing two rows. The tolerance is absolute now, because
@@ -401,7 +399,7 @@ def test_a_finetune_is_not_mistaken_for_its_base_model():
 
 
 def test_two_different_embedders_of_similar_size_are_not_merged():
-    """Second false positive from the live inventory, 2026-08-18.
+    """Second false positive from a real inventory.
 
     embeddinggemma:300m (621,867,104) and qwen3-embedding:0.6b (639,150,592)
     are 17 MB apart and completely different models. No size threshold that
@@ -441,8 +439,8 @@ def test_registry_prefixes_and_quant_markers_are_not_evidence():
 
 
 # ── seats are not sized where the cost is a guess ────────────────────────────
-# 2026-08-18: a seat spawned at the architectural maximum of 262,144 left
-# 448 MiB of 12,282 and took a monitor off the desktop. Above the largest
+# A seat spawned at the architectural maximum of 262,144 leaves 448 MiB of
+# 12,282 and takes a monitor off the desktop. Above the largest
 # measured context the VRAM figure is extrapolated, and on this family it
 # extrapolates flat because sliding-window attention caps the KV cache across
 # the measured range. It does not stay flat.

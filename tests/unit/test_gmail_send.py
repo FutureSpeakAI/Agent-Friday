@@ -58,7 +58,7 @@ def _isolate(tmp_path, monkeypatch):
 
     # One account, granted send.
     monkeypatch.setattr(gs, "sendable_accounts", lambda: [
-        {"id": "acct_a", "email": "stephen@example.com", "label": "main"}])
+        {"id": "acct_a", "email": "owner@example.com", "label": "main"}])
     monkeypatch.setattr(gs, "scope_granted", lambda account_id=None: True)
 
     from agent_friday.services import google_accounts as ga
@@ -266,8 +266,8 @@ def test_revoking_the_grant_between_approval_and_send_refuses(monkeypatch):
 def test_two_sendable_accounts_refuse_to_guess(monkeypatch):
     """Which address a message comes from cannot be corrected afterwards."""
     monkeypatch.setattr(gs, "sendable_accounts", lambda: [
-        {"id": "a", "email": "stephen@example.com", "label": "personal"},
-        {"id": "b", "email": "stephen@work.example", "label": "work"}])
+        {"id": "a", "email": "owner@example.com", "label": "personal"},
+        {"id": "b", "email": "owner@work.example", "label": "work"}])
     with pytest.raises(gs.SendRefused):
         _queue()
     assert SENT == []
@@ -275,18 +275,18 @@ def test_two_sendable_accounts_refuse_to_guess(monkeypatch):
 
 def test_naming_the_account_resolves_the_ambiguity(monkeypatch):
     monkeypatch.setattr(gs, "sendable_accounts", lambda: [
-        {"id": "a", "email": "stephen@example.com", "label": "personal"},
-        {"id": "b", "email": "stephen@work.example", "label": "work"}])
+        {"id": "a", "email": "owner@example.com", "label": "personal"},
+        {"id": "b", "email": "owner@work.example", "label": "work"}])
     result = gs.request_send(to="x@example.com", subject="Hi", body="Text.",
                              account_id="b")
     payload = result["approval"]["payload"]
-    assert payload["from_email"] == "stephen@work.example"
-    assert "stephen@work.example" in result["approval"]["action_description"]
+    assert payload["from_email"] == "owner@work.example"
+    assert "owner@work.example" in result["approval"]["action_description"]
 
 
 def test_a_read_only_account_cannot_be_named_into_sending(monkeypatch):
     monkeypatch.setattr(gs, "sendable_accounts", lambda: [
-        {"id": "a", "email": "stephen@example.com", "label": "personal"}])
+        {"id": "a", "email": "owner@example.com", "label": "personal"}])
     with pytest.raises(gs.SendRefused):
         gs.request_send(to="x@example.com", subject="Hi", body="Text.",
                         account_id="readonly_account")

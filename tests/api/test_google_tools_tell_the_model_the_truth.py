@@ -1,16 +1,16 @@
 """The Google tools must not tell the model something untrue.
 
-2026-09-09. Two failures stacked here, and the second is the worse one.
+Two failures can stack here, and the second is the worse one.
 
-  1. Every tool gated on ga.has_accounts() -- a record existing -- and then
-     emitted "connected": True. Stephen's calendar came back empty and
-     confident on a day holding two job interviews.
+  1. A tool that gates on ga.has_accounts() -- a record existing -- and then
+     emits "connected": True returns an empty calendar with confidence when
+     every account has expired.
 
-  2. When a fetch failed, the payload carried a note INSTRUCTING the model:
-     "do not say Calendar 'needs connecting' (it's already connected)". That
-     was false. Stephen asked Friday directly whether his Google accounts were
-     connected and was told yes, both. The model did not hallucinate -- it
-     faithfully repeated an instruction the system gave it. A claim-verifier
+  2. A failed fetch whose payload carries a note INSTRUCTING the model
+     "do not say Calendar 'needs connecting' (it's already connected)" is
+     false whenever the accounts are expired. A user who asks whether their
+     Google accounts are connected is then told yes. The model does not
+     hallucinate -- it faithfully repeats an instruction the system gave it. A claim-verifier
      cannot catch this class: nothing is fabricated. The only defence is that
      a note telling the model what to assert is emitted ONLY in the state
      where that assertion is true.
@@ -35,7 +35,7 @@ def _write_accounts(*records):
 
 
 def _rec(**kw):
-    base = {"id": "a1", "email": "stephen@example.com", "label": "Work",
+    base = {"id": "a1", "email": "user@example.com", "label": "Work",
             "status": "connected", "services": {}, "color": "#fff",
             "created": "2026-08-26T00:00:00+00:00",
             "last_sync": "2026-09-09T09:00:00+00:00", "scopes": [],
@@ -63,15 +63,15 @@ def clean():
 THE_PRODUCTION_STATE = (
     _rec(id="a1", email="primary@example.com", label="Personal",
          status="needs_reauth", last_sync=_days_ago(9)),
-    _rec(id="a2", email="stephen@futurespeak.ai", label="Work",
+    _rec(id="a2", email="owner@work.example", label="Work",
          status="needs_reauth", last_sync=_days_ago(9)),
 )
 
 
 class TestCalendarDoesNotClaimConnected:
 
-    def test_the_interview_day(self, monkeypatch):
-        """The exact call that reported an empty schedule as a real one."""
+    def test_an_empty_schedule_is_not_reported_as_real(self, monkeypatch):
+        """The call that must not report an empty schedule as a real one."""
         _write_accounts(*THE_PRODUCTION_STATE)
         # If the gate is right this is never reached; make it loud if it is.
         monkeypatch.setattr(ga, "merged_calendar",
@@ -81,7 +81,7 @@ class TestCalendarDoesNotClaimConnected:
         assert d["accounts_working"] == 0
         assert d["accounts_total"] == 2
         assert set(d["needs_reauth"]) == {"primary@example.com",
-                                          "stephen@futurespeak.ai"}
+                                          "owner@work.example"}
         assert "9 days ago" in d["note"]
 
     def test_note_never_tells_the_model_it_is_connected(self):
@@ -171,25 +171,20 @@ class TestOfflineCacheIsNotAConnection:
 
 
 class TestTheQueryReachesGmail:
-    """2026-09-22. "Yeah I def see email you did not pick up."
+    """The search query must reach Gmail's own `q=`.
 
-    On "start my day" Friday reported every query coming back 0 unread --
-    is:unread, in:inbox, in:primary, after:2026-09-21 -- while Gmail itself
-    held 50 unread across the two accounts.
-
-    Nothing was broken about OAuth, scopes, routing or pagination. The query
-    was never sent to Gmail. `_tool_search_email` called merged_gmail() with
-    NO query, took back the default unread/recent window, and then filtered
-    those cards with a word-boundary text match over sender+subject+snippet.
-    So `is:unread` was matched as LITERAL TEXT: it looked for the characters
-    "is:unread" in the subject line, found them nowhere, and said 0.
-
-    merged_gmail already took a `query` and already sent it to Gmail's own
-    `q=`. It was simply never passed.
+    If `_tool_search_email` calls merged_gmail() with NO query, it gets back
+    the default unread/recent window and then filters those cards with a
+    word-boundary text match over sender+subject+snippet. `is:unread` is then
+    matched as LITERAL TEXT: it looks for the characters "is:unread" in the
+    subject line, finds them nowhere, and says 0 -- every query (is:unread,
+    in:inbox, in:primary, after:...) comes back 0 unread while Gmail holds
+    dozens. merged_gmail takes a `query` and sends it to Gmail's `q=`; it
+    must be passed.
     """
 
     def test_the_query_is_handed_to_gmail(self, monkeypatch):
-        """The regression itself: the operator must leave the process."""
+        """The operator must leave the process."""
         _write_accounts(_rec(id="a1", label="Personal", status="connected",
                              services={"gmail": True}))
         seen = {}
@@ -204,20 +199,20 @@ class TestTheQueryReachesGmail:
             "the Gmail query never reached Gmail; it was %r" % seen.get("query"))
 
     @pytest.mark.parametrize("query", [
-        "is:unread", "in:inbox", "after:2026-09-21", "from:jere",
+        "is:unread", "in:inbox", "after:2026-09-21", "from:sam",
         "subject:invoice", "has:attachment", "newer_than:7d",
     ])
     def test_gmail_operators_are_not_filtered_out_locally(self, monkeypatch, query):
         """Gmail did the matching, so every row it returned is a hit.
 
-        The old code re-filtered Gmail's own results with a text match that
-        no operator can satisfy, which zeroed every one of these.
+        Re-filtering Gmail's own results with a text match that no operator
+        can satisfy zeroes every one of these.
         """
         _write_accounts(_rec(id="a1", label="Personal", status="connected",
                              services={"gmail": True}))
         monkeypatch.setattr(ga, "merged_gmail", lambda **kw: {
             "accounts": [], "errors": [],
-            "messages": [{"sender": "Jere <j@example.com>",
+            "messages": [{"sender": "Sam <s@example.com>",
                           "subject": "Ready to go live",
                           "snippet": "let me know", "unread": True,
                           "timestamp": "2026-09-22T09:00:00"}]})

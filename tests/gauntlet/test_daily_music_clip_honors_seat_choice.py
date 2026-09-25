@@ -9,17 +9,14 @@ user who set their Music seat to something other than the default
 therefore had that choice silently ignored every time Friday's autonomous
 daily-creation happened to pick music-clip mode.
 
-CORRECTION (2026-09-04, caught by an independent cold re-verification of
-this fix): the original version of this probe had only a text-absence pin
-(the "lyria-clip" string check below, kept as-is -- still useful as a
-literal regression guard) plus a second "sanity check" test that called
-music_engine.generate_music() directly, on its own monkeypatched
-replacement -- it never invoked services/creations.py's actual call site
-at all, so it proved nothing about the real code path. Rewritten below to
-call the real function, `creations._generate_media_daily()`, with
-music_engine.generate_music patched at its source module, and assert
-directly on the kwargs that reach it -- this is what actually exercises
-the fixed code, not a copy of it.
+A text-absence pin (the "lyria-clip" string check below) is a useful
+literal regression guard but not proof; neither is a test that calls a
+monkeypatched music_engine.generate_music() directly, which never reaches
+services/creations.py's call site. The behavioral test calls the real
+function, `creations._generate_media_daily()`, with
+music_engine.generate_music patched at its source module, and asserts
+directly on the kwargs that reach it -- exercising the real code, not a
+copy of it.
 """
 from __future__ import annotations
 

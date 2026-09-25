@@ -1,24 +1,15 @@
-"""Unit tests for `model_routing.unrestricted_cloud` — the maintainer's explicit
-instruction, 2026-09-03: "cloud only mode means no privacy safeguards,
-Friday operates completely with cloud models and no local inference. this
-mode must be in the app. when active, no feature or data is held back from
-the cloud."
+"""Unit tests for `model_routing.unrestricted_cloud`: an explicit mode in which
+Friday operates entirely on cloud models with no local inference and no
+privacy safeguards -- no feature or data is held back from the cloud.
 
-This is a real, separate flag from the pre-existing `model_routing.mode:
-"cloud_only"`, which has only ever meant provider ROUTING PREFERENCE and
-has never touched the gate — verified earlier in this same investigation
-(grep found zero references to model_routing anywhere in egress_gate.py
-before this change). `unrestricted_cloud` is new, defaults False, and when
-True bypasses every gate this codebase has for cloud sends: tier
-classification, redaction, the PII scrub, and the never-send list — all of
-it, "no data is held back" taken literally, since that is exactly what was
-specified.
+This is a separate flag from `model_routing.mode: "cloud_only"`, which means
+provider ROUTING PREFERENCE only and does not touch the gate.
+`unrestricted_cloud` defaults False, and when True bypasses every gate this
+codebase has for cloud sends: tier classification, redaction, the PII scrub,
+and the never-send list -- "no data is held back" taken literally.
 
-Each test below is written to describe today's CORRECT (post-change)
-behavior; the false-by-default tests double as the reproduction of what
-this looked like before the flag existed anywhere — proving OFF still
-means what it always meant, and ON is a real, working bypass rather than a
-no-op flag nobody wired up.
+The false-by-default tests prove OFF means full gating, and the ON tests
+prove it is a real, working bypass rather than a no-op flag nobody wired up.
 """
 from __future__ import annotations
 
@@ -41,7 +32,7 @@ def _set_unrestricted(monkeypatch, value: bool):
 
 
 class TestDefaultIsSafe:
-    """OFF by default -- and OFF must mean the same thing it always did."""
+    """OFF by default -- and OFF means fully gated."""
 
     def test_default_setting_reads_false(self, monkeypatch):
         from agent_friday import core as _core
@@ -106,34 +97,22 @@ class TestUnrestrictedModeBypassesEverything:
 
 
 class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
-    """SUPERSEDES `test_cloud_only_mode_alone_is_now_unrestricted` and its
-    sibling below (this class's old name, same day, a few hours earlier).
-    That version asserted mode=="cloud_only" alone was sufficient to trip
-    unrestricted mode, reasoning that selecting cloud-only IS the
-    acceptance a separate flag existed to double-check.
+    """mode=="cloud_only" alone never trips unrestricted mode.
 
-    Reversed again, same day, on the maintainer's explicit ruling: that reasoning
-    does not survive contact with the fact that `cloud_only` is this app's
-    FACTORY DEFAULT (`core.DEFAULT_SETTINGS["model_routing"]["mode"]`) --
-    nobody "selects" a value they never touched. The intervening version
-    meant every fresh install inherited "no safeguards" the moment someone
-    picked cloud-only as their provider, which is what most people do,
-    since it needs no local model and no setup. Restored to the ORIGINAL
-    class's conclusion (`mode` alone never trips this), but through a
-    different, permanent mechanism this time: `model_routing.cloud_consent`,
-    an explicit, recorded, hardware-checked choice
-    (`privacy/cloud_consent.py`) rather than a live read of `mode`. This is
-    why the fix is durable against a THIRD reversal the way a live
-    `mode`-read never was: `mode` can still change to `cloud_only` freely
-    without touching this at all, because this no longer reads `mode`.
+    `cloud_only` is this app's FACTORY DEFAULT
+    (`core.DEFAULT_SETTINGS["model_routing"]["mode"]`) -- nobody "selects" a
+    value they never touched. If `mode` alone tripped this, every fresh
+    install would inherit "no safeguards" the moment someone picked
+    cloud-only as their provider, which is what most people do, since it
+    needs no local model and no setup.
 
-    The live reproduction this whole investigation started from -- a
-    resume's TIER_2 sections coming back gated while cloud-only was active
-    and no local seat existed -- is still fixed, just through the correct
-    door: the maintainer's account, once it explicitly records
-    `cloud_consent={"answered": True, "choice": "cloud_unrestricted"}`, is
-    unrestricted. An install that has never answered is not, no matter what
-    `mode` says.
+    The trigger is `model_routing.cloud_consent`, an explicit, recorded,
+    hardware-checked choice (`privacy/cloud_consent.py`), not a live read of
+    `mode`: `mode` can change to `cloud_only` freely without touching this.
+    An account that explicitly records
+    `cloud_consent={"answered": True, "choice": "cloud_unrestricted"}` is
+    unrestricted, so a resume's TIER_2 sections pass to the cloud unchanged.
+    An install that has never answered is not, no matter what `mode` says.
     """
 
     def test_cloud_only_mode_alone_is_still_gated(self, monkeypatch):
@@ -144,12 +123,11 @@ class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
         assert eg.is_unrestricted_cloud() is False
 
     def test_cloud_only_plus_recorded_consent_is_unrestricted(self, monkeypatch):
-        """The exact live reproduction, fixed through the recorded-consent
-        door: a resume's contact/experience sections, classified TIER_2,
-        pass through unchanged once cloud-only mode is paired with an
-        explicit, answered `cloud_consent` -- matching what the maintainer's
-        account looks like once he has actually answered the prompt, not
-        what an untouched factory default looks like."""
+        """Through the recorded-consent door: a resume's contact/experience
+        sections, classified TIER_2, pass through unchanged once cloud-only
+        mode is paired with an explicit, answered `cloud_consent` -- what an
+        account looks like once the user has actually answered the prompt,
+        not what an untouched factory default looks like."""
         from agent_friday import core as _core
         monkeypatch.setattr(
             _core, "_load_settings",
@@ -173,9 +151,8 @@ class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
         assert "EGRESS-GATE" not in out
 
     def test_cloud_only_alone_still_redacts_the_same_resume(self, monkeypatch):
-        """The other half of the reproduction: WITHOUT recorded consent,
-        cloud-only alone must still gate -- this is the exact bug the
-        intervening version introduced, now closed from the other side."""
+        """The other half: WITHOUT recorded consent, cloud-only alone must
+        still gate."""
         from agent_friday import core as _core
         monkeypatch.setattr(
             _core, "_load_settings",
@@ -196,8 +173,8 @@ class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
 
 
 class TestLocalOnlyAndSmartModesAreUnaffected:
-    """The reversal above widens the condition only for the mode value
-    the maintainer has to have picked on purpose. These pin the other three values
+    """Unrestricted mode is reachable only through an explicit, recorded
+    choice. These pin the other three values
     of the exact same `model_routing.mode` setting to their unchanged,
     still-gated behavior -- the "no regression" half of the fix."""
 
@@ -221,11 +198,10 @@ class TestLocalOnlyAndSmartModesAreUnaffected:
 
 
 class TestRedactPlaceholderNamesARealRemedyOrSaysSoHonestly:
-    """Second-order bug, same report: the placeholder always claimed
-    "can be read on a local seat" even with zero local models installed
-    (the maintainer had just deleted functiongemma:270m and embeddinggemma:300m).
-    A privacy block naming a remedy that does not exist is indistinguishable
-    from an outage -- fix is to check, and say plainly when there is none."""
+    """The placeholder must not claim "can be read on a local seat" when zero
+    local models are installed. A privacy block naming a remedy that does not
+    exist is indistinguishable from an outage -- so it checks, and says
+    plainly when there is none."""
 
     def test_names_local_seat_when_one_exists(self, monkeypatch):
         monkeypatch.setattr(eg, "_local_model_available", lambda: True)
@@ -240,12 +216,10 @@ class TestRedactPlaceholderNamesARealRemedyOrSaysSoHonestly:
 
 
 class TestKnowledgeGraphRoutingIsIndependentOfTheFlag:
-    """Superseded 2026-09-03, same day: the KG indexer's old hard rule --
-    TIER_2/3 chunks pinned to a local model 'in any mode' -- was a per-TIER
-    override of what became a strict per-user choice: "he is not asking for
-    a system that decides for people, he's asking for one that does what
-    the person picked." `indexing_mode` ("local"/"cloud") now decides
-    routing on its own, uniformly across sensitivity; `unrestricted_cloud`
+    """KG routing is a strict per-user choice, not a per-TIER override: the
+    system does what the person picked rather than deciding for them, so
+    TIER_2/3 chunks are not pinned to a local model 'in any mode'.
+    `indexing_mode` ("local"/"cloud") decides routing on its own, uniformly across sensitivity; `unrestricted_cloud`
     has no special case here at all -- its only effect is inside
     egress_gate itself (TestUnrestrictedModeBypassesEverything above),
     which every cloud call in the app, including a "cloud"-mode KG chunk,
@@ -271,12 +245,12 @@ class TestKnowledgeGraphRoutingIsIndependentOfTheFlag:
 
 
 class TestStartupSelfTestUnderConsent:
-    """Found live 2026-09-06. Consent for unrestricted cloud was recorded at
-    07:40; the server restarted at 15:45; every task and chat turn then
-    failed with "Egress gate is non-functional (startup self-test failed)".
-    The self-test sealed its probe, the bypass returned it untouched, the
-    test called that a leak, and model_router refused every cloud send. An
-    unrestricted-cloud install therefore lost cloud on its next restart.
+    """With consent for unrestricted cloud recorded, a server restart must not
+    fail every task and chat turn with "Egress gate is non-functional
+    (startup self-test failed)". If the self-test seals its probe, the bypass
+    returns it untouched, the test calls that a leak, and model_router
+    refuses every cloud send -- an unrestricted-cloud install loses cloud on
+    its next restart.
     """
 
     _CONSENT = {"model_routing": {

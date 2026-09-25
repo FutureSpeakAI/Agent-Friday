@@ -1,15 +1,13 @@
-"""2026-08-14 defects #4 and #6 — gate-store alias mismatch + probe truth.
+"""Defects #4 and #6 — gate-store alias mismatch + probe truth.
 
-#4: the brain is seated as 'qwen3.6-35b-a3b-iq4nl' (llama-cpp-brain,
-OpenAI-compatible local descriptor) but the gate spoke only Ollama, so the
-brain could never earn green under its own id and every tool-using turn was
-refused 'never run'. The gate must dispatch via the descriptor's endpoint,
-the refusal must name the likely-same-model record without acting on it,
+#4: a brain seated as 'qwen3.6-35b-a3b-iq4nl' (llama-cpp-brain,
+OpenAI-compatible local descriptor) must be diagnosed through its own
+protocol, not Ollama's. The gate dispatches via the descriptor's endpoint,
 and descriptor-declared models count as installed.
 
 #6 (server side): the health probe must never send a foreign id to a
-provider — it probed Anthropic with the qwen alias (404 → shown down) and
-Ollama with the deleted gemma4:latest (down while healthy).
+provider — probing Anthropic with the qwen alias 404s (shown down), and
+probing Ollama with a deleted model shows it down while healthy.
 """
 from __future__ import annotations
 
@@ -63,19 +61,13 @@ class TestGateSpeaksTheBrainsProtocol:
 
 
 class TestNothingRefusesASeat:
-    """The alias problem dissolved rather than being solved.
+    """No seat gate, so no alias refusal.
 
-    What this used to pin: a brain seated under a descriptor id could never
-    earn green under that id, so every tool-using turn was refused "never run",
-    and the refusal had to point at the near-name record (qwen3.6:35b vs
-    qwen3.6-35b-a3b-iq4nl) WITHOUT acting on it — because a gate score does not
-    transfer between two ids that merely look alike.
-
-    There is no refusal path left to get the wording right. The maintainer removed the
-    gate on 2026-08-15: "I absolutely want the user to be able to set any model
-    they wish at any seat they wish, so this is non-negotiable." What is worth
-    pinning now is that the id under which a model is seated is simply the id
-    that gets dispatched, alias or not.
+    The user may set any model at any seat. What is pinned is that the id
+    under which a model is seated is the id that gets dispatched, alias or
+    not, and that a near-name record (qwen3.6:35b vs qwen3.6-35b-a3b-iq4nl) is
+    never borrowed — a score does not transfer between two ids that merely
+    look alike.
     """
 
     def test_a_descriptor_id_is_dispatched_as_itself(self):
@@ -104,8 +96,8 @@ class TestProbeModelChoice:
         chosen = ph.resident_model_for(
             {"type": "anthropic", "models": ["claude-sonnet-5"]})
         assert str(chosen).startswith("claude"), (
-            f"anthropic probe would 404 on {chosen!r} — the exact /api/health "
-            f"lie from the 2026-08-14 morning")
+            f"anthropic probe would 404 on {chosen!r} and /api/health would "
+            f"show a healthy provider as down")
 
     def test_ollama_probe_skips_uninstalled_configured_model(self, monkeypatch):
         import agent_friday.routing.ollama_manager as om

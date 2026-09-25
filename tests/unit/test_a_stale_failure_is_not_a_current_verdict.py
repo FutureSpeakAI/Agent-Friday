@@ -1,18 +1,17 @@
 """A recorded failure expires; it does not become permanent truth.
 
-Stephen, 2026-09-24: Google Drive kept reporting "not activated" after he had
-activated it, and only corrected itself once something happened to call Drive.
+Without an expiry, Google Drive keeps reporting "not activated" after the user
+has activated it, and corrects itself only once something happens to call Drive.
 
 `google_accounts.note_service_result` records a provider-side refusal in
 `~/.friday/google_accounts/service_state.json` and clears it only on a
 SUCCESSFUL call. The record is deliberate -- enabling an API is a console act,
 so the condition is sticky rather than transient -- but nothing re-checked it,
-so the verdict outlived the fix. The live file bears this out: `drive` was
-cleared at 2026-09-22T22:47, the moment a Drive call finally succeeded, not when
-the API was switched on.
+so the verdict outlived the fix: the record clears the moment a Drive call
+finally succeeds, not when the API is switched on.
 
-`service_health` then reported DEGRADED / "switched off at Google" as a CURRENT
-reading, and every surface downstream repeated it, including the note handed to
+`service_health` then reports DEGRADED / "switched off at Google" as a CURRENT
+reading, and every surface downstream repeats it, including the note handed to
 the model. A verdict that can only be revised by the very call it discourages is
 a verdict that cannot self-correct.
 

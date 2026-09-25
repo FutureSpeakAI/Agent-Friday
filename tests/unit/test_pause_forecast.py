@@ -1,8 +1,8 @@
 """Friday never goes quiet without saying so first.
 
-The maintainer, 2026-08-15: "Friday should always warn the user when local inference
-will (or might) cause her to go silent for any amount of time so they can
-decide if cloud or scheduling for idle time would be better."
+Friday always warns the user when local inference will (or might) cause her
+to go silent for any amount of time, so they can decide whether the cloud or
+scheduling for idle time would be better.
 
 The failure being pinned here is not the pause — it is the UNANNOUNCED pause.
 A 53-second wait you asked for is fine; 53 seconds of a machine that looks hung
@@ -68,13 +68,10 @@ def test_a_model_in_a_process_we_own_promises_no_pause(arb):
 
 
 def test_a_loaded_daemon_model_does_not_warn_on_every_single_turn(arb, monkeypatch):
-    """Reversed on 2026-08-18, deliberately, after it reached a real desk.
-
-    This used to assert the opposite: a daemon-served model was a "might",
-    because Ollama can evict without announcing it. That is true — and it is
-    true before EVERY message, forever, so warning on it meant warning always.
-    The maintainer hit exactly that: a confirmation before every message he sent,
-    which he had to scroll up to answer before anything would proceed.
+    """Deliberately not a "might", although Ollama can evict without
+    announcing it. That is true before EVERY message, forever, so warning on
+    it means warning always: a confirmation before every message sent, which
+    the user has to scroll up to answer before anything will proceed.
 
     A prompt that fires every time is not a safety feature. It is noise, and
     noise is how the warning gets clicked through on the day it finally
@@ -93,10 +90,10 @@ def test_a_loaded_daemon_model_does_not_warn_on_every_single_turn(arb, monkeypat
 def test_a_model_that_just_answered_is_not_called_cold(arb, monkeypatch):
     """The residency plan is not the only witness to what is loaded.
 
-    The maintainer switched his chat seat; the setting changed and the plan did not,
-    so his model appeared in no seat and no resident set. The forecaster read
-    that as "cold" and announced a 30-second wait before every message, while
-    that same model answered him at normal speed. A model that served a turn a
+    When the user switches the chat seat, the setting changes and the plan may
+    not, so the model appears in no seat and no resident set. Reading that as
+    "cold" announces a 30-second wait before every message, while that same
+    model answers at normal speed. A model that served a turn a
     moment ago is warm, whatever the plan believes.
     """
     arb(_FakeArbiter())
@@ -125,7 +122,7 @@ def test_a_pause_too_short_to_mention_is_not_mentioned(arb, monkeypatch):
 
 # ── every warning carries the choice ─────────────────────────────────────────
 
-def test_every_warning_offers_the_three_options_stephen_approved(arb):
+def test_every_warning_offers_the_three_options_the_owner_approved(arb):
     arb(_FakeArbiter())
     for f in (pf.before_local_turn("gemma4:12b"), pf.before_heavy_lease(),
               pf.before_image()):

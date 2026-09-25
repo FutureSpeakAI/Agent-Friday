@@ -1,27 +1,21 @@
-"""Gauntlet finding F55 (claim-corpus sweep, 2026-09-04): boot_guard.py's
-own module docstring says a known-good state is one that has "actually
-completed a startup and then served a request" -- but server.py's
-_confirm_boot() thread only ever slept 20 seconds and then called
-mark_boot_succeeded() unconditionally, with no check that anything was
-ever served. A slow-starting or silently-broken process (every route
-500s, startup work still running past the timer) got marked known-good
-anyway.
+"""Gauntlet finding F55 (claim-corpus sweep): boot_guard.py's own module
+docstring says a known-good state is one that has "actually completed a
+startup and then served a request". A _confirm_boot() thread that sleeps 20
+seconds and then calls mark_boot_succeeded() unconditionally marks a
+slow-starting or silently-broken process (every route 500s, startup work
+still running past the timer) known-good anyway.
 
-boot_guard.wait_for_health() is the extracted, testable fix: a real
-HTTP self-check with retry/backoff, used by server.py's boot-confirmation
-thread instead of a bare sleep-then-promote.
+boot_guard.wait_for_health() is a real HTTP self-check with retry/backoff,
+used by server.py's boot-confirmation thread instead of a bare
+sleep-then-promote.
 
-CORRECTION (weak-probe audit, 2026-09-05): TestBootGuardWaitForHealth
-below proves wait_for_health() itself works, but nothing here proved the
-WIRING -- that server.py's _confirm_boot() thread actually calls it and
-only promotes to known-good when it returns True. Revert JUST that
-wiring (put mark_boot_succeeded()/snapshot_known_good() back to running
-unconditionally, exactly the original F55 bug) and every test below
-would have kept passing, because none of them touch the gate itself.
-boot_guard.confirm_boot_health() is the fix: the decision ("only mark
-known-good if the health check passed") is now its own callable,
-testable function, and server.py calls IT instead of inlining the
-if/else. TestConfirmBootHealthGating proves the gate directly.
+TestBootGuardWaitForHealth proves wait_for_health() itself works, but not
+the WIRING -- that _confirm_boot() only promotes to known-good when it
+returns True. Reverting just that wiring would leave those tests passing.
+So the decision ("only mark known-good if the health check passed") lives
+in its own function, boot_guard.confirm_boot_health(), which server.py
+calls instead of inlining the if/else. TestConfirmBootHealthGating proves
+the gate directly.
 """
 from __future__ import annotations
 

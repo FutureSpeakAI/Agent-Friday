@@ -1,11 +1,9 @@
-"""2026-09-04: `_task_worker` / `_spawn_task` gained an optional `tools`
-override so a scheduled task that knows its own job is narrow (see
+"""`_task_worker` / `_spawn_task` take an optional `tools` override so a scheduled task that knows its own job is narrow (see
 scheduler.py's `sch_heartbeat`) doesn't have to pay CLAUDE_TOOLS' full
 ~13k-token registry on every call. The failure this guards against is silent:
 a schedule record naming tools that don't exist (a typo, or a tool later
 renamed) should degrade to "fewer tools available", not crash the run — and a
-schedule with NO `tools` field must see exactly what every task saw before
-this existed, the full registry.
+schedule with NO `tools` field must see the full registry.
 """
 from __future__ import annotations
 

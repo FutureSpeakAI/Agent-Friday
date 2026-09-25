@@ -3,14 +3,14 @@
 Scheduling an AudioBufferSourceNode per arriving chunk is behind two separate
 defects, and only one of them is a browser bug:
 
-* Chrome 152 sometimes replaced the start of a chunk with a single 128-sample
-  render block repeated about a hundred times — the dial-up screech reported
-  against Gemini Live. Fixed in Chrome 153.
+* Chrome 152 sometimes replaces the start of a chunk with a single 128-sample
+  render block repeated about a hundred times — a dial-up screech on Gemini
+  Live audio. Fixed in Chrome 153.
 * Every chunk boundary is also a resampler reset and a scheduling rounding
-  error. That one no browser version fixes. Measured here on Chrome 153 with a
-  pure 440 Hz sine, the per-chunk path stepped the waveform 34 times in six
-  seconds with the context pinned to 24 kHz and 38 times unpinned, by as much
-  as 0.62 where the signal itself can only move 0.035 between samples.
+  error. That one no browser version fixes. On Chrome 153 with a pure 440 Hz
+  sine, the per-chunk path steps the waveform 34 times in six seconds with
+  the context pinned to 24 kHz and 38 times unpinned, by as much as 0.62
+  where the signal itself can only move 0.035 between samples.
 
 So the check is not "is this browser buggy" — that would pass or fail with
 whatever Chrome happens to be installed. It is "does what we render actually

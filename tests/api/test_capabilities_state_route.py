@@ -1,6 +1,6 @@
 """/api/capabilities/state serves the same live picture the model reads.
 
-One truth, several surfaces (2026-09-18): the model's prompt block, the
+One truth, several surfaces: the model's prompt block, the
 search tool's failure text and any settings panel that wants to say what a
 backend is doing all come from services/capability_state.py. This route is
 how a UI gets it. It never guesses: absent and unconfigured are distinct,

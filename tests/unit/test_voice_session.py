@@ -26,10 +26,10 @@ def _run(chunker, pieces):
 
 def test_clause_chunker():
     c = ClauseChunker()
-    out = _run(c, ["Pulling that up now. ", "Your morning looks completely clear today, and Janet ",
+    out = _run(c, ["Pulling that up now. ", "Your morning looks completely clear today, and Priya ",
                    "replied an hour ago! Anything else?"])
     assert out == ["Pulling that up now.", "Your morning looks completely clear today,",
-                   "and Janet replied an hour ago!", "Anything else?"]
+                   "and Priya replied an hour ago!", "Anything else?"]
     # comma cuts only after >= 6 words
     assert _run(ClauseChunker(), ["Yes, I can. "]) == ["Yes, I can."]
     # hard cut at 12 words, at a whitespace boundary, never an empty clause
@@ -229,7 +229,7 @@ def test_first_clause_speaks_while_the_model_is_still_writing():
     mouth = _Mouth()
     order = []
     script = ["Pulling that up now. ", "Your morning looks completely clear today, ",
-              "and Janet replied. "]
+              "and Priya replied. "]
     s, frames = _session(script, mouth=mouth, delay=0.05)
     s.start()
     s.run_turn("what's on tomorrow", audio_ms=1500)
@@ -238,7 +238,7 @@ def test_first_clause_speaks_while_the_model_is_still_writing():
     # the model finished), which is the whole point of the pipeline.
     assert t.index("audio") < t.index("text")
     assert mouth.spoken == ["Pulling that up now.", "Your morning looks completely clear today,",
-                            "and Janet replied."]
+                            "and Priya replied."]
     rec = [f for f in frames if f["type"] == "turn_receipt"][0]
     assert rec["clauses"] == 3 and rec["outcome"] == "served"
     assert rec["first_clause_ms"] is not None and rec["first_audio_ms"] is not None
@@ -283,14 +283,14 @@ def test_receipt_carries_prefill_tokens_and_clauses():
 # ── clause fallback (§4.3) ───────────────────────────────────────────────────
 
 def test_failed_clause_is_spoken_by_piper_with_one_notice_per_session():
-    kok = _Mouth(fail_on={"Janet"})
+    kok = _Mouth(fail_on={"Priya"})
     piper = _Piper()
-    s, frames = _session(["Your morning is clear. Janet replied. Janet again."],
+    s, frames = _session(["Your morning is clear. Priya replied. Priya again."],
                          mouth=kok, fallback=piper)
     s.start()
     s.run_turn("hi")
     assert kok.spoken == ["Your morning is clear."]
-    assert piper.spoken == ["Janet replied.", "Janet again."]
+    assert piper.spoken == ["Priya replied.", "Priya again."]
     notices = [f for f in frames if f["type"] == "error-nonfatal"]
     assert len(notices) == 1
     assert notices[0]["code"] == "local_voice_clause_fallback"

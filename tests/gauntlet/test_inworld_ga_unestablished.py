@@ -1,4 +1,4 @@
-"""Q8, settled 2026-09-09: one standard for both vendors, or neither means anything.
+"""Q8: one standard for both vendors, or neither means anything.
 
 The Q2 rule is "where GA cannot be determined, exclude." Inworld's GA status
 cannot be determined - Inworld's product docs present TTS-2 as production while

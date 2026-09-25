@@ -197,9 +197,8 @@ console.log(JSON.stringify(out));
 @pytest.mark.parametrize("path", ["index.html", "ui_parts/app.html"])
 def test_workspaces_get_the_3d_bar(path):
     text = (ROOT / path).read_text(encoding="utf-8")
-    # ("home", "tasks") was here until 2026-09-24. The Home workspace is gone --
-    # the desktop hero is the landing screen -- so there is no window for it to
-    # decorate. Every remaining pairing is unchanged.
+    # There is no ("home", "tasks") pairing: there is no Home workspace -- the
+    # desktop hero is the landing screen -- so there is no window to decorate.
     for ws, src in [("trust", "people"), ("code", "code"), ("news", "news"),
                     ("contacts", "people"), ("messages", "messages"), ("calendar", "calendar")]:
         assert f"with3D('{ws}', '{src}'" in text or f"with3D('{ws}','{src}'" in text, ws

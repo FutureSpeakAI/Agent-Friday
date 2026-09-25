@@ -1,25 +1,20 @@
 """The tool-less leg of the shared OpenAI loop: its retry, and its excuses.
 
-THE RUN THIS COMES FROM. 2026-09-22 09:55:45, orb `openai-e8f20a1d`, the
-Front Page editorial on bonsai2:27b. It ran 1,741s, ended `status: error`
-with `label: "Max iters"` and `result: "[Agent hit max tool iterations
-without completing.]"`, and the edition it produced was the un-curated
-fallback — the ninth consecutive one, with nothing said about any of them.
+A tool-less caller such as the Front Page editorial must never receive
+"[Agent hit max tool iterations without completing.]": there is no loop.
+`_generate_text` passes `tools=None`, so `loops = max_iters if oai_tools else 1`
+gives exactly ONE round. A reasoning seat can spend that round's whole
+1,800-token budget in `reasoning_content` (`finish_reason="length"`,
+`content_len=0`), and the caller then falls back silently.
 
-There was no loop. `_generate_text` passes `tools=None`, so
-`loops = max_iters if oai_tools else 1` gives exactly ONE round. Reproduced
-against the live seat: one round, 320.8s, `finish_reason="length"`,
-`content_len=0`, the whole 1,800-token budget spent in `reasoning_content`.
-
-Two defects made that unreadable, and these tests pin both:
+These tests pin two rules:
 
 1. The empty-completion guard promises "one retry, then an honest failure".
-   Its `continue` spent the only round, so the retry never happened and
-   control fell through to the bottom of the function — whose message blames
-   an iteration budget that this call never had.
-2. A reasoning seat that hit its ceiling mid-thought was reported in exactly
-   the same words as a seat that said nothing at all, although the remedies
-   are different.
+   A `continue` that spends the only round skips the retry and falls through
+   to the bottom of the function — whose message blames an iteration budget
+   this call never had.
+2. A reasoning seat that hits its ceiling mid-thought is reported differently
+   from a seat that said nothing at all, because the remedies are different.
 
 These call `_call_ollama` rather than `_oai_agentic_loop` directly: the point
 is what a tool-less caller like the Front Page actually receives.
@@ -95,7 +90,7 @@ def test_the_retry_round_tells_the_model_what_went_wrong(monkeypatch):
 def test_a_tool_less_call_never_blames_an_iteration_budget(monkeypatch):
     """Twice empty is a real failure — but not THAT failure.
 
-    This is the exact string the Front Page parsed and could not read."""
+    That string misleads a tool-less caller like the Front Page."""
     _install(monkeypatch, _msg(""), _msg(""))
 
     text, _ = smr._call_ollama([{"role": "user", "content": "hi"}],
@@ -109,7 +104,7 @@ def test_a_tool_less_call_never_blames_an_iteration_budget(monkeypatch):
 # ── 2. Thinking until the ceiling is not silence ─────────────────────────────
 
 def test_budget_spent_thinking_is_reported_as_that_not_as_an_empty_reply(monkeypatch):
-    """The measured 2026-09-22 shape, twice over."""
+    """Budget spent in reasoning with no content, twice over."""
     _install(monkeypatch,
              _msg("", finish="length", reasoning="d" * 900),
              _msg("", finish="length", reasoning="d" * 900))

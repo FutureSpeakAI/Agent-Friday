@@ -1,4 +1,4 @@
-"""API-level red tests for Incident 2 (2026-08-13) F1 and F5.
+"""API-level tests for the fabricated-completion (F1) and retry-apology (F5) defects.
 
 F1 — the verbatim fabricated-completion transcript must never reach the
 user or the persisted history: "I created daily_context_check.md in your

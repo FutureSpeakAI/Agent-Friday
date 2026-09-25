@@ -1,10 +1,10 @@
 """A hosted model has nothing to load, so it gets no load warning.
 
-Observed 2026-08-30 with `openrouter/auto` seated as the everyday model:
-sending a message raised "This might pause for 30s — openrouter/auto is not
-loaded, so the first reply has to wait for it", in front of a cloud call that
-answered in about a second. The id matched no residency entry, no recorded
-load and no Ollama tag, so the forecast fell through to its flat 30s guess.
+With `openrouter/auto` seated as the everyday model, the id matches no
+residency entry, no recorded load and no Ollama tag, so a forecast that falls
+through to its flat 30s guess says "This might pause for 30s — openrouter/auto
+is not loaded, so the first reply has to wait for it" in front of a cloud call
+that answers in about a second.
 """
 from __future__ import annotations
 

@@ -1,20 +1,13 @@
-"""Gauntlet finding F65, actually closed (2026-09-04, the maintainer's ruling):
-"The temp leak is bounded, not closed -- 79 directories and 3.3 GB since
-the F71 fix, attributed to a ChromaDB lock residual. Either close it or
-state plainly in the finding what the bound is and why it can't be
-exceeded."
+"""Gauntlet finding F65: the temp-home leak must be closed, not merely
+bounded -- "self-heals eventually" is not an acceptable bound without a
+real ceiling behind it.
 
-F65 (round 12) root-caused this precisely but deliberately left it
-unfixed, citing too many same-day changes to test infrastructure already:
-any pytest run that touches conversation_memory (ChromaDB's HNSW index
-writer) reliably leaves data_level0.bin Windows-locked past
+Mechanism: any pytest run that touches conversation_memory (ChromaDB's
+HNSW index writer) reliably leaves data_level0.bin Windows-locked past
 pytest_sessionfinish's entire retry budget (~0.75s across 5 attempts), on
 a completely normal, non-crashed exit -- gc.collect() immediately before
-the retry does not fix it. Between then and now the residual grew from
-88 directories/268MB to 79 directories/3.3GB -- a ~14x jump in average
-size per leaked directory -- which is what prompted the ruling that
-"self-heals eventually" was no longer an acceptable bound without a real
-ceiling behind it.
+the retry does not fix it. The residual per leaked directory can grow to
+gigabytes.
 
 Fix: conversation_memory.close_conversation_memory() explicitly calls the
 singleton's ChromaDB client's own .close() method -- a real, documented
@@ -27,33 +20,21 @@ means there is exactly one PersistentClient per process, so one close()
 call fully releases it rather than dropping one of several shared
 references.
 
-Reproduced directly, both ways, before writing this file: a
-ConversationMemory instance that writes one entry and is torn down
-WITHOUT calling close() fails an immediate shutil.rmtree() with the exact
-WinError 32 F65 documented -- reliably, across a bare script and every
-SAME-PROCESS pytest test below, including with an added 1-second delay
-before the rmtree attempt (this is not a short GC-timing race one extra
-tick would clear, matching F65's own gc.collect() finding). The identical
-setup WITH close() called first succeeds immediately, no retry delay
-needed at all, every time this was tried.
+A ConversationMemory instance that writes one entry and is torn down
+WITHOUT calling close() fails an immediate shutil.rmtree() with WinError
+32 -- reliably, in a bare script and in every SAME-PROCESS pytest test
+below, even with a 1-second delay before the rmtree (this is not a short
+GC-timing race one extra tick would clear). The identical setup WITH
+close() called first succeeds immediately, no retry delay needed.
 
-Honest limit of the end-to-end subprocess check below (Test
-ConftestActuallyCallsItEndToEnd): unlike the same-process reproduction
-above, spawning conversation_memory-touching pytest runs as a genuinely
-SEPARATE subprocess and checking for a leaked temp home afterward did NOT
-reliably reproduce the original bug in this environment when tried
-several times before this fix landed (0 leaks in 4 trials, both against
-tests/unit/test_conversation_memory.py's full suite and a purpose-built
-single-test file matching the tight write-then-exit timing that reliably
-reproduces the leak same-process) -- something about a subprocess's own
-exit sequence releases the handle more reliably than continuing to run
-in the same process does, which was not root-caused further given the
-same-process mechanism is already deterministically proven both
-directions. This test is kept as a genuine, ongoing sanity check (a
-conversation_memory-touching real run should never leak), not cited as
-red-on-revert proof for the fix -- that proof is the
-TestCloseReleasesTheChromaDBLock class above, which did fail cleanly and
-deterministically pre-fix.
+Limit of the end-to-end subprocess check below
+(TestConftestActuallyCallsItEndToEnd): a genuinely SEPARATE pytest
+subprocess does not reliably reproduce the leak even without the fix --
+a subprocess's own exit sequence tends to release the handle. It is kept
+as an ongoing sanity check (a conversation_memory-touching real run should
+never leak), not as red-on-revert proof; that proof is the
+TestCloseReleasesTheChromaDBLock class, which fails deterministically
+without the fix.
 """
 from __future__ import annotations
 
@@ -140,9 +121,8 @@ class TestConftestActuallyCallsItEndToEnd:
         end.py's F47 proof, aimed at F65's specific mechanism instead of
         the sqlite/JSON-file-handle mechanism that one already covers --
         NOT cited as red-on-revert proof of the fix (see this module's
-        own docstring for why: this specific subprocess-based check did
-        not reliably reproduce the original bug even before the fix
-        landed). Kept because a real conversation_memory-touching run
+        own docstring for why: this subprocess-based check does not
+        reliably reproduce the bug even without the fix). Kept because a real conversation_memory-touching run
         leaking is exactly the failure mode worth continuing to watch
         for, whether or not this particular check would catch every
         regression of the underlying fix."""

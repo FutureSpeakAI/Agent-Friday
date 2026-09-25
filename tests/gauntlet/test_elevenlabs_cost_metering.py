@@ -2,8 +2,7 @@
 (services/elevenlabs_tools.py `_tool_speak_text`) makes a real billed API
 call -- its own tool description even says "Costs characters against the
 ElevenLabs quota" -- yet had zero cost_meter references and no PRICING
-entries for its voice models (docs/audits/gauntlet-2026-09-03/
-findings.jsonl, Q11).
+entries for its voice models (findings.jsonl, Q11).
 
 `_tool_speak_text` is a plain module-level function, so this is a real
 behavioral test: monkeypatch the HTTP layer (`_request`) to return a
@@ -13,8 +12,7 @@ id -- not a source-text pin.
 
 Also covers the FRIDAY_TESTING short-circuit that would otherwise make
 this test vacuously pass by never reaching the real code path at all
-(the "evidence didn't travel" class of mistake this audit already caught
-once, F35) -- explicitly patches `_tool_speak_text`'s own internal
+(the "evidence didn't travel" class of mistake, F35) -- explicitly patches `_tool_speak_text`'s own internal
 `os.environ.get("FRIDAY_TESTING")` check out of the way for the duration
 of the call under test.
 """

@@ -154,7 +154,7 @@ class TestPayloadStructure:
         data: they cannot leak the vault because they were never in it.
         Classifying them meant any description containing an ordinary word like
         "contact" or "calendar" was blanked and the model got a tool list it
-        could not read, which protects nothing (see _gate_tools, 2026-08-21).
+        could not read, which protects nothing (see _gate_tools).
 
         So the contract is: first-party descriptions pass, MCP descriptions —
         which arrive at runtime from a third party this repo never vouched for

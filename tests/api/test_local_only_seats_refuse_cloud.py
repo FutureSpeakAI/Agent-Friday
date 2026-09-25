@@ -1,35 +1,27 @@
 """A seat declared local-only cannot be seated on a cloud model.
 
-From a screenshot of Settings > Models, 2026-09-24: the "Memory keeper" seat
-reads "Reads the day and decides what is worth keeping. Local only." while
-showing "Claude Opus 5.5 - cloud - proven - has served 35 min ago".
+A local-only seat such as "Memory keeper" ("Reads the day and decides what is
+worth keeping. Local only.") must never display a cloud model such as
+"Claude Opus 5.5 - cloud - proven - has served 35 min ago".
 
-WHAT ACTUALLY HAPPENED -- established before changing anything, because "is the
-day going to the cloud" deserves evidence, not inference:
+`memory_proposals._ask_seat()` raises `SeatUnavailable` BEFORE any network call
+when the provider is not local, so the rule itself holds at runtime. What must
+also hold around it:
 
-  1. `memory_proposals._ask_seat()` raises `SeatUnavailable` BEFORE any network
-     call when the provider is not local. The rule was already enforced.
-  2. Its orb label "Reading the day" appears ZERO times in friday.log.
-  3. ZERO of 486,810 entries in ~/.friday/vault/egress-log.jsonl mention memory.
-  4. `memory_proposals.propose()` is not in the scheduler's task list at all.
-
-So nothing leaked. The label was accurate as a RULE; three things were wrong
-around it:
-
-  * the UI let a cloud model be SEATED on a local-only seat, leaving the seat in
-    a permanently-refusing state that nothing surfaced;
-  * the "proven - has served 35 min ago" badge is derived per MODEL, not per
-    seat ("Proven means this exact model has actually served this machine"), and
-    Opus 5.5 also holds the reasoning and subagent seats -- so a badge about
-    chat traffic read as evidence that the Memory keeper had been working;
-  * the refusal was a log warning and a False return, which no one sees.
+  * the UI must not let a cloud model be SEATED on a local-only seat, which
+    would leave the seat in a permanently-refusing state that nothing surfaces;
+  * the "proven - has served N min ago" badge is derived per MODEL, not per
+    seat ("Proven means this exact model has actually served this machine"), so
+    a model that also holds other seats can make a badge about chat traffic
+    read as evidence that the Memory keeper has been working;
+  * the refusal must be visible, not only a log warning and a False return.
 
 This file pins the rule in ONE place: the declaration, the save-time refusal and
 the runtime refusal all read `seat_policy.LOCAL_ONLY_SEATS`, so the label and the
-enforcement cannot drift apart again.
+enforcement cannot drift apart.
 
-Deliberately NOT a revival of `_check_local_model_seat_gate`, which is a no-op by
-maintainer decision: that gate refused a user's chosen model for failing a
+Deliberately NOT a revival of `_check_local_model_seat_gate`, which is a
+deliberate no-op: that gate refused a user's chosen model for failing a
 homegrown quality eval. This is a coherence rule -- a seat whose whole point is
 that it never leaves the machine cannot be pointed at a paid API -- which is a
 different claim and a much narrower one.

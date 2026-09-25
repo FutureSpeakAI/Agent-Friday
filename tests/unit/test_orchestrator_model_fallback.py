@@ -11,7 +11,7 @@ bugs and which are only misleading:
     misreport.
   * ``settings.get(k) or "claude-opus-5"`` -- **reachable.** An empty flat key
     survives the merge, and `_sync_capability_routing` propagates only truthy
-    values, so it stays empty and the `or` fires. Measured 2026-09-22: with
+    values, so it stays empty and the `or` fires. Concretely: with
     ``orchestrator_model: ""`` the flat read yields `claude-opus-5` while
     ``capability_routing.reasoning.model`` in the same dict still correctly says
     `claude-sonnet-5`. Two views of one seat, disagreeing.
@@ -138,10 +138,9 @@ def test_manifest_does_not_invent_a_model_from_unreadable_settings(tmp_path):
 #:   1. a line naming a *_model settings key beside a hardcoded Claude id, and
 #:   2. an `or "<claude id>"` fallback expression anywhere.
 #:
-#: Shape 2 exists because `setup_wizard.step_model` ended
-#: `return existing_model or "claude-opus-5"` -- a default shape 1 cannot see,
-#: because that line never mentions the settings key. It was found only when
-#: this guard was widened, after the narrow version had reported clean.
+#: Shape 2 exists because a line like `return existing_model or "claude-opus-5"`
+#: (as `setup_wizard.step_model` once ended) is a default shape 1 cannot see:
+#: it never mentions the settings key, so a shape-1-only guard reports clean.
 #:
 #: Neither shape matches a MENU ENTRY like
 #: `("claude-opus-5", "Claude Opus 5", ...)`. Opus 5 is a real, selectable
@@ -194,9 +193,8 @@ def test_no_call_site_falls_back_to_a_model_that_is_not_the_default():
 def test_the_guard_can_actually_see_both_shapes():
     """A guard that cannot fail is not evidence.
 
-    The two shapes are checked separately because the first version of this
-    guard had only shape 1 and reported CLEAN while `setup_wizard.py:714` still
-    returned `existing_model or "claude-opus-5"`.
+    The two shapes are checked separately because a guard with only shape 1
+    reports CLEAN on `return existing_model or "claude-opus-5"`.
     """
     assert _KEY.search('settings.get("orchestrator_model", "claude-opus-5")')
     assert _CLAUDE_ID.findall('x("orchestrator_model", "claude-opus-5")') \

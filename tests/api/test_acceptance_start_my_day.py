@@ -1,6 +1,6 @@
 """Acceptance tests T1/T2 (docs: toolcall-integrity-v5) — end-to-end through
-POST /api/chat, tying FR-2/FR-4 together against the exact failure shape from
-the 2026-08-12 incident: a "start my day" turn where Google isn't connected
+POST /api/chat, tying FR-2/FR-4 together against a known failure shape:
+a "start my day" turn where Google isn't connected
 and the model narrates fabricated results instead of admitting it can't get
 them.
 
@@ -8,8 +8,8 @@ T3 (chat wrap), T4 (conformance gate red/green), T5 (URL provenance) each
 have their own dedicated test files (test_chat_wrap_css.py,
 test_model_seat_gate.py + test_model_seat_gate_route.py,
 test_response_provenance.py + test_chat_provenance.py) — not duplicated
-here. T6 (real Google data end-to-end after the maintainer authorizes Google and
-seats a green model) requires his own live action and isn't automatable.
+here. T6 (real Google data end-to-end after the user authorizes Google and
+seats a green model) requires a live action and isn't automatable.
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class TestT1HonestInabilityWithNoToolsConnected:
         assert data["tool_trace"] == []
 
     def test_reproduced_incident_shape_is_caught_and_replaced(self, client, monkeypatch):
-        # This is the literal reported shape: bracketed pseudo-tool-calls
+        # The failure shape: bracketed pseudo-tool-calls
         # narrated as prose, an invented meeting, a minted calendar URL, and
         # an invented "outage" excuse when that fake URL would have 404'd.
         confabulation = (

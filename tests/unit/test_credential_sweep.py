@@ -1,10 +1,9 @@
-"""The standing version of the thing that found seven stranded credentials.
+"""A standing sweep for stranded credentials.
 
-On 2026-09-19 seven credentials were found dead, and NOT ONE was found by
-anybody noticing a symptom. Firecrawl presented as "no API key set" while the
-key sat there undecryptable. GitHub presented as a broken MCP server. Drive
-presented as working. Every one turned up because a one-off migration helper
-enumerated a whole class at once, and its first run found five.
+Dead credentials rarely surface as the symptom a person would notice: an
+undecryptable Firecrawl key presents as "no API key set", a stale GitHub token
+as a broken MCP server, and a failing Drive grant as working. Enumerating the
+whole class at once finds them; waiting for symptoms does not.
 
 These tests hold the properties that make the standing version useful rather
 than ignorable: it finds the thing nobody reported, it distinguishes whose
@@ -49,7 +48,7 @@ def only(monkeypatch):
 
 def test_an_unreadable_credential_is_a_problem(only):
     """THE FIRECRAWL CASE. Present, undecryptable, and reported as missing -
-    so the user was told to supply something he had already supplied."""
+    so the user is told to supply something they have already supplied."""
     only([_finding("firecrawl", ch.UNREADABLE)])
     inv = S.inventory()
     assert [p["id"] for p in inv["problems"]] == ["firecrawl"]
@@ -90,8 +89,8 @@ def test_the_two_kinds_of_broken_are_not_conflated(only):
 # ── expiry ──────────────────────────────────────────────────────────────────
 
 def test_an_expired_credential_is_flagged_even_if_it_still_decrypts(only):
-    """The publishing platforms stored an expires_at and never consulted it -
-    a token that expired in August reported as connected in September."""
+    """A stored expires_at must be consulted - otherwise a token that
+    expired last month still reports as connected."""
     only([_finding("linkedin", ch.WORKING, expires_at=time.time() - 60)])
     inv = S.inventory()
     assert inv["problems"][0]["expired"] is True

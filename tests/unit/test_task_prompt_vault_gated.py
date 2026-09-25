@@ -1,4 +1,4 @@
-"""Unit tests for WO-2 item 2 (2026-08-25): background-task system prompts
+"""Unit tests for WO-2 item 2: background-task system prompts
 must be gated for the provider the task actually lands on, not built ungated
 and left to the egress gate's keyword classifier as the only defense.
 
@@ -20,11 +20,10 @@ later) and `_gated_vault_control`.
 
 INJECTION POINT: this uses the vault's "== ACTIVE TASKS ==" section
 (`_build_context_prompt`, model_router.py — hard-tagged TIER_2, unconditional)
-rather than SELF.md/self-knowledge. WO-1 (2026-08-25, same session) made
-self-knowledge always gate-exempt by design — it is Friday's own
-self-description, not the maintainer's personal data — so it is no longer a valid
-TIER_2 probe. Active tasks are genuinely the maintainer's data and remain
-tier-gated exactly as before.
+rather than SELF.md/self-knowledge. WO-1 makes self-knowledge always
+gate-exempt by design — it is Friday's own self-description, not the user's
+personal data — so it is not a valid TIER_2 probe. Active tasks are genuinely
+the user's data and are tier-gated.
 """
 from __future__ import annotations
 

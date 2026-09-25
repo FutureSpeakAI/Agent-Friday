@@ -1,12 +1,8 @@
-"""A claim relayed from the grow-button spec session, investigated 2026-09-03:
-`POST /api/federation/compute/request` (routes/compute.py) had no
-`@login_required`, unlike most of its siblings in the same file, and routes
-to code execution -- so the claim was "unauthenticated arbitrary code
-execution, shipped and running."
+"""`POST /api/federation/compute/request` (routes/compute.py) routes to code
+execution. The question these tests answer: is that "unauthenticated arbitrary
+code execution"? Two separate things are true:
 
-VERIFIED, AND PARTLY WRONG. Two separate things are true here:
-
-1. The DANGEROUS CAPABILITY claim holds completely. receive_job() ->
+1. The DANGEROUS CAPABILITY is real. receive_job() ->
    accept_job() gates on nothing but a caller-SELF-REPORTED
    `requester_trust_score` (services/compute_provider.py:171); capability
    "analysis.run" then runs the caller's own `prompt` field as a Python
@@ -16,27 +12,21 @@ VERIFIED, AND PARTLY WRONG. Two separate things are true here:
    harmless payload through the real HTTP route and the real background
    execution thread -- no mocks anywhere in that chain.
 
-2. The "unauthenticated / no auth decorator" framing does NOT mean what it
-   sounds like. `core.check_auth()` (`@app.before_request`, core/__init__.py
-   :2499) runs before EVERY route in this app, decorated or not, and already
-   fail-closes any non-loopback caller with no FRIDAY_REMOTE_KEY. Verified
-   empirically below: a non-loopback caller hitting the undecorated
-   receive_job() got 401 BEFORE any decorator was added to this file, and a
-   `@login_required`-decorated sibling (active_jobs) produces the identical
-   401 for the identical caller. The decorator makes zero difference to
-   enforcement outcome for either the network vector or the loopback vector
-   -- loopback bypasses BOTH check_auth and login_required identically. It
-   was added to routes/compute.py anyway (three routes: receive_job,
-   job_status, receive_result), for consistency with the file's own pattern
-   and as an independent second layer, not because it closes a gap that
-   existed. This file's tests prove that framing precisely, not the
-   originally-relayed one.
+2. "Unauthenticated" is not accurate. `core.check_auth()`
+   (`@app.before_request`, core/__init__.py) runs before EVERY route in this
+   app, decorated or not, and fail-closes any non-loopback caller with no
+   FRIDAY_REMOTE_KEY. The tests below show a non-loopback caller gets the same
+   401 from receive_job() as from a `@login_required`-decorated sibling
+   (active_jobs). The decorator makes no difference to the enforcement outcome
+   for either the network vector or the loopback vector -- loopback bypasses
+   BOTH check_auth and login_required identically. routes/compute.py carries
+   `@login_required` on receive_job, job_status and receive_result for
+   consistency and as an independent second layer.
 
-The REAL remaining risk -- any LOOPBACK caller (i.e., any process running as
-The maintainer, not just his browser) gets free code execution here via a trust
-check that is a self-reported float -- is unchanged by this fix and cannot
-be closed by an auth decorator. It is reported, not silently redesigned;
-see the session's report to the maintainer.
+The remaining risk -- any LOOPBACK caller (any process running as the user,
+not just the browser) reaching code execution via a trust check that is a
+self-reported float -- cannot be closed by an auth decorator. The governance
+checkpoint holds such a job for the owner's approval (see below).
 """
 from __future__ import annotations
 
@@ -85,7 +75,7 @@ class TestArbitraryCodeExecutionIsReal:
 
     def test_loopback_caller_gets_a_script_executed_only_after_the_owner_approves(
             self, client, tmp_path, monkeypatch):
-        """Gated since 2026-09-24: a peer's job passes the governance
+        """A peer's job passes the governance
         checkpoint and waits on an approval card. Approved, it runs."""
         from agent_friday.services import approvals
         monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
@@ -108,7 +98,7 @@ class TestArbitraryCodeExecutionIsReal:
             # login." That IS this app's accepted trust boundary; the point
             # of this test is that "trusted local user" here means "any
             # process able to reach this loopback port with a self-reported
-            # trust score", not "the maintainer, specifically".
+            # trust score", not "the user, specifically".
         )
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert _wait_for_marker(marker, timeout=15.0), (
@@ -133,7 +123,7 @@ class TestArbitraryCodeExecutionIsReal:
 
 
 class TestNetworkExposureClaimWasWrong:
-    """The part of the relayed claim that does NOT hold: `check_auth()`'s
+    """The part of the claim that does NOT hold: `check_auth()`'s
     global before_request hook already fail-closes a non-loopback caller
     for EVERY route in the app, with or without @login_required. Proven by
     comparing receive_job (this file's target) against active_jobs (an

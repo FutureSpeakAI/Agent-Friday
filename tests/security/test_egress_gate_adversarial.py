@@ -118,13 +118,12 @@ class TestMultiField:
     def test_untrusted_mcp_tool_description_redacted(self):
         """A THIRD-PARTY tool description carrying sensitive content is withheld.
 
-        Scoped to MCP tools (2026-08-21). Descriptions arriving from an MCP
+        Scoped to MCP tools. Descriptions arriving from an MCP
         server are authored off-machine and are not something this repository
         vouched for, so they are still gated. See
-        test_first_party_tool_descriptions_survive for the other half — the
-        original version of this test used a bare name ("t") and so asserted
-        the rule over first-party tools too, which is what caused the model to
-        be handed an unreadable tool list on every cloud-fallback turn.
+        test_first_party_tool_descriptions_survive for the other half: gating
+        first-party tools too hands the model an unreadable tool list on
+        every cloud-fallback turn.
         """
         sealed = eg.seal_outbound(
             {"messages": [{"role": "user", "content": "hi"}],
@@ -139,8 +138,8 @@ class TestMultiField:
     def test_first_party_tool_descriptions_survive(self):
         """First-party descriptions reach the model intact.
 
-        They are static literals in this repository (189 of them in agent.py,
-        zero f-strings as of 2026-08-21) and therefore cannot contain the
+        They are static literals in this repository (no f-strings) and
+        therefore cannot contain the
         user's data — a description is documentation, not user content. Gating
         them blanked any tool whose description mentioned an ordinary word like
         "contact" or "family", including the contacts tool describing what it

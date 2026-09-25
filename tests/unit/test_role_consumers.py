@@ -17,9 +17,9 @@ These are STATIC checks. `verify()` parses the named consumer module and
 asserts the symbol exists and the seat key is read there. It cannot prove the
 read happens on a live path -- a consumer behind a dead branch passes.
 
-The stronger form is a runtime recorder, declined on 2026-08-23 because seat
-reads are scattered across ~18 sites in 13 modules and funnelling them would
-mean a cross-cutting refactor of files other sessions were editing. The
+The stronger form is a runtime recorder, declined because seat reads are
+scattered across ~18 sites in 13 modules and funnelling them would mean a
+cross-cutting refactor. The
 weakness is documented at length in services/role_consumers.py. Do not read a
 pass here as proof that a seat is live on any real request.
 
@@ -53,9 +53,9 @@ KNOWN_ORPHANS = {
 # Seats that reach their consumer through a legacy flat key rather than by
 # capability name. core._CAP_FLAT_MAP defines the link; _sync_capability_routing
 # keeps the pair congruent. Listed explicitly because MISSING one of these is
-# how 'voice' was wrongly filed as an orphan on 2026-08-23 -- the AST check
-# looked for the capability name, the consumer read the mirror, and the seat
-# looked dead while being perfectly live.
+# how 'voice' gets wrongly filed as an orphan -- the AST check looks for the
+# capability name, the consumer reads the mirror, and the seat looks dead
+# while being perfectly live.
 MIRRORED_SEATS = {"reasoning", "subagent", "creative_image", "creative_music",
                   "voice"}
 
@@ -173,10 +173,9 @@ def test_mirrored_seats_match_core_cap_flat_map():
 def test_mirrored_seat_orphan_verdicts_account_for_the_mirror(seat):
     """A mirrored seat called an orphan must say the MIRROR was checked too.
 
-    This is the regression guard for the 2026-08-23 false positive. 'voice'
-    was filed as dead because the AST check looked for the capability name
-    while services/voice_engine.py reads settings['voice_model'] -- the
-    mirror. The seat was live the whole time. A mirrored seat is exactly the
+    This guards a known false positive: 'voice' reads as dead if the AST
+    check looks only for the capability name, because
+    services/voice_engine.py reads settings['voice_model'] -- the mirror. A mirrored seat is exactly the
     case where "no literal in the consumer module" does NOT mean "unread", so
     declaring one dead requires having looked at the other key and said so.
     """

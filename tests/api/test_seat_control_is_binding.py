@@ -1,12 +1,11 @@
 """The seat control is binding, and when it cannot bind it says so.
 
-Observed 2026-09-18 from the persisted chat records and friday.log: the
-picker wrote `capability_routing.reasoning = gemma4:12b` (not installed;
-Ollama held zero models, the only local weights were the FridayWeaver e2b
-set), the save returned 200, the UI announced success, `local_seats.resolve`
-substituted e2b at INFO, and -- Computer Control being on -- the chat route
-then sent every turn to claude-sonnet-5 with a print() to a stdout nobody
-reads. The user asked three times for the local model and was told "Done".
+The failure this pins: the picker writes `capability_routing.reasoning =
+gemma4:12b` (not installed), the save returns 200, the UI announces success,
+`local_seats.resolve` substitutes another model at INFO, and -- Computer
+Control being on -- the chat route sends every turn to a cloud model with a
+print() to a stdout nobody reads. The user asks for the local model and is
+told "Done" while never getting it.
 
 Four things that could fail:
 
@@ -147,8 +146,8 @@ def test_a_substituted_seat_is_announced_in_the_turn(client, monkeypatch):
     """The picker holds gemma4:12b (not installed); the router substitutes the
     installed FridayWeaver seat. The turn must say so -- on the response and
     as a system line -- instead of an INFO line in a log nobody reads.
-    (Live on 2026-09-18 a scratch conversation was created bound to the
-    serving seat, so this path is pinned here rather than by a live turn.)"""
+    (A fresh conversation is bound to the serving seat, so this path is
+    pinned here rather than by a live turn.)"""
     local, cloud = _arrange_turn(monkeypatch, reasoning_model="gemma4:12b")
     from agent_friday.routing import model_router as _rm
     monkeypatch.setattr(_rm.ModelRouter, "_chosen_seat",

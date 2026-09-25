@@ -1,15 +1,15 @@
-"""The approval loop of 2026-09-22, and the two holes found underneath it.
+"""The approval loop, and the two holes underneath it.
 
-WHAT HAPPENED
+THE FAILURE
 
-Stephen asked Friday to open a file it had said it wrote. Friday asked
-"Would you like me to create bold-panel-prep.md?" and then asked it again,
-five times, through two plain approvals:
+The user asks Friday to open a file it said it wrote. Friday asks "Would you
+like me to create bold-panel-prep.md?" and then asks it again, five times,
+through two plain approvals:
 
-    Stephen: "um, sure"
-    Friday:  "Would you like me to create bold-panel-prep.md?"
-    Stephen: "I just authorized that, so yes."
-    Friday:  "Would you like me to create ~/Friday Creations/bold-panel-prep.md?"
+    User:   "um, sure"
+    Friday: "Would you like me to create bold-panel-prep.md?"
+    User:   "I just authorized that, so yes."
+    Friday: "Would you like me to create ~/Friday Creations/bold-panel-prep.md?"
 
 THE INVARIANTS THESE TESTS PIN
 
@@ -17,21 +17,20 @@ THE INVARIANTS THESE TESTS PIN
      other request.
   2. A gate may not ask the same question twice without new information.
 
-Both were violated, in opposite directions, by the same design: the grant was
-a single session-wide boolean (`confirm_granted`) and the pending action was a
-single slot keyed only by session id.
+A single session-wide boolean grant (`confirm_granted`) with a single pending
+slot keyed only by session id violates both, in opposite directions:
 
-  * It answered NO particular question, so a yes for one file would authorise
+  * It answers NO particular question, so a yes for one file would authorise
     a write to any other file - `test_a_yes_for_one_file_does_not_authorise_another`.
   * `_current_session_id()` returns the calendar DATE, so every surface open
-    that day shares one slot. The front page and the chat tab clobbered each
-    other's pending action, and a yes typed in one granted the other's -
-    `TestTwoSurfacesOneDay`. Stephen asked whether having the front page open
-    mattered; it did, and this is the test that says how.
-  * And it never terminated, because `_is_affirmative` was a start-anchored
-    match over a fixed vocabulary. "um, sure" has filler in front of it and
-    "I just authorized that, so yes." has the yes at the end. Neither could
-    ever match - `TestTheLoopItself`.
+    that day shares one slot. The front page and the chat tab clobber each
+    other's pending action, and a yes typed in one grants the other's -
+    `TestTwoSurfacesOneDay`. Having the front page open while chatting
+    matters, and that class says how.
+  * And it never terminates if `_is_affirmative` is a start-anchored match
+    over a fixed vocabulary. "um, sure" has filler in front of it and
+    "I just authorized that, so yes." has the yes at the end. Neither can
+    match such a pattern - `TestTheLoopItself`.
 
 WHY THE LOOP IS A SAFETY BUG AND NOT AN ANNOYANCE
 
@@ -95,7 +94,7 @@ def _text(verdict) -> str:
 
 class TestTheLoopItself:
 
-    #: Stephen's turns, verbatim, in order.
+    #: The user's turns from the looping conversation, verbatim, in order.
     TRANSCRIPT = [
         "open it a new tab please",
         "You just told me that you did that already.",
@@ -118,7 +117,7 @@ class TestTheLoopItself:
                 wrote.append(i)
         assert wrote, (
             "five turns including two plain approvals and the file was still "
-            "never written - this is the reported loop")
+            "never written - this is the approval loop")
 
     @pytest.mark.parametrize("reply", [
         "um, sure",
@@ -134,7 +133,7 @@ class TestTheLoopItself:
     def test_a_yes_in_ordinary_english_is_heard(self, reply):
         """Every one of these is unambiguously an approval to a human reader.
 
-        The first two are Stephen's own words; the rest are the same two
+        The first two are from the looping conversation; the rest are the same two
         shapes - leading filler, and a yes in final position - which the old
         start-anchored pattern could not see by construction.
         """
@@ -252,13 +251,13 @@ class TestTheGrantIsBoundToTheAction:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  3. TWO SURFACES, ONE DAY  — Stephen's concurrency question
+#  3. TWO SURFACES, ONE DAY  — the concurrency question
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestTwoSurfacesOneDay:
-    """He had the front page open while chatting, and asked whether that
-    mattered. It did: `_current_session_id()` is the calendar date, so both
-    surfaces share one pending-confirmation bucket."""
+    """Having the front page open while chatting matters:
+    `_current_session_id()` is the calendar date, so both surfaces share one
+    pending-confirmation bucket."""
 
     def test_the_session_id_really_is_shared(self):
         from agent_friday.services.model_router import _current_session_id
@@ -277,7 +276,7 @@ class TestTwoSurfacesOneDay:
             "the second surface overwrote the first surface's pending action")
 
     def test_a_yes_on_one_surface_does_not_grant_the_others_action(self):
-        """The leak, stated as the user would experience it: he answers the
+        """The leak, stated as the user would experience it: they answer the
         front page and the chat tab quietly writes a file."""
         chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {})
         _gate("write_file", {"path": "brief.md"}, chat)
@@ -377,7 +376,7 @@ class TestNothingElseMoved:
 
 class TestThroughExecuteTool:
     """Everything above drives `_hook_confirmation_gate`. That is the unit
-    that was wrong, but it is not what Stephen touched.
+    that was wrong, but it is not what the user touches.
 
     `_execute_tool` is the entry the model's tool call actually arrives at,
     with the hook chain, the governance rings and the dispatch behind it. A
@@ -396,7 +395,7 @@ class TestThroughExecuteTool:
         monkeypatch.setattr(agent, "_sandbox_policy",
                             lambda name, inp: (True, ""))
 
-    def test_stephens_transcript_ends_with_the_file_on_disk(self, tmp_path):
+    def test_owners_transcript_ends_with_the_file_on_disk(self, tmp_path):
         target = tmp_path / "bold-panel-prep.md"
         replies = []
         for msg in TestTheLoopItself.TRANSCRIPT:

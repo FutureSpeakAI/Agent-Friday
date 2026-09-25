@@ -1,10 +1,9 @@
 """The setup wizard must never hard-code the bundled/floor model — H3.
 
-The 2026-08-26 sweep (`7da7798`) replaced a hand-typed ``'gemma3:4b'`` — the
-one row in `model_plan._BRAINS` that cannot call tools — with
-`model_plan.FLOOR_MODEL` at five Python call sites, but the setup wizard's own
-HTML/JS was outside that sweep's reach (`headroom.md` §2.9, defect H3-in-UI).
-`WizardGemmaPull` now reads the floor model from `hw.floor_model`, served by
+Python call sites use `model_plan.FLOOR_MODEL` rather than a hand-typed
+``'gemma3:4b'`` — the one row in `model_plan._BRAINS` that cannot call tools —
+and the setup wizard's own HTML/JS must do the same (`headroom.md` §2.9,
+defect H3-in-UI). `WizardGemmaPull` reads the floor model from `hw.floor_model`, served by
 `/api/health/full` from `model_plan.FLOOR_MODEL` (`routes/platform.py`),
 instead of a literal — this test holds that fix from drifting back, and it is
 built on the same phantom-literal shape as

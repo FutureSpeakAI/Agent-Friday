@@ -1,23 +1,16 @@
-"""Finished cards leave the tray; resume handles do not (2026-09-22).
+"""Finished cards leave the tray; resume handles do not.
 
-  "there are tons of leftover notifications for interrupted and completed
-   processes we ran previously; they never went away. We need to be able to
-   remove them manually (I don't see an 'x' on these) and after a set amount
-   of time... This also seems like a good place to put a resume button for
-   interrupted processes."
+Finished and interrupted task cards must not accumulate forever: each can be
+dismissed by hand, ages out after a set time, and an interrupted card offers a
+resume button. The notification QUEUE is capped separately; this is about the
+tray's TASKS section, where a terminal record otherwise never leaves and the ✕
+on a running card means *cancel*, not dismiss.
 
-Measured before building: the notification QUEUE was fine — 200 entries at the
-cap, 197 already dismissed, 3 unread. The tray's TASKS section was the
-problem: 81 task records, every one terminal, none ever leaving. The ✕ only
-appeared while a task was running, where it meant *cancel*, so a finished card
-had no control at all.
-
-The dangerous version of this fix is a single `max_age_hours` sweep. Fifteen
-of those 81 were interrupted tasks, and some of them hold resume checkpoints —
-the handles on unfinished work that the whole checkpoint effort exists to
-offer. Expiring those on the same clock as a receipt would quietly delete
-exactly what was being preserved. So the lifetimes are per-class, and a
-resumable card has no clock at all.
+A single `max_age_hours` sweep is the dangerous version. Interrupted tasks can
+hold resume checkpoints — the handles on unfinished work that the checkpoint
+machinery exists to offer. Expiring those on the same clock as a receipt would
+quietly delete exactly what is being preserved. So the lifetimes are
+per-class, and a resumable card has no clock at all.
 """
 
 import pathlib
@@ -93,7 +86,7 @@ def test_an_interrupted_task_with_nothing_saved_does_age_out(monkeypatch):
 
 
 def test_a_broken_visibility_check_shows_the_row(monkeypatch):
-    """A bug in this function must never be able to hide work from him."""
+    """A bug in this function must never be able to hide work from the user."""
     monkeypatch.setattr(tl, "tray_hours",
                         lambda s: (_ for _ in ()).throw(RuntimeError("x")))
     assert tl.visible(_row("complete", 500), now=NOW) is True

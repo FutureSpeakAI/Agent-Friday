@@ -49,8 +49,7 @@ def test_local_reach_is_full_and_quiet():
 def test_cloud_reach_reads_the_real_table_by_default(monkeypatch):
     """The default path must consult the live declarations, not a comment.
 
-    Flipped 2026-09-16 (voice-system-clean-sheet.md §4.5): the table now
-    carries `ask_friday`, so the knowledge graph and memory ARE reachable --
+    Per voice-system-clean-sheet.md §4.5, the table carries `ask_friday`, so the knowledge graph and memory ARE reachable --
     through the local model, WHEN that model is proven -- and the notice goes
     quiet in favour of the honesty line that names the relay."""
     monkeypatch.setattr(rv, "_local_mind_proven", lambda: True)
@@ -62,9 +61,9 @@ def test_cloud_reach_reads_the_real_table_by_default(monkeypatch):
 
 
 def test_cloud_reach_relay_is_not_reach_when_the_local_mind_is_unproven(monkeypatch):
-    """§3.1: a relay to a model that is not there is not reach. On
-    2026-09-16 the reach line claimed full context via the local model in
-    the same payload whose manifest said the local model was unavailable."""
+    """§3.1: a relay to a model that is not there is not reach. The reach
+    line must not claim full context via the local model in the same payload
+    whose manifest says the local model is unavailable."""
     monkeypatch.setattr(rv, "_local_mind_proven", lambda: False)
     r = rv._voice_context_reach("gemini", ["query_calendar", "ask_friday"])
     assert r["full_context"] is False and r["via_local"] is False
@@ -92,8 +91,8 @@ def test_effective_tts_piper_is_piper(eng):
 def test_effective_tts_kokoro_serves_on_cuda_even_on_cpu_tier(eng, monkeypatch):
     """The spec's F4 said Piper serves when Kokoro is selected on the cpu
     tier. The code decides Kokoro's device from torch's CUDA view, not the
-    NeMo tier, and friday.log shows 'kokoro load ... device=cuda' on
-    2026-09-10. The effective block must report what actually happens."""
+    NeMo tier, and friday.log shows 'kokoro load ... device=cuda' in that
+    configuration. The effective block must report what actually happens."""
     import agent_friday.services.kokoro_voice as kv
     monkeypatch.setattr(kv, "kokoro_available", lambda: True)
     monkeypatch.setattr(kv, "kokoro_gpu_status",

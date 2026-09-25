@@ -1,21 +1,18 @@
 """The provider you pick in setup must be the provider you get.
 
 The setup wizard asks "Choose your primary AI provider" and offers
-Anthropic, OpenAI and Ollama (local). It wrote the answer to `provider`
-and never touched `model_routing.mode` — grep the module before this
-change and there are zero matches for `model_routing`.
+Anthropic, OpenAI and Ollama (local). Writing the answer only to `provider`
+without touching `model_routing.mode` is not enough.
 
-`mode` is what routes an actual turn. So picking "Ollama (local)" left
-the machine on the factory `cloud_only`, and picking a cloud provider
-with no key left it there too. Every fresh install landed on cloud_only
-no matter what was answered.
+`mode` is what routes an actual turn. So picking "Ollama (local)" without
+setting it leaves the machine on the factory `cloud_only`, and every fresh
+install lands on cloud_only no matter what was answered.
 
-Until 2026-08-26 that was invisible, because routes/chat.py had a keyless
-safety net that silently ran the turn on Ollama whenever no Anthropic key
-was present. Removing that rescue for cloud_only users (the second user's bug: she
-chose cloud only and was answered locally anyway) makes this gap load
-bearing in the other direction — someone who deliberately chose a local
-model, and gave no cloud key, would now be told to add one.
+A keyless safety net that silently runs the turn on Ollama whenever no
+Anthropic key is present would hide that, but it also answers a user who
+chose cloud only locally, so there is none for cloud_only users. That makes
+this gap load bearing in the other direction — someone who deliberately
+chose a local model, and gave no cloud key, would be told to add one.
 
 Both halves have to be true at once:
 
@@ -73,8 +70,8 @@ def test_the_block_is_complete_not_a_partial_reset():
 def test_an_existing_choice_is_preserved_not_clobbered():
     """Re-running setup must not silently undo a mode set later in the UI.
 
-    The seat-binding bug of 2026-08-24 was exactly this shape: a planner
-    recomputing a value the user had already chosen, on every run.
+    The seat-binding bug class has exactly this shape: a planner recomputing
+    a value the user has already chosen, on every run.
     """
     existing = {"mode": "smart", "ollama_url": "http://box.lan:11434"}
     block = wiz._routing_block_for("anthropic", existing,

@@ -1,4 +1,4 @@
-"""Gauntlet finding F57 (claim-corpus sweep, 2026-09-04):
+"""Gauntlet finding F57 (claim-corpus sweep):
 research/harness.py's _pseudo_toolcall_check() called
 tool_integrity.find_pseudo_toolcalls(text) with only one argument, but that
 function requires a second, REQUIRED tool_names argument. Every call raised

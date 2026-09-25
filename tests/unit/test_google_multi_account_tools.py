@@ -1,9 +1,7 @@
-"""Multi-account Google read path for the chat-facing built-in tools (docs:
-fix/toolcall-integrity-v5, 2026-08-13).
+"""Multi-account Google read path for the chat-facing built-in tools.
 
-Both of the maintainer's accounts landed correctly in the multi-account store
-(verified live against production data: accounts.json lists both,
-credentials_for() returns valid credentials for both). But
+Two accounts can land correctly in the multi-account store (accounts.json
+lists both, credentials_for() returns valid credentials for both). But
 _tool_query_calendar / _tool_search_email / connectors._status_for_google
 only ever consulted the PRIMARY account via the single-account bridge
 (calendar_engine._google_credentials() -> google_accounts.primary_credentials())
@@ -170,10 +168,10 @@ class TestSearchEmailMultiAccount:
                             lambda limit=25: ([{"subject": "cached", "sender": "x", "snippet": "y"}], "cache"))
         blob = agent_mod._tool_search_email({"query": ""})
         result = json.loads(blob)
-        # CHANGED 2026-09-09. This asserted connected is True while zero Google
-        # accounts existed -- cached mail labelled as a live connection, the
-        # same presence-is-not-function error that cost Stephen nine days on
-        # the calendar side. The cache fallback is still the right path here;
+        # Asserting connected is True while zero Google accounts exist would
+        # label cached mail as a live connection -- the same
+        # presence-is-not-function error that hid a broken calendar account
+        # for days. The cache fallback is still the right path here;
         # calling it "connected" was not. The results must arrive marked as
         # cache so the model can say so instead of reading them out as the
         # current inbox.
@@ -224,11 +222,10 @@ class TestConnectorStatusMultiAccount:
         by_label = {a["label"]: a["status"] for a in status["accounts"]}
         assert by_label["Personal"] == "connected"
         assert by_label["Work"] == "needs_reauth"
-        # CHANGED 2026-09-09. This previously asserted that the overall status
-        # "still reflects SOME account working" -- i.e. green. That expectation
-        # was the bug: a green badge told Stephen his Google was fine while one
-        # of two accounts had needed re-auth for nine days, and his calendar was
-        # silently half-empty through two job interviews. The aggregate is only
+        # The overall status must not "still reflect SOME account working" --
+        # i.e. green. A green badge says Google is fine while one of two
+        # accounts has needed re-auth for days and the calendar is silently
+        # half-empty. The aggregate is only
         # `connected` when EVERY account is; a partial failure is a failure the
         # user has to be able to see.
         assert status["status"] == "error"

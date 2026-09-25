@@ -2,13 +2,13 @@
 
 THE DEFECT THIS PINS (5.6.6)
 ----------------------------
-`step_vault_password` opened with "Generate a random passphrase for me?"
-defaulting to YES, and never looked at whether a vault already existed. The
-Windows installer runs the wizard at step 12 on EVERY run, including every
-upgrade. So an existing user pressing Enter through an upgrade minted a fresh
-passphrase over a vault encrypted under the old one — AES-256-GCM over an
-Argon2id key derived from (passphrase, salt). The ciphertext stays, the key
-changes, the data is gone. It reported success.
+If `step_vault_password` opens with "Generate a random passphrase for me?"
+defaulting to YES without looking at whether a vault already exists, then --
+because the Windows installer runs the wizard at step 12 on EVERY run,
+including every upgrade -- an existing user pressing Enter through an upgrade
+mints a fresh passphrase over a vault encrypted under the old one
+(AES-256-GCM over an Argon2id key derived from (passphrase, salt)). The
+ciphertext stays, the key changes, the data is gone, and it reports success.
 
 The installer half of this (app.copy deleting app\\start.bat, the passphrase's
 only automatic home) is proven separately by a published-asset upgrade
@@ -16,7 +16,7 @@ rehearsal; it cannot be reached from pytest. This file covers the wizard half.
 
 The tests drive the DANGEROUS input on purpose: every prompt answered by
 pressing Enter, i.e. `Prompt.ask`/`Confirm.ask` returning their own defaults.
-That is the path a real upgrading user takes, and it is the path that used to
+That is the path a real upgrading user takes, and it is the path that can
 destroy the vault. A test that typed careful answers would prove nothing.
 """
 from __future__ import annotations
@@ -118,8 +118,8 @@ def test_existing_vault_keeps_passphrase_from_keyring(vault, enter_only, monkeyp
 def test_lost_passphrase_does_not_silently_mint_a_new_one(vault, enter_only):
     """Vault present, passphrase gone. Pressing Enter must NOT generate one.
 
-    This is the case the maintainer singled out: "that is a situation to stop and
-    explain, not to paper over by generating a new one." The default answer is
+    That is a situation to stop and explain, not to paper over by generating a
+    new one. The default answer is
     'leave it unset', which keeps the old ciphertext recoverable if the
     passphrase turns up later.
     """
@@ -193,11 +193,10 @@ def test_fresh_install_pressing_enter_skips_rather_than_generating(vault, enter_
 def test_holding_enter_through_the_vault_screen_terminates(vault, enter_only):
     """A hang here is a hung install.
 
-    The wizard runs in the FOREGROUND at installer step 12. The first draft of
-    the rewritten screen re-entered itself on every empty answer, so a user
-    pressing Enter -- no passphrase, then declining the skip -- looped forever.
-    pytest caught it as a RecursionError; a real user would have seen the
-    installer stop with no explanation.
+    The wizard runs in the FOREGROUND at installer step 12. A screen that
+    re-enters itself on every empty answer loops forever for a user pressing
+    Enter -- no passphrase, then declining the skip. pytest sees that as a
+    RecursionError; a real user sees the installer stop with no explanation.
     """
     got = w.step_vault_password(12, "")     # every prompt answered with Enter
     assert got == ""

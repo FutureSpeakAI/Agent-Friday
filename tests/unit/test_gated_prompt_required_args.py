@@ -1,4 +1,4 @@
-"""Unit tests for the WO-2 chokepoint followup (2026-08-25): making
+"""Unit tests for the WO-2 chokepoint followup: making
 `provider`/`vault_control` required, keyword-only arguments on
 `_get_friday_system_prompt`, plus the static AST checker
 (scripts/check_gated_prompt_callers.py) that makes a missing decision loud at

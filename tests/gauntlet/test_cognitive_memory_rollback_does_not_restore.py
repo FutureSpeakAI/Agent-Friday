@@ -1,5 +1,5 @@
-"""Gauntlet finding F72 (2026-09-04, seam 13/SkillOpt investigation,
-externally sourced): CognitiveMemory.memory_rollback() is named, and was
+"""Gauntlet finding F72 (seam 13/SkillOpt investigation, externally
+sourced): CognitiveMemory.memory_rollback() is named, and was
 documented, as a point-in-time restore -- "Roll back all writes that
 occurred after `timestamp`". It is not one. write_memory() keeps no
 per-key history (a second write unconditionally overwrites the first's
@@ -11,11 +11,8 @@ the codebase ever reads back from (confirmed by a repo-wide grep), so
 the net effect for any key written both before AND after the cutoff is
 that it disappears entirely: not the old value, not the new one, nothing.
 
-This is a genuine, severe, externally-reported finding (the maintainer
-commissioned an outside review of the public v5.10.0 repo; this specific
-claim was verified by the external reviewer executing the scoring
-functions, and re-verified here against current code before logging).
-Reachable today via a real POST /api/memory/rollback route
+This is a genuine, severe finding from an outside review of the public
+v5.10.0 repo, reproduced against current code. Reachable via a real POST /api/memory/rollback route
 (@login_required, routes/insights.py), though no UI currently calls it.
 
 This probe is deliberately not named "test_..._is_fixed" -- it PINS the
@@ -25,7 +22,7 @@ honestly (and this test is rewritten to match) or the gap stays visible
 rather than being silently rediscovered. Whether Friday should have a
 real point-in-time restore (which would require adding version history
 to write_memory() -- a real architecture change to a security-adjacent
-memory primitive) is a decision for the maintainer, not made here.
+memory primitive) is a product decision, not made here.
 """
 from __future__ import annotations
 

@@ -17,21 +17,14 @@ websocket test. This probe follows that precedent: it asserts the refusal
 check exists AND runs before any Gemini client/key work, not just that
 the string exists somewhere in the file.
 
-CORRECTION (2026-09-04, caught by an independent cold re-verification of
-this fix): the original version of this probe searched ws_live's body for
-the bare substring "local_only", and the ledger's evidence claimed that
-substring had "zero" occurrences pre-fix. Both were wrong in a way that
-happened to still work: ws_live's body already contained exactly one
+Why the probe pins `_ws_local_only` and not the bare substring
+"local_only": ws_live's body already contained exactly one
 `local_only` match pre-fix, from an unrelated call, `_vault_local_only()`
 (a vault-scoped setting, nothing to do with model_routing.mode) --
-sitting well after this function's `resolve_gemini_key` call. The probe's
-first assertion (`"local_only" in body`) therefore already passed
-pre-fix; only the SECOND assertion (ordering relative to
-`resolve_gemini_key`) actually forced a real pre-fix failure, and only by
-coincidence of where that unrelated call happened to sit in the function.
-Rewritten to pin the fix's own variable name, `_ws_local_only` -- which
-grep-confirmed did not exist anywhere in this file before the fix commit
-(cdeed3d) -- so a match can only ever be the real model-routing gate, not
+sitting well after this function's `resolve_gemini_key` call. A bare
+`"local_only" in body` assertion therefore passes without the fix. The
+fix's own variable name, `_ws_local_only`, did not exist anywhere in this
+file before the fix, so a match can only ever be the real model-routing gate, not
 an incidental, differently-scoped `local_only` string elsewhere in the
 same function.
 """

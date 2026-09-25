@@ -1,7 +1,6 @@
-"""Regression tests for the 2026-07-06 Gemini Live tuning pass.
+"""Regression tests for the Gemini Live tuning.
 
-Pins the fixes for the maintainer's three Tier-3 requirements, grounded in Google's
-current Live API docs:
+Pins three Tier-3 requirements, grounded in Google's current Live API docs:
   - barge-in ON by default (was NO_INTERRUPTION → voice wouldn't interrupt),
   - context-window compression ON by default (removes the ~15-min session cap),
   - the fallback chain / model config stay coherent.
@@ -68,7 +67,7 @@ class TestModelChainStillValid:
 
 class TestToolChoreography:
     """announce → act → confirm — pins the fix for the on-stage freeze/stutter
-    during voice tool execution (news-reading demo, 2026-07-08)."""
+    during voice tool execution (e.g. reading the news aloud)."""
 
     def test_choreography_block_exists_and_orders_the_contract(self):
         from agent_friday.routes.voice import VOICE_TOOL_CHOREOGRAPHY as c

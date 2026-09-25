@@ -1,9 +1,9 @@
 """Google OAuth redirect_uri is pinned to loopback, not derived from the
-request Host header (docs: toolcall-integrity-v5, 2026-08-13).
+request Host header (docs: toolcall-integrity-v5).
 
-The maintainer's consent attempt died with Error 400 invalid_request: he reaches
-Friday via a hosts-file alias (http://agent.friday/), and both Google
-connectors previously built their "web" client_type redirect_uri from
+A consent attempt dies with Error 400 invalid_request when a user reaches
+Friday via a hosts-file alias (http://agent.friday/) and the Google connectors
+build their "web" client_type redirect_uri from
 request.host_url — Google's secure-response-handling policy rejects ANY
 plain-HTTP non-loopback redirect_uri outright (checked against the literal
 URI; DNS/propagation never fixes it). Mirrors mcp_oauth.py's

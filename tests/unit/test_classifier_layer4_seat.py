@@ -42,11 +42,11 @@ def test_the_seat_is_never_one_the_daemon_cannot_serve(daemon, monkeypatch):
 
     `local_seats.installed()` deliberately MERGES two registries: Ollama's tags
     and Friday's own llama-server runtime store. Layer 4 talks only to Ollama.
-    The first version of this fix resolved against the merged view, got
-    `gemma4:12b` — a real model, served by llama-server, absent from Ollama —
-    and the daemon answered 404 in 0.0s, which the layer reported as "no
-    opinion". Swapping a hardcoded name for a resolved one fixed nothing,
-    because the registry consulted was not the registry that serves the call.
+    Resolving against the merged view yields `gemma4:12b` — a real model,
+    served by llama-server, absent from Ollama — and the daemon answers 404
+    in 0.0s, which the layer reports as "no opinion". Swapping a hardcoded
+    name for a resolved one fixes nothing unless the registry consulted is
+    the registry that serves the call.
     """
     from agent_friday.services import local_seats
     # Ollama has one model; the merged view also contains a llama-server seat.
@@ -125,9 +125,9 @@ def capture_post(monkeypatch, daemon):
 
 
 def test_thinking_is_disabled_or_the_verdict_never_arrives(capture_post):
-    """MEASURED 2026-08-26: with `think` unset, Gemma4-12B-QAT spent the whole
-    num_predict budget emitting `<|channel>thought ...` and never reached a
-    verdict — at num_predict=64 it was still reasoning. Every current local
+    """With `think` unset, Gemma4-12B-QAT spends the whole num_predict budget
+    emitting `<|channel>thought ...` and never reaches a verdict — at
+    num_predict=64 it is still reasoning. Every current local
     seat is a thinking model, so this flag is required, not an optimisation."""
     sc._local_llm_tier("something ambiguous")
     assert capture_post["body"]["think"] is False

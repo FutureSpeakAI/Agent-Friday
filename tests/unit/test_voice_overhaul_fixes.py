@@ -1,6 +1,6 @@
-"""Regression tests for the 2026-07-06 voice overhaul fixes.
+"""Regression tests for the voice overhaul fixes.
 
-Each test pins one confirmed defect from the systemwide voice bug hunt:
+Each test pins one confirmed voice defect class:
 retired-model validation, degenerate fallback chain, stale default model,
 VAD pre-roll, egress-gate false positives / empty-message 400s, and the
 trusted self-authored prompt registry.

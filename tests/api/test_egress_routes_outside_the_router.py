@@ -1,11 +1,11 @@
-"""Route-level outbound paths found past the gate in the 2026-09-06 audit.
+"""Route-level outbound paths must pass the egress gate.
 
-- /api/federation/send and /api/federation/settings/sync handed caller and
-  user text to a peer with no classification.
-- /api/chat/send sent images to Gemini regardless of Local-only mode and
-  wrote no ledger row, while its sibling /api/chat did both.
+- /api/federation/send and /api/federation/settings/sync must classify caller
+  and user text before handing it to a peer.
+- /api/chat/send must honour Local-only mode for images sent to Gemini and
+  write a ledger row, as its sibling /api/chat does.
 
-All red on main @ 9d329fe. Network is stubbed throughout.
+Network is stubbed throughout.
 """
 from __future__ import annotations
 

@@ -1,7 +1,6 @@
 """Every Telegram and Discord send goes through the sealing manager.
 
-KNOWN_ISSUES listed this as unverified. Verified 2026-09-06: the only
-transports are telegram_bridge._send_raw and discord_bridge._send_raw, and
+The only transports are telegram_bridge._send_raw and discord_bridge._send_raw, and
 the only caller of either is channels/base.py ChannelAdapter.send(), after
 _gate_channel_text; inbound replies are sealed again in manager.gate_reply.
 This test keeps that true: nothing outside services/channels/ may name

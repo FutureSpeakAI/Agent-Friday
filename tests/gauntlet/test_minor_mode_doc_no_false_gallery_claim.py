@@ -15,8 +15,7 @@ only by file type/filename. Any adult-rated content generated before
 minor_mode was turned on (or by an adult user sharing the install) stays
 fully visible to a minor in the gallery.
 
-Final disposition (the maintainer, audit owner, 2026-09-04): gallery-side hiding is
-NOT being built right now -- this is a copy fix only, framed as "coming
+Disposition: gallery-side hiding is not built yet -- this is a copy fix only, framed as "coming
 soon," not a factual "doesn't exist" correction and not a build. The
 generation-time filtering claim (real, working) stays as-is. This probe pins:
   - core/__init__.py's minor_mode doc comment now frames the gallery-hiding
@@ -63,15 +62,15 @@ class TestMinorModeDocNoFalseGalleryClaim:
         assert not re.search(r"hidden in the gallery", text, re.IGNORECASE)
 
     def test_core_init_frames_gallery_hiding_as_coming_soon(self):
-        """The maintainer's final ruling: this is a 'coming soon' copy fix, not a
+        """This is a 'coming soon' copy fix, not a
         build and not a flat 'doesn't exist' statement."""
         text = _CORE_INIT.read_text(encoding="utf-8")
         idx = text.index('"minor_mode": False')
         block = text[max(0, idx - 800):idx]
         assert "coming soon" in block.lower(), (
             "the corrected minor_mode comment should frame gallery-side "
-            "adult-content hiding as 'coming soon', per the maintainer's explicit "
-            "ruling that this is a copy fix, not a build -- see "
+            "adult-content hiding as 'coming soon'; this is a copy fix, "
+            "not a build -- see "
             "findings.jsonl F29"
         )
         assert "not yet implemented" in block.lower() or \
@@ -112,8 +111,7 @@ class TestMinorModeDocNoFalseGalleryClaim:
 
     def test_gallery_list_still_filters_only_by_type_and_filename(self):
         """Grounding check: confirms no gallery filtering logic was
-        actually built -- per the maintainer's explicit instruction not to build
-        one, this remains a copy-only fix. The creations gallery's own
+        actually built -- this remains a copy-only fix. The creations gallery's own
         filter predicate still consults only file type/name, never a
         minor_mode/is_adult/adult_content/nsfw/rating dimension. Targets
         the specific filter call (not a repo-wide keyword grep, which
@@ -134,7 +132,7 @@ class TestMinorModeDocNoFalseGalleryClaim:
                              "nsfw", "rating"):
             assert marker_term not in predicate.lower(), (
                 f"the creations gallery filter now references {marker_term!r} "
-                "-- the maintainer was explicit that a gallery filter is NOT being "
-                "built right now; if this changed, F29's disposition needs "
+                "-- a gallery filter is deliberately NOT built yet; "
+                "if this changed, F29's disposition needs "
                 "revisiting"
             )

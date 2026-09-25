@@ -93,14 +93,14 @@ def test_malformed_chunk_is_skipped_not_fatal():
     assert out["choices"][0]["message"]["content"] == "x"
 
 
-# ── Reasoning deltas (2026-09-22) ───────────────────────────────────────────
+# ── Reasoning deltas ─────────────────────────────────────────────────────────
 #
 # A reasoning seat splits its output across `content` and `reasoning_content`,
-# and `max_tokens` is spent on both. The reassembler read only `content`, so a
-# turn that spent its whole budget thinking arrived as an EMPTY message — and
-# every layer above called it empty, then "Max iters", then silently served an
-# un-curated Front Page. Measured against the live bonsai2:27b llama-server
-# seat: 16 content deltas, 49 reasoning_content deltas, for one short prompt.
+# and `max_tokens` is spent on both. A reassembler that reads only `content`
+# turns a turn that spent its whole budget thinking into an EMPTY message — and
+# every layer above calls it empty, then "Max iters", then silently serves an
+# un-curated Front Page. A bonsai2:27b llama-server seat emits 16 content
+# deltas and 49 reasoning_content deltas for one short prompt.
 
 def test_reasoning_deltas_are_kept_and_not_mixed_into_content():
     r = _FakeResp(_sse(
@@ -127,10 +127,10 @@ def test_openrouter_spells_it_reasoning_and_that_is_kept_too():
 
 
 def test_a_turn_that_only_thought_is_distinguishable_from_a_blank_one():
-    """The exact 2026-09-22 Front Page shape: budget spent thinking, no answer.
+    """The Front Page failure shape: budget spent thinking, no answer.
 
-    Before the fix this was byte-identical to a model that said nothing at
-    all, which is why the failure was reported for days as 'empty'."""
+    Without the reasoning field this is byte-identical to a model that said
+    nothing at all, so the failure reads as 'empty'."""
     thought_only = _consume_sse_completion(_FakeResp(_sse(
         {"choices": [{"delta": {"reasoning_content": "a" * 400}}]},
         {"choices": [{"delta": {}, "finish_reason": "length"}]},

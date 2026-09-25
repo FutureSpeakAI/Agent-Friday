@@ -180,7 +180,7 @@ def test_a_seat_without_a_gguf_says_its_pin_is_unenforced(arb):
 # ── heavy lease ──────────────────────────────────────────────────────────────
 
 def test_heavy_lease_displaces_the_brain_but_not_the_sidekick(arb):
-    """R10. The maintainer, 2026-08-15: "keep e2b awake so Friday is always alive."
+    """R10. Keep e2b awake so Friday is always alive.
 
     A heavy lease takes the brain — that is the cost of depth on one card. It
     does not take the sidekick, so Friday keeps answering at 166 tok/s while
@@ -352,11 +352,11 @@ def test_status_reports_state_lease_and_residency(arb):
 
 # ── endpoint publishing merges, never clobbers ───────────────────────────────
 #
-# Observed 2026-08-19T22:26:54: a fresh server process (pid 8620) published
-# {"endpoints": {}} from its empty in-memory procs while gemma4:e4b — spawned
-# by the PREVIOUS process at 22:16:52 — sat healthy on :8091. Every reader
-# that resolves seats through the file went blind to a live seat in exactly
-# the restart window where the plan/served drift matters most.
+# A fresh server process that publishes {"endpoints": {}} from its empty
+# in-memory procs, while a seat spawned by the PREVIOUS process (e.g.
+# gemma4:e4b on :8091) is still healthy, blinds every reader that resolves
+# seats through the file to a live seat, in exactly the restart window where
+# the plan/served drift matters most.
 
 import json as _json
 
@@ -450,14 +450,13 @@ def test_publish_survives_a_corrupt_endpoints_file(ep_file):
 #
 # `adopt_or_reap` used to publish only `if report["adopted"] or report["reaped"]`,
 # so the one situation that most needs the record rewritten — nothing running at
-# all — was the one situation that left it alone. Observed 2026-08-24: the
-# pinned gemma4:12b seat died with the 11:49 restart, the survey came back
-# empty, nothing was adopted or reaped, and endpoints.json went on naming :8090
-# for the rest of the day, hours after the last process listening there exited.
+# all — was the one situation that left it alone: when a pinned seat dies on a
+# restart, the survey comes back empty, nothing is adopted or reaped, and
+# endpoints.json goes on naming the dead port for hours.
 #
-# `_serves` caught it at every call so nothing was misrouted, but a stale record
-# still cost every reader a failing probe, and it is the artefact anyone
-# debugging this reads first — it said the seat was up when it was long gone.
+# `_serves` catches it at every call so nothing is misrouted, but a stale record
+# still costs every reader a failing probe, and it is the artefact anyone
+# debugging this reads first — it says the seat is up when it is long gone.
 
 def test_a_boot_that_finds_no_seats_prunes_the_dead_record(ep_file, monkeypatch):
     _seed(ep_file["path"], {"gemma4:12b": "http://127.0.0.1:8090/v1"})
@@ -488,10 +487,8 @@ def test_a_boot_that_finds_nothing_still_keeps_a_live_foreign_seat(ep_file, monk
 def test_boot_plans_with_the_bindings_it_was_primed_with(arb):
     """boot() recomputed the plan BARE and loaded from that plan, so the seat
     the user bound in settings was dropped at the one moment a load could
-    happen. Observed on the reference machine (2026-09-17 17:02 and
-    2026-09-18 04:21 boots): the status page showed the FridayWeaver seat
-    pinned while the boot printed "plan pins no llama.cpp seat" and spawned
-    nothing. server.py primes compute_plan() with the settings overrides
+    happen: the status page showed the FridayWeaver seat pinned while the
+    boot printed "plan pins no llama.cpp seat" and spawned nothing. server.py primes compute_plan() with the settings overrides
     right before boot(); a bare recompute must reuse them."""
     arb.compute_plan({"interactive_brain": "gemma4:e2b"})
     assert arb.plan["seats"]["interactive_brain"]["model_id"] == "gemma4:e2b"

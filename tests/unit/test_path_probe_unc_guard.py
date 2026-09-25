@@ -1,10 +1,9 @@
 """A wedged network share must not stall a request.
 
-Measured 2026-09-17 with `\\\\wsl.localhost` hung: `/api/residency/status`
-timed out at 25 s and `/api/health` took 10.8 s, because
-`model_store.available()` and `local_seats._friday_store()` called
-`Path.exists()` on a registered UNC model path and the SMB timeout held the
-whole request. The top-bar model pill reads those endpoints.
+With `\\\\wsl.localhost` hung, `/api/residency/status` times out at 25 s and
+`/api/health` takes 10.8 s if `model_store.available()` and
+`local_seats._friday_store()` call `Path.exists()` on a registered UNC model
+path inline: the SMB timeout holds the whole request. The top-bar model pill reads those endpoints.
 
 Every test here fakes a share that hangs and asserts the caller gets its
 answer inside the probe budget. Delete the thread in `path_probe.exists`

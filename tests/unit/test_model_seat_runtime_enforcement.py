@@ -1,10 +1,9 @@
-"""There is no runtime seat enforcement any more (2026-08-15).
+"""There is no runtime seat enforcement.
 
-This file used to pin FR-1: an un-bypassable check re-evaluated on every
-tool-using dispatch, which substituted a "red" model with the last one that had
-scored green, and stripped tools entirely when no green fallback existed.
-
-The maintainer removed it, and the evidence backed him:
+FR-1 was an un-bypassable check re-evaluated on every tool-using dispatch,
+which substituted a "red" model with the last one that had scored green, and
+stripped tools entirely when no green fallback existed. It was removed, on this
+evidence:
 
   * The structural failures it fired on were a broken harness. gemma4:12b,
     26b, e2b and e4b scored 1/10, 1/10, 4/10 and 0/10 under a gate that set no
@@ -13,16 +12,14 @@ The maintainer removed it, and the evidence backed him:
   * The honesty record that refused gemma4:26b held eleven timeouts and one
     HTTP 400 — eleven empty answers and no model output at all. The single
     case that actually ran, passed.
-  * On 2026-08-15 a dependent 5-call tool chain scored 0/5 on every local
+  * A dependent 5-call tool chain scored 0/5 on every local
     model because `json.loads()` was being called on an already-parsed dict in
     our own loop, silently dropping every tool argument. Once fixed: 15/15.
 
 Twice now, "this model can't use tools" has turned out to mean "we broke the
 tools". That is the argument against a homegrown eval standing between a user
-and a model they chose.
-
-    "I absolutely want the user to be able to set any model they wish at any
-     seat they wish, so this is non-negotiable."   — the maintainer, 2026-08-15
+and a model they chose. The user can set any model they wish at any seat they
+wish; that is non-negotiable.
 
 What is pinned here is the inverse of what used to be: resolve_local_seat is a
 pass-through, and there is no fallback machinery left for anything to go wrong

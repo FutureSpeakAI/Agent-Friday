@@ -1,17 +1,13 @@
-"""Gauntlet finding F68 (2026-09-04, the maintainer's direct ruling on the
-2026-09-04 startup-wiring dynamic boot's "confirmed_pending_action" item):
-credential_store.provider_key_status() reported 'connected' from
-_provider_key_path(...).exists() alone -- it never attempted the decrypt
-read_secret() itself performs. The maintainer's own 3 provider keys showed
-'connected' for a real stretch of time while genuinely undecryptable
-(a machine-key rotation, a vault-passphrase change, or disk corruption
-all produce exactly this), which is precisely why nobody noticed sooner:
-the one surface meant to say so was lying.
+"""Gauntlet finding F68: credential_store.provider_key_status() reported
+'connected' from _provider_key_path(...).exists() alone -- it never
+attempted the decrypt read_secret() itself performs. Stored keys can show
+'connected' while genuinely undecryptable (a machine-key rotation, a
+vault-passphrase change, or disk corruption all produce exactly this), and
+then the one surface meant to say so is lying.
 
-The maintainer's ruling: report what's true -- readable, present-but-unreadable,
-or absent -- and make the boot log's bare "loaded N" say how many
-actually decrypted, not just how many happened to succeed with no
-denominator.
+The rule: report what's true -- readable, present-but-unreadable, or
+absent -- and make the boot log's bare "loaded N" say how many actually
+decrypted, not just how many happened to succeed with no denominator.
 
 Fix: provider_key_status() now attempts read_secret() and returns one of
 three states ('connected' / 'present_but_unreadable' / 'missing') instead
@@ -26,10 +22,9 @@ existing boolean logic would have silently mistreated the new third state.
 
 Reproducing "present but unreadable" for real: a garbage blob prefixed
 with credential_store._DPAPI_MAGIC genuinely fails Windows DPAPI unprotect
-on a real machine (confirmed directly before relying on it) -- a
-plaintext garbage blob does NOT raise (unprotect()'s own plaintext
-fallback returns unrecognized bytes as-is), so that construction was
-checked and rejected before writing this file.
+on a real machine -- a plaintext garbage blob does NOT raise
+(unprotect()'s own plaintext fallback returns unrecognized bytes as-is),
+so it cannot stand in for an unreadable key.
 """
 from __future__ import annotations
 
@@ -65,7 +60,7 @@ class TestProviderKeyStatusThreeStates:
         assert cs.provider_key_status("demo-provider") == "connected"
 
     def test_the_reviewers_scenario_a_present_but_undecryptable_key(self, isolated_keys_dir):
-        """The maintainer's own real situation, reproduced directly: a key FILE
+        """The real-world failure, reproduced directly: a key FILE
         exists, but decrypting it fails. Before this fix this reported
         'connected' -- a status display that lied."""
         _write_undecryptable_key(isolated_keys_dir, "broken-provider")
@@ -128,8 +123,8 @@ class TestBootstrapProviderEnvDetail:
     def test_all_candidates_unreadable_still_reports_them_not_silence(self, isolated_keys_dir, monkeypatch):
         """The exact scenario that used to vanish from the boot log
         entirely: bootstrap_provider_env()'s bare success count was 0, so
-        `if _loaded_keys:` never printed anything -- the maintainer's own 3-for-3
-        undecryptable run would have logged NOTHING at all."""
+        `if _loaded_keys:` never printed anything -- a run where every
+        stored key is undecryptable would have logged NOTHING at all."""
         monkeypatch.setattr(cs, "_env_key_for_provider", lambda p: f"{p.upper()}_KEY")
         for name in ("broken-1", "broken-2"):
             monkeypatch.delenv(f"{name.upper()}_KEY", raising=False)

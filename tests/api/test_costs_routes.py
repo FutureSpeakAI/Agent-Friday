@@ -58,9 +58,9 @@ def test_arming_a_budget_does_not_reset_the_rest_of_settings(client):
     """The blast-radius test.
 
     set_budget() goes through _save_settings, which merges against the file on
-    disk. That merge used to fail open -- an unreadable settings file left
-    `existing` empty and CONVERTED the save into a factory reset, which is how
-    the 2026-08-24 BOM incident became permanent. Arming a budget alert must
+    disk. If that merge fails open, an unreadable settings file (e.g. one with
+    a BOM) leaves `existing` empty and CONVERTS the save into a factory reset.
+    Arming a budget alert must
     never be the thing that costs someone their configuration.
     """
     from agent_friday.core import _load_settings_raw

@@ -1,15 +1,13 @@
-"""A long turn is not a dead turn (2026-09-22).
+"""A long turn is not a dead turn.
 
-The chat UI released the composer after fifteen minutes with "That turn has
-been running for over fifteen minutes with no reply. I have released this chat
-so you can keep talking — check the work view to see whether it is still
-going." On this machine a healthy turn runs 25 tool calls over five minutes
-(see docs/audits/2026-09-22-token-ceiling-forensics.md) and longer runs are
-routine, so the clock was calling live work dead.
+The chat UI must not release the composer on a clock ("That turn has been
+running for over fifteen minutes with no reply..."). A healthy turn can run
+25 tool calls over five minutes and longer runs are routine, so a fixed
+timeout calls live work dead.
 
-Deleting the timeout would have been wrong: it exists for the recurring silent
-hang, where the process stays alive and friday.log goes completely dark. That
-is a genuinely different condition and it can arrive in ninety seconds.
+The timeout cannot simply be deleted: it exists for the silent hang, where the
+process stays alive and friday.log goes completely dark. That is a genuinely
+different condition and it can arrive in ninety seconds.
 
 So the server answers the question instead. These tests pin the distinction
 that a stopwatch cannot make:
@@ -82,7 +80,7 @@ def test_elapsed_time_alone_never_changes_the_verdict():
             core._TURNS["t-old"]["last_progress"] = time.time()
         v = core.turn_liveness("t-old")
         assert v["state"] == "working"
-        assert v["elapsed_s"] > 3500       # an hour in, and still his
+        assert v["elapsed_s"] > 3500       # an hour in, and still working
     finally:
         release.set()
         t.join(5)
@@ -262,11 +260,9 @@ def test_a_streamed_turn_is_visible_to_the_liveness_poll(client, monkeypatch):
     chat() on a worker thread and delivers the reply as it is written. The
     liveness poll therefore has to find the turn registered by THAT path --
     and the poll is the only thing standing between a six-minute tool run and
-    the composer being released underneath it.
-
-    Measured 2026-09-22: "Please start my day" ran 15:12:16 -> 15:18:19 with
-    search_email and open_url calls throughout, streamed its 3,043-character
-    reply correctly, and was still declared dead by the poll.
+    the composer being released underneath it. A six-minute turn with tool
+    calls throughout can stream its whole reply correctly and still be
+    declared dead if the poll cannot see it.
     """
     seen = {}
     import agent_friday.routes.chat as chat_routes

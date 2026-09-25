@@ -1,14 +1,11 @@
 """Unit tests for FridayTray.restart_server()'s debounce guard (docs:
-toolcall-integrity-v5, 2026-08-13 double-launch incident).
+toolcall-integrity-v5, double-launch).
 
-Audited start_server()'s existing self._lock and found it correctly
-serializes the check-and-spawn instant — could not reproduce an in-process
-double-spawn through it. This guard is defense-in-depth against a rapid
-double-click collapsing to one restart instead of two concurrent
-stop→sleep→start sequences, regardless of whether that was the actual
-2026-08-13 cause (the more likely explanation — a second, externally
-launched process — is covered by server.py's own single-instance lock, not
-by anything in this file).
+start_server()'s self._lock already serializes the check-and-spawn instant.
+This guard is defense-in-depth: a rapid double-click collapses to one restart
+instead of two concurrent stop→sleep→start sequences. A second, externally
+launched process is covered by server.py's own single-instance lock, not by
+anything in this file.
 """
 from __future__ import annotations
 

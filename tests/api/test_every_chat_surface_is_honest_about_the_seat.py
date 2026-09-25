@@ -1,34 +1,32 @@
 """Whatever answers, the user is told -- on every chat surface.
 
-Stephen, 2026-09-24: "I just tried to chat with the default model in a new
-window within the Friday desktop and it looks like Bonsai2 responded. I thought
-I was Opus 5.5, and when Bonsai2 replied I got a lot of asterisks."
+A user who picks a cloud model (e.g. Opus 5.5) and gets a reply from a local
+one (e.g. Bonsai2) must be told, on every chat surface, and the reply must
+render as markdown rather than literal asterisks.
 
-Both halves traced to one component. `index.html` has two chat surfaces:
+`index.html` has two chat surfaces:
 
 * the main chat posts to `/api/chat/stream`, which runs `chat()`;
 * `ConversationWindow` -- the "new window" -- posts to `/api/chat/send`.
 
 `chat()` carries a seat-divergence notice. `chat_send()` is a second, complete
-dispatch path and had none, so a substitution there was silent. Separately,
-`ConversationWindow` rendered `m.text` raw inside a `pre-wrap` bubble, so every
-`**bold**` arrived as literal asterisks.
+dispatch path and must carry the same notice, or a substitution there is
+silent. `ConversationWindow` must render replies through the shared markdown
+renderer, or every `**bold**` arrives as literal asterisks.
 
-Why bonsai2 answered at all, verified by replaying the live router:
+Why a local model can answer a cloud pick:
 
     route(msgs, task_context={'has_tools': True})
       -> local/bonsai2:27b, "local_preferred/smart - kept on a local seat"
 
-`model_routing.mode` was `local_preferred`, and that branch returns a local seat
+With `model_routing.mode` = `local_preferred`, that branch returns a local seat
 whenever one is up, consulting `capability_routing.reasoning` only through
 `if want in names` -- a set of LOCAL model names, which a cloud pick can never
-join. The log even records `seat bound: claude-opus-5-5 (anthropic, from the
-global default)` on the same line as the decision to ignore it.
+join.
 
-So the notice's existing wording was wrong for this case too: it said the chosen
-model "is not installed on this machine", which of a cloud model is simply
-false, and pointed the user at installing it. The reason here is the routing
-mode, and that is what a user can actually act on.
+So the notice must not say the chosen model "is not installed on this machine",
+which of a cloud model is false and points the user at installing it. The
+reason is the routing mode, and that is what a user can act on.
 """
 
 import json
@@ -55,7 +53,7 @@ def test_a_cloud_pick_kept_local_by_the_mode_blames_the_mode():
     assert "claude-opus-5-5" in text and "bonsai2:27b" in text
     assert "not installed" not in text, (
         "Opus 5.5 is a cloud model; telling the user to install it is false "
-        "and unactionable -- this was the live wording")
+        "and unactionable")
     low = text.lower()
     assert "local preferred" in low or "routing mode" in low, (
         "the notice must name the setting that caused this: %r" % text)
@@ -85,9 +83,8 @@ def test_no_notice_when_the_chosen_model_is_the_one_that_answered():
 
 
 def test_a_cloud_pick_answered_locally_under_a_cloud_mode_does_not_blame_the_mode():
-    """Found by this suite's own output: with mode `cloud_only` the first draft
-    still said "routing mode is 'Cloud only', so this turn stayed on this
-    machine", which is self-contradictory. Under a mode that does not prefer
+    """With mode `cloud_only`, saying "routing mode is 'Cloud only', so this
+    turn stayed on this machine" is self-contradictory. Under a mode that does not prefer
     local, the cause is unknown from here -- say what happened, not why."""
     text = chat_mod._seat_divergence_text(
         "claude-sonnet-5", "bonsai2:27b", routing_mode="cloud_only")
@@ -112,14 +109,12 @@ def test_no_notice_when_nothing_was_chosen():
 
 @pytest.fixture
 def seated_opus(monkeypatch):
-    """Opus 5.5 in the reasoning seat, local_preferred routing -- live config.
+    """Opus 5.5 in the reasoning seat, local_preferred routing.
 
     Patched on `chat` itself, not on `core`: chat.py does
     `from agent_friday.core import _load_settings` at import time, so it holds
     its own reference and patching the core module leaves the route reading the
-    real file. The first version of this fixture did exactly that, and the test
-    failed reporting `claude-sonnet-5` / `Cloud only` -- the machine's real
-    settings -- which is what caught it.
+    real settings file.
     """
     real = chat_mod._load_settings
 
@@ -138,7 +133,7 @@ def seated_opus(monkeypatch):
 
 @pytest.fixture
 def answered_by_bonsai(monkeypatch):
-    """Make the ACTUAL generator local, as it was live."""
+    """Make the ACTUAL generator local."""
     from agent_friday.services import attribution
     monkeypatch.setattr(
         attribution, "last_generation",
@@ -152,9 +147,8 @@ def test_chat_send_announces_the_substitution(client, seated_opus,
                                               answered_by_bonsai, monkeypatch):
     """`/api/chat/send` -- the new-window surface -- must say what answered.
 
-    Before the fix this endpoint had no divergence check at all, so this turn
-    came back with a bonsai2 reply, a truthful `model` field, and no word to the
-    user about the seat they had chosen.
+    Without a divergence check this turn comes back with a bonsai2 reply, a
+    truthful `model` field, and no word to the user about the seat they chose.
     """
     monkeypatch.setattr(chat_mod, "_SEAT_NOTICES_SENT", set(), raising=False)
 
@@ -209,7 +203,7 @@ def _conversation_window_source():
 
 def test_the_new_window_renders_markdown_like_every_other_surface():
     """Friday replies are markdown. A surface that prints them raw shows the
-    user `**like this**`, which is what Stephen saw."""
+    user `**like this**`."""
     body = _conversation_window_source()
     assert "FridayDoc" in body or "renderFridayMarkdown" in body, (
         "ConversationWindow renders reply text without the shared markdown "
@@ -217,8 +211,8 @@ def test_the_new_window_renders_markdown_like_every_other_surface():
 
 
 def test_the_new_window_no_longer_prints_reply_text_raw():
-    """Pin the exact construct that caused it: the bubble's only child being
-    the unrendered string."""
+    """Pin the construct that prints markdown raw: the bubble's only child
+    being the unrendered string."""
     body = _conversation_window_source()
     assert "}, m.text)))" not in body, (
         "the message bubble still renders m.text raw")

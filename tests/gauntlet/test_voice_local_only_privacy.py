@@ -1,6 +1,6 @@
 """Gauntlet finding: local-only mode did not gate the voice pipeline the
-way it gates vision and text (fixed 2026-08-23, commit 4607bd9, for
-routes/chat.py's screenshot path). Two call sites were affected:
+way it gates vision and text (routes/chat.py's screenshot path). Two call
+sites were affected:
 
 1. routes/voice.py:_resolve_voice_engine() -- with Local-Only Mode on but
    the Tier-1 voice deps not installed (a separate, easy-to-skip step from
@@ -12,9 +12,8 @@ routes/chat.py's screenshot path). Two call sites were affected:
 2. services/voice_engine.py:_synthesize_tts_wav() -- "read this aloud" and
    the News audio briefing sent spoken text to Gemini TTS regardless of
    local-only mode; only a PII regex scrub and network/key status gated
-   the cloud path, and the PII scrubber is known to have real gaps
-   (memory: "Vault contact-PII leak -- phone/address/account-tail never
-   had a regex").
+   the cloud path, and the PII scrubber has known gaps (contact PII such
+   as phone numbers, addresses and account tails has no regex).
 
 Both are fixed the same way the vision path was: local-only becomes an
 absolute override that wins regardless of preference/key/network status,
@@ -57,7 +56,7 @@ class TestResolveVoiceEngineRespectsLocalOnly:
         assert result["engine"] != "gemini", (
             "with Local-Only Mode on and no local voice engine ready, "
             "_resolve_voice_engine still picked Gemini -- the same class "
-            "of bug the vision path had before its 2026-08-23 fix"
+            "of bug the vision path had before its fix"
         )
 
     def test_explicit_gemini_preference_does_not_override_local_only(self, monkeypatch):
@@ -75,9 +74,9 @@ class TestResolveVoiceEngineRespectsLocalOnly:
         assert result["engine"] != "gemini"
 
     def test_local_preference_no_longer_falls_back_to_cloud(self, monkeypatch):
-        """AMENDED 2026-09-09. This test previously asserted the opposite.
+        """The voice engine named `local` never falls back to the cloud.
 
-        It used to pin that `voice_engine="local"` under `local_preferred`
+        An earlier version of this test pinned the opposite: that `voice_engine="local"` under `local_preferred`
         routing WOULD fall back to Gemini when the Tier-1 deps were missing,
         on the reasoning that cloud fallback is local_preferred's documented
         semantics. That reasoning conflated two different settings: the
@@ -87,8 +86,8 @@ class TestResolveVoiceEngineRespectsLocalOnly:
         says -- and the old guard only caught it when local_only was ALSO set,
         so protection required saying "local" twice in two places.
 
-        Ruled 2026-09-09: `local` terminates. The prior behaviour was the bug,
-        and anyone relying on it was relying on being deceived. See
+        The rule: `local` terminates. The fallback was the bug, and anyone
+        relying on it was relying on being deceived. See
         tests/gauntlet/test_local_never_reaches_cloud.py and
         docs/design/active/cloud-voice-providers.md section 10.0b.
         """

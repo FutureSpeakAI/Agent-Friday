@@ -1,21 +1,14 @@
-"""Gauntlet finding F31, live incident 2026-09-03/04: extraction had no cap
-on cloud-eligible LLM calls per pass. When the corpus is large and the
-routed cheap/free provider is unhealthy, model_router's own circuit breaker
-(correct for chat) reroutes every remaining chunk straight to the paid
-frontier default -- a single Tier B pass ran unattended for 7+ hours at
-~$10/hour because nothing would ever stop asking. MAX_CLOUD_EXTRACT_CALLS
-bounds cloud-eligible attempts per pass; chunks past the cap stay stale for
-the next delta pass instead.
+"""Gauntlet finding F31: extraction had no cap on cloud-eligible LLM calls
+per pass. When the corpus is large and the routed cheap/free provider is
+unhealthy, model_router's own circuit breaker (correct for chat) reroutes
+every remaining chunk straight to the paid frontier default -- an uncapped
+Tier B pass can run unattended for 7+ hours at ~$10/hour because nothing
+ever stops asking. MAX_CLOUD_EXTRACT_CALLS bounds cloud-eligible attempts
+per pass; chunks past the cap stay stale for the next delta pass instead.
 
-REMEDIATION NOTE (2026-09-04): this probe originally lived as
-TestCloudExtractionCap inside tests/unit/test_kg_indexer.py -- an existing
-test file, against this audit's own standing rule that new probes go only
-in tests/gauntlet/. Moved here unchanged (content identical; the shared
-RecordingLLM stub and wiki_home fixture are duplicated below rather than
-imported from the unit test module, so this file is self-contained per
-this codebase's established gauntlet-probe pattern) to correct that rule
-violation, flagged directly by the maintainer's independent cold re-verification
-pass.
+Gauntlet probes live only in tests/gauntlet/, so this file is
+self-contained: the RecordingLLM stub and wiki_home fixture are duplicated
+below rather than imported from tests/unit/test_kg_indexer.py.
 """
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
 """A6 — authoritative clock (Incident 2, F3).
 
-The F3 red-test anchor: 2026-08-14 is a FRIDAY. The live incident labeled it
-"Thursday" and doubled down — because no clock existed in context and the
-model did its own weekday arithmetic.
+The F3 red-test anchor: 2026-08-14 is a FRIDAY. Without a clock in context
+the model does its own weekday arithmetic, labels it "Thursday" and doubles
+down.
 """
 from __future__ import annotations
 

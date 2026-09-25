@@ -1,5 +1,5 @@
-"""Unit tests for services/hang_watchdog.py (docs: toolcall-integrity-v5,
-follow-up after the 2026-08-12/08-13 silent-hang incidents).
+"""Unit tests for services/hang_watchdog.py (docs: toolcall-integrity-v5),
+which exists so a turn can never hang silently.
 
 Uses check_once()/pet() directly rather than real threads sleeping through
 real thresholds, so a simulated stall is deterministic and fast — no test

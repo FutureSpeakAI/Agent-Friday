@@ -1,7 +1,6 @@
-"""2026-08-14 defect #5 — orb/trace correlation through NON-interactive
-spawn paths.
+"""Defect #5 — orb/trace correlation through NON-interactive spawn paths.
 
-The maintainer saw gemma4:e4b process orbs whose thread views were empty. The B3
+A process orb whose thread view is empty tells the user nothing. The B3
 enrichment (task_id on orbs, lifecycle + tool log lines, /api/tasks join)
 must hold on the scheduler spawn path and the seat-fallback path — not just
 interactive chat spawns. These tests pin each hop of the chain.
@@ -102,4 +101,4 @@ class TestSeatFallbackSpawn:
         )
         assert (seen.get("session_ctx") or {}).get("task_id") == "t-fall-9", (
             "the fallback leg dropped the correlation id — its orb would be "
-            "an orphan (the 2026-08-14 empty-thread class)")
+            "an orphan with an empty thread view")

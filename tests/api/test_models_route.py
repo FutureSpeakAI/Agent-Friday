@@ -36,19 +36,16 @@ def test_models_route_includes_sonnet5_and_fable5(client):
 def test_orchestrator_includes_openai_and_local(client):
     """A local orchestrator option must be offered - by whatever serves it.
 
-    This asserted `"ollama-local" in providers` until 2026-09-22. Ollama was
-    removed from the project on 2026-09-18, so that provider now contributes
-    ZERO models while remaining registered, and the assertion had been failing
-    against a name that could no longer supply anything.
+    It does not assert `"ollama-local" in providers`: Ollama is removed from
+    the project, so that provider contributes ZERO models while remaining
+    registered. Such an assertion would also PASS on a stopped daemon's
+    hardcoded fallback list - the exact failure _arbiter_seat_entries
+    documents: "the picker must show the live residency plan, not a dead
+    daemon's guesses".
 
-    Worse, the old assertion would have PASSED on a stopped daemon's hardcoded
-    fallback list - which is the exact failure _arbiter_seat_entries documents:
-    "the picker must show the live residency plan, not a dead daemon's
-    guesses". So it was checking for the wrong thing in the wrong direction.
-
-    What matters is that the picker offers something local. On this machine
-    that is bonsai2:27b and the fridayweaver seat, served by llama-server
-    processes the Arbiter owns.
+    What matters is that the picker offers something local, e.g. bonsai2:27b
+    and the fridayweaver seat, served by llama-server processes the Arbiter
+    owns.
     """
     data = client.get("/api/models").get_json()
     providers = {m["provider"] for m in data["roles"]["orchestrator"]}
@@ -57,18 +54,16 @@ def test_orchestrator_includes_openai_and_local(client):
 
 
 def test_a_running_local_seat_reaches_the_picker(client, tmp_path, monkeypatch):
-    """REGRESSION, 2026-09-22: it did not.
+    """A seat the Arbiter is serving must be selectable.
 
-    _arbiter_seat_entries' disk fallback read `raw.get("seats") or raw` and
-    looked for dict values carrying model_id, or plain strings. The Arbiter
-    writes {"pid":…, "updated_at":…, "endpoints": {"<model>": "<url>"}}, so
-    iterating raw yields an int, a float and a dict with no model_id - all
-    skipped, and the seat one level down never seen. bonsai2 was absent from
-    the catalogue the entire time llama-server was serving it on 8090, so it
-    could not be selected.
+    The Arbiter writes {"pid":…, "updated_at":…, "endpoints": {"<model>":
+    "<url>"}}. A disk fallback that reads `raw.get("seats") or raw` and looks
+    for dict values carrying model_id, or plain strings, iterates an int, a
+    float and a dict with no model_id - all skipped, and the seat one level
+    down is never seen, so a model llama-server is serving never reaches the
+    catalogue.
 
-    Seeds the real file shape and asserts the seat surfaces. Fails against the
-    old parser.
+    Seeds the real file shape and asserts the seat surfaces.
     """
     import json
     from agent_friday.services import model_catalog as mc

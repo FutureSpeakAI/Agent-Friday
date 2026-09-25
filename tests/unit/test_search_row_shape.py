@@ -1,20 +1,15 @@
 """Every search backend hands back the same row shape.
 
-THE BUG THIS EXISTS FOR. Four backends each invented a field name for the same
-string. Brave, DuckDuckGo and Firecrawl say `snippet`; wigolo, added to the
-front of the chain on 2026-09-18, says `description`. `services/agent.py`
-rendered results with a hard `r['snippet']`. So from the moment wigolo became
-the first runner, every single web search raised `KeyError: 'snippet'` and the
-model was handed "Tool error (search_web): 'snippet'".
+Backends each use their own field name for the same string. Brave, DuckDuckGo
+and Firecrawl say `snippet`; wigolo, at the front of the chain, says
+`description`. A renderer that reads a hard `r['snippet']` turns every wigolo
+search into `KeyError: 'snippet'`, and the model is handed
+"Tool error (search_web): 'snippet'" -- search is dead on the one backend that
+cannot fail for a billing reason.
 
-Search was completely dead for a day on the one backend that cannot fail for a
-billing reason, and nothing caught it, because every test in the suite used a
-`snippet`-shaped fixture. A backend contract that only holds for the backends
-someone happened to write a fixture for is not a contract.
-
-Reported as DuckDuckGo choking on an anti-bot wall. That was a reasonable
-theory and the wrong one, which is why these assert measured shapes rather
-than a story about which backend is at fault.
+A backend contract that only holds for the backends someone happened to write
+a fixture for is not a contract, so these assert measured shapes for every
+backend rather than a `snippet`-shaped fixture.
 """
 from __future__ import annotations
 
@@ -76,16 +71,15 @@ def test_a_missing_title_falls_back_to_the_url():
 def test_the_search_tool_renders_a_wigolo_row_without_erroring(monkeypatch):
     """END TO END through the function the model actually calls.
 
-    This is the test that would have caught it. The unit above proves the
-    normaliser; this proves the renderer is fed by it - which is where the
-    KeyError actually landed.
+    The unit above proves the normaliser; this proves the renderer is fed by
+    it - which is where the KeyError lands.
     """
     from agent_friday.services import agent as A
 
     monkeypatch.setattr(W, "_wigolo_ready", lambda: True)
     monkeypatch.setattr(W, "_wigolo_search", lambda q, n: {
         "status": W.SearchStatus.OK,
-        # Exactly what wigolo returns, measured 2026-09-19.
+        # The row shape wigolo returns.
         "results": [{"title": "Claude", "url": "https://anthropic.com",
                      "description": "A model."}],
         "detail": "local, keyless",

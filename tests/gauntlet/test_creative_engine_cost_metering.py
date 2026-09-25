@@ -7,8 +7,8 @@ plain unmetered: creations.py's `_daily_budget_remaining()` gates which
 autonomous daily-creation mode Friday is allowed to pick by computing a
 ceiling minus cost_meter._rolling_spend()'s today-total -- since none of
 these calls ever wrote to cost_meter, that gate's "spend so far today"
-structurally excluded all of the very spend it exists to bound (docs/
-audits/gauntlet-2026-09-03/findings.jsonl, Q7).
+structurally excluded all of the very spend it exists to bound
+(findings.jsonl Q7).
 
 Each generation function is a plain module-level function, so these are
 real behavioral tests: monkeypatch `_client()`/the Gemini SDK call

@@ -6,9 +6,9 @@ background task ran on whatever the orchestrator happened to be.
 
 The tests that matter here are the refusals. A resolver that quietly hands
 back the cloud when the local seat is down has lied about the one property the
-caller named, and that is not hypothetical - on 2026-09-18 a local model
-silently stopped being local because a written-down port had gone stale, and
-the user saw Sonnet answer with nothing on screen to explain it.
+caller named. A stale written-down port is enough to make a local model
+silently stop being local, and the user then sees Sonnet answer with nothing
+on screen to explain it.
 """
 from __future__ import annotations
 

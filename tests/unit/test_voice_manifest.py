@@ -301,10 +301,10 @@ def _capture_mind_request(monkeypatch, seat):
 
 
 def test_mind_proof_disables_thinking_on_the_gemma4_family(monkeypatch):
-    """Observed live 2026-09-18: with thinking on, the FridayWeaver seat
-    spent all eight tokens inside <|channel>thought, `content` came back
-    empty, and the proof refused a seat the real turn would have used
-    (the router already sends enable_thinking=false for this family)."""
+    """With thinking on, the FridayWeaver seat spends all eight tokens inside
+    <|channel>thought, `content` comes back empty, and the proof refuses a
+    seat the real turn would use (the router sends enable_thinking=false for
+    this family)."""
     sent = _capture_mind_request(monkeypatch, "gemma4:e2b-fridayweaver-1.0")
     out = vm._run_mind({}, None)
     assert out["content"] == "OK"
