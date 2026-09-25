@@ -33,10 +33,14 @@ def _iso_user_model(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _reset_goals_provider():
     """register_goals_provider is process-global state — reset it around
-    every test so one test's fake provider can't leak into the next."""
+    every test so one test's fake provider can't leak into the next, and put
+    back whatever was registered before (services/goals.py registers the real
+    provider at import). Leaving the no-op behind made every later file on
+    the worker see no active goals."""
+    before = im._goals_provider
     im.register_goals_provider(None)
     yield
-    im.register_goals_provider(None)
+    im.register_goals_provider(before)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
