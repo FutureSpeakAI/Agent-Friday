@@ -59,6 +59,35 @@ log = logging.getLogger("friday.kokoro_voice")
 #: currently unnecessary becomes necessary and this is where that is noticed.
 KOKORO_NATIVE_RATE = 24000
 
+# ── Bounds on one utterance ─────────────────────────────────────────────────
+#
+# Measured on this machine (RTX, 12 GB) with hostile input: long invented
+# words, 200 dashes, emoji, stacked diacritics, "Kokoro" x40. Output length
+# tracks the phoneme count (0.04-0.08 s of audio per phoneme, 0.28 s at the
+# worst), and synthesis ran 2.5x faster than realtime even on CPU. Kokoro did
+# not run away on any of it.
+#
+# What DID hang, for over 40 minutes, was a call waiting on a GPU that another
+# Kokoro, a local LLM and a test suite had filled: CUDA work queued behind the
+# contention while the Python thread spun inside istftnet.inverse. A user whose
+# GPU is oversubscribed gets the same thing, and a voice turn that never ends.
+#
+# So each utterance gets a time budget and an output cap. Past the budget the
+# call is abandoned with a named refusal the voice session already knows how
+# to report; the stuck worker cannot be killed (Python has no way to), so
+# later calls refuse at once instead of queuing behind it, and the engine
+# recovers by itself when that worker returns.
+SYNTH_BUDGET_BASE_S = 15.0
+SYNTH_BUDGET_PER_CHAR_S = 0.25
+MAX_AUDIO_BASE_S = 2.0
+MAX_AUDIO_PER_PHONEME_S = 0.5
+
+
+def synthesis_budget_s(text: str) -> float:
+    """Seconds one utterance may take: roughly 5-10x the slowest CPU run
+    measured, so a working engine never trips it and a wedged one is cut off."""
+    return SYNTH_BUDGET_BASE_S + SYNTH_BUDGET_PER_CHAR_S * len(text or "")
+
 #: Default voice. Kokoro ships a set of named voices ("af_heart", "af_bella",
 #: "am_michael", ...); af_heart is its highest-rated English voice.
 DEFAULT_KOKORO_VOICE = "af_heart"
@@ -418,6 +447,9 @@ class KokoroTTS:
         self._pipeline = None
         self._device = None
         self._lock = threading.Lock()
+        # The worker of an utterance abandoned at its time budget, while it is
+        # still running. See the bounds above.
+        self._stuck = None
 
     # ── loading ────────────────────────────────────────────────────────────
 
@@ -543,32 +575,71 @@ class KokoroTTS:
             return b""
         self.load()
         import numpy as np
+        text = str(text)
+        stuck = self._stuck
+        if stuck is not None and stuck.is_alive():
+            raise KokoroUnavailable(
+                "local_voice_kokoro_busy",
+                "Kokoro is still finishing an earlier sentence that ran past its "
+                "time limit (the GPU is likely overloaded). This sentence was not "
+                "spoken; voice recovers by itself when that one ends.")
+        self._stuck = None
         chunks = []
+        failure = []
+        abandoned = threading.Event()
+
         # The safety net, kept even though load() now refuses a fallback-less
         # pipeline. Generation runs third-party phonemisation over arbitrary
         # user text, so it can fail in ways no pre-flight check anticipates --
         # and a raw TypeError from inside a dependency reaches the voice session
         # as an unhandled crash: no code, no reason, no offer of Piper. Any
         # failure here becomes a refusal that names itself instead.
-        try:
-            for _gs, _ps, audio in self._pipeline(str(text), voice=self.voice):
-                if audio is None:
-                    continue
-                arr = np.asarray(audio, dtype="float32").reshape(-1)
-                if arr.size:
-                    chunks.append(arr)
-        except KokoroUnavailable:
-            raise
-        except BaseException as e:  # noqa: BLE001
+        def generate():
+            try:
+                for _gs, _ps, audio in self._pipeline(text, voice=self.voice):
+                    if abandoned.is_set():
+                        return                 # nobody is waiting; stop working
+                    if audio is None:
+                        continue
+                    arr = np.asarray(audio, dtype="float32").reshape(-1)
+                    cap = int((MAX_AUDIO_BASE_S + MAX_AUDIO_PER_PHONEME_S
+                               * len(_ps or "")) * KOKORO_NATIVE_RATE)
+                    if arr.size > cap:
+                        log.warning("kokoro produced %.1fs of audio for %d phonemes; "
+                                    "cut to %.1fs", arr.size / KOKORO_NATIVE_RATE,
+                                    len(_ps or ""), cap / KOKORO_NATIVE_RATE)
+                        arr = arr[:cap]
+                    if arr.size:
+                        chunks.append(arr)
+            except BaseException as e:  # noqa: BLE001
+                failure.append(e)
+
+        budget = synthesis_budget_s(text)
+        worker = threading.Thread(target=generate, name="kokoro-synth", daemon=True)
+        worker.start()
+        worker.join(timeout=budget)
+        if worker.is_alive():
+            abandoned.set()
+            self._stuck = worker
+            log.error("kokoro synthesis of %d chars passed its %.0fs budget; "
+                      "abandoned (device=%s)", len(text), budget, self._device)
+            raise KokoroUnavailable(
+                "local_voice_kokoro_timeout",
+                "Kokoro took longer than %.0f seconds for one sentence, so it was "
+                "not spoken. That usually means the GPU is overloaded by other "
+                "work. Nothing was sent anywhere." % budget)
+        if failure:
+            e = failure[0]
+            if isinstance(e, KokoroUnavailable):
+                raise e
             log.error("kokoro synthesis failed on %d chars: %s: %s",
-                      len(str(text)), type(e).__name__, str(e)[:160],
-                      exc_info=True)
+                      len(text), type(e).__name__, str(e)[:160], exc_info=e)
             raise KokoroUnavailable(
                 "local_voice_kokoro_synthesis_failed",
                 "Kokoro failed while speaking this text (%s: %s). Nothing was "
                 "sent anywhere." % (type(e).__name__, str(e)[:120])) from e
         if not chunks:
-            log.warning("kokoro produced no audio for %d chars", len(str(text)))
+            log.warning("kokoro produced no audio for %d chars", len(text))
             return b""
         wav = np.concatenate(chunks)
         wav = np.clip(wav, -1.0, 1.0)
