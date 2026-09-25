@@ -9,7 +9,7 @@ an `if` and this file still passes, the field it guarded is a dead setting.
 `TestFieldEnforcementMap` is the meta-test: it fails if `arbiter.status()` grows a
 key with no named enforcement test, or names a test that does not exist.
 """
-import time
+import types
 
 import pytest
 
@@ -84,9 +84,13 @@ class TestTheLedger:
         """Enforces `expires_at`. Delete the expire_due() call at the top of
         held() and a lease is observable long after its deadline."""
         _stub_machine(monkeypatch)
-        d = arb.acquire("gpu_vram", 1000, "short-job", ttl_s=0.05)
+        # A controlled clock: with a real 50 ms TTL, a slow runner could spend
+        # the whole lease between acquire() and the first read.
+        clock = [1_758_000_000.0]
+        monkeypatch.setattr(arb, "time", types.SimpleNamespace(time=lambda: clock[0]))
+        d = arb.acquire("gpu_vram", 1000, "short-job", ttl_s=60)
         assert _res(arb.status(), "gpu_vram")["claimed_units"] == 1000
-        time.sleep(0.08)
+        clock[0] += 61
         assert _res(arb.status(), "gpu_vram")["claimed_units"] == 0
         assert any(e["kind"] == "expire" for e in arb.events())
 
