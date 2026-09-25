@@ -135,6 +135,14 @@ def _fingerprint(text) -> str:
     return hashlib.sha256((text or "").encode("utf-8", "replace")).hexdigest()[:16]
 
 
+def _local_only_label():
+    try:
+        from agent_friday.services.local_only_guard import local_only_snapshot
+        return (local_only_snapshot() or {}).get("label")
+    except Exception:
+        return None
+
+
 def checkpoint(task_id, *, convo, tool_trace=None, iteration=0, model=None,
                max_tokens=None, system=None, orb_label=None,
                orb_category="default", orb_icon="🧠", loop="anthropic") -> bool:
@@ -165,6 +173,8 @@ def checkpoint(task_id, *, convo, tool_trace=None, iteration=0, model=None,
             "orb_category": orb_category,
             "orb_icon": orb_icon,
             "pending_tool": None,
+            # A local-only run's checkpoint resumes local-only.
+            "local_only": _local_only_label(),
             "saved": time.time(),
             "attempts": (read(task_id) or {}).get("attempts", 0),
         }
@@ -449,17 +459,23 @@ def resume(task_id, *, confirm_pending: bool = False,
     except Exception:
         pass
 
+    import contextlib
     from agent_friday.services.agent import _call_claude_agent
-    return _call_claude_agent(
-        convo,
-        model=blob.get("model"),
-        max_tokens=blob.get("max_tokens") or 16384,
-        session_ctx=ctx,
-        orb_label=blob.get("orb_label"),
-        orb_category=blob.get("orb_category") or "default",
-        orb_icon=blob.get("orb_icon") or "🧠",
-        resumed_tool_trace=tool_trace,
-    )
+    guard = contextlib.nullcontext()
+    if blob.get("local_only"):
+        from agent_friday.services.local_only_guard import local_only
+        guard = local_only(blob["local_only"])
+    with guard:
+        return _call_claude_agent(
+            convo,
+            model=blob.get("model"),
+            max_tokens=blob.get("max_tokens") or 16384,
+            session_ctx=ctx,
+            orb_label=blob.get("orb_label"),
+            orb_category=blob.get("orb_category") or "default",
+            orb_icon=blob.get("orb_icon") or "🧠",
+            resumed_tool_trace=tool_trace,
+        )
 
 
 def _resume_from_ledger(task_id, verdict) -> Tuple[Optional[str], list]:

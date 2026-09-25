@@ -3306,6 +3306,31 @@ def _cloud_pin_snapshot():
         return None
 
 
+def _local_only_snapshot():
+    """The calling thread's local-only run (local_only_guard.local_only), or None."""
+    try:
+        from agent_friday.services.local_only_guard import local_only_snapshot
+        return local_only_snapshot()
+    except Exception:
+        return None
+
+
+def _task_local_only_label(task_id, rec):
+    """The label of the local-only run `task_id` belongs to, or None: from the
+    task record, else from its ledger (a new process after a restart has only
+    the ledger)."""
+    lo = (rec or {}).get('local_only')
+    if lo:
+        return (lo.get('label') if isinstance(lo, dict) else str(lo)) or 'this job'
+    try:
+        from agent_friday.services import task_ledger as _tl
+        led = _tl.load(task_id) or {}
+        v = (led.get('run') or {}).get('local_only')
+        return str(v) if v else None
+    except Exception:
+        return None
+
+
 def _task_schedule_id(task_id):
     """The schedule a task runs for, as recorded by `_spawn_task`, or None."""
     with TASKS_LOCK:
@@ -3328,9 +3353,15 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
     # on the thread that actually makes the model calls.
     import contextlib as _ctxlib
     _pin = rec.get('cloud_pin') or None
+    _lo = None if _pin else _task_local_only_label(task_id, rec)
     if _pin:
         from agent_friday.services.local_only_guard import cloud_pinned as _cloud_pinned
         _pin_ctx = _cloud_pinned(_pin.get('model'), _pin.get('label'))
+    elif _lo:
+        # A local-only run stays local-only here too: this worker, its
+        # continuation legs, and a resume after a restart (via the ledger).
+        from agent_friday.services.local_only_guard import local_only as _local_only
+        _pin_ctx = _local_only(_lo)
     else:
         _pin_ctx = _ctxlib.nullcontext()
     try:
@@ -3489,9 +3520,12 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         # The task's durable working ledger (goal, steps, facts, next step):
         # compaction writes into it and pins it, a crash resumes from it.
         _ledger = _task_ledger.ensure(task_id, prompt)
+        from agent_friday.services import local_only_guard as _lo_guard
         _task_ledger.remember_run(_ledger, name=name, description=description,
                                   model=model, tools=list(tools) if tools else None,
-                                  orb_icon=orb_icon)
+                                  orb_icon=orb_icon,
+                                  local_only=((_lo_guard.local_only_snapshot() or {})
+                                              .get('label')))
         _task_ledger.save(task_id, _ledger)
 
         def _leg(leg_messages):
@@ -4003,6 +4037,9 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'schedule_id': str(schedule_id) if schedule_id else None,
             # The spawning thread's cloud pin, re-entered by _task_worker.
             'cloud_pin': _cloud_pin_snapshot(),
+            # Likewise a local-only run (a local-only schedule): the guard is
+            # thread-local, and the work happens on the worker thread.
+            'local_only': _local_only_snapshot(),
             # Defect E: seat-supervisor admission fields. The queue keys on
             # id + seat; the watchdog view reads tool_calls off the record.
             'id': task_id,

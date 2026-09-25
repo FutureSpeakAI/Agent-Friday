@@ -700,6 +700,11 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
     if not model:
         model = routing_cfg.get('local_model') or model
 
+    # An Ollama "-cloud" tag is relayed to ollama.com by the local daemon: a
+    # cloud call, refused inside a local-only run before anything is sent.
+    from agent_friday.services.local_only_guard import refuse_if_active as _refuse_cloud
+    _refuse_cloud("ollama-local", str(model or ""))
+
     # There is deliberately NO seat gate here. A gate that re-checks every
     # tool-using dispatch and, on a red/ungated model, silently substitutes a
     # different one or strips tools for the turn means a user can bind a model

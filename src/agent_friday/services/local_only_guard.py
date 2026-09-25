@@ -99,6 +99,17 @@ def provider_name_of(provider) -> str:
     return str(provider or "").strip()
 
 
+def is_cloud_model_tag(model: str) -> bool:
+    """An Ollama model the daemon relays to ollama.com rather than running:
+    tag `cloud` or ending in `-cloud` (`glm-4.6:cloud`, `gpt-oss:120b-cloud`),
+    or an untagged name ending in `-cloud`."""
+    m = str(model or "").strip().lower()
+    if not m:
+        return False
+    tag = m.rsplit(":", 1)[1] if ":" in m else m
+    return tag == "cloud" or tag.endswith("-cloud")
+
+
 def refuse_if_active(provider, model: str = "") -> None:
     """Raise when a cloud call is attempted inside a local-only run.
 
@@ -109,6 +120,11 @@ def refuse_if_active(provider, model: str = "") -> None:
     if not is_active():
         return
     name = provider_name_of(provider)
+    if is_cloud_model_tag(model):
+        # Served through the local daemon, run in someone else's datacenter:
+        # the provider name says local and the model says otherwise.
+        name = "%s (a cloud-relayed model)" % (name or "ollama")
+        _refuse(name, model)
     try:
         from agent_friday.services.seat_policy import is_local_provider_name
         if is_local_provider_name(name):
@@ -118,7 +134,10 @@ def refuse_if_active(provider, model: str = "") -> None:
             return
     except Exception:
         pass
-    provider = name or provider
+    _refuse(name or provider, model)
+
+
+def _refuse(provider, model: str = "") -> None:
     msg = ("%s is local-only, so it will not call %s%s. It waits for the local "
            "seat and skips with a reason rather than spending money nobody "
            "chose." % (label(), provider or "a cloud provider",
@@ -175,6 +194,16 @@ def pin_snapshot() -> dict | None:
     if not m:
         return None
     return {"model": m, "label": str(getattr(_state, "pin_label", "") or "")}
+
+
+def local_only_snapshot() -> dict | None:
+    """This thread's local-only run as a plain dict, to carry into a worker
+    thread and onto disk, or None. A cloud pin also marks the thread active
+    (it refuses every OTHER cloud call) and is carried by `pin_snapshot`, so
+    it is not reported here."""
+    if not is_active() or pinned_model():
+        return None
+    return {"label": label()}
 
 
 def _gateway_id(model: str) -> str:
