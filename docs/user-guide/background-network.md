@@ -23,7 +23,7 @@ conversation content, vault data or personal details.
 | News feeds | Built-in RSS feeds (news sites, Google News) | Every 5 minutes | Turn news categories off in the News workspace |
 | Web fonts | `fonts.googleapis.com`, `fonts.gstatic.com` | Every page load | Not configurable yet |
 | MediaPipe scripts | `cdn.jsdelivr.net` | Every page load; model files only when tracking is on | Tracking off stops the model downloads; the scripts still load |
-| Embedding model | `huggingface.co` | At startup, only if not already cached | Pre-fetched by the installer |
+| Embedding model | `huggingface.co` | Never at startup. Once, the first time a feature needs it and it is not already on disk, with a notification | Pre-fetched by the installer's memory tier |
 | Local voice models | `huggingface.co` | First use of local voice, if not already downloaded | Leave local voice off |
 | Connector health | Your connected services (Google, MCP servers) | About every 2 minutes | Disconnect the connector |
 | Scheduled jobs | Your model provider, feeds, git remotes | Per schedule | Workflows workspace |
@@ -100,9 +100,14 @@ locally is not done yet; see [KNOWN_ISSUES.md](../../KNOWN_ISSUES.md).
 
 ## 5. Model downloads on first use
 
-- The privacy classifier's embedding model (`all-MiniLM-L6-v2`) is loaded at
-  startup. If it is not already cached, it is downloaded from Hugging Face. The
-  Windows installer pre-fetches it.
+- The embedding model (`all-MiniLM-L6-v2`, about 90 MB), used by the privacy
+  classifier, conversation memory and context ranking, is loaded at startup
+  only if it is already on disk. Startup never downloads it. If it is missing,
+  the first feature that needs it (in practice the first chat message)
+  downloads it once from `huggingface.co`, and Friday shows a notification
+  before the download starts and when it finishes or fails. The Windows
+  installer's memory tier fetches it ahead of time, so an installed PC
+  normally never makes this request.
 - Local voice downloads its speech-recognition and voice models from Hugging
   Face the first time you use it, if they are not already on disk.
 - Local chat models are downloaded only when you ask for one (installer,

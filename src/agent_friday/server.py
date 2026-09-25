@@ -513,9 +513,16 @@ if not _TESTING:
     # finished before anyone types. Daemon and best-effort: a machine without
     # sentence-transformers logs its warning here instead of mid-turn, which is
     # also the better place for it.
+    # Boot loads it only from the local cache. A model that is not on disk is
+    # left for the first feature that needs it, which downloads it with a
+    # visible notice (services/embedder_cache.py); startup downloads nothing.
     def _warm_sensitivity_embedder():
         try:
             import time as _time
+            from agent_friday.services import embedder_cache as _ec
+            if _ec.boot_status() != "cached":
+                print("  Sensitivity embedder: " + _ec.STATUS["detail"])
+                return
             from agent_friday.services import sensitivity_classifier as _sc
             _t = _time.time()
             if _sc._load_embedder() is not None:
