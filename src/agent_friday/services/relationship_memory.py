@@ -15,8 +15,10 @@ entry from an explicit list of fields so a new field on the provider's side
 cannot slip in. Bulk mail (anything with List-Unsubscribe) and automated
 senders (no-reply and friends) are not relationships and are skipped.
 
-Storage follows the people graph: plain JSON under ~/.friday/relationships/
-(timeline.json, follow_ups.json, config.json), written atomically.
+Storage is under ~/.friday/relationships/, written atomically. The timeline
+and follow-ups name people and quote subjects, so they are encrypted at rest
+with Friday's keystore (timeline.json.enc, follow_ups.json.enc); config.json
+holds only settings and stays plain.
 
 SYNC
 ----
@@ -92,10 +94,24 @@ def _dir() -> Path:
     return Path(core.FRIDAY_DIR) / "relationships"
 
 
+#: Files that name people and quote email subjects. They are encrypted at rest
+#: with Friday's keystore (credential_store.protect) as `<name>.enc`; a plain
+#: copy left by an earlier version is read once and replaced.
+_ENCRYPTED = frozenset({"timeline.json", "follow_ups.json"})
+
+
 def _read(name: str, default):
+    d = _dir()
     try:
-        data = json.loads((_dir() / name).read_text(encoding="utf-8"))
+        if name in _ENCRYPTED and (d / (name + ".enc")).exists():
+            from agent_friday.services import credential_store as _cs
+            raw = _cs.unprotect((d / (name + ".enc")).read_bytes()).decode("utf-8")
+        else:
+            raw = (d / name).read_text(encoding="utf-8")
+        data = json.loads(raw)
         if isinstance(data, type(default)):
+            if name in _ENCRYPTED and (d / name).exists():
+                _write(name, data)          # migrate the plain copy
             return data
     except Exception:
         pass
@@ -105,10 +121,21 @@ def _read(name: str, default):
 def _write(name: str, data) -> None:
     d = _dir()
     d.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, ensure_ascii=False, indent=1, default=str)
+    if name in _ENCRYPTED:
+        from agent_friday.services import credential_store as _cs
+        blob, _method = _cs.protect(text.encode("utf-8"))
+        path = d / (name + ".enc")
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_bytes(blob)
+        os.replace(tmp, path)
+        plain = d / name
+        if plain.exists():
+            plain.unlink()
+        return
     path = d / name
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1, default=str),
-                   encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
