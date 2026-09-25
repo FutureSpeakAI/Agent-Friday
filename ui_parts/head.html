@@ -54,10 +54,10 @@ window.addEventListener('DOMContentLoaded',function(){
   }
 });
 </script>
-<!-- Async font load: media="print" defers the render-blocking fetch, onload
-     flips it live. On dead/stalling wifi the app paints instantly with system
-     fallbacks and Orbitron swaps in only if the network delivers. -->
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'"/>
+<!-- Typefaces from this PC: static/fonts, then system faces. The server adds
+     Google Fonts to <head> only when the font files are missing and the
+     owner has not turned it off (services/web_fonts.py). -->
+<link href="/static/fonts/fonts.css" rel="stylesheet"/>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; cursor: default; }
         canvas { display: block; }

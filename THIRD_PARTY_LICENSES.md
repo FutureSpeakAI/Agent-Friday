@@ -324,8 +324,8 @@ either by the installer or on first use, and are governed by their own terms.
 
 ## Components not bundled (loaded from a CDN or provisioned separately)
 
-* **MediaPipe camera_utils / face_detection / hands** 0.3.1675466862 / 0.4.1646425229 / 0.4.1675469240 - Apache-2.0. no (loaded at runtime from cdn.jsdelivr.net; not in payload)
-* **Google Fonts: Orbitron, Inter, JetBrains Mono** n/a (css2 API) - OFL-1.1. no (loaded at runtime from fonts.googleapis.com)
+* **MediaPipe camera_utils / face_detection / hands** 0.3.1675466862 / 0.4.1646425229 / 0.4.1675469240 - Apache-2.0. no (loaded from cdn.jsdelivr.net only when the user turns on head or hand tracking; not in payload)
+* **Orbitron, Inter, JetBrains Mono** - OFL-1.1. no (not in the payload yet). `static/fonts/fonts.css` expects `Orbitron-Variable.ttf`, `Inter-Variable.ttf` and `JetBrainsMono-Variable.ttf` in `static/fonts/`; until they are added the page uses fonts installed on the PC, or Google Fonts (fonts.googleapis.com) if `web_fonts_from_google` is on. Adding the files requires their OFL-1.1 texts beside them and entries in NOTICE.
 * **OfficeCLI (officecli-win-x64.exe)** v1.0.152 - Apache-2.0. no (not bundled, not downloaded by any installer/script in the tree; manually provisioned to ~/.friday/runtime/officecli, sha256-pinned)
 * **llama.cpp llama-server (runtime/llama.cpp, llama.cpp-bonsai, llama.cpp-ollama)** unrecorded - MIT. no (operator-provisioned under ~/.friday/runtime; no downloader in the tree)
 * **ComfyUI** unrecorded - GPL-3.0-only. no (operator-provisioned under ~/.friday/runtime/ComfyUI; driven over HTTP)
