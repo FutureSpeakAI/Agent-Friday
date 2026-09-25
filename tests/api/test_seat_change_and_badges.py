@@ -100,6 +100,30 @@ class TestB2DirectFileEdit:
         core.SETTINGS_FILE.write_text(json.dumps(raw), encoding="utf-8")
         _force_settings_reread()
 
+    def test_a_seat_change_that_leaves_no_local_seat_still_surfaces(self, client, monkeypatch):
+        """Switching to local_only on a machine with no local seat makes the
+        next turn a refusal. That turn is where the change matters most, and
+        its response must carry the seat event like any other turn."""
+        from agent_friday.routing import model_router as _rm
+        monkeypatch.setattr(chat_mod, "_call_claude_agent", _stub)
+        monkeypatch.setattr(_rm.ModelRouter, "_local_candidates", lambda self: [])
+        _reset_seat_state()
+        client.post("/api/chat", json={"message": "hi"})
+
+        before = core.SETTINGS_FILE.read_text(encoding="utf-8")
+        try:
+            raw = json.loads(before)
+            raw.setdefault("model_routing", {})["mode"] = "local_only"
+            core.SETTINGS_FILE.write_text(json.dumps(raw), encoding="utf-8")
+            _force_settings_reread()
+            data = client.post("/api/chat", json={"message": "hi again"}).get_json()
+        finally:
+            core.SETTINGS_FILE.write_text(before, encoding="utf-8")
+            _force_settings_reread()
+        assert data.get("offer_cloud_switch") is True, "precondition: the turn was refused"
+        assert "model_routing.mode" in {e["key"] for e in data.get("seat_events") or []}, \
+            "the refusal dropped the seat change that caused it"
+
     def test_system_lines_never_replayed_into_model_context(self, client, monkeypatch):
         captured = {}
 
