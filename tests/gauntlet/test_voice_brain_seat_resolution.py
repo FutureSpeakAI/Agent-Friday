@@ -18,9 +18,8 @@ voice session's answers can come from a materially weaker/different model
 than the identical request would get through text chat, silently, with no
 error and no log line naming the discrepancy as a bug.
 
-Introduced in commit 12be4a7c (2026-08-21) -- ironically the fix for
-"voice used no model / picked an unloaded seat" -- and never covered by a
-seat-identity test.
+The bug arrived with the fix for "voice used no model / picked an unloaded
+seat" and was not covered by a seat-identity test until this file.
 """
 from __future__ import annotations
 

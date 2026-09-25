@@ -1,32 +1,19 @@
 """Every "Settings -> X" we say to a USER must be a tab that exists.
 
-This is the generalisation of what the second user found on 2026-08-26.
+The failure shape: a settings tab that is complete and working (it lists
+every provider, takes a key and POSTs it to /api/providers/<name>/key) but has
+no entry in the TABS array and no branch in the render chain, so nothing can
+reach it -- while the README, the tutorial, the installer and live buttons all
+send people there. Clicking such a button opens Settings on an empty pane.
 
-`SettingsTabProviders` was complete and working -- it lists every provider,
-takes a key and POSTs it to /api/providers/<name>/key -- and had no entry in
-the TABS array and no branch in the render chain, so nothing could reach it.
-Meanwhile README.md, docs/getting-started/tutorial.md ("Settings -> Providers -> Anthropic ->
-paste your key -> Save"), docs/getting-started/installation.md, the voice spec's error table,
-routes/creations.py and two live buttons in the Studio prompt bar all sent
-people there. Clicking the button opened Settings on an empty pane.
+The signposts that matter most are the ones a keyless user meets first: an
+error message pointing at "Settings -> API Keys", an installer line saying
+"To add a local model later: open Friday, then Settings -> Models", a demo
+banner naming "Settings -> AI Providers". Each names a screen that must exist
+at the moment the user needs it.
 
-Sweeping for the rest of the shape found 22 signposts naming 13 distinct
-tabs, against 11 tabs that actually render. The worst were the ones a keyless
-user meets first:
-
-  * "Settings -> API Keys" x6 -- there has never been such a tab. Two of them
-    read "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings
-    -> API Keys) or as an environment variable, then restart". That is
-    the maintainer's complaint in message form.
-  * "Settings -> Models" x4 -- including packaging/windows/install.ps1, which
-    tells someone who has just declined a local model "To add a local model
-    later: open Friday, then Settings -> Models". The exact sentence the second user
-    would have read, naming a screen that does not exist, at the moment she
-    needed it.
-  * "Settings -> AI Providers" in demo_mode.py, shown to a user with no key
-    at all.
-
-Nobody noticed because the author does not navigate by the signposts.
+A developer who does not navigate by the signposts never notices, so this
+test checks every one mechanically.
 
 SCOPE: user-facing text only. In Python that means string literals but NOT
 comments and NOT docstrings -- a stale comment misleads a developer, which is

@@ -1,6 +1,6 @@
 """Tests for `credential_store.reencrypt_stale_provider_keys` — the
-stale-vault-key recovery path built 2026-09-03 after a rehearsal run
-overwrote the shared, machine-wide OS keychain entry and orphaned three real
+stale-vault-key recovery path for when the shared, machine-wide OS keychain
+entry is overwritten (for example by a rehearsal run) and orphans real
 provider keys mid-session. See the module docstring in credential_store.py
 for what this can and cannot do: it can only save what the CURRENT process
 can still decrypt, re-encrypted under whatever a FRESH process derives now.

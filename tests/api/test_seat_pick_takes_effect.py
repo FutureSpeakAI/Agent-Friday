@@ -1,23 +1,19 @@
 """Picking a model for a seat takes effect, and says so.
 
-Stephen: "I tried seating new models in the intelligence settings menu when it
-finally did load and nothing changed when I picked Opus 5.5 for either seat."
+A pick in Settings > Intelligence must persist AND be visible: POST
+/api/settings returns 200, settings.json holds the new model, the flat
+`orchestrator_model` mirror updates, other seats are untouched, it survives a
+reload, and `/api/intelligence` -- the panel's own data source -- reports the
+new seat.
 
-Traced end to end on 2026-09-23, and the save was never the problem. POST
-/api/settings returned 200, settings.json held the new model, the flat
-`orchestrator_model` mirror updated, other seats were untouched, and it survived
-a reload. `/api/intelligence` -- the panel's own data source -- reported the new
-seat correctly too.
+The CONFIRMATION is the fragile part. The panel renders from /api/intelligence,
+which has profiled at **32.7s cold and 12.6s warm** against the **30s
+AbortController** that `useIntelligence` sets on itself. A refresh that aborts,
+or has not landed when the user looks, leaves the seat on screen unchanged, so
+a working save reads as "nothing changed" and the panel as "times out".
 
-What failed was the CONFIRMATION. The panel renders from /api/intelligence,
-which profiled at **32.7s cold and 12.6s warm** against the **30s
-AbortController** that `useIntelligence` sets on itself. So the refresh after a
-pick aborted, or had not landed when the user looked, and the seat on screen
-never moved. Both of Stephen's reports -- "times out trying to read the machine"
-and "nothing changed when I picked" -- are that one cause.
-
-These tests pin the behaviour end to end, so a future regression cannot hide
-behind a slow panel again.
+These tests pin the behaviour end to end, so a regression cannot hide behind a
+slow panel.
 """
 
 import pytest
@@ -138,7 +134,7 @@ def one_installed_model(monkeypatch):
 
 def test_a_pick_that_cannot_be_honoured_is_refused_with_a_reason(
         client, one_installed_model):
-    """Silence was the original complaint, so a refusal must carry a sentence."""
+    """A silent refusal reads as "nothing changed", so it must carry a sentence."""
     r = _pick(client, "reasoning", "gemma4:definitely-not-installed-9z")
     assert r.status_code == 400, \
         "accepted a seat for a model that is not installed"

@@ -1,6 +1,6 @@
-"""PKCE verifier persistence across the OAuth start/callback legs (docs:
-fix/toolcall-integrity-v5, 2026-08-13). OAuth consent now succeeds end to
-end, but token exchange failed with (invalid_grant) "Missing code
+"""PKCE verifier persistence across the OAuth start/callback legs.
+
+Without it, token exchange fails with (invalid_grant) "Missing code
 verifier": authorization_url() auto-generates a code_verifier on the START
 leg's Flow instance and sends its challenge to Google, but the CALLBACK leg
 rebuilds a completely fresh Flow (which never called authorization_url())

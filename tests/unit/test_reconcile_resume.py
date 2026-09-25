@@ -1,12 +1,11 @@
-"""Boot reconciliation after services/task_resume exists (2026-09-22).
+"""Boot reconciliation now that services/task_resume exists.
 
-``reconcile_tasks`` used to say, unconditionally, "It was a free-form run, so
-I cannot pick it up mid-way — say the word and I will start it again." That
-was true when it was written. It stopped being true the moment the agent loop
-started checkpointing its transcript: a restored transcript carries every
+``reconcile_tasks`` must not say, unconditionally, "It was a free-form run, so
+I cannot pick it up mid-way — say the word and I will start it again." The
+agent loop checkpoints its transcript, and a restored transcript carries every
 completed tool's result with it, so resuming re-buys nothing.
 
-The maintainer's complaint is the token spend lost to partially completed
+The cost being protected is the token spend lost to partially completed
 tasks, local and cloud both. So the thing under test is not "a message
 changed" — it is that the three cases get three different, honest answers:
 
@@ -14,12 +13,12 @@ changed" — it is that the three cases get three different, honest answers:
   * mid-flight with a tool IN FLIGHT -> offer, and name what re-running risks
   * mid-flight with NO checkpoint -> the original message, unchanged
 
-and the fourth case nobody was handling at all: a task that was still WAITING
-for a busy local seat. Those never started, so nothing was spent on them and
-re-queuing is lossless — but ``task_journal.reconcile_on_boot`` only looks at
-``running``/``queued``, so a ``queued-for-seat`` record was not even marked
-interrupted. It kept a status saying it was about to start, forever, with
-nothing left in the process that could start it.
+and a fourth case: a task that was still WAITING for a busy local seat. Those
+never started, so nothing was spent on them and re-queuing is lossless — but
+``task_journal.reconcile_on_boot`` only looks at ``running``/``queued``, so an
+unhandled ``queued-for-seat`` record is not even marked interrupted. It keeps a
+status saying it is about to start, forever, with nothing left in the process
+that could start it.
 """
 
 import time

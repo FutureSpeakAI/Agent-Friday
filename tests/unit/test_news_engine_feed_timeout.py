@@ -1,10 +1,6 @@
-"""Tests for the 2026-09-04 fix: `_parse_feed`/`_rss_results` had no real
-timeout, which blocked a pool worker (and the archiver thread waiting on the
-pool) forever against a feed server that accepts a connection and never
-finishes sending. See KNOWN_ISSUES.md for the incident this was found
-investigating (a stack-overflow crash of the whole server process — this
-fix does not claim to be *the* cause, only an independent, unambiguous bug
-found while investigating it).
+"""`_parse_feed`/`_rss_results` must have a real timeout. Without one, a feed
+server that accepts a connection and never finishes sending blocks a pool
+worker (and the archiver thread waiting on the pool) forever.
 
 Uses a real, local, deliberately-silent TCP listener rather than mocking
 `urllib`/`feedparser` -- the whole point is proving the SOCKET actually

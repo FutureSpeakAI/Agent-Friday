@@ -1,12 +1,11 @@
 """The first spoken turn must not pay for loading the voice.
 
-Measured on this machine: a cold Kokoro load is 91s, a warm one 0.19s. The
-cold load was paid on the first spoken turn, and a minute and a half of
-nothing after pressing the mic is indistinguishable, from the outside, from
-voice being broken.
+A cold Kokoro load can take ~90s, a warm one ~0.2s. If the cold load is paid
+on the first spoken turn, a minute and a half of nothing after pressing the
+mic is indistinguishable, from the outside, from voice being broken.
 
-The machinery to pre-load existed — ``/api/voice/warm`` — and nothing outside
-the test suite ever called it. These tests pin the two halves that make boot
+``/api/voice/warm`` pre-loads the voice, but only helps if something calls it
+at boot. These tests pin the two halves that make boot
 warming real: the server asks for it, and the endpoint answers an
 unauthenticated loopback request, because that is the only credential the
 server has when talking to itself.

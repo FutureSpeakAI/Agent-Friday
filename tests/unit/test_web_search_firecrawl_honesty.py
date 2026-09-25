@@ -1,10 +1,10 @@
 """Firecrawl exists, is preferred, and a missing key is reported as exactly that.
 
-Observed 2026-09-18: no FIRECRAWL_API_KEY anywhere, every query fell to the
-DuckDuckGo scrape (HTTP 202 anti-bot walls), and the model told the user
-"I don't have Firecrawl wired up as a tool right now, nothing in my toolkit
-is named that". Firecrawl is the first backend in `web_search.search()`'s
-chain; it was unconfigured, not absent. Three things that could fail:
+With no FIRECRAWL_API_KEY anywhere, every query falls to the DuckDuckGo
+scrape (HTTP 202 anti-bot walls), and a model that is not told otherwise says
+"I don't have Firecrawl wired up as a tool right now". Firecrawl is the first
+backend in `web_search.search()`'s chain; without a key it is unconfigured,
+not absent. Three things that could fail:
 
   1. With a key, Firecrawl is tried first.
   2. Without a key, a failed search says Firecrawl is unconfigured and how

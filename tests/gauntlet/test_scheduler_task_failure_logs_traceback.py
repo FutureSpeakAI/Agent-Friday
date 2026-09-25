@@ -13,21 +13,15 @@ elsewhere (_log.warning/_log.error) and the codebase's broader
 must-not-fail-silently convention (server.py's _fail_loud_and_exit, which
 routes through logging for exactly this reason).
 
-CORRECTION (2026-09-04, flagged by the maintainer's independent cold
-re-verification as a text pin): the original probe
-(test_scheduler_task_failure_uses_logger.py) only checked dispatch()'s
-SOURCE for "_log." and the absence of "traceback.print_exc" -- a text
-pin, even though dispatch() is an ordinary, independently-callable
-module-level function (not a closure nested in something untestable like
-ws_live), so a real behavioral test is straightforward: dispatch a
-genuinely failing builtin task exactly the way
+dispatch() is an ordinary, independently-callable module-level function
+(not a closure nested in something untestable like ws_live), so this is a
+behavioral test rather than a text pin: dispatch a genuinely failing
+builtin task exactly the way
 tests/unit/test_scheduler.py::test_dispatch_builtin_failure_records_failed
-already does, and assert on the ACTUAL log record emitted via pytest's
-caplog, not on the source text of the handler that produces it. Kept the
-original source-position probe alongside this one rather than deleting
-it -- it still correctly proves traceback.print_exc() is gone, which
-caplog alone would not directly show (a missing print_exc call has no
-log-record footprint to assert on).
+does, and assert on the ACTUAL log record emitted via pytest's caplog. A
+source-position probe stays alongside it because it proves
+traceback.print_exc() is gone, which caplog alone cannot show (a missing
+print_exc call has no log-record footprint to assert on).
 """
 from __future__ import annotations
 

@@ -1,18 +1,17 @@
 """A substitution must never land on a seat nothing answers to.
 
-THE OBSERVED FAILURE (2026-09-10, Stephen's machine). `resolve("brain")`
-returned `gemma4:e2b-friday-v1` — a retired alias for a model that no longer
-exists — while `gemma4:e2b-fridayweaver-1.0` was serving on port 8095 and
-answering in under a second. Friday then asked Ollama for the retired name,
-Ollama has nothing installed, and the turn died with "No model provider could
-run the agent".
+THE FAILURE. `resolve("brain")` can return `gemma4:e2b-friday-v1` — a retired
+alias for a model that no longer exists — while `gemma4:e2b-fridayweaver-1.0`
+is serving on port 8095 and answering in under a second. Friday then asks
+Ollama for the retired name, Ollama has nothing installed, and the turn dies
+with "No model provider could run the agent".
 
-The cause was not the size ordering itself but what happened when liveness
-could not be read: `runtime/residency/endpoints.json` held `{}` after a
-restart, so `seat_endpoint()` said None for every candidate, the live-seats
-pool came back empty, and the code treated "nobody is running" and "nobody
-could be asked" as the same state. Size ordering then picked the smallest,
-which was the dead one.
+The cause is not the size ordering itself but what happens when liveness
+cannot be read: `runtime/residency/endpoints.json` holds `{}` after a
+restart, so `seat_endpoint()` says None for every candidate, the live-seats
+pool comes back empty, and treating "nobody is running" and "nobody could be
+asked" as the same state lets size ordering pick the smallest, which is the
+dead one.
 """
 import pytest
 
@@ -41,7 +40,7 @@ def _inventory(monkeypatch):
 def test_substitution_prefers_the_seat_that_answers(monkeypatch):
     """With endpoints.json empty, the survey must still find the live seat."""
     _inventory(monkeypatch)
-    # endpoints.json empty — exactly the observed state.
+    # endpoints.json empty — exactly the failing state.
     monkeypatch.setattr("agent_friday.services.local_call.seat_endpoint",
                         lambda m: None)
     monkeypatch.setattr(ls, "_survey_seats", lambda force=False: frozenset({LIVE}))

@@ -15,7 +15,7 @@ stopped an equivalent package being re-vendored tomorrow.
 
 WHY A TEST AND NOT AN ENVIRONMENT VARIABLE. `ANONYMIZED_TELEMETRY=False` would
 have silenced browser-use, and that is precisely the shape of defect this
-codebase spent 24-25 August removing: a protection that holds only while
+codebase removes elsewhere: a protection that holds only while
 someone remembers to set it, on every launch path, in every future version.
 Configuration can be unset, missed by one launcher, or ignored by an upstream
 release. A test that fails on the *presence of the key or endpoint* cannot be
@@ -28,8 +28,7 @@ remember the rule.
 SCOPE. Tracked files only (`git ls-files`) — that is what a re-vendor would
 add, and it keeps the test independent of whatever is lying around a working
 tree or installed in a venv. Third-party telemetry inside *installed* packages
-is a different problem with a different fix; see docs/audits/ for the
-dependency sweep.
+is a different problem with a different fix.
 """
 
 from __future__ import annotations
@@ -96,8 +95,7 @@ TELEMETRY_SIGNATURES = [
 # It is EMPTY, and that is the point. The obvious way to write this test was to
 # paste the real browser-use key in as a sample and allowlist this file -- but
 # then the guard cannot scan itself, and the tree still contains a telemetry
-# key. The repo's own pre-commit secret scanner rejected that first draft,
-# correctly. The sample is therefore assembled at runtime from fragments that
+# key, which the repo's own pre-commit secret scanner rightly rejects. The sample is therefore assembled at runtime from fragments that
 # match nothing, so no telemetry literal exists anywhere in the tree and this
 # file is scanned like every other.
 ALLOWED: set[str] = set()

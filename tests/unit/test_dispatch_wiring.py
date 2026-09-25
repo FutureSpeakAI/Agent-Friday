@@ -115,7 +115,7 @@ def test_supervisor_kill_marks_frees_and_promotes(supervisor):
     wedged = _record("t1")
     sup.wire_spawn(wedged)
     sup.wire_spawn(_record("t2"))
-    # Reproduce the 2026-09-21 wedge signature: massively overdue, zero tool calls.
+    # Reproduce the wedge signature: massively overdue, zero tool calls.
     wedged["created_at"] = time.time() - 8869
     wedged["status"] = "running"
     sup.assess_pass()

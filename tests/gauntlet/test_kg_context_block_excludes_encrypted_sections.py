@@ -19,19 +19,14 @@ redaction the rest of the system prompt gets
 This probe must be RED before the fix (an encrypted-section candidate's
 summary appears in the block) and GREEN after.
 
-CASING NOTE (2026-09-04, caught by an independent cold re-verification of
-this fix): the first version of this probe used "private" (already
-lowercase) as the candidate's `section` AND as the mocked encrypted-
-sections entry -- both sides lowercase, so it could never have caught a
-case-mismatch bug, and it didn't: the first version of the actual fix
-compared the candidate's raw, case-preserved `section` directly against
-`_wiki_encrypted_sections()`'s always-lowercased set, so a real section
-directory named e.g. "Private" was never excluded. wiki_graph.py stores
+CASING NOTE: the candidate's `section` is "Private" (mixed case) while
+the mocked encrypted-sections entry is "private". wiki_graph.py stores
 `section` as the raw path segment (`rel.split("/")[0]`, never lowercased)
--- exactly what a real wiki folder name looks like on disk -- so this
-probe now uses "Private" (mixed case) for the candidate, matching what
-the real indexer actually produces, against the real function's real
-always-lowercase return shape.
+-- exactly what a real wiki folder name looks like on disk -- whereas
+`_wiki_encrypted_sections()` always returns a lowercased set. Using
+lowercase on both sides could never catch a fix that compares the raw,
+case-preserved `section` directly against that set and so fails to
+exclude a directory named "Private".
 """
 from __future__ import annotations
 

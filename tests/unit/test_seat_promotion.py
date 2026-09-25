@@ -1,26 +1,25 @@
 """FIFO promotion off the busy local seat actually starts the next task.
 
-Found 2026-09-22 while wiring the cloud-spill question, by driving the REAL
-supervisor with the REAL thread factory instead of the injected fake the
-existing seat tests use:
+Driving the REAL supervisor with the REAL thread factory, instead of the
+injected fake the other seat tests use, shows the failure this pins:
 
     probe-1: admitted as running
     probe-2: admitted as queued-for-seat
     -- first task ends; the queued one should now be promoted --
     PROMOTION RAISED: TypeError unhashable type: 'dict'
 
-``SeatSupervisor._start`` calls ``thread_factory(record)``. ``agent.
-_start_pending_task_thread`` took a task *id* and did
-``_PENDING_TASK_THREADS.pop(task_or_id, None)``. A dict is unhashable, and
+``SeatSupervisor._start`` calls ``thread_factory(record)``. If ``agent.
+_start_pending_task_thread`` treats its argument as a task *id* and does
+``_PENDING_TASK_THREADS.pop(task_or_id, None)``, a dict is unhashable, and
 ``pop`` only swallows that on an EMPTY dict — the dict is non-empty exactly
 when a task is parked waiting for a seat, which is the only situation
-promotion ever happens in. So every promotion raised, the queued task never
-started, and the traceback surfaced in the finishing worker's ``finally``
+promotion ever happens in. So every promotion raises, the queued task never
+starts, and the traceback surfaces in the finishing worker's ``finally``
 block, nowhere near the task it stranded.
 
-The seat tests that already existed all inject their own thread factory, so
-none of them could ever see this: they tested the supervisor's contract, and
-the defect was in the other side of it. This file tests the pair.
+Seat tests that inject their own thread factory cannot see this: they test
+the supervisor's contract, and the defect is on the other side of it. This
+file tests the pair.
 """
 
 import pytest

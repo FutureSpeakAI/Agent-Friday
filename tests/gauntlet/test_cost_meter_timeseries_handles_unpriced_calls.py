@@ -1,23 +1,20 @@
-"""Gauntlet finding F66 (2026-09-04): cost_meter.timeseries() crashed with
-TypeError the first time an unpriced-model call (cost_usd IS NULL,
-UNPRICED_MODELS -- F50) landed inside the requested range.
+"""Gauntlet finding F66: cost_meter.timeseries() must not crash when an
+unpriced-model call (cost_usd IS NULL, UNPRICED_MODELS -- F50) lands inside
+the requested range.
 
 summary() and by_schedule() sum cost_usd in SQL via COALESCE(SUM(...),0),
-which silently and correctly treats NULL as "contributes nothing to the
-total." timeseries() sums in Python (`b["usd"] += cost`), and nothing
-skipped a None there -- `0.0 += None` raises TypeError, which the route
-(routes/costs.py) catches and turns into a 500.
+which correctly treats NULL as "contributes nothing to the total."
+timeseries() sums in Python (`b["usd"] += cost`), so it must skip a None
+there -- `0.0 += None` raises TypeError, which the route (routes/costs.py)
+catches and turns into a 500.
 
-Found via F64's investigation: an order-dependent test failure
-(tests/api/test_self_sufficient_routes.py::test_costs_timeseries_and_scheduled
-failing only when the full suite ran, never in isolation) traced back to an
-earlier test in the same session recording a real call for an unpriced
-model (going through the real, shared cost_meter.DB_PATH), leaving exactly
-one NULL-cost_usd row for `timeseries()` to trip over later. Confirmed by
-direct reproduction: record() one unpriced-model call, call timeseries(),
-watch it crash with the exact "unsupported operand type(s) for +=: 'float'
-and 'NoneType'" message -- this is a real bug F50's own fix made newly
-reachable, not a test artifact.
+One NULL-cost_usd row is enough: record() one unpriced-model call, call
+timeseries(), and an unguarded sum crashes with "unsupported operand
+type(s) for +=: 'float' and 'NoneType'". In the suite this shows up as an
+order-dependent failure of
+tests/api/test_self_sufficient_routes.py::test_costs_timeseries_and_scheduled
+(an earlier test records an unpriced call through the shared
+cost_meter.DB_PATH). It is a real bug, not a test artifact.
 """
 from __future__ import annotations
 

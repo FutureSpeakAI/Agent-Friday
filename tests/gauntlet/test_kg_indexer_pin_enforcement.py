@@ -1,4 +1,4 @@
-"""Gauntlet finding F34, live incident 2026-09-04: _resolve_model()'s `pinned`
+"""Gauntlet finding F34: _resolve_model()'s `pinned`
 return value was computed and then discarded -- indexer._llm() passed the
 resolved model name to model_router._generate_text() as a hint only, and
 routing/model_router.py's capability-based seat choice
@@ -10,13 +10,9 @@ both false the moment a user picked a cloud model as their reasoning seat --
 an ordinary, UI-encouraged action. _llm() must call the local primitive
 directly when pinned, never the general router.
 
-REMEDIATION NOTE (2026-09-04): this probe originally lived as
-TestLlmEnforcesThePin inside tests/unit/test_kg_indexer.py -- an existing
-test file, against this audit's own standing rule that new probes go only
-in tests/gauntlet/. Moved here unchanged (content identical, only the
-module-level imports/helpers below are inlined so this file is
-self-contained) to correct that rule violation, flagged directly by
-The maintainer's independent cold re-verification pass.
+Gauntlet probes live only in tests/gauntlet/, so this file is
+self-contained rather than importing helpers from
+tests/unit/test_kg_indexer.py.
 """
 from __future__ import annotations
 
@@ -25,13 +21,11 @@ from agent_friday.services.knowledge_graph import indexer
 
 class TestLlmEnforcesThePin:
     def test_pinned_chunk_calls_ollama_directly_not_the_router(self, monkeypatch):
-        # 2026-09-05: indexing_mode's legacy "local_only"/"gated_cloud" pair
-        # was renamed to "local"/"cloud" by the same-day "strict per-user
-        # choice" rewrite (_resolve_model no longer overrides the choice
-        # per-chunk by sensitivity) -- this probe predates that rename.
-        # "local" mode still always pins, so the pin-enforcement claim this
-        # test exists to check is unaffected; it now needs an installed
-        # model mocked, since _resolve_model()'s local branch checks for one.
+        # indexing_mode's legacy "local_only"/"gated_cloud" pair is now
+        # "local"/"cloud" (a strict per-user choice: _resolve_model no
+        # longer overrides it per-chunk by sensitivity). "local" mode always
+        # pins; an installed model is mocked because _resolve_model()'s
+        # local branch checks for one.
         monkeypatch.setattr(indexer, "_available_local_model", lambda: "gemma4:e2b")
         calls = {"ollama": [], "generate_text": []}
         monkeypatch.setattr(
@@ -61,9 +55,8 @@ class TestLlmEnforcesThePin:
         still go through _generate_text as before -- the fix must be
         specific to the pinned case, not a blanket switch to local.
 
-        2026-09-05: mode string updated "gated_cloud" -> "cloud" (see the
-        sibling test above) -- "cloud" is the only mode _resolve_model
-        treats as unpinned, same routing/egress-gate requirement as before.
+        "cloud" (formerly "gated_cloud") is the only mode _resolve_model
+        treats as unpinned, with the same routing/egress-gate requirement.
         """
         import agent_friday.services.egress_gate as eg
         monkeypatch.setattr(eg, "gate_operational", lambda: True)

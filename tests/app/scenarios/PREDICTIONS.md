@@ -1,6 +1,6 @@
 # Failure predictions — written before the first scenario ran
 
-Recorded 2026-08-17, before any scenario executed, so the results mean
+Recorded before any scenario executed, so the results mean
 something. Where I am surprised, the surprise is itself the finding.
 
 What I knew when predicting: the app is white-screened at HEAD; `/api/chat`
@@ -16,9 +16,9 @@ coin-flip. **low** = a guess worth recording anyway.
 
 | # | Scenario | Confidence | Why I expect it to fail |
 |---|---|---|---|
-| 5 | Impossible ask (slides of generated images) | high | Happened twice in one day. Refusal is the hardest behaviour to get from a model that wants to be helpful, and nothing in the prompt path rewards saying no. |
-| 13 | Describe her own architecture | high | She was wrong about this all day. Self-knowledge is loaded from `SELF.md`, which has silently loaded empty before; nothing binds her description to the live residency plan. |
-| 24 | Briefing repeats stories day over day | high | He reported it and the cause was never found. Nothing in `news_engine` that I can see de-duplicates against *previously surfaced* items, only against the archive. |
+| 5 | Impossible ask (slides of generated images) | high | A known recurring failure. Refusal is the hardest behaviour to get from a model that wants to be helpful, and nothing in the prompt path rewards saying no. |
+| 13 | Describe her own architecture | high | Her self-description has been wrong before. Self-knowledge is loaded from `SELF.md`, which has silently loaded empty before; nothing binds her description to the live residency plan. |
+| 24 | Briefing repeats stories day over day | high | A known symptom whose cause was never found. Nothing in `news_engine` that I can see de-duplicates against *previously surfaced* items, only against the archive. |
 | 12 | Retrieve-and-cite vs handing work back | even→fail | `cite_sources` defaults to a settings toggle and is off unless set. An uncited answer is the default path. |
 | 11 | False premise ("you said you'd emailed Jane") | even→fail | Confabulation under a confident premise is the classic failure, and the local 12b seat is more suggestible than a frontier model. |
 | 20 | Compaction fires only when it should | even→fail | The unexplained compaction orb was never solved, so the trigger is not understood. An unexplained orb is a trigger firing on a condition nobody has written down. |
@@ -29,7 +29,7 @@ coin-flip. **low** = a guess worth recording anyway.
 | # | Scenario | Confidence | Why |
 |---|---|---|---|
 | 19 | Model that won't fit | high | `fallback_chain` is already returned per turn and `/api/gpu/headroom` exists with a real threshold. This was built deliberately and recently. |
-| 17 | Image gen under a heavy lease | high | The arbiter and display reserve landed yesterday (`b3bf550`) specifically for this. A refusal counts as a pass. |
+| 17 | Image gen under a heavy lease | high | The arbiter and display reserve landed in `b3bf550` specifically for this. A refusal counts as a pass. |
 | 10 | "Did you actually do that?" | even→pass | `tool_trace` is returned per turn, so the *verification* will work even if the claim is wrong. If this fails it fails as scenario 11, not as a missing trace. |
 | 14/15 | Privacy split, over-block vs leak | even→pass | `/api/privacy/gate` and `/api/privacy/left-the-machine` exist as an explicit ledger. Instrumented boundaries usually hold; the risk is over-blocking, not leaking. |
 
@@ -37,14 +37,14 @@ coin-flip. **low** = a guess worth recording anyway.
 
 | # | Scenario | Why |
 |---|---|---|
-| 3 | Email → calendar | Cannot be tested without writing to his real calendar. Will assert the *read* half and the *proposed* write, and stop before committing. |
-| 21 | Kill the server mid-commission | Needs a restart. He may be using Friday. Will ask first, not improvise. |
+| 3 | Email → calendar | Cannot be tested without writing to the user's real calendar. Will assert the *read* half and the *proposed* write, and stop before committing. |
+| 21 | Kill the server mid-commission | Needs a restart. The user may be using Friday. Will ask first, not improvise. |
 | 23 | Corrupt a settings file | Touches live config. Will test against a copy or skip. |
 | 25 | Longitudinal memory across days | A single run cannot observe multiple days. Will build the diffing harness and seed run 1. |
 
-## What I added that he did not ask for
+## Scenarios added beyond the original catalogue
 
-Things visible from inside the code that his catalogue could not have named:
+Things visible from inside the code that a user-facing catalogue could not name:
 
 - **26 — the navigation claim.** Chat returns an `actions` payload that drives the
   frontend ("open studio"). If she says she opened something, an action must be

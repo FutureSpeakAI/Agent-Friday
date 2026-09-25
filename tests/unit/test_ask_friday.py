@@ -1,6 +1,6 @@
 """Local brain, cloud mouth (clean-sheet §4.5, D7).
 
-`ask_friday` is the one Gemini Live tool that reaches Stephen's context: it
+`ask_friday` is the one Gemini Live tool that reaches the user's context: it
 dispatches to the LOCAL agent pipeline and returns the answer only after the
 egress gate has sealed it for google-gemini. A withheld answer is returned
 whole (the marker), never partially redacted.
@@ -29,7 +29,7 @@ def test_ask_friday_is_egress_gated(monkeypatch):
         calls["model"] = model
         calls["ctx"] = kw.get("session_ctx")
         calls["max_tokens"] = kw.get("max_tokens")
-        return "Janet's number is 555-0100 and the vault says TIER_3 secret.", []
+        return "Priya's number is 555-0100 and the vault says TIER_3 secret.", []
     monkeypatch.setattr("agent_friday.services.agent._generate_agent", fake_generate)
     monkeypatch.setattr("agent_friday.services.local_seats.resolve", lambda role: "seat-x")
     monkeypatch.setattr(rv, "_build_voice_system_prompt",
@@ -42,22 +42,22 @@ def test_ask_friday_is_egress_gated(monkeypatch):
         gated["fname"] = fname
         return "[withheld: contains never-send material]"
     monkeypatch.setattr(rv, "_gate_voice_tool_result", fake_gate)
-    out = ve._voice_tool_run("ask_friday", {"question": "what is Janet's number?"},
+    out = ve._voice_tool_run("ask_friday", {"question": "what is Priya's number?"},
                              lambda o: None)
     assert out == "[withheld: contains never-send material]"      # whole, not partial
     assert "555-0100" not in out
     assert gated["fname"] == "ask_friday"
-    assert gated["in"].startswith("Janet's number")
+    assert gated["in"].startswith("Priya's number")
     # It ran on the LOCAL pipeline with the full contract and the voice cap.
     assert calls["model"] == "seat-x"
     assert calls["ctx"]["provider"] == "local" and calls["ctx"]["is_voice"] is True
     assert calls["max_tokens"] == 300
     # The relay note rides in the USER turn and the question ends it; the
     # system text is the voice prompt untouched, so it shares the seat's
-    # prefix cache with local sessions (measured 2026-09-18: any change to
-    # the system message re-prefills the whole prompt).
+    # prefix cache with local sessions (any change to the system message
+    # re-prefills the whole prompt).
     user = calls["messages"][0]["content"]
-    assert user.endswith("what is Janet's number?")
+    assert user.endswith("what is Priya's number?")
     assert "RELAYED from a cloud voice session" in user
     assert calls["system"] == "VOICE PROMPT"
 

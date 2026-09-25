@@ -1,8 +1,8 @@
 """Every card the picker offers must be priced, and must not overstate itself.
 
-Audited on 2026-09-23 by listing what the picker ACTUALLY offers rather than
-what the shipped descriptor names -- which is what turned these up, because the
-Anthropic list is discovered live and is longer than the shipped one:
+Checked by listing what the picker ACTUALLY offers rather than what the shipped
+descriptor names, because the Anthropic list is discovered live and is longer
+than the shipped one. That listing found these defects, which the tests pin:
 
   * Six retired-but-still-served ids (Opus 4.8/4.7/4.6/4.5, Sonnet 4.6/4.5) were
     offered with no price row at all. `price_for` fell through to the provider
@@ -183,16 +183,15 @@ def test_an_unreadable_engine_row_says_so_rather_than_claiming_ready(monkeypatch
 
 # ── the seats Friday actually uses must meter ───────────────────────────────
 #
-# Audited 2026-09-23 against the live settings: every cloud seat is bound
-# THROUGH OpenRouter, so the ids in use are gateway-prefixed and use a DOT where
-# Anthropic's canonical id has a dash:
+# A cloud seat bound THROUGH OpenRouter uses a gateway-prefixed id with a DOT
+# where Anthropic's canonical id has a dash, e.g.:
 #
 #   reasoning / subagent / heavy_hitter -> anthropic/claude-opus-5.5
 #   orchestrator / sidekick_fast        -> anthropic/claude-sonnet-5
 #
-# None of those was in PRICING, openrouter declares no cost_per_1k, and
-# price_for's last resort returns 0/0 -- so the models Friday was actually
-# thinking with metered at exactly $0.00. `services/spend_guard` is denominated
+# If those are not in PRICING, openrouter declares no cost_per_1k, and
+# price_for's last resort returns 0/0 -- so the models Friday is actually
+# thinking with meter at exactly $0.00. `services/spend_guard` is denominated
 # in dollars, so a $0 rate silently disables the only stop that stops.
 
 @pytest.mark.parametrize("gateway_id,canonical", [

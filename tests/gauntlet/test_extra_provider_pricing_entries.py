@@ -1,28 +1,22 @@
 """Gauntlet finding Q11 part (b) / F50: five opt-in provider catalogs --
 Groq, Mistral, DeepSeek, xAI, Cohere (routing/provider_descriptors.py
 BUILTIN_EXTRA_PROVIDERS) -- metered as exactly $0 for every call,
-structurally, through all three pricing-resolution tiers (docs/audits/
-gauntlet-2026-09-03/findings.jsonl, Q11).
+structurally, through all three pricing-resolution tiers (findings.jsonl,
+Q11).
 
-The finding is explicit that the CODE PATH itself (_call_openai ->
-agent.py's _oai_agentic_loop -> cost_meter.meter()) already works
-correctly -- confirmed elsewhere in this audit for other openai-compatible
-providers -- so the only real gap is the price table.
+The CODE PATH itself (_call_openai -> agent.py's _oai_agentic_loop ->
+cost_meter.meter()) already works for openai-compatible providers, so the
+only real gap is the price table.
 
-An earlier draft of this fix filled the table with rates sourced from
-public pricing-aggregator pages rather than each provider's own page --
-findings.jsonl F50 is the write-up of that lapse, caught before it shipped
-to a user-facing cost panel. Only mistral-large-latest could be verified
-directly against Mistral's own pricing page (mistral.ai/pricing: "$0.5/M
-tokens in and $1.5/M tokens out"). Every other model this finding named
-is now DELIBERATELY UNPRICED (cost_meter.UNPRICED_MODELS): still metered
-(the call is logged with real token counts) but with cost_usd stored as
-SQL NULL rather than a guessed number -- the honest resolution the
-delegation asked for once a rate couldn't be verified against the
-provider's own page. This is a real improvement over the original
-$0-for-everyone bug even though it isn't full-coverage: a NULL cost is
-visibly "not priced" to any consumer of this data; a silent $0 looks like
-a verified free call, which none of these are.
+Rates come only from each provider's own pricing page, never from
+pricing-aggregator pages (findings.jsonl F50). Only mistral-large-latest
+is verified directly against Mistral's own pricing page (mistral.ai/pricing:
+"$0.5/M tokens in and $1.5/M tokens out"). Every other model named here is
+DELIBERATELY UNPRICED (cost_meter.UNPRICED_MODELS): still metered (the
+call is logged with real token counts) but with cost_usd stored as SQL
+NULL rather than a guessed number. A NULL cost is visibly "not priced" to
+any consumer of this data; a silent $0 looks like a verified free call,
+which none of these are.
 """
 from __future__ import annotations
 

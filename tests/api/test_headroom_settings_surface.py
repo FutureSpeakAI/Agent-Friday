@@ -35,10 +35,8 @@ def test_fetch_preflight_known_model_returns_the_five_line_card(client):
 
 
 def test_machine_level_now_enforces(client):
-    """It was a stub, deliberately, while headroom.md D1 was open: it
-    accepted the click and said plainly that nothing was enforced. D1 was
-    answered 2026-09-24 and `services/stand_down.py` implements it, so the
-    route reports enforcement and no longer disclaims it.
+    """`services/stand_down.py` implements headroom.md D1, so the route
+    reports enforcement and does not disclaim it.
     """
     r = client.post("/api/machine/level", json={"level": "yield"})
     assert r.status_code == 200

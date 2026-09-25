@@ -1,22 +1,15 @@
 """Daily creation runs while the user is away, and says why when it doesn't.
 
-Stephen, 2026-09-24: "Why doesn't the daily creation run by default during idle
-time?"
+Daily creation runs by default during idle time. A schedule entry of the form
 
-IT WAS NOT RUNNING AT ALL, and the reason was neither cost nor GPU contention.
-`sch_daily_creation` in his schedules.json carried:
+    "trigger": "daily", "spec": {"hour": 8}, "enabled": false
 
-    "trigger": "daily", "spec": {"hour": 8}, "enabled": false,
-    "last_run_ts": 2026-09-09, "last_status": "complete"
+is simply switched off, and nothing ever says so.
 
-Switched off. The newest artifact in ~/.friday/creations is 2026-08-30. So the
-honest answer to "why wasn't it running" is: somebody turned it off, and nothing
-ever said so.
-
-It now uses an `idle_daily` trigger: once a day, while he is away, inside a
-window, with the GPU free and Friday not stood down. Every condition is a reason
+It uses an `idle_daily` trigger instead: once a day, while the user is away,
+inside a window, with the GPU free and Friday not stood down. Every condition is a reason
 to WAIT rather than to fail, and the day's mark is only set when it actually runs
--- so a day he never steps away simply produces nothing, and the reason is
+-- so a day the user never steps away simply produces nothing, and the reason is
 available rather than inferred.
 """
 

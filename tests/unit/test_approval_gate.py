@@ -153,9 +153,9 @@ class TestDecide:
 
     def test_approve_sets_status_and_metadata(self):
         appr = self._pending()
-        out = approvals.decide(appr["approval_id"], "approve", decided_by="stephen", note="looks fine")
+        out = approvals.decide(appr["approval_id"], "approve", decided_by="owner", note="looks fine")
         assert out["status"] == "approved"
-        assert out["decided_by"] == "stephen"
+        assert out["decided_by"] == "owner"
         assert out["decision_note"] == "looks fine"
         assert out["decided_at"] is not None
 

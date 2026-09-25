@@ -1,7 +1,7 @@
 """A key you swap in Settings must still be the key after a restart.
 
-The maintainer, 2026-08-26: "we need to fix the installer so the Friday that ships
-to users can swap API keys from the settings menu". Swap, not just add — a
+The Friday that ships to users must be able to swap API keys from the
+Settings menu. Swap, not just add — a
 key that never worked and a key that stopped working look identical to a
 user, so replacing one is the realistic case, not the exotic one.
 
@@ -31,16 +31,15 @@ So:
 Friday is broken again, by the key she already replaced, and nothing on
 screen disagrees with her having fixed it.
 
-This was invisible to the author for the same reason as everything else this
-week: his credential store holds no anthropic or google-gemini key at all
-(list_provider_keys() -> ['atlascloud', 'firecrawl']), because the Settings
-panel that writes them was unreachable until today. With an empty store the
-old precedence and the new one do exactly the same thing.
+This is invisible on an install whose credential store holds no anthropic
+or google-gemini key at all: with an empty store the old precedence and the
+new one do exactly the same thing.
 
 The rule now: a key saved through the product is a deliberate, later
 instruction; an environment variable is ambient configuration. The same
 distinction model_router._chosen_seat draws between a binding and a default,
-and seat_binding draws between "a value he changed" and "the factory value".
+and seat_binding draws between "a value the user changed" and "the factory
+value".
 
 Nothing shadows silently in either direction — /api/providers reports which
 source is in play, so a start.bat rotation that does not take is visible
@@ -90,8 +89,8 @@ def test_a_key_saved_in_settings_beats_a_stale_start_bat(monkeypatch, store):
 def test_the_environment_still_works_when_nothing_was_saved(monkeypatch, store):
     """No stored key: behaviour is byte-identical to before this change.
 
-    This is why the change is safe to ship. The maintainer's store holds no
-    anthropic key, so for him the two rules are the same rule.
+    This is why the change is safe to ship. For a store that holds no
+    anthropic key, the two rules are the same rule.
     """
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key-from-start-bat")
     assert pd.provider_api_key(ANTHROPIC) == "fake-key-from-start-bat"

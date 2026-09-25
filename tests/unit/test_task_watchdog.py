@@ -113,9 +113,9 @@ def test_completed_task_is_ok_never_flagged():
 
 
 def test_incident_8869s_zero_tool_calls_rules_kill():
-    """Regression: the 2026-09-21 wedge. 8,869s elapsed against an 1800s
-    budget with zero tool calls pinned the GPU until the OS choked, and the
-    dispatcher ruled nothing. The watchdog must rule kill."""
+    """Regression: a wedged task. 8,869s elapsed against an 1800s budget with
+    zero tool calls pins the GPU until the OS chokes if the dispatcher rules
+    nothing. The watchdog must rule kill."""
     task = _task(
         started_at=0.0,
         timeout_seconds=1800.0,

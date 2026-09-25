@@ -191,10 +191,9 @@ def test_a_public_comfyui_url_is_still_cloud():
 
 # ── cancellation ─────────────────────────────────────────────────────────────
 #
-# Every test here is a defect that shipped on 2026-08-16 described as working.
-# The orb is registered BEFORE the lease is granted, so a cancel arriving in
-# that window found no lease, reported "nothing to interrupt", and the job ran
-# to completion anyway. Cancellation now hangs on a flag on the JOB, which
+# The orb is registered BEFORE the lease is granted, so a cancel keyed on the
+# lease finds none in that window, reports "nothing to interrupt", and the job
+# runs to completion anyway. Cancellation therefore hangs on a flag on the JOB, which
 # exists from the first line of generate() to the last.
 
 class _SlowArbiter(FakeArbiter):
@@ -296,8 +295,8 @@ def test_the_wait_honours_the_cancel_flag_and_interrupts_comfyui(monkeypatch):
 
 def test_system_generations_stay_out_of_the_creations_gallery(installed,
                                                               monkeypatch):
-    """Verification images once landed in the gallery indistinguishable from
-    his own work, and he had to delete them by hand."""
+    """Verification images must not land in the gallery indistinguishable from
+    the user's own work, leaving them to delete by hand."""
     monkeypatch.setattr(li, "_post", lambda p, b, timeout=60: {"prompt_id": "1"})
     monkeypatch.setattr(
         li, "_await_result",
@@ -315,7 +314,7 @@ def test_system_generations_stay_out_of_the_creations_gallery(installed,
 
 
 # ── SD 3.5 Medium, the alternative image seat ────────────────────────────────
-# Added 2026-08-18. Z-Image stays the default; this model is a CHOICE, and the
+# Z-Image stays the default; this model is a CHOICE, and the
 # two disagree about sampler settings by enough that swapping one graph's
 # numbers into the other yields a grey smear rather than a slower picture.
 

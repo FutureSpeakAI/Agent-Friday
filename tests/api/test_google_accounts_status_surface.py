@@ -1,22 +1,20 @@
 """The settings surface must report what the account store actually says.
 
-Regression origin (2026-09-09): both of Stephen's Google accounts carried
-status="needs_reauth" with a last_sync of 2026-09-01, and the connectors page
-showed them as "connected" for nine days. He asked Friday directly whether his
-Google accounts were connected, was told yes for both, and then got an empty
-schedule for a day holding two job interviews.
+Two Google accounts with status="needs_reauth" and a nine-day-old last_sync
+must not show as "connected". If they do, a user who asks Friday whether their
+accounts are connected is told yes, and then gets an empty schedule for a day
+that is not empty.
 
-The failing check was structural, and it is the third instance of the same
-shape in one day: a check asked whether a RECORD EXISTS and reported that as
-whether the THING WORKS. has_accounts() returned true for a non-empty index so
-the calendar tool reported connected:true with zero usable accounts; Kokoro's
-readiness used find_spec to test that a package NAME existed and called a
-broken import ready; and this surface rendered the presence of an account as a
-working connection.
+The failure shape is structural and recurs: a check asks whether a RECORD
+EXISTS and reports that as whether the THING WORKS. has_accounts() returns true
+for a non-empty index, so a calendar tool can report connected:true with zero
+usable accounts; a readiness check using find_spec tests that a package NAME
+exists and calls a broken import ready; and a surface can render the presence
+of an account as a working connection.
 
 So these tests deliberately do NOT test the happy path only -- a happy-path
-test would have passed on every one of those nine days. Each one pins the
-unhappy path, and each fails if the enforcement is removed.
+test passes throughout that failure. Each one pins the unhappy path, and each
+fails if the enforcement is removed.
 """
 
 import json
@@ -39,7 +37,7 @@ def _write_accounts(*records):
 
 def _rec(**kw):
     base = {
-        "id": "acct1", "email": "stephen@example.com", "label": "Work",
+        "id": "acct1", "email": "user@example.com", "label": "Work",
         "status": "connected", "services": {"gmail": True, "calendar": True},
         "color": "#00d4ff", "created": "2026-08-26T15:26:07+00:00",
         "last_sync": "2026-09-09T09:00:00+00:00", "scopes": [],
@@ -67,15 +65,15 @@ def clean(tmp_path):
         shutil.rmtree(ga.ACCOUNTS_DIR, ignore_errors=True)
 
 
-# ── the exact production state, reproduced ──────────────────────────────────
+# ── two expired accounts ─────────────────────────────────────────────────────
 class TestStoredStatusIsWhatShows:
 
     def test_needs_reauth_never_reads_as_connected(self, client):
-        """The nine-day bug, pinned."""
+        """Expired accounts never read as connected."""
         _write_accounts(
             _rec(id="a1", email="primary@example.com", label="Personal",
                  status="needs_reauth", last_sync=_days_ago(9)),
-            _rec(id="a2", email="stephen@futurespeak.ai", label="Work",
+            _rec(id="a2", email="owner@work.example", label="Work",
                  status="needs_reauth", last_sync=_days_ago(9)),
         )
         d = client.get("/api/google/accounts").get_json()
@@ -143,7 +141,7 @@ class TestRecoveryPathIsOffered:
         Without login_hint the user has to pick the right address out of an
         account chooser -- the moment a non-technical user abandons the fix.
         """
-        _write_accounts(_rec(id="a1", email="stephen@futurespeak.ai",
+        _write_accounts(_rec(id="a1", email="owner@work.example",
                              status="needs_reauth"))
         seen = {}
 
@@ -154,13 +152,13 @@ class TestRecoveryPathIsOffered:
                 seen.update(kw)
                 return "https://accounts.google.com/o/oauth2/auth?x=1", "state123"
 
-        # Captures what the route ASKED FOR, not just that it asked. The fake
-        # used to be `lambda state=None:`, which silently became a TypeError
-        # the day build_auth_flow grew the send scope (2026-09-20) — and the
-        # route catches everything and returns {"status": "error"}, so the
-        # failure surfaced as "reconnect is broken" rather than "the stub is
-        # stale." Keyword-only, so the next parameter added to the real
-        # function fails here loudly instead of vanishing into **kwargs.
+        # Captures what the route ASKED FOR, not just that it asked. A stub
+        # with a narrower signature raises TypeError when build_auth_flow grows
+        # a parameter, and the route catches everything and returns
+        # {"status": "error"}, so the failure would read as "reconnect is
+        # broken" rather than "the stub is stale." Explicit parameters (no
+        # **kwargs), so the next one added to the real function fails here
+        # loudly instead of vanishing.
         built = {}
 
         def _fake_build_auth_flow(state=None, include_send=False, include_modify=False,
@@ -175,7 +173,7 @@ class TestRecoveryPathIsOffered:
         r = client.post("/api/google/accounts/connect", json={"account_id": "a1"})
         d = r.get_json()
         assert d["status"] == "ok"
-        assert seen.get("login_hint") == "stephen@futurespeak.ai"
+        assert seen.get("login_hint") == "owner@work.example"
         assert d["reconnecting"] is True
         # A RECONNECT MUST NOT QUIETLY ASK FOR MORE THAN THE ACCOUNT HAD.
         # Someone fixing a broken token is the person least likely to read a
@@ -250,7 +248,7 @@ class TestRenderedSurface:
     """index.html is the served page (docs/development/ui-build.md).
 
     These fail if someone removes the status rendering from the UI while
-    leaving the API correct -- which is exactly the state the bug was in.
+    leaving the API correct.
     """
 
     def _served(self):
@@ -287,8 +285,8 @@ class TestWorkingAccountsHelper:
 
     Four call sites (agent.py 1096/1158/1249/1310) gate on a record existing
     and then emit "connected": True -- agent.py:1123 says so in a comment:
-    `# accounts exist and are linked`. That boolean is what told Stephen his
-    accounts were fine. These pin the honest replacement so adopting it is a
+    `# accounts exist and are linked`. That boolean tells a user with expired
+    accounts that they are fine. These pin the honest replacement so adopting it is a
     one-line change per site.
     """
 

@@ -1,9 +1,9 @@
 """The Arbiter's seat-file map comes from models.json and says so when it is
 empty (docs/design/active/model-soup.md §7.2 item 1, §9.5 item 2).
 
-On 2026-09-17 `residency/gguf_models.json` named seven GGUFs under a
-directory that no longer existed, so `Arbiter.gguf_paths` was empty and
-every pinned load fell to a daemon with no models, silently. Delete the
+When `residency/gguf_models.json` names GGUFs under a directory that no
+longer exists, `Arbiter.gguf_paths` is empty and every pinned load falls to a
+daemon with no models, silently. Delete the
 `if not out:` announcement in `residency_catalog.seat_files` and the last
 test fails; delete the store read and the first one does.
 """

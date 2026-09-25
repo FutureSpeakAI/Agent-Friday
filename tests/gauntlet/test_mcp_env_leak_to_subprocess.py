@@ -73,17 +73,12 @@ class TestMcpEnvLeakToSubprocess:
             "was never wired into MCPServerProcess._spawn()"
         )
         assert "FRIDAY_VAULT_KEY" not in env
-        # CORRECTION (F67, 2026-09-04): this assertion used to REQUIRE the
-        # opposite -- that an arbitrary, unrelated env var DID pass through
-        # ("the filter must be a denylist of named secrets, not a broad
-        # allowlist"). That was the defect, not a property to protect: a
-        # denylist has to name every secret that will ever exist, and 6 more
-        # real provider keys were found missing from it after this test was
-        # written. The maintainer's ruling inverted the design -- a sandboxed
-        # subprocess environment is now BUILT FROM an allowlist of names
-        # subprocesses functionally need, so an arbitrary unrelated variable
+        # F67: a denylist has to name every secret that will ever exist (6
+        # real provider keys were once missing from it), so a sandboxed
+        # subprocess environment is BUILT FROM an allowlist of names
+        # subprocesses functionally need. An arbitrary unrelated variable
         # (which is exactly what an unnamed-and-therefore-never-blocklisted
-        # secret would also look like) must NOT pass through either.
+        # secret would also look like) must NOT pass through.
         assert "SOME_UNRELATED_VAR" not in env, (
             "an arbitrary env var neither on SANDBOXED_ENV_ALLOWLIST nor a "
             "known secret reached a sandboxed subprocess -- the allowlist "
@@ -160,14 +155,13 @@ class TestMcpEnvLeakToSubprocess:
 
 
 class TestF67AllowlistInversion:
-    """F67 (2026-09-04): the maintainer's direct ruling on a defect that recurred
-    three times under a denylist design (F32 built it, F44 mis-fixed it,
-    an external review found 6 more real provider keys missing from it) --
-    invert to an allowlist, so a name nobody has thought to add yet cannot
+    """F67: a defect that recurred three times under a denylist design (F32
+    built it, F44 mis-fixed it, 6 more real provider keys were later found
+    missing from it) -- the design is an allowlist, so a name nobody has thought to add yet cannot
     leak by omission the way a name nobody thought to BLOCK could."""
 
     def test_a_provider_on_no_list_at_all_does_not_arrive(self, monkeypatch):
-        """The exact proof the maintainer asked for: plant a fake key for a
+        """The allowlist's core property: plant a fake key for a
         provider that appears on NEITHER the old ENV_BLOCKLIST (which no
         longer exists) NOR any list anywhere in this codebase -- a
         hypothetical 8th, 9th, 10th provider nobody has added yet -- spawn

@@ -40,7 +40,7 @@ def test_resolve_music_model_passthrough_raw_id():
     assert me.resolve_music_model("lyria-3-pro-preview") == "lyria-3-pro-preview"
 
 
-# ── The seat actually selects (it did not, before 2026-08-24) ───────────────
+# ── The seat actually selects ────────────────────────────────────────────────
 def test_seat_drives_the_default_model(seat):
     """A model chosen in the picker is what generation uses."""
     with seat("lyria-pro"):

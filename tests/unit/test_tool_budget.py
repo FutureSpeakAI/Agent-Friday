@@ -1,13 +1,13 @@
 """The request has to be buildable before anything else can be true.
 
-Measured on the maintainer's machine 2026-08-18, from the daemon itself:
+The failure, as the daemon reports it:
 
     request (46288 tokens) exceeds the available context size (32768 tokens)
 
-Every local turn 400'd and the router fell back to Anthropic, so what he saw
-was "it took forever to reply then kicked back to Sonnet 4.6 again, which I do
-not want". The model, the seat, the picker and the routing mode were all
-correct. 112 connector tools simply did not fit in the window.
+Every local turn 400s and the router falls back to the cloud, so the user
+waits a long time and then gets a cloud answer they did not ask for. The
+model, the seat, the picker and the routing mode can all be correct; 112
+connector tools simply do not fit in the window.
 """
 import pytest
 
@@ -41,12 +41,11 @@ CONN = [_tool(f"mcp_hf_{i}") for i in range(112)]
 def test_the_research_floor_survives_a_punishing_prompt(monkeypatch):
     """knowledge_query must not be trimmable, at any prompt length.
 
-    THE OBSERVED FAILURE: on 2026-09-10 a 17,650-token prompt on the
-    fridayweaver seat trimmed 75 core tools to 40 and dropped
-    `knowledge_query`, `read_doc`, `search_drive`, `search_news` and
-    `search_files` in the same turn -- every lookup route Friday had. The
-    intent tier did not save it, because a turn does not have to mention the
-    knowledge graph for the next turn to need it.
+    THE FAILURE SHAPE: a 17,650-token prompt on the fridayweaver seat can trim
+    75 core tools to 40 and drop `knowledge_query`, `read_doc`,
+    `search_drive`, `search_news` and `search_files` in the same turn -- every
+    lookup route Friday has. The intent tier does not save it, because a turn
+    does not have to mention the knowledge graph for the next turn to need it.
 
     THIS TEST COULD FAIL: with `_FLOOR_TOOLS` reverted to ranking-only, the
     floor tools sit at the tail of a 60-tool sort under a budget that fits
@@ -55,10 +54,9 @@ def test_the_research_floor_survives_a_punishing_prompt(monkeypatch):
     """
     _seat(monkeypatch, 32768)
     # The pressure has to be hard enough that the ESSENTIAL tier alone cannot
-    # save them: a first draft of this test used cheap decoys, and the floor
-    # tools survived on essential-set ranking whether the floor existed or
-    # not. It passed while proving nothing. So: every essential tool, all fat,
-    # on a budget that fits about two of them.
+    # save them: with cheap decoys the floor tools survive on essential-set
+    # ranking whether the floor exists or not, and the test proves nothing.
+    # So: every essential tool, all fat, on a budget that fits about two.
     tools = [_tool(n, size=3000) for n in sorted(tb._ESSENTIAL_TOOLS)]
     kept, _note = tb.fit_tools_to_seat("seat:e2b", tools, prompt_cost=20000)
     names = {t["name"] for t in kept}
@@ -130,10 +128,10 @@ def test_core_is_droppable_on_a_seat_that_cannot_hold_it(monkeypatch):
 def test_essential_tools_outrank_cheap_ones(monkeypatch):
     """Survival must not be decided by description length.
 
-    Measured on the live registry 2026-08-24: the eight tools dropped first
-    were the eight most EXPENSIVE schemas, while `get_career_pipeline` (40
-    tokens) outlived `spawn_task` (298). Nobody chose that ordering — it fell
-    out of a sort whose only non-essential criterion was token cost.
+    With token cost as the only non-essential criterion, the tools dropped
+    first on the real registry are the most EXPENSIVE schemas, and
+    `get_career_pipeline` (40 tokens) outlives `spawn_task` (298). Nobody
+    chooses that ordering; it falls out of the sort.
     """
     _seat(monkeypatch, 8192)
     fat_essential = _tool("search_web", size=900)
@@ -197,8 +195,8 @@ def test_the_served_window_beats_the_architectural_one(monkeypatch):
 
 
 def test_prompt_cost_shrinks_the_tool_budget(monkeypatch):
-    """2026-08-19: tools 'within budget' landed on top of an ordinary prompt
-    and the sum exceeded the seat — 400, fallback to the cloud. The request
+    """Tools 'within budget' on top of an ordinary prompt can sum past the
+    seat — 400, fallback to the cloud. The request
     is budgeted as a WHOLE or it is not budgeted.
     """
     _seat(monkeypatch, 65536)
@@ -215,9 +213,9 @@ def test_prompt_cost_shrinks_the_tool_budget(monkeypatch):
 
 
 def test_the_server_beats_the_plan(monkeypatch):
-    """The plan asked for 65,536; _spawn capped the seat to 32,768 and never
-    wrote it back. Measured 2026-08-19: budgeting against the plan built a
-    >32k request for a 32k seat. The server is the authority — the same
+    """The plan asks for 65,536; _spawn caps the seat to 32,768 and never
+    writes it back. Budgeting against the plan builds a >32k request for a
+    32k seat. The server is the authority — the same
     principle local_call._serves states for model identity.
     """
     monkeypatch.setattr(tb, "_served_ctx", lambda m: 32768)
@@ -328,7 +326,7 @@ def test_junk_is_survivable(junk, monkeypatch):
 
 
 def test_a_request_the_seat_measures_as_fitting_is_never_trimmed_on_an_estimate(monkeypatch):
-    """Re-measured 2026-09-18 on the FridayWeaver seat: 75 declarations
+    """Measured on the FridayWeaver seat: 75 declarations
     estimate 12,740 tokens and render to 12,433, so on that seat chars/4 is
     honest -- but another template can expand tools differently in either
     direction. When the seat will count the request, its count decides."""
@@ -362,16 +360,15 @@ def test_the_tool_list_holds_still_while_the_prompt_breathes(monkeypatch):
 
     A chat template renders tool declarations before anything else, so one
     tool appearing or disappearing moves every token after it and the seat's
-    prefix cache matches nothing. Measured 2026-09-18: consecutive turns sent
-    62 tools and then 63, because the budget subtracts the prompt from the
-    window and the prompt breathes as the conversation moves. The capability
-    difference between 62 tools and 63 is nil; the cost was ~21,000 tokens
+    prefix cache matches nothing. Without rounding, consecutive turns send 62
+    tools and then 63, because the budget subtracts the prompt from the window
+    and the prompt breathes as the conversation moves. The capability
+    difference between 62 tools and 63 is nil; the cost is ~21,000 tokens
     reprocessed at ~500 tok/s, about forty-three seconds, on every turn.
 
-    THE FIXTURE MATTERS, and the first version of this test was worthless.
-    It used the module's CORE + CONN, where the connectors are all dropped and
-    all twenty core tools survive at every prompt length in range - so it
-    passed with the rounding removed, which makes it evidence of nothing.
+    THE FIXTURE MATTERS. With the module's CORE + CONN, the connectors are all
+    dropped and all twenty core tools survive at every prompt length in range,
+    so the test passes with the rounding removed and is evidence of nothing.
 
     This one is shaped like the real catalogue instead: seventy-five of
     Friday's own tools costing ~14,000 tokens against a 32,768 window, which
@@ -415,11 +412,10 @@ def test_the_tool_list_holds_still_while_the_prompt_breathes(monkeypatch):
 def test_quantising_the_budget_never_empties_a_small_seat(monkeypatch):
     """Rounding down is safe at a fraction and ruinous at everything.
 
-    The stability rounding above nearly shipped as an unconditional
-    `budget // 2048 * 2048`. On an 8,192-token seat carrying a 4,200-token
-    prompt the budget is 972 tokens, and that expression is ZERO - every tool
-    dropped, on precisely the seats least able to spare them. The rounding is
-    now confined to budgets of at least two whole steps, which caps the loss
+    An unconditional `budget // 2048 * 2048` is wrong: on an 8,192-token seat
+    carrying a 4,200-token prompt the budget is 972 tokens, and that
+    expression is ZERO - every tool dropped, on precisely the seats least able
+    to spare them. The stability rounding above is confined to budgets of at least two whole steps, which caps the loss
     at half and keeps small seats out of it entirely.
     """
     _seat(monkeypatch, 8192)

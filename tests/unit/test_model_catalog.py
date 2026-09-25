@@ -188,12 +188,11 @@ def test_live_ollama_models_only_merge_into_ollama_provider(monkeypatch):
 
 def test_a_stopped_ollama_daemon_names_no_models(monkeypatch):
     """A daemon that is not running has no models, and saying otherwise is
-    invention — this test used to assert the opposite.
+    invention.
 
-    2026-08-16, the maintainer: "listing Gemma4 as a cloud model, and as an Ollama
-    model (it is neither)." The Ollama entry came from this static fallback,
-    surviving on a daemon that has been retired; the cloud badge came from the
-    UI testing a `classification` field the API never sent. The provider row
+    A static fallback here once listed Gemma4 as an Ollama model on a daemon
+    that had been retired (and the UI, testing a `classification` field the
+    API never sent, also badged it as cloud; it is neither). The provider row
     still appears so the hint is readable — it just stops naming models it does
     not have.
     """
@@ -228,7 +227,7 @@ def test_voice_role_excludes_engine_component_models():
 def test_voice_engines_reported():
     cat = build_catalog()
     engines = {e["id"]: e for e in cat["voice_engines"]}
-    # `auto` left the picker 2026-09-16 (clean-sheet §8.1 A): it is a synonym
+    # `auto` is not in the picker (clean-sheet §8.1 A): it is a synonym
     # for local and is still accepted on write, never offered as a choice.
     assert set(engines) == {"local", "local-gpu", "gemini"}
     for e in engines.values():
@@ -254,8 +253,8 @@ def test_unavailable_entries_carry_key_hint(monkeypatch):
 def test_anthropic_picker_lineup_and_order():
     cat = build_catalog()
     orch_ids = [e["id"] for e in cat["roles"]["orchestrator"]]
-    # The CURRENT family, 2026-08-17. The superseded ids this used to pin
-    # (opus-4-6/4-7/4-8, sonnet-4-5/4-6) are retired: a stale hardcoded model id
+    # The CURRENT family. Superseded ids (opus-4-6/4-7/4-8, sonnet-4-5/4-6)
+    # are not pinned here: a stale hardcoded model id
     # is unmaintained by definition and quietly becomes what ships.
     for mid in ("claude-sonnet-5", "claude-opus-5", "claude-fable-5"):
         assert mid in orch_ids, f"{mid} missing from orchestrator picker"

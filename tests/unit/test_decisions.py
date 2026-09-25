@@ -110,16 +110,14 @@ def test_gated_flag_still_follows_the_policy_table():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  THE RECORD DOES NOT BECOME A SECOND COPY OF HIS MAIL
+#  THE RECORD DOES NOT BECOME A SECOND COPY OF THE USER'S MAIL
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# REGRESSION, 2026-09-22. gmail_send.request_send builds its
-# action_description from From/To/Cc/Subject and the FULL body, approvals
-# .classify hands exactly that string to decide(), and _record wrote it
-# verbatim - so every message Stephen sends was about to leave its recipients
-# and its first ~1,900 characters in an audit log. The governance log covering
-# the same decision has scrubbed since the day it was written. This one had no
-# such pass. These fail against the module as it shipped on 2026-09-19.
+# gmail_send.request_send builds its action_description from From/To/Cc/Subject
+# and the FULL body, and approvals.classify hands exactly that string to
+# decide(). Written verbatim, every message the user sends would leave its
+# recipients and its first ~1,900 characters in an audit log. The governance
+# log covering the same decision scrubs; so must this one.
 
 #: Placeholder addresses and a placeholder secret, not the real ones. The
 #: pre-commit secret scanner blocks personal PII and key-shaped strings even
@@ -217,9 +215,8 @@ def test_scrubbing_happens_before_clipping(tmp_path, monkeypatch):
 def test_every_gate_decision_is_written_down(tmp_path, monkeypatch):
     # Pinned to `keyword` explicitly. What this proves is that the LOG records
     # a decision faithfully, which has nothing to do with which backend ships
-    # as the default - and on 2026-09-22 that default became `laya-union`, so
-    # a test that read the ambient setting started asserting the wrong method.
-    # It was only ever passing because the two happened to coincide.
+    # as the default (now `laya-union`); a test that read the ambient setting
+    # would assert the wrong method whenever the default moves.
     monkeypatch.setenv("FRIDAY_DECISION_BACKEND", "keyword")
     approvals.classify("Send an email to the whole team")
     rows = _rows(tmp_path)
@@ -248,12 +245,11 @@ def test_keyword_backend_reports_no_confidence(tmp_path):
 def test_long_states_are_clipped_and_say_so(tmp_path):
     """Filler is PROSE, deliberately.
 
-    This used "x" * 5000, which stopped working when scrubbing landed on
-    2026-09-22 - an unbroken 5,000-character run of alphanumerics is exactly
-    what _TOKEN_RE (24+ chars) exists to catch, so the state collapsed to
-    "Send an email. <token>" (22 chars) and was correctly not truncated. The
-    test was measuring the scrubber, not the clip. Prose filler restores the
-    original intent; the collapse behaviour is pinned separately below.
+    Not "x" * 5000: an unbroken 5,000-character run of alphanumerics is
+    exactly what _TOKEN_RE (24+ chars) exists to catch, so the state would
+    collapse to "Send an email. <token>" (22 chars) and correctly not be
+    truncated - measuring the scrubber, not the clip. The collapse behaviour
+    is pinned separately below.
     """
     decisions.decide("policy_class", "Send an email. " + "lorem ipsum " * 500)
     r = _rows(tmp_path)[0]
@@ -309,11 +305,9 @@ def test_a_broken_log_never_breaks_a_verdict(tmp_path, monkeypatch):
 def test_the_fallback_backend_is_keyword_and_stays_that_way():
     """The FALLBACK, which is a different thing from the shipped default.
 
-    This test used to assert both: that `DEFAULT_BACKEND` is keyword and that
-    `active_backend()` returns it. The second half stopped being true on
-    2026-09-22, when Stephen turned the union on with the eval in hand - the
-    shipped default is now `laya-union` (core.DEFAULT_SETTINGS), and that is a
-    product decision, not a regression.
+    `active_backend()` does not return keyword by default: the shipped default
+    is `laya-union` (core.DEFAULT_SETTINGS), a product decision made with the
+    eval in hand, not a regression.
 
     What must NOT move is this: `DEFAULT_BACKEND` is the value every failure
     path lands on. `decide()` falls back to it when a backend raises,
@@ -401,8 +395,8 @@ def test_seam_unavailable_fails_closed(monkeypatch):
     def _no_decisions(name, globals=None, locals=None, fromlist=(), level=0):
         # `from agent_friday.services import decisions` calls __import__ with
         # name="agent_friday.services" and fromlist=("decisions",) - matching
-        # on `name` alone never fires, which is why the first version of this
-        # test passed the module straight through and reported a false pass.
+        # on `name` alone never fires, passes the module straight through and
+        # reports a false pass.
         if "decisions" in (fromlist or ()) or name.endswith(".decisions"):
             raise ImportError("gone")
         return real(name, globals, locals, fromlist, level)

@@ -1,22 +1,19 @@
-"""Gauntlet finding F51, and the structural fix findings.jsonl F49 asked
-for once a second instance turned up: "if there's a common place that
-should be doing cleanup for all of them, fixing that is worth more than
-fixing the third one you find next week" (the maintainer, 2026-09-04).
+"""Gauntlet finding F51, and the structural fix findings.jsonl F49 calls
+for: when there is a common place that should do cleanup for every test
+file, fixing that place is worth more than fixing each instance.
 
-Three independent instances of the SAME leak class have now been found in
-one day, each in a different top-level file under tests/, each because
-that file hand-rolled its own isolated-home redirect instead of relying
-on tests/conftest.py's shared one (which pytest already applies to every
-file under tests/ automatically, and which has real crash-safe cleanup --
-a startup sweep plus a retry-backed pytest_sessionfinish):
+Three independent instances of the SAME leak class existed, each in a
+different top-level file under tests/, each because that file hand-rolled
+its own isolated-home redirect instead of relying on tests/conftest.py's
+shared one (which pytest already applies to every file under tests/
+automatically, and which has real crash-safe cleanup -- a startup sweep
+plus a retry-backed pytest_sessionfinish):
 
   - tests/conftest.py's OWN fixture (F47) -- the original, now fixed.
-  - tests/test_judgment_gate.py (F49) -- 97 leaked dirs, ~110GB, since
-    2026-08-17. Fixed by deleting the duplicate block.
-  - tests/test_egress_adversarial.py (F51) -- 327 leaked dirs, ~262MB,
-    since 2026-06-28 (nearly two and a half months, the oldest of the
-    three). Found by the broad sweep this file's own existence is the
-    fix for; fixed the same way.
+  - tests/test_judgment_gate.py (F49) -- 97 leaked dirs, ~110GB. Fixed by
+    deleting the duplicate block.
+  - tests/test_egress_adversarial.py (F51) -- 327 leaked dirs, ~262MB.
+    Fixed the same way.
 
 A green tests/gauntlet/ suite cannot catch any of these by running once --
 the leak is a side effect of a run, not a test outcome, and each instance

@@ -1,5 +1,5 @@
 """Unit tests for privacy/cloud_consent.py -- the explicit cloud-consent
-gate (2026-09-06). See that module's own docstring for the full design:
+gate. See that module's own docstring for the full design:
 unrestricted cloud access is earned by a recorded, hardware-checked choice,
 never inherited from `model_routing.mode`'s factory default.
 """
@@ -133,13 +133,12 @@ class TestRecordConsent:
 
 
 class TestTextCapabilityIsRunnerAgnostic:
-    """The maintainer, 2026-09-06: 'We don't require the user have ollama installed
-    at all, right?' -- verified rather than assumed. Ollama is one runner
+    """Friday does not require Ollama to be installed. Ollama is one runner
     among several (llama.cpp/GGUF via Friday's own runtime store, ComfyUI
     for image/video); a check that only recognizes the curated
     model_plan.BRAIN_MODELS ladder would call a machine incapable while a
-    real, resident, non-ladder GGUF model runs well on it -- exactly
-    the maintainer's own machine after deleting both Ollama models."""
+    real, resident, non-ladder GGUF model runs well on it (for example, a
+    machine with no Ollama models at all)."""
 
     def test_a_resident_non_ladder_model_counts(self, monkeypatch):
         from agent_friday.services import local_seats

@@ -1,14 +1,14 @@
 """Live state is never answerable from memory.
 
-2026-09-09. Friday's settings page showed two expired Google accounts as
-"connected". Stephen read the page and told Friday what he saw. Friday stored
-his sentence as a user-authored fact -- its highest-trust source -- and from
-then on answered "are my Google accounts connected?" by retrieving his own
-sentence and citing him, without consulting anything live.
+If a settings page wrongly shows two expired Google accounts as "connected"
+and the user repeats that to Friday, Friday stores the sentence as a
+user-authored fact -- its highest-trust source. Without this defence it then
+answers "are my Google accounts connected?" by retrieving the user's own
+sentence and citing them, without consulting anything live.
 
-Nothing else built that day caught it. The claim-verifier could not: nothing
-was fabricated. The tool layer could not: no tool was called. Fixing the
-settings page could not: the memory predated the fix by nine days.
+Nothing else catches that. The claim-verifier cannot: nothing is fabricated.
+The tool layer cannot: no tool is called. Fixing the settings page cannot: the
+memory predates the fix.
 
 These tests pin the structural defence -- a live-state question is answered
 from a live source and recall's licence to answer it is explicitly withdrawn --
@@ -33,7 +33,7 @@ def _write_accounts(*records):
 
 
 def _rec(**kw):
-    base = {"id": "a1", "email": "stephen@example.com", "label": "Work",
+    base = {"id": "a1", "email": "user@example.com", "label": "Work",
             "status": "connected", "services": {}, "color": "#fff",
             "created": "2026-08-26T00:00:00+00:00",
             "last_sync": "2026-09-09T09:00:00+00:00", "scopes": [],
@@ -61,7 +61,7 @@ def clean():
 THE_PRODUCTION_STATE = (
     _rec(id="a1", email="primary@example.com", label="Personal",
          status="needs_reauth", last_sync=_days_ago(9)),
-    _rec(id="a2", email="stephen@futurespeak.ai", label="Work",
+    _rec(id="a2", email="owner@work.example", label="Work",
          status="needs_reauth", last_sync=_days_ago(9)),
 )
 
@@ -103,7 +103,7 @@ class TestTheBlockContradictsThePoisonedMemory:
         assert block
         assert "0 of 2" in block
         assert "primary@example.com" in block
-        assert "stephen@futurespeak.ai" in block
+        assert "owner@work.example" in block
         assert "Answer NO" in block
 
     def test_withdraws_recall_authority_explicitly(self):
@@ -111,7 +111,7 @@ class TestTheBlockContradictsThePoisonedMemory:
 
         Without this half the model holds a live reading AND a remembered one,
         and the remembered one arrives with a citation and the user's own voice
-        behind it. That is precisely what happened.
+        behind it, and wins.
         """
         _write_accounts(*THE_PRODUCTION_STATE)
         block = live_state.live_state_block("Are my Google accounts connected?")
@@ -164,13 +164,13 @@ class TestProbeRegistryIsTheDefaultPath:
 
 
 class TestTheLiveReadingSitsNextToTheQuestion:
-    """The system-prompt block alone was not enough.
+    """The system-prompt block alone is not enough.
 
-    The replayed transcript is memory too, and it carried Friday's OWN earlier
+    The replayed transcript is memory too, and it can carry Friday's OWN earlier
     "yep, they're connected" turns -- closer to the question than any system
-    text. A small local model continues its own recent voice. Verified live on
-    2026-09-09: with the block in the system prompt but the transcript
-    contradicting it, the answer was still "Yes, boss. They are connected."
+    text. A small local model continues its own recent voice: with the block in
+    the system prompt but the transcript contradicting it, the answer is still
+    "Yes, boss. They are connected."
     """
 
     def test_a_live_state_turn_carries_its_reading(self):

@@ -1,4 +1,4 @@
-"""Two things the owner asked for by name, pinned so they cannot come back.
+"""Two dock and desktop invariants, pinned so they cannot come back.
 
 1. A dock icon must sit dead centre in its tile.
 
@@ -97,7 +97,7 @@ def test_the_press_animation_keeps_the_button_flat():
 def test_the_desktop_sheen_variables_have_no_readers(var):
     assert var not in INDEX.read_text(encoding="utf-8"), (
         "%s is back. It only ever fed the sweeping band over the desktop "
-        "surface, which the owner asked to have removed." % var
+        "surface, which is deliberately removed." % var
     )
 
 

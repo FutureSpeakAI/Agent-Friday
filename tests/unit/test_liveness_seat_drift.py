@@ -1,14 +1,14 @@
 """A false orphan is worse than no probe, because this report exists to be believed.
 
-Observed 2026-08-25. The seat map put `sidekick_fast` and `memory_manager` on
-TwIL-LM3 with `backend: ollama`, and the embedder on embeddinggemma:300m served
-by the daemon. `_probe_seat_drift` asked `owned_endpoint`, which only knows
-llama-server processes the Arbiter spawned, so all three came back None and were
-reported ORPHANED — "the plan says resident, nothing is serving it" — while
-every one of them was answering on :11434.
+A seat map can put `sidekick_fast` and `memory_manager` on TwIL-LM3 with
+`backend: ollama`, and the embedder on embeddinggemma:300m served by the daemon.
+If `_probe_seat_drift` asks `owned_endpoint`, which only knows llama-server
+processes the Arbiter spawned, all three come back None and are reported
+ORPHANED — "the plan says resident, nothing is serving it" — while every one of
+them is answering on :11434.
 
-That reads as "the maintainer lost his memory manager and fast sidekick this
-afternoon", and it nearly cost a session chasing seats that were never missing.
+That reads as "the memory manager and fast sidekick are gone", and sends the
+reader chasing seats that were never missing.
 The probe has to ask where calls actually land, not who owns the process.
 """
 import pytest

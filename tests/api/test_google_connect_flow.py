@@ -1,24 +1,24 @@
 """The connect flow tells you what is coming, and lands you somewhere on failure.
 
-Three things the maintainer called out on 2026-08-26, all of which are copy and
-routing rather than cryptography:
+Three rules, all of which are copy and routing rather than cryptography:
 
-  * "Tell the user the warning screen is coming, before it appears." A person
+  * Tell the user the warning screen is coming, before it appears. A person
     who meets "Google hasn't verified this app" unprepared assumes phishing
     and abandons. So /connect returns the pre-brief along with the auth URL.
-  * "Failing at the cap must be graceful." When the shared client is full the
+  * Failing at the cap must be graceful. When the shared client is full the
     callback must land in the bring-your-own walkthrough with an explanation,
     not a raw OAuth error string.
-  * Never "place this JSON file in this directory" — the wall the second user hit.
+  * Never "place this JSON file in this directory" — a wall new users cannot
+    get past.
 
-The old callback was literally:
+A callback that simply does:
 
     err = request.args.get("error")
     if err:
         return f"<h2>Google authorization failed</h2><p>{err}</p>", 400
 
-which renders `access_denied` to a person who has no idea what that is, at
-the exact moment they need to be told there is another way in.
+renders `access_denied` to a person who has no idea what that is, at the
+exact moment they need to be told there is another way in.
 """
 from __future__ import annotations
 

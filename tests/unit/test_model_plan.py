@@ -106,7 +106,7 @@ def test_cpu_only_gets_the_smallest_useful_model_not_the_largest(ram):
     strength of a number nobody has.
     """
     t = tiers(mp.plan(profile(ram, 100, 0)))
-    # gemma4:e2b is the smallest seat that can call tools (2026-09-03: the
+    # gemma4:e2b is the smallest seat that can call tools (the
     # only non-Gemma-4 row, gemma3:4b, is recognition-only and can never be
     # picked — see `_pickable()`). Before a tool-capable floor existed this
     # assertion read gemma3:4b, which was the smallest — and the only model
@@ -336,7 +336,7 @@ def test_a_bigger_card_gets_a_bigger_model_all_the_way_up():
     planner reported a confident, correct-looking fit every time.
 
     Probe points are chosen to land inside each of the four Gemma 4 rungs'
-    usable-VRAM ranges (2026-09-03: e2b 1.77 / e4b 3.01 / 12b 7.54 / 26b
+    usable-VRAM ranges (e2b 1.77 / e4b 3.01 / 12b 7.54 / 26b
     16.99 GiB) rather than an arbitrary sequence — the family has a real gap
     between 12b and 26b (any card from ~10 to ~19.5 GiB usable lands on 12b,
     which is correct: 26b genuinely doesn't fit there in this planner's
@@ -388,7 +388,7 @@ def test_measured_rungs_say_so():
     """Every SELECTABLE row has a real measurement behind its `vram_gib`.
 
     THIS TEST IS DELIBERATE POLICY, NOT PEDANTRY — please do not delete it to
-    make the table look tidier. 2026-09-03: unlike the old Qwen-era ladder
+    make the table look tidier. Unlike the old Qwen-era ladder
     (where `qwen3:14b`/`qwen3:32b` fit by arithmetic alone and had to say so),
     every current Gemma 4 rung — e2b, e4b, 12b, 26b — has a real measurement
     in `residency_catalog.SEED_MEASUREMENTS`. Saying "measured, not

@@ -118,8 +118,8 @@ def test_pause_all_blocks_dispatch():
 
 def test_content_disabled_blocks_dispatch(monkeypatch):
     """settings.content.enabled is the pipeline's master switch (DEFAULT_
-    SETTINGS says so). Until 2026-09-06 nothing branched on it: the UI wrote
-    it, a route read it into a dict, and tick() published anyway."""
+    SETTINGS says so). tick() must branch on it, not merely carry it from
+    the UI into a dict and publish anyway."""
     from agent_friday import core
     adapter = _mock_adapter()
     _armed_post()

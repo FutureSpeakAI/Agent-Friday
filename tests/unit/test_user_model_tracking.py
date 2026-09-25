@@ -84,17 +84,17 @@ class TestFacts:
         assert um.note_fact("preference", "")["ok"] is False
 
     def test_fact_dedup_same_source_no_inflation(self):
-        um.note_fact("bio", "works at FutureSpeak", confidence=0.6, source="dream:2026-06-30")
-        um.note_fact("bio", "works at FutureSpeak", confidence=0.6, source="dream:2026-06-30")
-        facts = [f for f in um._recent_facts(50) if "FutureSpeak" in f["text"]]
+        um.note_fact("bio", "works at Example Corp", confidence=0.6, source="dream:2026-06-30")
+        um.note_fact("bio", "works at Example Corp", confidence=0.6, source="dream:2026-06-30")
+        facts = [f for f in um._recent_facts(50) if "Example Corp" in f["text"]]
         assert len(facts) == 1
         # Re-running the SAME source must not inflate confidence.
         assert facts[0]["confidence"] == pytest.approx(0.6, abs=0.001)
 
     def test_fact_reinforced_by_new_source(self):
-        um.note_fact("bio", "lives in Austin", confidence=0.6, source="dream:2026-06-30")
-        um.note_fact("bio", "lives in Austin", confidence=0.6, source="dream:2026-07-01")
-        facts = [f for f in um._recent_facts(50) if "Austin" in f["text"]]
+        um.note_fact("bio", "lives in Springfield", confidence=0.6, source="dream:2026-06-30")
+        um.note_fact("bio", "lives in Springfield", confidence=0.6, source="dream:2026-07-01")
+        facts = [f for f in um._recent_facts(50) if "Springfield" in f["text"]]
         assert len(facts) == 1
         assert facts[0]["confidence"] > 0.6  # new source → reinforced
 

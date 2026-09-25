@@ -1,11 +1,11 @@
 """The gemma4 channel tool-call format — the last thing Ollama's daemon did for us.
 
 Every string here was captured from a live gemma4:e2b served by a process we
-own, 2026-08-15. The format is not JSON and the hard case is real:
+own. The format is not JSON and the hard case is real:
 
     <|tool_call>call:send_note{body:Meeting moved, bring the slides.,priority:2,to:Dana,urgent:true}<tool_call|>
 
-`body` contains a comma. Split on commas and the maintainer's note becomes
+`body` contains a comma. Split on commas and the user's note becomes
 "Meeting moved" and the rest is thrown away — silently, and plausibly enough
 that nobody would look twice.
 """

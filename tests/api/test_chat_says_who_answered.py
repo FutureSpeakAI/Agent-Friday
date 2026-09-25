@@ -1,17 +1,13 @@
 """A successful chat turn must say which model served it.
 
-2026-09-22: Stephen asked Bonsai2 a question twice and Sonnet 5 answered,
-insisting it was Bonsai2. Nothing lied at the routing layer - routing already
-refuses rather than substitutes (chat.py's seat_missing path, "I have not
-answered from a different model, because you asked for that one"). Two real
-bugs stopped him selecting bonsai2 at all: the catalogue took 18.9 s so the
-picker timed out, and the catalogue could not see the running seat because the
-endpoints file was read with the wrong key. The turn then ran on the configured
-default, correctly.
-
-What made it UNFALSIFIABLE from his chair is that the success reply never said
-who answered, so the only way to ask was to ask the model - and a model answers
-that from its system prompt, which tells it that it is Agent Friday.
+Routing refuses rather than substitutes (chat.py's seat_missing path, "I have
+not answered from a different model, because you asked for that one"). But if
+the model picker fails to select a seat (a slow catalogue that times out, or a
+catalogue that cannot see the running seat), the turn correctly runs on the
+configured default - and a user who picked another model cannot tell. If the
+success reply does not say who answered, the only way to find out is to ask the
+model, and a model answers that from its system prompt, which tells it that it
+is Agent Friday.
 
 Every refusal path already reported the model. This pins the success path.
 """

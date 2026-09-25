@@ -18,8 +18,8 @@ class TestStatuses:
         statuses = resp.get_json()["statuses"]
         assert "gemma4:latest" in statuses
         st = statuses["qwen3:8b"]
-        # Informational only — 2026-08-15 the gate was removed, so this
-        # reports a diagnostic result and gates nothing.
+        # Informational only — there is no seat gate, so this reports a
+        # diagnostic result and gates nothing.
         assert st["structural"] in ("ungated", "green", "red")
         assert st["running"] is False
         assert st["gates"] is False

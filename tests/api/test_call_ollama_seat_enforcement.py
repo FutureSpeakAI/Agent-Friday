@@ -1,30 +1,18 @@
-"""Dispatch enforces NOTHING about which model may hold a seat (2026-08-15).
+"""Dispatch enforces NOTHING about which model may hold a seat.
 
-This file used to pin the opposite, in the live `_call_ollama` path: that a
-"red" model was substituted with the last known green one, that a red model
-with no fallback had its tools stripped entirely, and that a model which had
-never been gated was refused the same as one that failed.
+The live `_call_ollama` path does not substitute a "red" model with a green
+one, does not strip a model's tools, and does not refuse a model that was never
+gated. The rule: the user may set any model at any seat. A model that does not
+emit tool calls is a prompting problem to fix, not a model to veto.
 
-All of that is gone. The maintainer, verbatim:
+The evidence supports that. The structural failures a seat gate fired on were a
+broken harness — the same models scored 1/10 and 0/10, then 10/10 each once the
+harness was fixed. A dependent 5-call tool chain scored 0/5 across every local
+model because of a type check in our own argument parsing; once fixed they
+scored 15/15. "The model can't use tools" has twice turned out to be "we broke
+the tools".
 
-    "I absolutely want the user to be able to set any model they wish at any
-     seat they wish, so this is non-negotiable."
-
-and, on the gate itself:
-
-    "This is not any kind of an industry standard practice. If the model is
-     not emitting the tool calls, we are not prompting it correctly."
-
-The evidence agreed with him twice over. The structural failures the gate
-fired on were a broken harness — the same models scored 1/10 and 0/10, then
-10/10 each once the harness was fixed. And on 2026-08-15 a dependent 5-call
-tool chain scored 0/5 across every local model because of a type check in our
-own argument parsing, not because of anything the models did; once fixed they
-scored 15/15. "The model can't use tools" has now twice turned out to be
-"we broke the tools".
-
-What is pinned here is the same code path, asserting the inverse: whatever
-model is asked for is the model that runs, with its tools intact.
+What is pinned here: whatever model is asked for is the model that runs, with its tools intact.
 
 Same manager-boundary-stub pattern as test_provider_loop_regression.py — the
 real _call_ollama and _oai_agentic_loop run end to end and only the Ollama
@@ -48,8 +36,8 @@ class _FakeOllamaManager:
         return True
 
     # **kw so a new dispatch-time argument does not silently break the stub.
-    # `num_ctx` arrived on 2026-08-15 when dispatch began applying the
-    # residency plan's context on every call, not only at Arbiter boot.
+    # `num_ctx` is sent because dispatch applies the residency plan's
+    # context on every call, not only at Arbiter boot.
     def chat_completion(self, messages, model, tools=None, temperature=0.7,
                         max_tokens=4096, **kw):
         self.calls.append({"messages": list(messages), "tools": tools,
@@ -115,8 +103,8 @@ class TestNoSeatEnforcementInRealDispatch:
 
         Without this the Arbiter would seat a model at the planned context and
         the first ordinary chat turn would reload it at Ollama's default —
-        measured on 2026-08-15 as gemma4:12b resident at 262144 with 71% of it
-        on the CPU, minutes after booting to a plan that said 32768.
+        e.g. gemma4:12b resident at 262144 with 71% of it on the CPU, minutes
+        after booting to a plan that said 32768.
         """
         mr._call_ollama([{"role": "user", "content": "hi"}],
                         model="anything:7b", tools=[ANTHROPIC_TOOL])

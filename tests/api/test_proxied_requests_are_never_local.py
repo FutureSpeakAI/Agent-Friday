@@ -1,35 +1,26 @@
 """A proxied request is never the local user.
 
-Found 2026-09-24. Stephen's `friday_startup.bat` runs
+A tunnel such as
 
     cloudflared tunnel --url http://localhost:3000
 
-which publishes the whole Friday API on a public `trycloudflare.com` URL. A
-tunnel was live for about two days.
+publishes the whole Friday API on a public `trycloudflare.com` URL.
 
 cloudflared connects to Friday from **loopback**, so every request arriving
-through the tunnel had `request.remote_addr == '127.0.0.1'`. `_is_local_request()`
-looked at nothing else, `_loopback_trusted()` returned True, and the request was
-auto-authenticated as the machine's owner -- `@login_required` included. Anyone
-holding the URL was effectively signed in as Stephen, with the approval
-endpoints among them.
+through the tunnel has `request.remote_addr == '127.0.0.1'`. If
+`_is_local_request()` looked at nothing else, `_loopback_trusted()` would return
+True and the request would be auto-authenticated as the machine's owner --
+`@login_required` included. Anyone holding the URL would be signed in as the
+owner, with the approval endpoints among them. Remote connections, including
+tunnelled ones, must always see the login screen.
 
-The comment above `_LOOPBACK_ADDRS` asserted the opposite: "only remote
-connections (e.g. via Cloudflare Tunnel) ever see it [the login screen]." The
-intent was right; the implementation could not tell the two apart.
-
-Verified against the local server only, read-only, before the fix: the same GET
-to a `@login_required` route returned data whether sent plain, with
-`X-Forwarded-For`, or with `CF-Connecting-IP` + `Cf-Ray`. The headers changed
-nothing.
-
-AMENDED 2026-09-24, same day: the first fix disqualified a request for merely
-CARRYING a forwarding header, which made Friday's own loopback proxy
-(`https://agent.friday`, `ops/Caddyfile`) look remote and put a login screen in
-front of the local user. The rule is now "forwarded from somewhere this machine
-cannot vouch for": the peer must be loopback, no `CF-*` header may be present,
-every claimed address in the chain must be loopback, and a forwarded host must
-be a local alias. See test_a_loopback_proxy_is_still_the_local_user.py.
+Disqualifying a request for merely CARRYING a forwarding header is too strict:
+it makes Friday's own loopback proxy (`https://agent.friday`, `ops/Caddyfile`)
+look remote and puts a login screen in front of the local user. The rule is
+"forwarded from somewhere this machine cannot vouch for": the peer must be
+loopback, no `CF-*` header may be present, every claimed address in the chain
+must be loopback, and a forwarded host must be a local alias. See
+test_a_loopback_proxy_is_still_the_local_user.py.
 
 Every trust decision in the app -- the HTTP decorator, the settings gate and the
 voice WebSocket -- funnels through `_is_local_request()`, so this is one place.
@@ -45,11 +36,10 @@ PROXY_HEADERS = [
     {"X-Forwarded-For": "203.0.113.9"},
     # NOT here any more: {"X-Forwarded-For": "127.0.0.1"}.
     #
-    # This file originally pinned a loopback-looking chain as remote, on the
-    # grounds that the chain is attacker-supplied. That was too strict and it
-    # locked Stephen out of his own machine within minutes: he browses
-    # `https://agent.friday`, Friday's OWN loopback proxy (`ops/Caddyfile`),
-    # and Caddy sends exactly that header.
+    # Pinning a loopback-looking chain as remote, on the grounds that the
+    # chain is attacker-supplied, is too strict: it locks the local user out
+    # when browsing `https://agent.friday`, Friday's OWN loopback proxy
+    # (`ops/Caddyfile`), because Caddy sends exactly that header.
     #
     # A spoof is now defeated by two other checks instead: any `CF-*` header
     # is disqualifying on its own, and EVERY address in the chain must be
@@ -129,8 +119,7 @@ def test_a_protected_route_challenges_a_proxied_request(flask_app, client):
     first LOCAL request mints `session['authenticated']` and the test client
     keeps that cookie, so the next request is authorised by its own session
     rather than by locality. That is correct behaviour -- a browser that logged
-    in stays logged in -- and it is exactly why the first version of this test
-    reported a pass-shaped 200.
+    in stays logged in -- and a shared client would return a pass-shaped 200.
     """
     assert client.get("/api/residency/status").status_code == 200, \
         "local access should still work"

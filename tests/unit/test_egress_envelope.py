@@ -4,10 +4,11 @@ The gate's job is not "scan the message list" — it is "nothing sensitive leave
 this device". Those are the same thing only if every field of the outbound
 payload that can carry prose is actually gated. This file pins the WHOLE
 envelope, because the failure mode we keep hitting is a gate that scans the
-obvious field and misses the rest (found 2026-08-24).
+obvious field and misses the rest.
 
-Every test here failed against the code as it stood on 2026-08-24. If one of
-them starts passing for a reason you did not intend, a coverage hole reopened.
+Every test here failed against the gate before envelope coverage existed. If
+one of them starts passing for a reason you did not intend, a coverage hole
+reopened.
 
 Synthetic data only — no real PII.
 """

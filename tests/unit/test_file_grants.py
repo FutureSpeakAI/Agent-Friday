@@ -205,12 +205,12 @@ class TestReadTimeFeeder:
         assert "EGRESS-GATE" not in out
 
     def test_a_page_sized_paragraph_over_2000_chars_still_registers(self, tmp_path):
-        """Regression pin (found live 2026-08-25 during the end-to-end walk
-        against the maintainer's real CV): register_public_text's 2000-char default
+        """Regression pin (an end-to-end walk with a real multi-page resume):
+        register_public_text's 2000-char default
         exists for news headlines, but a granted file's paragraphs are
         page-sized prose — extract_text joins PDF pages on "\\n\\n", and a
         real resume page routinely runs 2500-3500 chars. Before this was
-        fixed, 3 of 4 pages of a real CV silently failed to register: the
+        fixed, 3 of 4 pages of a real resume silently failed to register: the
         grant LOOKED like it worked (ledger entry created, check_grant
         returned 'active', no error anywhere) while most of the document
         still gated normally on the next read. Content-search snippets
@@ -321,8 +321,8 @@ class TestNeverSendOverride:
 # ── Registration must happen post-PII-scrub, not pre ────────────────────────
 
 class TestRegistrationOrderVsPiiScrub:
-    """Found live 2026-08-25 walking the motivating case against the maintainer's
-    real CV: read_file's result is PII-scrubbed by a post-tool hook
+    """Found walking the motivating case end to end with a real resume:
+    read_file's result is PII-scrubbed by a post-tool hook
     (priority 95) before it reaches the egress gate. Registering the RAW
     pre-scrub text (the original approach) meant any paragraph containing a
     phone number or address never matched its scrubbed form at gate time —

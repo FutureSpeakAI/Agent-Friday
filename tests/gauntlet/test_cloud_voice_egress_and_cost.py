@@ -6,7 +6,7 @@ synthesizer means every spoken sentence is ungated text leaving the machine.
 These tests fail if that gate is removed, weakened to a warning, or bypassed for
 a provider the egress gate's own cloud list happens not to know about.
 
-They also pin the Q1-Q4 decisions of 2026-09-09 so a later change has to argue
+They also pin the Q1-Q4 cloud-voice decisions so a later change has to argue
 with a red test rather than quietly drift.
 """
 from __future__ import annotations
@@ -198,7 +198,7 @@ class TestSettledDecisions:
         assert "Q3" in note
 
     def test_synthesis_result_flags_non_durable_audio(self, monkeypatch):
-        # Q8 (2026-09-09) made Inworld unselectable, so the durability
+        # Q8 makes Inworld unselectable, so the durability
         # plumbing can only be exercised by flipping the GA flag -- the same
         # one-line configuration change that would enable Inworld for real.
         # Exercising it here keeps the Q3 enforcement covered rather than

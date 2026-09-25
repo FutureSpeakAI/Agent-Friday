@@ -1,9 +1,9 @@
 """WO-14.1 — read_file must extract real text from PDF/docx, never mojibake.
 
-THE REPORTED FAILURE (voice session 2026-08-25, item #20): read_file had no
-PDF extraction. `p.read_text(encoding='utf-8', errors='replace')` on a PDF's
-raw bytes produced mojibake, and the model narrated a confident summary
-("four pages, senior AI leadership") over garbage it never actually read.
+THE FAILURE MODE: read_file had no PDF extraction.
+`p.read_text(encoding='utf-8', errors='replace')` on a PDF's raw bytes produced
+mojibake, and the model narrated a confident summary over garbage it never
+actually read.
 
 Every test below is written to FAIL against the old behaviour
 (`path.read_text(encoding='utf-8', errors='replace')`) — proven by

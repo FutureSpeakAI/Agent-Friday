@@ -1,10 +1,9 @@
-"""Unit tests for FridayTray._watchdog()'s crash notification (2026-09-04).
+"""Unit tests for FridayTray._watchdog()'s crash notification.
 
-Before this, the watchdog correctly noticed the server had died -- every 5s,
-like clockwork -- and did exactly one thing about it: relabelled its own
-tray menu. Friday's server was down 26 minutes before anyone knew, because
-nobody was looking at that menu; an unrelated hourly port check outside the
-app is what actually caught it. See KNOWN_ISSUES.md.
+A watchdog that notices the server has died -- every 5s -- and only
+relabels its own tray menu tells nobody: nobody is looking at that menu, so
+the server can be down for many minutes before anyone knows. A dead server
+must raise a notification. See KNOWN_ISSUES.md.
 
 No auto-restart is added or tested here on purpose -- that's a deliberate
 non-goal (resurrecting a crashed process on a loop can mask a repeating
@@ -101,7 +100,7 @@ class TestCrashNotification:
         assert tray.icon.menu_updates == 1
         assert tray.icon.notifications == [], (
             "recovering is not a crash -- only running->dead is the shape "
-            "worth telling him about"
+            "worth telling the user about"
         )
 
     def test_a_broken_notify_call_does_not_crash_the_watchdog(self, tray, monkeypatch):

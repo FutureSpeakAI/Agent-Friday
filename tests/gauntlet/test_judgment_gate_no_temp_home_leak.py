@@ -5,13 +5,12 @@ under tests/ -- and, unlike conftest.py's fixture, had NO cleanup at all,
 not even pytest_sessionfinish for a clean exit. Every run of this file left
 one directory behind forever, each containing its own copy of the
 sentence-transformers HF cache (~850MB-2.8GB depending on what got
-downloaded into it). Found 97 of them while investigating an unrelated
-disk-pressure report on 2026-09-04, dating back to 2026-08-17, totaling
-~110GB -- a second, independent instance of the exact leak class F47 fixed
-in conftest.py, undetected by F47's own proof (which only exercises
-conftest.py's fixture, not this file's separate one).
+downloaded into it); 97 accumulated leaks totalled ~110GB. It is a
+second, independent instance of the leak class F47 fixed in conftest.py,
+invisible to F47's own proof (which only exercises conftest.py's fixture,
+not this file's separate one).
 
-This probe proves the fix behaviorally: running the real test file leaves
+This probe checks the fix behaviorally: running the real test file leaves
 no friday_judgment_* directory behind, using the exact "count real
 directories before and after a real run" methodology F47 itself
 established -- not a read of the source.

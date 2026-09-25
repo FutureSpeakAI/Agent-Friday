@@ -1,10 +1,10 @@
 """A menu must never wait on the machine, and a card must never overstate it.
 
-Stephen: "Model selector dropdown and the intelligence settings menu both time
-out trying to read the machine. This should never happen."
+The model selector dropdown and the Intelligence settings menu must never time
+out trying to read the machine.
 
-Measured against the live server on 2026-09-23, and none of the suspected causes
-was the culprit:
+Measured against a live server before the fix, the cost was not where one
+would guess:
 
   * the model picker (`build_catalog`) cost **18.0s**, made up of
     `_tts_engines` 14.3s (it calls `kokoro_health()`, which imports torch on

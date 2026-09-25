@@ -5,8 +5,8 @@ VRAM figures are P1's measurements carried across, which is sound for weights
 and INFERRED for KV. Every plan for P2-P6 is derived from the rules in
 docs/design/implemented/residency-policy.md, not chosen.
 
-Model facts (params, quantization, capabilities) are real, read from the daemon
-on 2026-08-14. Measurements are the medians of 5 warm runs recorded in
+Model facts (params, quantization, capabilities) are real, read from the daemon.
+Measurements are the medians of 5 warm runs recorded in
 services/residency_catalog.SEED_MEASUREMENTS.
 """
 from __future__ import annotations
@@ -105,7 +105,7 @@ _ARTIFACT_BYTES = {
 
 # ── Chains -- headroom.md §6.3, Phase 3 ──────────────────────────────────────
 #
-# The sequence the maintainer described: "speak, transcribe, reason, render, speak
+# The target sequence: "speak, transcribe, reason, render, speak
 # back" -- one stt stage, the resident brain, one image render, one tts
 # stage. `resident` is what plan_chain treats as ALREADY loaded (the D6
 # resident pair, e4b + e2b, §6.3's own "honest resident pair" -- NOT what
@@ -134,7 +134,7 @@ CHAIN_RESIDENT = {
 }
 
 # The two real image footprints Phase 2 measured under the Arbiter's own
-# `image_job` lease, 2026-09-04 -- committed into `SEED_MEASUREMENTS` at
+# `image_job` lease -- committed into `SEED_MEASUREMENTS` at
 # `P1_FINGERPRINT` (`residency_catalog.py`) for the reference instance.
 # P2-P6 are DECLARED hardware: the same weights cost the same VRAM on any
 # machine (only the reserve/baseline around them differs, which

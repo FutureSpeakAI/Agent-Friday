@@ -1,9 +1,7 @@
 """Absent and unconfigured are different words, and the model is told which.
 
-2026-09-18: four surfaces reported their own state wrongly in one morning --
-the seat control, the Google accounts screen, Firecrawl and Brave. The last
-two reached the model as "not a tool" because the search health vocabulary
-returned ABSENT for "no key". services/capability_state.py is the one
+A surface that reports ABSENT for "no key" tells the model a keyable tool
+(Firecrawl, Brave) is "not a tool" at all. services/capability_state.py is the one
 answer; these tests pin the vocabulary, the probes and the prompt block.
 """
 from __future__ import annotations
@@ -20,9 +18,8 @@ def _unkeyed(monkeypatch):
     # wigolo runs on 127.0.0.1:3333 when it is installed, which makes these
     # tests pass or fail depending on whether a local service happens to be up
     # on the machine running them - it answers first and the assertions about
-    # the keyed backends never get their turn. Caught 2026-09-19, when the
-    # detail came back "local, keyless" instead of DuckDuckGo's HTTP 202.
-    # "Unkeyed" has to mean every backend is out, including the one that needs
+    # the keyed backends never get their turn (the detail comes back "local,
+    # keyless" instead of DuckDuckGo's HTTP 202). "Unkeyed" has to mean every backend is out, including the one that needs
     # no key.
     monkeypatch.setattr(ws, "_wigolo_ready", lambda: False)
 

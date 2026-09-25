@@ -1,4 +1,4 @@
-"""Gauntlet finding F59 (claim-corpus sweep, 2026-09-04):
+"""Gauntlet finding F59 (claim-corpus sweep):
 prompt_manager.create_default_manager() had zero callers anywhere in the
 codebase and its own body never fulfilled its own docstring ("standard
 Friday segments pre-registered" -- it registered none). The real per-

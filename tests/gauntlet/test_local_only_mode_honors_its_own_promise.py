@@ -16,25 +16,19 @@ classify_task() classifies EVERY ordinary interactive message as
 TOOL_USE -- this is not an edge case, it is the default shape of a
 normal conversation.
 
-RESOLVED 2026-09-04, the maintainer directly: "ordinary chat does need to
-respect local only in addition to Smart routing and cloud mode, but
-local only also needs a model, obviously... The August comment is
-superseded. All three modes are honoured for ordinary chat." So this fix
-is NOT scoped to local_only alone -- local_preferred and smart ALSO now
-prefer a local seat for ordinary interactive chat, the same way they
-already did for background/scheduled work, with cloud remaining the
-fallback for those two (unlike local_only, whose own absolute promise
-leaves no fallback: no local model means refuse-then-offer, see below,
-not a silent cloud answer).
+All three non-cloud modes are honoured for ordinary chat, not just
+local_only: local_preferred and smart ALSO prefer a local seat for
+ordinary interactive chat, the same way they do for background/scheduled
+work, with cloud remaining the fallback for those two (unlike local_only,
+whose own absolute promise leaves no fallback: no local model means
+refuse-then-offer, see below, not a silent cloud answer).
 
-Also per the maintainer's ruling, local_only's own failure mode when no local
-model is available is NOT a bare refusal: "the system should fail to
-function and produce an error, then it should ask the user if it can go
-into cloud only mode." Fail closed, surface the error, then offer an
-explicit cloud path as something the user chooses -- never a silent
-fallback. This is also now a standing transparency principle, not a rule
-scoped to this one case: "we should always prioritize the user knowing
-what is being done with their data, what model is in use." See
+local_only's failure mode when no local model is available is NOT a bare
+refusal: fail closed, surface the error, then offer an explicit cloud
+path as something the user chooses -- never a silent fallback. This is a
+standing transparency principle, not a rule scoped to this one case: the
+user always knows what is being done with their data and which model is
+in use. See
 routes/chat.py's handling of a refuse=True/offer_cloud_switch result for
 where that offer is actually surfaced to the user.
 
@@ -162,11 +156,9 @@ class TestLocalOnlyRoutesOrdinaryInteractiveChatLocally:
 
     def test_local_preferred_and_smart_also_prefer_local_for_ordinary_chat(
             self, monkeypatch):
-        """The maintainer, 2026-09-04: 'ordinary chat does need to respect local
-        only in addition to Smart routing and cloud mode' -- the August
-        2026-08-16 comment scoping local-preference to background/
-        scheduled work only is superseded for these two modes as well,
-        not just local_only."""
+        """Ordinary chat respects local preference in local_preferred and
+        smart modes too; local-preference is not scoped to background/
+        scheduled work only."""
         _patch_no_friday_seats(monkeypatch)
         _patch_ollama(monkeypatch, available=True,
                       models=[{"name": "gemma4:e4b", "size_gb": 5.0}])
@@ -176,8 +168,8 @@ class TestLocalOnlyRoutesOrdinaryInteractiveChatLocally:
                              task_context={"has_tools": True})
             assert result["provider"] == "local", (
                 f"mode={mode} sent an ordinary interactive turn to the "
-                "cloud despite the maintainer's ruling that local_preferred/smart "
-                "now also prefer local for ordinary chat, not just "
+                "cloud, but local_preferred/smart "
+                "also prefer local for ordinary chat, not just "
                 "background/scheduled work"
             )
 

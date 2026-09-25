@@ -1,7 +1,7 @@
 """OpenRouter Auto Router — "let Friday decide", and the wire format for it.
 
-The maintainer, 2026-08-30: "Let Friday decide the model (OpenRouter required) based
-upon task complexity and the user's cost priority settings."
+Friday can decide the model (OpenRouter required) based on task complexity and
+the user's cost priority setting.
 
 The cost priority IS OpenRouter's `cost_tier`. It rides a `plugins` entry;
 a top-level `cost_tier` is accepted and ignored, so a wrong nesting here does
@@ -95,7 +95,7 @@ def test_streaming_is_on_by_default(monkeypatch):
 def test_stream_fallback_does_not_eat_429_retry_after(monkeypatch):
     """Regression: the stream fallback must trigger on 400 ONLY.
 
-    A blanket `>= 400` fallback re-sent the request immediately on 429,
+    A blanket `>= 400` fallback re-sends the request immediately on 429,
     throwing away the Retry-After wait — turning rate-limit etiquette into
     unthrottled hammering, on the one status where that is worst.
     """
@@ -133,10 +133,10 @@ def test_stream_fallback_does_not_eat_429_retry_after(monkeypatch):
 
 def test_auto_router_floors_max_tokens_so_reasoning_cannot_starve_the_answer(
         monkeypatch):
-    """Measured 2026-08-30 against the live account: `openrouter/auto` with
-    max_tokens=20 routed to deepseek-v4-flash-0731, spent all 20 tokens on
-    `reasoning` deltas, and returned finish_reason="length" with content "".
-    A billed turn that said nothing. Which model answers is not knowable when
+    """Against the live API, `openrouter/auto` with max_tokens=20 can route
+    to a reasoning model (e.g. deepseek-v4-flash-0731), spend all 20 tokens on
+    `reasoning` deltas, and return finish_reason="length" with content "".
+    A billed turn that says nothing. Which model answers is not knowable when
     the caller sets the budget, so the floor lives here."""
     posts = _capture(monkeypatch)
     _settings(monkeypatch, "low")
@@ -204,7 +204,7 @@ def test_price_ceiling_is_not_sent_to_non_aggregators(monkeypatch):
 
 
 def test_free_ceiling_is_never_sent_with_the_auto_router(monkeypatch):
-    """Verified against the live API 2026-08-30: `openrouter/auto` with
+    """Against the live API, `openrouter/auto` with
     max_price {0,0} is HTTP 404 "No endpoints found that satisfy the max
     price" — the router's pool holds no zero-price endpoint. Sending it turns
     a spend preference into a dead turn."""

@@ -1,22 +1,20 @@
 """What the Providers panel needs in order to let someone SWAP a key.
 
-The maintainer, 2026-08-26: "we need to fix the installer so the Friday that ships
-to users can swap API keys from the settings menu ... view which keys are
-set (masked), replace one, remove one, and ideally see whether it currently
-works."
+A shipped Friday lets the user swap API keys from the settings menu: view
+which keys are set (masked), replace one, remove one, and see whether it
+currently works.
 
-Storing and deleting already worked. The two things missing were the ones
-that make a swap safe to perform:
+Beyond storing and deleting, two things make a swap safe to perform:
 
   * WHICH key is in play. Two sources can hold a key for one provider — the
     encrypted store (written by Settings) and the environment (written by the
-    wizard into start.bat, re-read at every launch). The environment used to
-    win silently, so a swapped key came back dead after a restart with
-    nothing on screen disagreeing.
-  * WHETHER IT WORKS. The probe was a metadata read, which a key with no
-    credit passes cheerfully, and the one-token ping that would have caught
-    that was gated to openai-compatible providers — so Anthropic and Google,
-    the two Friday ships with, were the two she could not check.
+    wizard into start.bat, re-read at every launch). If the environment wins
+    silently, a swapped key comes back dead after a restart with nothing on
+    screen disagreeing.
+  * WHETHER IT WORKS. A metadata-read probe passes a key with no credit
+    cheerfully; the one-token ping catches that, and it must cover Anthropic
+    and Google, the two providers Friday ships with, not only
+    openai-compatible ones.
 
 These tests drive the HTTP surface the panel actually reads.
 """

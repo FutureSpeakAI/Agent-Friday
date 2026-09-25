@@ -198,11 +198,11 @@ def test_no_surface_ever_spells_out_compatible():
 
 
 def test_video_section_has_real_rows_now_that_local_video_exists():
-    """D8's original resolution (2026-09-04 or earlier) was one sentence, no
-    rows -- a declared row per candidate model was D8's call to make, and
-    nothing on this machine could serve a video job yet, so a row would have
+    """D8's original resolution was one sentence, no rows -- a declared row
+    per candidate model was D8's call to make, and nothing local could serve
+    a video job yet, so a row would have
     been the seat-that-serves-nothing defect the decision was guarding
-    against. `services/local_video.py` (2026-09-04/05) shipped real,
+    against. `services/local_video.py` ships real,
     earned-availability video models with the SAME is_installed discipline
     as image -- the thing D8 was waiting on now exists, so a row is no
     longer premature. See routes/intelligence.py's local_models_catalog()."""

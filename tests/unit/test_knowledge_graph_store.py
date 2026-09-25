@@ -125,7 +125,7 @@ class TestSettingsAndDirty:
         assert s["index_sources"]["wiki"] is True  # untouched keys survive
 
     def test_legacy_indexing_mode_values_still_read_correctly(self, monkeypatch):
-        """settings.json written before 2026-09-03 can still carry
+        """An older settings.json can still carry
         "local_only"/"gated_cloud" -- kg_settings() migrates them on every
         read rather than silently reverting to the default."""
         import agent_friday.services.knowledge_graph as kg

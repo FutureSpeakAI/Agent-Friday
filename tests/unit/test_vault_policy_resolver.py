@@ -1,11 +1,11 @@
 """One vault resolver, and the divergence it exists to kill.
 
-The headline test is `test_both_enforcement_points_agree`. It FAILS against the
-pre-patch code, and it is the whole point of the patch: on 2026-09-01 the same
-running server force-routed a vault question to a local model (routing said
-"protected") while assembling every cloud prompt ungated (prompt assembly said
-"not protected"). Both halves were behaving as written. One flag, two readers,
-two answers, and no single place to ask what the machine was actually doing.
+The headline test is `test_both_enforcement_points_agree`. Without one
+resolver, the same running server can force-route a vault question to a local
+model (routing says "protected") while assembling every cloud prompt ungated
+(prompt assembly says "not protected"), with both halves behaving as written.
+One flag, two readers, two answers, and no single place to ask what the
+machine is actually doing.
 """
 
 import logging
@@ -20,7 +20,7 @@ from agent_friday.privacy import vault_policy
 def test_absent_key_defaults_to_gated():
     """A thin model_routing block must resolve PROTECTIVE, not open.
 
-    The maintainer's live block carried 2 of 15 keys. Every gate resolving from a
+    A real settings block can carry 2 of 15 keys. Every gate resolving from a
     default has to default to the safe side.
     """
     p = vault_policy.resolve({}, announce=False)
@@ -179,8 +179,8 @@ def test_vault_fallback_comes_from_the_resolver(monkeypatch):
 
 # ── the switch, proved in both directions ───────────────────────────────────
 #
-# The maintainer's stated intent, 2026-09-01: "I want them going to the cloud if
-# ungated. Ungated means cloud has full access." So the flag is a real switch
+# Ungated means the cloud has full access: an ungated vault question goes to the
+# cloud. So the flag is a real switch
 # with two honest positions, and each one is asserted end to end here: what the
 # router does with a vault-touching question, AND what the prompt builder does
 # with vault-tier context.

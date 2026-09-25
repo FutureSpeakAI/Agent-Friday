@@ -1,18 +1,15 @@
 """Friday's own loopback proxy is still the local user; a tunnel is not.
 
-Regression found 2026-09-24, minutes after the tunnel fix shipped. Stephen:
-"I'm being presented with an authentication screen when loading Agent Friday. I
-have not set a username or password so this is not correct."
+A local user who never set a username or password must not see a login screen.
 
-He browses `https://agent.friday`, which is Friday's OWN presentation proxy:
-`ops/Caddyfile`, `bind 127.0.0.1 ::1`, `reverse_proxy 127.0.0.1:3000`. Caddy adds
+`https://agent.friday` is Friday's OWN presentation proxy: `ops/Caddyfile`,
+`bind 127.0.0.1 ::1`, `reverse_proxy 127.0.0.1:3000`. Caddy adds
 `X-Forwarded-For: 127.0.0.1`, `X-Forwarded-Proto: https` and
-`X-Forwarded-Host: agent.friday`. The tunnel fix treated the mere PRESENCE of a
-forwarding header as proof of remoteness, so his own machine started asking him
-for a password that only exists because a launcher sets `FRIDAY_PASSWORD`.
-
-Measured live before this fix: `https://agent.friday/` -> 302 to /login and
-`https://agent.friday/api/health` -> 401, while `http://127.0.0.1:3000/` -> 200.
+`X-Forwarded-Host: agent.friday`. Treating the mere PRESENCE of a forwarding
+header as proof of remoteness makes the user's own machine ask for a password
+that only exists because a launcher sets `FRIDAY_PASSWORD`: `https://agent.friday/`
+-> 302 to /login and `https://agent.friday/api/health` -> 401, while
+`http://127.0.0.1:3000/` -> 200.
 
 The distinction that actually matters is not "was this forwarded" but "was it
 forwarded from somewhere on this machine". So a forwarded request is local only
@@ -27,12 +24,10 @@ That keeps the hole shut. cloudflared cannot satisfy it: Cloudflare's edge sets
 `CF-Connecting-IP` and appends the real client IP to `X-Forwarded-For`, and the
 client cannot strip either. Two independent checks, not one.
 
-The previously-pinned case "a spoofed `X-Forwarded-For: 127.0.0.1` is treated
-exactly like any other" is deliberately changed here -- see
-`test_proxied_requests_are_never_local.py`, updated in the same commit. A spoof is
-now defeated by the CF check and the whole-chain check rather than by refusing
-every loopback claim, because refusing them all locked the user out of his own
-machine.
+A spoofed `X-Forwarded-For: 127.0.0.1` is defeated by the CF check and the
+whole-chain check (see `test_proxied_requests_are_never_local.py`) rather than by
+refusing every loopback claim, because refusing them all locks the user out of
+their own machine.
 """
 
 import io
@@ -121,12 +116,12 @@ def flask_app():
 def test_a_loopback_proxy_is_the_local_user(flask_app, headers):
     with _ctx(flask_app, headers):
         assert core._is_local_request() is True, (
-            "%s was treated as remote, which is what put a login screen in "
-            "front of Stephen on his own machine" % headers)
+            "%s was treated as remote, which puts a login screen in "
+            "front of the local user on their own machine" % headers)
         assert core._loopback_trusted() is True
 
 
-def test_the_local_user_is_not_asked_to_log_in_through_his_own_proxy(
+def test_the_local_user_is_not_asked_to_log_in_through_their_own_proxy(
         flask_app, client):
     """End to end through the real decorator, with a FRESH client so no session
     cookie can answer for locality."""
@@ -134,8 +129,8 @@ def test_the_local_user_is_not_asked_to_log_in_through_his_own_proxy(
     r = fresh.get("/api/residency/status", headers=CADDY,
                   environ_base={"REMOTE_ADDR": "127.0.0.1"})
     assert r.status_code == 200, (
-        "a request through agent.friday got HTTP %s; measured 401 live before "
-        "this fix" % r.status_code)
+        "a request through agent.friday got HTTP %s; the local proxy must not "
+        "be challenged" % r.status_code)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

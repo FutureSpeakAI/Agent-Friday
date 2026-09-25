@@ -443,8 +443,8 @@ def test_the_suppression_signal_is_not_swallowed_by_the_error_guard():
 def test_the_target_window_is_chosen_at_key_down_not_at_paste_time():
     """Transcription takes a moment, and focus can move inside it.
 
-    Observed live: a dictated sentence arrived in a different application
-    entirely while the window it was meant for sat in the background. Pasting
+    Otherwise a dictated sentence can arrive in a different application
+    entirely while the window it was meant for sits in the background. Pasting
     speech into whatever happens to be in front is a disclosure, not a typo.
     """
     spy = Spy()

@@ -1,4 +1,4 @@
-"""JSON tool-result gating and news provenance (2026-08-24).
+"""JSON tool-result gating and news provenance.
 
 Two changes are pinned here:
 
@@ -33,7 +33,7 @@ from agent_friday.services import egress_gate as eg
 from agent_friday.services.egress_gate import _gate_text, register_public_text
 
 
-# The actual article text from the reported failure.
+# Article text of the shape that triggered the whole-result withholding.
 CDC_TITLE = "CDC reports rise in flu cases across northern states"
 CDC_SNIPPET = ("Officials recommend vaccination for people over 65 and those "
                "with underlying medical conditions, citing hospital admission "
@@ -255,10 +255,10 @@ def test_private_cases_are_falsifiable(monkeypatch):
     )
 
 
-# ── Formerly xfail; CLOSED 2026-08-25 in sensitivity_classifier ──────────────
+# ── Formerly xfail; now closed in sensitivity_classifier ────────────────────
 # This was pinned as a pre-existing classifier gap: wrapping text in JSON
-# LOWERED its tier, because the possessive/personal frame matching b69acb2
-# introduced used a connector class of [\w'\-\s] and a quote or colon in the
+# LOWERED its tier, because the possessive/personal frame matching
+# used a connector class of [\w'\-\s] and a quote or colon in the
 # gap broke the match. Fixed at the root, as the pin said it should be — the
 # connector class now admits punctuation, and "account balance" joined the
 # strong TIER-3 phrases so this string no longer depends on frame matching or

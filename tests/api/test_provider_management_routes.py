@@ -157,11 +157,9 @@ def test_provider_test_unknown_404(client):
 
 
 def test_provider_test_kie_does_not_hit_generic_models_probe(client, monkeypatch):
-    """kie.ai has no /models endpoint. Before this fix, Test Connection fell
-    into the generic openai-compatible branch and 404'd on every kie.ai key,
-    reporting a perfectly good credential as broken (live 2026-09-06,
-    the maintainer: "the API key is not working correctly"). It must delegate to
-    provider_health's dedicated kie check instead."""
+    """kie.ai has no /models endpoint. The generic openai-compatible branch
+    404s on every kie.ai key and reports a good credential as broken, so Test
+    Connection must delegate to provider_health's dedicated kie check."""
     from agent_friday.services import provider_health
 
     monkeypatch.setattr(

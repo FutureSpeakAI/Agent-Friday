@@ -1,14 +1,12 @@
 """Green orbs leave after 30 seconds. Failed ones do not leave on a timer.
 
-The maintainer: "Green ('done') process orbs need to vanish from the holographic
-desktop after 30 seconds. I do not want them hanging around in orbit around
-Friday's avatar for longer than that."
+Green ('done') process orbs leave the holographic desktop 30 seconds after
+they finish; they do not stay in orbit around Friday's avatar.
 
-The reason they hung around: every agent and inference orb registers with
-category 'monitoring', which had a 900-second retention — and the orb was drawn
-for as long as the RECORD lived. One lifetime doing two jobs. The record's long
-life was deliberate and correct (the detail has to outlive the orb); drawing an
-orb for all of it was not.
+Every agent and inference orb registers with category 'monitoring', which has
+a 900-second RECORD retention. The record's long life is deliberate (the detail
+has to outlive the orb); drawing the orb for as long as the record lives is
+not — one lifetime must not do two jobs.
 
 The asymmetry for failures is a judgement call and it is the one this codebase
 keeps making: a success that vanishes is fine, because you either saw it or did
@@ -71,15 +69,15 @@ def test_a_completed_orb_stops_orbiting_after_30s(client):
 
 
 def test_monitoring_category_does_not_buy_extra_orbit_time(client):
-    """This was the bug. 'monitoring' bought 900s of RECORD, and the orb rode
-    along for all of it."""
+    """'monitoring' buys 900s of RECORD; the orb must not ride along for all
+    of it."""
     _add("p1", status="completed", ended_ago=120, category="monitoring")
     assert _rows(client)["p1"]["orb_visible"] is False
 
 
 def test_the_record_outlives_the_orb(client):
     """The detail — model, log, result — has to stay explorable after the orb
-    goes. That was the original comment's point and it still holds."""
+    goes."""
     _add("p1", status="completed", ended_ago=120, category="monitoring")
     row = _rows(client)["p1"]
     assert row["orb_visible"] is False
@@ -90,8 +88,8 @@ def test_the_record_outlives_the_orb(client):
 
 @pytest.mark.parametrize("status", ["error", "failed", "timeout", "cancelled"])
 def test_a_failure_does_not_vanish_on_the_success_timer(client, status):
-    """The point that still holds: a failure outlives the 30s success timer, so
-    it cannot disappear before he has looked at it."""
+    """A failure outlives the 30s success timer, so it cannot disappear before
+    the user has looked at it."""
     _add("p1", status=status, ended_ago=120)
     row = _rows(client)["p1"]
     assert row["orb_visible"] is True
@@ -99,11 +97,11 @@ def test_a_failure_does_not_vanish_on_the_success_timer(client, status):
 
 
 def test_a_very_old_failure_stops_orbiting_but_is_still_reported(client):
-    """2026-08-16, the maintainer: "The error orbs won't go away."
+    """Error orbs must eventually go away.
 
-    The previous round made failures persist until dismissed and then shipped
-    nothing that could dismiss one, so persistent became permanent and they
-    accumulated around the avatar. An age cap ends the orbit; the ROW is still
+    Failures that persist until dismissed, with nothing able to dismiss them,
+    become permanent and accumulate around the avatar. An age cap ends the
+    orbit; the ROW is still
     returned and still flagged, so nothing is hidden — it has just stopped
     standing in front of the work in progress.
     """

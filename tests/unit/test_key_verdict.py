@@ -1,8 +1,8 @@
 """"Friday isn't working" must become "this key was rejected".
 
-The maintainer, 2026-08-26: a settings-side equivalent of Test-AnthropicKey "would
-turn 'Friday isn't working' into 'this key was rejected', which is the
-difference between a user who fixes it and a user who gives up."
+A settings-side equivalent of Test-AnthropicKey turns "Friday isn't working"
+into "this key was rejected", which is the difference between a user who
+fixes it and a user who gives up.
 
 The installer already knows how to do this. packaging/windows/lib/Heal.ps1
 ::Test-AnthropicKey spends a fraction of a cent on one real round-trip and

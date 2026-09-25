@@ -1,9 +1,7 @@
 """Two ways to connect Google, and an honest hand-off between them.
 
-The maintainer, 2026-08-26: "accept the unverified app warning AND bring your own
-with a walkthru. Let's do both."
-
-So there are two clients:
+Friday offers both: a bundled client that shows Google's unverified-app
+warning, and a guided bring-your-own client. So there are two clients:
 
   * BUNDLED — ships with Friday. One click, and a warning screen. Subject to
     Google's 100-new-users-per-project lifetime cap, which cannot be reset.
@@ -16,10 +14,10 @@ makes its precedence load-bearing — a user who has gone to the trouble of
 making their own client must never be silently routed back onto the full one.
 
 WHAT THIS FILE DOES NOT TEST is the credential itself. Friday ships with the
-bundled constants EMPTY, because only the maintainer can mint them (they belong to
-his Google Cloud project and name him as the publisher). Empty must therefore
-behave exactly like "no bundled client" — the mechanism is complete and inert
-until he pastes them in, and a half-configured client must never be offered
+bundled constants EMPTY, because only the publisher can mint them (they belong
+to the publisher's Google Cloud project and name the publisher). Empty must
+therefore behave exactly like "no bundled client" — the mechanism is complete
+and inert until they are filled in, and a half-configured client must never be offered
 as if it worked.
 """
 from __future__ import annotations
@@ -142,7 +140,7 @@ class TestErrorGuidance:
 
     def test_no_guidance_tells_anyone_to_place_a_file(self):
         """The whole reason this exists. 'Place a JSON file in this directory'
-        is the wall the second user hit on 2026-08-26."""
+        is a wall a non-developer user cannot get past."""
         for code in (goc.CAP_REACHED, goc.DECLINED_OR_CAPPED, goc.MISCONFIGURED,
                      goc.ADMIN_BLOCKED, goc.UNKNOWN):
             low = goc.explain_error(code).lower()
@@ -276,7 +274,7 @@ class TestByoStorage:
         assert cfg["installed"]["client_id"] == "mine.apps.googleusercontent.com"
 
     def test_a_discovered_file_still_works_for_existing_installs(self, monkeypatch):
-        """The maintainer already has a client_secret*.json on disk. Adding a new
+        """Existing installs can already have a client_secret*.json on disk. Adding a new
         storage location must not strand it."""
         monkeypatch.setattr(goc, "BUNDLED_CLIENT_ID", "b.apps.googleusercontent.com",
                             raising=False)

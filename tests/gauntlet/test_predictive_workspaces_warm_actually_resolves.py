@@ -1,4 +1,4 @@
-"""Gauntlet finding F58 (claim-corpus sweep, 2026-09-04):
+"""Gauntlet finding F58 (claim-corpus sweep):
 predictive_workspaces.py's module docstring promises boot/hourly
 pre-warming that "proactively touch[es] the caches a predicted workspace
 depends on... so it renders instantly." _warm_workspace() resolved its

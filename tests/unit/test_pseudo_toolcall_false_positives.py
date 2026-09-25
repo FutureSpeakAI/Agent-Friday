@@ -1,11 +1,11 @@
-"""F4 (Incident 2, 2026-08-13) — the FR-2 leak detector must not flag honest
-hypothetical/capability prose that merely *mentions* a tool-ish English word.
+"""F4 — the FR-2 leak detector must not flag honest hypothetical/capability
+prose that merely *mentions* a tool-ish English word.
 
-Live forensics: friday.log 10:53:24 and 10:57:39 show leaked_names=['click',
-'navigate', 'browse_web', 'search_web'] fired by plain answers to capability
-questions ("could you click a button for me?") that needed zero tools. The
-old _LEAK_TEMPLATE made every piece of call syntax optional, so a bare word
-matched. Each false positive cost ~90s of corrective-retry dead air.
+A template that makes every piece of call syntax optional fires
+leaked_names=['click', 'navigate', 'browse_web', 'search_web'] on plain
+answers to capability questions ("could you click a button for me?") that
+need zero tools, because a bare word matches. Each false positive costs ~90s
+of corrective-retry dead air.
 
 The detector must require actual pseudo-call *syntax*: [name], [name(args)],
 name(args), or name: {...} — never a bare English word.

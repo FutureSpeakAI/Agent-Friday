@@ -1,17 +1,14 @@
 """Every provider that asks for a key must say where to get one.
 
-The maintainer, after setting Friday up on a second user's laptop 2026-08-26:
+The UI includes clickable buttons that open the sign-up pages for the API/MCP
+services Friday can use.
 
-    "The UI must also include clickable buttons that open the sign up pages
-     for various API/MCP services Friday can use."
-
-The Providers panel asked for a key and named the environment variable it
-would be stored under — `needs ANTHROPIC_API_KEY`, `Paste GEMINI_API_KEY`.
-That is the author's vocabulary. It tells someone who already has a key
-where to put it, and tells someone who does not have one nothing at all.
-The gap between "I need a key" and "I have a key" was never part of the
-product; it was assumed to have been crossed already, off-screen, because
-for the author it always had been.
+A Providers panel that only asks for a key and names the environment variable
+it will be stored under — `needs ANTHROPIC_API_KEY`, `Paste GEMINI_API_KEY` —
+speaks the author's vocabulary. It tells someone who already has a key where
+to put it, and tells someone who does not have one nothing at all. The gap
+between "I need a key" and "I have a key" is part of the product, not
+something to assume was crossed off-screen.
 
 So a descriptor that demands an api key carries the page that issues one,
 and it is applied in `normalize_descriptor` — the one gate every descriptor

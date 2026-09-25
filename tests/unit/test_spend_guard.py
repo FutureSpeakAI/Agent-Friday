@@ -2,11 +2,9 @@
 recorded spend past the threshold through cost_meter's own DB and asserting
 the real cloud choke points refuse the next call.
 
-The maintainer (2026-09-06): "A spending limit that reports itself as set and
-doesn't stop anything is the worst instance of the placebo pattern in the
-product ... The test has to prove the stop actually stops -- drive real
-spend past the threshold and assert the work halts, not merely that a flag
-flipped."
+A spending limit that reports itself as set and stops nothing is a placebo.
+So the test proves the stop actually stops: it drives real spend past the
+threshold and asserts the work halts, not merely that a flag flipped.
 
 Two caps: the alert cap (default, unchanged, never blocks) and the hard
 stop (opt-in, blocks cloud, never local). Both are asserted here so a

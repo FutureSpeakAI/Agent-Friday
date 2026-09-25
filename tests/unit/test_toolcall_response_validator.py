@@ -2,7 +2,7 @@
 FR-2, the post-generation response validator (docs: toolcall-integrity-v5).
 
 Scans every generated reply for fabricated bracket-syntax pseudo-tool-calls
-(the 2026-08-12 "start my day" confabulation pattern: [query_calendar],
+(the "start my day" confabulation pattern: [query_calendar],
 [search_email(priority:high)], etc.) before it's stored, rendered, or spoken.
 """
 from __future__ import annotations

@@ -27,15 +27,11 @@ via apiFetch and only flashes "Saved" when the server echoes status:'ok'.
 the block and silently reset `enabled`/`psi_daily_cap` -- that half is
 backend-testable and is what TestContentSettingsDeepMerge below pins.
 
-CORRECTION (2026-09-04, flagged by the maintainer's independent cold
-re-verification): this probe originally covered ONLY the backend
-deep-merge hardening above -- the docstring itself admitted "the JS side
-isn't unit-testable here, so it's covered by manual/visual review of the
-diff." That left the actual defect (saveGlobals's own request body shape
-and its unconditional 'Saved' flash) with zero automated coverage; the
-deep-merge fix alone cannot fail if saveGlobals regresses back to a flat,
-unwrapped body, since nothing would ever call _save_settings with the
-correct shape to exercise it. TestSaveGlobalsRequestShape below extracts
+The backend deep-merge test alone does not cover the actual defect
+(saveGlobals's own request body shape and its unconditional 'Saved'
+flash): it cannot fail if saveGlobals regresses back to a flat, unwrapped
+body, since nothing would then call _save_settings with the correct shape
+to exercise it. TestSaveGlobalsRequestShape below extracts
 saveGlobals's actual source text from both index.html and
 ui_parts/app.html (this codebase's established pattern for pinning
 embedded-JS behavior source-textually, e.g.

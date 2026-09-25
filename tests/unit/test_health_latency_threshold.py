@@ -8,7 +8,7 @@ text, slowly, and reported green. That is the exact failure this whole
 residency layer exists to prevent, invisible to the only sensor that would see
 it.
 
-Two false-negative defects found on the live machine are pinned here too. Both
+Two false-negative defects are pinned here too. Both
 made health report failure while inference was fine, which is the inverse
 error and just as damaging to trust.
 """
@@ -18,7 +18,7 @@ import pytest
 
 from agent_friday.services import provider_health as ph
 
-BASELINE = 20.26          # gemma4:12b, measured 2026-08-14
+BASELINE = 20.26          # gemma4:12b, measured ms/token
 
 
 @pytest.fixture(autouse=True)

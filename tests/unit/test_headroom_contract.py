@@ -5,8 +5,8 @@ for five concepts, and the one that actually gates a lease --
 `Arbiter.grant()`'s R-DISPLAY-RESERVE check -- resolved to 256 MiB on a
 single-monitor Windows box (`hardware_profile.display_reserve_mib()`,
 unclamped) while the planner assumed at least 2,560
-(`hardware_profile.MIN_DISPLAY_RESERVE_MIB["windows"]`). The 2026-08-17
-monitor loss happened at 322 MiB free; the gate as it existed before this
+(`hardware_profile.MIN_DISPLAY_RESERVE_MIB["windows"]`). A monitor
+dropped off at 322 MiB free; the gate as it existed before this
 file would still pass at that level.
 
 These tests pin: `resolve_display_reserve()` produces the reconciled figure
@@ -181,7 +181,7 @@ def test_the_gate_now_requires_2560_not_256_on_single_monitor_windows(
     assert before["display_reserve_mib"] == 256
     assert before["ok"] is True, (
         "sanity check: 2,082 MiB free clears a 256 MiB reserve -- this is "
-        "the state the 2026-08-17 monitor loss happened in (322 MiB free), "
+        "the state a monitor dropped off in (322 MiB free), "
         "and the un-reconciled gate would have let it through")
 
     # The reconciled figure -- what the gate enforces now.

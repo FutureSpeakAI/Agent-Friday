@@ -38,8 +38,8 @@ class _FakeOllamaManager:
                         max_tokens=4096, **kw):
         # **kw so a new dispatch-time argument does not break the stub and
         # make it look like the shared loop stopped being reached. `num_ctx`
-        # arrived on 2026-08-15 when dispatch started applying the residency
-        # plan's context on every call rather than only at Arbiter boot.
+        # is sent because dispatch applies the residency plan's context on
+        # every call rather than only at Arbiter boot.
         self.calls.append({"messages": list(messages), "tools": tools})
         return {
             "choices": [{
@@ -73,7 +73,7 @@ def test_call_ollama_with_tools_reaches_shared_loop(monkeypatch):
     fake = _FakeOllamaManager()
     monkeypatch.setattr(ollama_manager, "get_manager", lambda *a, **k: fake)
     # This test pins the tool-schema conversion, not the seat gate — pin the
-    # gate green so the (2026-08-14) inventory-aware refusal can't strip the
+    # gate green so no inventory-aware refusal can strip the
     # tools before they reach the fake manager.
     from agent_friday.services import model_seat_gate as gate
     monkeypatch.setattr(gate, "resolve_local_seat",
@@ -122,14 +122,10 @@ def test_generate_text_normalizes_string_prompts(monkeypatch):
     #   2. `_route_basic` then asking the REAL Ollama daemon on localhost:11434
     #      (via the get_manager singleton, 30-second availability cache).
     #
-    # In a full-suite run this failed with "[ROUTER] chose local/gemma4:e4b" --
-    # a model that exists on the author's machine and nowhere in CI. It
-    # reproduced identically on an UNMODIFIED tree given the same selection, so
-    # it is a latent order-and-hardware dependency rather than a regression;
-    # any change to suite composition can trigger it. The same hazard is on
-    # record twice already: the cloud_only tests that tested "the last test to
-    # write settings" (5350d69), and a routing probe that had to force the local
-    # seat empty before the real default behaviour appeared.
+    # Without isolation, a full-suite run can fail with "[ROUTER] chose
+    # local/gemma4:e4b" -- a model present on a developer machine and nowhere
+    # in CI. That is a latent order-and-hardware dependency, not a regression;
+    # any change to suite composition can trigger it.
     #
     # Make the daemon unreachable for the duration. The test is named for prompt
     # normalisation and that is now the only thing it measures.

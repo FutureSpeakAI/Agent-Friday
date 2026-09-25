@@ -1,14 +1,15 @@
 """One connector's JSON must not be able to silence every cloud conversation.
 
-Measured 2026-08-18 on the maintainer's machine: after the Higgsfield connector
-registered 86 tools, EVERY Anthropic turn came back "[Friday offline]" with
+A connector that registers a tool with a top-level combinator (the Higgsfield
+connector registers 86 tools) makes EVERY Anthropic turn come back
+"[Friday offline]" with
 
     tools.90.custom.input_schema: input_schema does not support
     oneOf, allOf, or anyOf at the top level
 
 The API rejects the whole request, not the offending tool, and names an index
-rather than a name — so the symptom was "cloud chat is dead" with no way to
-tell which of 112 tools did it. These tests pin the repair and, as much,
+rather than a name — so the symptom is "cloud chat is dead" with no way to
+tell which of 100+ tools did it. These tests pin the repair and, as much,
 the requirement that the capability SURVIVES it.
 """
 import pytest

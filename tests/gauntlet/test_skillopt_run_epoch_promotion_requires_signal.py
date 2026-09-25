@@ -1,11 +1,10 @@
-"""Gauntlet finding F73 (2026-09-04, seam 13/SkillOpt investigation,
-externally sourced): SkillOptEngine.run_epoch() could promote a candidate
-skill version that was never actually evaluated.
+"""Gauntlet finding F73 (seam 13/SkillOpt, externally sourced):
+SkillOptEngine.run_epoch() could promote a candidate skill version that was
+never actually evaluated.
 
-The external review (the maintainer commissioned an outside read of the public
-v5.10.0 repo) inspected but did not execute this one, so per instruction
-it was reproduced here before being trusted. All four reproductions it
-asked for confirmed the claim against current code, before this fix:
+An external review of the public v5.10.0 repo raised this without executing
+it, so it is reproduced here before being trusted. All four reproductions
+confirmed the claim against the code before the fix:
 
   1. Evaluator raises on EVERY case in the batch -> promoted.
   2. No evaluator configured, and neither candidate nor baseline has any
@@ -37,7 +36,7 @@ partial failure (some cases evaluated, some didn't) still proceeds to the
 gate as before, but the reason string now names the failure count and
 the last error instead of silently dropping it.
 
-Reachability note, for honest severity: as of this fix, nothing in the
+Reachability note, for honest severity: nothing in the
 live server wires an evaluator into the one production SkillOptEngine
 singleton (get_engine() calls SkillOptEngine() with zero arguments), and
 nothing in the currently-wired autoresearch/nightly pipeline

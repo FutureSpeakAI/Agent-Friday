@@ -1,7 +1,5 @@
 """The Cost & Usage panel must be reachable, and must read what it fetches.
 
-This is the generalisation of what a spend audit found on 2026-08-30.
-
 The panel was complete and working when it landed in 91411e9: a collapsible
 Settings section with range pills, a total, a daily sparkline, per-provider /
 per-workspace / per-model breakdowns and budget controls. Commit 0cd13fc
@@ -17,15 +15,14 @@ behind it. What survived was:
     went with the JSX. The effect could therefore never fire;
   * saveBudget(), defined and called by nothing.
 
-The backend never stopped working. /api/costs/summary returned 200 the whole
-time. So for two months the meter recorded every call correctly and delivered
-it to a panel that had been deleted, and the only spend a user could actually
-see was one "$3.50 today" line on the Anthropic row of the Providers tab.
+The backend never stopped working: /api/costs/summary kept returning 200, the
+meter recorded every call correctly and delivered it to a panel that had been
+deleted, and the only spend a user could actually see was one "$3.50 today"
+line on the Anthropic row of the Providers tab.
 
-The cost of that silence, measured on the maintainer's own install the day it was
-found: $1,189.76 for the month against a $50 monthly budget whose alert was
-switched off -- switched off because the only UI that could ever have armed
-it was the one that had been deleted.
+The cost of that silence is a month's spend running far past a monthly budget
+whose alert is off -- off because the only UI that could ever have armed it
+was the one that had been deleted.
 
 Two of these tests would have failed the day 0cd13fc landed.
 
@@ -140,9 +137,9 @@ def test_the_panel_says_what_it_does_not_count():
 
 def test_the_panel_does_not_arm_budgets_on_the_users_behalf():
     """Both alerts being off is a consequence of the deletion, not a choice
-    the maintainer made -- but the fix is to let him arm them, not to flip them on
-    for him. A UI default of `true` here would spend his attention without
-    asking."""
+    the user made -- but the fix is to let them arm the alerts, not to flip
+    them on for them. A UI default of `true` here would spend the user's
+    attention without asking."""
     src = _src()
     start = src.find("const [costBudget")
     assert start != -1, "costBudget state is gone"

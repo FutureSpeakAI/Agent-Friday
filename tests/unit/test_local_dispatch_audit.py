@@ -1,15 +1,14 @@
 """Where a local call lands is a fact the log has to state, not one to infer.
 
-On 2026-08-24 the pinned `gemma4:12b` seat died with an 11:49 restart and was
-never respawned. `endpoints.json` went on naming :8090 for the rest of the day;
-every local role silently resolved to an Ollama tag instead; and nobody
-noticed until somebody went looking for an unrelated reason. Nothing was broken enough to
-raise: `seat_endpoint` correctly disbelieved the stale file, `local_seats`
-correctly dropped the unreachable models, and each layer's individually correct
-behaviour added up to a machine answering as models nobody chose.
+When a pinned seat (e.g. `gemma4:12b`) dies on a restart and is never
+respawned, `endpoints.json` goes on naming its port (:8090) and every local
+role silently resolves to an Ollama tag instead. Nothing is broken enough to
+raise: `seat_endpoint` correctly disbelieves the stale file, `local_seats`
+correctly drops the unreachable models, and each layer's individually correct
+behaviour adds up to a machine answering as models nobody chose.
 
-The gap was that no layer ever said out loud which endpoint it had settled on.
-These tests cover the line that now does.
+So some layer has to say out loud which endpoint it settled on. These tests
+cover the log line that does.
 """
 import pytest
 

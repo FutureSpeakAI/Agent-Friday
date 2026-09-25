@@ -1,4 +1,4 @@
-"""search_email() query plumbing (docs: gmail-query-fix, 2026-09-19 (Saturday)).
+"""search_email() query plumbing (docs: gmail-query-fix).
 
 Two independent defects in the live (multi-account) search_email path:
 

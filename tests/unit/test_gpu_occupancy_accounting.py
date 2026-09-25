@@ -1,6 +1,6 @@
 """The arbiter must not plan into VRAM another tenant is holding.
 
-Measured 2026-09-01: the arbiter believed 8,451 MiB were available while
+In the failure this pins, the arbiter believed 8,451 MiB were available while
 nvidia-smi reported 11,557 of 12,282 MiB in use by a fine-tuning run. The WDDM
 display-reserve counter read 18,376 MiB -- impossible on that card -- so it was
 correctly discarded, and then incorrectly fell back to a cached IDLE floor of

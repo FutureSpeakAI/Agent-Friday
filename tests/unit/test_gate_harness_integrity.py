@@ -1,8 +1,7 @@
 """A harness failure is not a verdict about a model.
 
-On 2026-08-15 the maintainer gated four models at once. They evicted each other from
-VRAM, every case paid a cold reload against a flat 120s budget, and the store
-recorded:
+Gating four models at once made them evict each other from VRAM: every case
+paid a cold reload against a flat 120s budget, and the store recorded:
 
     gemma4:12b  structural 1/10   (9 of 10 cases: "timed out")
     gemma4:e2b  structural 4/10   — overwriting a standing GREEN
@@ -175,7 +174,7 @@ def test_num_ctx_forces_the_native_endpoint(monkeypatch):
     """`options` is Ollama-NATIVE; /v1/chat/completions accepts the request and
     silently discards it.
 
-    VERIFIED on the live daemon 2026-08-15:
+    Verified against a live Ollama daemon:
         /v1/chat/completions  options.num_ctx=8192 -> ollama ps says 131072
         /api/chat             options.num_ctx=8192 -> ollama ps says   8192
 

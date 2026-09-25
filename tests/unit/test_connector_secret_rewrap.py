@@ -2,12 +2,10 @@
 
 THE GAP THIS CLOSES. `credential_store.migrate_to_keystore` walks FILES. These
 secrets are base64 inside `mcp_servers.json`, so `_credential_files()` cannot
-see them and the first migration missed them entirely. The cost was exact: five
-credentials came back on 2026-09-19 while the GitHub MCP server kept failing
-every spawn with "GCM auth tag mismatch", because its token was still sealed
-under the passphrase the resolver had stopped preferring. Two more were
-stranded here - the GitHub PAT and a Google OAuth credential - and both
-recovered.
+see them and a file-only migration misses them entirely. The cost is concrete:
+an MCP server (GitHub) fails every spawn with "GCM auth tag mismatch" because
+its token is still sealed under the passphrase the resolver stopped
+preferring.
 
 The rules are migration's rules, because this is somebody's only copy of a
 token: decrypt with any key Friday knows, round-trip before replacing, leave

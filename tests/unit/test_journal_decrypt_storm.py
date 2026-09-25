@@ -1,7 +1,7 @@
 """A record that cannot be decrypted is bad news once, not bad news forever.
 
-Measured on the reference machine, 2026-09-22 15:10-18:30. A passphrase
-rotation left 20-odd task-journal records unreadable (GCM auth tag mismatch).
+Measured on the reference machine over three hours. A passphrase rotation
+left 20-odd task-journal records unreadable (GCM auth tag mismatch).
 Nothing crashed: `_decode_line` swallows the failure and the row is skipped,
 which is the right behaviour. But `_unprotect` logs a warning first, and the
 tray polls /api/tasks roughly every two seconds, and that poll calls
@@ -13,7 +13,7 @@ PermissionError [WinError 32] because a second process holds the file, and the
 failure was raised inside logging -- which prints "--- Logging error ---" plus
 a full traceback to stderr for every suppressed line.
 
-Net effect: friday.log frozen at 15:10, no application log at all for three
+Net effect: friday.log frozen, no application log at all for three
 hours, and server_stderr.log growing at 5.6 GB/hour. Friday went blind, and
 every request competed with a process writing 100 MB a minute.
 

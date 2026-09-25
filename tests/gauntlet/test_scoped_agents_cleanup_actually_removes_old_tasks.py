@@ -1,4 +1,4 @@
-"""Gauntlet finding F56 (claim-corpus sweep, 2026-09-04):
+"""Gauntlet finding F56 (claim-corpus sweep):
 scoped_agents.cleanup_old_tasks() computed a `cutoff` timestamp but never
 compared anything to it, and its removal loop was a bare `for tid in
 to_remove[-50:]: pass  # Actually keep them for now` -- it never removed a

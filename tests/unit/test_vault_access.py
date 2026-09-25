@@ -124,11 +124,11 @@ if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
 
 
-# ── Contact-shaped PII: the 2026-08-25 leak ───────────────────────────────────
-# "emergency contact: 555-1234" classified TIER_1 and vault_access.gate_content
-# handed it to Anthropic verbatim. The cause was not one missing keyword: a
-# phone number, a street address and a masked account tail had NO detector at
-# any layer that ships. Presidio (Layer 2) has never been installed anywhere,
+# ── Contact-shaped PII ────────────────────────────────────────────────────────
+# "emergency contact: 555-1234" must not classify TIER_1 and reach Anthropic
+# verbatim through vault_access.gate_content. The cause of that is not one
+# missing keyword: a phone number, a street address and a masked account tail
+# need a detector at a layer that ships. Presidio (Layer 2) is not installed,
 # and embeddings (Layer 3) are excluded from the frozen .exe AND switched off
 # outright on this path (classify passes use_embeddings=False). So these tests
 # deliberately assert against the DETERMINISTIC layers only — they must hold in
@@ -208,16 +208,16 @@ def test_private_cases_are_falsifiable(vac, monkeypatch):
 
 
 # ── Context-section fallbacks must stay fail-closed ───────────────────────────
-# The classifier gap above was survivable in most of _build_context_prompt
-# because nearly every personal section is hard-tagged TIER_2. It was FATAL in
-# the wiki section because that one passed a PUBLIC fallback — so a classifier
-# miss did not degrade to "withheld", it degraded to "sent in full". Measured on
-# the real corpus: 90 of 95 files in ~/.friday/wiki reached the cloud in full
-# under the old fallback, 0 under the new one.
+# A classifier gap is survivable in most of _build_context_prompt because
+# nearly every personal section is hard-tagged TIER_2. It is FATAL in any
+# section that passes a PUBLIC fallback — a classifier miss then degrades not
+# to "withheld" but to "sent in full". Measured on a real wiki corpus: 90 of 95
+# files reached the cloud in full under a PUBLIC fallback, 0 under a
+# fail-closed one.
 #
 # This is asserted at source level on purpose. The defect is the literal
 # fallback argument, not any behaviour reachable without building a whole
-# context prompt, and a behavioural test would not have caught the original bug.
+# context prompt, and a behavioural test would not catch it.
 class TestContextSectionFallbacks:
     def _router_source(self):
         from pathlib import Path
@@ -229,7 +229,7 @@ class TestContextSectionFallbacks:
         src = self._router_source()
         assert "classify(wiki_text, _T2)" in src, (
             "the WIKI/BRIEFING DATA section must classify with a PRIVATE "
-            "fallback; with _T1 a classifier miss sends the maintainer's personal "
+            "fallback; with _T1 a classifier miss sends the user's personal "
             "wiki to the cloud in full"
         )
         assert "classify(wiki_text, _T1)" not in src

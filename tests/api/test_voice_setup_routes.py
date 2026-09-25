@@ -1,9 +1,8 @@
 """API regression tests for the first-run voice setup surface.
 
-Pins the 2026-07-06 fixes: /friday-live 404s after the src/ restructure, the
-setup TTS test 500ing on every call (b64encode on BytesIO), wizard step
-statuses derived from strings health() never emits, and the new in-UI
-installer endpoints.
+Pins: /friday-live is served after the src/ restructure, the setup TTS test
+does not 500 (b64encode on BytesIO), wizard step statuses derive from strings
+health() actually emits, and the in-UI installer endpoints.
 """
 import base64
 import io

@@ -1,11 +1,9 @@
 """The Front Page's failure path — the part the user was never shown.
 
-Between 2026-09-19 and 2026-09-22 every edition written to
-`~/.friday/front_pages/` was the un-curated fallback: nine consecutive, the
-last genuinely curated one being 2026-09-18 morning. Each was written to
-disk, each pushed the same cheerful "📰 Friday's Front Page — Morning
-edition" notification, and the page rendered identically to a curated one.
-Stephen found out by refreshing localhost.
+A run of nine consecutive editions written to `~/.friday/front_pages/` was
+the un-curated fallback. Each was written to disk, each pushed the same
+cheerful "📰 Friday's Front Page — Morning edition" notification, and the page
+rendered identically to a curated one, so nothing told the user.
 
 `_editorialize_front_page` had two exits — `if not isinstance(data, dict):
 return fallback` and a bare `except Exception: return fallback` — and neither

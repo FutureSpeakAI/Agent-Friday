@@ -1,4 +1,4 @@
-"""`auto` never resolves to a cloud engine. Settled 2026-09-09 as R4.1.
+"""`auto` never resolves to a cloud engine (R4.1).
 
 The local sibling of the existing `test_resolve_engine_local_only_never_cloud`
 (D-AC3). That one guards the case where the user turned local-only ON; this one

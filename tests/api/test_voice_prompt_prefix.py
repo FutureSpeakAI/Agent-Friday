@@ -34,8 +34,8 @@ def test_voice_prompt_is_prefix_stable(monkeypatch):
     p1, meta1 = rv._build_voice_system_prompt({"orchestrator_model": "seat"})
     clock["t"] = "2026-09-16 09:13"                       # a minute passes
     p2, meta2 = rv._build_voice_system_prompt({"orchestrator_model": "seat"})
-    # Measured 2026-09-18 on the FridayWeaver seat: ANY change to the
-    # system message re-prefills the whole prompt, so the system text must
+    # On llama-server, ANY change to the system message re-prefills the
+    # whole prompt, so the system text must
     # be byte-identical across builds. The clock moved, and the SYSTEM text
     # did not -- the volatile tail rides in `meta["volatile"]` and is put in
     # the user turn by `_voice_user_message`.

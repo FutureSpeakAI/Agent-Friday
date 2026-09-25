@@ -264,7 +264,7 @@ def test_save_is_atomic_leaving_no_partial_file(monkeypatch, tmp_path):
 
 
 # ── the display reserve ─────────────────────────────────────────────────────
-# Regression cover for 2026-08-17: the arbiter budgeted 542 MiB for a desktop
+# Regression cover: the arbiter once budgeted 542 MiB for a desktop
 # whose compositor actually held 2,778 MiB, planned seats into memory Windows
 # needed to draw the screen, and a monitor dropped off. The floor is now the
 # larger of the cached idle measurement and a sampled live display draw.

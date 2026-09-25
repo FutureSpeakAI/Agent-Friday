@@ -1,10 +1,10 @@
-"""2026-08-14 sharpened defect #6 — per-message badges name the ACTUAL
-responding model after any fallback, never the intended/configured seat.
+"""Per-message badges name the ACTUAL responding model after any fallback,
+never the intended/configured seat.
 
-Live evidence: all 12 of the morning's replies were badged
-'qwen3.6-35b-a3b-iq4nl' while the brain never bound its port — gemma4:e4b
-(seat substitution) and Claude (ladder fallback) did the actual answering.
-Attribution was captured at routing; dispatch decides below it.
+If attribution is captured at routing, every reply is badged with the
+configured seat (e.g. 'qwen3.6-35b-a3b-iq4nl') even when that server never
+bound its port and another model (a substitute or a cloud fallback) did the
+answering. Dispatch decides below routing, so it is dispatch that records.
 
 Contract: primitives call attribution.record_generation() when they produce
 final text; the chat route reads the LAST generation for the persisted
@@ -32,7 +32,7 @@ class TestBadgeReflectsActualGenerator:
         resp = client.post("/api/chat", json={"message": "hello"})
         data = resp.get_json()
         assert data["friday_msg"]["model"] == "gemma4:e4b", (
-            "badge must name the ACTUAL generator — the morning's badge lie")
+            "badge must name the ACTUAL generator, not the routed seat")
         assert data["friday_msg"]["seat"] == "local"
         assert data["model"] == "gemma4:e4b"
         # The fallback chain rides the message and the payload.
@@ -89,12 +89,9 @@ class TestPrimitivesRecord:
                                                              monkeypatch):
         """The badge attributes the RESPONDING model, not the intended seat.
 
-        This used to be written around a seat-gate substitution: the gate could
-        swap a "red" model for a last-known-green one, and the law was that the
-        badge had to name the substitute rather than the model the user picked.
-        The gate is gone (2026-08-15) and nothing substitutes any more — so the
-        law now has a simpler shape and a stricter one. What the user picked is
-        what runs, and that is what gets recorded.
+        There is no seat gate and nothing substitutes a model, so the rule is
+        simple and strict: what the user picked is what runs, and that is what
+        gets recorded.
         """
         import agent_friday.services.model_router as mr
         import agent_friday.routing.ollama_manager as om

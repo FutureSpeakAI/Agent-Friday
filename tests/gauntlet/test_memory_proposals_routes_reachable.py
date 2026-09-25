@@ -1,16 +1,16 @@
-"""Gauntlet finding F53 (2026-09-04): services/memory_proposals.py was
-fully built and correct -- propose()/pending()/approve()/reject()/state() --
-but nothing in the running app could ever call it. No route, no CLI command,
-nothing. routes/memory_proposals.py is the manual door its own docstring
-says should exist ("propose() is something the user RUNS, and its output is
-shown to him before any of it becomes durable").
+"""Gauntlet finding F53: services/memory_proposals.py was fully built and
+correct -- propose()/pending()/approve()/reject()/state() -- but nothing in
+the running app could ever call it. No route, no CLI command, nothing.
+routes/memory_proposals.py is the manual door its own docstring says
+should exist: propose() is something the user RUNS, and its output is
+shown to the user before any of it becomes durable.
 
 All offline: no LLM seat is assigned in test settings, so propose() takes
 its real "no seat assigned" early-return path rather than calling a model.
 
 Uses a locally-defined `client` fixture rather than tests/api/conftest.py's:
-that one is scoped to tests/api/ only, and the standing rule for this audit
-is new probes go only in tests/gauntlet/, never editing or importing from an
+that one is scoped to tests/api/ only, and gauntlet probes go only in
+tests/gauntlet/, never editing or importing from an
 existing test's conftest (mirrors test_content_pause_kill_switch_route.py's
 same accommodation for the same reason).
 """

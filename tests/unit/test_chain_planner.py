@@ -1,4 +1,4 @@
-"""plan_chain — the sequence the maintainer described (headroom.md §6, §12 Phase 3).
+"""plan_chain — the multi-stage chain sequence (headroom.md §6, §12 Phase 3).
 
 The golden chains are the review surface, same rule as the sibling
 test_residency_policy.py: a policy change that moves a chain plan must move a
@@ -7,7 +7,7 @@ six named fixtures cannot be.
 
 P1's own arithmetic is the load-bearing case in this file: Phase 2 measured
 Z-Image Turbo FP8 at 10,453 MiB under the Arbiter's real `image_job` lease
-(basis="measured", 2026-09-04). Fed into the same R3/R10 arithmetic the
+(basis="measured"). Fed into the same R3/R10 arithmetic the
 planner already uses (12,282 - 1,024 R3 - 1,261 baseline = 9,997 MiB
 available; minus the retained e2b sidekick's 1,811 MiB = 8,186 MiB actually
 free to a lease), the real number does NOT fit -- even with the brain fully
@@ -148,7 +148,7 @@ def test_p4_image_runs_on_the_second_gpu_with_no_transitions():
     assert image["retained_mib"] == 0
     assert image["exclusive_of"] == []
     assert plan["transitions"] == []            # "the only fixture where
-    # The maintainer's sentence runs as he imagines it" -- §6.3 P4.
+    # the described sentence runs as imagined" -- §6.3 P4.
 
 
 # ── P6 — no GPU, no local backend, entirely cloud ────────────────────────────

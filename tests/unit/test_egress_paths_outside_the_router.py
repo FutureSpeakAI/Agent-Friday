@@ -2,9 +2,9 @@
 
 docs/security/threat-model.md:42 says the egress gate "runs immediately before
 every outbound cloud HTTP call"; SECURITY.md:60 says every cloud call passes
-through the router chokepoint. The 2026-09-06 hardening audit traced every
-call site and found these carrying user- or model-authored text past the gate.
-Each test here was red on main @ 9d329fe and pins the fix.
+through the router chokepoint. Each call site below carried user- or
+model-authored text past the gate; each test here was red before the fix and
+pins it.
 
 Every test stubs the network. No key, no provider, no bytes leave.
 """

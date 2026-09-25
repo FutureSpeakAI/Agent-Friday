@@ -11,9 +11,9 @@ ran all the way to the microphone: ``kokoro_available()`` stayed False, so
 session, so pressing the mic did nothing — and no amount of waiting fixed it,
 because nothing ever asked again.
 
-Observed on the live server, which reported every Kokoro dependency installed,
-reported the import broken, and then imported Kokoro and spoke a sentence in a
-separate process seconds later.
+The failure looks like this: a server reports every Kokoro dependency
+installed and the import broken, while a separate process imports Kokoro and
+speaks a sentence seconds later.
 
 Success is still cached forever — it cannot become untrue. Only failure is
 retried, and only after a cooldown, so this never becomes an import storm.

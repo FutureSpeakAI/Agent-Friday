@@ -1,7 +1,7 @@
 """The Model Soup card tells the truth about what will answer the next turn
 (docs/design/active/model-soup.md §11).
 
-Three things are pinned here, each of which was false on 2026-09-17:
+Three things are pinned here:
 
   * the payload names the model that will take the NEXT turn under the
     routing mode, and says why, instead of leaving it to be inferred from

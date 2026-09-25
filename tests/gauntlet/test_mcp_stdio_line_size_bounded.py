@@ -18,15 +18,11 @@ discards (rather than tries to parse) a frame that hits the cap. Both
 _read_loop (stdout) and _drain_stderr (stderr) have the identical
 discard-and-resync shape.
 
-CORRECTION (2026-09-04, caught by an independent cold re-verification of
-this fix): the original version of this probe (a) pinned that readline()
-was CALLED with a bounded size argument, which is a proxy for the real
-property and can pass even if a caller ignored what readline() actually
-returned; and (b) only covered _read_loop (stdout) -- _drain_stderr, the
-second function this same finding names, had no test at all. Rewritten
-below to assert directly on the length of every string _read_loop/
+The probe asserts directly on the length of every string _read_loop/
 _drain_stderr actually hold in memory at once (the real property: bounded
-memory, not bounded call arguments), and to cover both functions.
+memory, not bounded call arguments), and covers both functions. Pinning
+only that readline() was CALLED with a bounded size is a proxy that can
+pass even if a caller ignores what readline() actually returned.
 """
 from __future__ import annotations
 

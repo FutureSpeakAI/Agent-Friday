@@ -10,8 +10,8 @@ recorded as Google having pulled the grant.
 That diagnosis has the worst possible property: its remedy appears to work.
 Reconnecting rewrites the token under whatever key the current process holds,
 so the account comes back - until the next process with a different key touches
-it. Measured in Stephen's audit log on 2026-09-19: 11,508 of these on Sept 4th,
-9,517 on the 11th, 8,109 on the 17th, and a reconnect every single morning.
+it. In one audit log this produced 11,508 of these failures in a single day,
+9,517 and 8,109 on others, and a reconnect every single morning.
 
 The second half was fail-open. `_accounts_with` gated fetches on
 `status != "needs_reauth"`, a deny-list of exactly one value, so "error",
@@ -172,8 +172,8 @@ def test_a_successful_read_clears_a_stale_failure(monkeypatch):
     bad for as long as its token stayed valid - no refresh was due, so nothing
     ever said otherwise, and every fetch skipped it.
 
-    Observed 2026-09-19 right after the keystore migration: both accounts
-    reading fine, the audit log full of success=true, and the connectors page
+    Right after a keystore migration this showed as both accounts reading
+    fine, the audit log full of success=true, and the connectors page
     insisting they needed reauthorising. A verdict that can only ever get worse
     is not a health check.
     """

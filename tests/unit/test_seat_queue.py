@@ -12,9 +12,9 @@ Contract pinned by these tests:
 - USER_NOTICE constant exists and tells the user that local AI runs one job at
   a time and needs time to run.
 
-Regression case: 2026-09-21 — multiple workflow tasks dispatched onto the
-single-slot bonsai2 seat simultaneously; they serialized invisibly at the HTTP
-layer with no status, and the user had to cancel them by hand.
+Regression case: multiple workflow tasks dispatched onto the single-slot
+bonsai2 seat simultaneously serialize invisibly at the HTTP layer with no
+status, and the user has to cancel them by hand.
 """
 
 import time

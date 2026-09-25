@@ -1,14 +1,12 @@
-"""Gauntlet finding: the pause-forecast "don't warn me again" escape hatch
-(index.html's seat-pause confirmation dialog) POSTs `{"settings":
-{"pause_warnings_off": true}}` -- correctly wrapped, so layer 1 of the
-settings pipeline (the {settings: ...} envelope) is fine. But
-`pause_warnings_off` had no entry in DEFAULT_SETTINGS, so
-`_load_settings_raw()`'s whitelist (`{k: v for k, v in data.items() if k in
-DEFAULT_SETTINGS}`) silently dropped it on every save -- the exact defect
-class already fixed once this session for `knowledge_graph`. The dialog's
-client-side optimistic state made it look like the "don't ask again" choice
-stuck for the rest of that browser tab; it silently reverted on the next
-settings read (reload, restart).
+"""The pause-forecast "don't warn me again" escape hatch (index.html's
+seat-pause confirmation dialog) POSTs `{"settings": {"pause_warnings_off":
+true}}` -- correctly wrapped, so layer 1 of the settings pipeline (the
+{settings: ...} envelope) is fine. But a key with no entry in
+DEFAULT_SETTINGS is dropped by `_load_settings_raw()`'s whitelist (`{k: v for
+k, v in data.items() if k in DEFAULT_SETTINGS}`) on every save -- the same
+defect class as `knowledge_graph`. The dialog's client-side optimistic state
+makes the "don't ask again" choice look stuck for the rest of that browser
+tab, while it silently reverts on the next settings read (reload, restart).
 
 Mirrors tests/unit/test_kg_indexer.py's TestKnowledgeGraphSettingsPersist
 pattern for the same defect class.

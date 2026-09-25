@@ -267,7 +267,7 @@ def test_opus_5_5_cache_reads_bill_at_a_twentieth_not_a_tenth():
 
     Opus 5.5 reads cache at 0.05x ($0.20 against a $4 base); every other model
     here reads at the standard 0.1x. Cache reads are not a minor term: the
-    4.09M-token turn audited on 2026-09-22 was 96.4% cache reads, so this one
+    4.09M-token agentic turn can be 96.4% cache reads, so this one
     multiplier decides nearly the whole bill. A flat tenth would overstate
     every cached Opus 5.5 read by exactly 2x.
     """
@@ -326,11 +326,10 @@ def test_the_default_cloud_model_was_not_repointed():
 def test_fable_5_1_is_not_metered_free():
     """It was already selectable, and it was already billing at zero.
 
-    Fable 5.1 is in the live /v1/models list, so the picker already offered it,
-    and it was in none of the price tables -- so price_for fell through to the
-    anthropic provider's cost_per_1k, found no row there either, and returned
-    0/0. Measured 2026-09-22: 1M input tokens on the most expensive model in
-    the lineup metered $0.00. A silent zero reads as "local, on-device, free",
+    Fable 5.1 is in the live /v1/models list, so the picker offers it; with
+    no price-table row, price_for falls through to the anthropic provider's
+    cost_per_1k, finds no row there either, and returns 0/0 - 1M input
+    tokens on the most expensive model in the lineup meters $0.00. A silent zero reads as "local, on-device, free",
     which is the one thing a cloud call is not. Same defect as the
     canonical-Haiku-id bug above, found the same way.
     """

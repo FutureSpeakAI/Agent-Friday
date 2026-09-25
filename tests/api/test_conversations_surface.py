@@ -80,10 +80,10 @@ def test_a_seat_binding_sticks_and_is_reported_back(client, monkeypatch):
 def test_a_second_local_model_is_refused_with_a_reason(client, monkeypatch):
     """One local model at a time on 12 GB.
 
-    Two 27B seats do not fit - measured 2026-09-18, two bonsai2:27b servers
-    held 11,605 MiB of 12,282 between them and every turn hung. Accepting the
-    binding and letting the next turn discover it is how a user learns this
-    as a hang instead of as a sentence.
+    Two 27B seats do not fit - two bonsai2:27b servers hold 11,605 MiB of
+    12,282 between them and every turn hangs. Accepting the binding and
+    letting the next turn discover it is how a user learns this as a hang
+    instead of as a sentence.
     """
     import agent_friday.routes.conversations as routes
     monkeypatch.setattr("agent_friday.services.residency_arbiter."

@@ -23,7 +23,7 @@ source-position check that both `ws_voice_local` and `ws_live` actually
 call it at their gate (not just that the helper exists and is correct in
 isolation).
 
-CORRECTION (weak-probe audit, 2026-09-05): that source-position check
+Why both: that source-position check
 (TestBothWebsocketsActuallyCallTheFixedGate) is a literal string match
 against the function's source text -- real today, but silently defeated
 by a rename or reformat tomorrow with the underlying protection
@@ -176,8 +176,7 @@ def _real_handler(endpoint: str):
 
 
 class TestWebsocketsGenuinelyExecuteTheAuthGate:
-    """CORRECTION (weak-probe audit, 2026-09-05): TestBothWebsocketsActually
-    CallTheFixedGate above proves the exact call-site TEXT is present --
+    """TestBothWebsocketsActuallyCallTheFixedGate above proves the exact call-site TEXT is present --
     real today, but a rename of _ws_auth_ok, a reformat of that line, or a
     refactor to `if _ws_auth_ok(...) is False:` would all silently defeat
     a literal string match while leaving the actual protection (or its

@@ -268,12 +268,11 @@ class TestMinimumCacheablePrefix:
 
 
 class TestOpenRouterCache:
-    """The OpenAI-compatible transport (OpenRouter, via `_call_openai`) got
-    NO cache breakpoints at all until 2026-09-04 — `apply_anthropic_cache`
-    only ever ran on the native Anthropic SDK path (`_call_claude_agent`).
-    Every scheduled task routed through OpenRouter, the hourly heartbeat
-    included, resent its full ~14k-token system prefix uncached, every call,
-    forever. `apply_openrouter_cache` is the same stable/volatile split,
+    """The OpenAI-compatible transport (OpenRouter, via `_call_openai`) needs
+    its own cache breakpoints — `apply_anthropic_cache` only runs on the
+    native Anthropic SDK path (`_call_claude_agent`). Without them every
+    scheduled task routed through OpenRouter, the hourly heartbeat included,
+    resends its full ~14k-token system prefix uncached, every call. `apply_openrouter_cache` is the same stable/volatile split,
     reshaped for a `{"role": "system", "content": [...]}` message instead of
     Anthropic's top-level `system` kwarg — OpenRouter accepts the identical
     `cache_control` block shape on system-message content parts.
@@ -310,17 +309,16 @@ class TestOpenRouterCache:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  The cumulative task budget is ADVISORY (2026-09-22)
+#  The cumulative task budget is ADVISORY
 # ─────────────────────────────────────────────────────────────────────────────
 class TestAdvisoryTaskBudget:
     """It warns; it does not kill.
 
-    Two real incidents on 2026-09-22 (friday.log:53032 and :56076) stopped a
-    live Sonnet chat turn mid-flight at 4,050,351 and 4,090,829 "input tokens".
-    Cross-checked against ``~/.friday/costs.db`` the second of those was 25
-    calls over five minutes, 96.4% of the tokens were CACHE READS billed at
-    0.1x, and the whole turn cost $3.14. The ceiling was counting re-sent
-    cached context at full freight and killing work over three dollars.
+    A hard ceiling stops a live Sonnet chat turn mid-flight at ~4,050,000
+    "input tokens" when that turn is 25 calls over five minutes, 96.4% of the
+    tokens are CACHE READS billed at 0.1x, and the whole turn costs $3.14. It
+    counts re-sent cached context at full freight and kills work over three
+    dollars.
 
     The seam under test is ``charge`` — the thing the egress chokepoint calls
     on every cloud send — not the estimator. These tests fail loudly against
@@ -354,7 +352,7 @@ class TestAdvisoryTaskBudget:
 
     def test_the_warning_carries_the_numbers_and_the_real_money(self,
                                                                 monkeypatch):
-        """Stephen's standing rule: he always knows what is happening. A
+        """Standing rule: the user always knows what is happening. A
         warning that cannot be sized, and that quotes a scary token count
         without the dollars that count actually represents, is not
         transparency — it is the thing that made the token ceiling look like

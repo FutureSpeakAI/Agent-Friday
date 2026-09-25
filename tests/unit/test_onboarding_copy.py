@@ -163,12 +163,10 @@ def test_the_local_only_refusal_names_the_models_tab(monkeypatch):
 
 
 def test_the_cloud_screen_says_the_map_loses_its_semantic_layer_by_default():
-    """FACT-FIX 1, revised 2026-09-03. Tier B used to pin extraction to a
-    local model unconditionally and produce nothing without one, silently --
-    fixed the same day indexing_mode became a real per-user local/cloud
-    choice (Settings -> Knowledge Graph). The screen must describe today's
-    actual default (local) without claiming it is the only option, since it
-    no longer is."""
+    """FACT-FIX 1. indexing_mode is a real per-user local/cloud choice
+    (Settings -> Knowledge Graph), so extraction is not pinned to a local
+    model. The screen must describe the actual default (local) without
+    claiming it is the only option."""
     ack = screen_text("cloud_ack")
     assert "by default" in ack and "model on this computer" in ack, (
         "the cloud screen no longer describes the default local behaviour"

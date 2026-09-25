@@ -1,12 +1,10 @@
-"""Gauntlet finding Q19 (final disposition, the maintainer 2026-09-04): when
-local_only mode has no local model available at all, the product must not
-silently fall back to the cloud (that defeats the mode's whole point) and
-must not just refuse with a dead-end error either. His exact words: "the
-system should fail to function and produce an error, then it should ask
-the user if it can go into cloud only mode. We should always prioritize
-the user knowing what is being done with their data, what model is in
-use." He named this a standing transparency principle, not a rule scoped
-to this one case.
+"""Gauntlet finding Q19: when local_only mode has no local model available
+at all, the product must not silently fall back to the cloud (that defeats
+the mode's whole point) and must not just refuse with a dead-end error
+either. It fails with an error, then asks the user whether it may switch
+to cloud mode. This is a standing transparency principle, not a rule
+scoped to this one case: the user always knows what is being done with
+their data and which model is in use.
 
 routing/model_router.py's local_only branch (see
 test_local_only_mode_honors_its_own_promise.py for that half of Q19)
@@ -90,8 +88,8 @@ class TestLocalOnlyFailThenOfferCloud:
             "local_only's no-local-model refusal must carry a structured "
             "offer_cloud_switch marker so the frontend can render an "
             "actual actionable choice, not just an error the user has to "
-            "act on by finding Settings themselves — the maintainer: 'fail... "
-            "then ask the user if it can go into cloud only mode'"
+            "act on by finding Settings themselves (fail, then ask the "
+            "user whether it may switch to cloud mode)"
         )
         assert body.get("friday_msg", {}).get("offer_cloud_switch") is True, (
             "the persisted/rendered chat message itself must also carry "
@@ -123,5 +121,5 @@ class TestLocalOnlyFailThenOfferCloud:
         assert "local" in text and ("cloud" in text or "ollama" in text), (
             "the refusal text must plainly say what's happening (no local "
             "model available) and name the offered alternative — this is "
-            "the transparency the maintainer asked for, not a generic error"
+            "the transparency principle, not a generic error"
         )

@@ -1,28 +1,22 @@
-"""Gauntlet finding F3 — resolved under the maintainer's 2026-09-04 delegation to
-Claude (docs/history/audits/gauntlet-2026-09-03/progress.md "QUEUED FOR STEPHEN" /
-Q1; findings.jsonl F3).
+"""Gauntlet finding F3 (findings.jsonl F3).
 
 Settings > Privacy > Context Logging > Retention Period persists
 `context_retention_days` and reads it back (GET /api/context/stats), and
-its own DEFAULT_SETTINGS comment has claimed "0 = keep forever; 30 / 90 /
-180 / 365 = prune older" since it was added. But no code path ever branched
-deletion behaviour on it: the only thing that ever removed a context-log
-file by age was a fully manual `DELETE /api/context/range`, requiring the
-user to pick an explicit date range and type the literal string "DELETE".
-There was no scheduled sweep -- the setting's own promise was false.
+its DEFAULT_SETTINGS comment promises "0 = keep forever; 30 / 90 / 180 /
+365 = prune older". A manual `DELETE /api/context/range` (explicit date
+range plus the literal string "DELETE") does not keep that promise; a
+scheduled sweep must.
 
-Under the delegation's "false claim is a defect" and "the user always knows
-what is happening to their data" principles, this was mechanical to fix
-correctly: CONTEXT_LOG_DIR stores exactly one <YYYY-MM-DD>.jsonl file per
+A false claim is a defect, and the user always knows what is happening to
+their data. CONTEXT_LOG_DIR stores exactly one <YYYY-MM-DD>.jsonl file per
 day (core._context_log_files), so retention is whole-file deletion, not row
 surgery -- no ambiguity about partial-day handling, no schema, low blast
 radius. core.prune_context_logs() does the deletion (a no-op when the
-setting is 0, "keep forever", the default) and is now registered as the
-scheduler's real "context_log_retention" builtin task, running daily like
-every other builtin sweep in this codebase.
+setting is 0, "keep forever", the default) and is registered as the
+scheduler's "context_log_retention" builtin task, running daily like every
+other builtin sweep in this codebase.
 
-This probe used to pin the ABSENCE of that wiring (deliberately red). It now
-pins the presence and correctness of the fix instead.
+This probe pins the presence and correctness of that wiring.
 """
 from __future__ import annotations
 

@@ -1,15 +1,14 @@
-"""Unit tests for WO-2 item 1 (2026-08-25): the voice egress gate must fail
-CLOSED, not open.
+"""Unit tests for WO-2 item 1: the voice egress gate must fail CLOSED, not
+open.
 
-Before this fix, `routes/voice.py`'s tool-result and live-text egress paths
-wrapped `egress_gate._gate_text` in a single broad `except Exception`. Since
 `_gate_text` raises `NeverSendBlocked` for never-send material BY DESIGN (see
 its docstring in services/egress_gate.py — this is the gate's STRONGEST
-verdict, not a bug), that exception landed in the broad except, which logged
-a warning and left the pre-gate, UNGATED payload to be sent to Google. The
-gate's strongest verdict was exactly the case that bypassed it.
+verdict, not a bug). A caller that wraps it in a single broad
+`except Exception` that logs a warning and sends the pre-gate, UNGATED
+payload to Google makes the gate's strongest verdict exactly the case that
+bypasses it.
 
-The fix extracted the gating logic into two module-level, directly testable
+So the gating logic lives in two module-level, directly testable
 functions: `_gate_voice_tool_result` (tool results → Gemini) and
 `_gate_voice_text` (typed live.text turns → Gemini). Both are FAIL-CLOSED:
 every exception, including NeverSendBlocked, returns a withheld placeholder,

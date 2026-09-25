@@ -1,4 +1,4 @@
-"""Gauntlet finding F54 (part of the 2026-09-04 claim-corpus sweep):
+"""Gauntlet finding F54 (part of the claim-corpus sweep):
 content_policies.py's own docstring claims "The H1-H4 hard floor is always
 checked via moderation.scan() first" and "always applies first, regardless
 of pack configuration." Neither was true for content classified purely by
@@ -68,12 +68,12 @@ class TestHarmFloorCatchesCategoryOnlyContent:
             content_policies, "get_subscribed_packs",
             lambda: list(content_policies.BUILTIN_PACKS))
 
-        # **kw, not a fixed signature. This stub took only `content_text`
-        # until 2026-09-22, when evaluate_content began passing
+        # **kw, not a fixed signature. evaluate_content passes
         # apply_packs=False to break the mutual recursion with
-        # moderation.scan. The stub then raised TypeError, which
-        # evaluate_content's `except Exception: pass` swallowed, and the test
-        # failed reporting "not blocked" - describing the stub, not the code.
+        # moderation.scan; a stub taking only `content_text` raises
+        # TypeError, which evaluate_content's `except Exception: pass`
+        # swallows, and the test fails reporting "not blocked" - describing
+        # the stub, not the code.
         # A double that pins an exact signature breaks on every real
         # refactor and says nothing true when it does.
         def _fake_scan(content_text=None, **kw):

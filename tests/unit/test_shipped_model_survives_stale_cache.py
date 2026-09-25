@@ -1,15 +1,16 @@
 """A cached live model list must not hide a model we ship.
 
 Anthropic is a hosted-native provider: when `hosted_catalog` has cached the
-provider's own /v1/models response, the catalog builder preferred that list and
-DROPPED the shipped statics. The cache has a 24-hour TTL.
+provider's own /v1/models response, a catalog builder that prefers that list
+and DROPS the shipped statics hides a newly shipped model. The cache has a
+24-hour TTL.
 
-So on the day Claude Opus 5.5 was added to the shipped list, the picker did not
-offer it. The cached list predated the release, was not yet stale, and won. The
-static entry's METADATA still applied -- the corrected Sonnet 5 rate appeared
-immediately -- which made the missing id look like a typo rather than a cache
-deciding what the product offers. Measured 2026-09-22: the cache held 11 ids,
-including `claude-fable-5-1`, and no `claude-opus-5-5`.
+So when a model is added to the shipped list, the picker does not offer it
+until the cache expires: a cached list that predates the release is not yet
+stale, and wins. The static entry's METADATA still applies -- a corrected
+rate appears immediately -- which makes the missing id look like a typo rather
+than a cache deciding what the product offers. A cache of 11 ids including
+`claude-fable-5-1` and no `claude-opus-5-5` is exactly that state.
 
 Discovery still leads, because it is live truth and carries the long tail. A
 statically shipped id is our own claim that the model exists, so it is appended
@@ -23,7 +24,7 @@ from agent_friday.services import model_catalog as mc
 
 @pytest.fixture
 def seeded(monkeypatch):
-    """A cache that predates Opus 5.5, exactly as the real one did."""
+    """A cache that predates Opus 5.5."""
     stale_live = [
         {"id": "claude-sonnet-5"},
         {"id": "claude-opus-5"},

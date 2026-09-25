@@ -1,19 +1,18 @@
-"""The cumulative token budget must never kill a live turn (2026-09-22).
+"""The cumulative token budget must never kill a live turn.
 
-This is the seam that actually broke, not the unit underneath it. On
-2026-09-22 two Sonnet chat turns died inside ``_call_claude_agent`` because
-``prompt_cache.task_budget.charge`` raised from the egress chokepoint
-(friday.log:53032, :56076). The user saw ``[Friday offline] '6 am and 4 pm,
-but only ' has sent 4,090,829 input tokens ... The task is stopped rather
-than billed further``.
+This pins the seam, not the unit underneath it. If
+``prompt_cache.task_budget.charge`` raises from the egress chokepoint, a chat
+turn dies inside ``_call_claude_agent`` and the user sees ``[Friday offline]
+... has sent 4,090,829 input tokens ... The task is stopped rather than billed
+further``.
 
-Walking ``~/.friday/costs.db`` back from that kill: 25 calls over five
-minutes, 4,090,886 tokens presented — the counter was accurate to 57 tokens
-— of which 3,945,193 were CACHE READS billed at 0.1x. The turn cost $3.14.
+A turn of that size is ordinary: 25 calls over five minutes presenting ~4.09M
+tokens, of which ~3.95M are CACHE READS billed at 0.1x, costs about $3. The
+budget is advisory, not a kill switch.
 
 So these tests drive the real loop, over the real chokepoint, with the real
-setting, and assert the turn finishes. A unit test on ``charge`` alone would
-not have caught the raise escaping through ``_seal_or_block``.
+setting, and assert the turn finishes. A unit test on ``charge`` alone cannot
+catch the raise escaping through ``_seal_or_block``.
 """
 
 import types
@@ -60,7 +59,7 @@ def _client(monkeypatch, rounds):
 
 def test_a_turn_past_its_token_budget_still_returns_its_answer(monkeypatch,
                                                                tiny_budget):
-    """The exact failure Stephen hit: the turn must not come back as
+    """The turn must not come back as
     ``[Friday offline] ... The task is stopped``."""
     calls = _client(monkeypatch, rounds=0)
     text, _trace = ag._call_claude_agent(
@@ -73,9 +72,9 @@ def test_a_turn_past_its_token_budget_still_returns_its_answer(monkeypatch,
 
 
 def test_the_loop_keeps_iterating_after_it_crosses(monkeypatch, tiny_budget):
-    """Crossing on iteration 1 must not prevent iterations 2..N. The old
-    implementation raised on EVERY charge after the first, so the turn could
-    not survive its own tool calls."""
+    """Crossing on iteration 1 must not prevent iterations 2..N. Raising on
+    EVERY charge after the first means the turn cannot survive its own tool
+    calls."""
     calls = _client(monkeypatch, rounds=3)
     text, trace = ag._call_claude_agent(
         [{"role": "user", "content": "go"}],
@@ -86,7 +85,7 @@ def test_the_loop_keeps_iterating_after_it_crosses(monkeypatch, tiny_budget):
 
 
 def test_crossing_notifies_the_user_exactly_once(monkeypatch, tiny_budget):
-    """Stephen always knows what is happening — but a notification per
+    """The user always knows what is happening — but a notification per
     iteration is noise, and this loop runs up to 999 of them."""
     _client(monkeypatch, rounds=3)
     ag._call_claude_agent([{"role": "user", "content": "go"}],

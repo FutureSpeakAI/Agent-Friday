@@ -1,6 +1,6 @@
 """An index of the tools instead of 13,300 tokens of their schemas.
 
-MEASURED 2026-09-19 on the reference machine: 75 tools, ~13,324 tokens of
+MEASURED on a reference machine: 75 tools, ~13,324 tokens of
 schema, 41% of a 32,768-token window spent before the user says anything, and
 a 15,930-token prompt to answer "how many conversations are stored". Only 383
 of those tokens are tool NAMES; the rest is detail the model does not need
@@ -180,8 +180,8 @@ def test_a_tool_with_no_description_still_lists(tools):
 # ── off until measured ──────────────────────────────────────────────────────
 
 def test_it_is_on_by_default(monkeypatch):
-    """Defaulted ON on 2026-09-19 once the risk was understood rather than
-    assumed: `_execute_tool` dispatches by NAME and never consults the list the
+    """Defaulted ON because the risk is understood rather than assumed:
+    `_execute_tool` dispatches by NAME and never consults the list the
     model was sent, so the catalogue governs what Friday is told about, not
     what it can do."""
     monkeypatch.delenv("FRIDAY_TOOL_CATALOGUE", raising=False)

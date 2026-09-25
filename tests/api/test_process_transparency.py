@@ -1,6 +1,6 @@
 """Subagent/process transparency — clicking a task must show a real process.
 
-Pins the 2026-07-08 fixes: a local-inference orb's detail endpoint must carry
+Pins that a local-inference orb's detail endpoint must carry
 model + intent log + result, the raw process status must map to the vocabulary
 the detail panel renders RESULT under ('completed' -> 'complete'), and
 monitoring processes must stay explorable well past the 30s ephemeral purge.

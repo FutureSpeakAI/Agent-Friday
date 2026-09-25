@@ -1,6 +1,6 @@
 """API acceptance for B1 (model badge persisted) and B2 (a direct
 settings.json edit produces a visible system line next turn — the exact
-acceptance criterion from the spec, mirroring the silent 10:16:59 flip).
+acceptance criterion from the spec: a seat must never change silently).
 """
 from __future__ import annotations
 
@@ -50,22 +50,18 @@ class TestB2DirectFileEdit:
         # Turn 1 seeds the observed-seat state.
         client.post("/api/chat", json={"message": "hi"})
 
-        # Direct file edit — no API, no UI. The 10:16:59 mechanism.
+        # Direct file edit — no API, no UI.
         raw = json.loads(core.SETTINGS_FILE.read_text(encoding="utf-8"))
         routing = raw.setdefault("model_routing", {})
-        # CORRECTION (second cold-verification pass, 2026-09-05): this used
-        # to restore only routing["mode"] afterward, never routing
-        # ["local_model"] -- so "gemma4:latest" (not a real, tool-capable
-        # model id) leaked into the SHARED settings.json for the rest of
-        # any pytest session that ran this file, breaking
+        # Capture and restore BOTH mutated keys, not just the one asserted on.
+        # Restoring only routing["mode"] leaks "gemma4:latest" (not a real,
+        # tool-capable model id) into the SHARED settings.json for the rest of
+        # the pytest run, which breaks
         # tests/unit/test_model_plan.py::test_the_indexer_falls_back_to_a_
-        # tool_capable_model the moment it ran later in the same session
-        # (reproduced directly: `pytest tests/api/ tests/unit/` fails that
-        # test; `pytest tests/unit/` alone does not). Same bug CLASS F64
-        # already fixed once for a different field (model_routing.mode in
-        # test_vault_gate_is_honest.py) -- capture and restore BOTH
-        # mutated keys this time, not just the one this test happens to
-        # assert on.
+        # tool_capable_model when it runs later in the same session
+        # (`pytest tests/api/ tests/unit/` fails it; `pytest tests/unit/`
+        # alone does not). Same bug class as F64 (model_routing.mode in
+        # test_vault_gate_is_honest.py).
         _orig_mode = routing.get("mode")
         _orig_local_model = routing.get("local_model")
         routing["mode"] = "local_only"

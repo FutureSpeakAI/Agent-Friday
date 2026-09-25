@@ -1,9 +1,8 @@
 """Regression: "cloud only" must actually keep the turn off this machine.
 
-a second user's laptop, 2026-08-26 — the first time Friday was installed by someone
-who did not write her. She set the routing mode to cloud only and every turn
-was still answered by a local model. It was not a save that failed; it was a
-save nothing read.
+On a fresh install with the routing mode set to cloud only, every turn must not
+be answered by a local model. The failure this pins was not a save that failed;
+it was a save nothing read.
 
 The cause is the keyless safety net in `routes/chat.py`. It was written for a
 machine that HAS an Anthropic key and might momentarily lose it:
@@ -14,15 +13,13 @@ machine that HAS an Anthropic key and might momentarily lose it:
 
 Its comment justifies itself with "only triggers when the alternative is a
 guaranteed failure, so it can't regress a working setup". That premise holds
-for the author and fails for a new user: on a fresh install there is no
+on a developer machine and fails for a new user: on a fresh install there is no
 Anthropic key at all, so the net is not a net, it is the permanent route. And
 it never consulted `model_routing.mode`, so no setting could switch it off.
 
-Note the asymmetry this pins shut. The mirror-image case was already fixed —
-`local_only` refuses to fall back to the cloud, loudly, with an explanation
-("LOCAL ONLY MEANS LOCAL ONLY", chat.py). `cloud_only` had no such guard.
-Same disease, opposite direction, and only the direction the author travels
-had been treated.
+The two directions are symmetric: `local_only` refuses to fall back to the
+cloud, loudly, with an explanation ("LOCAL ONLY MEANS LOCAL ONLY", chat.py),
+and `cloud_only` must refuse to fall back to a local model the same way.
 
   1. cloud_only + no key  → say so; Ollama NEVER called
   2. cloud_only + no key  → the message names the fix, not a file path
@@ -93,8 +90,7 @@ class TestCloudOnlyIsHonoured:
 
         assert resp.status_code == 200
         assert local.calls == 0, (
-            "cloud_only was set and a local model answered anyway — this is "
-            "the exact defect the second user reported"
+            "cloud_only was set and a local model answered anyway"
         )
         assert resp.get_json().get("cloud_only_no_key") is True
 

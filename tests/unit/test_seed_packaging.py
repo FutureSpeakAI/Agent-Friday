@@ -20,10 +20,8 @@ These tests pin two things that must never regress:
      already exists — required because "when absent" implies a check, and
      `friday`/`friday setup` call this on every launch.
 
-See docs/audits/ (packaging PR) for the real non-editable-install proof this
-unit suite can't reproduce (a fresh venv + wheel build is out of scope for
-the fast unit suite; it's demonstrated separately and captured in the PR
-description).
+The real non-editable-install proof (a fresh venv + wheel build) is out of
+scope for the fast unit suite and is exercised separately.
 """
 from __future__ import annotations
 

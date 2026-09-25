@@ -1,7 +1,7 @@
 """Timer-driven work must not fight an exclusive GPU lease.
 
-The maintainer, 2026-08-18: "An hourly heartbeat launched while I was running my last
-image job and the whole computer slowed to a crawl."
+A timer (such as the hourly heartbeat) that loads a local model during an image
+job slows the whole machine to a crawl.
 
 The lease was exclusive on the way in — acquiring one evicts every seat but the
 R10-retained ones, exactly so an image job owns the card — and unenforced
@@ -40,7 +40,7 @@ def test_chores_do_not_count(kind):
 
 def test_an_unknown_kind_defers_rather_than_guessing_it_is_safe():
     """Guessing wrong this way delays a chore. Guessing wrong the other way
-    took his machine down."""
+    takes the machine down."""
     assert sch._uses_gpu({"id": "s"}) is True
     assert sch._uses_gpu({"id": "s", "kind": "something_new"}) is True
 
@@ -73,7 +73,7 @@ def test_a_due_heartbeat_is_held_while_an_image_job_owns_the_card(
     sch._tick()
     assert due_heartbeat == [], (
         "the heartbeat ran during an exclusive image lease — this is the "
-        "collision that slowed his whole machine")
+        "collision that slows the whole machine")
 
 
 def test_the_held_heartbeat_runs_once_the_lease_releases(
@@ -81,7 +81,7 @@ def test_the_held_heartbeat_runs_once_the_lease_releases(
     """Queue-then-run, not skip.
 
     The record is left unmarked while held, so the first tick after the lease
-    releases runs it. A delayed hourly heartbeat costs him nothing; a dropped
+    releases runs it. A delayed hourly heartbeat costs the user nothing; a dropped
     one is a silent gap.
     """
     _lease(monkeypatch, {"kind": "image"})

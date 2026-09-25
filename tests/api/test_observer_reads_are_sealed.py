@@ -2,11 +2,9 @@
 
 docs/reference/task-observation.md promises every free-text field served
 to a non-user principal passes through the gate, with a ledger row and a
-`gate` decision on the task when something was redacted. The 2026-09-06
-audit found /api/tasks and /api/tasks/<id> on the allowlist serving
-prompt, result and log raw with no ledger row, and /api/processes and the
-orchestrator routes serving orb logs and worker output the same way.
-Red on 9d329fe.
+`gate` decision on the task when something was redacted. That covers
+/api/tasks and /api/tasks/<id> (prompt, result and log), and /api/processes
+and the orchestrator routes (orb logs and worker output).
 """
 from __future__ import annotations
 

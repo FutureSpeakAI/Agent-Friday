@@ -1,6 +1,6 @@
 """The standing prompt has a declared ceiling, and something checks it.
 
-WHY THIS EXISTS. On 2026-09-18 a warm chat turn on the local seat took forty
+WHY THIS EXISTS. A warm chat turn on the local seat once took forty
 to fifty seconds, and forty-three of those were one line in the seat's own log:
 
     prompt eval time = 52,962 ms / 26,284 tokens
@@ -27,7 +27,7 @@ import pytest
 
 from agent_friday.services import tool_budget as tb
 
-#: Measured 2026-09-18 on the reference machine: ~4,250 tokens.
+#: Measured on the reference machine: ~4,250 tokens.
 #: Headroom to 6,000 - about forty per cent - because the system prompt
 #: legitimately grows with capabilities, and because part of it is assembled
 #: from the user's own wiki and vault, which are not fixed.

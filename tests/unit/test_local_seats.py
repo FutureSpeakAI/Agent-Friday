@@ -1,10 +1,9 @@
 """A model name in the source is a guess about the disk. Check it.
 
-On 2026-08-18 three modules named models that had been uninstalled hours
-earlier, and each degraded into something that looked like a legitimate
-result rather than an outage: the privacy gate fell back to its deterministic
-verdict, and the research grind reported "no usable JSON" — which its own
-pipeline is entitled to read as a model declining to comply.
+A module that names an uninstalled model degrades into something that looks
+like a legitimate result rather than an outage: the privacy gate falls back to
+its deterministic verdict, and the research grind reports "no usable JSON" —
+which its own pipeline is entitled to read as a model declining to comply.
 
 The tests that matter here are the ones about honesty under substitution.
 """
@@ -67,7 +66,7 @@ def test_an_unreachable_daemon_returns_the_caller_preference_unchanged(monkeypat
 
 
 def test_capability_routing_is_consulted_before_the_size_fallback(monkeypatch):
-    """The setting he already edits wins over an arbitrary size pick."""
+    """The setting the user already edits wins over an arbitrary size pick."""
     _inventory(monkeypatch, [SMALL, MID, BIG], configured="mid:9b")
     assert seats.resolve("brain", "gone:1b") == "mid:9b"
 
@@ -171,23 +170,21 @@ def test_a_cloud_model_is_never_touched(monkeypatch):
 
 
 def test_nothing_is_healed_while_the_daemon_is_unreachable(monkeypatch):
-    """A blip must not rewrite his choices permanently.
+    """A blip must not rewrite the user's choices permanently.
 
-    Updated 2026-09-18. The rule this test defends is that an unreadable
-    inventory must not MUTATE his settings, and that still holds below. What
-    it used to also assert — that heal() says nothing at all — turned out to
-    be the bug rather than the contract. Friday booted before the FridayWeaver
-    weights reached local disk, installed() came back empty, heal() returned
-    silently, capability_routing.reasoning kept naming an uninstalled
-    gemma4:12b, and four turns went to the cloud with no word anywhere. So the
-    return is now advisory: no repair, but a note that nothing was verified.
+    An unreadable inventory must not MUTATE the settings. It must not be
+    silent either: if Friday boots before the weights reach local disk,
+    installed() comes back empty, and a silent heal() leaves
+    capability_routing.reasoning naming an uninstalled model while turns go
+    to the cloud with no word anywhere. So the return is advisory: no repair,
+    but a note that nothing was verified.
     """
     monkeypatch.setattr(seats, "installed", lambda force=False: [])
     settings = {"orchestrator_model": "gemma4:e2b",
                 "capability_routing": {"reasoning": {"model": "gemma4:e2b"}}}
     notes = seats.heal(settings)
 
-    # The contract: his choices are untouched.
+    # The contract: the user's choices are untouched.
     assert settings["orchestrator_model"] == "gemma4:e2b"
     assert settings["capability_routing"]["reasoning"]["model"] == "gemma4:e2b"
 
@@ -200,7 +197,7 @@ def test_nothing_is_healed_while_the_daemon_is_unreachable(monkeypatch):
 
 
 def test_a_vision_model_does_not_win_a_text_role_by_being_smaller(monkeypatch):
-    """Measured: healing chose qwen3-vl:8b over his own text model at +190 MB."""
+    """Measured: healing chose qwen3-vl:8b over the user's own text model at +190 MB."""
     _inventory(monkeypatch, [VISION, TEXT, BIG])
     assert seats.resolve("brain", "gone:1b") == "text:9b"
 
@@ -212,13 +209,12 @@ def test_a_vision_model_is_used_when_it_is_the_only_thing_there(monkeypatch):
 
 # ── Friday's own runtime counts as installed ────────────────────────────────
 #
-# The first version of this module asked only the Ollama daemon, which
-# inverted its purpose. gemma4:e2b / :12b / :e4b / :26b are real entries in
+# Asking only the Ollama daemon inverts this module's purpose. gemma4:e2b / :12b / :e4b / :26b are real entries in
 # ~/.friday/runtime/models/models.json with files on disk, served by the
 # Arbiter as processes Friday owns. The daemon has never heard of them. A
 # resolver that trusts the daemon alone declares her own models missing and
 # substitutes whatever was last `ollama pull`ed -- moving a seat off the
-# runtime the maintainer chose, which is what happened to his reasoning seat.
+# runtime the user chose (a reasoning seat, for example).
 
 def test_a_model_in_fridays_own_store_is_installed(monkeypatch):
     monkeypatch.setattr(seats, "_friday_store",
@@ -244,10 +240,9 @@ def _daemon_returning(monkeypatch, payload):
     """Stub Ollama's /api/tags with a fixed inventory.
 
     Also declares the daemon's PORT open, because `installed()` now checks
-    that before spending four seconds on an HTTP timeout — Ollama was removed
-    from the reference machine on 2026-09-18 and this probe sits on the chat
-    path, so the common case became "nothing is listening" and paying the full
-    timeout for it on every turn was not affordable.
+    that before spending four seconds on an HTTP timeout — this probe sits on
+    the chat path, "nothing is listening" is a common case on machines without
+    Ollama, and paying the full timeout for it on every turn is not affordable.
 
     Stubbing the HTTP response without the socket underneath it describes a
     machine that cannot exist: a daemon that answers /api/tags is, by

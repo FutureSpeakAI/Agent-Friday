@@ -1,17 +1,14 @@
-"""The seat gate is GONE — any model can take any seat (2026-08-15).
+"""There is no seat gate — any model can take any seat.
 
-This file used to assert the opposite: that `POST /api/settings` rejected a
-`model_routing.local_model` change when the model failed a structural
-conformance gate, or had no honesty-battery record, or failed one.
-
-The maintainer's decision, and the evidence supported it. Gating a user-selected
-model behind a homegrown eval is not standard practice; the structural
-failures it fired on were a broken harness (the same models scored 1/10 and
-0/10, then 10/10 once fixed); and the honesty record it refused `gemma4:26b`
-on held eleven timeouts and one HTTP error — eleven empty answers, no model
+`POST /api/settings` does not reject a `model_routing.local_model` change for
+failing a structural conformance gate or an honesty battery. Gating a
+user-selected model behind a homegrown eval is not standard practice, and such
+evals mislead: structural failures can come from a broken harness (the same
+models scoring 1/10 and 0/10, then 10/10 once fixed), and an "honesty record"
+can consist entirely of timeouts and HTTP errors — empty answers, no model
 output at all.
 
-What these tests now pin is that nothing refuses a seat.
+What these tests pin is that nothing refuses a seat.
 """
 from __future__ import annotations
 

@@ -52,7 +52,7 @@ def test_cpu_only_host_gets_its_own_fingerprint():
 
 def test_seed_carries_the_reference_measurements():
     rows = rc.measurements("gemma4:12b", rc.P1_FINGERPRINT)
-    # 65536 and 131072 were added 2026-08-15 by the KV sweep that settled how
+    # 65536 and 131072 come from the KV sweep that settled how
     # much a bigger window actually costs: 7718 -> 7750 -> 7814 MiB. 96 MiB for
     # 4x the context is the evidence behind sizing the brain from the whole
     # prompt rather than from the tool registry alone.
@@ -101,10 +101,9 @@ def test_ctx_above_everything_measured_uses_the_largest():
     # higher than several rows above it, because it was taken under an older
     # Ollama whose allocator differed.
     #
-    # Asked at 262144, above every measured row. 65536 and 131072 stopped
-    # being valid probes for this on 2026-08-15 when the KV sweep measured
-    # them directly — they now return exact matches, which is a different
-    # code path.
+    # Asked at 262144, above every measured row. 65536 and 131072 are not
+    # valid probes for this: the KV sweep measured them directly, so they
+    # return exact matches, which is a different code path.
     assert rc.vram_at("gemma4:12b", rc.P1_FINGERPRINT, 262144) == 7814
     assert rc.vram_at("gemma4:12b", rc.P1_FINGERPRINT, 65536) == 7750
 

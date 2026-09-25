@@ -25,17 +25,12 @@ from pathlib import Path
 
 # Isolation (USERPROFILE/HOMEDRIVE/HOMEPATH/FRIDAY_PASSWORD/etc.) comes from
 # tests/conftest.py, which pytest always imports before any test module under
-# tests/ -- this file used to mint its OWN separate isolated home via
-# tempfile.mkdtemp(prefix="friday_judgment_") with no cleanup of any kind
-# (not even on a clean exit), leaking one directory (each containing its own
-# copy of the sentence-transformers HF cache, ~2.8GB) per test run since at
-# least 2026-08-17. Found 97 of them, 83.65GB total, while investigating an
-# unrelated disk-pressure report on 2026-09-04 -- a second, independent
-# instance of the exact leak class findings.jsonl F47 fixed in conftest.py,
-# in a file F47 never touched because it never used the shared fixture.
-# Removing the duplicate home entirely (rather than adding a second cleanup
-# path to maintain) means this file now shares the SAME already-proven,
-# crash-safe isolated home every other test under tests/ uses.
+# tests/. This file must not mint its own isolated home with
+# tempfile.mkdtemp(): with no cleanup, each run leaks a directory holding its
+# own copy of the sentence-transformers HF cache (~2.8GB), the leak class
+# findings.jsonl F47 fixed in conftest.py (tracked here as F49). Sharing the
+# crash-safe isolated home every other test under tests/ uses leaves one
+# cleanup path to maintain.
 
 _ROOT = Path(__file__).resolve().parent.parent
 for _p in (str(_ROOT / "src"), str(_ROOT)):
@@ -329,11 +324,11 @@ def test_register_public_text_stores_origin():
 
 # ── Receipt matching: content, not markup ─────────────────────────────────────
 #
-# MEASURED DEFECT 2026-08-17: extraction returns quotes with markdown stripped
-# (the 12b returned "22:35:12 UTC" where the page held "22:35:12 [UTC](...)"),
-# and a raw string compare called that fabricated. Verification was striking
-# TRUE, correctly-sourced claims over punctuation — a false positive in the one
-# mechanism whose whole value is being believed.
+# Extraction returns quotes with markdown stripped (the 12b returns
+# "22:35:12 UTC" where the page holds "22:35:12 [UTC](...)"), and a raw string
+# compare calls that fabricated, striking TRUE, correctly-sourced claims over
+# punctuation — a false positive in the one mechanism whose whole value is
+# being believed.
 #
 # These tests pin BOTH halves: markup differences must not strike a true quote,
 # and altered or invented text must still be struck.
@@ -369,9 +364,8 @@ def test_receipt_matching_normalizes_markup_not_meaning(quote, should_match):
 
 # ── Outline shape tolerance ───────────────────────────────────────────────────
 #
-# MEASURED 2026-08-17: a commission produced 9 fully-verified findings and then
-# FAILED on `AttributeError: 'str' object has no attribute 'get'`, because the
-# outline model returned `sections` as a list of heading strings instead of
+# A commission can produce 9 fully-verified findings and then FAIL on `AttributeError: 'str' object has no attribute 'get'`, because the
+# outline model returns `sections` as a list of heading strings instead of
 # objects. Constrained JSON decoding guarantees valid JSON, not the shape you
 # asked for. Losing nine good findings at the last step to a wrapper shape is
 # the definition of a green job producing nothing.
@@ -457,15 +451,15 @@ def test_scoper_accepts_sub_questions_as_bare_strings():
     assert texts == ["What happened?", "Who paid for it?"]
 
 
-# ── Two leaks found with the gate switched ON, 2026-08-17 ────────────────────
+# ── Two leaks that show only with the gate switched ON ───────────────────────
 
 @pytest.mark.parametrize("text,expected", [
     # The regex bug: IGNORECASE \bus\b matched "US Supreme Court", so a news
-    # headline was treated as the maintainer speaking about himself and withheld —
+    # headline was treated as the user speaking about themselves and withheld —
     # destroying exactly the value this layer exists to recover.
     ("Trump asks US Supreme Court to allow ballroom work to continue", False),
     ("The FDA approved a new diabetes medication after a trial", False),
-    ("Travis County court records show the contractor filed for bankruptcy", False),
+    ("Cook County court records show the contractor filed for bankruptcy", False),
     ("Point2 Technology raised a $136M Series B", False),
     # Genuine first person must be caught.
     ("My custody hearing is on the 14th", True),
@@ -480,15 +474,15 @@ def test_first_person_floor_does_not_fire_on_third_party_news(text, expected):
 
 def test_stephen_substance_requires_the_scrub_to_actually_separate(judging,
                                                                    monkeypatch):
-    """LEAK FOUND LIVE: the judge correctly answered STEPHEN_SUBSTANCE for
-    "My custody hearing is on the 14th..." — and the scrubber found NOTHING to
-    replace, because the sentence has no name, number or address. It is pure
-    first-person substance. verify_outgoing passed it (it blocks at SENSITIVE;
-    this is PRIVATE), so a span the judge had just called the maintainer's own private
-    material travelled verbatim.
+    """The judge can correctly answer STEPHEN_SUBSTANCE for "My custody
+    hearing is on the 14th..." while the scrubber finds NOTHING to replace,
+    because the sentence has no name, number or address. It is pure
+    first-person substance. verify_outgoing passes it (it blocks at
+    SENSITIVE; this is PRIVATE), so without this rule a span the judge just
+    called the user's own private material travels verbatim.
 
     A scrub that replaced nothing did not separate identity from substance."""
-    judging(jg.STEPHEN_SUBSTANCE, "his own affairs")
+    judging(jg.STEPHEN_SUBSTANCE, "the user's own affairs")
     probe = ("My custody hearing is on the 14th and my lawyer says my ex will "
              "contest the settlement figure I proposed for our daughter.")
     out, _err = _seal(probe)
@@ -497,12 +491,12 @@ def test_stephen_substance_requires_the_scrub_to_actually_separate(judging,
 
 
 def test_first_person_cannot_be_judged_third_party(judging):
-    """A false rescue on his own affairs is the error class the whole design
-    exists to prevent — and the e2b produced one live, answering
-    ABOUT_THE_WORLD for a first-person sentence about his own finances.
+    """A false rescue on the user's own affairs is the error class the whole
+    design exists to prevent — and the e2b produces one, answering
+    ABOUT_THE_WORLD for a first-person sentence about the user's finances.
 
-    NOTE ON SCOPE, because the first draft of this test asserted more than the
-    architecture promises: the first-person floor lives inside the APPEAL path,
+    NOTE ON SCOPE, so this test asserts no more than the architecture
+    promises: the first-person floor lives inside the APPEAL path,
     and appeals only happen for spans the deterministic classifier already
     withheld (§5.4 — judgment is an appeals court). A first-person span the
     classifier rates PUBLIC never reaches judgment at all and is sent by the
@@ -519,8 +513,8 @@ def test_classifier_recall_gap_is_not_something_judgment_fixes():
     """Documents a PRE-EXISTING limit, so nobody mistakes the judgment gate for
     protection it does not provide.
 
-    Found while verifying the gate live: these first-person sentences about
-    the maintainer's own money and clients are rated PUBLIC by the deterministic
+    These first-person sentences about the user's own money and clients are
+    rated PUBLIC by the deterministic
     classifier, so they are sent WITHOUT ever being appealed. That is the
     keyword/embedding layer's recall, not a judgment failure — and it was true
     before the judgment gate existed. Judgment can only rescue; it never sees

@@ -6,11 +6,11 @@ those modes unreachable. That ruling is recorded in the router and is right.
 
 A seat bound to ONE CONVERSATION is a different statement. It is the user
 saying "this thread, that model", per thread, which is the whole point of
-being able to open several chats at once. Measured 2026-09-18 before this
-change: a conversation bound to claude-sonnet-5 was answered by bonsai2:27b
-while another bound to bonsai2:27b was answered correctly - so the per-chat
-picker worked in exactly one of its two directions, which is worse than not
-having it, because it looked like it worked.
+being able to open several chats at once. Without this rule a conversation
+bound to claude-sonnet-5 is answered by bonsai2:27b while one bound to
+bonsai2:27b is answered correctly - a per-chat picker that works in exactly
+one of its two directions, which is worse than not having it, because it
+looks like it works.
 
 The cost is real and is stated where the decision is logged: a chat bound to a
 cloud model leaves the machine even in local_preferred, and is billed. That is

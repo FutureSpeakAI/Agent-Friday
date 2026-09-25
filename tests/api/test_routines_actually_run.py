@@ -1,26 +1,21 @@
 """A routine either runs or says why. It never claims to have launched.
 
-Stephen, 2026-09-24: "I just tried to launch the daily creation routine from the
-'Home' workspace and nothing happened."
-
-Nothing happened because nothing was ever started. `routes/workflows.run_routine`
-wrote a dict entry and returned success:
+Launching a routine from the 'Home' workspace must start real work. Writing a
+dict entry and returning success is not a launch:
 
     VIBE_TERMINALS[tid] = {"id": tid, "task": task_desc, "status": "pending", ...}
     status[routine_id] = {"last_run": stamp, "last_status": "launched", ...}
     return jsonify({"status": "ok", ..., "message": f"{reg['label']} launched"})
 
-No thread, no subprocess, no task. Its own docstring said "Launches a background
-Vibe-Code task"; the real launcher, `routes/code.vibe_code_launch`, starts a
-`threading.Thread(target=_run_claude_terminal, ...)`, and this one simply did not.
-Nothing consumes a "pending" VIBE_TERMINALS entry either, so the row sat there
-forever while the UI reported a launch.
+That starts no thread, no subprocess and no task, and nothing consumes a
+"pending" VIBE_TERMINALS entry, so the row would sit there forever while the UI
+reports a launch. The real launcher, `routes/code.vibe_code_launch`, starts a
+`threading.Thread(target=_run_claude_terminal, ...)`.
 
-That is the invisible-success defect in its purest form: the API lies, the toast
-says "launched", and no work occurs. It is also a no-receipt claim of completion,
-which this codebase forbids everywhere else.
+An API that says "launched" while no work occurs is an invisible success and a
+no-receipt claim of completion, which this codebase forbids everywhere.
 
-The fix dispatches to the REAL job where one exists -- the scheduler already owns
+`run_routine` dispatches to the REAL job where one exists -- the scheduler owns
 `daily_creation`, `news_morning`, `afternoon_briefing` and `repo_sync` -- and
 REFUSES, with the reason, for the registry entries that have no handler in this
 build. A routine with no implementation is allowed to exist and say so; it is not
@@ -33,7 +28,7 @@ import pytest
 def test_the_registry_and_the_handler_map_agree():
     """Every routine either maps to a real builtin task or is listed as having
     no handler. A registry entry that is in neither set would fall through to
-    the old lie."""
+    a success with no work behind it."""
     from agent_friday.services.misc_engine import ROUTINE_REGISTRY
     from agent_friday.routes import workflows
 
@@ -113,7 +108,7 @@ def test_an_unknown_routine_is_still_a_404(client):
 
 def test_a_refused_routine_is_not_recorded_as_launched(client, monkeypatch):
     """The status file must not carry `last_status: launched` for a run that
-    never happened -- that is what made the Home panel look like it had worked."""
+    never happened -- that makes the Home panel look like it had worked."""
     from agent_friday.routes import workflows
     from agent_friday.services import misc_engine
 
@@ -139,7 +134,7 @@ def test_a_routine_is_refused_while_stood_down(client, tmp_path, monkeypatch):
     from agent_friday.services import stand_down as sd
     monkeypatch.setattr(sd, "_release_gpu", lambda: None)
     sd._invalidate()
-    sd.stand_down(requested_by="stephen")
+    sd.stand_down(requested_by="owner")
     try:
         r = client.post("/api/routines/daily-creation/run")
         assert r.status_code == 409, (
