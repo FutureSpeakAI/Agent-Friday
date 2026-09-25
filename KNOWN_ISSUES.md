@@ -37,9 +37,6 @@ you hit something that is not here, please open an issue.
   See [Scheduled jobs](docs/user-guide/scheduled-jobs.md).
 - **No receipt viewer.** Signed receipts are written to
   `.friday\decision-bom.jsonl` but there is no screen for them.
-- **The uninstaller does not undo the local address.** Remove the hosts-file
-  entry and the trusted certificate from Settings → General before
-  uninstalling.
 - **The provenance ledger is in memory.** Where an argument came from is
   forgotten on restart, and a value that was paraphrased or re-encoded, or
   summarised by a model, is not tracked. The approval checkpoint still applies

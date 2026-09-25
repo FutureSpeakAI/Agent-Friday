@@ -35,6 +35,13 @@
     all-MiniLM-L6-v2 weights in the Hugging Face cache, and the Ollama models
     THIS installer pulled.
 
+    Undone when present: the local address's hosts-file block (between
+    Friday's markers; needs Windows' administrator prompt, so it is asked
+    only when the block exists, and skipped and reported when unattended) and
+    Friday's own certificate authority in the user's Root store (found by the
+    thumbprints in ~/.friday/local-address; Windows asks to confirm). What
+    could not be undone is reported, never claimed.
+
     Kept by default, and said out loud: her notes, wiki, conversation memory,
     skills, settings and creations under ~/.friday, plus the credential that
     unlocks them.
@@ -66,6 +73,7 @@ if (-not (Test-Path $LibDir)) { $LibDir = $Here }   # tools/ layout after instal
 . (Join-Path $LibDir 'Download.ps1')
 . (Join-Path $LibDir 'Ollama.ps1')
 . (Join-Path $LibDir 'Shortcuts.ps1')
+. (Join-Path $LibDir 'LocalAddress.ps1')
 
 Initialize-Console
 
@@ -249,6 +257,11 @@ Say ("  - Friday's program files                         {0,6:N2} GB" -f $sizeIn
 Say ("  - The AI models and voices she downloaded        {0,6:N2} GB" -f ($sizeCaches + $sizeModels))
 Say '  - The desktop and Start menu shortcuts'
 if (Test-Autostart) { Say '  - The setting that starts her when you sign in' }
+$LocalAddressDir = Join-Path $FridayDir 'local-address'
+$hostsBlockPresent = Test-FridayHostsBlock
+$fridayCaTrusted = @(Get-TrustedFridayThumbprints -Thumbprints (Get-FridayCaThumbprints -StateDir $LocalAddressDir))
+if ($hostsBlockPresent) { Say "  - Friday's local address in this PC's hosts file (Windows will ask)" }
+if ($fridayCaTrusted.Count -gt 0) { Say "  - The certificate Friday asked Windows to trust (Windows will ask)" }
 Say '  - Her entry in the list of installed programs'
 Say ''
 
@@ -300,7 +313,7 @@ if (-not $Unattended) {
 }
 
 Write-Log "removeData = $removeData"
-Set-StepTotal 8
+Set-StepTotal 9
 
 # =========================================================================
 #  1. Stop anything that is running, or the deletes will fail on file locks
@@ -459,7 +472,68 @@ $null = Invoke-Step -Id 'uninstall.caches' -Title 'Removing the downloaded voice
     }
 
 # =========================================================================
-#  6. Her data - and the credential that opens it. Together, always.
+#  6. The local address: hosts-file block and trusted certificate
+# =========================================================================
+# Before step 7, which may delete ~/.friday\local-address - the only record
+# of which certificates Friday made.
+
+Say-Step "Undoing Friday's local address"
+if ($hostsBlockPresent) {
+    if ($Unattended) {
+        Say-Note "Friday's entry is still in this PC's hosts file."
+        Say-Detail 'Removing it needs administrator permission, which an unattended run does not ask for.'
+        Add-InstallWarning ("The hosts-file block between '" + $script:FridayHostsBegin +
+                            "' and its end marker was left in place (unattended run; needs elevation).")
+    } else {
+        Say ''
+        Say "  Friday added its local address (agent.<name>) to this PC's hosts"
+        Say '  file, a Windows system file. Removing that entry needs administrator'
+        Say '  permission, so Windows will show a prompt. Nothing else in the file'
+        Say '  is changed.'
+        Say ''
+        $rh = Read-Host "  Remove Friday's entry from the hosts file? [Y/n]"
+        if ($rh -match '^[Nn]') {
+            Say-Note "Left in place. It maps a name to this PC only and does nothing without Friday."
+            Add-InstallWarning 'The user chose to keep the hosts-file block.' -Informational
+        } elseif (Invoke-FridayHostsRemovalElevated) {
+            Say-Ok 'Removed from the hosts file.'
+        } else {
+            Say-Note "The hosts-file entry is still there (the permission prompt was declined or failed)."
+            Say '        To remove it by hand, open Notepad as administrator, open'
+            Say '        C:\Windows\System32\drivers\etc\hosts, and delete the lines'
+            Say "        between the two 'Agent Friday local address' markers."
+            Add-InstallWarning 'The hosts-file block could not be removed; the user was given manual instructions.'
+        }
+    }
+} else {
+    Say-Detail 'No Friday entry in the hosts file.'
+}
+if ($fridayCaTrusted.Count -gt 0) {
+    if (-not $Unattended) {
+        Say ''
+        Say '  Windows will ask you to confirm removing the certificate Friday made'
+        Say '  for its local address. Choose Yes.'
+    }
+    # Unattended: attempted with a short wait, because Windows' confirmation
+    # has nobody to answer it; whatever is left is reported below.
+    $certWait = 300
+    if ($Unattended) { $certWait = 60 }
+    $left = @(Remove-FridayTrustedCertificates -Thumbprints $fridayCaTrusted -TimeoutSeconds $certWait)
+    if ($left.Count -eq 0) {
+        Say-Ok 'Windows no longer trusts the certificate Friday made.'
+    } else {
+        Say-Note 'Windows still trusts the certificate Friday made (the confirmation was declined or timed out).'
+        Say '        To remove it by hand: Start menu, "Manage user certificates",'
+        Say '        Trusted Root Certification Authorities, Certificates, then delete'
+        Say '        the one named "Agent Friday local address CA".'
+        Add-InstallWarning ("Friday's certificate is still trusted in the user Root store: " + ($left -join ', '))
+    }
+} else {
+    Say-Detail 'Windows does not trust any certificate Friday made.'
+}
+
+# =========================================================================
+#  7. Her data - and the credential that opens it. Together, always.
 # =========================================================================
 
 Say-Step 'Your notes'
@@ -503,7 +577,7 @@ else {
 }
 
 # =========================================================================
-#  7. Add/Remove Programs entry
+#  8. Add/Remove Programs entry
 # =========================================================================
 
 $null = Invoke-Step -Id 'uninstall.registry' -Title 'Removing Friday from the installed programs list' `
@@ -512,7 +586,7 @@ $null = Invoke-Step -Id 'uninstall.registry' -Title 'Removing Friday from the in
     -Verify { -not (Test-UninstallerRegistered) }
 
 # =========================================================================
-#  8. The install folder itself
+#  9. The install folder itself
 # =========================================================================
 
 $null = Invoke-Step -Id 'uninstall.root' -Title 'Removing Friday''s program files' `
@@ -543,9 +617,9 @@ if ($warns.Count -eq 0) {
 } else {
     Say "  $($script:C.Yellow)$($script:C.Bold)Agent Friday has been removed, with a couple of leftovers.$($script:C.Reset)"
     Say ''
-    Say '  Something on this computer was holding on to a file, so one or two'
-    Say '  things could not be deleted. Restarting the computer and running'
-    Say '  the uninstaller once more usually clears it.'
+    Say '  One or two things could not be removed; each is described above.'
+    Say '  If a file was in use, restarting the computer and running the'
+    Say '  uninstaller once more usually clears it.'
 }
 Say ''
 Say "  $($script:C.Grey)Details: $(Join-Path $LogDir 'LAST-UNINSTALL-REPORT.md')$($script:C.Reset)"
