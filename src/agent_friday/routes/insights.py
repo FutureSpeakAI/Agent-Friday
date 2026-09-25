@@ -382,17 +382,18 @@ def reencrypt_stale_provider_keys():
 
 
 # ── GDPR/CCPA data rights (H6) — export / erase, mirroring the friday CLI ──────
-_EXPORT_SKIP_DIRS = {"audio-cache", "vibe-code-logs", "__pycache__"}
+from agent_friday.services.data_export import skip_reason  # noqa: E402
 
 
 @insights_bp.route('/api/data/export')
 @login_required
 def data_export():
-    """Right of access: stream ALL local Friday data as a portable zip.
+    """Right of access: stream the owner's Friday data as a portable zip.
 
-    Everything Friday knows already lives on-device under ~/.friday; this just
-    packages it. Mirrors `friday export` so the CLI and the Settings → Privacy
-    button produce the same archive.
+    The same data export as `friday export`: services/data_export decides
+    what is left out, which is every key and credential file (the keystore
+    root key among them) and downloaded model files. A backup that includes
+    the keys is `friday export --full`, which encrypts it with a passphrase.
     """
     if not FRIDAY_DIR.exists():
         return jsonify({"status": "error", "message": "No Friday data found."}), 404
@@ -405,7 +406,7 @@ def data_export():
             if not path.is_file():
                 continue
             rel = path.relative_to(FRIDAY_DIR)
-            if set(rel.parts) & _EXPORT_SKIP_DIRS:
+            if skip_reason(rel):
                 continue
             try:
                 zf.write(path, arcname=str(Path(".friday") / rel))
