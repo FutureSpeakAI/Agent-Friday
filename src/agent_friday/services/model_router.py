@@ -635,7 +635,10 @@ def _trace_outgoing(where, pname, model, payload, extra=None):
         pass
 
 
-def _call_ollama(messages, system=None, model=None, max_tokens=4096,
+from agent_friday.services import turn_budget as _tbud
+
+
+def _call_ollama(messages, system=None, model=None, max_tokens=None,
                  # An orb's icon should say what the WORK is, not what
                  # transport carried it. A house default here makes every
                  # Ollama-path orb wear one, and the scene appends a second
@@ -803,8 +806,17 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
             if isinstance(content, str):
                 convo.append({"role": m.get("role", "user"), "content": content})
 
-        def _send(_convo, _oai_tools):
+        def _send(_convo, _oai_tools, **_over):
+            """`_over` carries a per-ROUND override.
+
+            The loop needs it to re-issue an exhausted round with a bigger
+            allowance and the thinking turned off. Without it the retry would
+            repeat the call that just failed, which is what turned a 19-minute
+            turn into no answer at all.
+            """
             _t0 = _time.time()
+            _mt = int(_over.get("max_tokens") or max_tokens or 0) or None
+            _think = False if _over.get("no_reasoning") else None
             try:
                 # Apply the PLAN's context on every dispatch, not only when
                 # the Arbiter loads a seat at boot. Without this the first
@@ -834,11 +846,14 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                     _to = max(300, int(_est * 4) + 180)
                 except Exception:
                     pass
+                _ctx = _plan_num_ctx(model)
                 resp = ollama.chat_completion(
                     _convo, model=model, tools=_oai_tools,
                     temperature=temperature if temperature is not None else 0.7,
-                    max_tokens=max_tokens,
-                    num_ctx=_plan_num_ctx(model),
+                    max_tokens=(_tbud.clamp_output(_mt, _ctx)
+                                or _tbud.output_tokens_for(model, num_ctx=_ctx)),
+                    num_ctx=_ctx,
+                    think=_think,
                     timeout=_to,
                 )
             except Exception:
@@ -1188,7 +1203,7 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
     return out
 
 
-def _call_openai(messages, system=None, model=None, max_tokens=4096,
+def _call_openai(messages, system=None, model=None, max_tokens=None,
                  temperature=None, orb_label=None, orb_icon='☁️',
                  tools=None, pii_lookup=None, session_ctx=None,
                  max_iters=None,
@@ -1462,12 +1477,27 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
         # `openrouter/auto` the id we SEND is a router, not an answer.
         _last_served = {}
 
-        def _send(_convo, _oai_tools):
+        def _send(_convo, _oai_tools, **_over):
+            # See the note on the Ollama sender: `_over` is how the loop asks
+            # for a bigger allowance with the thinking turned off, instead of
+            # repeating a round that just spent everything on deliberation.
+            _mt = int(_over.get("max_tokens") or max_tokens or 0) or None
+            _no_think = bool(_over.get("no_reasoning"))
+            _ctx_for_budget = _plan_num_ctx(model) if local_bypass else None
             payload = {
                 "model": model,
                 "messages": _convo,
                 "temperature": temperature if temperature is not None else 0.7,
-                "max_tokens": max_tokens,
+                # The reasoning budget is for seats WE serve. A cloud model
+                # reached through this same dialect has its own limits and its
+                # own price per token, and nothing about Stephen's failure was
+                # cloud-side, so an empty model name keeps the ordinary 4096
+                # there rather than quietly multiplying somebody's bill.
+                "max_tokens": (
+                    _tbud.clamp_output(_mt, _ctx_for_budget)
+                    or _tbud.output_tokens_for(
+                        model if local_bypass else "",
+                        num_ctx=_ctx_for_budget)),
             }
             if _oai_tools:
                 payload["tools"] = _oai_tools
@@ -1490,6 +1520,13 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                                 "enable_thinking": False}
                     except Exception:
                         pass
+            # The loop is asking for an ANSWER now, not more deliberation:
+            # the previous round spent its whole allowance thinking. Turn the
+            # scratchpad off so the larger budget funds the reply.
+            if _no_think:
+                payload.setdefault("chat_template_kwargs", {})[
+                    "enable_thinking"] = False
+                payload["reasoning_effort"] = "none"
             # REASONING EFFORT ON LOCAL THINKING MODELS.
             #
             # A reasoning model left at its own default thinks as hard as it
@@ -1513,7 +1550,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             # `local_reasoning_effort` to "xhigh" to restore the old
             # behaviour, or "off" to disable thinking outright. Only applied
             # to seats we serve ourselves, and never over an explicit caller.
-            if local_bypass and "reasoning_effort" not in payload:
+            if local_bypass and not _no_think and "reasoning_effort" not in payload:
                 try:
                     _eff = ((_load_settings() or {}).get(
                         "local_reasoning_effort") or "medium").strip().lower()

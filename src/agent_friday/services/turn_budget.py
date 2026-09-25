@@ -315,3 +315,133 @@ def limit_message(kind: str, *, detail: str = "", used: int = 0,
         "limit — the work was still going, not finished. Say "
         "“continue” and I will pick up where I left off, or narrow it "
         "down and I will be quicker. (%s)" % (int(used or 0), m))
+
+
+# ── Output budget: how much the model may WRITE in one round ────────────────
+#
+# Stephen, 2026-09-25, after a 19-minute turn ended with no answer at all:
+#
+#   "[bonsai2:27b used its entire 4096-token output budget thinking and never
+#    began the answer (16637 characters of reasoning, no reply). Raise
+#    max_tokens for this call...]"
+#
+# A reasoning model spends the OUTPUT budget on its thinking. 4096 tokens is a
+# reasonable answer length and a hopeless thinking-plus-answer length, so on a
+# hard question the scratchpad consumes the whole allowance and the reply never
+# starts. The round cap was the same mistake in a different unit: a number
+# chosen for one kind of model, silently applied to another.
+#
+# Two things follow, and both are needed. A bigger budget, and -- because a
+# bigger budget can still be exhausted -- a loop that carries on rather than
+# handing the user advice about an internal knob.
+
+#: What a non-reasoning call may write. Unchanged: it was never the problem.
+OUTPUT_TOKENS_DEFAULT = 4096
+
+#: What a local reasoning seat may write in one round, thinking included.
+#: Generous on purpose -- the thinking is the expensive part and it is not
+#: optional -- but see `output_tokens_for`, which clamps this to the context the
+#: seat is actually served at.
+REASONING_OUTPUT_DEFAULT = 32768
+
+#: Never let the output allowance eat more than this share of the context
+#: window. bonsai2 declares 262K but is SERVED at 65,536 here, so a flat 32K
+#: ask would leave only half the window for a prompt that already carries 25
+#: tool results. Half is the most that can be promised without starving the
+#: conversation it is supposed to be answering.
+OUTPUT_CONTEXT_SHARE = 0.5
+
+#: When a round exhausts its budget mid-thought, the retry gets this much more.
+#: Paired with thinking turned OFF, so the larger allowance goes to the answer
+#: rather than funding a longer deliberation that ends the same way.
+RETRY_OUTPUT_MULTIPLIER = 2
+
+
+def looks_like_reasoning_model(model: str = "") -> bool:
+    """Does this seat think before it answers?
+
+    Name-based, deliberately: the transport has to size the request before it
+    sees a single token back, so there is nothing else to go on at that point.
+    A wrong YES costs a larger ceiling that an ordinary model simply will not
+    use -- `max_tokens` is a limit, not an allocation -- while a wrong NO costs
+    the user their answer. The asymmetry decides the default.
+    """
+    m = str(model or "").lower()
+    if not m:
+        return False
+    return any(k in m for k in (
+        "bonsai", "qwen3", "qwq", "deepseek-r", "r1", "o1", "o3", "o4",
+        "reason", "think", "magistral", "phi-4-reasoning", "glm-z",
+    ))
+
+
+def output_tokens_for(model: str = "", *, num_ctx: Optional[int] = None,
+                      seat: str = "") -> int:
+    """Tokens one round may write, thinking included.
+
+    `num_ctx` is the context the seat is actually served at, not the maximum it
+    advertises. Those differ by a factor of four on this machine, and the served
+    figure is the one that decides whether a reply fits.
+    """
+    blk = _cfg().get("output_tokens") or {}
+    asked = _positive(blk, seat, model, "default")
+    if asked is None:
+        asked = (REASONING_OUTPUT_DEFAULT if looks_like_reasoning_model(model)
+                 else OUTPUT_TOKENS_DEFAULT)
+    if num_ctx:
+        try:
+            ceiling = int(int(num_ctx) * OUTPUT_CONTEXT_SHARE)
+            # Never clamp below the ordinary default: a small context is a
+            # reason to write less, not a reason to be unable to answer.
+            asked = max(OUTPUT_TOKENS_DEFAULT, min(asked, ceiling))
+        except Exception:
+            pass
+    return int(asked)
+
+
+def clamp_output(tokens: Optional[int], num_ctx: Optional[int]) -> Optional[int]:
+    """Hold any output allowance -- including one the loop asked for -- inside
+    the served context.
+
+    The loop asks for a bigger retry budget without knowing what window the seat
+    is served at; only the transport knows that. Unclamped, a doubled ask can
+    equal the whole context and leave the prompt no room at all.
+    """
+    if not tokens:
+        return tokens
+    if not num_ctx:
+        return int(tokens)
+    try:
+        ceiling = max(OUTPUT_TOKENS_DEFAULT, int(int(num_ctx) * OUTPUT_CONTEXT_SHARE))
+        return int(min(int(tokens), ceiling))
+    except Exception:
+        return int(tokens)
+
+
+def retry_output_tokens(previous: Optional[int] = None, *, model: str = "",
+                        num_ctx: Optional[int] = None) -> int:
+    """The budget for the round that follows an exhausted one."""
+    base = int(previous or output_tokens_for(model, num_ctx=num_ctx))
+    bigger = base * RETRY_OUTPUT_MULTIPLIER
+    if num_ctx:
+        try:
+            bigger = min(bigger, int(int(num_ctx) * OUTPUT_CONTEXT_SHARE))
+        except Exception:
+            pass
+    return max(base, int(bigger))
+
+
+def ran_long_message(*, model: str = "", rounds: int = 0) -> str:
+    """What the user sees when a turn genuinely could not finish.
+
+    Never names `max_tokens`, `num_predict` or any other knob. The old text
+    ended a 19-minute turn by telling the person to raise a setting they cannot
+    see, which reads as their fault and is not even advice they can act on.
+    """
+    where = (" after %d rounds of work" % rounds) if rounds else ""
+    return (
+        "I ran long on this one%s and did not get to a finished answer — I kept "
+        "thinking past the point where I should have started writing. That is "
+        "mine to fix, not yours. Say “continue” and I will pick it up and "
+        "answer from what I already worked out, or narrow it down and I will be "
+        "quicker. (%s)" % (where, str(model or "the model")))

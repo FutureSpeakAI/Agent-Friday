@@ -104,7 +104,8 @@ def test_a_tool_less_call_never_blames_an_iteration_budget(monkeypatch):
 # ── 2. Thinking until the ceiling is not silence ─────────────────────────────
 
 def test_budget_spent_thinking_is_reported_as_that_not_as_an_empty_reply(monkeypatch):
-    """Budget spent in reasoning with no content, twice over."""
+    """Budget spent in reasoning with no content, twice over -- including the
+    re-issued round, which is the loop's last resort."""
     _install(monkeypatch,
              _msg("", finish="length", reasoning="d" * 900),
              _msg("", finish="length", reasoning="d" * 900))
@@ -112,12 +113,23 @@ def test_budget_spent_thinking_is_reported_as_that_not_as_an_empty_reply(monkeyp
     text, _ = smr._call_ollama([{"role": "user", "content": "editorialise"}],
                                model="fake-local", tools=None, max_tokens=1800)
 
-    assert "1800-token output budget" in text
+    # The DISTINCTION is what this test is for, and it still holds: a turn
+    # that spent its budget thinking reads differently from a blank reply.
     assert "thinking" in text
     assert "fake-local" in text
-    # The remedy is in the message, because the reader cannot infer it.
-    assert "max_tokens" in text
+    assert "empty response" not in text.lower()
     assert "max tool iterations" not in text
+    # WHAT CHANGED, 2026-09-25. This used to require the message to quote the
+    # ceiling ("1800-token output budget") and name `max_tokens` as the
+    # remedy, on the reasoning that the reader cannot infer it. They cannot
+    # act on it either: `max_tokens` is not reachable from the chat, and
+    # Stephen met this text at the end of a 19-minute turn that produced
+    # nothing. The remedy now belongs to the code -- the loop re-issues the
+    # round with a bigger budget and the thinking turned off -- so the message
+    # owns the failure and offers to continue instead.
+    assert "max_tokens" not in text
+    assert "shorten the prompt" not in text
+    assert "continue" in text.lower()
 
 
 def test_thinking_to_the_ceiling_is_told_to_stop_deliberating(monkeypatch):

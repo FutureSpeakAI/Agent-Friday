@@ -9972,6 +9972,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     _wall = _tb.WallClock(_tb.wall_clock_for("local"))
     _tokens = _tb.TokenBudget(_tb.token_budget_for("local"))
     _empty_retried = False
+    #: Set when a round is to be re-issued with a larger output allowance.
+    _retry_over = None
     # THE EMPTY-RETRY THAT NEVER RETRIED.
     #
     # The empty-completion guard below says "one retry that tells the model
@@ -10045,7 +10047,18 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             return _tb.limit_message("clock", detail=_wall.reason(),
                                      used=int(_wall.elapsed()),
                                      model=str(model or "")), tool_trace
-        resp = send_fn(convo, oai_tools)
+        # A round that ran out of budget mid-thought is re-issued with a
+        # bigger allowance and the thinking OFF -- repeating it unchanged is
+        # what turned a 19-minute turn into no answer at all. Senders that
+        # predate the override still work: they simply do not take one.
+        if _retry_over:
+            try:
+                resp = send_fn(convo, oai_tools, **_retry_over)
+            except TypeError:
+                resp = send_fn(convo, oai_tools)
+            _retry_over = None
+        else:
+            resp = send_fn(convo, oai_tools)
 
         usage = resp.get("usage", {}) or {}
         # Attribute spend to the model the provider ACTUALLY served when it
@@ -10164,6 +10177,15 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                               "and never wrote a reply. Do not deliberate "
                               "further: answer now, immediately and in the "
                               "exact format the user asked for.)")
+                    # Telling it to stop thinking is not enough on its own: the
+                    # next round has the same ceiling and the same habit. Give
+                    # the retry room AND take the scratchpad away, so the
+                    # allowance can only go to the answer.
+                    _retry_over = {
+                        "max_tokens": _tb.retry_output_tokens(
+                            max_tokens, model=str(model or "")),
+                        "no_reasoning": True,
+                    }
                 else:
                     _nudge = ("(Automated check — this is not from the user. "
                               "Your previous response was empty. Answer the "
@@ -10187,13 +10209,13 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 _think = (msg.get("reasoning_content")
                           or msg.get("reasoning") or "").strip()
                 if _last_finish == "length" and _think:
-                    _budget = (f"its entire {max_tokens}-token output budget"
-                               if max_tokens else "its whole output budget")
-                    text = (f"[{model} used {_budget} thinking and never began "
-                            f"the answer ({len(_think)} characters of "
-                            f"reasoning, no reply). Raise max_tokens for this "
-                            f"call, shorten the prompt, or use a seat that "
-                            f"reasons less.]")
+                    # Reached only after the retry above ALSO came back with
+                    # nothing, having been given a bigger budget and no
+                    # scratchpad. The old text named `max_tokens` -- a knob the
+                    # user cannot see -- and read like their fault. Say what
+                    # happened, own it, and offer to carry on.
+                    text = _tb.ran_long_message(model=str(model or ""),
+                                                rounds=_round)
                 else:
                     _why = ({"length": "it ran out of output budget mid-answer",
                              "content_filter": "the provider filtered it"}

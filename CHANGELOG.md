@@ -40,6 +40,18 @@ Cloud-only installs now fully work. The plain-language summary is in
 
 ### Fixed
 
+- **A long answer from a local reasoning model no longer comes back empty.**
+  A thinking model spends its OUTPUT allowance on the thinking, and every chat
+  turn on a local seat was capped at 4,096 tokens — a fine answer length and a
+  hopeless thinking-plus-answer length. On a hard question the scratchpad used
+  the whole allowance and the reply never started, so a 19-minute turn with 25
+  tool calls ended with no answer and a line telling the user to raise a
+  setting they cannot see. A local reasoning seat now gets a budget sized for
+  it (32,768 tokens for Bonsai 2, held to half the context it is actually
+  served at), and if a round still runs out mid-thought Friday re-issues it
+  with the thinking turned off instead of repeating it. If even that fails she
+  says in plain words that she ran long and offers to continue; no reply ever
+  again ends with advice about an internal setting.
 - The default heartbeat was never local-only: a fresh install ran it hourly
   on a cloud model. It is local-only like the other built-in jobs; on a
   cloud-only PC it follows the new question above.
