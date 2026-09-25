@@ -151,6 +151,12 @@ try {
           "enabled: $($phone.config.enabled); ingress running: $($phone.ingress.running)"
 
     # agent.<name>: the marked hosts block, then Friday's own listener.
+    # GitHub's Windows images run IIS, which answers port 80 through http.sys
+    # ahead of any other listener. A person's PC normally does not; on a
+    # disposable runner it is stopped so the check is about Friday.
+    foreach ($svc in 'W3SVC', 'WAS') {
+        if (Get-Service -Name $svc -ErrorAction SilentlyContinue) { Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue }
+    }
     $la = Api '/api/local-address'
     $hostName = [string]$la.host
     if (-not $hostName) { $hostName = 'agent.friday' }
