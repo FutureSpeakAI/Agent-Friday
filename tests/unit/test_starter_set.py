@@ -102,14 +102,32 @@ def test_chain_plans_do_not_raise_and_carry_both_shapes(profile_name):
                   for s in chain["voice_only"]["stages"])
 
 
-def test_brain_pick_is_the_planners_not_a_second_ladder():
+def test_brain_pick_is_the_planners_not_a_second_ladder(monkeypatch):
     """HR15's actual content for THIS surface: the brain `build_starter_set`
     proposes must be a model `model_plan.plan()` itself picked -- read
     straight from the plan's own 'brain' tier, never independently derived
-    or copied from `ollama_manager.recommend_models()`."""
+    or copied from `ollama_manager.recommend_models()`.
+
+    build_starter_set also asks the machine what is installed and passes
+    that to the planner, so the comparison is made on a pinned machine (no
+    daemon, no local seats) with the planner given the same facts; left to
+    the real machine, whatever an earlier test or the host has installed
+    changes the pick on one side only."""
+    from agent_friday.routing import ollama_manager as om
+    from agent_friday.services import local_seats
+
+    class _NoDaemon:
+        def is_available(self):
+            return False
+
+        def list_models(self):
+            return []
+
+    monkeypatch.setattr(om, "get_manager", lambda *a, **k: _NoDaemon())
+    monkeypatch.setattr(local_seats, "installed", lambda *a, **k: [])
     profile = fx.ALL_PROFILES["P1"]
     ss = build_starter_set(profile)
-    plan = mp.plan(profile)
+    plan = mp.plan(profile, installed=None, conversational=[])
     tier = next(t for t in plan["tiers"] if t["id"] == "brain")
     if tier["status"] == "refused":
         assert ss["brain"]["model_id"] is None
