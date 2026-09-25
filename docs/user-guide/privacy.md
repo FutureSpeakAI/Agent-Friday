@@ -66,8 +66,10 @@ create a file grant: it is pinned to that file's content and expires. See
 ## What leaves your PC on its own
 
 No telemetry, analytics or crash reports, and nothing to FutureSpeak.AI. The
-few background connections Friday does make (news feeds, a connectivity probe,
-web fonts, the opt-in update check) are listed, with how to turn each off, in
+few background connections Friday does make (news feeds, connector health
+checks, Google Fonts until you turn it off or the font files are installed,
+the opt-in update check, and one-time model downloads when a feature first
+needs them) are listed, with how to turn each off, in
 [Background network activity](background-network.md).
 
 ## Other people

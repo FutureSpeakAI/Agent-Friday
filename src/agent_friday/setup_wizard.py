@@ -1719,8 +1719,8 @@ def main():
         step_third_party(total_steps, 5)
 
     # ── Screen 5: new versions ──
-    # Asked, never assumed: the weekly check is the only request Friday would
-    # make on its own schedule. Quick setup does not ask, so it stays off.
+    # Asked, never assumed: the weekly check is the one scheduled request to
+    # Friday's own project. Quick setup does not ask, so it stays off.
     if not quick and _ask("updates"):
         step_updates(total_steps, 5)
 

@@ -28,8 +28,10 @@ from __future__ import annotations
 SCREEN_ORDER = ("collects", "vault", "routing", "cloud_ack", "third_party", "updates")
 
 
-# The only request Friday would make on its own schedule. It is asked, not
-# assumed: nothing is sent until the owner answers "check".
+# The one scheduled request to Friday's own project (GitHub's releases list).
+# It is asked, not assumed: nothing is sent until the owner answers "check".
+# Every other background connection is listed in
+# docs/user-guide/background-network.md.
 UPDATES_TITLE = "Checking for new versions"
 
 UPDATES = """\

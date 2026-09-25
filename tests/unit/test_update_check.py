@@ -541,7 +541,7 @@ def test_update_check_does_not_touch_the_model_egress_gate(monkeypatch):
 #  ASKED, NEVER ASSUMED
 # ═════════════════════════════════════════════════════════════════════════════
 #
-# The weekly check is the only request Friday would make on its own schedule.
+# The weekly check is the one scheduled request to Friday's own project.
 # It starts only after the owner answers "check" to the first-run question
 # (onboarding.json updates_choice). Unanswered means off.
 
