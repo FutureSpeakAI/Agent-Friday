@@ -9,8 +9,25 @@ import time
 
 import pytest
 
+from agent_friday.services import context_budget
 from agent_friday.services import residency_arbiter as ra
 from tests import residency_fixtures as fx
+
+
+@pytest.fixture(autouse=True)
+def _reference_turn_size(monkeypatch):
+    """Plan against the reference turn size, not the last one recorded.
+
+    compute_plan() subtracts the injected-context size a REAL turn recorded
+    (runtime/residency/turn_demand.json) from every seat's window. Chat tests
+    elsewhere run real turns in the same test home and record theirs, and a
+    large one shrinks the P1 windows until the sidekick no longer fits, which
+    is not what these tests are about."""
+    monkeypatch.setattr(context_budget, "injected_tokens",
+                        lambda: (context_budget.MEASURED_INJECTED_TOKENS, "reference"))
+    context_budget.reset_cache()
+    yield
+    context_budget.reset_cache()
 
 
 class FakeOllama:
@@ -58,6 +75,11 @@ class FakeLlama:
 
     def evict_all(self):
         self.procs.clear()
+
+    def adopt_or_reap(self, wanted):
+        """A fresh fake has no orphans to adopt or reap. Present so boot()
+        runs its real sequence instead of logging an AttributeError."""
+        return {"adopted": [], "reaped": []}
 
 
 class FakeComfy:
