@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_friday.routing.model_router import get_router
+from agent_friday.routing.model_router import ModelRouter, get_router
 
 
 def _router(monkeypatch, mode="local_preferred", local=("bonsai2:27b",)):
@@ -29,10 +29,15 @@ def _router(monkeypatch, mode="local_preferred", local=("bonsai2:27b",)):
     # real implementation rather than assumed, after a first version of this
     # fixture handed back bare strings and produced a TypeError deep inside
     # the router that looked like a product bug.
-    monkeypatch.setattr(r, "_local_candidates",
-                        lambda: [{"name": n, "size_gb": 16.0} for n in local])
-    monkeypatch.setattr(r, "_is_registry_local",
-                        lambda m: ":" in str(m or ""))
+    #
+    # Patched on the CLASS, never on the process-wide router instance: undoing
+    # an instance patch writes the real bound method back into the instance's
+    # own __dict__, where it outranks every later class-level patch, and the
+    # next file's seat tests are then routed by the real candidate list.
+    monkeypatch.setattr(ModelRouter, "_local_candidates",
+                        lambda self: [{"name": n, "size_gb": 16.0} for n in local])
+    monkeypatch.setattr(ModelRouter, "_is_registry_local",
+                        lambda self, m: ":" in str(m or ""))
     return r
 
 
