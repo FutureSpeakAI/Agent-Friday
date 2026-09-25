@@ -656,19 +656,27 @@ class Heartbeat:
         self._thread.start()
         return self
 
-    def stop(self):
+    def stop(self, timeout: float = 2.0):
+        """Stop beating. Waits for a beat already in progress, so nothing is
+        written for this task after stop() returns."""
         self._stop.set()
+        if self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout)
 
     def _run(self):
         last_journal = 0.0
         while not self._stop.wait(HEARTBEAT_STATE_S):
             now = time.time()
             try:
-                st = read_state(self.task_id)
-                if not st or is_terminal(st.get("status")):
-                    return
-                st["last_seen"] = now
-                write_state(self.task_id, st)
+                # Read, check and write under the journal lock: a status the
+                # worker writes in between (complete, failed) must never be
+                # replaced by this beat's older copy of the state.
+                with _LOCK:
+                    st = read_state(self.task_id)
+                    if not st or is_terminal(st.get("status")):
+                        return
+                    st["last_seen"] = now
+                    write_state(self.task_id, st)
                 if now - last_journal >= HEARTBEAT_JOURNAL_S:
                     append(self.task_id, "heartbeat")
                     last_journal = now

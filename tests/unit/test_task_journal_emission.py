@@ -374,6 +374,35 @@ def test_heartbeat_refreshes_last_seen_while_running_and_stops_when_terminal(mon
     assert _kinds().count("heartbeat") == n_after, "no heartbeats once the task is terminal"
 
 
+def test_a_beat_never_overwrites_a_status_written_while_it_runs(monkeypatch):
+    """The worker finishes the task between the beat's read and its write.
+    The beat must not put its older 'running' copy back over 'complete'."""
+    import threading
+    _settings(monkeypatch)
+    monkeypatch.setattr(tj, "HEARTBEAT_STATE_S", 0.05)
+    tj.write_state(TID, {"task_id": TID, "name": "hb", "status": "running", "created": time.time()})
+    real_read = tj.read_state
+    fired = []
+
+    def read_then_finish(task_id):
+        st = real_read(task_id)
+        if threading.current_thread().name.startswith("heartbeat") and not fired:
+            fired.append(1)
+            done = dict(st, status="complete")
+            t = threading.Thread(target=tj.write_state, args=(TID, done))
+            t.start()
+            t.join(0.3)          # the worker's write lands now, if nothing holds it back
+        return st
+
+    monkeypatch.setattr(tj, "read_state", read_then_finish)
+    hb = tj.Heartbeat(TID).start()
+    time.sleep(0.6)
+    hb.stop()
+    monkeypatch.setattr(tj, "read_state", real_read)
+    assert fired, "the beat never ran"
+    assert tj.read_state(TID)["status"] == "complete"
+
+
 def test_worker_pushes_its_task_and_pops_it(monkeypatch):
     """The emitters in the gate/spend/approval modules rely on the worker
     having made its task current; prove the push/pop pair around a run."""
