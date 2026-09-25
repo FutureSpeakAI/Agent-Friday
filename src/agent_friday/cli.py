@@ -1453,7 +1453,20 @@ examples:
 
     # Data rights (GDPR/CCPA). Everything is device-local, so these operate on
     # ~/.friday directly with no server round-trip.
-    sub.add_parser("export", help="Export ALL your Friday data to a portable zip (right of access)")
+    p_export = sub.add_parser(
+        "export",
+        help="Export your Friday data to a zip in Documents (right of access); "
+             "keys and credentials are left out unless --full")
+    p_export.add_argument("--out", metavar="PATH",
+                          help="Folder or file to write (default: Documents)")
+    p_export.add_argument("--full", action="store_true",
+                          help="Include keys and credentials, encrypted with a "
+                               "passphrase you type")
+    p_decrypt = sub.add_parser(
+        "decrypt-backup", help="Turn a `friday export --full` backup back into a zip")
+    p_decrypt.add_argument("file", help="The .fbak file")
+    p_decrypt.add_argument("--out", metavar="PATH",
+                           help="Folder or file to write (default: next to the backup)")
     p_erase = sub.add_parser("erase", help="Permanently delete ALL local Friday data (right to erasure)")
     p_erase.add_argument("--yes", action="store_true", help="Skip the typed confirmation prompt")
 
@@ -1473,41 +1486,245 @@ examples:
     return p
 
 
-def cmd_export():
-    """GDPR/CCPA right-of-access: bundle EVERYTHING Friday stores about the user
-    into a single portable zip. All of Friday's data already lives on-device under
-    ~/.friday; this just packages it so a non-technical user can exercise data
-    portability without hunting through hidden folders."""
+# ── Export and backup ────────────────────────────────────────────
+# What `friday export` leaves out, by reason. A data export holds the owner's
+# data, not the keys that decrypt their credentials: anyone holding the
+# keystore root key and the credential blobs can use every stored API key and
+# account token. Those go only into a full backup, which is itself encrypted
+# with a passphrase the owner types.
+_EXPORT_TRANSIENT_PARTS = {"audio-cache", "vibe-code-logs", "__pycache__"}
+# Downloaded model weights and caches: large, and fetched again on demand.
+_EXPORT_DOWNLOAD_TOPS = {"runtime", "local_voice", "models", "cache"}
+_EXPORT_SECRET_DIRS = (
+    ("security",),                 # keystore root key, DPAPI passphrase copy
+    ("providers", "keys"),         # provider API keys
+    ("google_accounts", "tokens"),
+    ("mcp_oauth",),
+    ("phone", "secrets"),
+)
+_EXPORT_SECRET_NAMES = {
+    "secret_key",                  # web session secret
+    ".governance-key", ".attestation-key-ed25519",
+    "ledger_signing.key",
+    "key.pem", "ca-key.pem",       # TLS and local-address private keys
+}
+_EXPORT_SECRET_SUFFIXES = (".key", ".dpapi", ".cred", ".oauth.enc",
+                           ".token.enc", "-key.pem")
+
+# Full backup container: magic, 16-byte Argon2id salt, then a vault_crypto
+# AES-256-GCM blob of the zip.
+_BACKUP_MAGIC = b"FRIDAYBACKUP\x01"
+_BACKUP_SALT_LEN = 16
+_BACKUP_MIN_PASSPHRASE = 12
+
+
+def _backup_profile():
+    from agent_friday.privacy import vault_crypto as vc
+    return vc.DEFAULT_PROFILE
+
+
+def _export_skip_reason(rel: Path, full: bool) -> str | None:
+    """Why a file under ~/.friday is left out of an export, or None."""
+    parts = rel.parts
+    if set(parts) & _EXPORT_TRANSIENT_PARTS:
+        return "transient"
+    if parts and parts[0] in _EXPORT_DOWNLOAD_TOPS:
+        return "download"
+    if full:
+        return None
+    for prefix in _EXPORT_SECRET_DIRS:
+        if parts[:len(prefix)] == prefix:
+            return "secret"
+    name = rel.name
+    if name in _EXPORT_SECRET_NAMES or name.endswith(_EXPORT_SECRET_SUFFIXES):
+        return "secret"
+    return None
+
+
+def _documents_dir() -> Path:
+    """The user's Documents folder (Windows known folder), else the home folder."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _GUID(ctypes.Structure):
+                _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                            ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+            # FOLDERID_Documents {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
+            fid = _GUID(0xFDD39AD0, 0x238F, 0x46AF,
+                        (ctypes.c_ubyte * 8)(0xAD, 0xB4, 0x6C, 0x85,
+                                             0x48, 0x03, 0x69, 0xC7))
+            buf = ctypes.c_wchar_p()
+            if ctypes.windll.shell32.SHGetKnownFolderPath(
+                    ctypes.byref(fid), 0, None, ctypes.byref(buf)) == 0:
+                try:
+                    return Path(buf.value)
+                finally:
+                    ctypes.windll.ole32.CoTaskMemFree(buf)
+        except Exception:
+            pass
+    docs = Path.home() / "Documents"
+    return docs if docs.is_dir() else Path.home()
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _export_destination(out: str | None, filename: str) -> Path | None:
+    """Where the archive goes: the owner's --out, else Documents.
+
+    Never inside ~/.friday (the archive would contain itself) or the
+    application folder (replaced on upgrade, and in a source checkout, a
+    git working tree). Returns None and says why when refused.
+    """
+    if out:
+        p = Path(os.path.expandvars(os.path.expanduser(out)))
+        if p.is_dir() or out.endswith(("/", "\\")) or not p.suffix:
+            p = p / filename
+    else:
+        p = _documents_dir() / filename
+    for forbidden, what in ((FRIDAY_DIR, "Friday's data folder"),
+                            (PROJ_ROOT, "the application folder")):
+        if _is_within(p, forbidden):
+            console.print(f"[red]Refusing to write the archive into {what} "
+                          f"({forbidden}). Choose another place with --out.[/red]")
+            return None
+    if any(part.lower().startswith("onedrive") for part in p.parts):
+        console.print("[yellow]Note: this folder is synced by OneDrive, so the "
+                      "archive will be uploaded to your OneDrive account.[/yellow]")
+    return p
+
+
+def _write_export_zip(dest, full: bool) -> dict:
+    """Zip ~/.friday into `dest` (a path or file object). Returns counts by reason."""
+    import zipfile
+    counts = {"files": 0, "transient": 0, "download": 0, "secret": 0, "error": 0}
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(FRIDAY_DIR.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(FRIDAY_DIR)
+            reason = _export_skip_reason(rel, full)
+            if reason:
+                counts[reason] += 1
+                continue
+            try:
+                zf.write(path, arcname=str(Path(".friday") / rel))
+                counts["files"] += 1
+            except Exception:
+                counts["error"] += 1
+    return counts
+
+
+def _ask_backup_passphrase() -> str:
+    for _ in range(3):
+        pw = Prompt.ask("  [cyan]Backup passphrase[/cyan]", password=True, default="")
+        if len(pw) < _BACKUP_MIN_PASSPHRASE:
+            console.print(f"  [red]Use at least {_BACKUP_MIN_PASSPHRASE} characters.[/red]")
+            continue
+        if Prompt.ask("  [cyan]Confirm passphrase[/cyan]", password=True, default="") != pw:
+            console.print("  [red]The two entries differ.[/red]")
+            continue
+        return pw
+    return ""
+
+
+def cmd_export(full: bool = False, out: str | None = None,
+               passphrase: str | None = None):
+    """Right of access: package the owner's Friday data into one archive.
+
+    The default archive is a zip of ~/.friday WITHOUT decryptable secret
+    material: no keystore root key, credential blobs, session secret or
+    signing keys, and no downloaded model files. `--full` also includes the
+    secrets and writes one file encrypted with a passphrase the owner types
+    (AES-256-GCM, Argon2id); `friday decrypt-backup` turns it back into a zip.
+    The archive goes to --out, or to Documents; never into the application
+    folder.
+    """
     console.print(Rule("[bold cyan]Agent Friday — Export My Data[/bold cyan]"))
     if not FRIDAY_DIR.exists():
         console.print("[yellow]No Friday data found (~/.friday does not exist). Nothing to export.[/yellow]")
         return
-    import zipfile
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    out = Path.cwd() / f"friday-data-export-{stamp}.zip"
-    count = 0
-    skipped = 0
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in FRIDAY_DIR.rglob("*"):
-            if not path.is_file():
-                continue
-            # Skip volatile/transient artifacts that are not user data.
-            rel = path.relative_to(FRIDAY_DIR)
-            parts = set(rel.parts)
-            if parts & {"audio-cache", "vibe-code-logs", "__pycache__"}:
-                skipped += 1
-                continue
-            try:
-                zf.write(path, arcname=str(Path(".friday") / rel))
-                count += 1
-            except Exception:
-                skipped += 1
-    size_mb = out.stat().st_size / (1024 * 1024)
-    console.print(f"[green]Exported {count} files[/green] ({size_mb:.1f} MB) → [bold]{out}[/bold]")
-    if skipped:
-        console.print(f"[dim]Skipped {skipped} transient/cache files (audio cache, logs).[/dim]")
-    console.print("[dim]Note: encrypted vault blobs are exported as-is; they need your "
-                  "vault passphrase to read. Everything else is plain files you own.[/dim]")
+    name = (f"friday-backup-{stamp}.fbak" if full
+            else f"friday-data-export-{stamp}.zip")
+    dest = _export_destination(out, name)
+    if dest is None:
+        return 1
+
+    if not full:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        counts = _write_export_zip(dest, full=False)
+    else:
+        if passphrase is None:
+            console.print("  A full backup includes the keys that decrypt your stored API\n"
+                          "  keys and account tokens, so it is encrypted with a passphrase.\n"
+                          "  [bold]Without the passphrase the backup cannot be opened.[/bold]\n")
+            passphrase = _ask_backup_passphrase()
+        if len(passphrase or "") < _BACKUP_MIN_PASSPHRASE:
+            console.print("[red]No full backup written: a passphrase of at least "
+                          f"{_BACKUP_MIN_PASSPHRASE} characters is required.[/red]")
+            return 1
+        import io
+        from agent_friday.privacy import vault_crypto as vc
+        buf = io.BytesIO()
+        counts = _write_export_zip(buf, full=True)
+        salt = os.urandom(_BACKUP_SALT_LEN)
+        key = vc.derive_key(passphrase, salt, _backup_profile())
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(_BACKUP_MAGIC + salt + vc.encrypt(buf.getvalue(), key))
+
+    size_mb = dest.stat().st_size / (1024 * 1024)
+    console.print(f"[green]Exported {counts['files']} files[/green] ({size_mb:.1f} MB) → [bold]{dest}[/bold]")
+    if counts["secret"]:
+        console.print(f"[dim]Left out {counts['secret']} key and credential files. "
+                      "Stored API keys and account sign-ins are not in this export; "
+                      "use `friday export --full` for a passphrase-protected backup "
+                      "that includes them.[/dim]")
+    if counts["download"] or counts["transient"]:
+        console.print(f"[dim]Left out {counts['download'] + counts['transient']} "
+                      "downloaded model and cache files.[/dim]")
+    console.print("[dim]Encrypted vault files are exported as they are; they need "
+                  "your vault passphrase to read.[/dim]")
+    return 0
+
+
+def cmd_decrypt_backup(src: str, out: str | None = None,
+                       passphrase: str | None = None):
+    """Turn a `friday export --full` backup back into a zip of .friday."""
+    from agent_friday.privacy import vault_crypto as vc
+    p = Path(os.path.expanduser(src))
+    try:
+        raw = p.read_bytes()
+    except OSError as e:
+        console.print(f"[red]Cannot read {p}: {e}[/red]")
+        return 1
+    if not raw.startswith(_BACKUP_MAGIC):
+        console.print(f"[red]{p} is not a Friday full backup.[/red]")
+        return 1
+    salt = raw[len(_BACKUP_MAGIC):len(_BACKUP_MAGIC) + _BACKUP_SALT_LEN]
+    blob = raw[len(_BACKUP_MAGIC) + _BACKUP_SALT_LEN:]
+    if passphrase is None:
+        passphrase = Prompt.ask("  [cyan]Backup passphrase[/cyan]", password=True, default="")
+    try:
+        data = vc.decrypt(blob, vc.derive_key(passphrase, salt, _backup_profile()))
+    except Exception:
+        console.print("[red]Wrong passphrase, or the file is damaged.[/red]")
+        return 1
+    dest = _export_destination(out or str(p.parent), p.with_suffix(".zip").name)
+    if dest is None:
+        return 1
+    dest.write_bytes(data)
+    console.print(f"[green]Decrypted[/green] → [bold]{dest}[/bold]  [dim]It holds your "
+                  "keys in readable form; delete it once restored.[/dim]")
+    return 0
 
 
 def cmd_erase(assume_yes: bool = False):
@@ -1780,7 +1997,10 @@ def main():
     elif cmd == "vault-setup":
         rv = cmd_vault_setup()
     elif cmd == "export":
-        rv = cmd_export()
+        rv = cmd_export(full=getattr(args, "full", False),
+                        out=getattr(args, "out", None))
+    elif cmd == "decrypt-backup":
+        rv = cmd_decrypt_backup(args.file, out=getattr(args, "out", None))
     elif cmd == "erase":
         rv = cmd_erase(assume_yes=getattr(args, "yes", False))
     elif cmd == "tls-init":

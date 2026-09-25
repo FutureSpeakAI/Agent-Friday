@@ -40,17 +40,60 @@ credentials. Keep it on encrypted storage.
 1. Quit Friday: tray icon → Quit, or close the Friday console window.
 2. Copy `%USERPROFILE%\.friday` to your backup drive.
 
-Or use the built-in export, which zips the folder (leaving out the audio cache):
+Or use the built-in export. It has two forms.
+
+**Data export** (the default) zips your data and leaves out every key and
+credential file: the keystore root key (`security\`), stored API keys,
+account sign-in tokens, the web session secret, signing keys and private TLS
+keys. It also leaves out downloaded model files and caches.
 
 ```
 "%LOCALAPPDATA%\AgentFriday\Agent Friday.cmd" export
 ```
 
-The zip, `friday-data-export-<date>.zip`, is written to
-`%LOCALAPPDATA%\AgentFriday\app`. Move it somewhere safe. It includes model
-files, so it can be large. Vault files stay encrypted inside it.
+The zip, `friday-data-export-<date>.zip`, is written to your Documents folder,
+or wherever you name with `--out <folder>`. Friday refuses to write it into
+its own data folder or the program folder. If Documents is synced by
+OneDrive, Friday says so, because the zip will then be uploaded. Vault files
+stay encrypted inside the zip.
+
+A data export is enough to keep your wiki, conversations, settings and vault,
+but **it cannot restore your stored API keys or account sign-ins**. After
+restoring one, enter your keys again in Settings → Accounts & Keys and
+reconnect your accounts.
+
+**Full backup** also includes the keys and credentials, inside one file
+encrypted with a passphrase you type (at least 12 characters; AES-256-GCM
+with an Argon2id key):
+
+```
+"%LOCALAPPDATA%\AgentFriday\Agent Friday.cmd" export --full
+```
+
+It writes `friday-backup-<date>.fbak`. **Without that passphrase the backup
+cannot be opened by anyone**, including you. It is separate from your vault
+passphrase; you need both to read vault files from the backup.
 
 ## Restoring
+
+A folder copy or a data export zip is restored by putting its `.friday`
+folder back as `%USERPROFILE%\.friday`. A full backup is first turned back
+into a zip:
+
+```
+"%LOCALAPPDATA%\AgentFriday\Agent Friday.cmd" decrypt-backup <file>.fbak
+```
+
+That writes `<file>.zip` next to the backup (or to `--out <folder>`). The zip
+holds your keys in readable form: restore from it, then delete it.
+
+What each kind of backup brings back:
+
+| Backup | Data, settings, vault | Stored API keys and account sign-ins |
+|---|---|---|
+| Folder copy | Yes | Yes |
+| Full backup (`export --full`) | Yes | Yes |
+| Data export (`export`) | Yes | No: enter keys again and reconnect accounts |
 
 ### On the same PC and Windows account
 
@@ -69,9 +112,9 @@ The passphrase copies in Credential Manager still work.
 
 4. Start Friday.
 
-Stored API keys and account tokens come across with the keystore. If a
-connected account asks you to sign in again, do so in Settings → Accounts &
-Keys.
+From a folder copy or a full backup, stored API keys and account tokens come
+across with the keystore. From a data export they do not. If a connected
+account asks you to sign in again, do so in Settings → Accounts & Keys.
 
 **After a move, outward actions may be held.** Friday's governance signing key
 is kept in Windows Credential Manager, so a new PC or account gets a new key,
