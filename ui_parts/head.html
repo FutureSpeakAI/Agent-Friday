@@ -190,7 +190,10 @@ window.addEventListener('DOMContentLoaded',function(){
            not fit is clipped at the side rather than sticking out over the
            scene. Only at the side: the scene selector and the model quick
            switch drop their menus down out of the left-hand group, and
-           clipping vertically hides them completely. */
+           clipping vertically hides them completely. Those two menus are
+           not clipped at the side either: their wrappers are deliberately
+           not positioned, so each menu's containing block is the bar
+           itself, outside the half that clips. */
         .top-bar > * { min-width: 0; overflow-x: clip; overflow-y: visible; }
 
         /* Kill Switch — floating always-visible emergency stop */

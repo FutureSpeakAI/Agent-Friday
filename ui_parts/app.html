@@ -19128,7 +19128,11 @@ function App(){
         </div>
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {/* Scene selector dropdown */}
-        <div ref={sceneMenuRef} style={{position:'relative'}}>
+        {/* Not positioned, on purpose: the menu's containing block is then the
+            top bar itself, not this half of it, whose sides clip on a narrow
+            window. With no top or left the menu sits where it would flow,
+            right under the button. */}
+        <div ref={sceneMenuRef}>
           <button onClick={()=>{setSceneMenuOpen(o=>!o);setModelMenuOpen(false)}}
             style={{background:'rgba(0,0,0,0.35)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}
             onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(0,212,255,0.45)'}}
@@ -19138,7 +19142,7 @@ function App(){
             {structureName}
             <span style={{fontSize:10,opacity:0.85}} aria-hidden="true">▾</span>
           </button>
-          {sceneMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:260,background:'rgba(10,14,26,0.88)',backdropFilter:'blur(20px) saturate(1.3)',WebkitBackdropFilter:'blur(20px) saturate(1.3)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'6px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.5),0 0 40px rgba(0,212,255,0.06)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
+          {sceneMenuOpen&&<div style={{position:'absolute',marginTop:6,width:260,background:'rgba(10,14,26,0.88)',backdropFilter:'blur(20px) saturate(1.3)',WebkitBackdropFilter:'blur(20px) saturate(1.3)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'6px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.5),0 0 40px rgba(0,212,255,0.06)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
             <div style={{padding:'4px 12px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.7)',letterSpacing:'0.08em',textTransform:'uppercase'}}>Holographic Scene</div>
             {(structures.length>0?structures:WIZARD_STRUCTURES).map((s,i)=>(
               <button key={i} onClick={()=>{window.fridayVibe?.setStructure(i);fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:i})}).catch(()=>{});setSceneMenuOpen(false)}}

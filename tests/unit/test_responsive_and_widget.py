@@ -209,24 +209,30 @@ MENU_PROBE = """label => {
   if (!btn) return {found: false};
   const menu = Array.from(btn.parentElement.children).find(c => c !== btn);
   if (!menu) return {found: true, opened: false};
+  // A menu that hangs from a zero-height row is measured by what hangs from it.
+  const m = menu.getBoundingClientRect().height > 0 ? menu : (menu.firstElementChild || menu);
   const bar = document.querySelector('.top-bar').getBoundingClientRect();
-  const r = menu.getBoundingClientRect();
-  const x = r.left + r.width / 2, y = Math.max(r.top, bar.bottom) + 12;
-  const hit = document.elementFromPoint(x, y);
+  const r = m.getBoundingClientRect(), b = btn.getBoundingClientRect();
+  const y = Math.max(r.top, bar.bottom) + 12;
+  const seen = x => { const hit = document.elementFromPoint(x, y); return !!hit && menu.contains(hit); };
   return {found: true, opened: true, box: [Math.round(r.left), Math.round(r.top),
           Math.round(r.width), Math.round(r.height)], barBottom: Math.round(bar.bottom),
-          dropsDown: r.top >= bar.bottom - 12, visible: !!hit && menu.contains(hit)};
+          dropsDown: r.top >= bar.bottom - 12, visible: seen(r.left + r.width / 2),
+          whole: seen(r.left + 6) && seen(r.right - 6), gap: Math.round(r.top - b.bottom),
+          fromLeft: Math.round(r.left - b.left), fromRight: Math.round(r.right - b.right)};
 }"""
 
 
 @pytest.mark.parametrize("label", ["Scene selection", "Model quick switch"])
-@pytest.mark.parametrize("w,h", [(1600, 900), (1024, 768)], ids=lambda v: str(v))
+@pytest.mark.parametrize("w,h", [(1600, 900), (1024, 768), (800, 700)], ids=lambda v: str(v))
 def test_the_top_bar_menus_open_where_they_can_be_seen(desktop, w, h, label):
-    """A menu that drops out of the top bar is seen, not merely mounted.
+    """A menu that drops out of the top bar is seen, whole, where it always was.
 
     The bar's halves clip what does not fit on a narrow window. Clipping them
     vertically as well hid the scene selector's menu and the model quick
     switch's menu completely: the click opened each one and nothing appeared.
+    Clipping at the side still cut the right-hand end off both menus once the
+    window was narrow enough for the halves to shrink.
     """
     desktop.evaluate("() => { const c = window.fridayCondensed; if (c && c.exit) c.exit(); }")
     desktop.set_viewport_size({"width": w, "height": h})
@@ -241,6 +247,13 @@ def test_the_top_bar_menus_open_where_they_can_be_seen(desktop, w, h, label):
     assert r.get("opened"), "%r did not open its menu at %dpx" % (label, w)
     assert r["dropsDown"], "%r's menu opens above the bar at %dpx: %r" % (label, w, r)
     assert r["visible"], "%r's menu opened but cannot be seen at %dpx: %r" % (label, w, r)
+    assert r["whole"], "%r's menu is cut off at the side at %dpx: %r" % (label, w, r)
+    # Where each menu has always been: 6px under its button, the scene
+    # selector's flush with the button's left edge, the quick switch's with
+    # the pill's right edge.
+    assert abs(r["gap"] - 6) <= 1, "%r's menu moved at %dpx: %r" % (label, w, r)
+    edge = "fromLeft" if label == "Scene selection" else "fromRight"
+    assert abs(r[edge]) <= 1, "%r's menu moved at %dpx: %r" % (label, w, r)
 
 def test_condensed_mode_is_the_avatar_and_nothing_else(desktop):
     desktop.set_viewport_size({"width": 340, "height": 400})

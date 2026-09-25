@@ -253,7 +253,10 @@ window.addEventListener('DOMContentLoaded',function(){
            and whatever still does not fit is clipped at the side rather than
            sticking out over the scene. Only at the side: the scene selector
            and the model quick switch drop their menus down out of the
-           left-hand group, and clipping vertically hides them completely. */
+           left-hand group, and clipping vertically hides them completely.
+           Those two menus are not clipped at the side either: their
+           wrappers are deliberately not positioned, so each menu's
+           containing block is the bar itself, outside the half that clips. */
         .top-bar > * { min-width: 0; overflow-x: clip; overflow-y: visible; }
 
         /* Kill Switch — floating always-visible emergency stop */
@@ -41684,7 +41687,11 @@ function QuickSwitch({ current, onPick, switching }) {
   const isLocal = servingModel ? servingModel.local : (serving ? /:|^hf\./i.test(serving.model) : false);
   const resident = servingModel && servingModel.state === 'resident';
 
-  return E('div', { ref: ref, style: { position: 'relative' } },
+  // The wrapper is not positioned, on purpose: the menu's containing block
+  // is then the top bar itself, not the half of it this pill sits in, whose
+  // sides clip on a narrow window. The menu hangs from a zero-height row
+  // under the pill that puts its right edge on the pill's right edge.
+  return E('div', { ref: ref },
     E('button', {
       onClick: () => setOpen(o => !o),
       title: stalled && !d
@@ -41717,16 +41724,17 @@ function QuickSwitch({ current, onPick, switching }) {
         },
       }, '→ ' + prettyModel(switching.id) + (switching.wake_s ? ' ~' + switching.wake_s + 's' : '')),
       E('span', { style: { fontSize: 10, opacity: 0.85 }, 'aria-hidden': 'true' }, '▾')),
-    open && E('div', { style: { position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 2200 } },
-      E(ModelPicker, {
-        intel: d, err: err, onRetry: reload,
-        need: { role: 'orchestrator', modality: 'tools' }, current: current,
-        onPick: onPick, onClose: () => setOpen(false),
-        note: serving
-          ? 'Answering you now: ' + prettyModel(serving.model) + ' · ' + (fmtAgo(serving.at) || 'recently') +
-            '. Pick another and the pill changes once it has actually served a turn.'
-          : 'Nothing has served a turn yet.',
-      })));
+    open && E('div', { style: { display: 'flex', justifyContent: 'flex-end', height: 0 } },
+      E('div', { style: { position: 'absolute', marginTop: 6, zIndex: 2200 } },
+        E(ModelPicker, {
+          intel: d, err: err, onRetry: reload,
+          need: { role: 'orchestrator', modality: 'tools' }, current: current,
+          onPick: onPick, onClose: () => setOpen(false),
+          note: serving
+            ? 'Answering you now: ' + prettyModel(serving.model) + ' · ' + (fmtAgo(serving.at) || 'recently') +
+              '. Pick another and the pill changes once it has actually served a turn.'
+            : 'Nothing has served a turn yet.',
+        }))));
 }
 
 /** The model for ONE conversation.
@@ -53021,11 +53029,13 @@ function App() {
       fontSize: 13,
       userSelect: 'none'
     }
-  }, "|"), /*#__PURE__*/React.createElement("div", {
-    ref: sceneMenuRef,
-    style: {
-      position: 'relative'
-    }
+  }, "|"),
+  // Not positioned, on purpose: the menu's containing block is then the
+  // top bar itself, not this half of it, whose sides clip on a narrow
+  // window. With no top or left the menu sits where it would flow, right
+  // under the button.
+  /*#__PURE__*/React.createElement("div", {
+    ref: sceneMenuRef
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setSceneMenuOpen(o => !o);
@@ -53063,8 +53073,7 @@ function App() {
   }, "\u25BE")), sceneMenuOpen && /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'absolute',
-      top: 'calc(100% + 6px)',
-      left: 0,
+      marginTop: 6,
       width: 260,
       background: 'rgba(10,14,26,0.88)',
       backdropFilter: 'blur(20px) saturate(1.3)',
