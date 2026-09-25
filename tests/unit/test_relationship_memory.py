@@ -86,7 +86,7 @@ def test_the_timeline_holds_headers_and_never_bodies(rel):
     _seed_mail(rel)
     out = rel.sync(NOW)
     assert out["added"] == 4 and not out["errors"]
-    raw = (rel.home / "relationships" / "timeline.json").read_text(encoding="utf-8")
+    raw = json.dumps(rel._read("timeline.json", {}))
     assert "SECRET" not in raw, "a body, snippet or event description was stored"
     tl = json.loads(raw)
     keys = set().union(*(e.keys() for e in tl["interactions"]))
@@ -107,7 +107,7 @@ def test_sync_is_incremental_per_account(rel):
     rel.sync(NOW + timedelta(hours=1))
     assert rel.state["queries"][1].startswith("after:%d" % high), rel.state["queries"][1]
     # Re-seeing the same messages adds nothing.
-    tl = json.loads((rel.home / "relationships" / "timeline.json").read_text(encoding="utf-8"))
+    tl = json.loads(json.dumps(rel._read("timeline.json", {})))
     assert len(tl["interactions"]) == 4
     # The calendar resumes from where it stopped, with a day of overlap.
     start2, _ = rel.state["cal_windows"][1]
@@ -344,7 +344,7 @@ def test_forget_erases_the_timeline_and_follow_ups(rel):
     assert receipt["removed"]["timeline_removed"] == 2
     assert receipt["removed"]["timeline_edited"] == 2
     assert receipt["removed"]["follow_ups_removed"] == 1
-    raw = (rel.home / "relationships" / "timeline.json").read_text(encoding="utf-8")
+    raw = json.dumps(rel._read("timeline.json", {}))
     assert "dana@acme.example.com" not in raw and "Dana" not in raw
     # Shared entries keep the other people.
     assert rel.person_timeline("Sam Reyes")["count"] == 1
@@ -352,10 +352,10 @@ def test_forget_erases_the_timeline_and_follow_ups(rel):
     assert [f["person"] for f in rel.list_follow_ups()] == ["Sam Reyes"]
     # A later sync of the same mail does not bring her back.
     rel.sync(NOW + timedelta(hours=1))
-    tl = json.loads((rel.home / "relationships" / "timeline.json").read_text(encoding="utf-8"))
+    tl = json.loads(json.dumps(rel._read("timeline.json", {})))
     rel.state["gmail"] = [_msg("m9", "t9", "D <dana@acme.example.com>", OWNER, "new", 0.5)]
     rel.sync(NOW + timedelta(hours=2))
-    tl2 = json.loads((rel.home / "relationships" / "timeline.json").read_text(encoding="utf-8"))
+    tl2 = json.loads(json.dumps(rel._read("timeline.json", {})))
     assert "dana@acme.example.com" not in json.dumps(tl) + json.dumps(tl2)
     assert rel.set_follow_up("Dana Okafor")["ok"] is False
 
@@ -435,3 +435,24 @@ def test_each_tool_has_its_class():
         assert name in agent.CLAUDE_TOOL_HANDLERS
     assert g.classify("save_google_contact", {})[0] == g.OUTWARD
     assert "save_google_contact" not in g.SELF_GATED
+
+
+def test_timeline_and_follow_ups_are_encrypted_at_rest(rel):
+    from agent_friday.services import relationship_memory as rm
+    rm._save_timeline({"people": {"sam@example.com": [{"subject": "Offer letter draft"}]}})
+    rm._save_follow_ups([{"person": "sam@example.com", "about": "Offer letter draft"}])
+    d = rm._dir()
+    assert not (d / "timeline.json").exists() and not (d / "follow_ups.json").exists()
+    for name in ("timeline.json.enc", "follow_ups.json.enc"):
+        assert b"Offer letter" not in (d / name).read_bytes()
+    assert rm._load_follow_ups()[0]["about"] == "Offer letter draft"
+
+
+def test_a_plain_copy_from_an_earlier_version_is_migrated(rel):
+    import json
+    from agent_friday.services import relationship_memory as rm
+    d = rm._dir()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "follow_ups.json").write_text(json.dumps({"follow_ups": [{"about": "x"}]}), encoding="utf-8")
+    assert rm._load_follow_ups() == [{"about": "x"}]
+    assert not (d / "follow_ups.json").exists() and (d / "follow_ups.json.enc").exists()
