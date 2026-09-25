@@ -80,18 +80,38 @@ def knowledge_context_block(message: str, max_items: int = 3) -> list[str]:
 
 # ── live fact ingestion ───────────────────────────────────────
 
+#: Provenance kinds a fact may carry. "research" is a finding from the public
+#: web that the user reviewed and accepted in the setup chat; it records the
+#: URLs it came from, so the graph can always say where it learned something.
+SOURCE_KINDS = ("cognitive", "conversation", "wiki", "research")
+
+
 def ingest_fact(text: str, *, source_kind: str, source_key: str,
                 category: str = "fact",
-                sensitivity: Optional[int] = None) -> Optional[str]:
+                sensitivity: Optional[int] = None,
+                sources: Optional[list] = None) -> Optional[str]:
     """Write a discovered fact into the graph as a node, LLM-free.
 
     Returns the new entity id (or the existing one when the same fact was
     already ingested — idempotent by content hash). Emits a node_ignited
     event so the 3D view lights up live.
+
+    `sources` is required for source_kind="research": a list of
+    {"url", "fetched_at"} naming the public pages the fact came from. A
+    research fact with no source is refused rather than stored unattributed.
     """
     text = (text or "").strip()
     if len(text) < 12 or not kg_settings().get("enabled", True):
         return None
+    research_sources = []
+    if source_kind == "research":
+        for s in sources or []:
+            url = str((s or {}).get("url") or "").strip()
+            if url.startswith(("http://", "https://")):
+                research_sources.append({"url": url[:500],
+                                         "fetched_at": (s or {}).get("fetched_at")})
+        if not research_sources:
+            return None
     if sensitivity is None:
         try:
             from agent_friday.services.sensitivity_classifier import classify, Tier
@@ -109,6 +129,7 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
     title = " ".join(text.split()[:8])
     prov_key = ("cognitive_keys" if source_kind == "cognitive"
                 else "conversations" if source_kind == "conversation"
+                else "research" if source_kind == "research"
                 else "wiki_pages")
     node = {
         "id": eid, "title": title, "type": category,
@@ -117,6 +138,8 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
         "provenance": {prov_key: [source_key], "sensitivity": sensitivity,
                        "learned": source_kind},
     }
+    if research_sources:
+        node["provenance"]["sources"] = research_sources
 
     # LLM-free weaving: link the fact to pages whose title appears in it.
     rels = []
