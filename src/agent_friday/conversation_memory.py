@@ -204,6 +204,9 @@ class ConversationMemory:
         """
         from chromadb.utils import embedding_functions
         try:
+            from agent_friday.services import embedder_cache
+            if self.model_name == embedder_cache.MODEL:
+                embedder_cache.ensure_available("conversation memory")
             return embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name=self.model_name
             )

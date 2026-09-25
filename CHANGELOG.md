@@ -162,6 +162,9 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   routing table instead of connecting to Google's and Cloudflare's DNS
   servers every 30 seconds. `network_probe: "internet"` restores the old
   probe; `"off"` disables it.
+- **Startup never downloads the embedding model.** It is loaded at boot only
+  when already cached; a missing model is downloaded by the first feature
+  that needs it, with a notification before and after.
 - **`friday setup` writes provider keys only to the encrypted store.** It no
   longer copies them in plain text to `config.yaml`, `settings.json` and
   `start.bat`, and its next run moves copies left by earlier versions into

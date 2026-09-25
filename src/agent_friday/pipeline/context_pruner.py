@@ -149,6 +149,9 @@ class ContextPruner:
         """Load the sentence-transformer model on first use (not at import)."""
         if self._model is None:
             from sentence_transformers import SentenceTransformer
+            from agent_friday.services import embedder_cache
+            if self.model_name == embedder_cache.MODEL:
+                embedder_cache.ensure_available("context trimming")
             self._model = SentenceTransformer(self.model_name)
         return self._model
 

@@ -130,6 +130,9 @@ def _ensure_index(tools) -> bool:
             return False
         try:
             t0 = time.time()
+            if not _STATE.get("model"):
+                from agent_friday.services import embedder_cache
+                embedder_cache.ensure_available("tool selection")
             model = _STATE.get("model") or SentenceTransformer("all-MiniLM-L6-v2")
             texts = _corpus(tools)
             emb = model.encode(texts, normalize_embeddings=True,
@@ -228,6 +231,9 @@ def rank_texts(texts, query: str):
         return None
     try:
         with _LOCK:
+            if not _STATE.get("model"):
+                from agent_friday.services import embedder_cache
+                embedder_cache.ensure_available("context ranking")
             model = _STATE.get("model") or SentenceTransformer("all-MiniLM-L6-v2")
             _STATE["model"] = model
         # Only the head of each block is embedded. A 40 KB wiki dump has its

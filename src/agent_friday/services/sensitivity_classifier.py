@@ -247,6 +247,9 @@ def _load_embedder():
             return _EMBEDDER
         try:
             from sentence_transformers import SentenceTransformer
+            # A missing model is fetched with a visible notice, never silently.
+            from agent_friday.services import embedder_cache
+            embedder_cache.ensure_available("the privacy classifier")
             model = SentenceTransformer('all-MiniLM-L6-v2')
             _EMBEDDER = model
             _EXEMPLAR_EMBEDS = model.encode(
