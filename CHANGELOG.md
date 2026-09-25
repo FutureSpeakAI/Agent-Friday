@@ -171,6 +171,11 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   `friday export --full` includes the keys inside a passphrase-encrypted
   file; `friday decrypt-backup` opens it. See
   [backup and restore](docs/user-guide/backup-and-restore.md).
+- **One signed receipt file.** The privilege-ring check writes its entries
+  through the approval checkpoint into `.friday\decision-bom.jsonl`. It no
+  longer keeps its own file, and it never writes an unsigned entry: when a
+  receipt cannot be signed and written, a network or OS-control call is held.
+  `.friday\vault\decision-bom.jsonl` from earlier versions is left as history.
 
 ### Fixed
 

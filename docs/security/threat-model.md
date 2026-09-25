@@ -145,8 +145,9 @@ A narrower check does run before every outward action: the per-action
 checkpoint (`governance/action_gate.authorize`, see §4) computes the HMAC of the
 cLaws text under the governance key and compares it with the pin in
 `~/.friday/governance/claws.pin.json`. If they differ, outward actions are held
-and reads continue. Its decisions are receipted in `~/.friday/decision-bom.jsonl`;
-the ring check writes its own signed entries to `~/.friday/vault/decision-bom.jsonl`.
+and reads continue. Its decisions, and the ring check's, are receipted in the
+one signed file `~/.friday/decision-bom.jsonl`; if an entry cannot be signed
+and written, a ring-2+ call is held rather than logged unsigned.
 
 **Keyring fallback:** On systems without a supported keyring backend (e.g. a
 headless Linux server without Secret Service), `get_governance_key()` falls back

@@ -406,9 +406,9 @@ encrypted at rest on this disk.
 | `security/vault-passphrase.dpapi` | A backup copy of the vault passphrase | Windows DPAPI (this Windows account only) |
 | `providers/keys/`, `google_accounts/tokens/`, `mcp_oauth/`, `platforms/` | Provider keys and connected-account tokens | Encrypted |
 | `phone/` | Phone settings, encrypted Twilio secrets, message log | Secrets encrypted; the rest plain text |
-| `decision-bom.jsonl` | Signed receipts of approval decisions | Plain text, HMAC-signed |
+| `decision-bom.jsonl` | Signed receipts of approval and privilege-ring decisions | Plain text, HMAC-signed |
 | `governance/` | Grants and the pinned constraint hash | Plain text |
-| `vault/decision-bom.jsonl`, `vault/access-log.jsonl`, `vault/egress-log.jsonl`, `vault/context-log/` | Governance and privacy logs | Plain text |
+| `vault/decision-bom.jsonl` (history from earlier versions), `vault/access-log.jsonl`, `vault/egress-log.jsonl`, `vault/context-log/` | Governance and privacy logs | Plain text |
 | `vault/.governance-key` | Governance signing key (fallback copy) | Owner-only file |
 | `traces/ledger.jsonl` | Reasoning traces | Each record encrypted; hash-chained and signed |
 | `tasks/` | Background-task journal | Encrypted by default |

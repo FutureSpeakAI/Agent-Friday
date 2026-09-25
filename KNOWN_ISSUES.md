@@ -37,10 +37,7 @@ you hit something that is not here, please open an issue.
   is no switch in Workflows to allow a job the cloud; edit `schedules.json`.
   See [Scheduled jobs](docs/user-guide/scheduled-jobs.md).
 - **No receipt viewer.** Signed receipts are written to
-  `.friday\decision-bom.jsonl` but there is no screen for them. There are also
-  two receipt files: the privilege-ring check writes its own entries to
-  `.friday\vault\decision-bom.jsonl`, and if signing fails there it writes the
-  entry unsigned rather than holding the call.
+  `.friday\decision-bom.jsonl` but there is no screen for them.
 - **The uninstaller does not undo the local address.** Remove the hosts-file
   entry and the trusted certificate from Settings → General before
   uninstalling.

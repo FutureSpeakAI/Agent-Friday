@@ -1490,7 +1490,12 @@ def _rehydrate_pii(text, lookup):
 CONTEXT_LOG_DIR = FRIDAY_DIR / "vault" / "context-log"
 
 # ── Governance Decision BOM ───────────────────────────────────
-DECISION_BOM_FILE = FRIDAY_DIR / "vault" / "decision-bom.jsonl"
+# The one signed receipt file. governance/action_gate._receipt writes every
+# entry, including the privilege-ring check's.
+DECISION_BOM_FILE = FRIDAY_DIR / "decision-bom.jsonl"
+# Where the ring check used to write its own entries. Nothing writes it now;
+# an existing file is left in place as history.
+LEGACY_DECISION_BOM_FILE = FRIDAY_DIR / "vault" / "decision-bom.jsonl"
 
 
 def _context_logging_enabled():
