@@ -16,7 +16,7 @@ class _Mem:
         return True
 
     def get_session(self, date_str):
-        return [{"role": "user", "text": "my local-only notes about the custody hearing"},
+        return [{"role": "user", "text": "my local-only notes about the dentist appointment"},
                 {"role": "friday", "text": "noted"}]
 
 

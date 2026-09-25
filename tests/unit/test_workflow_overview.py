@@ -168,7 +168,7 @@ def test_topics_are_not_mistaken_for_actions(text):
     ("Share it on LinkedIn", "post or publish online"),
     ("Text her the address", "send text messages"),
     ("Add the hearing to my calendar", "change your calendar or invite people"),
-    ("Book a flight to Austin", "spend money"),
+    ("Book a flight to Denver", "spend money"),
     ("Delete last month's drafts", "delete or move files"),
 ])
 def test_acts_are_named(text, label):
