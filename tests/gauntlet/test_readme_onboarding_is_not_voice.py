@@ -2,10 +2,9 @@
 voice and walks you through setup." Onboarding is actually silent, text-
 and-click-through, on both surfaces:
 
-  - The browser wizard, SetupWizard (index.html / ui_parts/app.html) --
-    its 6 steps are pure React DOM; WIZARD_VOICES is a list of TTS
-    persona CHOICES the user picks for later, not a greeting played now.
-    completeWizard() only POSTs config and flips a flag -- no audio call
+  - The browser setup chat, SetupChat (index.html / ui_parts/app.html) --
+    pure React DOM driven by services/setup_chat.py, which says scripted
+    text lines; its completion only POSTs and flips a flag -- no audio call
     anywhere in the component or its completion path.
   - The CLI wizard, setup_wizard.py -- drives the same steps via rich's
     console.print/Prompt.ask only; no audio playback anywhere in the file.
@@ -41,8 +40,8 @@ class TestReadmeOnboardingIsNotVoice:
         text = _README.read_text(encoding="utf-8")
         assert _OLD_CLAIM not in text, (
             "README.md still claims Friday greets the user by voice on "
-            "first run -- both the browser SetupWizard and the CLI "
-            "setup_wizard.py are silent, text-and-click wizards with no "
+            "first run -- both the browser setup chat and the CLI "
+            "setup_wizard.py are silent, text-and-click flows with no "
             "audio playback anywhere in either onboarding path"
         )
         assert not re.search(r"greets you by voice", text, re.IGNORECASE), (

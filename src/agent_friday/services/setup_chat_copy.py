@@ -83,9 +83,12 @@ CONNECT_DONE = "Done for now"
 #: The guard's reply when something key-shaped is typed into the chat box.
 #: The value itself is never repeated.
 KEY_IN_CHAT = (
-    "That looks like a {label}. I didn't send it anywhere, and it isn't in "
+    "That looks like a key ({label}). I didn't send it anywhere, and it isn't in "
     "this conversation. Keys belong in the secure field on the matching "
     "card, which stores them encrypted on this computer.")
+
+#: When text is typed at a step that is answered with the options or a card.
+USE_OPTIONS = "Tap one of the options, or use the card beside this conversation."
 
 
 # ── Who reads your answers ───────────────────────────────────────────────────

@@ -648,8 +648,8 @@ class TestSettingsPanel:
     def test_settings_opens_panel(self, loaded_page: Page):
         """Open settings and verify the panel body renders.
 
-        API key fields live only in the first-run SetupWizard — the always-on
-        Settings panel exposes Agent Identity / model pickers / etc. instead.
+        API key fields live on the setup chat's checklist and in Settings >
+        Accounts & Keys; this checks the panel's identity and model pickers.
         """
         # The top-bar gear opens QUICK SETTINGS; the full panel (IDENTITY →
         # Agent Name, Orchestrator tab, …) is one click deeper.

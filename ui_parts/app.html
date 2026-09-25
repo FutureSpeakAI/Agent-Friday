@@ -12009,18 +12009,13 @@ function TaskCard({task,expanded,onToggle,onCancel,onView,onChanged}){
     {expanded&&<TaskControls task={task}/>}
   </div>);
 }
-// ═══ SETUP WIZARD (first-run onboarding, Hermes-inspired) ═══
+// ═══ FIRST-RUN SETUP (the setup chat and the tables it shares) ═══
 const WIZARD_VOICES=[
   {id:'Aoede',label:'Aoede',desc:'Warm, confident female'},
   {id:'Puck',label:'Puck',desc:'Energetic male'},
   {id:'Charon',label:'Charon',desc:'Deep, authoritative male'},
   {id:'Kore',label:'Kore',desc:'Clear, neutral female'},
   {id:'Leda',label:'Leda',desc:'Soft, thoughtful female'},
-];
-const WIZARD_STYLES=[
-  {id:'professional',label:'Professional',desc:'Precise and direct'},
-  {id:'casual',label:'Casual',desc:'Relaxed and conversational'},
-  {id:'concise',label:'Concise',desc:'Ultra-brief, signal only'},
 ];
 const WIZARD_STRUCTURES=[
   {idx:0,id:'CUBES',name:'Genesis Lattice',desc:'Crystalline birth'},
@@ -12037,15 +12032,7 @@ const WIZARD_STRUCTURES=[
   {idx:11,id:'NONE',name:'Transcendence',desc:'Pure consciousness'},
   {idx:12,id:'EDEN',name:'Giga Earth (Rez)',desc:'Tribute to Rez'},
 ];
-const WIZARD_STEPS=[
-  {id:'welcome',title:'Welcome to Agent Friday',subtitle:"I'm Agent Friday. Let's get you set up."},
-  {id:'profile',title:'Choose Your Profile',subtitle:'A starting point tuned to how you work'},
-  {id:'providers',title:'Connect AI Providers',subtitle:'Bring your own key — one is enough to go live'},
-  {id:'services',title:'Connect Services',subtitle:'Optional — Google and one-click connectors'},
-  {id:'hardware',title:'Hardware Check',subtitle:'What this machine can run on-device'},
-  {id:'done',title:'Ready to Launch',subtitle:'Your agent is configured'},
-];
-// H5 — first-run bundled-model pull. Shown in the hardware step: if Ollama is
+// H5 — first-run bundled-model pull. Shown on the setup chat's basics card: if Ollama is
 // running but the floor model (model_plan.FLOOR_MODEL, served as
 // hw.floor_model by /api/health/full) isn't pulled yet, offer a one-click
 // download so "works with zero keys" is actually true on first run.
@@ -12078,7 +12065,7 @@ function WizardGemmaPull({hw}){
   if(!hw||!BUNDLED_MODEL)return null;
   if(!hw.ollama_available){
     return <div style={{padding:'10px 12px',borderRadius:8,border:'1px solid rgba(245,158,11,0.25)',background:'rgba(245,158,11,0.05)',marginBottom:14,fontSize:11,color:'rgba(255,210,140,0.9)',lineHeight:1.6}}>
-      Install <a href="https://ollama.com" target="_blank" rel="noreferrer" style={{color:'#00d4ff'}}>Ollama</a> to run Friday fully offline with no cloud key. Then reopen this wizard to pull the bundled model.
+      Install <a href="https://ollama.com" target="_blank" rel="noreferrer" style={{color:'#00d4ff'}}>Ollama</a> to run Friday fully offline with no cloud key. Then come back here, or to Settings &gt; Models, to pull the bundled model.
     </div>;
   }
   if(has||state==='done'){
@@ -12106,278 +12093,798 @@ function WizardGemmaPull({hw}){
     {state==='error'&&<div style={{fontSize:10,color:'#ff6b8a',marginTop:6,fontFamily:'JetBrains Mono'}}>✗ {detail}</div>}
   </div>;
 }
-function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
-  const s=WIZARD_STEPS[step];
-  const _mc=useModelCatalog();
-  const isLast=step===WIZARD_STEPS.length-1;
-  const pct=Math.round((step/(WIZARD_STEPS.length-1))*100);
-  // ── Live onboarding data: distros, provider health, capability unlocks, hardware.
-  const[distros,setDistros]=React.useState([]);
-  const[phealth,setPhealth]=React.useState({});     // provider name -> {status,detail}
-  const[caps,setCaps]=React.useState([]);
-  const[hw,setHw]=React.useState(null);
-  const[showKey,setShowKey]=React.useState({});     // provider name -> reveal bool
-  React.useEffect(()=>{
-    fetch('/api/distros').then(r=>r.json()).then(d=>setDistros(d.distros||[])).catch(()=>{});
-    fetch('/api/capabilities').then(r=>r.json()).then(d=>setCaps(d.capabilities||[])).catch(()=>{});
-  },[]);
-  const refreshHealth=React.useCallback(()=>{
-    fetch('/api/providers/health').then(r=>r.json()).then(d=>{const m={};(d.providers||[]).forEach(p=>{m[p.provider]=p});setPhealth(m)}).catch(()=>{});
-  },[]);
-  React.useEffect(()=>{if(step===2)refreshHealth();},[step,refreshHealth]);
-  React.useEffect(()=>{if(step===4&&!hw)fetch('/api/health/full').then(r=>r.json()).then(d=>setHw(d.hardware||{})).catch(()=>setHw({}));},[step,hw]);
-  // What each provider unlocks (from the capability router), grouped by provider.
-  const unlockBy=React.useMemo(()=>{const m={};(caps||[]).forEach(c=>{if(c.provider){(m[c.provider]=m[c.provider]||[]).push(c.label)}});return m;},[caps]);
-  const provList=(_mc.providers||[]);
-  const setProvKey=(name,val)=>{const next={...(data.providers||{})};next[name]={...(next[name]||{}),api_key:val};onChange({providers:next});};
-  const keyOf=(name)=>((data.providers||{})[name]||{}).api_key||'';
-  const enteredCount=Object.values(data.providers||{}).filter(p=>p&&(p.api_key||'').trim()).length;
-  // Min one provider to leave the providers step: a key entered OR an available provider.
-  const providersReady=enteredCount>0||provList.some(p=>p.available);
-  const gateOk=step!==2||providersReady;
+// ── First-run setup chat ────────────────────────────────────────────────────
+//
+// The first-run path is: the consent screens (vault first), then this
+// conversation, then the desktop. The server decides every step
+// (services/setup_chat.py) and says every line (services/setup_chat_copy.py);
+// these components draw it. The chat works with no model at all.
+//
+// KEYS NEVER GO THROUGH THE CHAT. Anything typed is checked against the key
+// shapes from /api/setup-chat/secret-shapes BEFORE it is sent; a match is not
+// sent anywhere, and the secure field on the matching checklist card is
+// offered instead. Secure fields post straight to the existing credential
+// endpoints, and their values are cleared from memory once posted.
+async function scJSON(url, method, body) {
+  const opts = { method: method || 'GET', headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  let r;
+  try { r = await fetch(url, opts); } catch (e) {
+    return { ok: false, status: 0, data: { message: 'Could not reach Friday. Try again.' } };
+  }
+  let d = {};
+  try { d = await r.json(); } catch (_) {}
+  return { ok: r.ok, status: r.status, data: d };
+}
 
-  return(
-    <div style={{position:'fixed',inset:0,zIndex:9999,background:'rgba(4,4,12,0.97)',backdropFilter:'blur(20px)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'Inter'}}>
-      {/* Ambient glow */}
-      <div style={{position:'absolute',top:'20%',left:'50%',transform:'translateX(-50%)',width:600,height:300,background:'radial-gradient(ellipse,rgba(124,58,237,0.12) 0%,transparent 70%)',pointerEvents:'none'}}/>
-      <div style={{position:'absolute',bottom:'25%',left:'50%',transform:'translateX(-50%)',width:400,height:200,background:'radial-gradient(ellipse,rgba(0,212,255,0.07) 0%,transparent 70%)',pointerEvents:'none'}}/>
+let __scShapes = null;
+function scLoadShapes() {
+  if (__scShapes) return Promise.resolve(__scShapes);
+  return fetch('/api/setup-chat/secret-shapes').then(r => r.json()).then(d => {
+    const mk = s => { try { return { ...s, rx: new RegExp(s.pattern) }; } catch (_) { return null; } };
+    __scShapes = {
+      list: (d.shapes || []).map(mk).filter(Boolean),
+      generic: d.generic ? mk(d.generic) : null,
+      message: d.message || ''
+    };
+    return __scShapes;
+  }).catch(() => ({ list: [], generic: null, message: '' }));
+}
 
-      <div style={{width:'min(520px,92vw)',position:'relative'}}>
-        {/* Progress bar */}
-        <div style={{height:2,background:'rgba(255,255,255,0.06)',borderRadius:2,marginBottom:40,overflow:'hidden'}}>
-          <div style={{height:'100%',width:pct+'%',background:'linear-gradient(90deg,#7c3aed,#00d4ff)',borderRadius:2,transition:'width .4s ease'}}/>
+// The first shape `text` matches, or null. Never returns the value.
+function scDetectSecret(text, shapes) {
+  if (!text || !shapes) return null;
+  for (const s of shapes.list) if (s.rx.test(text)) return s;
+  const t = String(text).trim();
+  if (shapes.generic && shapes.generic.rx.test(t) && /\d/.test(t) && /[A-Za-z]/.test(t)) return shapes.generic;
+  return null;
+}
+
+function scKeyNote(hit, shapes) {
+  const tpl = (shapes && shapes.message) || 'That looks like a key ({label}). It was not sent anywhere.';
+  return tpl.replace('{label}', hit.label);
+}
+
+const SC_STATUS = {
+  connected: 'Connected', needs_attention: 'Needs attention', not_connected: 'Not connected',
+  skipped: 'Skipped', external: 'Set up outside Friday'
+};
+
+function scSafeUrl(u) {
+  return /^https?:\/\//i.test(String(u || '')) ? u : '';
+}
+
+function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip }) {
+  const [vals, setVals] = React.useState({});
+  const [opts, setOpts] = React.useState({});
+  const [label, setLabel] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState(null);
+  const c = it.connect || {};
+  const domId = 'sc-item-' + it.id.replace(/[^a-z0-9]/gi, '-');
+  const openUrl = u => { if (scSafeUrl(u)) window.open(u, '_blank', 'noopener'); };
+  const post = async (url, body) => {
+    const r = await scJSON(url, 'POST', body);
+    const d = r.data || {};
+    if (!r.ok || d.ok === false || d.status === 'error') throw new Error(d.error || d.message || ('HTTP ' + r.status));
+    return d;
+  };
+  const run = async fn => {
+    setBusy(true);
+    setMsg(null);
+    try { await fn(); } catch (e) {
+      setMsg({ ok: false, text: 'That did not work: ' + ((e && e.message) || 'unknown error') });
+    }
+    setBusy(false);
+    setVals({});           // secrets do not outlive the request
+    onChanged();
+  };
+  const connect = () => run(async () => {
+    if (c.kind === 'secret') {
+      const v = (vals.key || '').trim();
+      if (!v) throw new Error('paste the key first');
+      await post(c.endpoint, { key: v });
+      setMsg({ ok: true, text: 'Saved, encrypted on this computer.' });
+    } else if (c.kind === 'google_oauth') {
+      const d = await post(c.endpoint, { label: label.trim(), include_send: !!opts.include_send, include_modify: !!opts.include_modify });
+      openUrl(d.auth_url);
+      setMsg({ ok: true, text: "Google's consent screen opened in your browser. It lists the same permissions; come back here once you've approved." });
+    } else if (c.kind === 'oauth_connector') {
+      const d = await post(c.endpoint, {});
+      openUrl(d.auth_url);
+      setMsg({ ok: true, text: d.message || 'Approve access in the browser window that opened.' });
+    } else if (c.kind === 'platform_oauth') {
+      const d = await post(c.endpoint, {});
+      openUrl(d.connect_url);
+      setMsg({ ok: true, text: 'Approve access in the browser window that opened.' });
+    } else if (c.kind === 'fields') {
+      const fields = c.fields || [];
+      if (c.shape === 'flat') {
+        const body = {};
+        fields.forEach(f => { const v = (vals[f.key] || '').trim(); if (v) body[f.key] = v; });
+        if (!Object.keys(body).length) throw new Error('fill in the fields first');
+        await post(c.endpoint, body);
+      } else if (c.shape === 'channel') {
+        const v = (vals.token || '').trim();
+        if (!v) throw new Error('paste the token first');
+        await post(c.endpoint, { token: v, enabled: true });
+      } else {
+        let n = 0;
+        for (const f of fields) {
+          const v = (vals[f.key] || '').trim();
+          if (!v) continue;
+          n++;
+          if (f.shape === 'patch') await post(f.endpoint, { patch: { [f.key]: v } });
+          else await post(f.endpoint, { name: f.key, value: v });
+        }
+        if (!n) throw new Error('fill in at least one field');
+      }
+      setMsg({ ok: true, text: 'Saved. Secrets are stored encrypted and never shown again.' });
+    }
+  });
+  const fieldInput = f => (
+    <label key={f.key} className="sc-field">
+      <span>{f.label}{f.set ? ' (stored)' : ''}</span>
+      <input className="sc-input" type={f.secret ? 'password' : 'text'}
+        autoComplete={f.secret ? 'new-password' : 'off'} spellCheck={false}
+        value={vals[f.key] || ''} onChange={e => { const v = e.target.value; setVals(o => ({ ...o, [f.key]: v })); }}
+        aria-label={it.label + ': ' + f.label} />
+    </label>
+  );
+  const canConnect = ['secret', 'fields', 'google_oauth', 'oauth_connector', 'platform_oauth'].indexOf(c.kind) >= 0;
+  const required = (it.permissions || []).filter(p => !p.optional);
+  const optional = (it.permissions || []).filter(p => p.optional);
+  return (
+    <div className="sc-item" id={domId}>
+      <div className="sc-item-head">
+        <button type="button" className="sc-chip quiet" aria-expanded={open} aria-controls={domId + '-body'} onClick={onToggle}>
+          <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+          <span className="sc-sr">{(open ? 'Hide details for ' : 'Show details for ') + it.label}</span>
+        </button>
+        <div className="sc-item-title">
+          {it.label}
+          <div className="sc-item-unlocks">{it.unlocks}</div>
         </div>
-
-        {/* Step counter */}
-        <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.3)',letterSpacing:'.12em',marginBottom:12}}>
-          {String(step+1).padStart(2,'0')} / {String(WIZARD_STEPS.length).padStart(2,'0')}
+        <span className={'sc-pill ' + it.status}>{SC_STATUS[it.status] || it.status}</span>
+      </div>
+      {open && <div id={domId + '-body'} className="sc-item-body">
+        <div className="sc-group" style={{ margin: '10px 0 2px' }}>What it asks for</div>
+        <ul className="sc-perms">
+          {required.map((p, i) => <li key={i}>{p.text}</li>)}
+        </ul>
+        {optional.map(p => (
+          <label key={p.key} className="sc-optional">
+            <input type="checkbox" checked={!!opts[p.key]} onChange={e => { const v = e.target.checked; setOpts(o => ({ ...o, [p.key]: v })); }} />
+            <span>Also: {p.text} <em>(optional, off unless you tick it)</em></span>
+          </label>
+        ))}
+        {it.detail && <div className="sc-sub" style={{ margin: '6px 0' }}>{it.detail}</div>}
+        {c.kind === 'secret' && fieldInput({ key: 'key', label: 'API key', secret: true })}
+        {c.kind === 'fields' && (c.fields || []).map(fieldInput)}
+        {c.kind === 'google_oauth' && (
+          <label className="sc-field">
+            <span>A label for this account (optional)</span>
+            <input className="sc-input" type="text" autoComplete="off" value={label} onChange={e => setLabel(e.target.value)} placeholder="Work, Personal" />
+          </label>
+        )}
+        {c.kind === 'external' && <ol className="sc-perms">{(c.steps || []).map((s, i) => <li key={i}>{s}</li>)}</ol>}
+        {(c.kind === 'local' || c.kind === 'manual') && c.hint && <div className="sc-sub">{c.hint}</div>}
+        {c.note && <div className="sc-sub">{c.note}</div>}
+        {c.more && <div className="sc-sub">More options: {c.more}</div>}
+        <div className="sc-row">
+          {canConnect && <button type="button" className="sc-btn" disabled={busy} onClick={connect}>
+            {busy ? 'Working…' : (c.kind === 'secret' || c.kind === 'fields') ? 'Save securely'
+              : (c.kind === 'google_oauth' && it.status === 'connected') ? 'Add another account' : 'Connect'}
+          </button>}
+          {it.status !== 'connected' && it.status !== 'external' && (
+            <button type="button" className="sc-btn quiet" onClick={onSkip}>{it.status === 'skipped' ? 'Undo skip' : 'Skip'}</button>
+          )}
+          {scSafeUrl(c.signup_url) && <a className="sc-link" href={c.signup_url} target="_blank" rel="noreferrer noopener">Get a key</a>}
+          {scSafeUrl(it.docs_url) && <a className="sc-link quiet" href={it.docs_url} target="_blank" rel="noreferrer noopener">Docs</a>}
         </div>
+        {msg && <div role="status" className={'sc-msgline ' + (msg.ok ? 'ok' : 'bad')}>{msg.text}</div>}
+      </div>}
+    </div>
+  );
+}
 
-        {/* Heading */}
-        <div style={{fontFamily:'Orbitron',fontSize:28,fontWeight:900,color:'#fff',letterSpacing:'0.04em',marginBottom:6,lineHeight:1.1}}>{s.title}</div>
-        <div style={{fontSize:13,color:'rgba(255,255,255,0.45)',marginBottom:36,letterSpacing:'0.01em'}}>{s.subtitle}</div>
+// The checklist. Used by the setup chat and by Settings > Accounts & Keys.
+function SetupConnectionsPanel({ highlight }) {
+  const [data, setData] = React.useState(null);
+  const [open, setOpen] = React.useState(highlight || null);
+  const load = React.useCallback(() => {
+    scJSON('/api/setup/connections').then(r => { if (r.ok) setData(r.data); });
+  }, []);
+  React.useEffect(() => {
+    load();
+    // Coming back from a browser consent screen: re-read the statuses.
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [load]);
+  React.useEffect(() => {
+    if (!highlight) return;
+    setOpen(highlight);
+    const t = setTimeout(() => {
+      const el = document.getElementById('sc-item-' + highlight.replace(/[^a-z0-9]/gi, '-'));
+      if (el) {
+        el.scrollIntoView({ block: 'center' });
+        const f = el.querySelector('input,button');
+        if (f) f.focus();
+      }
+    }, 80);
+    return () => clearTimeout(t);
+  }, [highlight]);
+  if (!data) return <div className="sc-sub">Checking what's connected…</div>;
+  const items = data.items || [];
+  const groups = (data.groups || []).filter(g => items.some(i => i.group === g.id));
+  const counts = data.counts || {};
+  const skip = async it => {
+    await scJSON('/api/setup/connections/' + encodeURIComponent(it.id) + '/skip', 'POST', { skipped: it.status !== 'skipped' });
+    load();
+  };
+  return (
+    <div className="sc-connections">
+      <p className="sc-sub">
+        {(counts.connected || 0) + ' connected'}{counts.skipped ? ' · ' + counts.skipped + ' skipped' : ''}{counts.needs_attention ? ' · ' + counts.needs_attention + ' need attention' : ''}. {data.never}
+      </p>
+      {groups.map(g => (
+        <section key={g.id} aria-label={g.label}>
+          <div className="sc-group">{g.label}</div>
+          {items.filter(i => i.group === g.id).map(it => (
+            <SetupConnectionItem key={it.id} it={it} open={open === it.id}
+              onToggle={() => setOpen(open === it.id ? null : it.id)}
+              onChanged={load} onSkip={() => skip(it)} />
+          ))}
+        </section>
+      ))}
+    </div>
+  );
+}
 
-        {/* Step content */}
-        {step===0&&(
-          <div>
-            <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',marginBottom:10,letterSpacing:'.05em',fontFamily:'JetBrains Mono'}}>NAME YOUR INSTANCE</div>
-            <input
-              value={data.agent_name}
-              onChange={e=>onChange({agent_name:e.target.value})}
-              placeholder="AGENT FRIDAY"
-              autoFocus
-              style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:8,padding:'14px 18px',color:'#fff',fontFamily:'Orbitron',fontSize:18,fontWeight:700,letterSpacing:'0.06em',outline:'none',boxSizing:'border-box',transition:'border-color .2s'}}
-              onFocus={e=>e.target.style.borderColor='rgba(0,212,255,0.6)'}
-              onBlur={e=>e.target.style.borderColor='rgba(0,212,255,0.25)'}
-            />
-            <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',margin:'22px 0 10px',letterSpacing:'.05em',fontFamily:'JetBrains Mono'}}>PERSONALITY</div>
-            <div style={{display:'flex',gap:8}}>
-              {WIZARD_STYLES.map(st=>{
-                const sel=data.communication_style===st.id;
-                return(
-                  <div key={st.id} onClick={()=>onChange({communication_style:st.id})}
-                    style={{flex:1,padding:'12px',borderRadius:8,border:'1px solid '+(sel?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.08)'),background:sel?'rgba(0,212,255,0.07)':'rgba(255,255,255,0.02)',cursor:'pointer',transition:'all .15s',textAlign:'center'}}>
-                    <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:sel?'#00d4ff':'#aaa',fontWeight:sel?700:400}}>{st.label}</div>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:3}}>{st.desc}</div>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',margin:'22px 0 10px',letterSpacing:'.05em',fontFamily:'JetBrains Mono'}}>AVATAR · HOLOGRAPHIC SCENE</div>
-            <div style={{maxHeight:170,overflowY:'auto',display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,paddingRight:4}}>
-              {WIZARD_STRUCTURES.map(sc=>{
-                const sel=(data.preferred_scene_index??0)===sc.idx;
-                return(
-                  <div key={sc.id} onClick={()=>onChange({preferred_scene_index:sc.idx})}
-                    style={{padding:'10px 14px',borderRadius:8,border:'1px solid '+(sel?'rgba(0,212,255,0.55)':'rgba(255,255,255,0.07)'),background:sel?'rgba(0,212,255,0.07)':'rgba(255,255,255,0.02)',cursor:'pointer',transition:'all .15s'}}>
-                    <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:sel?'#00d4ff':'rgba(255,255,255,0.65)',fontWeight:sel?700:400,letterSpacing:'.03em'}}>{sc.name}</div>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.28)',marginTop:3}}>{sc.desc}</div>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',margin:'22px 0 10px',letterSpacing:'.05em',fontFamily:'JetBrains Mono'}}>WHO IS THIS FRIDAY FOR?</div>
-            <div style={{display:'flex',gap:8}}>
-              {[{id:false,label:'For me',desc:'Full, unfiltered creative range'},{id:true,label:'For my child',desc:'Family mode — age-appropriate filtering'}].map(opt=>{
-                const sel=(!!data.minor_mode)===opt.id;
-                return(
-                  <div key={String(opt.id)} onClick={()=>onChange({minor_mode:opt.id})}
-                    style={{flex:1,padding:'12px',borderRadius:8,border:'1px solid '+(sel?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.08)'),background:sel?'rgba(0,212,255,0.07)':'rgba(255,255,255,0.02)',cursor:'pointer',transition:'all .15s',textAlign:'center'}}>
-                    <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:sel?'#00d4ff':'#aaa',fontWeight:sel?700:400}}>{opt.label}</div>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:3}}>{opt.desc}</div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {step===1&&(
-          <div style={{maxHeight:340,overflowY:'auto',paddingRight:4,display:'flex',flexDirection:'column',gap:8}}>
-            {(distros.length?distros:[{name:'default',description:'Standard Agent Friday — balanced for general use'}]).map(d=>{
-              const sel=(data.distribution||'default')===d.name;
-              return(
-                <div key={d.name} onClick={()=>onChange({distribution:d.name})}
-                  style={{padding:'14px 18px',borderRadius:8,border:'1px solid '+(sel?'rgba(0,212,255,0.55)':'rgba(255,255,255,0.08)'),background:sel?'rgba(0,212,255,0.07)':'rgba(255,255,255,0.02)',cursor:'pointer',transition:'all .15s'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <div style={{fontFamily:'Orbitron',fontSize:13,color:sel?'#00d4ff':'#ddd',textTransform:'capitalize'}}>{d.name}</div>
-                    {sel&&<div style={{width:8,height:8,borderRadius:'50%',background:'#00d4ff',flexShrink:0}}/>}
-                  </div>
-                  <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginTop:4,lineHeight:1.5}}>{d.description}</div>
-                </div>
-              );
-            })}
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.25)',fontFamily:'JetBrains Mono',marginTop:2}}>Sets your workspaces, dock layout and Friday's tone. Switchable anytime in Settings.</div>
-          </div>
-        )}
-
-        {step===2&&(
-          <div style={{maxHeight:360,overflowY:'auto',paddingRight:4,display:'flex',flexDirection:'column',gap:10}}>
-            {(provList.length?provList:[{name:'anthropic',label:'Anthropic (Claude)',type:'anthropic',available:false}]).map(p=>{
-              const local=p.type==='ollama';
-              const has=!!(keyOf(p.name).trim()||p.available);
-              const stat=local?(p.available?'running':'not running'):(keyOf(p.name).trim()?'will connect':(p.available?'connected':'not connected'));
-              const dot=has?'#34d399':(local?'#f59e0b':'rgba(255,255,255,0.25)');
-              const unlocks=(unlockBy[p.name]||[]);
-              return(
-                <div key={p.name} style={{padding:'12px 14px',borderRadius:8,border:'1px solid rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.02)'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <div style={{fontFamily:'Orbitron',fontSize:12,color:'#ddd'}}>{p.label||p.name}</div>
-                    <div style={{display:'flex',alignItems:'center',gap:6}}>
-                      <div style={{width:7,height:7,borderRadius:'50%',background:dot}}/>
-                      <span style={{fontSize:10,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.4)'}}>{stat}</span>
-                    </div>
-                  </div>
-                  {unlocks.length>0&&<div style={{fontSize:10,color:'rgba(0,212,255,0.55)',marginTop:3,fontFamily:'JetBrains Mono'}}>unlocks: {unlocks.join(' · ')}</div>}
-                  {local
-                    ?<div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:6,fontFamily:'JetBrains Mono'}}>On-device · no key needed{p.available?' · running now':' · start Ollama to enable'}</div>
-                    :<div style={{position:'relative',marginTop:8}}>
-                      <input type={showKey[p.name]?'text':'password'} value={keyOf(p.name)}
-                        onChange={e=>setProvKey(p.name,e.target.value)/* pragma: allowlist secret */}
-                        placeholder={'API key for '+(p.label||p.name)}
-                        style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.2)',borderRadius:6,padding:'9px 50px 9px 12px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:12,outline:'none',boxSizing:'border-box'}}/>
-                      <span onClick={()=>setShowKey(s=>({...s,[p.name]:!s[p.name]}))} style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',cursor:'pointer',color:'rgba(255,255,255,0.35)',fontSize:10,fontFamily:'JetBrains Mono',userSelect:'none'}}>{showKey[p.name]?'HIDE':'SHOW'}</span>
-                    </div>}
-                </div>
-              );
-            })}
-            <div style={{fontSize:11,color:providersReady?'rgba(52,211,153,0.85)':'rgba(245,158,11,0.85)',fontFamily:'JetBrains Mono',marginTop:2}}>
-              {providersReady?'✓ At least one provider ready':'Add one API key (or start Ollama) to continue — or skip into demo mode below'}
-            </div>
-            <div style={{fontSize:10,color:'rgba(255,255,255,0.22)',fontFamily:'JetBrains Mono',lineHeight:1.6}}>Keys are encrypted at rest on your machine — never stored in plaintext, never sent anywhere except to that provider.</div>
-          </div>
-        )}
-
-        {step===3&&(
-          <div style={{display:'flex',flexDirection:'column',gap:10}}>
-            <div style={{padding:'14px',borderRadius:8,border:'1px solid rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.02)'}}>
-              <div style={{fontFamily:'Orbitron',fontSize:12,color:'#ddd'}}>Google · Gmail, Calendar & Drive</div>
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginTop:5,lineHeight:1.5}}>Connect one or more Google accounts so Friday can read mail, manage your calendar and reach your files. Secure OAuth — tokens are encrypted at rest.</div>
-              <div style={{fontSize:10,color:'rgba(0,212,255,0.55)',marginTop:8,fontFamily:'JetBrains Mono'}}>Set up in Settings → Connected Services after launch.</div>
-            </div>
-            <div style={{padding:'14px',borderRadius:8,border:'1px solid rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.02)'}}>
-              <div style={{fontFamily:'Orbitron',fontSize:12,color:'#ddd'}}>MCP Connectors</div>
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginTop:5,lineHeight:1.5}}>Slack, Notion, GitHub and hundreds more connect over MCP — one click each, governed by Friday's security rings.</div>
-              <div style={{fontSize:10,color:'rgba(0,212,255,0.55)',marginTop:8,fontFamily:'JetBrains Mono'}}>Manage in Settings → Connected Services.</div>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.25)',fontFamily:'JetBrains Mono'}}>This step is optional — Continue to skip for now.</div>
-          </div>
-        )}
-
-        {step===4&&(
-          <div>
-            {!hw&&<div style={{fontSize:12,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>Detecting hardware…</div>}
-            {hw&&(
-              <div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
-                  <div style={{padding:'12px',borderRadius:8,border:'1px solid rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.02)'}}>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>GPU</div>
-                    <div style={{fontSize:12,color:hw.gpu?'#34d399':'rgba(255,255,255,0.5)',marginTop:4}}>{hw.gpu||'None detected'}</div>
-                  </div>
-                  <div style={{padding:'12px',borderRadius:8,border:'1px solid rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.02)'}}>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>MEMORY</div>
-                    <div style={{fontSize:12,color:'#ddd',marginTop:4}}>{hw.ram_gb?hw.ram_gb+' GB RAM':'—'}{hw.vram_gb?' · '+hw.vram_gb+' GB VRAM':''}</div>
-                  </div>
-                </div>
-                <WizardGemmaPull hw={hw}/>
-                {(hw.suggested_models&&hw.suggested_models.length)?(
-                  <div>
-                    <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',fontFamily:'JetBrains Mono',marginBottom:8}}>SUGGESTED LOCAL MODELS</div>
-                    {hw.suggested_models.map(m=>(
-                      <div key={m.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:6,background:'rgba(255,255,255,0.02)',marginBottom:6}}>
-                        <span style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#00d4ff'}}>{m.name}</span>
-                        <span style={{fontSize:10,color:'rgba(255,255,255,0.4)',textAlign:'right'}}>{m.task}</span>
-                      </div>
-                    ))}
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',fontFamily:'JetBrains Mono',marginTop:6}}>Ollama {hw.ollama_available?'is running — these are ready to pull':'is not installed — add it to run these on-device'}.</div>
-                  </div>
-                ):(
-                  <div style={{fontSize:12,color:'rgba(255,255,255,0.45)',lineHeight:1.6}}>This machine will run Friday in <span style={{color:'#00d4ff'}}>cloud mode</span> using your connected provider(s). On-device models want more RAM/VRAM — you can always add Ollama later.</div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {step===5&&(
-          <div style={{textAlign:'center',padding:'14px 0'}}>
-            <div style={{fontSize:64,marginBottom:18,filter:'drop-shadow(0 0 20px rgba(0,212,255,0.4))'}}>⚡</div>
-            <div style={{fontFamily:'Orbitron',fontSize:20,color:'#00d4ff',marginBottom:12,letterSpacing:'0.06em'}}>{data.agent_name||'AGENT FRIDAY'}</div>
-            <div style={{fontSize:13,color:'rgba(255,255,255,0.5)',lineHeight:1.7,maxWidth:360,margin:'0 auto'}}>
-              Profile <span style={{color:'#00d4ff',fontFamily:'JetBrains Mono',textTransform:'capitalize'}}>{data.distribution||'default'}</span> · Style <span style={{color:'rgba(255,255,255,0.7)'}}>{data.communication_style}</span><br/>
-              {enteredCount>0
-                ?<span style={{color:'rgba(52,211,153,0.9)'}}>✓ {enteredCount} provider{enteredCount>1?'s':''} connected</span>
-                :<span style={{color:'rgba(245,158,11,0.9)'}}>Demo mode — connect a provider anytime in Settings</span>}
-            </div>
-            {/* Friday's own address, offered once at setup and always in
-                Settings. Each system change starts only from its own button,
-                and Windows asks again before making it. The vault passphrase
-                is collected by ConsentFlow, before this wizard. */}
-            <div data-testid="wizard-local-address" style={{textAlign:'left',marginTop:24}}>
-              <div style={{fontSize:12,color:'rgba(255,255,255,0.55)',lineHeight:1.6,marginBottom:8}}>Optional: give Friday its own address on this PC. Each change asks Windows for your permission first, and you can do it later in Settings.</div>
-              <LocalAddressSettings/>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.25)',marginTop:20,fontFamily:'JetBrains Mono',letterSpacing:'.05em'}}>
-              BY FUTURESPEAK.AI · ASIMOV'S CLAWS CERTIFIED
-            </div>
-          </div>
-        )}
-
-        {/* Navigation */}
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:40}}>
-          {step>0
-            ?<button onClick={onBack} style={{background:'none',border:'1px solid rgba(255,255,255,0.12)',borderRadius:8,padding:'12px 24px',color:'rgba(255,255,255,0.5)',fontFamily:'JetBrains Mono',fontSize:12,cursor:'pointer',letterSpacing:'.05em',transition:'all .15s'}}
-                onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.3)'}
-                onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.12)'}>
-              ← Back
-            </button>
-            :<div/>
-          }
-          <button
-            onClick={()=>{ if(isLast){onComplete()} else if(gateOk){onNext()} }}
-            style={{background:'linear-gradient(135deg,rgba(124,58,237,0.4),rgba(0,212,255,0.3))',border:'1px solid rgba(0,212,255,0.4)',borderRadius:8,padding:'12px 32px',color:'#fff',fontFamily:'Orbitron',fontSize:12,fontWeight:700,cursor:gateOk?'pointer':'not-allowed',opacity:gateOk?1:0.4,letterSpacing:'.08em',transition:'all .2s',boxShadow:'0 0 20px rgba(0,212,255,0.15)'}}
-            onMouseEnter={e=>{if(!gateOk)return;e.currentTarget.style.boxShadow='0 0 30px rgba(0,212,255,0.3)';e.currentTarget.style.borderColor='rgba(0,212,255,0.7)'}}
-            onMouseLeave={e=>{e.currentTarget.style.boxShadow='0 0 20px rgba(0,212,255,0.15)';e.currentTarget.style.borderColor='rgba(0,212,255,0.4)'}}>
-            {isLast?'LAUNCH FRIDAY →':'Continue →'}
-          </button>
-        </div>
-
-        {/* Skip link */}
-        {!isLast&&(
-          <div style={{textAlign:'center',marginTop:16}}>
-            <span onClick={onComplete} style={{fontSize:11,color:'rgba(255,255,255,0.2)',cursor:'pointer',fontFamily:'JetBrains Mono',letterSpacing:'.05em',textDecoration:'underline',textDecorationColor:'rgba(255,255,255,0.1)'}}
-              onMouseEnter={e=>e.currentTarget.style.color='rgba(255,255,255,0.4)'}
-              onMouseLeave={e=>e.currentTarget.style.color='rgba(255,255,255,0.2)'}>
-              skip setup
-            </span>
-          </div>
-        )}
+function SetupResearchSeeds({ onSubmit, onSkip, busy, error, intro }) {
+  const [v, setV] = React.useState({ name: '', handles: '', sites: '', employer: '' });
+  const set = k => e => { const x = e.target.value; setV(o => ({ ...o, [k]: x })); };
+  const field = (k, label, ph, first) => (
+    <label className="sc-field">
+      <span>{label}</span>
+      <input className="sc-input" type="text" autoComplete="off" spellCheck={false}
+        value={v[k]} onChange={set(k)} placeholder={ph} data-sc-focus={first ? '' : undefined} />
+    </label>
+  );
+  return (
+    <div className="sc-card">
+      <h2>What to search for</h2>
+      {intro && <p className="sc-sub" style={{ whiteSpace: 'pre-wrap' }}>{intro}</p>}
+      <p className="sc-sub">Only these. Nothing else is searched, and nothing is kept until you review it.</p>
+      {field('name', 'Your name as it appears in public', 'e.g. Sam Example', true)}
+      {field('handles', 'Handles (optional, separated by commas)', '@you, you-on-github')}
+      {field('sites', 'Your own websites (optional)', 'example.org')}
+      {field('employer', 'Employer (optional)', '')}
+      {error && <div role="alert" className="sc-msgline bad">{error}</div>}
+      <div className="sc-row">
+        <button type="button" className="sc-btn" disabled={busy || !(v.name.trim() || v.handles.trim())} onClick={() => onSubmit(v)}>Start the search</button>
+        {onSkip && <button type="button" className="sc-btn quiet" onClick={onSkip}>Skip</button>}
       </div>
     </div>
   );
 }
 
+function SetupResearchReview({ research, onChanged }) {
+  const [edit, setEdit] = React.useState({});
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const r = research || {};
+  const items = r.candidates || [];
+  const send = async decisions => {
+    setBusy(true);
+    setErr('');
+    const res = await scJSON('/api/setup-chat/research/review', 'POST', { decisions });
+    setBusy(false);
+    if (!res.ok) { setErr(res.data.message || res.data.error || 'Could not save that.'); return; }
+    setEdit({});
+    if (onChanged) onChanged(res.data.research);
+  };
+  const stopEdit = id => setEdit(e => { const n = { ...e }; delete n[id]; return n; });
+  if (r.state === 'running') {
+    return (
+      <div className="sc-card">
+        <h2 tabIndex={-1} data-sc-focus="">The search is running</h2>
+        <p className="sc-sub">It runs as a background task; you can watch it in the tray. Findings appear here for review, and nothing is kept until you accept it.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="sc-card">
+      <h2 tabIndex={-1} data-sc-focus="">Review what I found</h2>
+      <p className="sc-sub">
+        From the public web: treat it as unverified until you accept it. Only what you accept is kept.
+        {r.dropped_total ? ' ' + r.dropped_total + ' finding(s) touched health, sexuality, money, family or where you live, and were thrown away without being stored.' : ''}
+      </p>
+      {items.length > 1 && (
+        <div className="sc-row" style={{ marginBottom: 10 }}>
+          <button type="button" className="sc-btn" disabled={busy} onClick={() => send(items.map(i => ({ id: i.id, action: 'accept' })))}>Accept all</button>
+          <button type="button" className="sc-btn quiet" disabled={busy} onClick={() => send(items.map(i => ({ id: i.id, action: 'reject' })))}>Reject all</button>
+        </div>
+      )}
+      {items.map(i => (
+        <div className="sc-finding" key={i.id}>
+          {edit[i.id] !== undefined
+            ? <input className="sc-input" value={edit[i.id]} aria-label="Edit this finding"
+                onChange={e => { const x = e.target.value; setEdit(o => ({ ...o, [i.id]: x })); }} />
+            : <div>{i.claim}</div>}
+          <div className="sc-cite">
+            Source: {scSafeUrl(i.url) ? <a className="sc-link" href={i.url} target="_blank" rel="noreferrer noopener">{i.title || i.url}</a> : (i.title || '')}
+            {' · read ' + (i.fetched_on || '') + ' · public web, untrusted'}
+          </div>
+          <div className="sc-row">
+            {edit[i.id] !== undefined ? (
+              <React.Fragment>
+                <button type="button" className="sc-btn" disabled={busy || !String(edit[i.id]).trim()} onClick={() => send([{ id: i.id, action: 'edit', text: edit[i.id] }])}>Save and accept</button>
+                <button type="button" className="sc-btn quiet" onClick={() => stopEdit(i.id)}>Cancel</button>
+              </React.Fragment>
+            ) : (
+              <React.Fragment>
+                <button type="button" className="sc-btn" disabled={busy} aria-label={'Accept: ' + i.claim} onClick={() => send([{ id: i.id, action: 'accept' }])}>Accept</button>
+                <button type="button" className="sc-btn quiet" disabled={busy} aria-label={'Edit: ' + i.claim} onClick={() => setEdit(o => ({ ...o, [i.id]: i.claim }))}>Edit</button>
+                <button type="button" className="sc-btn danger" disabled={busy} aria-label={'Reject: ' + i.claim} onClick={() => send([{ id: i.id, action: 'reject' }])}>Reject</button>
+              </React.Fragment>
+            )}
+          </div>
+        </div>
+      ))}
+      {!items.length && <p className="sc-sub">{r.accepted ? r.accepted + ' finding(s) kept in Friday\'s knowledge graph, each with its source.' : 'Nothing is waiting for review.'}</p>}
+      {err && <div role="alert" className="sc-msgline bad">{err}</div>}
+    </div>
+  );
+}
 
+function SetupStyleCard({ style, sliders, floor, examplePrompt, onSave, onSkip, saveLabel }) {
+  const defs = sliders || [];
+  const [vals, setVals] = React.useState((style && style.sliders) || {});
+  const [prev, setPrev] = React.useState({ sample: style && style.sample, summary: style && style.summary });
+  const [moved, setMoved] = React.useState(false);
+  const timer = React.useRef(null);
+  React.useEffect(() => {
+    setVals((style && style.sliders) || {});
+    setPrev({ sample: style && style.sample, summary: style && style.summary });
+    setMoved(false);
+  }, [style]);
+  React.useEffect(() => () => clearTimeout(timer.current), []);
+  const change = (id, v) => {
+    const next = { ...vals, [id]: v };
+    setVals(next);
+    setMoved(true);
+    clearTimeout(timer.current);
+    // The example is re-rendered by the same rules on this computer.
+    timer.current = setTimeout(() => {
+      scJSON('/api/setup-chat/style/preview', 'POST', { sliders: next })
+        .then(r => { if (r.ok) setPrev({ sample: r.data.sample, summary: r.data.summary }); });
+    }, 120);
+  };
+  const by = (style && style.by) || {};
+  return (
+    <div className="sc-card">
+      <h2 tabIndex={-1} data-sc-focus="">Friday for you</h2>
+      <div className="sc-badge">
+        {by.kind === 'local' ? 'Read by ' + by.model + ' (on this computer)'
+          : by.kind === 'cloud' ? 'Read by ' + by.model + ' (' + by.provider + ', cloud)'
+          : 'Made with simple rules on this computer, no model'}
+      </div>
+      <p className="sc-summary">{prev.summary}</p>
+      <div className="sc-sub" style={{ margin: 0 }}>If you asked: “{examplePrompt}”</div>
+      <div className="sc-sample" aria-live="polite">{prev.sample}</div>
+      {defs.map(d => {
+        const v = typeof vals[d.id] === 'number' ? vals[d.id] : 50;
+        return (
+          <div className="sc-slider" key={d.id}>
+            <label htmlFor={'sc-sl-' + d.id}><span>{d.label}</span><span className="sc-dim">{v}</span></label>
+            <input id={'sc-sl-' + d.id} type="range" min={d.id === 'pushback' ? floor : 0} max={100} step={1} value={v}
+              onChange={e => change(d.id, parseInt(e.target.value, 10))}
+              aria-valuetext={v + ' of 100, from ' + d.low + ' to ' + d.high} />
+            <div className="sc-ends"><span>{d.low}</span><span>{d.high}</span></div>
+          </div>
+        );
+      })}
+      <p className="sc-sub">Pushback never goes below {floor}: Friday still tells you when you're wrong, just more gently. Honesty and asking before real-world actions can't be tuned.</p>
+      <div className="sc-row">
+        <button type="button" className="sc-btn" onClick={() => onSave(moved ? vals : null)}>{saveLabel || 'Save this style'}</button>
+        {onSkip && <button type="button" className="sc-btn quiet" onClick={onSkip}>Keep my default style</button>}
+      </div>
+    </div>
+  );
+}
+
+function SetupBasicsCard({ initial, onDone, busy }) {
+  const [minor, setMinor] = React.useState(!!(initial && initial.minor_mode));
+  const [dist, setDist] = React.useState((initial && initial.distribution) || 'default');
+  const [distros, setDistros] = React.useState([]);
+  const [hw, setHw] = React.useState(null);
+  const [addr, setAddr] = React.useState(false);
+  React.useEffect(() => {
+    fetch('/api/distros').then(r => r.json()).then(d => setDistros(d.distros || [])).catch(() => {});
+    fetch('/api/health/full').then(r => r.json()).then(d => setHw(d.hardware || {})).catch(() => setHw({}));
+  }, []);
+  const radio = (on, label, desc, pick, key) => (
+    <div key={key} role="radio" tabIndex={0} aria-checked={on} className={'sc-option' + (on ? ' on' : '')}
+      onClick={pick} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } }}>
+      <div className="sc-option-label">{label}</div>
+      {desc && <div className="sc-option-desc">{desc}</div>}
+    </div>
+  );
+  const list = distros.length ? distros : [{ name: 'default', description: 'Standard Agent Friday, balanced for general use' }];
+  return (
+    <div className="sc-card">
+      <h2 tabIndex={-1} data-sc-focus="">The basics</h2>
+      <div className="sc-group">Who is this Friday for?</div>
+      <div role="radiogroup" aria-label="Who is this Friday for?">
+        {radio(!minor, 'For me', 'Full, unfiltered creative range', () => setMinor(false), 'me')}
+        {radio(minor, 'For my child', 'Family mode: age-appropriate filtering', () => setMinor(true), 'child')}
+      </div>
+      <div className="sc-group">Starting profile</div>
+      <div role="radiogroup" aria-label="Starting profile">
+        {list.map(d => radio(dist === d.name, d.name.charAt(0).toUpperCase() + d.name.slice(1), d.description, () => setDist(d.name), d.name))}
+      </div>
+      <div className="sc-group">What this computer can run</div>
+      {!hw ? <div className="sc-sub">Checking the hardware…</div> : (
+        <div data-testid="setup-hardware">
+          <div className="sc-sub" style={{ margin: '0 0 8px' }}>
+            {'GPU: ' + (hw.gpu || 'none detected') + ' · ' + (hw.ram_gb ? hw.ram_gb + ' GB RAM' : 'memory unknown') + (hw.vram_gb ? ' · ' + hw.vram_gb + ' GB VRAM' : '')}
+          </div>
+          <WizardGemmaPull hw={hw} />
+          <WizardStarterSetSection hw={hw} />
+        </div>
+      )}
+      <button type="button" className="sc-chip quiet" aria-expanded={addr} onClick={() => setAddr(!addr)}>
+        {(addr ? '▾ ' : '▸ ') + "Friday's own address on this PC (optional)"}
+      </button>
+      {addr && (
+        <div data-testid="setup-local-address" style={{ marginTop: 8 }}>
+          <div className="sc-sub">Each change asks Windows for your permission first, and you can do it later in Settings.</div>
+          <LocalAddressSettings />
+        </div>
+      )}
+      <div className="sc-row">
+        <button type="button" className="sc-btn" disabled={busy} onClick={() => onDone({ minor_mode: minor, distribution: dist })}>Continue</button>
+      </div>
+    </div>
+  );
+}
+
+const SC_RESEARCH_LINE = {
+  running: 'Still running in the background. Review it later in Settings > General > Your profile.',
+  ready: 'Findings are waiting for your review in Settings > General > Your profile.',
+  reviewed: 'Reviewed.',
+  empty: 'Finished; nothing to keep.',
+  declined: 'You chose not to.',
+  unavailable: 'Not available yet: no model to read pages.',
+  failed: 'It stopped with an error; you can run it again from Settings.',
+  not_asked: 'Not run.'
+};
+
+function SetupFinishCard({ state, onFinish, busy }) {
+  const [conn, setConn] = React.useState(null);
+  React.useEffect(() => { scJSON('/api/setup/connections').then(r => { if (r.ok) setConn(r.data); }); }, []);
+  const items = (conn && conn.items) || [];
+  const connected = items.filter(i => i.status === 'connected').map(i => i.label);
+  const skipped = items.filter(i => i.status === 'skipped').length;
+  const r = state.research || {};
+  let researchLine = SC_RESEARCH_LINE[r.state] || SC_RESEARCH_LINE.not_asked;
+  if (r.state === 'reviewed') researchLine = (r.accepted || 0) + ' finding(s) kept, each with its source.';
+  return (
+    <div className="sc-card">
+      <h2 tabIndex={-1} data-sc-focus="">All set</h2>
+      <dl className="sc-summary-list">
+        <dt>Name</dt><dd>{state.agent_name}</dd>
+        <dt>Connected</dt><dd>{conn ? (connected.length ? connected.join(', ') : 'Nothing yet') : 'Checking…'}{skipped ? ' (' + skipped + ' skipped, waiting in Settings)' : ''}</dd>
+        <dt>Research</dt><dd>{researchLine}</dd>
+        <dt>Your style</dt><dd>{state.style_saved ? 'Saved. It keeps evolving as you work together.' : 'My default style for now.'}</dd>
+      </dl>
+      <div className="sc-row">
+        <button type="button" className="sc-btn" disabled={busy} onClick={onFinish}>Open my desktop</button>
+      </div>
+    </div>
+  );
+}
+
+function SetupChat({ onDone }) {
+  const [st, setSt] = React.useState(null);
+  const [text, setText] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [notes, setNotes] = React.useState([]);
+  const [highlight, setHighlight] = React.useState(null);
+  const [err, setErr] = React.useState('');
+  const [leaving, setLeaving] = React.useState(false);
+  const [shapes, setShapes] = React.useState(null);
+  const logRef = React.useRef(null);
+  const inputRef = React.useRef(null);
+  const doneRef = React.useRef(false);
+  const apply = d => {
+    if (!d || !d.stage) return;
+    setSt(d);
+    if (d.completed && !doneRef.current) {
+      doneRef.current = true;
+      if (onDone) onDone(d);
+    }
+  };
+  React.useEffect(() => {
+    scJSON('/api/setup-chat/state').then(r => apply(r.data));
+    scLoadShapes().then(setShapes);
+  }, []);
+  const nMsgs = st ? (st.transcript || []).length + notes.length : 0;
+  const stage = st && st.stage;
+  // Newest message into view; focus to wherever the next answer goes.
+  React.useEffect(() => {
+    if (!st) return;
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
+    const t = setTimeout(() => {
+      const p = st.prompt || {};
+      if (p.input === 'text' && inputRef.current) { inputRef.current.focus(); return; }
+      const el = document.querySelector('.sc-root [data-sc-focus]');
+      if (el) el.focus();
+    }, 40);
+    return () => clearTimeout(t);
+  }, [nMsgs, stage]);
+  // The research runs in the background; keep its status fresh while it does.
+  const rstate = st && st.research && st.research.state;
+  React.useEffect(() => {
+    if (rstate !== 'running') return;
+    const iv = setInterval(() => {
+      scJSON('/api/setup-chat/research').then(r => { if (r.ok) setSt(s => (s ? { ...s, research: r.data } : s)); });
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [rstate]);
+  if (!st) return null;
+  const p = st.prompt || {};
+  const cp = st.copy || {};
+  const note = (textLine, target) => setNotes(n => n.concat([{ text: textLine, target: target || '' }]));
+  const answer = async (value, typed) => {
+    setErr('');
+    setBusy(true);
+    const r = await scJSON('/api/setup-chat/answer', 'POST', { stage: st.stage, value: value, text: typed || '' });
+    setBusy(false);
+    if (r.status === 422 && r.data.error === 'key_shaped') {
+      note(r.data.message, r.data.shape && r.data.shape.target);
+      setText('');
+      return;
+    }
+    if (r.status === 409 && r.data.stage) { apply(r.data); return; }
+    if (!r.ok) { setErr(r.data.message || 'Something went wrong. Try again.'); return; }
+    setText('');
+    setNotes([]);
+    apply(r.data);
+  };
+  const send = e => {
+    if (e) e.preventDefault();
+    const t = text.trim();
+    if (!t || busy) return;
+    const hit = scDetectSecret(t, shapes);
+    if (hit) {
+      setText('');
+      note(scKeyNote(hit, shapes), hit.target);
+      return;
+    }
+    const chip = (p.chips || []).find(c => c.label.toLowerCase() === t.toLowerCase());
+    if (p.input !== 'text') {
+      if (chip) { answer(chip.value, ''); return; }
+      setText('');
+      note(cp.use_options || 'Tap one of the options.');
+      return;
+    }
+    answer(null, t);
+  };
+  const leave = () => {
+    if (!leaving) {
+      setLeaving(true);
+      setTimeout(() => setLeaving(false), 6000);
+      return;
+    }
+    scJSON('/api/setup-chat/skip-all', 'POST', {}).then(r => apply(r.data));
+  };
+  const goStage = first => scJSON('/api/setup-chat/goto', 'POST', { stage: first }).then(r => { if (r.ok) { setNotes([]); apply(r.data); } });
+  const openCard = target => {
+    if (st.stage === 'connect') { setHighlight(null); setTimeout(() => setHighlight(target), 0); return; }
+    const connect = (st.groups || []).find(g => g.id === 'connect');
+    if (connect && connect.state === 'done') goStage('connect').then(() => setHighlight(target));
+  };
+  const seeds = v => {
+    for (const k in v) {
+      if (scDetectSecret(String(v[k] || ''), shapes)) { setErr('One of those fields looks like a key. Keys go on the Connect cards, not here.'); return; }
+    }
+    answer(v, '');
+  };
+  const card = p.card;
+  let cardEl = null;
+  if (card === 'connections') {
+    cardEl = <div className="sc-card"><h2 tabIndex={-1} data-sc-focus="">Connect everything</h2><SetupConnectionsPanel highlight={highlight} /></div>;
+  } else if (card === 'basics') {
+    cardEl = <SetupBasicsCard initial={st} busy={busy} onDone={v => answer(v, '')} />;
+  } else if (card === 'research_seeds') {
+    cardEl = <SetupResearchSeeds busy={busy} error={err} onSubmit={seeds} onSkip={() => answer('skip', '')} />;
+  } else if (card === 'research_review') {
+    cardEl = <SetupResearchReview research={st.research} onChanged={res => { if (res) setSt(s => ({ ...s, research: res })); }} />;
+  } else if (card === 'style') {
+    cardEl = <SetupStyleCard style={st.style} sliders={st.sliders} floor={st.pushback_floor} examplePrompt={st.example_prompt}
+      onSave={sl => answer(sl ? { action: 'save', sliders: sl } : { action: 'save' }, '')}
+      onSkip={() => answer({ action: 'skip' }, '')} />;
+  } else if (card === 'finish') {
+    cardEl = <SetupFinishCard state={st} busy={busy} onFinish={() => answer('finish', '')} />;
+  }
+  const connectDone = ((st.groups || []).find(g => g.id === 'connect') || {}).state;
+  return (
+    <div className="st-root sc-root" role="dialog" aria-modal="true" aria-label="Set up Friday">
+      <header className="sc-head">
+        <div className="sc-brand st-brand">{String(st.agent_name || 'Friday').toUpperCase()}</div>
+        <nav className="sc-rail" aria-label="Setup progress">
+          {(st.groups || []).map(g => (
+            <button key={g.id} type="button" className={'sc-step ' + g.state}
+              aria-current={g.state === 'current' ? 'step' : undefined}
+              disabled={g.state !== 'done'}
+              title={g.state === 'done' ? 'Go back to ' + g.label : undefined}
+              onClick={() => { if (g.state === 'done') goStage(g.first); }}>{g.label}</button>
+          ))}
+        </nav>
+        {st.reader && <span className="sc-badge" title="Who reads your answers">{'Reader: ' + st.reader.badge}</span>}
+        <button type="button" className={'sc-btn ' + (leaving ? 'danger' : 'quiet')} onClick={leave}>
+          {leaving ? 'Finish setup with defaults?' : (cp.set_up_later || 'Set up later')}
+        </button>
+      </header>
+      <div className="sc-body">
+        <section className="sc-chat" aria-label="Conversation with Friday">
+          <div className="sc-log" ref={logRef} role="log" aria-live="polite" aria-relevant="additions">
+            {(st.transcript || []).map((m, i) => (
+              <div key={i} className={'sc-msg ' + (m.role === 'user' ? 'user' : 'friday')}>
+                <span className="sc-sr">{m.role === 'user' ? 'You: ' : (st.agent_name || 'Friday') + ': '}</span>
+                {m.text}
+                {m.model && <div className="sc-badge">{'Read by ' + m.model}</div>}
+                {m.task_id && <div className="sc-badge">Running as a background task: see the tray</div>}
+              </div>
+            ))}
+            {notes.map((n, i) => (
+              <div key={'n' + i} className="sc-msg note" role="alert">
+                {n.text}
+                {n.target && (st.stage === 'connect' || connectDone === 'done') && (
+                  <div className="sc-row"><button type="button" className="sc-btn" onClick={() => openCard(n.target)}>Open the secure field</button></div>
+                )}
+                {n.target && !(st.stage === 'connect' || connectDone === 'done') && (
+                  <div className="sc-sub" style={{ margin: '6px 0 0' }}>The Connect step is coming up next, or use Settings &gt; Accounts &amp; Keys.</div>
+                )}
+              </div>
+            ))}
+          </div>
+          {(p.chips || []).length > 0 && (
+            <div className="sc-chips" role="group" aria-label="Quick answers">
+              {p.chips.map((c, i) => (
+                <button key={c.value + i} type="button"
+                  className={'sc-chip' + (/^(skip|rather_not|skip_rest|rules)$/.test(c.value) ? ' quiet' : '')}
+                  disabled={busy} data-sc-focus={i === 0 && p.input !== 'text' && !card ? '' : undefined}
+                  onClick={() => answer(c.value, '')}>{c.label}</button>
+              ))}
+            </div>
+          )}
+          {err && card !== 'research_seeds' && <div role="alert" className="sc-msgline bad">{err}</div>}
+          {st.stage !== 'done' && (
+            <form className="sc-form" onSubmit={send}>
+              <label htmlFor="sc-input" className="sc-sr">Your answer</label>
+              <input id="sc-input" ref={inputRef} className="sc-input" type="text" autoComplete="off"
+                value={text} onChange={e => setText(e.target.value)} disabled={busy}
+                placeholder={p.input === 'text' ? (p.placeholder || 'Type your answer') : 'Type here, or use the options'} />
+              <button type="submit" className="sc-btn" disabled={busy || !text.trim()}>Send</button>
+            </form>
+          )}
+          {p.stage === 'questions' && <div className="sc-sub" style={{ marginTop: 6 }}>{'Question ' + (p.index + 1) + ' of ' + p.total + '. Type "skip" to skip.'}</div>}
+        </section>
+        {cardEl && <aside className="sc-side" aria-label="Details for this step">{cardEl}</aside>}
+      </div>
+    </div>
+  );
+}
+
+// ── Settings: the setup checklist and "Your profile" ────────────────────────
+function SettingsSetupChecklist() {
+  return (
+    <StSection title="Setup checklist" desc="Everything Friday can connect to, with exactly what each one asks for. Anything you skipped in the setup chat waits here.">
+      <SetupConnectionsPanel />
+    </StSection>
+  );
+}
+
+function SettingsYourProfile() {
+  const [p, setP] = React.useState(null);
+  const [meta, setMeta] = React.useState(null);
+  const [research, setResearch] = React.useState(null);
+  const [edits, setEdits] = React.useState({});
+  const [msg, setMsg] = React.useState('');
+  const [confirmDel, setConfirmDel] = React.useState(false);
+  const [seeding, setSeeding] = React.useState(false);
+  const [rErr, setRErr] = React.useState('');
+  const [shapes, setShapes] = React.useState(null);
+  const load = () => {
+    scJSON('/api/setup-chat/profile').then(r => { if (r.ok) setP(r.data); });
+    scJSON('/api/setup-chat/research').then(r => { if (r.ok) setResearch(r.data); });
+    scJSON('/api/setup-chat/state').then(r => { if (r.ok) setMeta(r.data); });
+  };
+  React.useEffect(() => { load(); scLoadShapes().then(setShapes); }, []);
+  React.useEffect(() => {
+    if (!research || research.state !== 'running') return;
+    const iv = setInterval(() => scJSON('/api/setup-chat/research').then(r => { if (r.ok) setResearch(r.data); }), 5000);
+    return () => clearInterval(iv);
+  }, [research && research.state]);
+  if (!p) return null;
+  const saveAnswers = async rebuild => {
+    for (const k in edits) {
+      if (scDetectSecret(edits[k], shapes)) { setMsg('That looks like a key. Keys go in Accounts & Keys, not here.'); return; }
+    }
+    const r = await scJSON('/api/setup-chat/profile/answers', 'PUT', { answers: edits, rebuild: !!rebuild });
+    if (r.ok) { setP(r.data); setEdits({}); setMsg(rebuild ? 'Saved, and your style was rebuilt from the answers.' : 'Saved.'); }
+    else setMsg(r.data.message || r.data.error || 'Could not save.');
+  };
+  const del = async () => {
+    if (!confirmDel) { setConfirmDel(true); return; }
+    const r = await scJSON('/api/setup-chat/profile', 'DELETE');
+    setConfirmDel(false);
+    if (r.ok) { setP(r.data); setMsg('Deleted: your answers, the setup transcript and the style block are gone.'); }
+  };
+  const rerun = () => window.dispatchEvent(new CustomEvent('friday:setup-chat-rerun'));
+  const startResearch = async v => {
+    for (const k in v) {
+      if (scDetectSecret(String(v[k] || ''), shapes)) { setRErr('One of those fields looks like a key. Keys go in Accounts & Keys.'); return; }
+    }
+    setRErr('');
+    const r = await scJSON('/api/setup-chat/research/start', 'POST', { seeds: v });
+    if (!r.ok) { setRErr(r.data.message || r.data.error || 'Could not start the search.'); return; }
+    setSeeding(false);
+    load();
+  };
+  const rs = research && research.state;
+  return (
+    <React.Fragment>
+      <StSection title="Your profile" desc="What you told Friday in the setup chat, and the speaking style made from it. Stored encrypted on this computer. Only the style reaches Friday's prompt, never your answers.">
+        {p.name && <div className="sc-sub">{'Friday calls you ' + p.name + '.'}</div>}
+        {(p.questions || []).map(q => (
+          <label key={q.id} className="sc-field">
+            <span>{q.question}</span>
+            <input className="sc-input" type="text" autoComplete="off"
+              value={edits[q.id] !== undefined ? edits[q.id] : q.answer}
+              placeholder={q.skipped ? 'Skipped' : 'Not answered'}
+              onChange={e => { const x = e.target.value; setEdits(o => ({ ...o, [q.id]: x })); }} />
+          </label>
+        ))}
+        <div className="sc-row">
+          <button type="button" className="sc-btn" disabled={!Object.keys(edits).length} onClick={() => saveAnswers(false)}>Save answers</button>
+          <button type="button" className="sc-btn quiet" onClick={() => saveAnswers(true)}>Save and rebuild my style</button>
+        </div>
+        {p.style && meta && (
+          <div style={{ marginTop: 14 }}>
+            <SetupStyleCard style={p.style} sliders={meta.sliders} floor={meta.pushback_floor} examplePrompt={meta.example_prompt}
+              saveLabel="Save style"
+              onSave={async sl => {
+                const r = await scJSON('/api/setup-chat/profile/style', 'POST', { sliders: sl || p.style.sliders });
+                if (r.ok) { setP(r.data); setMsg('Style saved. It is part of Friday\'s personality now.'); }
+              }} />
+          </div>
+        )}
+        <div className="sc-sub">{p.style_in_prompt ? 'Your style is part of Friday\'s personality (SOUL.md) and keeps evolving.' : 'No first-run style is in Friday\'s personality.'}</div>
+        <div className="sc-row">
+          <button type="button" className="sc-btn" onClick={rerun}>Run the setup chat again</button>
+          <button type="button" className="sc-btn danger" onClick={del}>{confirmDel ? 'Confirm: delete my answers and style' : 'Delete my profile'}</button>
+        </div>
+        {msg && <div role="status" className="sc-msgline ok">{msg}</div>}
+      </StSection>
+      <StSection title="Research on you (optional)" desc="Public-web research using only what you type in, reviewed line by line before anything is kept.">
+        {rs === 'running' && <div className="sc-sub">The search is running as a background task; findings will appear here.</div>}
+        {(rs === 'ready' || rs === 'reviewed') && <SetupResearchReview research={research} onChanged={res => { if (res) setResearch(res); }} />}
+        {rs === 'failed' && <div className="sc-sub">{'The last search stopped with an error: ' + (research.error || 'unknown')}</div>}
+        {!seeding && rs !== 'running' && rs !== 'ready' && <button type="button" className="sc-btn" onClick={() => setSeeding(true)}>{rs && rs !== 'not_asked' && rs !== 'declined' && rs !== 'unavailable' ? 'Search again' : 'Research me on the public web'}</button>}
+        {seeding && <SetupResearchSeeds intro={meta && meta.copy && meta.copy.research_ask} error={rErr} onSubmit={startResearch} onSkip={() => setSeeding(false)} />}
+      </StSection>
+    </React.Fragment>
+  );
+}
 // ═════════════════════════════════════════════════════════════════════════════════
 //  SETTINGS WORKSPACE — full tabbed settings (General / Models / Voice / Privacy /
 //  Federation / Economy / Orchestrator / Connectors / About)
@@ -16007,7 +16514,7 @@ function SettingsWS() {
   const TABS = [{
     id: 'general',
     label: 'General',
-    sub: 'Her name, her personality, and which workspaces the dock offers.'
+    sub: 'Her name, her personality, which workspaces the dock offers, and your profile from the setup chat.'
   }, {
     id: 'intelligence',
     label: 'Models',
@@ -16017,7 +16524,7 @@ function SettingsWS() {
     // things a person connects once and then forgets about.
     id: 'accounts',
     label: 'Accounts & Keys',
-    sub: 'Model provider keys, Google accounts and tool servers.'
+    sub: 'The setup checklist, model provider keys, Google accounts and tool servers.'
   }, {
     id: 'privacy',
     label: 'Privacy & Approvals',
@@ -16144,10 +16651,10 @@ function SettingsWS() {
       padding: '22px 28px 40px',
       maxWidth: 860
     }
-  }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
+  }, tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabModels, {
+  }), /*#__PURE__*/React.createElement(SettingsYourProfile, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabModels, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(StSection, {
@@ -16155,7 +16662,7 @@ function SettingsWS() {
     desc: "Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed. Keys are added in Accounts & Keys."
   }, with3DModels(/*#__PURE__*/React.createElement(ModelBrowser, {
     save: save
-  })))), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  })))), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, null), /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(SettingsTabConnectors, {
@@ -16531,8 +17038,8 @@ function App(){
   const[dockHidden,setDockHidden]=useState(false);
   // ── Setup Wizard ──
   const[setupDone,setSetupDone]=useState(true); // optimistic — flip after check
-  const[wizStep,setWizStep]=useState(0);
-  const[wizData,setWizData]=useState({agent_name:'AGENT FRIDAY',communication_style:'professional',preferred_scene_index:0,distribution:'default',providers:{}});
+  // "Run the setup chat again", from Settings > General > Your profile.
+  const[setupRerun,setSetupRerun]=useState(false);
   useEffect(()=>{
     // ?skip_setup=1 in URL → bypass immediately and stamp the marker
     if(new URLSearchParams(window.location.search).get('skip_setup')==='1'){
@@ -16542,14 +17049,18 @@ function App(){
     }
     fetch('/api/setup/status').then(r=>r.json()).then(d=>setSetupDone(d.initialized)).catch(()=>setSetupDone(true));
   },[]);
-  const completeWizard=async()=>{
-    try{await fetch('/api/setup/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(wizData)})}catch(e){}
-    // Keys just landed — drop the cached model catalog so availability re-resolves.
+  // The setup chat finished, or "Set up later": the server has completed
+  // setup already. Keys may have landed, so model availability re-resolves.
+  const finishSetupChat=d=>{
     try{fridayInvalidateModelCatalog();}catch(_){}
-    // Reflect the scalar choices now; never spread the providers object into settings.
-    const{providers,...scalars}=wizData;
-    setAgentSettings(s=>({...s,...scalars}));setSetupDone(true);
+    setAgentSettings(s=>({...s,agent_name:(d&&d.agent_name)||s.agent_name,minor_mode:!!(d&&d.minor_mode)}));
+    setSetupDone(true);setSetupRerun(false);
   };
+  useEffect(()=>{
+    const h=()=>{fetch('/api/setup-chat/rerun',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>{if(r.ok)setSetupRerun(true)}).catch(()=>{})};
+    window.addEventListener('friday:setup-chat-rerun',h);
+    return()=>window.removeEventListener('friday:setup-chat-rerun',h);
+  },[]);
   const topBarTimer=useRef(null);
   const dockTimer=useRef(null);
   const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
@@ -18452,15 +18963,10 @@ function App(){
   }
 
   return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
-    {/* ── Setup Wizard (first-run) ── */}
-    {!setupDone&&<SetupWizard
-      step={wizStep}
-      data={wizData}
-      onChange={patch=>setWizData(d=>({...d,...patch}))}
-      onNext={()=>setWizStep(s=>Math.min(s+1,WIZARD_STEPS.length-1))}
-      onBack={()=>setWizStep(s=>Math.max(s-1,0))}
-      onComplete={completeWizard}
-    />}
+    {/* ── First-run setup chat. index.html puts the consent screens
+         (ConsentFlow, not mirrored here) in front of it. ── */}
+    {!setupDone&&<SetupChat onDone={finishSetupChat}/>}
+    {setupDone&&setupRerun&&<SetupChat onDone={finishSetupChat}/>}
     {/* Top Bar */}
     <MeetingRecIndicator/>
     <div className={`top-bar ${topBarHidden?'hidden':''}`}>

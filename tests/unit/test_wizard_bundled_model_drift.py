@@ -12,9 +12,9 @@ built on the same phantom-literal shape as
 reintroduced as a LIVE value fails, the same literal named in prose that
 explains why it must not come back does not.
 
-Two files carry the wizard: `index.html` (served) and `ui_parts/app.html`
-(its JSX source, `project_ui_build_divergence` — the two are kept in step by
-hand). Both are checked.
+The pull is shown on the first-run setup chat's basics card. Two files carry
+it: `index.html` (served) and `ui_parts/app.html` (its hand-kept JSX
+mirror). Both are checked.
 """
 from __future__ import annotations
 
@@ -31,16 +31,18 @@ APP_HTML = ROOT / "ui_parts" / "app.html"
 # `_BRAINS`) — the model H3 kept naming by accident.
 PHANTOM = "gemma3:4b"
 
-_WIZARD_START = re.compile(r"const\s+WIZARD_STEPS\s*=")
-_WIZARD_END = "function SetupWizard"
+_WIZARD_START = re.compile(r"function\s+exactTag\s*\(")
+_PULL = "function WizardGemmaPull"
 
 
 def _wizard_block(text: str) -> str:
-    """The setup-wizard section: `WIZARD_STEPS` through the end of
-    `WizardGemmaPull`, stopping just before `SetupWizard` begins."""
+    """The bundled-model pull the setup chat's basics card shows: `exactTag`
+    through the end of `WizardGemmaPull`, stopping at the next top-level
+    function."""
     m = _WIZARD_START.search(text)
-    assert m, "could not find `const WIZARD_STEPS =` — has the wizard moved?"
-    end = text.index(_WIZARD_END, m.start())
+    assert m, "could not find `function exactTag(` — has the model pull moved?"
+    pull = text.index(_PULL, m.start())
+    end = text.index("\nfunction ", pull + len(_PULL))
     return text[m.start():end]
 
 
