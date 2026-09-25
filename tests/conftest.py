@@ -158,6 +158,19 @@ os.environ.setdefault("FRIDAY_PASSWORD", "test-vault-passphrase")
 # FRIDAY_VAULT_PASSPHRASE is the canonical vault key env var; FRIDAY_PASSWORD is
 # the backward-compat fallback.  Set both so tests exercise the new code path.
 os.environ.setdefault("FRIDAY_VAULT_PASSPHRASE", "test-vault-passphrase")
+# Provider API keys from the HOST environment do not reach the offline suite.
+# A developer machine carries real GEMINI_API_KEY / ANTHROPIC_API_KEY / ...,
+# CI carries none, and a test that sees one behaves differently there: the
+# health probe counts a keyed provider, a code path decides "cloud is
+# available", and an unmocked call becomes a paid one. Tests that need a key
+# set it themselves with monkeypatch. `--run-network` keeps them (the choice
+# is recorded in the environment so xdist workers, whose argv does not carry
+# the flag, make the same one).
+if "--run-network" in sys.argv:
+    os.environ["_FRIDAY_KEEP_HOST_PROVIDER_KEYS"] = "1"
+if os.environ.get("_FRIDAY_KEEP_HOST_PROVIDER_KEYS") != "1":
+    for _k in [k for k in os.environ if k.upper().endswith("_API_KEY")]:
+        del os.environ[_k]
 # Quieten noisy optional-dep warnings during test runs.
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
