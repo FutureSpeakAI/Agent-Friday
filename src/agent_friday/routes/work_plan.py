@@ -209,8 +209,9 @@ def _cloud_available() -> bool:
     """
     try:
         from agent_friday import core
+        from agent_friday.services.one_key import openrouter_ready
         return bool(getattr(core, "ANTHROPIC_API_KEY", None) or
-                    getattr(core, "GEMINI_API_KEY", None))
+                    getattr(core, "GEMINI_API_KEY", None) or openrouter_ready())
     except Exception:
         return False
 

@@ -137,3 +137,53 @@ def probe_spec(prov: dict, model: str | None) -> dict | None:
                      "messages": [{"role": "user", "content": "hi"}]},
         }
     return None
+
+
+def ping_detail(prov: dict, model: str | None, api_key: str | None = None,
+                headers: dict | None = None) -> tuple[str, dict | None]:
+    """Spend one token against `prov` and return (verdict, ping).
+
+    The one round trip behind both ``POST /api/providers/<name>/test`` (with
+    ``ping``) and the setup chat's key check. `api_key` defaults to the key
+    the provider resolves to; `headers` default to the provider's own auth
+    headers. `ping` is {model, ok, latency_ms, status} or {model, ok, error},
+    or None when no probe exists for this adapter. Fails open to UNKNOWN.
+    """
+    import time as _t
+
+    spec = probe_spec(prov, model)
+    if spec is None:
+        return UNKNOWN, None
+    ptype = (prov or {}).get("type") or ""
+    try:
+        from agent_friday.routing.provider_descriptors import (
+            auth_headers, provider_api_key)
+        if api_key is None:
+            api_key = provider_api_key(prov)  # pragma: allowlist secret
+        hdrs = dict(headers if headers is not None else auth_headers(prov, api_key))
+    except Exception:
+        return UNKNOWN, {"model": model, "ok": False, "error": "no credentials"}
+    url = spec["url"]
+    if ptype == "anthropic":
+        hdrs.update({"x-api-key": api_key or "",
+                     "anthropic-version": "2023-06-01"})
+    elif ptype == "google":
+        url = url + "?key=" + (api_key or "")
+    try:
+        import requests
+        t1 = _t.time()
+        rp = requests.post(url, headers=hdrs, json=spec["json"], timeout=30)
+        # Body read into memory for classification and never logged: an
+        # auth-failure body can echo request headers on some proxies.
+        return (verdict_for(rp.status_code, rp.text),
+                {"model": model, "ok": rp.status_code < 400,
+                 "latency_ms": int((_t.time() - t1) * 1000),
+                 "status": rp.status_code})
+    except Exception as e:
+        return UNKNOWN, {"model": model, "ok": False,
+                         "error": f"{type(e).__name__}"[:80]}
+
+
+def ping(prov: dict, model: str | None, api_key: str | None = None) -> str:
+    """The verdict alone; see `ping_detail`."""
+    return ping_detail(prov, model, api_key)[0]

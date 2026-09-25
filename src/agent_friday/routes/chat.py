@@ -1380,6 +1380,18 @@ def chat():
         # asked to keep off this machine, answered on it. Saying why — and
         # where the key goes — is worth more than a reply from a model they
         # declined.
+        #
+        # ONE KEY IS ENOUGH. The router already serves a cloud decision
+        # through OpenRouter when that is the only key (services/one_key.py);
+        # the overrides above (the per-turn cloud choice, Computer Control)
+        # write a cloud decision after it, so they get the same substitution
+        # here before anything concludes there is no key.
+        if (not _routed_local) and _provider == 'cloud' and get_anthropic_client() is None:
+            from agent_friday.services import one_key as _one_key
+            _route_info = _one_key.substitute_route(_route_info)
+            if _route_info.get('provider') == 'openai':
+                _provider = 'openai'
+                system_prompt, sources, pii_lookup = _prep_for('openai')
         if (not _routed_local) and _provider == 'cloud' and get_anthropic_client() is None:
             _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
             if _mode == 'cloud_only':
@@ -1389,10 +1401,11 @@ def chat():
                     "I'm set to **cloud only**, and there's no cloud AI key on "
                     "this computer yet — so there's nothing for me to think "
                     "with. I haven't sent this anywhere.\n\n"
-                    "Add a key in **Settings → Accounts & Keys**. Anthropic's Claude "
-                    "is what I use by default; the panel there has a button "
-                    "through to the signup page and takes the key straight "
-                    "from you — nothing to edit by hand.\n\n"
+                    "Add one key in **Settings → Accounts & Keys**: Anthropic "
+                    "(https://console.anthropic.com/settings/keys) or, instead, "
+                    "OpenRouter (https://openrouter.ai/keys). One is enough. "
+                    "The panel there takes the key straight from you and "
+                    "stores it encrypted — nothing to edit by hand.\n\n"
                     "If you would rather I ran on this laptop instead, switch "
                     "to **Smart** in Settings → Models and I will use a "
                     "local model whenever there is no key."

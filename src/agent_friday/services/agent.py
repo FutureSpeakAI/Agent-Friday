@@ -465,9 +465,9 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
                 "up, then retry."), []
     raise RuntimeError(
         "No model provider could run the agent (tried "
-        + "; ".join(errors[-3:]) + "). Set ANTHROPIC_API_KEY via the setup "
-        "wizard (or as an environment variable), configure an OpenAI-compatible "
-        "endpoint in Settings, or run Ollama locally, then restart the server."
+        + "; ".join(errors[-3:]) + "). Add one cloud key, Anthropic or "
+        "OpenRouter, in Settings → Accounts & Keys (one is enough), configure "
+        "an OpenAI-compatible endpoint in Settings, or run a local model."
     )
 
 
@@ -9387,8 +9387,21 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     """
     client = get_anthropic_client()
     if client is None:
+        # One key is enough: with only an OpenRouter key, the same Claude
+        # model runs the same tool loop through OpenRouter
+        # (services/one_key.py). `_call_openai` gates, seals and meters it.
+        from agent_friday.services import one_key as _one_key
+        _alt = _one_key.openrouter_instead(
+            model or _load_settings().get('orchestrator_model'))
+        if _alt:
+            return _call_openai(
+                messages, system=system, model=_alt, max_tokens=max_tokens,
+                orb_label=orb_label, orb_icon=orb_icon, tools=CLAUDE_TOOLS,
+                pii_lookup=pii_lookup, session_ctx=session_ctx,
+                provider=_one_key.OPENROUTER)
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → Accounts & Keys) or as an environment variable, then restart the server."
+            "No cloud AI key is set. Add an Anthropic or an OpenRouter key in "
+            "Settings → Accounts & Keys (one is enough)."
         )
 
     if pii_lookup is None:

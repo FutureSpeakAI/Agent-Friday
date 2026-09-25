@@ -80,6 +80,61 @@ CONNECT = (
 
 CONNECT_DONE = "Done for now"
 
+# ── One key is enough (cloud mode) ───────────────────────────────────────────
+#
+# Said at the connect stage when the user chose the cloud and there is no
+# model on this computer. Anthropic first, OpenRouter as the alternative;
+# either key alone is enough (services/one_key.py holds that promise).
+
+CONNECT_ONE_KEY = (
+    "You chose the cloud, so I need one AI key to think with. One key is "
+    "enough, and either of these works on its own:\n\n"
+    "Anthropic (recommended): Claude, from the company that makes it. You "
+    "pay Anthropic only for what you use. Get a key at "
+    "https://console.anthropic.com/settings/keys\n\n"
+    "OpenRouter (the alternative): one account that reaches Claude and many "
+    "other models. You buy credit up front and pay per use. Get a key at "
+    "https://openrouter.ai/keys\n\n"
+    "Paste the key into the API key field on the Anthropic or OpenRouter "
+    "card, not into this chat. I'll check it works as soon as you save it.")
+
+CONNECT_ONE_KEY_HAVE = (
+    "You already have an {label} key, and that one key is enough: I can "
+    "think with it. You don't need the other one.")
+
+#: After a key is saved: the verdict sentence, then one of these.
+KEY_CAN_THINK = "That one key is enough. I can think now."
+KEY_CANNOT_THINK = ("I still can't think. Try the key again, or use the other "
+                    "provider instead: one key is enough.")
+KEY_UNSURE = ("I'll try it for real the first time you talk to me; if it "
+              "fails, Settings > Accounts & Keys is where to fix it.")
+
+#: Leaving the connect stage in the cloud with no key: what will not work.
+NO_KEY_YET = (
+    "No AI key yet, so for now I can't think. Until you add one, chat, "
+    "briefings, the front page, scheduled jobs and research won't work, and "
+    "I'll use simple rules for the rest of setup. Add an Anthropic or an "
+    "OpenRouter key any time in Settings > Accounts & Keys; one is enough, "
+    "and nothing else needs redoing.")
+
+#: The one-key line on the checklist (setup chat and Settings > Accounts & Keys).
+ONE_KEY_IN_USE = ("Thinking with your {label} key. One key is enough; you "
+                  "don't need another.")
+ONE_KEY_NONE = ("One key is enough to think with: Anthropic, or OpenRouter "
+                "instead. Nothing that needs a model will work until one is "
+                "added.")
+ONE_KEY_LINK_LABELS = {"anthropic": "Get an Anthropic key",
+                       "openrouter": "Get an OpenRouter key"}
+
+#: What each of the two cards says it unlocks, in plain words.
+PROVIDER_UNLOCKS = {
+    "anthropic": ("Claude, from the company that makes it. Pay as you go. "
+                  "This one key is enough for everything Friday thinks about."),
+    "openrouter": ("The alternative to Anthropic: one account for Claude and "
+                   "many other models, paid from prepaid credit. This one key "
+                   "is enough on its own."),
+}
+
 #: The guard's reply when something key-shaped is typed into the chat box.
 #: The value itself is never repeated.
 KEY_IN_CHAT = (

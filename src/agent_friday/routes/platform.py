@@ -382,32 +382,11 @@ def api_provider_test(name):
             except Exception:
                 _model = None
         from agent_friday.services import key_verdict as _kv
-        _spec = _kv.probe_spec(prov, _model)
-        if _spec is None:
-            result["verdict"] = _kv.UNKNOWN
-        else:
-            _hdrs = dict(headers)
-            _url = _spec["url"]
-            if ptype == "anthropic":
-                _hdrs.update({"x-api-key": api_key or "",
-                              "anthropic-version": "2023-06-01"})
-            elif ptype == "google":
-                _url = _url + "?key=" + (api_key or "")
-            try:
-                t1 = _t.time()
-                rp = requests.post(_url, headers=_hdrs, json=_spec["json"],
-                                   timeout=30)
-                # Body read into memory for classification and never logged:
-                # an auth-failure body can echo request headers on some proxies.
-                result["verdict"] = _kv.verdict_for(rp.status_code, rp.text)
-                result["ping"] = {"model": _model,
-                                  "ok": rp.status_code < 400,
-                                  "latency_ms": int((_t.time() - t1) * 1000),
-                                  "status": rp.status_code}
-            except Exception as e:
-                result["verdict"] = _kv.UNKNOWN
-                result["ping"] = {"model": _model, "ok": False,
-                                  "error": f"{type(e).__name__}"[:80]}
+        # One round trip, shared with the setup chat's key check.
+        result["verdict"], _ping = _kv.ping_detail(prov, _model, api_key,
+                                                   headers=headers)
+        if _ping is not None:
+            result["ping"] = _ping
         result["verdict_detail"] = _kv.explain(
             result["verdict"], prov.get("label") or name)
 

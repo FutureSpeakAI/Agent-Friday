@@ -175,8 +175,18 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
         pass
     client = get_anthropic_client()
     if client is None:
+        # One key is enough: with only an OpenRouter key, the same Claude
+        # model is served through OpenRouter (services/one_key.py). Its own
+        # primitive seals the payload through the egress gate.
+        from agent_friday.services import one_key as _one_key
+        _alt = _one_key.openrouter_instead(
+            model or _load_settings().get("orchestrator_model"))
+        if _alt:
+            return _call_openai(messages, system=system, model=_alt,
+                                max_tokens=max_tokens, provider=_one_key.OPENROUTER)[0]
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → Accounts & Keys) or as an environment variable, then restart the server."
+            "No cloud AI key is set. Add an Anthropic or an OpenRouter key in "
+            "Settings → Accounts & Keys (one is enough)."
         )
     if model is None:
         # Same law as the dispatch ladders: orchestrator_model can hold a
@@ -557,10 +567,9 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
             pass
     raise RuntimeError(
         "No model provider could generate text (tried "
-        + "; ".join(errors[-3:]) + "). Set ANTHROPIC_API_KEY via the setup "
-        "wizard (Settings → Accounts & Keys) or as an environment variable, configure "
-        "an OpenAI-compatible endpoint in Settings, or run Ollama locally, then "
-        "restart the server."
+        + "; ".join(errors[-3:]) + "). Add one cloud key, Anthropic or "
+        "OpenRouter, in Settings → Accounts & Keys (one is enough), configure "
+        "an OpenAI-compatible endpoint in Settings, or run a local model."
     )
 
 # Keeps its own name and docstring; __wrapped__ carries the real signature.

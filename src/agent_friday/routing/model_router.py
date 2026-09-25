@@ -281,7 +281,18 @@ class ModelRouter:
         vault_access  — this request was flagged as vault-touching
         refuse        — caller must refuse outright (no model call)
         warning       — user-facing message to surface, if any
+
+        A cloud decision is served by whichever of the two cloud keys exists
+        (services/one_key.py): an Anthropic decision with only an OpenRouter
+        key becomes the same model through OpenRouter, and the reverse. Both
+        stay cloud, so the flags below are unchanged by it.
         """
+        if result.get("provider") != "local" and not refuse:
+            try:
+                from agent_friday.services.one_key import substitute_route
+                result = substitute_route(result)
+            except Exception:
+                pass
         is_local = result.get("provider") == "local"
         result["is_local"] = is_local
         result["vault_allowed"] = is_local

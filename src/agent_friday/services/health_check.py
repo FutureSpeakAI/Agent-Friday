@@ -230,7 +230,13 @@ def check_cloud_providers() -> Tuple[bool, str]:
         import agent_friday.core as core
     except Exception as e:
         return False, f"could not check: {type(e).__name__}: {e}"
+    try:
+        from agent_friday.services.one_key import openrouter_ready
+        _openrouter = openrouter_ready()
+    except Exception:
+        _openrouter = False
     have = [name for name, val in (("anthropic", core.ANTHROPIC_API_KEY),
+                                   ("openrouter", _openrouter),
                                    ("gemini", core.GEMINI_API_KEY)) if val]
     if have:
         return True, "configured: " + ", ".join(have)

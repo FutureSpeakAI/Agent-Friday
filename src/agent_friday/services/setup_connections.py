@@ -49,8 +49,11 @@ NOT_CONNECTED = "not_connected"
 SKIPPED = "skipped"
 EXTERNAL = "external"
 
-#: Provider order in the AI group: the ones people ask for first.
-_PROVIDER_FIRST = ("anthropic", "openai", "openrouter", "google-gemini", "huggingface")
+#: Provider order in the AI group: Anthropic, then OpenRouter as the one-key
+#: alternative (services/one_key.py), then the ones people ask for next.
+_PROVIDER_FIRST = ("anthropic", "openrouter", "openai", "google-gemini", "huggingface")
+#: The two providers either of which is enough on its own.
+_ONE_KEY = ("anthropic", "openrouter")
 #: Registry entries that are not an account someone connects with a key.
 _PROVIDER_EXCLUDE = ("custom",)
 
@@ -112,20 +115,33 @@ def _ai_items() -> list:
     rows.sort(key=lambda p: (_PROVIDER_FIRST.index(p["name"])
                              if p["name"] in _PROVIDER_FIRST else 99,
                              (p.get("label") or p["name"]).lower()))
+    try:
+        from agent_friday.services import one_key
+        in_use = one_key.key_in_use()
+    except Exception:
+        in_use = None
     out = []
     for p in rows:
         name, label = p["name"], p.get("label") or p["name"]
         status, detail = _provider_status(name, reg)
+        connect = {"kind": "secret",
+                   "fields": [{"key": "key", "label": "API key", "secret": True}],
+                   "endpoint": "/api/providers/%s/key" % name,
+                   "test": "/api/providers/%s/test" % name,
+                   "signup_url": SIGNUP_URLS.get(name, "")}
+        if name in _ONE_KEY:
+            # Saving either key is followed by a one-token check that says
+            # whether Friday can think now.
+            connect["verify"] = "/api/setup/verify-key/%s" % name
+            if name == in_use and status == CONNECTED:
+                detail = (detail + " " if detail else "") + copy.ONE_KEY_IN_USE.format(
+                    label=one_key.LABELS[name])
         out.append(_item(
             "provider:" + name, "ai", label,
-            unlocks="Chat and reasoning with %s models." % label,
+            unlocks=copy.PROVIDER_UNLOCKS.get(
+                name, "Chat and reasoning with %s models." % label),
             permissions=[_perm(copy.PROVIDER_PERMISSION.format(label=label))],
-            connect={"kind": "secret",
-                     "fields": [{"key": "key", "label": "API key", "secret": True}],
-                     "endpoint": "/api/providers/%s/key" % name,
-                     "test": "/api/providers/%s/test" % name,
-                     "signup_url": SIGNUP_URLS.get(name, "")},
-            status=status, detail=detail))
+            connect=connect, status=status, detail=detail))
     # The local option: no key, no account.
     local_ok, local_detail = False, ""
     try:
@@ -477,8 +493,15 @@ def checklist(skipped=()) -> dict:
     counts = {}
     for it in items:
         counts[it["status"]] = counts.get(it["status"], 0) + 1
+    try:
+        from agent_friday.services import one_key
+        one = one_key.status()
+    except Exception as e:
+        _log.warning("setup checklist: one-key status could not be read: %s", e)
+        one = None
     return {"groups": [{"id": g, "label": lbl} for g, lbl in GROUPS],
             "items": items, "counts": counts, "errors": errors,
+            "one_key": one,
             "never": ("Friday never reads your browser's saved passwords or "
                       "cookies, never opens other apps' credential files, and "
                       "never asks for a password in the chat.")}

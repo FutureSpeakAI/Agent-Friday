@@ -38596,6 +38596,15 @@ function SetupConnectionItem({
         ok: true,
         text: 'Saved, encrypted on this computer.'
       });
+      // Anthropic / OpenRouter: one token to say whether Friday can think now.
+      if (c.verify) {
+        const r = await scJSON(c.verify, 'POST', {});
+        const d = r.data || {};
+        if (r.ok && d.text) setMsg({
+          ok: !!d.can_think,
+          text: 'Saved, encrypted on this computer. ' + d.text
+        });
+      }
     } else if (c.kind === 'google_oauth') {
       const d = await post(c.endpoint, {
         label: label.trim(),
@@ -38832,7 +38841,16 @@ function SetupConnectionsPanel({
     className: "sc-connections"
   }, /*#__PURE__*/React.createElement("p", {
     className: "sc-sub"
-  }, (counts.connected || 0) + ' connected', counts.skipped ? ' · ' + counts.skipped + ' skipped' : '', counts.needs_attention ? ' · ' + counts.needs_attention + ' need attention' : '', ". ", data.never), groups.map(g => /*#__PURE__*/React.createElement("section", {
+  }, (counts.connected || 0) + ' connected', counts.skipped ? ' · ' + counts.skipped + ' skipped' : '', counts.needs_attention ? ' · ' + counts.needs_attention + ' need attention' : '', ". ", data.never), data.one_key && data.one_key.line && /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, data.one_key.line, ' ', (data.one_key.links || []).filter(l => scSafeUrl(l.url)).map(l => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: l.provider
+  }, ' ', /*#__PURE__*/React.createElement("a", {
+    className: "sc-link",
+    href: l.url,
+    target: "_blank",
+    rel: "noreferrer noopener"
+  }, l.label)))), groups.map(g =>/*#__PURE__*/React.createElement("section", {
     key: g.id,
     "aria-label": g.label
   }, /*#__PURE__*/React.createElement("div", {

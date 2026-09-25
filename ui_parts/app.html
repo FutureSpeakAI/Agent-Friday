@@ -12186,6 +12186,12 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip }) {
       if (!v) throw new Error('paste the key first');
       await post(c.endpoint, { key: v });
       setMsg({ ok: true, text: 'Saved, encrypted on this computer.' });
+      // Anthropic / OpenRouter: one token to say whether Friday can think now.
+      if (c.verify) {
+        const r = await scJSON(c.verify, 'POST', {});
+        const d = r.data || {};
+        if (r.ok && d.text) setMsg({ ok: !!d.can_think, text: 'Saved, encrypted on this computer. ' + d.text });
+      }
     } else if (c.kind === 'google_oauth') {
       const d = await post(c.endpoint, { label: label.trim(), include_send: !!opts.include_send, include_modify: !!opts.include_modify });
       openUrl(d.auth_url);
@@ -12329,6 +12335,14 @@ function SetupConnectionsPanel({ highlight }) {
       <p className="sc-sub">
         {(counts.connected || 0) + ' connected'}{counts.skipped ? ' · ' + counts.skipped + ' skipped' : ''}{counts.needs_attention ? ' · ' + counts.needs_attention + ' need attention' : ''}. {data.never}
       </p>
+      {data.one_key && data.one_key.line && (
+        <p className="sc-sub">
+          {data.one_key.line}{' '}
+          {(data.one_key.links || []).filter(l => scSafeUrl(l.url)).map(l => (
+            <React.Fragment key={l.provider}>{' '}<a className="sc-link" href={l.url} target="_blank" rel="noreferrer noopener">{l.label}</a></React.Fragment>
+          ))}
+        </p>
+      )}
       {groups.map(g => (
         <section key={g.id} aria-label={g.label}>
           <div className="sc-group">{g.label}</div>

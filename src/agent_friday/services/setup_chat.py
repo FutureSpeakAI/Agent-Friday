@@ -147,6 +147,10 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
         _say(transcript, copy.BASICS.format(agent=st.get("agent_name") or "Friday"), stage)
     elif stage == "connect":
         _say(transcript, copy.CONNECT, stage)
+        if _needs_a_cloud_key(st):
+            in_use = _key_in_use()
+            _say(transcript, copy.CONNECT_ONE_KEY_HAVE.format(label=_KEY_LABELS[in_use])
+                 if in_use else copy.CONNECT_ONE_KEY, stage, one_key=True)
     elif stage == "reader":
         text, _ = _reader_offer(st)
         _say(transcript, text, stage)
@@ -369,7 +373,72 @@ def _on_connect(st, transcript, value, text):
     labels = setup_connections.connected_labels()
     _heard(transcript, copy.CONNECT_DONE + (
         " (connected: %s)" % ", ".join(labels[:8]) if labels else ""), "connect")
+    if _needs_a_cloud_key(st) and not _key_in_use():
+        _say(transcript, copy.NO_KEY_YET, "connect", one_key=True)
     _enter(st, transcript, "reader")
+
+
+# ── One key is enough (the connect stage, cloud mode) ───────────────────────
+
+_KEY_LABELS = {"anthropic": "Anthropic", "openrouter": "OpenRouter"}
+
+#: Test seam for the key check: `callable(provider) -> {verdict, can_think,
+#: text}`. None means the real one-token check (services/one_key.verify).
+KEY_VERIFY = None
+
+
+def _key_in_use() -> str | None:
+    try:
+        from agent_friday.services import one_key
+        return one_key.key_in_use()
+    except Exception:
+        return None
+
+
+def _needs_a_cloud_key(st: dict) -> bool:
+    """The user chose the cloud and nothing on this computer can think."""
+    mode = st.get("routing_mode") or ""
+    if mode == "cloud_only":
+        return True
+    if mode == "local_preferred":
+        from agent_friday.services import setup_reader
+        return not setup_reader.local_model()
+    return False
+
+
+def key_saved(provider: str) -> dict:
+    """A key was just saved on a checklist card: check it and say so.
+
+    The key itself never reaches this function; it is already in the
+    credential store. The check spends one token through the same verdict
+    logic as Settings (services/key_verdict.py). While the chat is on the
+    connect stage, the result is also said in the conversation.
+    Returns {provider, verdict, can_think, text}.
+    """
+    from agent_friday.services import one_key
+    check = KEY_VERIFY or one_key.verify
+    try:
+        out = dict(check(provider) or {})
+    except Exception:
+        out = {"verdict": "unknown", "can_think": False, "text": ""}
+    verdict = out.get("verdict") or "unknown"
+    if verdict == "ok":
+        tail = copy.KEY_CAN_THINK
+    elif verdict in ("rejected", "no_credit"):
+        tail = copy.KEY_CANNOT_THINK
+    else:
+        tail = copy.KEY_UNSURE
+    text = ((out.get("text") or "") + " " + tail).strip()
+    result = {"provider": provider, "verdict": verdict,
+              "can_think": verdict == "ok", "text": text}
+    with _LOCK:
+        st = load_state()
+        if st["consent_done"] and not st["completed"] and st["stage"] == "connect":
+            transcript = profile.load_transcript()
+            _say(transcript, text, "connect", one_key=True, verdict=verdict)
+            profile.save_transcript(transcript)
+            save_state(st)
+    return result
 
 
 def _on_reader(st, transcript, value, text):

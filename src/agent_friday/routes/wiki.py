@@ -325,7 +325,9 @@ def wiki_setup_research():
     location = (data.get("location") or "").strip()
 
     drafts = []
-    client = get_anthropic_client()
+    # Either cloud key can draft (one is enough, services/one_key.py).
+    from agent_friday.services.one_key import cloud_key_present
+    client = get_anthropic_client() or cloud_key_present()
     base_context = (
         f"Name: {full_name or '[unknown]'}\n"
         f"Birthdate: {birthdate or '[unknown]'}\n"

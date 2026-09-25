@@ -45,20 +45,28 @@ def local_model() -> str | None:
 
 
 def cloud_model() -> dict | None:
-    """{model, provider} for the cloud reader, or None when no key is usable."""
+    """{model, provider} for the cloud reader, or None when no key is usable.
+
+    One key is enough (services/one_key.py): Anthropic when its key exists,
+    otherwise the same Claude model through OpenRouter. The provider named
+    here is the one `call_json` actually sends to.
+    """
     try:
-        from agent_friday.services import credential_store as cs
-        import agent_friday.core as core
-        if not (getattr(core, "ANTHROPIC_API_KEY", "")
-                or cs.provider_key_status("anthropic") == "connected"):
-            return None
+        from agent_friday.services import one_key
+        in_use = one_key.key_in_use()
     except Exception:
         return None
+    if in_use is None:
+        return None
     try:
-        from agent_friday.services.research.harness import _anthropic_model_name
-        name = _anthropic_model_name()
+        from agent_friday.services.model_router import ANTHROPIC_MODEL_DEFAULT
+        from agent_friday.core import _load_settings
+        name = ((_load_settings() or {}).get("anthropic_model")
+                or ANTHROPIC_MODEL_DEFAULT)
     except Exception:
-        name = "Claude"
+        name = "claude-sonnet-5"
+    if in_use == one_key.OPENROUTER:
+        return {"model": one_key.openrouter_id_for(name), "provider": "OpenRouter"}
     return {"model": name, "provider": "Anthropic"}
 
 
@@ -99,9 +107,15 @@ def call_json(reader: dict, system: str, user: str, *,
     if kind == "cloud":
         try:
             from agent_friday.services import local_call
-            from agent_friday.services.model_router import _call_claude
-            raw = _call_claude([{"role": "user", "content": user}],
-                               system=system, max_tokens=max_tokens)
+            msgs = [{"role": "user", "content": user}]
+            if (reader or {}).get("provider") == "OpenRouter":
+                # The reader the user agreed to is the one that reads.
+                from agent_friday.services.model_router import _call_openai
+                raw = _call_openai(msgs, system=system, model=model or None,
+                                   max_tokens=max_tokens, provider="openrouter")[0]
+            else:
+                from agent_friday.services.model_router import _call_claude
+                raw = _call_claude(msgs, system=system, max_tokens=max_tokens)
             return local_call.extract_json(raw or "")
         except Exception as e:
             _log.warning("cloud reader failed: %s", e)

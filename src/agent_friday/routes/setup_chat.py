@@ -17,6 +17,7 @@
     DELETE /api/setup-chat/profile                delete answers, transcript, style block
     GET    /api/setup/connections                 the checklist; never a secret value
     POST   /api/setup/connections/<id>/skip       {skipped}
+    POST   /api/setup/verify-key/<name>           check a just-saved Anthropic or OpenRouter key
 
 LOCAL ONLY, on top of the app-wide login gate. The profile holds a person's
 answers about themselves and the begin call carries the vault passphrase; both
@@ -244,6 +245,20 @@ def setup_connections():
     from agent_friday.services import setup_connections as scx
     st = sc.load_state()
     return jsonify({"ok": True, **scx.checklist(st.get("skipped_connections") or [])})
+
+
+@setup_chat_bp.route("/api/setup/verify-key/<name>", methods=["POST"])
+def setup_verify_key(name):
+    """Check the key just saved for one of the two thinking providers.
+
+    Takes no key: the card has already stored it through
+    ``POST /api/providers/<name>/key``. Returns {verdict, can_think, text}.
+    """
+    from agent_friday.services import one_key
+    if name not in (one_key.ANTHROPIC, one_key.OPENROUTER):
+        return jsonify({"ok": False, "error": "only the Anthropic and OpenRouter "
+                                              "keys are checked here"}), 404
+    return jsonify({"ok": True, **sc.key_saved(name)})
 
 
 @setup_chat_bp.route("/api/setup/connections/<path:item_id>/skip", methods=["POST"])

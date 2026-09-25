@@ -249,8 +249,10 @@ def _anthropic_model_name() -> str:
     try:
         from agent_friday.services.model_router import ANTHROPIC_MODEL_DEFAULT
         from agent_friday.core import _load_settings
-        return ((_load_settings() or {}).get("anthropic_model")
-                or ANTHROPIC_MODEL_DEFAULT)
+        from agent_friday.services.one_key import served_name
+        # With only an OpenRouter key the call is served there, and named so.
+        return served_name((_load_settings() or {}).get("anthropic_model")
+                           or ANTHROPIC_MODEL_DEFAULT)
     except Exception:
         return "claude (model id unavailable)"
 
