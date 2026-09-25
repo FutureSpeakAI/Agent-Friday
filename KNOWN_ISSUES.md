@@ -139,10 +139,6 @@ or Windows credential protection.
 
 ## 7. Security posture
 
-- **Keys entered through the `friday setup` terminal wizard** are stored
-  encrypted and also copied in plain text to `.friday\settings.json`,
-  `.friday\config.yaml` and `start.bat` in the application folder. Use
-  Settings → Accounts & Keys instead.
 - **Some keys live in `settings.json` in plain text** when set there:
   `elevenlabs_api_key`, `inworld_api_key` and `model_routing.openai_api_key`.
   Prefer environment variables or the encrypted store.

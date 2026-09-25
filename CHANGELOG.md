@@ -158,6 +158,13 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   folder you choose. Earlier builds copied every wiki write to
   `G:\My Drive\Wiki` whenever that folder existed; if you use Google Drive
   for desktop on drive G:, check for and remove that folder.
+- **`friday setup` writes provider keys only to the encrypted store.** It no
+  longer copies them in plain text to `config.yaml`, `settings.json` and
+  `start.bat`, and its next run moves copies left by earlier versions into
+  the encrypted store and removes them. A key that cannot be stored is left
+  where it is and reported. A vault passphrase chosen or recovered on the
+  lost-passphrase screen is stored in Credential Manager; the screen no
+  longer claims it was written to `start.bat`.
 
 ### Fixed
 

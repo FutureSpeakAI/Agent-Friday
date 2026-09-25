@@ -136,7 +136,7 @@ jobs, background tasks and the phone. They are implemented in
 | Governance signing key | Windows Credential Manager (`agent-friday` / `governance-key`), falling back to `~/.friday/vault/.governance-key` (owner-only) | Never replaced automatically: an unreadable key is an error, not a reason to mint a new one and orphan old receipts. |
 | Ed25519 attestation key | `~/.friday/vault/.attestation-key-ed25519` (owner-only) | File only; used for federation and attestation. |
 | Web session secret | `~/.friday/secret_key` (owner-only) | Random, persisted. |
-| Keys entered through the `friday setup` terminal wizard | The encrypted store above, **and** plaintext copies in `~/.friday/config.yaml`, `~/.friday/settings.json` and a `start.bat` in the application folder | **The copies are plaintext.** Prefer Settings → Accounts & Keys, which writes only the encrypted store. This is listed in [KNOWN_ISSUES.md](KNOWN_ISSUES.md). |
+| Keys entered through the `friday setup` terminal wizard | The encrypted store above only | The wizard writes no key to `config.yaml`, `settings.json` or `start.bat`. On its next run it moves plaintext keys an earlier version left in those files into the encrypted store and removes the copies; a key that cannot be stored, or that differs from a key already stored, is left in place and reported. |
 
 Precedence at startup: a real environment variable wins; a key from the
 encrypted store beats a key from a launch script; `FRIDAY_VAULT_PASSPHRASE` or
