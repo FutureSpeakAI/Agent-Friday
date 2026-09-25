@@ -3,9 +3,10 @@
 The hotkey service is exercised in test_push_to_transcribe.py. What is pinned
 here is the join between it and the rest of Friday: the tray reads the
 settings, refuses a hotkey it cannot honour instead of binding something else,
-routes the audio to the local ear and nowhere near a cloud one, and waits for
-the server before installing a key whose first press would otherwise reach
-nothing.
+and routes the audio to the local ear and nowhere near a cloud one. It
+registers the key without waiting for the server, whose cold start can outlast
+any wait, keeps trying until the hook holds, and says so out loud when it
+cannot.
 """
 import json
 
@@ -147,27 +148,164 @@ def test_a_server_error_becomes_a_sentence_not_a_stack_trace(monkeypatch,
     assert "downloaded" in str(e.value)
 
 
-def test_it_waits_for_the_server_before_installing_the_key(monkeypatch):
-    """A hotkey whose first press reaches nothing gets written off."""
+def test_a_hold_before_the_server_is_up_says_so(monkeypatch, bridge):
+    """The key is registered before the server can transcribe, which is only
+    right because a hold during a boot is told why nothing was typed."""
+    import urllib.error
+
+    def refused(req, timeout=None):
+        raise urllib.error.URLError(ConnectionRefusedError(10061, "refused"))
+
+    monkeypatch.setattr(tray.urllib.request, "urlopen", refused)
+    with pytest.raises(RuntimeError) as e:
+        bridge._transcribe(b"\x01\x02" * 100)
+    assert "starting up" in str(e.value)
+
+
+# ── Registration: now, until it holds, and out loud when it cannot ──────────
+
+ACTIVE = tray.PushToTranscribe.ACTIVE
+OFF = tray.PushToTranscribe.OFF
+RETRY = tray.PushToTranscribe.RETRY
+BLOCKED = tray.PushToTranscribe.BLOCKED
+
+
+class FakeIcon:
+    def __init__(self):
+        self.notifications = []
+
+    def notify(self, message, title=None):
+        self.notifications.append((message, title))
+
+
+class _Stop(Exception):
+    pass
+
+
+def _tray(monkeypatch, outcomes, stop_after=None):
+    """A tray whose bridge answers apply() from `outcomes` in turn. Sleeps are
+    recorded, not slept; with `stop_after`, the loop is broken at that sleep."""
     t = tray.FridayTray.__new__(tray.FridayTray)
-    t.ptt = tray.PushToTranscribe()
-    applied = []
-    t.ptt.apply = lambda: applied.append(1)
+    t.ptt = tray.PushToTranscribe(server_url="http://127.0.0.1:1")
+    t.icon = FakeIcon()
     t._refresh_menu = lambda: None
+    queue = list(outcomes)
+    calls = []
+
+    def apply():
+        outcome, detail = queue.pop(0)
+        calls.append(outcome)
+        t.ptt.detail = detail
+        return outcome
+
+    t.ptt.apply = apply
+    slept = []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        if stop_after is not None and len(slept) >= stop_after:
+            raise _Stop()
+
+    monkeypatch.setattr(tray.time, "sleep", sleep)
+    # A server that never answers, so a health gate (if one were back) fails
+    # fast instead of polling for real.
     monkeypatch.setattr(tray, "_wait_for_health",
-                        lambda **kw: (False, "never came up"))
+                        lambda **kw: (False, "NOT RESPONDING"))
+    return t, calls, slept
+
+
+def test_the_hotkey_is_registered_without_waiting_for_the_server(monkeypatch):
+    """A cold start takes minutes on a slow machine and the hook needs none of
+    it. Waiting for /api/health (120 s, then never again) is how the hotkey
+    went missing after a restart."""
+    t, calls, slept = _tray(monkeypatch, [(ACTIVE, "Alt+T")])
+
+    def no_wait(**kw):
+        raise AssertionError("registration must not wait for the server")
+
+    monkeypatch.setattr(tray, "_wait_for_health", no_wait)
     t._start_push_to_transcribe()
-    assert not applied, "no server, no hotkey"
+    assert calls == [ACTIVE]
+    assert slept == [], "registered at once, no waiting"
+    assert t.icon.notifications == []
 
-    monkeypatch.setattr(tray, "_wait_for_health", lambda **kw: (True, "ok"))
+
+def test_a_failed_registration_is_retried_until_it_holds(monkeypatch):
+    """There is no last attempt: the tray backs off to once a minute and keeps
+    going, well past the two minutes that used to be the end of it."""
+    fails = [(RETRY, "could not install the keyboard hook")] * 12
+    t, calls, slept = _tray(monkeypatch, fails + [(ACTIVE, "Alt+T")])
     t._start_push_to_transcribe()
-    assert applied == [1]
+    assert len(calls) == 13 and calls[-1] == ACTIVE, (
+        "it stops trying only when the hook holds: %r" % calls)
+    assert slept[:3] == [2.0, 4.0, 8.0], slept
+    assert max(slept) == tray.PTT_RETRY_MAX_S
+    assert sum(slept) > 120
 
 
-def test_health_is_read_as_a_pair_not_a_truthy_tuple():
-    """_wait_for_health returns (ok, detail). Testing the tuple itself is
-    always true, which would install the hotkey against a dead server."""
-    import inspect
-    src = inspect.getsource(tray.FridayTray._start_push_to_transcribe)
-    assert "if not _wait_for_health(" not in src, (
-        "a non-empty tuple is truthy; unpack it")
+def test_a_registration_that_keeps_failing_is_said_out_loud(monkeypatch):
+    """Under pythonw the log reaches no file: a hotkey that is not working
+    says so in a notification, and says so again when it recovers."""
+    t, calls, slept = _tray(
+        monkeypatch,
+        [(BLOCKED, "bad hotkey: 'alt+nonsense'")] * 3 + [(ACTIVE, "Alt+T")])
+    t._start_push_to_transcribe()
+    msgs = [m for m, _title in t.icon.notifications]
+    assert len(msgs) == 2, msgs
+    assert "not working" in msgs[0] and "bad hotkey" in msgs[0]
+    assert "working now" in msgs[1] and "Alt+T" in msgs[1]
+    assert all(title == "Friday Desktop" for _m, title in t.icon.notifications)
+
+
+def test_the_menu_line_says_why_while_it_is_not_working(monkeypatch):
+    t, calls, slept = _tray(
+        monkeypatch, [(RETRY, "could not install the keyboard hook")] * 50,
+        stop_after=5)
+    with pytest.raises(_Stop):
+        t._start_push_to_transcribe()
+    assert "could not install the keyboard hook" in t.ptt.label()
+    assert len(t.icon.notifications) == 1, "said once, not once a minute"
+
+
+def test_one_failure_that_the_retry_fixes_is_not_worth_a_notification(
+        monkeypatch):
+    t, calls, slept = _tray(
+        monkeypatch,
+        [(RETRY, "could not install the keyboard hook"), (ACTIVE, "Alt+T")])
+    t._start_push_to_transcribe()
+    assert calls == [RETRY, ACTIVE]
+    assert t.icon.notifications == []
+
+
+def test_off_is_an_answer_not_a_failure(monkeypatch):
+    t, calls, slept = _tray(monkeypatch, [(OFF, "off")])
+    t._start_push_to_transcribe()
+    assert calls == [OFF] and slept == [] and t.icon.notifications == []
+
+
+def test_settings_json_is_read_while_the_server_is_starting(monkeypatch,
+                                                            tmp_path):
+    """Turned off in settings means no hook from the first second, not the
+    default hook until the server answers. The file is read as the server
+    reads it, BOM and all."""
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    (tmp_path / "settings.json").write_bytes(
+        b"\xef\xbb\xbf" + json.dumps({"push_to_transcribe": False}).encode())
+    made = []
+    _patch_service(monkeypatch, made)
+    p = tray.PushToTranscribe(server_url="http://127.0.0.1:1")
+    assert p.apply() == OFF
+    assert not made, "off in settings.json is no hook, server or no server"
+
+
+def test_a_rebound_hotkey_is_honoured_before_the_server_answers(monkeypatch,
+                                                                tmp_path):
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"push_to_transcribe_hotkey": "ctrl+shift+space"}),
+        encoding="utf-8")
+    made = []
+    _patch_service(monkeypatch, made)
+    p = tray.PushToTranscribe(server_url="http://127.0.0.1:1")
+    assert p.apply() == ACTIVE
+    assert made[0].hotkey == "ctrl+shift+space"

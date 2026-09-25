@@ -773,6 +773,14 @@ class PushToTalk:
                                on_release=lambda *_a: None)
         listener.daemon = True
         listener.start()
+        if not _hook_installed(listener):
+            try:
+                listener.stop()
+            except Exception:
+                pass
+            log.warning("push-to-transcribe: Windows did not install the "
+                        "keyboard hook")
+            return False
         self._listener = listener
         log.info("push-to-transcribe listening for %s",
                  describe_hotkey(self.hotkey))
@@ -786,6 +794,41 @@ class PushToTalk:
             except Exception:
                 pass
         self._cancel("Stopped")
+
+
+def _hook_installed(listener, timeout=2.0, _hooks=None):
+    """Whether the Windows keyboard hook behind a pynput listener exists.
+
+    Starting a listener proves nothing. pynput marks it ready before calling
+    SetWindowsHookEx, never checks what that call returns, and swallows any
+    exception in its thread, so a hook Windows refused looks exactly like a
+    working one. The handle pynput records for each hook thread is what says
+    the hook is there. Where that record is not available (another pynput or
+    another platform), a listener thread still alive after a moment is the
+    most that can be known.
+    """
+    if _hooks is None:
+        try:
+            from pynput._util.win32 import SystemHook
+            _hooks = SystemHook._HOOKS
+        except Exception:
+            _hooks = None
+    began = time.monotonic()
+    while listener.is_alive():
+        waited = time.monotonic() - began
+        if _hooks is None:
+            if waited >= 0.3:
+                return True
+        else:
+            # The thread is entered in the table before the handle is stored
+            # on it, so an entry without a handle yet is not a verdict.
+            entry = _hooks.get(listener.ident)
+            if entry is not None and getattr(entry, "_hook", None):
+                return True
+        if waited >= timeout:
+            return False
+        time.sleep(0.02)
+    return False
 
 
 def _modifiers_held(mods):

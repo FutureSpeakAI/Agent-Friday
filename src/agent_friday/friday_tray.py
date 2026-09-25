@@ -152,8 +152,18 @@ def _wait_for_health(timeout: float = SERVER_START_TIMEOUT_S,
 # that is always running and has a desktop session to send keystrokes into.
 # The server owns the ear, so the tray records and asks it for the words.
 
+# A registration that fails is tried again after these intervals, doubling,
+# for as long as the tray runs. There is no last attempt.
+PTT_RETRY_FIRST_S = 2.0
+PTT_RETRY_MAX_S = 60.0
+
 class PushToTranscribe:
     """Holds the hotkey service and keeps it in step with the settings."""
+
+    # What apply() leaves behind. ACTIVE and OFF are what the settings asked
+    # for; RETRY and BLOCKED are not, and differ in whether trying again
+    # unchanged could help (BLOCKED needs a different setting or install).
+    ACTIVE, OFF, RETRY, BLOCKED = "active", "off", "retry", "blocked"
 
     def __init__(self, server_url=None):
         # None follows the server's current port on every request.
@@ -168,15 +178,29 @@ class PushToTranscribe:
 
     # -- settings ---------------------------------------------------------
     def _settings(self) -> dict:
+        """The settings, from the server, else from settings.json itself.
+
+        The hotkey is registered while the server may still be starting, and
+        a cold start takes minutes. Reading the file the server reads (as it
+        reads it: utf-8-sig, since a BOM is a parse error) means a hotkey the
+        user turned off or rebound is honoured from the first second, not
+        replaced by the default until the server answers.
+        """
+        import json
         try:
-            import json
-            import urllib.request
             with urllib.request.urlopen(self.server_url + "/api/settings",
                                         timeout=5) as r:
                 body = json.load(r)
             return body.get("settings", body) or {}
         except Exception as e:
-            log.info("push-to-transcribe could not read settings: %s", e)
+            log.info("push-to-transcribe could not read settings from the "
+                     "server: %s", e)
+        try:
+            path = friday_home() / "settings.json"
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            log.info("push-to-transcribe could not read settings.json: %s", e)
             return {}
 
     # -- the ear lives in the server --------------------------------------
@@ -203,8 +227,11 @@ class PushToTranscribe:
         return body.get("text") or ""
 
     # -- lifecycle --------------------------------------------------------
-    def apply(self) -> None:
-        """Start, stop or rebind to match the current settings."""
+    def apply(self) -> str:
+        """Start, stop or rebind to match the current settings.
+
+        Returns ACTIVE, OFF, RETRY or BLOCKED; `detail` says why in words.
+        """
         s = self._settings()
         want = bool(s.get("push_to_transcribe", True))
         hotkey = str(s.get("push_to_transcribe_hotkey") or "alt+t")
@@ -213,14 +240,14 @@ class PushToTranscribe:
         if not want:
             self.stop()
             self.detail = "off"
-            return
+            return self.OFF
 
         try:
             from agent_friday.services import push_to_talk as ptt
         except Exception as e:
             self.detail = "unavailable (%s)" % e
             log.info("push-to-transcribe unavailable: %s", e)
-            return
+            return self.BLOCKED
 
         try:
             ptt.parse_hotkey(hotkey)
@@ -229,7 +256,7 @@ class PushToTranscribe:
             self.detail = "bad hotkey: %s" % e
             log.warning("push-to-transcribe %s", self.detail)
             self.stop()
-            return
+            return self.BLOCKED
 
         if self.service is not None:
             try:
@@ -238,7 +265,8 @@ class PushToTranscribe:
                 self.detail = ptt.describe_hotkey(hotkey)
             except Exception as e:
                 self.detail = "could not rebind: %s" % e
-            return
+                return self.RETRY
+            return self.ACTIVE
 
         if self.indicator is None:
             try:
@@ -253,9 +281,10 @@ class PushToTranscribe:
         if self.service.start():
             self.detail = ptt.describe_hotkey(hotkey)
             log.info("push-to-transcribe active: hold %s anywhere", self.detail)
-        else:
-            self.service = None
-            self.detail = "could not install the keyboard hook"
+            return self.ACTIVE
+        self.service = None
+        self.detail = "could not install the keyboard hook"
+        return self.RETRY
 
     def stop(self) -> None:
         svc, self.service = self.service, None
@@ -512,24 +541,51 @@ class FridayTray:
         self.icon.run()
 
     def _start_push_to_transcribe(self) -> None:
-        """Install the dictation hotkey once the ear is reachable.
+        """Register the dictation hotkey now, and keep at it until it holds.
 
-        It waits for health rather than racing it: the hook would install
-        fine, but the first hold would reach a server that is not listening
-        yet, and "it did nothing the first time" is how a feature gets
-        written off.
+        The keyboard hook does not need the server; only transcription does.
+        So registration does not wait for /api/health: a cold start can take
+        minutes (SERVER_START_TIMEOUT_S), and a wait with a deadline is a
+        hotkey that never registers on a slow machine. A hold that arrives
+        before the server can transcribe says so on the indicator, which is
+        what separates "not ready yet" from "it did nothing".
+
+        A registration that fails is tried again, backing off to once a
+        minute, for as long as the tray runs. A failure that survives a retry
+        is said out loud, in a notification and on the menu line, and so is
+        the recovery: under pythonw the log reaches no file.
         """
-        healthy, detail = _wait_for_health(timeout=120.0)
-        if not healthy:
-            self.ptt.detail = "the server never came up"
-            log.info("push-to-transcribe: not installing the hotkey (%s)",
-                     detail)
-            return
-        try:
-            self.ptt.apply()
-        except Exception as e:
-            log.warning("push-to-transcribe failed to start: %s", e)
-        self._refresh_menu()
+        delay = PTT_RETRY_FIRST_S
+        failures = 0
+        told = None
+        while True:
+            try:
+                outcome = self.ptt.apply()
+            except Exception as e:
+                self.ptt.detail = "failed to start (%s)" % e
+                outcome = PushToTranscribe.RETRY
+            self._refresh_menu()
+            if outcome in (PushToTranscribe.ACTIVE, PushToTranscribe.OFF):
+                if told is not None and outcome == PushToTranscribe.ACTIVE:
+                    self._notify("Push-to-Transcribe is working now: hold %s "
+                                 "to dictate." % self.ptt.detail)
+                return
+            failures += 1
+            log.warning("push-to-transcribe not registered (attempt %d): %s",
+                        failures, self.ptt.detail)
+            if failures >= 2 and self.ptt.detail != told:
+                told = self.ptt.detail
+                self._notify("Push-to-Transcribe is not working: %s. Friday "
+                             "keeps trying." % told)
+            time.sleep(delay)
+            delay = min(delay * 2, PTT_RETRY_MAX_S)
+
+    def _notify(self, message: str) -> None:
+        if self.icon is not None:
+            try:
+                self.icon.notify(message, "Friday Desktop")
+            except Exception:
+                pass
 
 
 #: Held for the life of the process. A module global rather than a local,

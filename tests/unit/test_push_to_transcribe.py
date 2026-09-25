@@ -438,6 +438,93 @@ def test_the_suppression_signal_is_not_swallowed_by_the_error_guard():
     assert "suppress_event()" in body, "something must still suppress"
 
 
+# ── The hook is there, or it is not claimed ─────────────────────────────────
+# pynput marks a listener ready before it calls SetWindowsHookEx, never checks
+# what that returns, and swallows anything its thread raises. "Started" was
+# therefore reported for hooks Windows had refused.
+
+class FakeListener:
+    def __init__(self, alive=True, ident=4242, **_kw):
+        self.alive = alive
+        self.ident = ident
+        self.stopped = False
+        self.daemon = False
+
+    def is_alive(self):
+        return self.alive
+
+    def start(self):
+        pass
+
+    def stop(self):
+        self.stopped = True
+        self.alive = False
+
+
+class FakeHookEntry:
+    def __init__(self, handle):
+        self._hook = handle
+
+
+def test_a_hook_windows_installed_is_recognised():
+    lis = FakeListener()
+    assert ptt._hook_installed(lis, timeout=0.2,
+                               _hooks={lis.ident: FakeHookEntry(0x1234)})
+
+
+def test_a_hook_windows_refused_is_not_claimed():
+    """A refused hook leaves a thread pumping messages with no handle."""
+    lis = FakeListener()
+    assert not ptt._hook_installed(lis, timeout=0.2,
+                                   _hooks={lis.ident: FakeHookEntry(None)})
+
+
+def test_a_listener_thread_that_died_is_not_a_hook():
+    assert not ptt._hook_installed(FakeListener(alive=False), timeout=0.2,
+                                   _hooks={})
+
+
+def test_no_hook_after_the_wait_is_a_failure():
+    began = time.monotonic()
+    assert not ptt._hook_installed(FakeListener(), timeout=0.2, _hooks={})
+    assert time.monotonic() - began >= 0.2
+
+
+def test_a_handle_that_arrives_a_moment_late_is_waited_for():
+    """pynput enters the thread in its table before storing the handle."""
+    lis = FakeListener()
+    entry = FakeHookEntry(None)
+    threading.Timer(0.05, setattr, (entry, "_hook", 0x99)).start()
+    assert ptt._hook_installed(lis, timeout=1.0, _hooks={lis.ident: entry})
+
+
+def test_start_says_false_when_windows_did_not_install_the_hook(monkeypatch):
+    kb = pytest.importorskip("pynput.keyboard")
+    made = []
+
+    def listener(**kw):
+        made.append(FakeListener(**kw))
+        return made[-1]
+
+    monkeypatch.setattr(kb, "Listener", listener)
+    monkeypatch.setattr(ptt, "_hook_installed", lambda lis, **kw: False)
+    svc = ptt.PushToTalk(hotkey="alt+t", recorder_factory=FakeRecorder)
+    assert svc.start() is False
+    assert made and made[0].stopped, "a listener with no hook is not kept"
+    assert svc._listener is None
+
+
+def test_start_says_true_only_once_the_hook_is_there(monkeypatch):
+    kb = pytest.importorskip("pynput.keyboard")
+    seen = []
+    monkeypatch.setattr(kb, "Listener", lambda **kw: FakeListener(**kw))
+    monkeypatch.setattr(ptt, "_hook_installed",
+                        lambda lis, **kw: seen.append(lis) or True)
+    svc = ptt.PushToTalk(hotkey="alt+t", recorder_factory=FakeRecorder)
+    assert svc.start() is True
+    assert seen and svc._listener is seen[0]
+
+
 # ── The words go where the person was looking ───────────────────────────────
 
 def test_the_target_window_is_chosen_at_key_down_not_at_paste_time():
