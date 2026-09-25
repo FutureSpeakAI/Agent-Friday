@@ -9,7 +9,6 @@ stay on your machine. Friday shows which model is answering, asks before it
 does anything outward on your behalf, and keeps a signed record of every
 decision.
 
-<!-- Screenshot placeholder: replace with a capture from a demo instance. -->
 ![The Friday desktop](docs/images/desktop.png)
 
 > Agent Friday Desktop is the standalone desktop application in this repository.
@@ -38,7 +37,6 @@ decision.
 
 ## What it does
 
-<!-- Screenshot placeholder -->
 ![An approval card for an email](docs/images/approval-card.png)
 
 - **Chat** with any model, in a panel, a window or its own browser tab, with a
@@ -62,7 +60,6 @@ decision.
 - **News, Contacts, Code, Studio, Content** and more workspaces on a dock you
   can arrange.
 
-<!-- Screenshot placeholder -->
 ![The Knowledge workspace](docs/images/knowledge.png)
 
 ## Requirements
@@ -130,7 +127,6 @@ local address such as **https://agent.friday** in Settings → General: Windows
 asks you to confirm the hosts-file entry and to trust a certificate that can
 vouch for that one name only.
 
-<!-- Screenshot placeholder -->
 ![First run: where your words go](docs/images/first-run-routing.png)
 
 Step by step: [Getting started](docs/user-guide/getting-started.md).

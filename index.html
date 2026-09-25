@@ -22694,13 +22694,15 @@ function SystemWS() {
       fontSize: 12,
       color: '#ddd'
     }
-  }, a.title), a.action_description && /*#__PURE__*/React.createElement("div", {
+  }, a.title), approvalDetailLines(a).map((line, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
     style: {
       fontSize: 11,
       color: '#999',
-      marginTop: 2
+      marginTop: 2,
+      whiteSpace: 'pre-wrap'
     }
-  }, a.action_description), /*#__PURE__*/React.createElement(ApprovalPagePreview, {
+  }, line)), /*#__PURE__*/React.createElement(ApprovalPagePreview, {
     a: a
   }), /*#__PURE__*/React.createElement(ApprovalProvenance, {
     p: a.provenance
@@ -22710,8 +22712,9 @@ function SystemWS() {
       color: 'rgba(255,255,255,0.4)',
       fontFamily: 'JetBrains Mono',
       marginTop: 4
-    }
-  }, a.kind, " \xB7 ", a.policy_class, a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''), /*#__PURE__*/React.createElement("div", {
+    },
+    title: a.kind + ' \xB7 ' + a.policy_class
+  }, a.expires_at ? 'Expires ' + new Date(a.expires_at * 1000).toLocaleString() + ' if not answered' : ''), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -49082,6 +49085,21 @@ function ApprovalProvenance({ p }) {
 // Pending approval cards, for a tab with no desktop around it: a header
 // chip that counts them, a toast when a new one arrives, and the cards
 // themselves with Approve / Deny (the same /decide call as System > Approvals).
+// What an approval card says under its title: the description of what will
+// happen, then the action line when it adds something the title does not
+// already say. Never the same words twice, and never a raw JSON dump.
+function approvalDetailLines(a) {
+  const norm = t => String(t || '').trim().toLowerCase();
+  const seen = new Set([norm(a.title)]);
+  const out = [];
+  for (const t of [a.description, a.action_description]) {
+    const n = norm(t);
+    if (!n || seen.has(n) || n.charAt(0) === '{') continue;
+    seen.add(n);
+    out.push(String(t).trim());
+  }
+  return out;
+}
 function StandaloneApprovals() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
@@ -49128,7 +49146,7 @@ function StandaloneApprovals() {
       !items.length && /*#__PURE__*/React.createElement("div", { style: { color: '#7f93ad', fontSize: 12 } }, 'Nothing is waiting.'),
       items.map(a => /*#__PURE__*/React.createElement("div", { key: a.approval_id, className: 'ws-tab-card' },
         /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, color: '#fff', marginBottom: 4 } }, a.title),
-        a.action_description && /*#__PURE__*/React.createElement("div", { style: { whiteSpace: 'pre-wrap', fontSize: 12, color: '#b8c7dc', maxHeight: 220, overflow: 'auto' } }, a.action_description),
+        approvalDetailLines(a).map((line, i) => /*#__PURE__*/React.createElement("div", { key: i, style: { whiteSpace: 'pre-wrap', fontSize: 12, color: '#b8c7dc', maxHeight: 220, overflow: 'auto' } }, line)),
         /*#__PURE__*/React.createElement(ApprovalPagePreview, { a: a }),
         /*#__PURE__*/React.createElement(ApprovalProvenance, { p: a.provenance }),
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
