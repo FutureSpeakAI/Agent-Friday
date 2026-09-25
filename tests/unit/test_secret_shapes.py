@@ -28,7 +28,7 @@ CASES = [
     (_k("gh" + "p_", 36), "connector:github"),
     (_k("xox" + "b-", 30), "connector:slack"),
     (_k("h" + "f_", 34), "provider:huggingface"),
-    ("S" + "K" + "0123456789abcdef" * 2, "phone:twilio"),
+    ("S" + "K" + "0123456789abcdef" * 2, "twilio"),
     ("s" + "k_" + "0123456789abcdef" * 3, "provider:elevenlabs"),
     ("f" + "c-" + "0123456789abcdef" * 2, "provider:firecrawl"),
     ("123456789:" + ("AbCdEfGhIj" * 4)[:35], "channel:telegram"),

@@ -845,6 +845,108 @@ window.addEventListener('DOMContentLoaded',function(){
         .st-rail-btn:hover { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.03); }
         .st-rail-btn.on { color: var(--st-accent); background: rgba(0,212,255,0.07); border-left-color: var(--st-accent); }
         .st-rail-btn:focus-visible { outline: 1px solid var(--st-accent); outline-offset: -2px; }
+        /* First-run setup chat (SetupChat) and the checklist it shares with
+           Settings. Reads the Settings tokens above; motion only when the
+           person has not asked for less of it. */
+        .sc-root { position: fixed; inset: 0; z-index: 9999; background: rgb(6,10,16);
+            display: flex; flex-direction: column; font-family: var(--st-font); color: var(--st-text); }
+        .sc-head { display: flex; align-items: center; gap: 16px; padding: 14px 24px;
+            border-bottom: 1px solid var(--st-line); flex-wrap: wrap; }
+        .sc-brand { font-family: 'Orbitron', var(--st-font); font-weight: 700; color: var(--st-accent);
+            letter-spacing: .06em; font-size: 14px; }
+        .sc-rail { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; min-width: 0; }
+        .sc-step { all: unset; box-sizing: border-box; font-size: 11.5px; padding: 4px 10px; border-radius: 12px;
+            color: var(--st-faint); border: 1px solid transparent; }
+        .sc-step.done { color: var(--st-dim); cursor: pointer; }
+        .sc-step.done:hover { color: var(--st-text); background: rgba(255,255,255,0.04); }
+        .sc-step.current { color: var(--st-accent); border-color: rgba(0,212,255,0.35); background: rgba(0,212,255,0.06); }
+        .sc-card h2[data-sc-focus]:focus { outline: none; }
+        .sc-root .sc-step:focus-visible, .sc-root .sc-btn:focus-visible, .sc-root .sc-chip:focus-visible,
+        .sc-root .sc-input:focus-visible, .sc-root .sc-option:focus-visible,
+        .sc-connections .sc-btn:focus-visible, .sc-connections .sc-chip:focus-visible,
+        .sc-connections .sc-input:focus-visible, .sc-card .sc-btn:focus-visible, .sc-card .sc-input:focus-visible {
+            outline: 2px solid var(--st-accent); outline-offset: 2px; }
+        .sc-body { flex: 1; min-height: 0; display: flex; gap: 22px; padding: 20px 24px; max-width: 1320px;
+            width: 100%; margin: 0 auto; box-sizing: border-box; }
+        .sc-chat { flex: 1 1 440px; min-width: 0; max-width: 640px; display: flex; flex-direction: column; }
+        .sc-log { flex: 1; overflow-y: auto; padding-right: 6px; }
+        .sc-msg { max-width: 88%; margin: 0 0 10px; padding: 10px 14px; border-radius: 14px; font-size: 14px;
+            line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .sc-msg.friday { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07); border-top-left-radius: 4px; }
+        .sc-msg.user { margin-left: auto; background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.22); border-top-right-radius: 4px; }
+        .sc-msg.note { background: rgba(245,158,11,0.07); border: 1px solid rgba(245,158,11,0.35); color: #f0c37a; }
+        .sc-badge { display: inline-block; margin-top: 6px; font-size: 10.5px; color: var(--st-dim); font-family: var(--st-mono); }
+        .sc-head .sc-badge { margin-top: 0; }
+        .sc-msg .sc-badge { display: block; }
+        .sc-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+        .sc-chip { all: unset; box-sizing: border-box; cursor: pointer; font-size: 12.5px; padding: 7px 12px; border-radius: 16px;
+            border: 1px solid rgba(0,212,255,0.3); color: var(--st-text); background: rgba(0,212,255,0.04); }
+        .sc-chip:hover { background: rgba(0,212,255,0.12); }
+        .sc-chip.quiet { border-color: rgba(255,255,255,0.15); color: var(--st-dim); background: transparent; }
+        .sc-chip[disabled] { opacity: .45; cursor: not-allowed; }
+        .sc-form { display: flex; gap: 8px; margin-top: 6px; }
+        .sc-input { flex: 1; min-width: 0; box-sizing: border-box; width: 100%; padding: 10px 12px; font-size: 14px;
+            background: rgba(255,255,255,0.04); color: #fff; border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 8px; font-family: inherit; }
+        .sc-btn { all: unset; box-sizing: border-box; cursor: pointer; font-size: 12.5px; padding: 8px 14px; border-radius: 8px;
+            border: 1px solid rgba(0,212,255,0.4); color: var(--st-accent); background: rgba(0,212,255,0.06); text-align: center; }
+        .sc-btn:hover { background: rgba(0,212,255,0.14); }
+        .sc-btn[disabled] { opacity: .45; cursor: not-allowed; }
+        .sc-btn.quiet { border-color: rgba(255,255,255,0.15); color: var(--st-dim); background: transparent; }
+        .sc-btn.danger { border-color: rgba(255,107,138,0.5); color: var(--st-danger); background: transparent; }
+        .sc-side { flex: 1 1 520px; min-width: 0; overflow-y: auto; padding-left: 4px; }
+        .sc-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; background: rgba(255,255,255,0.02);
+            padding: 16px; margin-bottom: 14px; }
+        .sc-card, .sc-connections { color: var(--st-text, rgba(255,255,255,0.86)); }
+        .sc-card h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: #fff; }
+        .sc-sub { font-size: 12px; color: var(--st-dim); line-height: 1.6; margin: 0 0 12px; }
+        .sc-dim { color: var(--st-dim); }
+        .sc-group { margin: 16px 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--st-faint); }
+        .sc-item { border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+        .sc-item-head { display: flex; align-items: center; gap: 10px; }
+        .sc-item-title { flex: 1; min-width: 0; font-size: 13px; color: var(--st-text); }
+        .sc-item-unlocks { font-size: 11.5px; color: var(--st-dim); margin-top: 2px; line-height: 1.5; }
+        .sc-pill { font-size: 10.5px; padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15);
+            color: var(--st-dim); white-space: nowrap; }
+        .sc-pill.connected { color: var(--st-ok); border-color: rgba(0,255,128,0.35); }
+        .sc-pill.needs_attention { color: var(--st-warn); border-color: rgba(245,158,11,0.45); }
+        .sc-pill.skipped, .sc-pill.external { color: var(--st-faint); }
+        .sc-perms { margin: 6px 0 8px; padding-left: 18px; font-size: 12px; color: var(--st-label); line-height: 1.6; }
+        .sc-optional { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--st-label); margin: 4px 0; }
+        .sc-optional em { color: var(--st-dim); font-style: normal; }
+        .sc-field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-size: 11.5px; color: var(--st-dim); }
+        .sc-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+        .sc-link { font-size: 12px; color: var(--st-accent); }
+        .sc-link.quiet { color: var(--st-dim); }
+        .sc-msgline { font-size: 12px; margin-top: 8px; }
+        .sc-msgline.ok { color: var(--st-ok); }
+        .sc-msgline.bad { color: var(--st-danger); }
+        .sc-option { border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+        .sc-option.on { border-color: rgba(0,212,255,0.5); background: rgba(0,212,255,0.06); }
+        .sc-option-label { font-size: 13px; color: #fff; }
+        .sc-option-desc { font-size: 11.5px; color: var(--st-dim); margin-top: 2px; }
+        .sc-summary { font-size: 13.5px; line-height: 1.65; margin: 10px 0; }
+        .sc-sample { font-size: 13.5px; line-height: 1.65; padding: 12px 14px; border-left: 2px solid rgba(0,212,255,0.5);
+            background: rgba(0,212,255,0.04); border-radius: 0 8px 8px 0; margin: 8px 0 12px; }
+        .sc-slider { margin: 10px 0; }
+        .sc-slider label { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--st-label); }
+        .sc-slider input { width: 100%; accent-color: #00d4ff; }
+        .sc-ends { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--st-faint); }
+        .sc-finding { border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
+        .sc-cite { font-size: 11px; color: var(--st-dim); margin-top: 4px; overflow-wrap: anywhere; }
+        .sc-summary-list { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13px; margin: 8px 0 12px; }
+        .sc-summary-list dt { color: var(--st-dim); }
+        .sc-summary-list dd { margin: 0; }
+        .sc-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+        @media (max-width: 960px) {
+            .sc-body { flex-direction: column; overflow-y: auto; }
+            .sc-chat { max-width: none; flex: none; }
+            .sc-log, .sc-side { overflow: visible; }
+        }
+        @media (prefers-reduced-motion: no-preference) {
+            .sc-msg { animation: scMsgIn .18s ease-out; }
+        }
+        @keyframes scMsgIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
         button.toggle-pill { font-family: inherit; }
         .st-root .settings-btn, .st-root .btn { font-family: var(--st-font); letter-spacing: 0; }
         /* Settings speaks one typeface. Panels written before these tokens set
@@ -37836,19 +37938,6 @@ const WIZARD_VOICES = [{
   label: 'Leda',
   desc: 'Soft, thoughtful female'
 }];
-const WIZARD_STYLES = [{
-  id: 'professional',
-  label: 'Professional',
-  desc: 'Precise and direct'
-}, {
-  id: 'casual',
-  label: 'Casual',
-  desc: 'Relaxed and conversational'
-}, {
-  id: 'concise',
-  label: 'Concise',
-  desc: 'Ultra-brief, signal only'
-}];
 const WIZARD_STRUCTURES = [{
   idx: 0,
   id: 'CUBES',
@@ -37917,14 +38006,9 @@ const WIZARD_STRUCTURES = [{
 }];
 // ── Vault-first consent flow ────────────────────────────────────────────────
 //
-// Runs BEFORE SetupWizard. Five screens: what Friday writes down, the vault
+// Runs BEFORE the setup chat. Five screens: what Friday writes down, the vault
 // passphrase, where your words go, what cloud mode changes, and the part about
 // other people.
-//
-// It is a separate component rather than five more entries in WIZARD_STEPS
-// because that wizard dispatches on hardcoded numeric indices (step === 0 .. 5)
-// and inserting screens at the front would mean renumbering every branch in a
-// 1.5 MB file -- a change whose failure mode is a silently blank UI.
 //
 // The words come from /api/onboarding/copy, which serves
 // services/onboarding_copy.py -- the SAME strings the terminal wizard prints.
@@ -37946,7 +38030,7 @@ function ConsentFlow({ onDone }) {
     fetch('/api/onboarding/copy').then(r => r.json())
       .then(d => setScreens(d.screens || []))
       // A failed fetch must not strand the user in a blank consent flow with
-      // no way forward. Fall through to the wizard rather than block.
+      // no way forward. Fall through to the setup chat rather than block.
       .catch(() => onDone({}));
   }, []);
 
@@ -38225,32 +38309,7 @@ function CloudConsentGate({ onDone }) {
         onClick: () => submit(choice)
       }, saving ? 'Recording…' : 'Confirm'))));
 }
-const WIZARD_STEPS = [{
-  id: 'welcome',
-  title: 'Welcome to Agent Friday',
-  subtitle: "I'm Agent Friday. Let's get you set up."
-}, {
-  id: 'profile',
-  title: 'Choose Your Profile',
-  subtitle: 'A starting point tuned to how you work'
-}, {
-  id: 'providers',
-  title: 'Connect AI Providers',
-  subtitle: 'Bring your own key — one is enough to go live'
-}, {
-  id: 'services',
-  title: 'Connect Services',
-  subtitle: 'Optional — Google and one-click connectors'
-}, {
-  id: 'hardware',
-  title: 'Hardware Check',
-  subtitle: 'What this machine can run on-device'
-}, {
-  id: 'done',
-  title: 'Ready to Launch',
-  subtitle: 'Your agent is configured'
-}];
-// H5 — first-run bundled-model pull. Shown in the hardware step: if Ollama is
+// H5 — first-run bundled-model pull. Shown on the setup chat's basics card: if Ollama is
 // running but the floor model (model_plan.FLOOR_MODEL, served as
 // hw.floor_model by /api/health/full) isn't pulled yet, offer a one-click
 // download so "works with zero keys" is actually true on first run.
@@ -38306,7 +38365,7 @@ function WizardGemmaPull({
       style: {
         color: '#00d4ff'
       }
-    }, "Ollama"), " to run Friday fully offline with no cloud key. Then reopen this wizard to pull the bundled model.");
+    }, "Ollama"), " to run Friday fully offline with no cloud key. Then come back here, or to Settings > Models, to pull the bundled model.");
   }
   if (has || state === 'done') {
     return /*#__PURE__*/React.createElement("div", {
@@ -38393,793 +38452,1316 @@ function WizardGemmaPull({
     }
   }, "\u2717 ", detail));
 }
-function SetupWizard({
-  step,
-  data,
-  onChange,
-  onNext,
-  onBack,
-  onComplete
+// ── First-run setup chat ────────────────────────────────────────────────────
+//
+// The first-run path is: the consent screens (vault first), then this
+// conversation, then the desktop. The server decides every step
+// (services/setup_chat.py) and says every line (services/setup_chat_copy.py);
+// these components draw it. The chat works with no model at all.
+//
+// KEYS NEVER GO THROUGH THE CHAT. Anything typed is checked against the key
+// shapes from /api/setup-chat/secret-shapes BEFORE it is sent; a match is not
+// sent anywhere, and the secure field on the matching checklist card is
+// offered instead. Secure fields post straight to the existing credential
+// endpoints, and their values are cleared from memory once posted.
+async function scJSON(url, method, body) {
+  const opts = {
+    method: method || 'GET',
+    headers: {}
+  };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  let r;
+  try {
+    r = await fetch(url, opts);
+  } catch (e) {
+    return {
+      ok: false,
+      status: 0,
+      data: {
+        message: 'Could not reach Friday. Try again.'
+      }
+    };
+  }
+  let d = {};
+  try {
+    d = await r.json();
+  } catch (_) {}
+  return {
+    ok: r.ok,
+    status: r.status,
+    data: d
+  };
+}
+let __scShapes = null;
+function scLoadShapes() {
+  if (__scShapes) return Promise.resolve(__scShapes);
+  return fetch('/api/setup-chat/secret-shapes').then(r => r.json()).then(d => {
+    const mk = s => {
+      try {
+        return {
+          ...s,
+          rx: new RegExp(s.pattern)
+        };
+      } catch (_) {
+        return null;
+      }
+    };
+    __scShapes = {
+      list: (d.shapes || []).map(mk).filter(Boolean),
+      generic: d.generic ? mk(d.generic) : null,
+      message: d.message || ''
+    };
+    return __scShapes;
+  }).catch(() => ({
+    list: [],
+    generic: null,
+    message: ''
+  }));
+}
+
+// The first shape `text` matches, or null. Never returns the value.
+function scDetectSecret(text, shapes) {
+  if (!text || !shapes) return null;
+  for (const s of shapes.list) if (s.rx.test(text)) return s;
+  const t = String(text).trim();
+  if (shapes.generic && shapes.generic.rx.test(t) && /\d/.test(t) && /[A-Za-z]/.test(t)) return shapes.generic;
+  return null;
+}
+function scKeyNote(hit, shapes) {
+  const tpl = shapes && shapes.message || 'That looks like a key ({label}). It was not sent anywhere.';
+  return tpl.replace('{label}', hit.label);
+}
+const SC_STATUS = {
+  connected: 'Connected',
+  needs_attention: 'Needs attention',
+  not_connected: 'Not connected',
+  skipped: 'Skipped',
+  external: 'Set up outside Friday'
+};
+function scSafeUrl(u) {
+  return /^https?:\/\//i.test(String(u || '')) ? u : '';
+}
+function SetupConnectionItem({
+  it,
+  open,
+  onToggle,
+  onChanged,
+  onSkip
 }) {
-  const s = WIZARD_STEPS[step];
-  const _mc = useModelCatalog();
-  const isLast = step === WIZARD_STEPS.length - 1;
-  const pct = Math.round(step / (WIZARD_STEPS.length - 1) * 100);
-  // ── Live onboarding data: distros, provider health, capability unlocks, hardware.
+  const [vals, setVals] = React.useState({});
+  const [opts, setOpts] = React.useState({});
+  const [label, setLabel] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState(null);
+  const c = it.connect || {};
+  const domId = 'sc-item-' + it.id.replace(/[^a-z0-9]/gi, '-');
+  const openUrl = u => {
+    if (scSafeUrl(u)) window.open(u, '_blank', 'noopener');
+  };
+  const post = async (url, body) => {
+    const r = await scJSON(url, 'POST', body);
+    const d = r.data || {};
+    if (!r.ok || d.ok === false || d.status === 'error') throw new Error(d.error || d.message || 'HTTP ' + r.status);
+    return d;
+  };
+  const run = async fn => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await fn();
+    } catch (e) {
+      setMsg({
+        ok: false,
+        text: 'That did not work: ' + (e && e.message || 'unknown error')
+      });
+    }
+    setBusy(false);
+    setVals({}); // secrets do not outlive the request
+    onChanged();
+  };
+  const connect = () => run(async () => {
+    if (c.kind === 'secret') {
+      const v = (vals.key || '').trim();
+      if (!v) throw new Error('paste the key first');
+      await post(c.endpoint, {
+        key: v
+      });
+      setMsg({
+        ok: true,
+        text: 'Saved, encrypted on this computer.'
+      });
+    } else if (c.kind === 'google_oauth') {
+      const d = await post(c.endpoint, {
+        label: label.trim(),
+        include_send: !!opts.include_send,
+        include_modify: !!opts.include_modify
+      });
+      openUrl(d.auth_url);
+      setMsg({
+        ok: true,
+        text: "Google's consent screen opened in your browser. It lists the same permissions; come back here once you've approved."
+      });
+    } else if (c.kind === 'oauth_connector') {
+      const d = await post(c.endpoint, {});
+      openUrl(d.auth_url);
+      setMsg({
+        ok: true,
+        text: d.message || 'Approve access in the browser window that opened.'
+      });
+    } else if (c.kind === 'platform_oauth') {
+      const d = await post(c.endpoint, {});
+      openUrl(d.connect_url);
+      setMsg({
+        ok: true,
+        text: 'Approve access in the browser window that opened.'
+      });
+    } else if (c.kind === 'fields') {
+      const fields = c.fields || [];
+      if (c.shape === 'flat') {
+        const body = {};
+        fields.forEach(f => {
+          const v = (vals[f.key] || '').trim();
+          if (v) body[f.key] = v;
+        });
+        if (!Object.keys(body).length) throw new Error('fill in the fields first');
+        await post(c.endpoint, body);
+      } else if (c.shape === 'channel') {
+        const v = (vals.token || '').trim();
+        if (!v) throw new Error('paste the token first');
+        await post(c.endpoint, {
+          token: v,
+          enabled: true
+        });
+      } else {
+        let n = 0;
+        for (const f of fields) {
+          const v = (vals[f.key] || '').trim();
+          if (!v) continue;
+          n++;
+          if (f.shape === 'patch') await post(f.endpoint, {
+            patch: {
+              [f.key]: v
+            }
+          });else await post(f.endpoint, {
+            name: f.key,
+            value: v
+          });
+        }
+        if (!n) throw new Error('fill in at least one field');
+      }
+      setMsg({
+        ok: true,
+        text: 'Saved. Secrets are stored encrypted and never shown again.'
+      });
+    }
+  });
+  const fieldInput = f => /*#__PURE__*/React.createElement("label", {
+    key: f.key,
+    className: "sc-field"
+  }, /*#__PURE__*/React.createElement("span", null, f.label, f.set ? ' (stored)' : ''), /*#__PURE__*/React.createElement("input", {
+    className: "sc-input",
+    type: f.secret ? 'password' : 'text',
+    autoComplete: f.secret ? 'new-password' : 'off',
+    spellCheck: false,
+    value: vals[f.key] || '',
+    onChange: e => {
+      const v = e.target.value;
+      setVals(o => ({
+        ...o,
+        [f.key]: v
+      }));
+    },
+    "aria-label": it.label + ': ' + f.label
+  }));
+  const canConnect = ['secret', 'fields', 'google_oauth', 'oauth_connector', 'platform_oauth'].indexOf(c.kind) >= 0;
+  const required = (it.permissions || []).filter(p => !p.optional);
+  const optional = (it.permissions || []).filter(p => p.optional);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-item",
+    id: domId
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sc-item-head"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-chip quiet",
+    "aria-expanded": open,
+    "aria-controls": domId + '-body',
+    onClick: onToggle
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, open ? '▾' : '▸'), /*#__PURE__*/React.createElement("span", {
+    className: "sc-sr"
+  }, (open ? 'Hide details for ' : 'Show details for ') + it.label)), /*#__PURE__*/React.createElement("div", {
+    className: "sc-item-title"
+  }, it.label, /*#__PURE__*/React.createElement("div", {
+    className: "sc-item-unlocks"
+  }, it.unlocks)), /*#__PURE__*/React.createElement("span", {
+    className: 'sc-pill ' + it.status
+  }, SC_STATUS[it.status] || it.status)), open && /*#__PURE__*/React.createElement("div", {
+    id: domId + '-body',
+    className: "sc-item-body"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sc-group",
+    style: {
+      margin: '10px 0 2px'
+    }
+  }, "What it asks for"), /*#__PURE__*/React.createElement("ul", {
+    className: "sc-perms"
+  }, required.map((p, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, p.text))), optional.map(p => /*#__PURE__*/React.createElement("label", {
+    key: p.key,
+    className: "sc-optional"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: !!opts[p.key],
+    onChange: e => {
+      const v = e.target.checked;
+      setOpts(o => ({
+        ...o,
+        [p.key]: v
+      }));
+    }
+  }), /*#__PURE__*/React.createElement("span", null, "Also: ", p.text, " ", /*#__PURE__*/React.createElement("em", null, "(optional, off unless you tick it)")))), it.detail && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub",
+    style: {
+      margin: '6px 0'
+    }
+  }, it.detail), c.kind === 'secret' && fieldInput({
+    key: 'key',
+    label: 'API key',
+    secret: true
+  }), c.kind === 'fields' && (c.fields || []).map(fieldInput), c.kind === 'google_oauth' && /*#__PURE__*/React.createElement("label", {
+    className: "sc-field"
+  }, /*#__PURE__*/React.createElement("span", null, "A label for this account (optional)"), /*#__PURE__*/React.createElement("input", {
+    className: "sc-input",
+    type: "text",
+    autoComplete: "off",
+    value: label,
+    onChange: e => setLabel(e.target.value),
+    placeholder: "Work, Personal"
+  })), c.kind === 'external' && /*#__PURE__*/React.createElement("ol", {
+    className: "sc-perms"
+  }, (c.steps || []).map((s, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, s))), (c.kind === 'local' || c.kind === 'manual') && c.hint && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, c.hint), c.note && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, c.note), c.more && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, "More options: ", c.more), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, canConnect && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy,
+    onClick: connect
+  }, busy ? 'Working…' : c.kind === 'secret' || c.kind === 'fields' ? 'Save securely' : c.kind === 'google_oauth' && it.status === 'connected' ? 'Add another account' : 'Connect'), it.status !== 'connected' && it.status !== 'external' && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    onClick: onSkip
+  }, it.status === 'skipped' ? 'Undo skip' : 'Skip'), scSafeUrl(c.signup_url) && /*#__PURE__*/React.createElement("a", {
+    className: "sc-link",
+    href: c.signup_url,
+    target: "_blank",
+    rel: "noreferrer noopener"
+  }, "Get a key"), scSafeUrl(it.docs_url) && /*#__PURE__*/React.createElement("a", {
+    className: "sc-link quiet",
+    href: it.docs_url,
+    target: "_blank",
+    rel: "noreferrer noopener"
+  }, "Docs")), msg && /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    className: 'sc-msgline ' + (msg.ok ? 'ok' : 'bad')
+  }, msg.text)));
+}
+
+// The checklist. Used by the setup chat and by Settings > Accounts & Keys.
+function SetupConnectionsPanel({
+  highlight
+}) {
+  const [data, setData] = React.useState(null);
+  const [open, setOpen] = React.useState(highlight || null);
+  const load = React.useCallback(() => {
+    scJSON('/api/setup/connections').then(r => {
+      if (r.ok) setData(r.data);
+    });
+  }, []);
+  React.useEffect(() => {
+    load();
+    // Coming back from a browser consent screen: re-read the statuses.
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [load]);
+  React.useEffect(() => {
+    if (!highlight) return;
+    setOpen(highlight);
+    const t = setTimeout(() => {
+      const el = document.getElementById('sc-item-' + highlight.replace(/[^a-z0-9]/gi, '-'));
+      if (el) {
+        el.scrollIntoView({
+          block: 'center'
+        });
+        const f = el.querySelector('input,button');
+        if (f) f.focus();
+      }
+    }, 80);
+    return () => clearTimeout(t);
+  }, [highlight]);
+  if (!data) return /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, "Checking what's connected\u2026");
+  const items = data.items || [];
+  const groups = (data.groups || []).filter(g => items.some(i => i.group === g.id));
+  const counts = data.counts || {};
+  const skip = async it => {
+    await scJSON('/api/setup/connections/' + encodeURIComponent(it.id) + '/skip', 'POST', {
+      skipped: it.status !== 'skipped'
+    });
+    load();
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-connections"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, (counts.connected || 0) + ' connected', counts.skipped ? ' · ' + counts.skipped + ' skipped' : '', counts.needs_attention ? ' · ' + counts.needs_attention + ' need attention' : '', ". ", data.never), groups.map(g => /*#__PURE__*/React.createElement("section", {
+    key: g.id,
+    "aria-label": g.label
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sc-group"
+  }, g.label), items.filter(i => i.group === g.id).map(it => /*#__PURE__*/React.createElement(SetupConnectionItem, {
+    key: it.id,
+    it: it,
+    open: open === it.id,
+    onToggle: () => setOpen(open === it.id ? null : it.id),
+    onChanged: load,
+    onSkip: () => skip(it)
+  })))));
+}
+function SetupResearchSeeds({
+  onSubmit,
+  onSkip,
+  busy,
+  error,
+  intro
+}) {
+  const [v, setV] = React.useState({
+    name: '',
+    handles: '',
+    sites: '',
+    employer: ''
+  });
+  const set = k => e => {
+    const x = e.target.value;
+    setV(o => ({
+      ...o,
+      [k]: x
+    }));
+  };
+  const field = (k, label, ph, first) => /*#__PURE__*/React.createElement("label", {
+    className: "sc-field"
+  }, /*#__PURE__*/React.createElement("span", null, label), /*#__PURE__*/React.createElement("input", {
+    className: "sc-input",
+    type: "text",
+    autoComplete: "off",
+    spellCheck: false,
+    value: v[k],
+    onChange: set(k),
+    placeholder: ph,
+    "data-sc-focus": first ? '' : undefined
+  }));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", null, "What to search for"), intro && /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub",
+    style: {
+      whiteSpace: 'pre-wrap'
+    }
+  }, intro), /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, "Only these. Nothing else is searched, and nothing is kept until you review it."), field('name', 'Your name as it appears in public', 'e.g. Sam Example', true), field('handles', 'Handles (optional, separated by commas)', '@you, you-on-github'), field('sites', 'Your own websites (optional)', 'example.org'), field('employer', 'Employer (optional)', ''), error && /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    className: "sc-msgline bad"
+  }, error), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy || !(v.name.trim() || v.handles.trim()),
+    onClick: () => onSubmit(v)
+  }, "Start the search"), onSkip && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    onClick: onSkip
+  }, "Skip")));
+}
+function SetupResearchReview({
+  research,
+  onChanged
+}) {
+  const [edit, setEdit] = React.useState({});
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const r = research || {};
+  const items = r.candidates || [];
+  const send = async decisions => {
+    setBusy(true);
+    setErr('');
+    const res = await scJSON('/api/setup-chat/research/review', 'POST', {
+      decisions
+    });
+    setBusy(false);
+    if (!res.ok) {
+      setErr(res.data.message || res.data.error || 'Could not save that.');
+      return;
+    }
+    setEdit({});
+    if (onChanged) onChanged(res.data.research);
+  };
+  const stopEdit = id => setEdit(e => {
+    const n = {
+      ...e
+    };
+    delete n[id];
+    return n;
+  });
+  if (r.state === 'running') {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "sc-card"
+    }, /*#__PURE__*/React.createElement("h2", {
+      tabIndex: -1,
+      "data-sc-focus": ""
+    }, "The search is running"), /*#__PURE__*/React.createElement("p", {
+      className: "sc-sub"
+    }, "It runs as a background task; you can watch it in the tray. Findings appear here for review, and nothing is kept until you accept it."));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", {
+    tabIndex: -1,
+    "data-sc-focus": ""
+  }, "Review what I found"), /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, "From the public web: treat it as unverified until you accept it. Only what you accept is kept.", r.dropped_total ? ' ' + r.dropped_total + ' finding(s) touched health, sexuality, money, family or where you live, and were thrown away without being stored.' : ''), items.length > 1 && /*#__PURE__*/React.createElement("div", {
+    className: "sc-row",
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy,
+    onClick: () => send(items.map(i => ({
+      id: i.id,
+      action: 'accept'
+    })))
+  }, "Accept all"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    disabled: busy,
+    onClick: () => send(items.map(i => ({
+      id: i.id,
+      action: 'reject'
+    })))
+  }, "Reject all")), items.map(i => /*#__PURE__*/React.createElement("div", {
+    className: "sc-finding",
+    key: i.id
+  }, edit[i.id] !== undefined ? /*#__PURE__*/React.createElement("input", {
+    className: "sc-input",
+    value: edit[i.id],
+    "aria-label": "Edit this finding",
+    onChange: e => {
+      const x = e.target.value;
+      setEdit(o => ({
+        ...o,
+        [i.id]: x
+      }));
+    }
+  }) : /*#__PURE__*/React.createElement("div", null, i.claim), /*#__PURE__*/React.createElement("div", {
+    className: "sc-cite"
+  }, "Source: ", scSafeUrl(i.url) ? /*#__PURE__*/React.createElement("a", {
+    className: "sc-link",
+    href: i.url,
+    target: "_blank",
+    rel: "noreferrer noopener"
+  }, i.title || i.url) : i.title || '', ' · read ' + (i.fetched_on || '') + ' · public web, untrusted'), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, edit[i.id] !== undefined ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy || !String(edit[i.id]).trim(),
+    onClick: () => send([{
+      id: i.id,
+      action: 'edit',
+      text: edit[i.id]
+    }])
+  }, "Save and accept"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    onClick: () => stopEdit(i.id)
+  }, "Cancel")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy,
+    "aria-label": 'Accept: ' + i.claim,
+    onClick: () => send([{
+      id: i.id,
+      action: 'accept'
+    }])
+  }, "Accept"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    disabled: busy,
+    "aria-label": 'Edit: ' + i.claim,
+    onClick: () => setEdit(o => ({
+      ...o,
+      [i.id]: i.claim
+    }))
+  }, "Edit"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn danger",
+    disabled: busy,
+    "aria-label": 'Reject: ' + i.claim,
+    onClick: () => send([{
+      id: i.id,
+      action: 'reject'
+    }])
+  }, "Reject"))))), !items.length && /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, r.accepted ? r.accepted + ' finding(s) kept in Friday\'s knowledge graph, each with its source.' : 'Nothing is waiting for review.'), err && /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    className: "sc-msgline bad"
+  }, err));
+}
+function SetupStyleCard({
+  style,
+  sliders,
+  floor,
+  examplePrompt,
+  onSave,
+  onSkip,
+  saveLabel
+}) {
+  const defs = sliders || [];
+  const [vals, setVals] = React.useState(style && style.sliders || {});
+  const [prev, setPrev] = React.useState({
+    sample: style && style.sample,
+    summary: style && style.summary
+  });
+  const [moved, setMoved] = React.useState(false);
+  const timer = React.useRef(null);
+  React.useEffect(() => {
+    setVals(style && style.sliders || {});
+    setPrev({
+      sample: style && style.sample,
+      summary: style && style.summary
+    });
+    setMoved(false);
+  }, [style]);
+  React.useEffect(() => () => clearTimeout(timer.current), []);
+  const change = (id, v) => {
+    const next = {
+      ...vals,
+      [id]: v
+    };
+    setVals(next);
+    setMoved(true);
+    clearTimeout(timer.current);
+    // The example is re-rendered by the same rules on this computer.
+    timer.current = setTimeout(() => {
+      scJSON('/api/setup-chat/style/preview', 'POST', {
+        sliders: next
+      }).then(r => {
+        if (r.ok) setPrev({
+          sample: r.data.sample,
+          summary: r.data.summary
+        });
+      });
+    }, 120);
+  };
+  const by = style && style.by || {};
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", {
+    tabIndex: -1,
+    "data-sc-focus": ""
+  }, "Friday for you"), /*#__PURE__*/React.createElement("div", {
+    className: "sc-badge"
+  }, by.kind === 'local' ? 'Read by ' + by.model + ' (on this computer)' : by.kind === 'cloud' ? 'Read by ' + by.model + ' (' + by.provider + ', cloud)' : 'Made with simple rules on this computer, no model'), /*#__PURE__*/React.createElement("p", {
+    className: "sc-summary"
+  }, prev.summary), /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub",
+    style: {
+      margin: 0
+    }
+  }, "If you asked: \u201C", examplePrompt, "\u201D"), /*#__PURE__*/React.createElement("div", {
+    className: "sc-sample",
+    "aria-live": "polite"
+  }, prev.sample), defs.map(d => {
+    const v = typeof vals[d.id] === 'number' ? vals[d.id] : 50;
+    return /*#__PURE__*/React.createElement("div", {
+      className: "sc-slider",
+      key: d.id
+    }, /*#__PURE__*/React.createElement("label", {
+      htmlFor: 'sc-sl-' + d.id
+    }, /*#__PURE__*/React.createElement("span", null, d.label), /*#__PURE__*/React.createElement("span", {
+      className: "sc-dim"
+    }, v)), /*#__PURE__*/React.createElement("input", {
+      id: 'sc-sl-' + d.id,
+      type: "range",
+      min: d.id === 'pushback' ? floor : 0,
+      max: 100,
+      step: 1,
+      value: v,
+      onChange: e => change(d.id, parseInt(e.target.value, 10)),
+      "aria-valuetext": v + ' of 100, from ' + d.low + ' to ' + d.high
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "sc-ends"
+    }, /*#__PURE__*/React.createElement("span", null, d.low), /*#__PURE__*/React.createElement("span", null, d.high)));
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, "Pushback never goes below ", floor, ": Friday still tells you when you're wrong, just more gently. Honesty and asking before real-world actions can't be tuned."), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    onClick: () => onSave(moved ? vals : null)
+  }, saveLabel || 'Save this style'), onSkip && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    onClick: onSkip
+  }, "Keep my default style")));
+}
+function SetupBasicsCard({
+  initial,
+  onDone,
+  busy
+}) {
+  const [minor, setMinor] = React.useState(!!(initial && initial.minor_mode));
+  const [dist, setDist] = React.useState(initial && initial.distribution || 'default');
   const [distros, setDistros] = React.useState([]);
-  const [phealth, setPhealth] = React.useState({}); // provider name -> {status,detail}
-  const [caps, setCaps] = React.useState([]);
   const [hw, setHw] = React.useState(null);
-  const [showKey, setShowKey] = React.useState({}); // provider name -> reveal bool
+  const [addr, setAddr] = React.useState(false);
   React.useEffect(() => {
     fetch('/api/distros').then(r => r.json()).then(d => setDistros(d.distros || [])).catch(() => {});
-    fetch('/api/capabilities').then(r => r.json()).then(d => setCaps(d.capabilities || [])).catch(() => {});
+    fetch('/api/health/full').then(r => r.json()).then(d => setHw(d.hardware || {})).catch(() => setHw({}));
   }, []);
-  const refreshHealth = React.useCallback(() => {
-    fetch('/api/providers/health').then(r => r.json()).then(d => {
-      const m = {};
-      (d.providers || []).forEach(p => {
-        m[p.provider] = p;
-      });
-      setPhealth(m);
-    }).catch(() => {});
-  }, []);
-  React.useEffect(() => {
-    if (step === 2) refreshHealth();
-  }, [step, refreshHealth]);
-  React.useEffect(() => {
-    if (step === 4 && !hw) fetch('/api/health/full').then(r => r.json()).then(d => setHw(d.hardware || {})).catch(() => setHw({}));
-  }, [step, hw]);
-  // What each provider unlocks (from the capability router), grouped by provider.
-  const unlockBy = React.useMemo(() => {
-    const m = {};
-    (caps || []).forEach(c => {
-      if (c.provider) {
-        (m[c.provider] = m[c.provider] || []).push(c.label);
+  const radio = (on, label, desc, pick, key) => /*#__PURE__*/React.createElement("div", {
+    key: key,
+    role: "radio",
+    tabIndex: 0,
+    "aria-checked": on,
+    className: 'sc-option' + (on ? ' on' : ''),
+    onClick: pick,
+    onKeyDown: e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        pick();
       }
-    });
-    return m;
-  }, [caps]);
-  const provList = _mc.providers || [];
-  const setProvKey = (name, val) => {
-    const next = {
-      ...(data.providers || {})
-    };
-    next[name] = {
-      ...(next[name] || {}),
-      api_key: val
-    };
-    onChange({
-      providers: next
-    });
-  };
-  const keyOf = name => ((data.providers || {})[name] || {}).api_key || '';
-  const enteredCount = Object.values(data.providers || {}).filter(p => p && (p.api_key || '').trim()).length;
-  // Min one provider to leave the providers step: a key entered OR an available provider.
-  const providersReady = enteredCount > 0 || provList.some(p => p.available);
-  const gateOk = step !== 2 || providersReady;
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'fixed',
-      inset: 0,
-      zIndex: 9999,
-      background: 'rgba(4,4,12,0.97)',
-      backdropFilter: 'blur(20px)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontFamily: 'Inter'
     }
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      top: '20%',
-      left: '50%',
-      transform: 'translateX(-50%)',
-      width: 600,
-      height: 300,
-      background: 'radial-gradient(ellipse,rgba(124,58,237,0.12) 0%,transparent 70%)',
-      pointerEvents: 'none'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      bottom: '25%',
-      left: '50%',
-      transform: 'translateX(-50%)',
-      width: 400,
-      height: 200,
-      background: 'radial-gradient(ellipse,rgba(0,212,255,0.07) 0%,transparent 70%)',
-      pointerEvents: 'none'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 'min(520px,92vw)',
-      position: 'relative'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 2,
-      background: 'rgba(255,255,255,0.06)',
-      borderRadius: 2,
-      marginBottom: 40,
-      overflow: 'hidden'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: '100%',
-      width: pct + '%',
-      background: 'linear-gradient(90deg,#7c3aed,#00d4ff)',
-      borderRadius: 2,
-      transition: 'width .4s ease'
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.3)',
-      letterSpacing: '.12em',
-      marginBottom: 12
-    }
-  }, String(step + 1).padStart(2, '0'), " / ", String(WIZARD_STEPS.length).padStart(2, '0')), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 28,
-      fontWeight: 900,
-      color: '#fff',
-      letterSpacing: '0.04em',
-      marginBottom: 6,
-      lineHeight: 1.1
-    }
-  }, s.title), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      color: 'rgba(255,255,255,0.45)',
-      marginBottom: 36,
-      letterSpacing: '0.01em'
-    }
-  }, s.subtitle), step === 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.5)',
-      marginBottom: 10,
-      letterSpacing: '.05em',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "NAME YOUR INSTANCE"), /*#__PURE__*/React.createElement("input", {
-    value: data.agent_name,
-    onChange: e => onChange({
-      agent_name: e.target.value
-    }),
-    placeholder: "AGENT FRIDAY",
-    autoFocus: true,
-    style: {
-      width: '100%',
-      background: 'rgba(255,255,255,0.04)',
-      border: '1px solid rgba(0,212,255,0.25)',
-      borderRadius: 8,
-      padding: '14px 18px',
-      color: '#fff',
-      fontFamily: 'Orbitron',
-      fontSize: 18,
-      fontWeight: 700,
-      letterSpacing: '0.06em',
-      outline: 'none',
-      boxSizing: 'border-box',
-      transition: 'border-color .2s'
-    },
-    onFocus: e => e.target.style.borderColor = 'rgba(0,212,255,0.6)',
-    onBlur: e => e.target.style.borderColor = 'rgba(0,212,255,0.25)'
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.5)',
-      margin: '22px 0 10px',
-      letterSpacing: '.05em',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "PERSONALITY"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8
-    }
-  }, WIZARD_STYLES.map(st => {
-    const sel = data.communication_style === st.id;
-    return /*#__PURE__*/React.createElement("div", {
-      key: st.id,
-      onClick: () => onChange({
-        communication_style: st.id
-      }),
-      style: {
-        flex: 1,
-        padding: '12px',
-        borderRadius: 8,
-        border: '1px solid ' + (sel ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
-        background: sel ? 'rgba(0,212,255,0.07)' : 'rgba(255,255,255,0.02)',
-        cursor: 'pointer',
-        transition: 'all .15s',
-        textAlign: 'center'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontFamily: 'JetBrains Mono',
-        fontSize: 11,
-        color: sel ? '#00d4ff' : '#aaa',
-        fontWeight: sel ? 700 : 400
-      }
-    }, st.label), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 10,
-        color: 'rgba(255,255,255,0.35)',
-        marginTop: 3
-      }
-    }, st.desc));
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.5)',
-      margin: '22px 0 10px',
-      letterSpacing: '.05em',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "AVATAR \xB7 HOLOGRAPHIC SCENE"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      maxHeight: 170,
-      overflowY: 'auto',
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: 8,
-      paddingRight: 4
-    }
-  }, WIZARD_STRUCTURES.map(sc => {
-    const sel = (data.preferred_scene_index ?? 0) === sc.idx;
-    return /*#__PURE__*/React.createElement("div", {
-      key: sc.id,
-      onClick: () => onChange({
-        preferred_scene_index: sc.idx
-      }),
-      style: {
-        padding: '10px 14px',
-        borderRadius: 8,
-        border: '1px solid ' + (sel ? 'rgba(0,212,255,0.55)' : 'rgba(255,255,255,0.07)'),
-        background: sel ? 'rgba(0,212,255,0.07)' : 'rgba(255,255,255,0.02)',
-        cursor: 'pointer',
-        transition: 'all .15s'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontFamily: 'JetBrains Mono',
-        fontSize: 11,
-        color: sel ? '#00d4ff' : 'rgba(255,255,255,0.65)',
-        fontWeight: sel ? 700 : 400,
-        letterSpacing: '.03em'
-      }
-    }, sc.name), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 10,
-        color: 'rgba(255,255,255,0.28)',
-        marginTop: 3
-      }
-    }, sc.desc));
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.5)',
-      margin: '22px 0 10px',
-      letterSpacing: '.05em',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "WHO IS THIS FRIDAY FOR?"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8
-    }
-  }, [{
-    id: false,
-    label: 'For me',
-    desc: 'Full, unfiltered creative range'
-  }, {
-    id: true,
-    label: 'For my child',
-    desc: 'Family mode — age-appropriate filtering'
-  }].map(opt => {
-    const sel = !!data.minor_mode === opt.id;
-    return /*#__PURE__*/React.createElement("div", {
-      key: String(opt.id),
-      onClick: () => onChange({
-        minor_mode: opt.id
-      }),
-      style: {
-        flex: 1,
-        padding: '12px',
-        borderRadius: 8,
-        border: '1px solid ' + (sel ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
-        background: sel ? 'rgba(0,212,255,0.07)' : 'rgba(255,255,255,0.02)',
-        cursor: 'pointer',
-        transition: 'all .15s',
-        textAlign: 'center'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontFamily: 'JetBrains Mono',
-        fontSize: 11,
-        color: sel ? '#00d4ff' : '#aaa',
-        fontWeight: sel ? 700 : 400
-      }
-    }, opt.label), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 10,
-        color: 'rgba(255,255,255,0.35)',
-        marginTop: 3
-      }
-    }, opt.desc));
-  }))), step === 1 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      maxHeight: 340,
-      overflowY: 'auto',
-      paddingRight: 4,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 8
-    }
-  }, (distros.length ? distros : [{
+    className: "sc-option-label"
+  }, label), desc && /*#__PURE__*/React.createElement("div", {
+    className: "sc-option-desc"
+  }, desc));
+  const list = distros.length ? distros : [{
     name: 'default',
-    description: 'Standard Agent Friday — balanced for general use'
-  }]).map(d => {
-    const sel = (data.distribution || 'default') === d.name;
-    return /*#__PURE__*/React.createElement("div", {
-      key: d.name,
-      onClick: () => onChange({
-        distribution: d.name
-      }),
-      style: {
-        padding: '14px 18px',
-        borderRadius: 8,
-        border: '1px solid ' + (sel ? 'rgba(0,212,255,0.55)' : 'rgba(255,255,255,0.08)'),
-        background: sel ? 'rgba(0,212,255,0.07)' : 'rgba(255,255,255,0.02)',
-        cursor: 'pointer',
-        transition: 'all .15s'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontFamily: 'Orbitron',
-        fontSize: 13,
-        color: sel ? '#00d4ff' : '#ddd',
-        textTransform: 'capitalize'
-      }
-    }, d.name), sel && /*#__PURE__*/React.createElement("div", {
-      style: {
-        width: 8,
-        height: 8,
-        borderRadius: '50%',
-        background: '#00d4ff',
-        flexShrink: 0
-      }
-    })), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 11,
-        color: 'rgba(255,255,255,0.4)',
-        marginTop: 4,
-        lineHeight: 1.5
-      }
-    }, d.description));
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.25)',
-      fontFamily: 'JetBrains Mono',
-      marginTop: 2
-    }
-  }, "Sets your workspaces, dock layout and Friday's tone. Switchable anytime in Settings.")), step === 2 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      maxHeight: 360,
-      overflowY: 'auto',
-      paddingRight: 4,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 10
-    }
-  }, (provList.length ? provList : [{
-    name: 'anthropic',
-    label: 'Anthropic (Claude)',
-    type: 'anthropic',
-    available: false
-  }]).map(p => {
-    const local = p.type === 'ollama';
-    const has = !!(keyOf(p.name).trim() || p.available);
-    const stat = local ? p.available ? 'running' : 'not running' : keyOf(p.name).trim() ? 'will connect' : p.available ? 'connected' : 'not connected';
-    const dot = has ? '#34d399' : local ? '#f59e0b' : 'rgba(255,255,255,0.25)';
-    const unlocks = unlockBy[p.name] || [];
-    return /*#__PURE__*/React.createElement("div", {
-      key: p.name,
-      style: {
-        padding: '12px 14px',
-        borderRadius: 8,
-        border: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(255,255,255,0.02)'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontFamily: 'Orbitron',
-        fontSize: 12,
-        color: '#ddd'
-      }
-    }, p.label || p.name), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        width: 7,
-        height: 7,
-        borderRadius: '50%',
-        background: dot
-      }
-    }), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono',
-        color: 'rgba(255,255,255,0.4)'
-      }
-    }, stat))), unlocks.length > 0 && /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 10,
-        color: 'rgba(0,212,255,0.55)',
-        marginTop: 3,
-        fontFamily: 'JetBrains Mono'
-      }
-    }, "unlocks: ", unlocks.join(' · ')), local ? /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 10,
-        color: 'rgba(255,255,255,0.35)',
-        marginTop: 6,
-        fontFamily: 'JetBrains Mono'
-      }
-    }, "On-device \xB7 no key needed", p.available ? ' · running now' : ' · start Ollama to enable') : /*#__PURE__*/React.createElement("div", {
-      style: {
-        position: 'relative',
-        marginTop: 8
-      }
-    }, /*#__PURE__*/React.createElement("input", {
-      type: showKey[p.name] ? 'text' : 'password',
-      value: keyOf(p.name),
-      onChange: e => setProvKey(p.name, e.target.value) /* pragma: allowlist secret */,
-      placeholder: 'API key for ' + (p.label || p.name),
-      style: {
-        width: '100%',
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(0,212,255,0.2)',
-        borderRadius: 6,
-        padding: '9px 50px 9px 12px',
-        color: '#fff',
-        fontFamily: 'JetBrains Mono',
-        fontSize: 12,
-        outline: 'none',
-        boxSizing: 'border-box'
-      }
-    }), /*#__PURE__*/React.createElement("span", {
-      onClick: () => setShowKey(s => ({
-        ...s,
-        [p.name]: !s[p.name]
-      })),
-      style: {
-        position: 'absolute',
-        right: 12,
-        top: '50%',
-        transform: 'translateY(-50%)',
-        cursor: 'pointer',
-        color: 'rgba(255,255,255,0.35)',
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono',
-        userSelect: 'none'
-      }
-    }, showKey[p.name] ? 'HIDE' : 'SHOW')));
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: providersReady ? 'rgba(52,211,153,0.85)' : 'rgba(245,158,11,0.85)',
-      fontFamily: 'JetBrains Mono',
-      marginTop: 2
-    }
-  }, providersReady ? '✓ At least one provider ready' : 'Add one API key (or start Ollama) to continue — or skip into demo mode below'), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.22)',
-      fontFamily: 'JetBrains Mono',
-      lineHeight: 1.6
-    }
-  }, "Keys are encrypted at rest on your machine \u2014 never stored in plaintext, never sent anywhere except to that provider.")), step === 3 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 10
-    }
+    description: 'Standard Agent Friday, balanced for general use'
+  }];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", {
+    tabIndex: -1,
+    "data-sc-focus": ""
+  }, "The basics"), /*#__PURE__*/React.createElement("div", {
+    className: "sc-group"
+  }, "Who is this Friday for?"), /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Who is this Friday for?"
+  }, radio(!minor, 'For me', 'Full, unfiltered creative range', () => setMinor(false), 'me'), radio(minor, 'For my child', 'Family mode: age-appropriate filtering', () => setMinor(true), 'child')), /*#__PURE__*/React.createElement("div", {
+    className: "sc-group"
+  }, "Starting profile"), /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Starting profile"
+  }, list.map(d => radio(dist === d.name, d.name.charAt(0).toUpperCase() + d.name.slice(1), d.description, () => setDist(d.name), d.name))), /*#__PURE__*/React.createElement("div", {
+    className: "sc-group"
+  }, "What this computer can run"), !hw ? /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, "Checking the hardware\u2026") : /*#__PURE__*/React.createElement("div", {
+    "data-testid": "setup-hardware"
   }, /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub",
     style: {
-      padding: '14px',
-      borderRadius: 8,
-      border: '1px solid rgba(255,255,255,0.08)',
-      background: 'rgba(255,255,255,0.02)'
+      margin: '0 0 8px'
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 12,
-      color: '#ddd'
-    }
-  }, "Google \xB7 Gmail, Calendar & Drive"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      marginTop: 5,
-      lineHeight: 1.5
-    }
-  }, "Connect one or more Google accounts so Friday can read mail, manage your calendar and reach your files. Secure OAuth \u2014 tokens are encrypted at rest."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(0,212,255,0.55)',
-      marginTop: 8,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "Set up in Settings \u2192 Connected Services after launch.")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '14px',
-      borderRadius: 8,
-      border: '1px solid rgba(255,255,255,0.08)',
-      background: 'rgba(255,255,255,0.02)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 12,
-      color: '#ddd'
-    }
-  }, "MCP Connectors"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      marginTop: 5,
-      lineHeight: 1.5
-    }
-  }, "Slack, Notion, GitHub and hundreds more connect over MCP \u2014 one click each, governed by Friday's security rings."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(0,212,255,0.55)',
-      marginTop: 8,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "Manage in Settings \u2192 Connected Services.")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.25)',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "This step is optional \u2014 Continue to skip for now.")), step === 4 && /*#__PURE__*/React.createElement("div", null, !hw && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.4)',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "Detecting hardware\u2026"), hw && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: 10,
-      marginBottom: 16
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '12px',
-      borderRadius: 8,
-      border: '1px solid rgba(255,255,255,0.08)',
-      background: 'rgba(255,255,255,0.02)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.4)',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "GPU"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: hw.gpu ? '#34d399' : 'rgba(255,255,255,0.5)',
-      marginTop: 4
-    }
-  }, hw.gpu || 'None detected')), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '12px',
-      borderRadius: 8,
-      border: '1px solid rgba(255,255,255,0.08)',
-      background: 'rgba(255,255,255,0.02)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.4)',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "MEMORY"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: '#ddd',
-      marginTop: 4
-    }
-  }, hw.ram_gb ? hw.ram_gb + ' GB RAM' : '—', hw.vram_gb ? ' · ' + hw.vram_gb + ' GB VRAM' : ''))), /*#__PURE__*/React.createElement(WizardGemmaPull, {
+  }, 'GPU: ' + (hw.gpu || 'none detected') + ' · ' + (hw.ram_gb ? hw.ram_gb + ' GB RAM' : 'memory unknown') + (hw.vram_gb ? ' · ' + hw.vram_gb + ' GB VRAM' : '')), /*#__PURE__*/React.createElement(WizardGemmaPull, {
     hw: hw
   }), /*#__PURE__*/React.createElement(WizardStarterSetSection, {
     hw: hw
-  }))), step === 5 && /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-chip quiet",
+    "aria-expanded": addr,
+    onClick: () => setAddr(!addr)
+  }, (addr ? '▾ ' : '▸ ') + "Friday's own address on this PC (optional)"), addr && /*#__PURE__*/React.createElement("div", {
+    "data-testid": "setup-local-address",
     style: {
-      textAlign: 'center',
-      padding: '14px 0'
+      marginTop: 8
     }
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 64,
-      marginBottom: 18,
-      filter: 'drop-shadow(0 0 20px rgba(0,212,255,0.4))'
+    className: "sc-sub"
+  }, "Each change asks Windows for your permission first, and you can do it later in Settings."), /*#__PURE__*/React.createElement(LocalAddressSettings, null)), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy,
+    onClick: () => onDone({
+      minor_mode: minor,
+      distribution: dist
+    })
+  }, "Continue")));
+}
+const SC_RESEARCH_LINE = {
+  running: 'Still running in the background. Review it later in Settings > General > Your profile.',
+  ready: 'Findings are waiting for your review in Settings > General > Your profile.',
+  reviewed: 'Reviewed.',
+  empty: 'Finished; nothing to keep.',
+  declined: 'You chose not to.',
+  unavailable: 'Not available yet: no model to read pages.',
+  failed: 'It stopped with an error; you can run it again from Settings.',
+  not_asked: 'Not run.'
+};
+function SetupFinishCard({
+  state,
+  onFinish,
+  busy
+}) {
+  const [conn, setConn] = React.useState(null);
+  React.useEffect(() => {
+    scJSON('/api/setup/connections').then(r => {
+      if (r.ok) setConn(r.data);
+    });
+  }, []);
+  const items = conn && conn.items || [];
+  const connected = items.filter(i => i.status === 'connected').map(i => i.label);
+  const skipped = items.filter(i => i.status === 'skipped').length;
+  const r = state.research || {};
+  let researchLine = SC_RESEARCH_LINE[r.state] || SC_RESEARCH_LINE.not_asked;
+  if (r.state === 'reviewed') researchLine = (r.accepted || 0) + ' finding(s) kept, each with its source.';
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", {
+    tabIndex: -1,
+    "data-sc-focus": ""
+  }, "All set"), /*#__PURE__*/React.createElement("dl", {
+    className: "sc-summary-list"
+  }, /*#__PURE__*/React.createElement("dt", null, "Name"), /*#__PURE__*/React.createElement("dd", null, state.agent_name), /*#__PURE__*/React.createElement("dt", null, "Connected"), /*#__PURE__*/React.createElement("dd", null, conn ? connected.length ? connected.join(', ') : 'Nothing yet' : 'Checking…', skipped ? ' (' + skipped + ' skipped, waiting in Settings)' : ''), /*#__PURE__*/React.createElement("dt", null, "Research"), /*#__PURE__*/React.createElement("dd", null, researchLine), /*#__PURE__*/React.createElement("dt", null, "Your style"), /*#__PURE__*/React.createElement("dd", null, state.style_saved ? 'Saved. It keeps evolving as you work together.' : 'My default style for now.')), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy,
+    onClick: onFinish
+  }, "Open my desktop")));
+}
+function SetupChat({
+  onDone
+}) {
+  const [st, setSt] = React.useState(null);
+  const [text, setText] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [notes, setNotes] = React.useState([]);
+  const [highlight, setHighlight] = React.useState(null);
+  const [err, setErr] = React.useState('');
+  const [leaving, setLeaving] = React.useState(false);
+  const [shapes, setShapes] = React.useState(null);
+  const logRef = React.useRef(null);
+  const inputRef = React.useRef(null);
+  const doneRef = React.useRef(false);
+  const apply = d => {
+    if (!d || !d.stage) return;
+    setSt(d);
+    if (d.completed && !doneRef.current) {
+      doneRef.current = true;
+      if (onDone) onDone(d);
     }
-  }, "\u26A1"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 20,
-      color: '#00d4ff',
-      marginBottom: 12,
-      letterSpacing: '0.06em'
-    }
-  }, data.agent_name || 'AGENT FRIDAY'), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      color: 'rgba(255,255,255,0.5)',
-      lineHeight: 1.7,
-      maxWidth: 360,
-      margin: '0 auto'
-    }
-  }, "Profile ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#00d4ff',
-      fontFamily: 'JetBrains Mono',
-      textTransform: 'capitalize'
-    }
-  }, data.distribution || 'default'), " \xB7 Style ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'rgba(255,255,255,0.7)'
-    }
-  }, data.communication_style), /*#__PURE__*/React.createElement("br", null), enteredCount > 0 ? /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'rgba(52,211,153,0.9)'
-    }
-  }, "\u2713 ", enteredCount, " provider", enteredCount > 1 ? 's' : '', " connected") : /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'rgba(245,158,11,0.9)'
-    }
-  }, "Demo mode \u2014 connect a provider anytime in Settings")),
-  // Friday's own address, offered once at setup and always in Settings. The
-  // same card as Settings: each of its two system changes (the hosts entry and
-  // trusting Friday's certificate) starts only from its own button, and
-  // Windows asks the person again before making it.
-  /*#__PURE__*/React.createElement("div", {
-    'data-testid': 'wizard-local-address',
-    style: {
-      textAlign: 'left',
-      marginTop: 24
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.55)',
-      lineHeight: 1.6,
-      marginBottom: 8
-    }
-  }, "Optional: give Friday its own address on this PC. Each change asks Windows for your permission first, and you can do it later in Settings."), /*#__PURE__*/React.createElement(LocalAddressSettings, null)),
-  // The vault passphrase used to be collected HERE: a purple box in the bottom
-  // third of the final screen, below the configuration summary and immediately
-  // above the button that dismisses the wizard forever, captioned "leave blank
-  // to set it later". The single most unrecoverable decision in the product was
-  // the last and least prominent thing on the last screen.
-  //
-  // It is now screen 2 of the consent flow, before any cosmetic choice, with
-  // the copy that explains what it protects on the screen before it. See
-  // ConsentFlow and services/onboarding_copy.py.
-  /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.25)',
-      marginTop: 20,
-      fontFamily: 'JetBrains Mono',
-      letterSpacing: '.05em'
-    }
-  }, "BY FUTURESPEAK.AI \xB7 ASIMOV'S CLAWS CERTIFIED")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginTop: 40
-    }
-  }, step > 0 ? /*#__PURE__*/React.createElement("button", {
-    onClick: onBack,
-    style: {
-      background: 'none',
-      border: '1px solid rgba(255,255,255,0.12)',
-      borderRadius: 8,
-      padding: '12px 24px',
-      color: 'rgba(255,255,255,0.5)',
-      fontFamily: 'JetBrains Mono',
-      fontSize: 12,
-      cursor: 'pointer',
-      letterSpacing: '.05em',
-      transition: 'all .15s'
-    },
-    onMouseEnter: e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.3)',
-    onMouseLeave: e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'
-  }, "\u2190 Back") : /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      if (isLast) {
-        onComplete();
-      } else if (gateOk) {
-        onNext();
+  };
+  React.useEffect(() => {
+    scJSON('/api/setup-chat/state').then(r => apply(r.data));
+    scLoadShapes().then(setShapes);
+  }, []);
+  const nMsgs = st ? (st.transcript || []).length + notes.length : 0;
+  const stage = st && st.stage;
+  // Newest message into view; focus to wherever the next answer goes.
+  React.useEffect(() => {
+    if (!st) return;
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
+    const t = setTimeout(() => {
+      const p = st.prompt || {};
+      if (p.input === 'text' && inputRef.current) {
+        inputRef.current.focus();
+        return;
       }
-    },
-    style: {
-      background: 'linear-gradient(135deg,rgba(124,58,237,0.4),rgba(0,212,255,0.3))',
-      border: '1px solid rgba(0,212,255,0.4)',
-      borderRadius: 8,
-      padding: '12px 32px',
-      color: '#fff',
-      fontFamily: 'Orbitron',
-      fontSize: 12,
-      fontWeight: 700,
-      cursor: gateOk ? 'pointer' : 'not-allowed',
-      opacity: gateOk ? 1 : 0.4,
-      letterSpacing: '.08em',
-      transition: 'all .2s',
-      boxShadow: '0 0 20px rgba(0,212,255,0.15)'
-    },
-    onMouseEnter: e => {
-      if (!gateOk) return;
-      e.currentTarget.style.boxShadow = '0 0 30px rgba(0,212,255,0.3)';
-      e.currentTarget.style.borderColor = 'rgba(0,212,255,0.7)';
-    },
-    onMouseLeave: e => {
-      e.currentTarget.style.boxShadow = '0 0 20px rgba(0,212,255,0.15)';
-      e.currentTarget.style.borderColor = 'rgba(0,212,255,0.4)';
+      const el = document.querySelector('.sc-root [data-sc-focus]');
+      if (el) el.focus();
+    }, 40);
+    return () => clearTimeout(t);
+  }, [nMsgs, stage]);
+  // The research runs in the background; keep its status fresh while it does.
+  const rstate = st && st.research && st.research.state;
+  React.useEffect(() => {
+    if (rstate !== 'running') return;
+    const iv = setInterval(() => {
+      scJSON('/api/setup-chat/research').then(r => {
+        if (r.ok) setSt(s => s ? {
+          ...s,
+          research: r.data
+        } : s);
+      });
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [rstate]);
+  if (!st) return null;
+  const p = st.prompt || {};
+  const cp = st.copy || {};
+  const note = (textLine, target) => setNotes(n => n.concat([{
+    text: textLine,
+    target: target || ''
+  }]));
+  const answer = async (value, typed) => {
+    setErr('');
+    setBusy(true);
+    const r = await scJSON('/api/setup-chat/answer', 'POST', {
+      stage: st.stage,
+      value: value,
+      text: typed || ''
+    });
+    setBusy(false);
+    if (r.status === 422 && r.data.error === 'key_shaped') {
+      note(r.data.message, r.data.shape && r.data.shape.target);
+      setText('');
+      return;
     }
-  }, isLast ? 'LAUNCH FRIDAY →' : 'Continue →')), !isLast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: 'center',
-      marginTop: 16
+    if (r.status === 409 && r.data.stage) {
+      apply(r.data);
+      return;
     }
+    if (!r.ok) {
+      setErr(r.data.message || 'Something went wrong. Try again.');
+      return;
+    }
+    setText('');
+    setNotes([]);
+    apply(r.data);
+  };
+  const send = e => {
+    if (e) e.preventDefault();
+    const t = text.trim();
+    if (!t || busy) return;
+    const hit = scDetectSecret(t, shapes);
+    if (hit) {
+      setText('');
+      note(scKeyNote(hit, shapes), hit.target);
+      return;
+    }
+    const chip = (p.chips || []).find(c => c.label.toLowerCase() === t.toLowerCase());
+    if (p.input !== 'text') {
+      if (chip) {
+        answer(chip.value, '');
+        return;
+      }
+      setText('');
+      note(cp.use_options || 'Tap one of the options.');
+      return;
+    }
+    answer(null, t);
+  };
+  const leave = () => {
+    if (!leaving) {
+      setLeaving(true);
+      setTimeout(() => setLeaving(false), 6000);
+      return;
+    }
+    scJSON('/api/setup-chat/skip-all', 'POST', {}).then(r => apply(r.data));
+  };
+  const goStage = first => scJSON('/api/setup-chat/goto', 'POST', {
+    stage: first
+  }).then(r => {
+    if (r.ok) {
+      setNotes([]);
+      apply(r.data);
+    }
+  });
+  const openCard = target => {
+    if (st.stage === 'connect') {
+      setHighlight(null);
+      setTimeout(() => setHighlight(target), 0);
+      return;
+    }
+    const connect = (st.groups || []).find(g => g.id === 'connect');
+    if (connect && connect.state === 'done') goStage('connect').then(() => setHighlight(target));
+  };
+  const seeds = v => {
+    for (const k in v) {
+      if (scDetectSecret(String(v[k] || ''), shapes)) {
+        setErr('One of those fields looks like a key. Keys go on the Connect cards, not here.');
+        return;
+      }
+    }
+    answer(v, '');
+  };
+  const card = p.card;
+  let cardEl = null;
+  if (card === 'connections') {
+    cardEl = /*#__PURE__*/React.createElement("div", {
+      className: "sc-card"
+    }, /*#__PURE__*/React.createElement("h2", {
+      tabIndex: -1,
+      "data-sc-focus": ""
+    }, "Connect everything"), /*#__PURE__*/React.createElement(SetupConnectionsPanel, {
+      highlight: highlight
+    }));
+  } else if (card === 'basics') {
+    cardEl = /*#__PURE__*/React.createElement(SetupBasicsCard, {
+      initial: st,
+      busy: busy,
+      onDone: v => answer(v, '')
+    });
+  } else if (card === 'research_seeds') {
+    cardEl = /*#__PURE__*/React.createElement(SetupResearchSeeds, {
+      busy: busy,
+      error: err,
+      onSubmit: seeds,
+      onSkip: () => answer('skip', '')
+    });
+  } else if (card === 'research_review') {
+    cardEl = /*#__PURE__*/React.createElement(SetupResearchReview, {
+      research: st.research,
+      onChanged: res => {
+        if (res) setSt(s => ({
+          ...s,
+          research: res
+        }));
+      }
+    });
+  } else if (card === 'style') {
+    cardEl = /*#__PURE__*/React.createElement(SetupStyleCard, {
+      style: st.style,
+      sliders: st.sliders,
+      floor: st.pushback_floor,
+      examplePrompt: st.example_prompt,
+      onSave: sl => answer(sl ? {
+        action: 'save',
+        sliders: sl
+      } : {
+        action: 'save'
+      }, ''),
+      onSkip: () => answer({
+        action: 'skip'
+      }, '')
+    });
+  } else if (card === 'finish') {
+    cardEl = /*#__PURE__*/React.createElement(SetupFinishCard, {
+      state: st,
+      busy: busy,
+      onFinish: () => answer('finish', '')
+    });
+  }
+  const connectDone = ((st.groups || []).find(g => g.id === 'connect') || {}).state;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "st-root sc-root",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": "Set up Friday"
+  }, /*#__PURE__*/React.createElement("header", {
+    className: "sc-head"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sc-brand st-brand"
+  }, String(st.agent_name || 'Friday').toUpperCase()), /*#__PURE__*/React.createElement("nav", {
+    className: "sc-rail",
+    "aria-label": "Setup progress"
+  }, (st.groups || []).map(g => /*#__PURE__*/React.createElement("button", {
+    key: g.id,
+    type: "button",
+    className: 'sc-step ' + g.state,
+    "aria-current": g.state === 'current' ? 'step' : undefined,
+    disabled: g.state !== 'done',
+    title: g.state === 'done' ? 'Go back to ' + g.label : undefined,
+    onClick: () => {
+      if (g.state === 'done') goStage(g.first);
+    }
+  }, g.label))), st.reader && /*#__PURE__*/React.createElement("span", {
+    className: "sc-badge",
+    title: "Who reads your answers"
+  }, 'Reader: ' + st.reader.badge), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: 'sc-btn ' + (leaving ? 'danger' : 'quiet'),
+    onClick: leave
+  }, leaving ? 'Finish setup with defaults?' : cp.set_up_later || 'Set up later')), /*#__PURE__*/React.createElement("div", {
+    className: "sc-body"
+  }, /*#__PURE__*/React.createElement("section", {
+    className: "sc-chat",
+    "aria-label": "Conversation with Friday"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sc-log",
+    ref: logRef,
+    role: "log",
+    "aria-live": "polite",
+    "aria-relevant": "additions"
+  }, (st.transcript || []).map((m, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: 'sc-msg ' + (m.role === 'user' ? 'user' : 'friday')
   }, /*#__PURE__*/React.createElement("span", {
-    onClick: onComplete,
+    className: "sc-sr"
+  }, m.role === 'user' ? 'You: ' : (st.agent_name || 'Friday') + ': '), m.text, m.model && /*#__PURE__*/React.createElement("div", {
+    className: "sc-badge"
+  }, 'Read by ' + m.model), m.task_id && /*#__PURE__*/React.createElement("div", {
+    className: "sc-badge"
+  }, "Running as a background task: see the tray"))), notes.map((n, i) => /*#__PURE__*/React.createElement("div", {
+    key: 'n' + i,
+    className: "sc-msg note",
+    role: "alert"
+  }, n.text, n.target && (st.stage === 'connect' || connectDone === 'done') && /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    onClick: () => openCard(n.target)
+  }, "Open the secure field")), n.target && !(st.stage === 'connect' || connectDone === 'done') && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub",
     style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.2)',
-      cursor: 'pointer',
-      fontFamily: 'JetBrains Mono',
-      letterSpacing: '.05em',
-      textDecoration: 'underline',
-      textDecorationColor: 'rgba(255,255,255,0.1)'
-    },
-    onMouseEnter: e => e.currentTarget.style.color = 'rgba(255,255,255,0.4)',
-    onMouseLeave: e => e.currentTarget.style.color = 'rgba(255,255,255,0.2)'
-  }, "skip setup"))));
+      margin: '6px 0 0'
+    }
+  }, "The Connect step is coming up next, or use Settings > Accounts & Keys.")))), (p.chips || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "sc-chips",
+    role: "group",
+    "aria-label": "Quick answers"
+  }, p.chips.map((c, i) => /*#__PURE__*/React.createElement("button", {
+    key: c.value + i,
+    type: "button",
+    className: 'sc-chip' + (/^(skip|rather_not|skip_rest|rules)$/.test(c.value) ? ' quiet' : ''),
+    disabled: busy,
+    "data-sc-focus": i === 0 && p.input !== 'text' && !card ? '' : undefined,
+    onClick: () => answer(c.value, '')
+  }, c.label))), err && card !== 'research_seeds' && /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    className: "sc-msgline bad"
+  }, err), st.stage !== 'done' && /*#__PURE__*/React.createElement("form", {
+    className: "sc-form",
+    onSubmit: send
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "sc-input",
+    className: "sc-sr"
+  }, "Your answer"), /*#__PURE__*/React.createElement("input", {
+    id: "sc-input",
+    ref: inputRef,
+    className: "sc-input",
+    type: "text",
+    autoComplete: "off",
+    value: text,
+    onChange: e => setText(e.target.value),
+    disabled: busy,
+    placeholder: p.input === 'text' ? p.placeholder || 'Type your answer' : 'Type here, or use the options'
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    className: "sc-btn",
+    disabled: busy || !text.trim()
+  }, "Send")), p.stage === 'questions' && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub",
+    style: {
+      marginTop: 6
+    }
+  }, 'Question ' + (p.index + 1) + ' of ' + p.total + '. Type "skip" to skip.')), cardEl && /*#__PURE__*/React.createElement("aside", {
+    className: "sc-side",
+    "aria-label": "Details for this step"
+  }, cardEl)));
 }
 
+// ── Settings: the setup checklist and "Your profile" ────────────────────────
+function SettingsSetupChecklist() {
+  return /*#__PURE__*/React.createElement(StSection, {
+    title: "Setup checklist",
+    desc: "Everything Friday can connect to, with exactly what each one asks for. Anything you skipped in the setup chat waits here."
+  }, /*#__PURE__*/React.createElement(SetupConnectionsPanel, null));
+}
+function SettingsYourProfile() {
+  const [p, setP] = React.useState(null);
+  const [meta, setMeta] = React.useState(null);
+  const [research, setResearch] = React.useState(null);
+  const [edits, setEdits] = React.useState({});
+  const [msg, setMsg] = React.useState('');
+  const [confirmDel, setConfirmDel] = React.useState(false);
+  const [seeding, setSeeding] = React.useState(false);
+  const [rErr, setRErr] = React.useState('');
+  const [shapes, setShapes] = React.useState(null);
+  const load = () => {
+    scJSON('/api/setup-chat/profile').then(r => {
+      if (r.ok) setP(r.data);
+    });
+    scJSON('/api/setup-chat/research').then(r => {
+      if (r.ok) setResearch(r.data);
+    });
+    scJSON('/api/setup-chat/state').then(r => {
+      if (r.ok) setMeta(r.data);
+    });
+  };
+  React.useEffect(() => {
+    load();
+    scLoadShapes().then(setShapes);
+  }, []);
+  React.useEffect(() => {
+    if (!research || research.state !== 'running') return;
+    const iv = setInterval(() => scJSON('/api/setup-chat/research').then(r => {
+      if (r.ok) setResearch(r.data);
+    }), 5000);
+    return () => clearInterval(iv);
+  }, [research && research.state]);
+  if (!p) return null;
+  const saveAnswers = async rebuild => {
+    for (const k in edits) {
+      if (scDetectSecret(edits[k], shapes)) {
+        setMsg('That looks like a key. Keys go in Accounts & Keys, not here.');
+        return;
+      }
+    }
+    const r = await scJSON('/api/setup-chat/profile/answers', 'PUT', {
+      answers: edits,
+      rebuild: !!rebuild
+    });
+    if (r.ok) {
+      setP(r.data);
+      setEdits({});
+      setMsg(rebuild ? 'Saved, and your style was rebuilt from the answers.' : 'Saved.');
+    } else setMsg(r.data.message || r.data.error || 'Could not save.');
+  };
+  const del = async () => {
+    if (!confirmDel) {
+      setConfirmDel(true);
+      return;
+    }
+    const r = await scJSON('/api/setup-chat/profile', 'DELETE');
+    setConfirmDel(false);
+    if (r.ok) {
+      setP(r.data);
+      setMsg('Deleted: your answers, the setup transcript and the style block are gone.');
+    }
+  };
+  const rerun = () => window.dispatchEvent(new CustomEvent('friday:setup-chat-rerun'));
+  const startResearch = async v => {
+    for (const k in v) {
+      if (scDetectSecret(String(v[k] || ''), shapes)) {
+        setRErr('One of those fields looks like a key. Keys go in Accounts & Keys.');
+        return;
+      }
+    }
+    setRErr('');
+    const r = await scJSON('/api/setup-chat/research/start', 'POST', {
+      seeds: v
+    });
+    if (!r.ok) {
+      setRErr(r.data.message || r.data.error || 'Could not start the search.');
+      return;
+    }
+    setSeeding(false);
+    load();
+  };
+  const rs = research && research.state;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(StSection, {
+    title: "Your profile",
+    desc: "What you told Friday in the setup chat, and the speaking style made from it. Stored encrypted on this computer. Only the style reaches Friday's prompt, never your answers."
+  }, p.name && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, 'Friday calls you ' + p.name + '.'), (p.questions || []).map(q => /*#__PURE__*/React.createElement("label", {
+    key: q.id,
+    className: "sc-field"
+  }, /*#__PURE__*/React.createElement("span", null, q.question), /*#__PURE__*/React.createElement("input", {
+    className: "sc-input",
+    type: "text",
+    autoComplete: "off",
+    value: edits[q.id] !== undefined ? edits[q.id] : q.answer,
+    placeholder: q.skipped ? 'Skipped' : 'Not answered',
+    onChange: e => {
+      const x = e.target.value;
+      setEdits(o => ({
+        ...o,
+        [q.id]: x
+      }));
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: !Object.keys(edits).length,
+    onClick: () => saveAnswers(false)
+  }, "Save answers"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    onClick: () => saveAnswers(true)
+  }, "Save and rebuild my style")), p.style && meta && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 14
+    }
+  }, /*#__PURE__*/React.createElement(SetupStyleCard, {
+    style: p.style,
+    sliders: meta.sliders,
+    floor: meta.pushback_floor,
+    examplePrompt: meta.example_prompt,
+    saveLabel: "Save style",
+    onSave: async sl => {
+      const r = await scJSON('/api/setup-chat/profile/style', 'POST', {
+        sliders: sl || p.style.sliders
+      });
+      if (r.ok) {
+        setP(r.data);
+        setMsg('Style saved. It is part of Friday\'s personality now.');
+      }
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, p.style_in_prompt ? 'Your style is part of Friday\'s personality (SOUL.md) and keeps evolving.' : 'No first-run style is in Friday\'s personality.'), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    onClick: rerun
+  }, "Run the setup chat again"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn danger",
+    onClick: del
+  }, confirmDel ? 'Confirm: delete my answers and style' : 'Delete my profile')), msg && /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    className: "sc-msgline ok"
+  }, msg)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Research on you (optional)",
+    desc: "Public-web research using only what you type in, reviewed line by line before anything is kept."
+  }, rs === 'running' && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, "The search is running as a background task; findings will appear here."), (rs === 'ready' || rs === 'reviewed') && /*#__PURE__*/React.createElement(SetupResearchReview, {
+    research: research,
+    onChanged: res => {
+      if (res) setResearch(res);
+    }
+  }), rs === 'failed' && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, 'The last search stopped with an error: ' + (research.error || 'unknown')), !seeding && rs !== 'running' && rs !== 'ready' && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    onClick: () => setSeeding(true)
+  }, rs && rs !== 'not_asked' && rs !== 'declined' && rs !== 'unavailable' ? 'Search again' : 'Research me on the public web'), seeding && /*#__PURE__*/React.createElement(SetupResearchSeeds, {
+    intro: meta && meta.copy && meta.copy.research_ask,
+    error: rErr,
+    onSubmit: startResearch,
+    onSkip: () => setSeeding(false)
+  })));
+}
 // ═════════════════════════════════════════════════════════════════════════════════
 //  SETTINGS WORKSPACE — full tabbed settings (General / Models / Voice / Privacy /
 //  Federation / Economy / Orchestrator / Connectors / About)
@@ -48021,7 +48603,7 @@ function SettingsWS() {
   const TABS = [{
     id: 'general',
     label: 'General',
-    sub: 'Her name, her personality, and which workspaces the dock offers.'
+    sub: 'Her name, her personality, which workspaces the dock offers, and your profile from the setup chat.'
   }, {
     id: 'intelligence',
     label: 'Models',
@@ -48031,7 +48613,7 @@ function SettingsWS() {
     // things a person connects once and then forgets about.
     id: 'accounts',
     label: 'Accounts & Keys',
-    sub: 'Model provider keys, Google accounts and tool servers.'
+    sub: 'The setup checklist, model provider keys, Google accounts and tool servers.'
   }, {
     id: 'privacy',
     label: 'Privacy & Approvals',
@@ -48158,13 +48740,13 @@ function SettingsWS() {
       padding: '22px 28px 40px',
       maxWidth: 860
     }
-  }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
+  }, tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
+  }), /*#__PURE__*/React.createElement(SettingsYourProfile, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
     s: s,
     save: save
-  }), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  }), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, null), /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(SettingsTabConnectors, {
@@ -48859,20 +49441,14 @@ function App() {
   });
   const [topBarHidden, setTopBarHidden] = useState(false);
   const [dockHidden, setDockHidden] = useState(false);
-  // ── Setup Wizard ──
+  // ── First-run setup: the consent screens, then the setup chat ──
   const [setupDone, setSetupDone] = useState(true); // optimistic — flip after check
-  const [wizStep, setWizStep] = useState(0);
-  const [wizData, setWizData] = useState({
-    agent_name: 'AGENT FRIDAY',
-    communication_style: 'professional',
-    preferred_scene_index: 0,
-    distribution: 'default',
-    providers: {}
-  });
-  // The vault-first consent flow runs before the configuration wizard. Held
-  // separately from wizStep so the wizard's hardcoded step indices are
-  // untouched.
-  const [consentDone, setConsentDone] = useState(false);
+  // Whether the consent screens are done is the server's record
+  // (services/setup_chat.py), so a restart mid-setup resumes the chat rather
+  // than asking for consent again. null until that answer arrives.
+  const [consentDone, setConsentDone] = useState(null);
+  // "Run the setup chat again", from Settings > General > Your profile.
+  const [setupRerun, setSetupRerun] = useState(false);
   useEffect(() => {
     // ?skip_setup=1 in URL → bypass immediately and stamp the marker
     if (new URLSearchParams(window.location.search).get('skip_setup') === '1') {
@@ -48883,6 +49459,7 @@ function App() {
       return;
     }
     fetch('/api/setup/status').then(r => r.json()).then(d => setSetupDone(d.initialized)).catch(() => setSetupDone(true));
+    fetch('/api/setup-chat/state').then(r => r.json()).then(d => setConsentDone(!!d.consent_done)).catch(() => setConsentDone(false));
   }, []);
   // Explicit cloud-consent gate: independent of setup/
   // ConsentFlow above, which is about vault disclosure and provider-routing
@@ -48897,31 +49474,35 @@ function App() {
       .then(d => setNeedsCloudConsent(!!d.needs_prompt))
       .catch(() => setNeedsCloudConsent(false));
   }, []);
-  const completeWizard = async () => {
+  // The setup chat finished, or "Set up later": the server has completed
+  // setup already. Keys may have landed, so model availability re-resolves.
+  const finishSetupChat = d => {
     try {
-      await fetch('/api/setup/complete', {
+      fridayInvalidateModelCatalog();
+    } catch (_) {}
+    setAgentSettings(s => ({
+      ...s,
+      agent_name: d && d.agent_name || s.agent_name,
+      minor_mode: !!(d && d.minor_mode)
+    }));
+    setSetupDone(true);
+    setSetupRerun(false);
+  };
+  useEffect(() => {
+    const h = () => {
+      fetch('/api/setup-chat/rerun', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(wizData)
-      });
-    } catch (e) {}
-    // Keys just landed — drop the cached model catalog so availability re-resolves.
-    try {
-      fridayInvalidateModelCatalog();
-    } catch (_) {}
-    // Reflect the scalar choices now; never spread the providers object into settings.
-    const {
-      providers,
-      ...scalars
-    } = wizData;
-    setAgentSettings(s => ({
-      ...s,
-      ...scalars
-    }));
-    setSetupDone(true);
-  };
+        body: '{}'
+      }).then(r => {
+        if (r.ok) setSetupRerun(true);
+      }).catch(() => {});
+    };
+    window.addEventListener('friday:setup-chat-rerun', h);
+    return () => window.removeEventListener('friday:setup-chat-rerun', h);
+  }, []);
   const topBarTimer = useRef(null);
   const dockTimer = useRef(null);
   // Real connection-health for the top-bar dot. Polled every 15s.
@@ -52175,18 +52756,25 @@ function App() {
       map: wsCustMap,
       setCust
     }
-  }, !setupDone && !consentDone && /*#__PURE__*/React.createElement(ConsentFlow, {
-    onDone: seed => { setWizData(d => ({ ...d, ...seed })); setConsentDone(true); }
-  }), !setupDone && consentDone && /*#__PURE__*/React.createElement(SetupWizard, {
-    step: wizStep,
-    data: wizData,
-    onChange: patch => setWizData(d => ({
-      ...d,
-      ...patch
-    })),
-    onNext: () => setWizStep(s => Math.min(s + 1, WIZARD_STEPS.length - 1)),
-    onBack: () => setWizStep(s => Math.max(s - 1, 0)),
-    onComplete: completeWizard
+  }, !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
+    // The server stores the passphrase as the chat begins; this page does
+    // not keep it.
+    onDone: seed => {
+      fetch('/api/setup-chat/begin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          routing_mode: seed && seed.routing_mode || '',
+          vault_passphrase: seed && seed.vault_passphrase || ''
+        })
+      }).catch(() => {}).then(() => setConsentDone(true));
+    }
+  }), !setupDone && consentDone === true && /*#__PURE__*/React.createElement(SetupChat, {
+    onDone: finishSetupChat
+  }), setupDone && setupRerun && /*#__PURE__*/React.createElement(SetupChat, {
+    onDone: finishSetupChat
   }), setupDone && needsCloudConsent && /*#__PURE__*/React.createElement(CloudConsentGate, {
     onDone: () => setNeedsCloudConsent(false)
   }), /*#__PURE__*/React.createElement(MeetingRecIndicator, null), /*#__PURE__*/React.createElement("div", {

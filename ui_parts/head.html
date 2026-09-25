@@ -465,6 +465,108 @@ window.addEventListener('DOMContentLoaded',function(){
         .st-rail-btn:hover { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.03); }
         .st-rail-btn.on { color: var(--st-accent); background: rgba(0,212,255,0.07); border-left-color: var(--st-accent); }
         .st-rail-btn:focus-visible { outline: 1px solid var(--st-accent); outline-offset: -2px; }
+        /* First-run setup chat (SetupChat) and the checklist it shares with
+           Settings. Reads the Settings tokens above; motion only when the
+           person has not asked for less of it. */
+        .sc-root { position: fixed; inset: 0; z-index: 9999; background: rgb(6,10,16);
+            display: flex; flex-direction: column; font-family: var(--st-font); color: var(--st-text); }
+        .sc-head { display: flex; align-items: center; gap: 16px; padding: 14px 24px;
+            border-bottom: 1px solid var(--st-line); flex-wrap: wrap; }
+        .sc-brand { font-family: 'Orbitron', var(--st-font); font-weight: 700; color: var(--st-accent);
+            letter-spacing: .06em; font-size: 14px; }
+        .sc-rail { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; min-width: 0; }
+        .sc-step { all: unset; box-sizing: border-box; font-size: 11.5px; padding: 4px 10px; border-radius: 12px;
+            color: var(--st-faint); border: 1px solid transparent; }
+        .sc-step.done { color: var(--st-dim); cursor: pointer; }
+        .sc-step.done:hover { color: var(--st-text); background: rgba(255,255,255,0.04); }
+        .sc-step.current { color: var(--st-accent); border-color: rgba(0,212,255,0.35); background: rgba(0,212,255,0.06); }
+        .sc-card h2[data-sc-focus]:focus { outline: none; }
+        .sc-root .sc-step:focus-visible, .sc-root .sc-btn:focus-visible, .sc-root .sc-chip:focus-visible,
+        .sc-root .sc-input:focus-visible, .sc-root .sc-option:focus-visible,
+        .sc-connections .sc-btn:focus-visible, .sc-connections .sc-chip:focus-visible,
+        .sc-connections .sc-input:focus-visible, .sc-card .sc-btn:focus-visible, .sc-card .sc-input:focus-visible {
+            outline: 2px solid var(--st-accent); outline-offset: 2px; }
+        .sc-body { flex: 1; min-height: 0; display: flex; gap: 22px; padding: 20px 24px; max-width: 1320px;
+            width: 100%; margin: 0 auto; box-sizing: border-box; }
+        .sc-chat { flex: 1 1 440px; min-width: 0; max-width: 640px; display: flex; flex-direction: column; }
+        .sc-log { flex: 1; overflow-y: auto; padding-right: 6px; }
+        .sc-msg { max-width: 88%; margin: 0 0 10px; padding: 10px 14px; border-radius: 14px; font-size: 14px;
+            line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .sc-msg.friday { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07); border-top-left-radius: 4px; }
+        .sc-msg.user { margin-left: auto; background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.22); border-top-right-radius: 4px; }
+        .sc-msg.note { background: rgba(245,158,11,0.07); border: 1px solid rgba(245,158,11,0.35); color: #f0c37a; }
+        .sc-badge { display: inline-block; margin-top: 6px; font-size: 10.5px; color: var(--st-dim); font-family: var(--st-mono); }
+        .sc-head .sc-badge { margin-top: 0; }
+        .sc-msg .sc-badge { display: block; }
+        .sc-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+        .sc-chip { all: unset; box-sizing: border-box; cursor: pointer; font-size: 12.5px; padding: 7px 12px; border-radius: 16px;
+            border: 1px solid rgba(0,212,255,0.3); color: var(--st-text); background: rgba(0,212,255,0.04); }
+        .sc-chip:hover { background: rgba(0,212,255,0.12); }
+        .sc-chip.quiet { border-color: rgba(255,255,255,0.15); color: var(--st-dim); background: transparent; }
+        .sc-chip[disabled] { opacity: .45; cursor: not-allowed; }
+        .sc-form { display: flex; gap: 8px; margin-top: 6px; }
+        .sc-input { flex: 1; min-width: 0; box-sizing: border-box; width: 100%; padding: 10px 12px; font-size: 14px;
+            background: rgba(255,255,255,0.04); color: #fff; border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 8px; font-family: inherit; }
+        .sc-btn { all: unset; box-sizing: border-box; cursor: pointer; font-size: 12.5px; padding: 8px 14px; border-radius: 8px;
+            border: 1px solid rgba(0,212,255,0.4); color: var(--st-accent); background: rgba(0,212,255,0.06); text-align: center; }
+        .sc-btn:hover { background: rgba(0,212,255,0.14); }
+        .sc-btn[disabled] { opacity: .45; cursor: not-allowed; }
+        .sc-btn.quiet { border-color: rgba(255,255,255,0.15); color: var(--st-dim); background: transparent; }
+        .sc-btn.danger { border-color: rgba(255,107,138,0.5); color: var(--st-danger); background: transparent; }
+        .sc-side { flex: 1 1 520px; min-width: 0; overflow-y: auto; padding-left: 4px; }
+        .sc-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; background: rgba(255,255,255,0.02);
+            padding: 16px; margin-bottom: 14px; }
+        .sc-card, .sc-connections { color: var(--st-text, rgba(255,255,255,0.86)); }
+        .sc-card h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: #fff; }
+        .sc-sub { font-size: 12px; color: var(--st-dim); line-height: 1.6; margin: 0 0 12px; }
+        .sc-dim { color: var(--st-dim); }
+        .sc-group { margin: 16px 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--st-faint); }
+        .sc-item { border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+        .sc-item-head { display: flex; align-items: center; gap: 10px; }
+        .sc-item-title { flex: 1; min-width: 0; font-size: 13px; color: var(--st-text); }
+        .sc-item-unlocks { font-size: 11.5px; color: var(--st-dim); margin-top: 2px; line-height: 1.5; }
+        .sc-pill { font-size: 10.5px; padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15);
+            color: var(--st-dim); white-space: nowrap; }
+        .sc-pill.connected { color: var(--st-ok); border-color: rgba(0,255,128,0.35); }
+        .sc-pill.needs_attention { color: var(--st-warn); border-color: rgba(245,158,11,0.45); }
+        .sc-pill.skipped, .sc-pill.external { color: var(--st-faint); }
+        .sc-perms { margin: 6px 0 8px; padding-left: 18px; font-size: 12px; color: var(--st-label); line-height: 1.6; }
+        .sc-optional { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--st-label); margin: 4px 0; }
+        .sc-optional em { color: var(--st-dim); font-style: normal; }
+        .sc-field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-size: 11.5px; color: var(--st-dim); }
+        .sc-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+        .sc-link { font-size: 12px; color: var(--st-accent); }
+        .sc-link.quiet { color: var(--st-dim); }
+        .sc-msgline { font-size: 12px; margin-top: 8px; }
+        .sc-msgline.ok { color: var(--st-ok); }
+        .sc-msgline.bad { color: var(--st-danger); }
+        .sc-option { border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+        .sc-option.on { border-color: rgba(0,212,255,0.5); background: rgba(0,212,255,0.06); }
+        .sc-option-label { font-size: 13px; color: #fff; }
+        .sc-option-desc { font-size: 11.5px; color: var(--st-dim); margin-top: 2px; }
+        .sc-summary { font-size: 13.5px; line-height: 1.65; margin: 10px 0; }
+        .sc-sample { font-size: 13.5px; line-height: 1.65; padding: 12px 14px; border-left: 2px solid rgba(0,212,255,0.5);
+            background: rgba(0,212,255,0.04); border-radius: 0 8px 8px 0; margin: 8px 0 12px; }
+        .sc-slider { margin: 10px 0; }
+        .sc-slider label { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--st-label); }
+        .sc-slider input { width: 100%; accent-color: #00d4ff; }
+        .sc-ends { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--st-faint); }
+        .sc-finding { border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
+        .sc-cite { font-size: 11px; color: var(--st-dim); margin-top: 4px; overflow-wrap: anywhere; }
+        .sc-summary-list { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13px; margin: 8px 0 12px; }
+        .sc-summary-list dt { color: var(--st-dim); }
+        .sc-summary-list dd { margin: 0; }
+        .sc-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+        @media (max-width: 960px) {
+            .sc-body { flex-direction: column; overflow-y: auto; }
+            .sc-chat { max-width: none; flex: none; }
+            .sc-log, .sc-side { overflow: visible; }
+        }
+        @media (prefers-reduced-motion: no-preference) {
+            .sc-msg { animation: scMsgIn .18s ease-out; }
+        }
+        @keyframes scMsgIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
         button.toggle-pill { font-family: inherit; }
         .st-root .settings-btn, .st-root .btn { font-family: var(--st-font); letter-spacing: 0; }
         /* Settings speaks one typeface. Panels written before these tokens set

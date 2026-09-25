@@ -55,7 +55,7 @@ SHAPES: tuple = (
     ("groq_xai_pplx", "Groq / xAI / Perplexity key",
      r"\b(?:gsk_[A-Za-z0-9]{40,}|xai-[A-Za-z0-9]{40,}|pplx-[A-Za-z0-9]{40,})", ""),
     ("twilio", "Twilio API key or account SID",
-     r"\b(?:SK|AC)[0-9a-f]{32}\b", "phone:twilio"),
+     r"\b(?:SK|AC)[0-9a-f]{32}\b", "twilio"),
     ("jwt", "JSON Web Token",
      r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}", ""),
     ("private_key", "Private key block",
@@ -111,9 +111,11 @@ def looks_like_secret(text) -> dict | None:
 
 def for_client() -> dict:
     """The list as the browser needs it: patterns as strings, never values."""
+    from agent_friday.services.setup_chat_copy import KEY_IN_CHAT
     return {
         "shapes": [{"id": sid, "label": label, "pattern": pat, "target": target}
                    for sid, label, pat, target in SHAPES],
         "generic": {"id": GENERIC[0], "label": GENERIC[1],
                     "pattern": GENERIC[2], "target": GENERIC[3]},
+        "message": KEY_IN_CHAT,
     }

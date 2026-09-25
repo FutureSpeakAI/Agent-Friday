@@ -252,7 +252,8 @@ def view() -> dict:
             _enter(st, transcript, st["stage"])
             profile.save_transcript(transcript)
             save_state(st)
-        reader = st.get("reader") or setup_reader.RULES
+        # Named once it is chosen, so the header never claims a reader early.
+        reader = st.get("reader")
         return {
             "stage": st["stage"], "consent_done": bool(st["consent_done"]),
             "completed": bool(st["completed"]), "rerun": bool(st["rerun"]),
@@ -261,7 +262,7 @@ def view() -> dict:
             "routing_mode": st["routing_mode"],
             "groups": _groups(st["stage"]), "prompt": _prompt(st),
             "transcript": transcript,
-            "reader": {**reader, "badge": setup_reader.badge(reader)},
+            "reader": ({**reader, "badge": setup_reader.badge(reader)} if reader else None),
             "research": research_view(st),
             "style": (profile.load_profile().get("style")
                       if st["stage"] in ("style", "research_review", "finish") else None),
@@ -270,6 +271,9 @@ def view() -> dict:
                         for s in copy.SLIDERS],
             "pushback_floor": copy.PUSHBACK_FLOOR,
             "example_prompt": copy.EXAMPLE_PROMPT,
+            "copy": {"key_in_chat": copy.KEY_IN_CHAT, "use_options": copy.USE_OPTIONS,
+                     "research_ask": copy.RESEARCH_ASK,
+                     "set_up_later": copy.SET_UP_LATER},
         }
 
 
