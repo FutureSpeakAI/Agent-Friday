@@ -87,6 +87,18 @@ except Exception:
 
 
 
+class RoutedRefusal(str):
+    """Text `_generate_text` returns INSTEAD of generating: the router's
+    refusal (vault access with no local model allowed), the demo placeholder.
+    It is a str so every caller that shows it keeps working; a caller that
+    would treat the reply as model output (a summary) checks `is_refusal`."""
+
+
+def is_refusal(text) -> bool:
+    """True when `text` is a refusal the router returned, not generated text."""
+    return isinstance(text, RoutedRefusal)
+
+
 def _seal_or_block(payload, provider):
     """Egress-gate wrapper shared by EVERY cloud provider call site (R3).
 
@@ -452,7 +464,7 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     try:
         from agent_friday.services.demo_mode import is_demo, demo_response
         if is_demo():
-            return demo_response('generic')
+            return RoutedRefusal(demo_response('generic'))
     except Exception:
         pass
 
@@ -482,10 +494,11 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     # contract for every one of this function's many callers (briefings,
     # digests, KG summarization, calendar/message drafting, wiki bootstrap).
     if route.get('refuse'):
-        return (route.get('warning')
-                or "This request needs vault access, which requires a local "
-                   "model. Load one in Settings → Models (or adjust "
-                   "model_routing.vault_cloud_fallback), then retry.")
+        return RoutedRefusal(
+            route.get('warning')
+            or "This request needs vault access, which requires a local "
+               "model. Load one in Settings → Models (or adjust "
+               "model_routing.vault_cloud_fallback), then retry.")
     vault_access = bool(route.get('vault_access'))
 
     # Re-gate the system prompt per LEG, not once for the predicted

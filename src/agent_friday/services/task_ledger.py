@@ -227,8 +227,13 @@ def absorb_summary(ledger: Dict[str, Any], summary: str) -> None:
     if sections.get("NEXT"):
         ledger["next"] = " ".join(sections["NEXT"])[:600]
     if not sections:
-        # An unstructured summary is still the latest consolidated account.
-        ledger["facts"] = [_one_line(summary, 4000)]
+        # An unstructured summary is kept alongside the facts, never in place
+        # of them: prose without the FACTS section says nothing about which
+        # facts it meant to drop, and a refusal or an error message would
+        # otherwise have erased them all.
+        facts = ledger.setdefault("facts", [])
+        facts.append(_one_line(summary, 4000))
+        del facts[:-400]
     ledger["compactions"] = int(ledger.get("compactions") or 0) + 1
     ledger["summarized_rounds"] = int(ledger.get("rounds") or 0)
 

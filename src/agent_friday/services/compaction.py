@@ -430,6 +430,13 @@ def _default_summarizer(text, max_tokens=400):
                     _cm.pop_attribution()
             except Exception:
                 pass
+        from agent_friday.services.model_router import is_refusal
+        if is_refusal(out):
+            # The router answered instead of a model (no local model may take
+            # this, demo mode). That is no summary -- taking it as one replaced
+            # whole conversations with the refusal.
+            print("  [compaction] no local model wrote a summary: %s" % str(out)[:120])
+            return ""
         return (out or "").strip()
     except Exception as e:
         print(f"  [compaction] summarizer failed: {e}")
