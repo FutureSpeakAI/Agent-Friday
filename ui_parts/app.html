@@ -7941,6 +7941,7 @@ function CalendarWS(){
       <button className="btn active" onClick={quickAdd} disabled={adding}>{adding?'Parsing…':'✨ Add'}</button>
     </div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    <MeetingsPanel/>
 
     {/* Week strip */}
     <div className="cal-week">
@@ -8012,6 +8013,147 @@ function CalendarWS(){
         </div>
         {e.prep_available&&<span className="cal-prep-badge">Prep</span>}
       </div>)}
+    </div>}
+  </div>);
+}
+
+// ═══ MEETINGS (services/meeting_capture.py) ═══
+// Record a meeting from the Calendar, transcribe it on this machine, take notes
+// on a local model. Starting shows the consent statement every time; while a
+// recording runs, MeetingRecIndicator shows a red dot and the elapsed time on
+// every screen, with a one-click stop.
+function meetingsChanged(){try{window.dispatchEvent(new Event('friday-meetings'));}catch(_){}}
+function meetingClock(s){s=Math.max(0,Math.floor(s||0));const h=Math.floor(s/3600),m=Math.floor(s/60)%60,x=s%60;return h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');}
+function useMeetingStatus(ms){
+  const [st,setSt]=useState(null);
+  const [at,setAt]=useState(0);
+  const [,setTick]=useState(0);
+  const load=()=>fetch('/api/meetings/status').then(r=>r.json()).then(d=>{setSt(d);setAt(Date.now());}).catch(()=>{});
+  useEffect(()=>{load();const t=setInterval(load,ms||3000);const k=setInterval(()=>setTick(x=>x+1),1000);window.addEventListener('friday-meetings',load);return()=>{clearInterval(t);clearInterval(k);window.removeEventListener('friday-meetings',load);};},[]);
+  const elapsed=st&&st.recording?(st.elapsed_s||0)+(Date.now()-at)/1000:0;
+  return [st,elapsed,load];
+}
+function MeetingRecIndicator(){
+  const [st,elapsed,reload]=useMeetingStatus(3000);
+  const [stopping,setStopping]=useState(false);
+  if(!st||!st.recording)return null;
+  const live=st.capturing;
+  const stop=async()=>{setStopping(true);try{await fetch('/api/meetings/stop',{method:'POST'});}catch(e){}setStopping(false);meetingsChanged();};
+  return(<div role="status" aria-live="polite" style={{position:'fixed',top:48,left:'50%',transform:'translateX(-50%)',zIndex:10050,display:'flex',alignItems:'center',gap:8,padding:'5px 8px 5px 12px',borderRadius:999,background:'rgba(20,6,8,0.92)',border:'1px solid rgba(239,68,68,0.6)',boxShadow:'0 0 18px rgba(239,68,68,0.35)',fontFamily:'JetBrains Mono',fontSize:12,color:'#fecaca'}}>
+    <span aria-hidden="true" style={{width:10,height:10,borderRadius:'50%',background:live?'#ef4444':'#f59e0b',boxShadow:live?'0 0 8px #ef4444':'none',animation:live?'pulse 1.4s ease-in-out infinite':'none'}}></span>
+    <span onClick={()=>fridayNavigate({workspace:'calendar',view:'meetings',meeting_id:st.id})} style={{cursor:'pointer'}} title={'Recording “'+(st.title||'meeting')+'” — microphone only. Open Meetings.'}>{live?'REC':'Starting microphone…'} {meetingClock(elapsed)}</span>
+    <button onClick={stop} disabled={stopping} aria-label="Stop recording" style={{background:'#ef4444',color:'#fff',border:'none',borderRadius:999,padding:'3px 10px',fontSize:11,fontWeight:700,cursor:'pointer'}}>{stopping?'Stopping…':'■ Stop'}</button>
+  </div>);
+}
+function MeetingsPanel(){
+  const [st,elapsed,reloadSt]=useMeetingStatus(3000);
+  const [open,setOpen]=useState(false);
+  const [list,setList]=useState([]);
+  const [asking,setAsking]=useState(false);
+  const [title,setTitle]=useState('');
+  const [keepAudio,setKeepAudio]=useState(false);
+  const [maxH,setMaxH]=useState(2);
+  const [sel,setSel]=useState(null);
+  const [picked,setPicked]=useState({});
+  const [fu,setFu]=useState(null);
+  const [showTx,setShowTx]=useState(false);
+  const [msg,setMsg]=useState('');
+  const [busy,setBusy]=useState(false);
+  const loadList=()=>fetch('/api/meetings').then(r=>r.json()).then(d=>setList(d.meetings||[])).catch(()=>{});
+  const openMeeting=id=>fetch('/api/meetings/'+id).then(r=>r.json()).then(d=>{if(d.meeting){setSel(d.meeting);setPicked({});setFu(null);setShowTx(false);}else setMsg(d.error||'Could not open that meeting.');}).catch(()=>setMsg('Could not open that meeting.'));
+  // Reads the deep-link target without consuming it: CalendarWS reads the same one.
+  useEffect(()=>{
+    const apply=t=>{if(t&&t.workspace==='calendar'&&t.view==='meetings'){setOpen(true);loadList();if(t.meeting_id)openMeeting(t.meeting_id);}};
+    apply(window.__fridayNavTarget);
+    const on=e=>apply(e.detail||{});
+    window.addEventListener('friday-nav',on);
+    return()=>window.removeEventListener('friday-nav',on);
+  },[]);
+  useEffect(()=>{loadList();},[]);
+  const finishing=(st&&st.finishing)||[];
+  useEffect(()=>{loadList();if(sel&&!finishing.includes(sel.id))openMeeting(sel.id);},[finishing.join(','),st&&st.recording]);
+  const ask=async()=>{setMsg('');setAsking(true);setTitle('');try{const d=await (await fetch('/api/meetings/suggest')).json();if(d.event&&d.event.title)setTitle(d.event.title);}catch(e){}};
+  const start=async()=>{setBusy(true);setMsg('');try{const r=await fetch('/api/meetings/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({consent_ack:true,consent_version:st&&st.consent_version,title,keep_audio:keepAudio,max_duration_s:maxH*3600})});const d=await r.json();if(d.status==='ok'){setAsking(false);}else setMsg(d.error||'Could not start recording.');}catch(e){setMsg('Could not start recording.');}setBusy(false);meetingsChanged();};
+  const stop=async()=>{setBusy(true);try{await fetch('/api/meetings/stop',{method:'POST'});}catch(e){}setBusy(false);meetingsChanged();loadList();};
+  const del=async m=>{if(!window.confirm('Delete “'+(m.title||'this meeting')+'”? The transcript, notes and any kept audio are removed from this computer.'))return;const d=await (await fetch('/api/meetings/'+m.id,{method:'DELETE'})).json().catch(()=>({}));if(d.status==='ok'){setSel(null);loadList();}else setMsg(d.error||'Could not delete it.');};
+  const renotes=async()=>{setBusy(true);const d=await (await fetch('/api/meetings/'+sel.id+'/notes',{method:'POST'})).json().catch(()=>({}));setBusy(false);if(d.status!=='ok')setMsg(d.error||'Could not write notes.');openMeeting(sel.id);};
+  const addTasks=async()=>{const items=Object.keys(picked).filter(k=>picked[k]).map(Number);if(!items.length)return;const d=await (await fetch('/api/meetings/'+sel.id+'/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})})).json().catch(()=>({}));if(d.status==='ok'){setMsg((d.created||[]).length+' added to Tasks.');openMeeting(sel.id);}else setMsg(d.error||'Could not add tasks.');};
+  const draft=async kind=>{const d=await (await fetch('/api/meetings/'+sel.id+'/follow-up?kind='+kind)).json().catch(()=>({}));if(d.status==='ok')setFu({to:'',subject:d.subject,body:d.body});};
+  const queue=async()=>{const d=await (await fetch('/api/meetings/'+sel.id+'/follow-up',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(fu)})).json().catch(()=>({}));if(d.status==='ok'){setFu(null);setMsg('Waiting for your approval — nothing has been sent.');}else setMsg(d.error||'Could not prepare the email.');};
+  const rec=st&&st.recording;
+  const box={border:'1px solid rgba(255,255,255,0.1)',borderRadius:10,padding:10,marginBottom:10,background:'rgba(255,255,255,0.03)'};
+  const small={fontSize:11,color:'#8a93a6'};
+  const s=sel&&sel.summary||{};
+  return(<div className="meetings-panel" style={box}>
+    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+      <span style={{fontWeight:700,fontSize:13,color:'#eef1f6'}}>Meetings</span>
+      {rec?<>
+        <span aria-hidden="true" style={{width:9,height:9,borderRadius:'50%',background:st.capturing?'#ef4444':'#f59e0b'}}></span>
+        <span style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#fecaca'}}>{st.capturing?'Recording':'Starting microphone…'} {meetingClock(elapsed)} · {st.title}</span>
+        <button className="btn" onClick={stop} disabled={busy} style={{background:'#ef4444',color:'#fff',borderColor:'#ef4444'}}>■ Stop</button>
+      </>:<button className="btn active" onClick={ask} disabled={asking}>● Record a meeting</button>}
+      <span style={{flex:1}}></span>
+      <button className="btn" onClick={()=>{setOpen(!open);if(!open)loadList();}}>{open?'Hide past meetings':'Past meetings ('+list.length+')'}</button>
+    </div>
+    {finishing.length>0&&<div style={{...small,marginTop:6}}>Finishing the transcript and notes…</div>}
+    {asking&&!rec&&<div role="dialog" aria-label="Start recording" style={{...box,marginTop:10,borderColor:'rgba(245,158,11,0.5)'}}>
+      <div style={{fontSize:13,color:'#fde68a',fontWeight:600,marginBottom:6}}>{st?st.consent_text:''}</div>
+      <div style={{...small,marginBottom:8}}>{st&&st.system_audio?st.system_audio.reason:''} Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks.</div>
+      <input className="input" style={{width:'100%',marginBottom:6}} value={title} onChange={e=>setTitle(e.target.value)} placeholder="Meeting name (from your calendar when one is on now)"/>
+      <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap',fontSize:12,color:'#cfd6e4'}}>
+        <label><input type="checkbox" checked={keepAudio} onChange={e=>setKeepAudio(e.target.checked)}/> Keep the audio (encrypted)</label>
+        <label>Stop after <select value={maxH} onChange={e=>setMaxH(Number(e.target.value))}>{[1,2,3,4].map(h=><option key={h} value={h}>{h} h</option>)}</select></label>
+        <span style={{flex:1}}></span>
+        <button className="btn" onClick={()=>setAsking(false)}>Cancel</button>
+        <button className="btn active" onClick={start} disabled={busy}>I've told everyone — start recording</button>
+      </div>
+    </div>}
+    {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:6}}>{msg}</div>}
+    {open&&<div style={{marginTop:8}}>
+      {list.length===0&&<div style={small}>No recorded meetings.</div>}
+      {list.map(m=><div key={m.id} onClick={()=>openMeeting(m.id)} style={{display:'flex',gap:8,padding:'5px 4px',cursor:'pointer',borderTop:'1px solid rgba(255,255,255,0.06)',background:sel&&sel.id===m.id?'rgba(0,212,255,0.08)':'transparent'}}>
+        <span style={{fontSize:12,color:'#eef1f6',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.title}</span>
+        <span style={small}>{(m.started_at||'').replace('T',' ').slice(0,16)}</span>
+        <span style={small}>{meetingClock(m.duration_s)}</span>
+        <span style={small}>{m.state==='recording'?'recording':m.summary_status==='done'?'notes':m.summary_status}</span>
+      </div>)}
+    </div>}
+    {open&&sel&&<div style={{...box,marginTop:8}}>
+      <div style={{display:'flex',alignItems:'center',gap:8}}>
+        <span style={{fontWeight:700,fontSize:13,color:'#eef1f6',flex:1}}>{sel.title}</span>
+        {sel.has_audio&&<a className="btn" href={'/api/meetings/'+sel.id+'/audio'}>Audio</a>}
+        <button className="btn" onClick={()=>del(sel)} style={{color:'#fca5a5'}}>Delete</button>
+      </div>
+      <div style={small}>{(sel.started_at||'').replace('T',' ').slice(0,16)} · {meetingClock(sel.duration_s)} · microphone only{sel.stop_reason&&sel.stop_reason!=='owner'?' · stopped: '+sel.stop_reason.replace('_',' '):''}</div>
+      {s.status==='done'?<div style={{marginTop:8,fontSize:12,color:'#cfd6e4'}}>
+        <div style={small}>Notes by {s.model}, on this computer.</div>
+        {(s.notes||[]).length>0&&<><div className="cal-section-title">Notes</div><ul style={{margin:'2px 0 6px 18px'}}>{s.notes.map((n,i)=><li key={i}>{n}</li>)}</ul></>}
+        {(s.decisions||[]).length>0&&<><div className="cal-section-title">Decisions</div><ul style={{margin:'2px 0 6px 18px'}}>{s.decisions.map((n,i)=><li key={i}>{n}</li>)}</ul></>}
+        {(s.action_items||[]).length>0&&<><div className="cal-section-title">Action items</div>
+          {s.action_items.map((a,i)=>{const done=(sel.tasks_created||[]).includes(i);return(<label key={i} style={{display:'block',margin:'2px 0'}}><input type="checkbox" disabled={done} checked={done||!!picked[i]} onChange={e=>setPicked({...picked,[i]:e.target.checked})}/> {a.task}{a.owner?' — '+a.owner:''}{a.due?' · '+a.due:''}{done?' (in Tasks)':''}</label>);})}
+          <button className="btn" onClick={addTasks} style={{marginTop:4}}>Add selected to Tasks</button></>}
+        <div style={{display:'flex',gap:6,marginTop:8}}>
+          <button className="btn" onClick={()=>draft('thank_you')}>Draft a thank-you email</button>
+          <button className="btn" onClick={()=>draft('follow_up')}>Draft a follow-up</button>
+        </div>
+      </div>:<div style={{marginTop:8,fontSize:12,color:'#cfd6e4'}}>
+        {s.status==='running'?'Writing notes on the local model…':s.reason||'Notes are written after the transcript is finished.'}
+        {(s.status==='skipped'||s.status==='failed')&&<button className="btn" onClick={renotes} disabled={busy} style={{marginLeft:8}}>Write notes again</button>}
+      </div>}
+      {fu&&<div style={{...box,marginTop:8}}>
+        <input className="input" style={{width:'100%',marginBottom:4}} value={fu.to} onChange={e=>setFu({...fu,to:e.target.value})} placeholder="To (email address)"/>
+        <input className="input" style={{width:'100%',marginBottom:4}} value={fu.subject} onChange={e=>setFu({...fu,subject:e.target.value})}/>
+        <textarea className="input" rows={8} style={{width:'100%'}} value={fu.body} onChange={e=>setFu({...fu,body:e.target.value})}/>
+        <div style={{display:'flex',gap:6,marginTop:4,alignItems:'center'}}>
+          <span style={{...small,flex:1}}>This becomes an approval card. Nothing is sent until you approve it.</span>
+          <button className="btn" onClick={()=>setFu(null)}>Cancel</button>
+          <button className="btn active" onClick={queue} disabled={!fu.to.trim()}>Ask me to approve</button>
+        </div>
+      </div>}
+      <button className="btn" onClick={()=>setShowTx(!showTx)} style={{marginTop:8}}>{showTx?'Hide transcript':'Show transcript'}</button>
+      {showTx&&<div style={{marginTop:6,maxHeight:260,overflowY:'auto',fontSize:12,color:'#cfd6e4',whiteSpace:'pre-wrap'}}>
+        {(sel.segments||[]).map((g,i)=><div key={i} style={{margin:'2px 0',color:g.kind==='speech'?'#cfd6e4':'#8a93a6'}}><span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#8a93a6'}}>{meetingClock(g.t)} </span>{g.text}</div>)}
+      </div>}
     </div>}
   </div>);
 }
@@ -18320,6 +18462,7 @@ function App(){
       onComplete={completeWizard}
     />}
     {/* Top Bar */}
+    <MeetingRecIndicator/>
     <div className={`top-bar ${topBarHidden?'hidden':''}`}>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
         <div style={{display:'flex',alignItems:'baseline',gap:5,lineHeight:1}}>

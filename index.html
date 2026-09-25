@@ -28150,7 +28150,7 @@ function CalendarWS() {
       color: '#00d4ff',
       marginBottom: 8
     }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  }, toast), /*#__PURE__*/React.createElement(MeetingsPanel, null), /*#__PURE__*/React.createElement("div", {
     className: "cal-week"
   }, week.map(d => /*#__PURE__*/React.createElement("div", {
     key: d.date,
@@ -28340,6 +28340,625 @@ function CalendarWS() {
   }, "\uD83D\uDCCD ", e.location)), e.prep_available && /*#__PURE__*/React.createElement("span", {
     className: "cal-prep-badge"
   }, "Prep")))));
+}
+
+// ═══ MEETINGS (services/meeting_capture.py) ═══
+// Record a meeting from the Calendar, transcribe it on this machine, take notes
+// on a local model. Starting shows the consent statement every time; while a
+// recording runs, MeetingRecIndicator shows a red dot and the elapsed time on
+// every screen, with a one-click stop.
+function meetingsChanged() {
+  try {
+    window.dispatchEvent(new Event('friday-meetings'));
+  } catch (_) {}
+}
+function meetingClock(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  const h = Math.floor(s / 3600),
+    m = Math.floor(s / 60) % 60,
+    x = s % 60;
+  return h + ':' + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0');
+}
+function useMeetingStatus(ms) {
+  const [st, setSt] = useState(null);
+  const [at, setAt] = useState(0);
+  const [, setTick] = useState(0);
+  const load = () => fetch('/api/meetings/status').then(r => r.json()).then(d => {
+    setSt(d);
+    setAt(Date.now());
+  }).catch(() => {});
+  useEffect(() => {
+    load();
+    const t = setInterval(load, ms || 3000);
+    const k = setInterval(() => setTick(x => x + 1), 1000);
+    window.addEventListener('friday-meetings', load);
+    return () => {
+      clearInterval(t);
+      clearInterval(k);
+      window.removeEventListener('friday-meetings', load);
+    };
+  }, []);
+  const elapsed = st && st.recording ? (st.elapsed_s || 0) + (Date.now() - at) / 1000 : 0;
+  return [st, elapsed, load];
+}
+function MeetingRecIndicator() {
+  const [st, elapsed, reload] = useMeetingStatus(3000);
+  const [stopping, setStopping] = useState(false);
+  if (!st || !st.recording) return null;
+  const live = st.capturing;
+  const stop = async () => {
+    setStopping(true);
+    try {
+      await fetch('/api/meetings/stop', {
+        method: 'POST'
+      });
+    } catch (e) {}
+    setStopping(false);
+    meetingsChanged();
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-live": "polite",
+    style: {
+      position: 'fixed',
+      top: 48,
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: 10050,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '5px 8px 5px 12px',
+      borderRadius: 999,
+      background: 'rgba(20,6,8,0.92)',
+      border: '1px solid rgba(239,68,68,0.6)',
+      boxShadow: '0 0 18px rgba(239,68,68,0.35)',
+      fontFamily: 'JetBrains Mono',
+      fontSize: 12,
+      color: '#fecaca'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true",
+    style: {
+      width: 10,
+      height: 10,
+      borderRadius: '50%',
+      background: live ? '#ef4444' : '#f59e0b',
+      boxShadow: live ? '0 0 8px #ef4444' : 'none',
+      animation: live ? 'pulse 1.4s ease-in-out infinite' : 'none'
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    onClick: () => fridayNavigate({
+      workspace: 'calendar',
+      view: 'meetings',
+      meeting_id: st.id
+    }),
+    style: {
+      cursor: 'pointer'
+    },
+    title: 'Recording “' + (st.title || 'meeting') + '” — microphone only. Open Meetings.'
+  }, live ? 'REC' : 'Starting microphone…', " ", meetingClock(elapsed)), /*#__PURE__*/React.createElement("button", {
+    onClick: stop,
+    disabled: stopping,
+    "aria-label": "Stop recording",
+    style: {
+      background: '#ef4444',
+      color: '#fff',
+      border: 'none',
+      borderRadius: 999,
+      padding: '3px 10px',
+      fontSize: 11,
+      fontWeight: 700,
+      cursor: 'pointer'
+    }
+  }, stopping ? 'Stopping…' : '■ Stop'));
+}
+function MeetingsPanel() {
+  const [st, elapsed, reloadSt] = useMeetingStatus(3000);
+  const [open, setOpen] = useState(false);
+  const [list, setList] = useState([]);
+  const [asking, setAsking] = useState(false);
+  const [title, setTitle] = useState('');
+  const [keepAudio, setKeepAudio] = useState(false);
+  const [maxH, setMaxH] = useState(2);
+  const [sel, setSel] = useState(null);
+  const [picked, setPicked] = useState({});
+  const [fu, setFu] = useState(null);
+  const [showTx, setShowTx] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const loadList = () => fetch('/api/meetings').then(r => r.json()).then(d => setList(d.meetings || [])).catch(() => {});
+  const openMeeting = id => fetch('/api/meetings/' + id).then(r => r.json()).then(d => {
+    if (d.meeting) {
+      setSel(d.meeting);
+      setPicked({});
+      setFu(null);
+      setShowTx(false);
+    } else setMsg(d.error || 'Could not open that meeting.');
+  }).catch(() => setMsg('Could not open that meeting.'));
+  // Reads the deep-link target without consuming it: CalendarWS reads the same one.
+  useEffect(() => {
+    const apply = t => {
+      if (t && t.workspace === 'calendar' && t.view === 'meetings') {
+        setOpen(true);
+        loadList();
+        if (t.meeting_id) openMeeting(t.meeting_id);
+      }
+    };
+    apply(window.__fridayNavTarget);
+    const on = e => apply(e.detail || {});
+    window.addEventListener('friday-nav', on);
+    return () => window.removeEventListener('friday-nav', on);
+  }, []);
+  useEffect(() => {
+    loadList();
+  }, []);
+  const finishing = st && st.finishing || [];
+  useEffect(() => {
+    loadList();
+    if (sel && !finishing.includes(sel.id)) openMeeting(sel.id);
+  }, [finishing.join(','), st && st.recording]);
+  const ask = async () => {
+    setMsg('');
+    setAsking(true);
+    setTitle('');
+    try {
+      const d = await (await fetch('/api/meetings/suggest')).json();
+      if (d.event && d.event.title) setTitle(d.event.title);
+    } catch (e) {}
+  };
+  const start = async () => {
+    setBusy(true);
+    setMsg('');
+    try {
+      const r = await fetch('/api/meetings/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          consent_ack: true,
+          consent_version: st && st.consent_version,
+          title,
+          keep_audio: keepAudio,
+          max_duration_s: maxH * 3600
+        })
+      });
+      const d = await r.json();
+      if (d.status === 'ok') {
+        setAsking(false);
+      } else setMsg(d.error || 'Could not start recording.');
+    } catch (e) {
+      setMsg('Could not start recording.');
+    }
+    setBusy(false);
+    meetingsChanged();
+  };
+  const stop = async () => {
+    setBusy(true);
+    try {
+      await fetch('/api/meetings/stop', {
+        method: 'POST'
+      });
+    } catch (e) {}
+    setBusy(false);
+    meetingsChanged();
+    loadList();
+  };
+  const del = async m => {
+    if (!window.confirm('Delete “' + (m.title || 'this meeting') + '”? The transcript, notes and any kept audio are removed from this computer.')) return;
+    const d = await (await fetch('/api/meetings/' + m.id, {
+      method: 'DELETE'
+    })).json().catch(() => ({}));
+    if (d.status === 'ok') {
+      setSel(null);
+      loadList();
+    } else setMsg(d.error || 'Could not delete it.');
+  };
+  const renotes = async () => {
+    setBusy(true);
+    const d = await (await fetch('/api/meetings/' + sel.id + '/notes', {
+      method: 'POST'
+    })).json().catch(() => ({}));
+    setBusy(false);
+    if (d.status !== 'ok') setMsg(d.error || 'Could not write notes.');
+    openMeeting(sel.id);
+  };
+  const addTasks = async () => {
+    const items = Object.keys(picked).filter(k => picked[k]).map(Number);
+    if (!items.length) return;
+    const d = await (await fetch('/api/meetings/' + sel.id + '/tasks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        items
+      })
+    })).json().catch(() => ({}));
+    if (d.status === 'ok') {
+      setMsg((d.created || []).length + ' added to Tasks.');
+      openMeeting(sel.id);
+    } else setMsg(d.error || 'Could not add tasks.');
+  };
+  const draft = async kind => {
+    const d = await (await fetch('/api/meetings/' + sel.id + '/follow-up?kind=' + kind)).json().catch(() => ({}));
+    if (d.status === 'ok') setFu({
+      to: '',
+      subject: d.subject,
+      body: d.body
+    });
+  };
+  const queue = async () => {
+    const d = await (await fetch('/api/meetings/' + sel.id + '/follow-up', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(fu)
+    })).json().catch(() => ({}));
+    if (d.status === 'ok') {
+      setFu(null);
+      setMsg('Waiting for your approval — nothing has been sent.');
+    } else setMsg(d.error || 'Could not prepare the email.');
+  };
+  const rec = st && st.recording;
+  const box = {
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+    background: 'rgba(255,255,255,0.03)'
+  };
+  const small = {
+    fontSize: 11,
+    color: '#8a93a6'
+  };
+  const s = sel && sel.summary || {};
+  return /*#__PURE__*/React.createElement("div", {
+    className: "meetings-panel",
+    style: box
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 700,
+      fontSize: 13,
+      color: '#eef1f6'
+    }
+  }, "Meetings"), rec ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true",
+    style: {
+      width: 9,
+      height: 9,
+      borderRadius: '50%',
+      background: st.capturing ? '#ef4444' : '#f59e0b'
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'JetBrains Mono',
+      fontSize: 12,
+      color: '#fecaca'
+    }
+  }, st.capturing ? 'Recording' : 'Starting microphone…', " ", meetingClock(elapsed), " \xB7 ", st.title), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: stop,
+    disabled: busy,
+    style: {
+      background: '#ef4444',
+      color: '#fff',
+      borderColor: '#ef4444'
+    }
+  }, "\u25A0 Stop")) : /*#__PURE__*/React.createElement("button", {
+    className: "btn active",
+    onClick: ask,
+    disabled: asking
+  }, "\u25CF Record a meeting"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => {
+      setOpen(!open);
+      if (!open) loadList();
+    }
+  }, open ? 'Hide past meetings' : 'Past meetings (' + list.length + ')')), finishing.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...small,
+      marginTop: 6
+    }
+  }, "Finishing the transcript and notes\u2026"), asking && !rec && /*#__PURE__*/React.createElement("div", {
+    role: "dialog",
+    "aria-label": "Start recording",
+    style: {
+      ...box,
+      marginTop: 10,
+      borderColor: 'rgba(245,158,11,0.5)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: '#fde68a',
+      fontWeight: 600,
+      marginBottom: 6
+    }
+  }, st ? st.consent_text : ''), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...small,
+      marginBottom: 8
+    }
+  }, st && st.system_audio ? st.system_audio.reason : '', " Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks."), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      width: '100%',
+      marginBottom: 6
+    },
+    value: title,
+    onChange: e => setTitle(e.target.value),
+    placeholder: "Meeting name (from your calendar when one is on now)"
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 12,
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, /*#__PURE__*/React.createElement("label", null, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: keepAudio,
+    onChange: e => setKeepAudio(e.target.checked)
+  }), " Keep the audio (encrypted)"), /*#__PURE__*/React.createElement("label", null, "Stop after ", /*#__PURE__*/React.createElement("select", {
+    value: maxH,
+    onChange: e => setMaxH(Number(e.target.value))
+  }, [1, 2, 3, 4].map(h => /*#__PURE__*/React.createElement("option", {
+    key: h,
+    value: h
+  }, h, " h")))), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setAsking(false)
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn active",
+    onClick: start,
+    disabled: busy
+  }, "I've told everyone \u2014 start recording"))), msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginTop: 6
+    }
+  }, msg), open && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8
+    }
+  }, list.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: small
+  }, "No recorded meetings."), list.map(m => /*#__PURE__*/React.createElement("div", {
+    key: m.id,
+    onClick: () => openMeeting(m.id),
+    style: {
+      display: 'flex',
+      gap: 8,
+      padding: '5px 4px',
+      cursor: 'pointer',
+      borderTop: '1px solid rgba(255,255,255,0.06)',
+      background: sel && sel.id === m.id ? 'rgba(0,212,255,0.08)' : 'transparent'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: '#eef1f6',
+      flex: 1,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, m.title), /*#__PURE__*/React.createElement("span", {
+    style: small
+  }, (m.started_at || '').replace('T', ' ').slice(0, 16)), /*#__PURE__*/React.createElement("span", {
+    style: small
+  }, meetingClock(m.duration_s)), /*#__PURE__*/React.createElement("span", {
+    style: small
+  }, m.state === 'recording' ? 'recording' : m.summary_status === 'done' ? 'notes' : m.summary_status)))), open && sel && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...box,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 700,
+      fontSize: 13,
+      color: '#eef1f6',
+      flex: 1
+    }
+  }, sel.title), sel.has_audio && /*#__PURE__*/React.createElement("a", {
+    className: "btn",
+    href: '/api/meetings/' + sel.id + '/audio'
+  }, "Audio"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => del(sel),
+    style: {
+      color: '#fca5a5'
+    }
+  }, "Delete")), /*#__PURE__*/React.createElement("div", {
+    style: small
+  }, (sel.started_at || '').replace('T', ' ').slice(0, 16), " \xB7 ", meetingClock(sel.duration_s), " \xB7 microphone only", sel.stop_reason && sel.stop_reason !== 'owner' ? ' · stopped: ' + sel.stop_reason.replace('_', ' ') : ''), s.status === 'done' ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: small
+  }, "Notes by ", s.model, ", on this computer."), (s.notes || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "cal-section-title"
+  }, "Notes"), /*#__PURE__*/React.createElement("ul", {
+    style: {
+      margin: '2px 0 6px 18px'
+    }
+  }, s.notes.map((n, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, n)))), (s.decisions || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "cal-section-title"
+  }, "Decisions"), /*#__PURE__*/React.createElement("ul", {
+    style: {
+      margin: '2px 0 6px 18px'
+    }
+  }, s.decisions.map((n, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, n)))), (s.action_items || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "cal-section-title"
+  }, "Action items"), s.action_items.map((a, i) => {
+    const done = (sel.tasks_created || []).includes(i);
+    return /*#__PURE__*/React.createElement("label", {
+      key: i,
+      style: {
+        display: 'block',
+        margin: '2px 0'
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "checkbox",
+      disabled: done,
+      checked: done || !!picked[i],
+      onChange: e => setPicked({
+        ...picked,
+        [i]: e.target.checked
+      })
+    }), " ", a.task, a.owner ? ' — ' + a.owner : '', a.due ? ' · ' + a.due : '', done ? ' (in Tasks)' : '');
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: addTasks,
+    style: {
+      marginTop: 4
+    }
+  }, "Add selected to Tasks")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => draft('thank_you')
+  }, "Draft a thank-you email"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => draft('follow_up')
+  }, "Draft a follow-up"))) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, s.status === 'running' ? 'Writing notes on the local model…' : s.reason || 'Notes are written after the transcript is finished.', (s.status === 'skipped' || s.status === 'failed') && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: renotes,
+    disabled: busy,
+    style: {
+      marginLeft: 8
+    }
+  }, "Write notes again")), fu && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...box,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      width: '100%',
+      marginBottom: 4
+    },
+    value: fu.to,
+    onChange: e => setFu({
+      ...fu,
+      to: e.target.value
+    }),
+    placeholder: "To (email address)"
+  }), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      width: '100%',
+      marginBottom: 4
+    },
+    value: fu.subject,
+    onChange: e => setFu({
+      ...fu,
+      subject: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("textarea", {
+    className: "input",
+    rows: 8,
+    style: {
+      width: '100%'
+    },
+    value: fu.body,
+    onChange: e => setFu({
+      ...fu,
+      body: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 4,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      ...small,
+      flex: 1
+    }
+  }, "This becomes an approval card. Nothing is sent until you approve it."), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setFu(null)
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "btn active",
+    onClick: queue,
+    disabled: !fu.to.trim()
+  }, "Ask me to approve"))), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setShowTx(!showTx),
+    style: {
+      marginTop: 8
+    }
+  }, showTx ? 'Hide transcript' : 'Show transcript'), showTx && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6,
+      maxHeight: 260,
+      overflowY: 'auto',
+      fontSize: 12,
+      color: '#cfd6e4',
+      whiteSpace: 'pre-wrap'
+    }
+  }, (sel.segments || []).map((g, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      margin: '2px 0',
+      color: g.kind === 'speech' ? '#cfd6e4' : '#8a93a6'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'JetBrains Mono',
+      fontSize: 10,
+      color: '#8a93a6'
+    }
+  }, meetingClock(g.t), " "), g.text)))));
 }
 
 // ═══ DRAFT PREVIEW HELPERS ═══
@@ -51570,7 +52189,7 @@ function App() {
     onComplete: completeWizard
   }), setupDone && needsCloudConsent && /*#__PURE__*/React.createElement(CloudConsentGate, {
     onDone: () => setNeedsCloudConsent(false)
-  }), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement(MeetingRecIndicator, null), /*#__PURE__*/React.createElement("div", {
     className: `top-bar ${topBarHidden ? 'hidden' : ''}`
   }, /*#__PURE__*/React.createElement("div", {
     style: {
