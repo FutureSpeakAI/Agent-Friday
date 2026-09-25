@@ -20,7 +20,8 @@ you hit something that is not here, please open an issue.
   signature of Friday's rules no longer matches. Reads keep working. Settings
   → Privacy & Approvals → Friday's rules on this PC shows the state and
   re-pins after you confirm. The same hold follows any release that changes
-  the rules text. See [backup and restore](docs/user-guide/backup-and-restore.md).
+  the rules text. A new install, or a profile that never pinned, is not held:
+  the first check pins the rules on that PC. See [backup and restore](docs/user-guide/backup-and-restore.md).
 - **Installers 5.6.0 to 5.6.5** had upgrade defects (files not replaced; the
   vault passphrase deleted when it lived only in `start.bat`). Running the
   current installer repairs such an install. There is no recovery for data
