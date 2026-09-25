@@ -167,3 +167,68 @@ class TestTextCapabilityIsRunnerAgnostic:
         monkeypatch.setattr(local_seats, "installed", lambda: [])
         ok, why = cc._text_capable({}, [])
         assert ok is False
+
+
+class TestDeclineIsAlwaysOffered:
+    """Unrestricted cloud is never the only answer. On hardware that cannot
+    offer local_private, "cloud_guarded" is how the owner says no; it is a
+    real, durable answer that leaves every safeguard on."""
+
+    def _incapable(self, monkeypatch):
+        monkeypatch.setattr(cc, "assess_local_capability",
+                            lambda profile=None: {"capable": False, "roles": {},
+                                                  "chain_ok": False, "chain_why": None})
+
+    def test_guarded_is_accepted_on_insufficient_hardware(self, monkeypatch):
+        self._incapable(monkeypatch)
+        saved = {}
+        monkeypatch.setattr("agent_friday.core._save_settings",
+                            lambda data, **kw: saved.update(data) or data)
+        record = cc.record_consent(cc.CHOICE_GUARDED)
+        assert record["choice"] == cc.CHOICE_GUARDED
+        assert saved["model_routing"]["cloud_consent"]["answered"] is True
+
+    def test_guarded_answer_is_gated_and_stops_the_prompt(self, monkeypatch):
+        from agent_friday import core as _core
+        monkeypatch.setattr(_core, "_load_settings", lambda: _settings({
+            "cloud_consent": {"answered": True, "choice": cc.CHOICE_GUARDED,
+                              "at": "2026-01-01T00:00:00+00:00"}}))
+        status = cc.resolve()
+        assert status.answered is True
+        assert status.unrestricted is False
+        assert cc.status()["needs_prompt"] is False
+
+    def test_incapable_gate_offers_the_guarded_button(self):
+        html = (Path(__file__).resolve().parents[2] / "index.html").read_text(
+            encoding="utf-8")
+        start = html.index("function CloudConsentGate(")
+        body = html[start:html.index("\n}\n", start)]
+        incapable = body[body.index("!capable && React.createElement"):
+                         body.index("capable && React.createElement(React.Fragment",
+                                    body.index("!capable && React.createElement") + 5)]
+        assert "submit('cloud_guarded')" in incapable
+        assert "submit('cloud_unrestricted')" in incapable
+
+
+class TestChainReasonIsPlainWords:
+    """chain_why is shown on the consent screen, so it reads as a sentence
+    and never as the planner's identifiers."""
+
+    def _assess_with_stage(self, monkeypatch, stage):
+        from agent_friday.routes import intelligence
+        monkeypatch.setattr(intelligence, "local_models_catalog",
+                            lambda prof, _: {})
+        monkeypatch.setattr(intelligence, "build_starter_set",
+                            lambda prof: {"chain": {"with_image": {
+                                "stages": [stage], "contract_ok": True}}})
+        return cc.assess_local_capability(profile={})
+
+    @pytest.mark.parametrize("where", ["refused", "cloud"])
+    def test_no_planner_identifiers_leak(self, monkeypatch, where):
+        cap = self._assess_with_stage(monkeypatch,
+                                      {"role": "image", "where": where})
+        why = cap["chain_why"]
+        assert cap["chain_ok"] is False
+        for ident in ("with_image", "refused", "stage", "seat", "_"):
+            assert ident not in why, (ident, why)
+        assert "picture" in why
