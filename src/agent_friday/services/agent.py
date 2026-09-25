@@ -645,6 +645,13 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Keywords to match across headline/snippet/source. Blank = top current stories."}, "limit": {"type": "integer", "description": "Max stories to return (1-25, default 8)."}}}},
     {"name": "run_command", "description": "Run a non-destructive PowerShell command on the system. Destructive commands (rm, del, format, shutdown, reg delete, etc.) are blocked.",
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
+    {"name": "run_sandboxed", "description": "Run Python code in Friday's code sandbox instead of the host shell: for calculations, data analysis and trying out code. Prefer this to run_command for running code. It runs in a separate process that cannot write to the user's files or Friday's data, cannot start other programs, has time and memory limits and none of Friday's secrets; files it writes are discarded, so print what you need. Network is blocked inside Python only (not by Windows) and it can READ files the user's account can read, so each run needs the user's approval. backend='windows_sandbox' runs it in a disposable Windows Sandbox VM with networking off, only where Windows Sandbox is already installed. Returns stdout, stderr, exit code and what held it in.",
+     "input_schema": {"type": "object", "properties": {
+         "code": {"type": "string", "description": "Python 3 source to run as a script."},
+         "timeout_seconds": {"type": "integer", "description": "Wall-clock limit, 1-120 (default 30)."},
+         "memory_mb": {"type": "integer", "description": "Memory limit, 64-2048 (default 1024)."},
+         "backend": {"type": "string", "enum": ["host", "windows_sandbox"], "description": "host (default) or windows_sandbox."}},
+         "required": ["code"]}},
     {"name": "open_url", "description": "Open a URL / web page in the user's web browser — this opens a REAL browser tab on the user's screen (Chrome, or their default browser). Use this whenever the user asks you to 'open', 'pull up', 'go to', 'open a tab for', or 'open in the browser' any website or web page. You CAN open browser tabs — do not say you can't.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full http(s):// URL of the page to open in a browser tab."}}, "required": ["url"]}},
     {"name": "open_path", "description": "Open a local file, folder, or app on the user's computer (e.g. 'Downloads', 'Projects', a file path like C:\\Users\\me\\notes.txt, or an app like Notepad/Explorer). Reveals or opens only — never deletes.",
@@ -1972,6 +1979,21 @@ def _tool_run_command(inp):
         return "Command timed out after 300s."
     except Exception as e:
         return f"Command error: {e}"
+
+
+def _tool_run_sandboxed(inp):
+    """Python in the code sandbox (services/code_sandbox.py), not the host
+    shell. The checkpoint has already ruled on it: the host backend is
+    outward, Windows Sandbox is internal only where it is installed."""
+    from agent_friday.services import code_sandbox as _sbx
+    inp = inp or {}
+    res = _sbx.run(str(inp.get("code") or ""),
+                   timeout_s=inp.get("timeout_seconds") or _sbx.DEFAULT_TIMEOUT_S,
+                   memory_mb=inp.get("memory_mb") or _sbx.DEFAULT_MEMORY_MB,
+                   backend=str(inp.get("backend") or "host"))
+    if not res.get("ok"):
+        return f"Not run: {res.get('error')}"
+    return json.dumps(res, default=str)
 
 
 # ── URL validation (guards against malformed / hallucinated links) ──────────
@@ -5287,6 +5309,7 @@ CLAUDE_TOOL_HANDLERS = {
     "search_wiki": _tool_search_wiki,
     "search_news": _tool_search_news,
     "run_command": _tool_run_command,
+    "run_sandboxed": _tool_run_sandboxed,
     "open_url": _tool_open_url,
     "open_path": _tool_open_path,
     "navigate": _tool_navigate,
@@ -5726,6 +5749,7 @@ TOOL_RINGS: dict[str, int] = {
     "spawn_task":           2,
     "deep_research":        2,   # searches and reads the web (network)
     "run_command":          2,
+    "run_sandboxed":        2,   # a contained child process; see code_sandbox
     "generate_image":       2,   # calls the Gemini image API (network)
     "generate_video":       2,   # calls the Google Veo API (network)
     "generate_music":       2,   # calls the Lyria 3 API (network)

@@ -79,7 +79,7 @@ SENSITIVE_READ_TOOLS = {
 # Tools that move data off the device or out to a third party.
 OUTBOUND_TOOLS = {
     "draft_email", "send_email", "search_web", "browse_web", "open_url",
-    "run_command", "install_package", "spawn_task", "peer_send",
+    "run_command", "run_sandboxed", "install_package", "spawn_task", "peer_send",
     "peer_send_file", "post", "http_request", "webhook",
 }
 

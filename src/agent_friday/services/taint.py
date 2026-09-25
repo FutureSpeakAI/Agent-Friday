@@ -419,6 +419,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "open_url": {"url": "open_url"},
     "write_file": {"path": "write_path"},
     "run_command": {"command": "command"},
+    "run_sandboxed": {"code": "command"},
     "spawn_interactive_session": {"command": "command"},
     "send_to_session": {"input": "command"},
     "type_text": {"text": "command"},
