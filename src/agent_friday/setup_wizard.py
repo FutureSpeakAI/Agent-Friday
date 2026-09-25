@@ -207,6 +207,18 @@ ASCII_BANNER = r"""
 
 # ── Config I/O ────────────────────────────────────────────────────
 
+# Config keys that hold secrets. They are never written to config.yaml,
+# settings.json or start.bat.
+_SECRET_CONFIG_KEYS = ("anthropic_api_key", "gemini_api_key", "vault_password")
+
+# Plaintext provider keys an earlier wizard wrote: config key, credential
+# store provider id, and the variable name it used in start.bat.
+_PLAINTEXT_PROVIDER_KEYS = (
+    ("anthropic_api_key", "anthropic", "ANTHROPIC_API_KEY"),
+    ("gemini_api_key", "google-gemini", "GEMINI_API_KEY"),
+)
+
+
 def _apply_quick_defaults(config: dict) -> dict:
     """Fill the model choices `--quick` skips asking about. Mutates and returns.
 
@@ -250,6 +262,9 @@ def _load_config() -> dict:
 
 
 def _save_config(config: dict):
+    # Secrets never reach these files: provider keys live in the credential
+    # store and the vault passphrase in services/vault_passphrase.
+    config = {k: v for k, v in config.items() if k not in _SECRET_CONFIG_KEYS}
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     try:
         import yaml
@@ -259,6 +274,156 @@ def _save_config(config: dict):
     except ImportError:
         pass
     SETTINGS_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
+# -- Plaintext keys left by earlier versions ------------------------------
+
+_START_BAT_KEY_RE = r"(?im)^[ \t]*SET[ \t]+%s=(.*?)[ \t]*\r?$"
+
+
+def _stored_provider_key(provider: str) -> str:
+    """The key the credential store holds for this provider, or ""."""
+    try:
+        from agent_friday.services import credential_store as cs
+        return cs.get_provider_key(provider) or ""
+    except Exception:
+        return ""
+
+
+def _read_yaml_config() -> dict | None:
+    """config.yaml as a dict; None when it is absent or cannot be parsed."""
+    if not CONFIG_YAML.exists():
+        return None
+    try:
+        import yaml
+        data = yaml.safe_load(CONFIG_YAML.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _read_settings_json() -> dict | None:
+    if not SETTINGS_FILE.exists():
+        return None
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _plaintext_key_sources() -> list:
+    """(where, config_key, provider, value) for every plaintext key on disk.
+
+    start.bat is listed first: core reads it into the environment at import,
+    so its value is the one a running Friday was actually using.
+    """
+    found = []
+    bat = PROJ_ROOT / "start.bat"
+    if bat.exists():
+        try:
+            text = bat.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            text = ""
+        for cfg_key, provider, var in _PLAINTEXT_PROVIDER_KEYS:
+            m = re.search(_START_BAT_KEY_RE % var, text)
+            if m and m.group(1).strip():
+                found.append(("start.bat", cfg_key, provider, m.group(1).strip()))
+    for where, data in (("config.yaml", _read_yaml_config()),
+                        ("settings.json", _read_settings_json())):
+        for cfg_key, provider, _var in _PLAINTEXT_PROVIDER_KEYS:
+            value = str((data or {}).get(cfg_key) or "").strip()
+            if value:
+                found.append((where, cfg_key, provider, value))
+    return found
+
+
+def _scrub_start_bat(config_keys: set) -> None:
+    bat = PROJ_ROOT / "start.bat"
+    raw = bat.read_bytes().decode("utf-8", errors="ignore")
+    for cfg_key, _provider, var in _PLAINTEXT_PROVIDER_KEYS:
+        if cfg_key in config_keys:
+            raw = re.sub(_START_BAT_KEY_RE % var + r"\n?", "", raw)
+    bat.write_bytes(raw.encode("utf-8"))
+
+
+def _scrub_config_file(where: str, config_keys: set) -> None:
+    if where == "settings.json":
+        data = _read_settings_json() or {}
+        for k in config_keys:
+            data.pop(k, None)
+        SETTINGS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return
+    data = _read_yaml_config()
+    if data is not None:
+        import yaml
+        for k in config_keys:
+            data.pop(k, None)
+        CONFIG_YAML.write_text(
+            yaml.dump(data, default_flow_style=False, allow_unicode=True,
+                      sort_keys=False), encoding="utf-8")
+        return
+    # Unparseable YAML: drop the top-level lines that carry the keys.
+    text = CONFIG_YAML.read_text(encoding="utf-8", errors="ignore")
+    for k in config_keys:
+        text = re.sub(r"(?m)^%s:.*(?:\r?\n)?" % re.escape(k), "", text)
+    CONFIG_YAML.write_text(text, encoding="utf-8")
+
+
+def migrate_plaintext_keys() -> dict:
+    """Move provider keys an earlier wizard left in plain text into the
+    credential store, then remove them from the file they were found in.
+
+    A plaintext copy is removed only when the credential store holds exactly
+    that value afterwards (stored now, or already there). A key that fails to
+    store, or that differs from a different key already stored, stays where
+    it is and is reported, so nothing is lost.
+
+    Returns {"moved": [(where, provider)], "kept": [(where, provider, why)]}.
+    """
+    from agent_friday import setup_brain as sb
+
+    report = {"moved": [], "kept": []}
+    scrub: dict = {}
+    for where, cfg_key, provider, value in _plaintext_key_sources():
+        stored = _stored_provider_key(provider)
+        if stored and stored != value:
+            report["kept"].append((where, provider,
+                                   "a different key is already stored"))
+            continue
+        if not stored:
+            ok, _msg = sb.store_key(provider, value)
+            if not ok or _stored_provider_key(provider) != value:
+                report["kept"].append((where, provider,
+                                       "it could not be stored encrypted"))
+                continue
+        scrub.setdefault(where, set()).add(cfg_key)
+        report["moved"].append((where, provider))
+
+    for where, keys in scrub.items():
+        try:
+            if where == "start.bat":
+                _scrub_start_bat(keys)
+            else:
+                _scrub_config_file(where, keys)
+        except Exception as e:
+            report["moved"] = [m for m in report["moved"] if m[0] != where]
+            for k in keys:
+                prov = next(p for c, p, _v in _PLAINTEXT_PROVIDER_KEYS if c == k)
+                report["kept"].append((where, prov,
+                                       "the file could not be rewritten (%s)"
+                                       % type(e).__name__))
+    return report
+
+
+def _say_plaintext_migration(report: dict) -> None:
+    for where, provider in report.get("moved") or []:
+        console.print(f"  [green]Moved the {provider} key from {where} into "
+                      f"encrypted storage and removed the plain-text copy.[/green]")
+    for where, provider, why in report.get("kept") or []:
+        console.print(f"  [yellow]The {provider} key in {where} was left in place: "
+                      f"{why}. Re-enter it in Settings -> Accounts & Keys, then "
+                      f"delete it from {where}.[/yellow]")
 
 
 # -- Routing mode follows the provider you picked ------------------------
@@ -967,6 +1132,22 @@ def _vault_keep_existing(total: int, existing: str, source: str,
     return existing
 
 
+def _store_passphrase_and_say(pw: str) -> list:
+    """Store the vault passphrase in its durable homes and say which took."""
+    try:
+        from agent_friday.services import vault_passphrase as _vp
+        written = _vp.store(pw)
+    except Exception:
+        written = []
+    if written:
+        console.print(f"  [dim]Stored in: {', '.join(written)}.[/dim]")
+    else:
+        console.print("  [red]Friday could not store the passphrase on this computer\n"
+                      "  (no OS keychain and no DPAPI).[/red] [dim]Set\n"
+                      "  FRIDAY_VAULT_PASSPHRASE in your environment before launching.[/dim]")
+    return written
+
+
 def _vault_lost_passphrase(total: int, already_explained: bool = False,
                           step: int = 2) -> str:
     """A vault exists and its passphrase is gone. Stop and explain.
@@ -1008,11 +1189,15 @@ def _vault_lost_passphrase(total: int, already_explained: bool = False,
                 break
             ok = _verify_vault_passphrase(pw)
             if ok is True:
-                console.print("  [green]✓ That opens your vault. Keeping it.[/green]\n")
+                console.print("  [green]✓ That opens your vault. Keeping it.[/green]")
+                _store_passphrase_and_say(pw)
+                console.print()
                 return pw
             if ok is None:
                 console.print("  [yellow]There is nothing encrypted yet to check it against — "
-                              "accepting it.[/yellow]\n")
+                              "accepting it.[/yellow]")
+                _store_passphrase_and_say(pw)
+                console.print()
                 return pw
             console.print("  [red]That does not open the vault. Try again, or press "
                           "Enter to go back.[/red]\n")
@@ -1031,7 +1216,8 @@ def _vault_lost_passphrase(total: int, already_explained: bool = False,
         import secrets as _sec
         generated = _sec.token_urlsafe(24)
         console.print(f"\n  [bold green]New passphrase:[/bold green] [bold white]{generated}[/bold white]")
-        console.print("  [dim]Written to start.bat. Save it somewhere safe.[/dim]\n")
+        _store_passphrase_and_say(generated)
+        console.print("  [dim]Save it somewhere safe as well, such as a password manager.[/dim]\n")
         Prompt.ask("  [dim]Press Enter to continue[/dim]", default="")
         return generated
 
@@ -1333,9 +1519,9 @@ def step_summary(config: dict, quick: bool) -> bool:
     gk = config.get("gemini_api_key", "")
     vp = config.get("vault_password", "")
     t.add_row("Anthropic key",
-              f"✓ SET  ({ak[:12]}...)" if ak else "[dim]not set[/dim]")
+              "✓ SET  (stored encrypted)" if ak else "[dim]not set[/dim]")
     t.add_row("Gemini key",
-              f"✓ SET  ({gk[:12]}...)" if gk else "[dim]not set — voice/creative disabled[/dim]")
+              "✓ SET  (stored encrypted)" if gk else "[dim]not set — voice/creative disabled[/dim]")
     t.add_row("Vault encryption",
               "[bold green]✓ AES-256-GCM enabled[/bold green]" if vp
               else "[bold yellow]⚠ DISABLED — vault stored plaintext[/bold yellow]")
@@ -1348,11 +1534,13 @@ def step_summary(config: dict, quick: bool) -> bool:
 # ── Save config ───────────────────────────────────────────────────
 
 def _persist(config: dict):
-    """Write config.yaml + settings.json + setup marker + personality.json."""
-    # Never write vault_password to settings files — it lives only in start.bat
-    # as a FRIDAY_PASSWORD env var so it is not committed or version-controlled.
-    safe_config = {k: v for k, v in config.items() if k != "vault_password"}
-    _save_config(safe_config)
+    """Write config.yaml + settings.json + setup marker + personality.json.
+
+    No secret is written by this function: provider keys are already in the
+    credential store (step_brain stores them) and the vault passphrase in
+    services/vault_passphrase. _save_config drops them defensively.
+    """
+    _save_config(config)
 
     # Mark setup done
     SETUP_MARKER.write_text(__import__("datetime").datetime.now().isoformat(), encoding="utf-8")
@@ -1375,32 +1563,23 @@ def _persist(config: dict):
 
 
 def _write_start_bat(config: dict):
-    """The convenience launcher for a source checkout.
+    """The convenience launcher for a source checkout. It holds no secrets.
 
-    THE VAULT PASSPHRASE IS NOT WRITTEN HERE AND MUST NEVER BE AGAIN.
+    Neither the vault passphrase nor a provider key is written here. This
+    file sits in the application folder, which the installer replaces on
+    upgrade, and it is plain text. Provider keys live in the credential store
+    (~/.friday/providers/keys), which the server loads into its environment
+    at boot; the passphrase lives in services/vault_passphrase.
 
-    It used to be, on the line after the API keys, and that made this file
-    the passphrase only automatic home. PROJ_ROOT for a packaged install is
-    the app directory that install.ps1 deletes recursively on every upgrade.
-    5.6.5 destroyed vaults exactly this way. The passphrase now lives in the
-    OS keychain and a DPAPI-wrapped file under ~/.friday/security, neither of
-    which the installer touches; services/vault_passphrase.py owns that, and
-    vault_passphrase.migrate() moves existing installs across.
-
-    The API keys stay for now. That is a considered difference, not an
-    oversight: they have an encrypted second home already
-    (~/.friday/providers/keys via credential_store), so losing this file
-    costs a re-entry rather than the data, and
-    core._bootstrap_env_from_launch_scripts force-overrides them from here at
-    import -- untangling that is its own change with its own failure modes.
+    An existing start.bat is left untouched: it may still carry a key that
+    migrate_plaintext_keys could not move, and overwriting it would lose
+    that key.
     """
-    lines = ["@echo off", "title Agent Friday", ""]
-    if config.get("anthropic_api_key"):
-        lines.append(f'SET ANTHROPIC_API_KEY={config["anthropic_api_key"]}')  # pragma: allowlist secret
-    if config.get("gemini_api_key"):
-        lines.append(f'SET GEMINI_API_KEY={config["gemini_api_key"]}')  # pragma: allowlist secret
-    lines += ["", f'cd /d "{PROJ_ROOT}"', "python server.py", "pause"]
     bat = PROJ_ROOT / "start.bat"
+    if bat.exists():
+        return
+    lines = ["@echo off", "title Agent Friday", "",
+             f'cd /d "{PROJ_ROOT}"', "python server.py", "pause"]
     bat.write_text("\r\n".join(lines), encoding="utf-8")
 
 
@@ -1446,6 +1625,10 @@ def main():
     # safe to call unconditionally on every wizard invocation, including
     # --force re-runs and a returning user's gap-fill.
     ensure_seed_skills_installed()
+
+    # Keys an earlier wizard wrote in plain text move to the credential store
+    # before anything reads the config.
+    _say_plaintext_migration(migrate_plaintext_keys())
 
     # Load existing values for defaults
     existing = _load_config()
@@ -1567,10 +1750,11 @@ def main():
         _apply_quick_defaults(config)
 
     # Step 9 (always): API keys
+    # Held in memory for the summary only; _save_config never writes them.
     config["anthropic_api_key"], config["gemini_api_key"] = step_brain(
         total_steps,
-        config.get("anthropic_api_key", ""),
-        config.get("gemini_api_key", ""),
+        config.get("anthropic_api_key") or _stored_provider_key("anthropic"),
+        config.get("gemini_api_key") or _stored_provider_key("google-gemini"),
     )
 
     # The vault used to be asked here, sixth of ten, after the model picker and
@@ -1654,12 +1838,8 @@ def _launch():
         border_style="cyan", padding=(1, 4),
     ))
     console.print()
-    cfg = _load_config()
+    # The server loads provider keys from the credential store at boot.
     env = os.environ.copy()
-    if cfg.get("anthropic_api_key") and not env.get("ANTHROPIC_API_KEY"):
-        env["ANTHROPIC_API_KEY"] = cfg["anthropic_api_key"]
-    if cfg.get("gemini_api_key") and not env.get("GEMINI_API_KEY"):
-        env["GEMINI_API_KEY"] = cfg["gemini_api_key"]
     try:
         subprocess.run([sys.executable, str(server)], env=env, cwd=str(PROJ_ROOT))
     except KeyboardInterrupt:

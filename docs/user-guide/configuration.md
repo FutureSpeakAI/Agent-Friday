@@ -377,9 +377,13 @@ stored key wins. A key read from a launch script (`start.bat`,
 `launch_now.bat`, `friday_startup.bat` in the application folder) loses to the
 stored key.
 
-**The terminal wizard.** `friday setup` stores keys in the encrypted store and
-also writes plaintext copies to `~/.friday/config.yaml`, `~/.friday/settings.json`
-and `start.bat`. Delete those copies if you do not need them.
+**The terminal wizard.** `friday setup` stores keys only in the encrypted
+store. Earlier versions also wrote plaintext copies to `~/.friday/config.yaml`,
+`~/.friday/settings.json` and `start.bat`; the next run of `friday setup` moves
+those into the encrypted store and removes the copies. It leaves a copy in
+place, and says so, when the key cannot be stored or differs from a key
+already stored; re-enter that key in Settings → Accounts & Keys and delete the
+copy by hand.
 
 ---
 
