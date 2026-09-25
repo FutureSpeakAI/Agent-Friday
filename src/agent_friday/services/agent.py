@@ -7996,6 +7996,26 @@ def _resolve_tool_name(name):
     return None, sorted(near)[:6]
 
 
+def _restore_placeholders(value, pii_lookup):
+    """`value` with every [PII:kind:hash] tag from this turn put back.
+
+    A cloud model sees the user's addresses, numbers and names as tags and
+    uses the tags in tool arguments. The tool runs on this machine, so it gets
+    the real values; the approval card shows them to the owner. What the tool
+    returns is scrubbed again before the model sees it.
+    """
+    if not isinstance(pii_lookup, dict) or not pii_lookup:
+        return value
+    from agent_friday.core import _rehydrate_pii
+    if isinstance(value, str):
+        return _rehydrate_pii(value, pii_lookup)
+    if isinstance(value, dict):
+        return {k: _restore_placeholders(v, pii_lookup) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_restore_placeholders(v, pii_lookup) for v in value]
+    return value
+
+
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -8034,7 +8054,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
 
     ctx = _hooks.HookContext(
         tool_name=name,
-        input=tool_input or {},
+        input=_restore_placeholders(tool_input or {}, pii_lookup),
         session_ctx=session_ctx,
         pii_lookup=pii_lookup,
     )

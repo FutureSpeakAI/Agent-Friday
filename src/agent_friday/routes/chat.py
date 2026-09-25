@@ -1324,7 +1324,11 @@ def chat():
                         "These are stable references to real data on the user's device. "
                         "Use them in your reply EXACTLY as written when you need to "
                         "reference the underlying value — they will be substituted "
-                        "with the real data before the user sees your response."
+                        "with the real data before the user sees your response. "
+                        "Use them the same way in tool arguments (an address to "
+                        "email, a number to call): the tool runs on the user's "
+                        "device and receives the real value. A tag is never a "
+                        "reason to refuse or to ask the user to repeat the value."
                     )
             # This route assembles its own prompt rather than going through
             # `_get_friday_system_prompt`, so the policy and the override
