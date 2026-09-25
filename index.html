@@ -47561,6 +47561,135 @@ function PhoneCostsSection() {
     style: line
   }, "Per text: out ", usd(pr.sms_outbound_usd), " \xB7 in ", usd(pr.sms_inbound_usd), " \xB7 per minute: out ", usd(pr.voice_outbound_per_min_usd), " \xB7 in ", usd(pr.voice_inbound_per_min_usd))));
 }
+// Scheduled jobs on a PC with no local model: the owner's cloud answer, each
+// job's model and the estimated monthly cost (services/scheduled_cloud.py).
+// Built from the same parts as the sections beside it: StSection, the
+// toggle-pill buttons and the mono row of "Scheduled jobs this month".
+function ScheduledCloudSection() {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState('');
+  const load = () => apiFetch('/api/costs/scheduled-cloud').then(r => r.json()).then(j => {
+    if (j && j.status === 'ok') setD(j);
+  }).catch(() => {});
+  useEffect(() => {
+    load();
+  }, []);
+  const change = patch => {
+    setErr('');
+    apiFetch('/api/costs/scheduled-cloud', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(patch)
+    }).then(r => r.json()).then(j => {
+      if (j && j.status === 'ok') setD(j);else setErr(j && j.message || 'not saved');
+    }).catch(() => setErr('not saved'));
+  };
+  if (!d || !d.settings || !d.estimate) return null;
+  const cfg = d.settings,
+    est = d.estimate;
+  const mono = {
+    fontFamily: 'JetBrains Mono'
+  };
+  const dim = 'rgba(255,255,255,0.35)';
+  const usd = n => '$' + Number(n || 0).toFixed(2);
+  const hours = m => m % 60 === 0 ? m / 60 + 'h' : m + 'm';
+  const answer = !cfg.answered ? 'Not answered yet. Until you allow it, these jobs are paused on a PC with no local model.' : cfg.allow ? 'Allowed. With no local model serving, they run on the cloud models below.' : 'Not allowed. With no local model serving, they are paused.';
+  const row = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: 11,
+    padding: '3px 0',
+    color: 'rgba(255,255,255,0.6)'
+  };
+  return /*#__PURE__*/React.createElement(StSection, {
+    title: "Scheduled jobs without a local model"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "The morning news, evening front page, afternoon briefing, daily creation and heartbeat run on a model on this PC when it has one, at no cost. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !!cfg.allow,
+    className: 'toggle-pill ' + (cfg.allow ? 'on' : ''),
+    onClick: () => change({
+      allow: !cfg.allow
+    })
+  }, "Allow a cloud model"), /*#__PURE__*/React.createElement("span", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim
+    }, mono)
+  }, answer)), (est.jobs || []).map(j => /*#__PURE__*/React.createElement("div", {
+    key: j.id,
+    style: Object.assign({}, row, mono)
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, j.name, " \xB7 ", j.model_label, j.enabled ? '' : ' · switched off'), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#fff',
+      flexShrink: 0,
+      marginLeft: 10
+    }
+  }, usd(j.usd_per_month), "/mo"))), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({}, row, mono)
+  }, /*#__PURE__*/React.createElement("span", null, "Estimated total"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#fff',
+      flexShrink: 0,
+      marginLeft: 10
+    }
+  }, usd(est.total_usd_per_month), "/mo")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 12,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: Object.assign({
+      fontSize: 11,
+      color: dim
+    }, mono)
+  }, "Cloud heartbeat every"), (d.cadences || []).map(m => /*#__PURE__*/React.createElement("button", {
+    key: m,
+    type: "button",
+    "aria-pressed": cfg.heartbeat_every_minutes === m,
+    className: 'toggle-pill ' + (cfg.heartbeat_every_minutes === m ? 'on' : ''),
+    onClick: () => change({
+      heartbeat_every_minutes: m
+    })
+  }, hours(m)))), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginTop: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "The heartbeat runs between ", String(est.heartbeat_window[0]).padStart(2, '0'), ":00 and ", String(est.heartbeat_window[1]).padStart(2, '0'), ":00, ", est.heartbeat_runs_per_day, " times a day. An estimate, not a bill: ", (est.assumptions || []).join(' '), " Actual spend shows above and counts toward your limits."), err && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: '#ff0080',
+      marginTop: 8
+    }, mono)
+  }, "Error: ", err));
+}
 function SettingsTabAbout() {
   const [h, setH] = useState(null);
   const [evo, setEvo] = useState(null);
@@ -48557,7 +48686,7 @@ function SettingsTabCosts() {
       marginTop: 12,
       lineHeight: 1.5
     }, mono)
-  }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")), /*#__PURE__*/React.createElement(PhoneCostsSection, null));
+  }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")), /*#__PURE__*/React.createElement(ScheduledCloudSection, null), /*#__PURE__*/React.createElement(PhoneCostsSection, null));
 }
 // Federation and Economy are on hold: the V6 wholeness spec says they must
 // not surface. Their panels, routes and data are untouched; setting this to

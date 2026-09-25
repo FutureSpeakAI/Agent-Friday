@@ -20,7 +20,7 @@ from __future__ import annotations
 # can be the thing that makes a model available to read the answers.
 STAGES = ("welcome", "agent_name", "basics", "connect", "reader",
           "research_ask", "research_seeds", "questions", "style",
-          "research_review", "finish", "done")
+          "research_review", "scheduled_cloud", "finish", "done")
 
 #: What the progress rail shows. Several internal stages share a label.
 STAGE_GROUPS = (
@@ -29,7 +29,7 @@ STAGE_GROUPS = (
     ("research", "Research", ("reader", "research_ask", "research_seeds")),
     ("about", "About you", ("questions",)),
     ("style", "Your Friday", ("style", "research_review")),
-    ("finish", "Finish", ("finish", "done")),
+    ("finish", "Finish", ("scheduled_cloud", "finish", "done")),
 )
 
 SET_UP_LATER = "Set up later"
@@ -317,6 +317,42 @@ SLIDERS = (
 #: The lowest the pushback slider goes. Friday still says when the user is
 #: wrong at the floor; it only says it more softly.
 PUSHBACK_FLOOR = 20
+
+
+# ── Scheduled jobs on a cloud model (only on a PC with no local model) ───────
+
+SCHEDULED_CLOUD_ASK = (
+    "One more question. I do a few jobs on my own schedule: the morning news, "
+    "the evening front page, an afternoon briefing, a daily creation, and a "
+    "heartbeat that checks your mail and calendar. They are meant to run on a "
+    "model on this computer, which costs nothing, but this computer doesn't "
+    "have one. Until it does, they are paused.\n\n"
+    "May they use a cloud model instead? This is the model each would use, "
+    "and roughly what it would cost:\n{lines}\n\n"
+    "About {total} a month in total, billed to your account with the "
+    "provider. The estimate errs on the high side. The heartbeat would run "
+    "every {every}, between {start} and {end}. If you add a local model "
+    "later, they move back to it. You can change this any time in "
+    "Settings > Spending.")
+
+#: One line per job in the question above.
+SCHEDULED_CLOUD_LINE = "- {name}: {model}, about {usd} a month"
+
+SCHEDULED_CLOUD_CHIPS = (("yes", "Yes, use the cloud"),
+                         ("no", "No, keep them paused"),
+                         ("skip", "Skip"))
+
+SCHEDULED_CLOUD_YES = (
+    "Done. They'll run on the cloud while this computer has no local model, "
+    "and what they cost shows in Settings > Spending.")
+
+SCHEDULED_CLOUD_NO = (
+    "Understood. They stay paused until this computer has a local model. You "
+    "can change your mind in Settings > Spending.")
+
+SCHEDULED_CLOUD_SKIPPED = (
+    "Skipping it. They stay paused for now, and the question waits in "
+    "Settings > Spending.")
 
 
 # ── Stage 6: finish ──────────────────────────────────────────────────────────

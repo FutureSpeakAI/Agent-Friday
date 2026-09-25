@@ -157,6 +157,26 @@ more softly. A style cannot switch off Friday's honesty rules or the rule that
 she asks before any real-world action; those always come after the style in
 her instructions, and text trying to override them is removed.
 
+### Scheduled jobs on a PC with no local model
+
+Friday does a few jobs on her own schedule: the morning news, the evening
+front page, an afternoon briefing, a daily creation, and a heartbeat that
+checks your mail and calendar. They run on a model on this computer, at no
+cost. If this computer has no local model, they are paused, and the chat asks
+once whether they may use a cloud model instead. The question lists the model
+each job would use (Claude Haiku 4.5 by default) and its estimated monthly
+cost, about $9 in total with the defaults.
+
+- **Yes** lets them run on those models while there is no local model. The
+  heartbeat then runs every 4 hours between 08:00 and 20:00.
+- **No** keeps them paused.
+- **Skip** leaves the question unanswered.
+
+The question does not appear when a local model is installed, when you chose
+"local only" on the "Where your words go" screen, or once you have answered
+it. Change the answer any time in **Settings → Spending**. See
+[Scheduled jobs](scheduled-jobs.md).
+
 ### 6. Finish
 
 A summary of what is connected, where the research stands, and whether your
@@ -167,6 +187,7 @@ style was saved. **Open my desktop** completes setup.
 | What | Where | How |
 |---|---|---|
 | Which step you are on, your choices of name, profile and family mode, the routing choice, what you skipped | `.friday/setup_chat.json` | Plain file, no secrets and no answers |
+| Whether scheduled jobs may use a cloud model | `.friday/settings.json`, `scheduled_cloud` | Plain file |
 | Your name, your answers, the derived style | `.friday/profile/setup_profile.bin` | Encrypted |
 | The conversation so far | `.friday/profile/setup_transcript.bin` | Encrypted |
 | Research findings waiting for review | `.friday/profile/research/` | Encrypted |

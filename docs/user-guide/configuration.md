@@ -185,6 +185,13 @@ Grants for scheduled jobs are not a setting; they are kept in
 | Key | Default | Meaning |
 |---|---|---|
 | `idle_work` | on; after 600 s idle; between 09:00 and 23:00 | Work that runs once a day while you are away, such as daily creation. |
+| `scheduled_cloud.answered` | `false` | Whether you have answered "may the built-in scheduled jobs use a cloud model when this PC has no local model?". Skipping the question leaves it `false`. |
+| `scheduled_cloud.allow` | `false` | Your answer. When `true` and no local model is serving, the morning news, evening front page, afternoon briefing, daily creation and heartbeat run on the cloud models below. A local model that is serving is always used first. Ignored until `answered` is `true`. |
+| `scheduled_cloud.at` | `null` | When you answered (ISO time). |
+| `scheduled_cloud.heartbeat_model` | `claude-haiku-4-5-20251001` | The one cloud model the heartbeat may use. |
+| `scheduled_cloud.job_model` | `claude-haiku-4-5-20251001` | The one cloud model the other four jobs may use. |
+| `scheduled_cloud.heartbeat_every_minutes` | `240` | How often the heartbeat runs while it runs in the cloud (60, 120, 240, 360, 480, 720 or 1440). |
+| `scheduled_cloud.heartbeat_from_hour`, `heartbeat_to_hour` | `8`, `20` | The heartbeat runs in the cloud only between these hours. |
 | `away_drain` | off | Drain queued heavy GPU work on a timer. |
 | `away_drain_after_s` | `900` | Idle time before queued work may take the GPU. |
 | `repo_sync` | no repositories | Git working trees the repo-sync job pulls. |

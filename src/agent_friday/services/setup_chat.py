@@ -136,6 +136,8 @@ def _ask_question(st: dict, transcript: list, i: int) -> None:
 
 def _enter(st: dict, transcript: list, stage: str) -> None:
     """Move to `stage` and say its opening line(s)."""
+    if stage == "scheduled_cloud" and not _scheduled_cloud_wanted(st):
+        stage = "finish"
     st["stage"] = stage
     if stage == "welcome":
         _say(transcript, copy.WELCOME_BACK if st.get("rerun") else copy.WELCOME, stage)
@@ -167,6 +169,8 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
              else copy.STYLE_INTRO, stage, **_style_badge())
     elif stage == "research_review":
         _say(transcript, copy.RESEARCH_REVIEW, stage)
+    elif stage == "scheduled_cloud":
+        _say(transcript, _scheduled_cloud_question(), stage)
     elif stage == "finish":
         _say(transcript, copy.FINISH, stage)
 
@@ -220,6 +224,8 @@ def _prompt(st: dict) -> dict:
         p.update(card="style")
     elif stage == "research_review":
         p.update(card="research_review", chips=_chips((("done", "Done reviewing"),)))
+    elif stage == "scheduled_cloud":
+        p.update(chips=_chips(copy.SCHEDULED_CLOUD_CHIPS))
     elif stage == "finish":
         p.update(card="finish")
     return p
@@ -562,7 +568,7 @@ def _after_style(st, transcript):
         _say(transcript, copy.RESEARCH_STILL_RUNNING, "style")
     elif state == "empty":
         _say(transcript, copy.RESEARCH_NOTHING, "style")
-    _enter(st, transcript, "finish")
+    _enter(st, transcript, "scheduled_cloud")
 
 
 def _on_style(st, transcript, value, text):
@@ -596,6 +602,64 @@ def _on_research_review(st, transcript, value, text):
     r = research_view(st)
     _heard(transcript, "Done reviewing (%d kept)" % int(r.get("accepted") or 0),
            "research_review")
+    _enter(st, transcript, "scheduled_cloud")
+
+
+# ── Scheduled jobs on a cloud model ──────────────────────────────────────────
+#
+# Asked once, and only on a PC with no local model (setup_reader.local_model,
+# the same detector the reader stage uses): with one, the jobs run locally for
+# free and there is nothing to decide. Not asked when the owner chose "local
+# only" on the consent screen, which already answers it. The answer is the
+# `scheduled_cloud` settings block (services/scheduled_cloud.py); Skip leaves
+# it unanswered.
+
+def _scheduled_cloud_wanted(st: dict) -> bool:
+    if (st.get("routing_mode") or "") == "local_only":
+        return False
+    try:
+        from agent_friday.services import scheduled_cloud, setup_reader
+        if setup_reader.local_model():
+            return False
+        return not scheduled_cloud.settings().get("answered")
+    except Exception:
+        return False
+
+
+def _usd(n: float) -> str:
+    return "$%.2f" % float(n or 0)
+
+
+def _scheduled_cloud_question() -> str:
+    from agent_friday.services import scheduled_cloud
+    est = scheduled_cloud.estimate()
+    lines = "\n".join(copy.SCHEDULED_CLOUD_LINE.format(
+        name=j["name"], model=j["model_label"], usd=_usd(j["usd_per_month"]))
+        for j in est["jobs"] if j["enabled"])
+    every = int(est["heartbeat_every_minutes"])
+    every_words = ("hour" if every == 60 else "%d hours" % (every // 60)
+                   if every % 60 == 0 else "%d minutes" % every)
+    start, end = est["heartbeat_window"]
+    return copy.SCHEDULED_CLOUD_ASK.format(
+        lines=lines, total=_usd(est["total_usd_per_month"]), every=every_words,
+        start="%02d:00" % start, end="%02d:00" % end)
+
+
+def _on_scheduled_cloud(st, transcript, value, text):
+    from agent_friday.services import scheduled_cloud
+    choice = str(value or _guard_text(text) or "").strip().lower()
+    labels = dict(copy.SCHEDULED_CLOUD_CHIPS)
+    if choice in ("yes", "y", labels["yes"].lower()):
+        scheduled_cloud.save({"allow": True})
+        _heard(transcript, labels["yes"], "scheduled_cloud")
+        _say(transcript, copy.SCHEDULED_CLOUD_YES, "scheduled_cloud")
+    elif choice in ("no", "n", labels["no"].lower()):
+        scheduled_cloud.save({"allow": False})
+        _heard(transcript, labels["no"], "scheduled_cloud")
+        _say(transcript, copy.SCHEDULED_CLOUD_NO, "scheduled_cloud")
+    else:
+        _heard(transcript, copy.SKIP, "scheduled_cloud")
+        _say(transcript, copy.SCHEDULED_CLOUD_SKIPPED, "scheduled_cloud")
     _enter(st, transcript, "finish")
 
 
@@ -608,7 +672,8 @@ _HANDLERS = {
     "welcome": _on_welcome, "agent_name": _on_agent_name, "basics": _on_basics,
     "connect": _on_connect, "reader": _on_reader, "research_ask": _on_research_ask,
     "research_seeds": _on_research_seeds, "questions": _on_questions,
-    "style": _on_style, "research_review": _on_research_review, "finish": _on_finish,
+    "style": _on_style, "research_review": _on_research_review,
+    "scheduled_cloud": _on_scheduled_cloud, "finish": _on_finish,
 }
 
 
