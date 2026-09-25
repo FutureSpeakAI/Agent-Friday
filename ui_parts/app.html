@@ -6349,10 +6349,10 @@ function SystemWS(){
         ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>Nothing waiting on you. Actions Friday won't take on her own — connecting Google, gated goal steps, spend — show up here.</div>
         :approvals.map(a=><div key={a.approval_id} className="card" style={{marginBottom:6,padding:8}}>
             <div style={{fontSize:12,color:'#ddd'}}>{a.title}</div>
-            {approvalDetailLines(a).map((line,i)=><div key={i} style={{fontSize:11,color:'#999',marginTop:2,whiteSpace:'pre-wrap'}}>{line}</div>)}
+            {a.action_description&&<div style={{fontSize:11,color:'#999',marginTop:2}}>{a.action_description}</div>}
             <ApprovalPagePreview a={a}/>
             <ApprovalProvenance p={a.provenance}/>
-            <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginTop:4}} title={a.kind+' · '+a.policy_class}>{a.expires_at?'Expires '+new Date(a.expires_at*1000).toLocaleString()+' if not answered':''}</div>
+            <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginTop:4}}>{a.kind} · {a.policy_class}{a.expires_at?' · expires '+new Date(a.expires_at*1000).toLocaleString():''}</div>
             <div style={{display:'flex',gap:6,marginTop:6}}>
               <button className="btn" style={{fontSize:11,padding:'2px 10px',color:'#00ff80'}} disabled={!!apBusy} onClick={()=>decideApproval(a.approval_id,'approve')}>Approve</button>
               <button className="btn" style={{fontSize:11,padding:'2px 10px',color:'#ff0080'}} disabled={!!apBusy} onClick={()=>decideApproval(a.approval_id,'deny')}>Deny</button>
@@ -16911,21 +16911,6 @@ function ApprovalProvenance({p}){
     {flags.map((f,i)=><div key={i} style={{fontSize:12,color:f.severity==='warn'?'#fde68a':'#9fb0c6',marginTop:2}}>{'\u2022 '+f.text}</div>)}
   </div>;
 }
-// What an approval card says under its title: the description of what will
-// happen, then the action line when it adds something the title does not
-// already say. Never the same words twice, and never a raw JSON dump.
-function approvalDetailLines(a){
-  const norm=t=>String(t||'').trim().toLowerCase();
-  const seen=new Set([norm(a.title)]);
-  const out=[];
-  for(const t of [a.description,a.action_description]){
-    const n=norm(t);
-    if(!n||seen.has(n)||n.charAt(0)==='{')continue;
-    seen.add(n);
-    out.push(String(t).trim());
-  }
-  return out;
-}
 function StandaloneApprovals(){
   const[items,setItems]=useState([]);const[open,setOpen]=useState(false);const[busy,setBusy]=useState('');const[fresh,setFresh]=useState(null);
   const seen=useRef(null);
@@ -16945,7 +16930,7 @@ function StandaloneApprovals(){
       {!items.length&&<div style={{color:'#7f93ad',fontSize:12}}>Nothing is waiting.</div>}
       {items.map(a=><div key={a.approval_id} className="ws-tab-card">
         <div style={{fontWeight:700,color:'#fff',marginBottom:4}}>{a.title}</div>
-        {approvalDetailLines(a).map((line,i)=><div key={i} style={{whiteSpace:'pre-wrap',fontSize:12,color:'#b8c7dc',maxHeight:220,overflow:'auto'}}>{line}</div>)}
+        {a.action_description&&<div style={{whiteSpace:'pre-wrap',fontSize:12,color:'#b8c7dc',maxHeight:220,overflow:'auto'}}>{a.action_description}</div>}
         <ApprovalPagePreview a={a}/>
         <ApprovalProvenance p={a.provenance}/>
         <div style={{display:'flex',gap:8,marginTop:8}}>

@@ -814,16 +814,6 @@ window.addEventListener('DOMContentLoaded',function(){
         .settings-btn:hover { background: rgba(255,255,255,0.08); color: #fff; border-color: rgba(255,255,255,0.22); }
         .settings-btn.active { color: #00d4ff; border-color: rgba(0,212,255,0.5); background: rgba(0,212,255,0.12); box-shadow: 0 0 10px rgba(0,212,255,0.15); }
         .settings-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-        /* A visible file picker looks like the Settings buttons, not the
-           browser's native control. */
-        input[type="file"] { color: rgba(255,255,255,0.55); font-size: 11px; font-family: 'JetBrains Mono', monospace; }
-        input[type="file"]::file-selector-button {
-            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 5px; padding: 6px 10px; margin-right: 10px; color: rgba(255,255,255,0.78);
-            font-family: 'JetBrains Mono', monospace; font-size: 11px; cursor: pointer; transition: all 0.2s;
-        }
-        input[type="file"]::file-selector-button:hover { background: rgba(255,255,255,0.08); color: #fff; border-color: rgba(255,255,255,0.22); }
-        input[type="file"]:disabled::file-selector-button { opacity: 0.45; cursor: not-allowed; }
         /* Settings pane tokens. Every Settings tab reads these instead of
            hard-coding its own greys, so the pane has one type scale and one
            palette. */
@@ -22694,15 +22684,13 @@ function SystemWS() {
       fontSize: 12,
       color: '#ddd'
     }
-  }, a.title), approvalDetailLines(a).map((line, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
+  }, a.title), a.action_description && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#999',
-      marginTop: 2,
-      whiteSpace: 'pre-wrap'
+      marginTop: 2
     }
-  }, line)), /*#__PURE__*/React.createElement(ApprovalPagePreview, {
+  }, a.action_description), /*#__PURE__*/React.createElement(ApprovalPagePreview, {
     a: a
   }), /*#__PURE__*/React.createElement(ApprovalProvenance, {
     p: a.provenance
@@ -22712,9 +22700,8 @@ function SystemWS() {
       color: 'rgba(255,255,255,0.4)',
       fontFamily: 'JetBrains Mono',
       marginTop: 4
-    },
-    title: a.kind + ' \xB7 ' + a.policy_class
-  }, a.expires_at ? 'Expires ' + new Date(a.expires_at * 1000).toLocaleString() + ' if not answered' : ''), /*#__PURE__*/React.createElement("div", {
+    }
+  }, a.kind, " \xB7 ", a.policy_class, a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -49085,21 +49072,6 @@ function ApprovalProvenance({ p }) {
 // Pending approval cards, for a tab with no desktop around it: a header
 // chip that counts them, a toast when a new one arrives, and the cards
 // themselves with Approve / Deny (the same /decide call as System > Approvals).
-// What an approval card says under its title: the description of what will
-// happen, then the action line when it adds something the title does not
-// already say. Never the same words twice, and never a raw JSON dump.
-function approvalDetailLines(a) {
-  const norm = t => String(t || '').trim().toLowerCase();
-  const seen = new Set([norm(a.title)]);
-  const out = [];
-  for (const t of [a.description, a.action_description]) {
-    const n = norm(t);
-    if (!n || seen.has(n) || n.charAt(0) === '{') continue;
-    seen.add(n);
-    out.push(String(t).trim());
-  }
-  return out;
-}
 function StandaloneApprovals() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
@@ -49146,7 +49118,7 @@ function StandaloneApprovals() {
       !items.length && /*#__PURE__*/React.createElement("div", { style: { color: '#7f93ad', fontSize: 12 } }, 'Nothing is waiting.'),
       items.map(a => /*#__PURE__*/React.createElement("div", { key: a.approval_id, className: 'ws-tab-card' },
         /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, color: '#fff', marginBottom: 4 } }, a.title),
-        approvalDetailLines(a).map((line, i) => /*#__PURE__*/React.createElement("div", { key: i, style: { whiteSpace: 'pre-wrap', fontSize: 12, color: '#b8c7dc', maxHeight: 220, overflow: 'auto' } }, line)),
+        a.action_description && /*#__PURE__*/React.createElement("div", { style: { whiteSpace: 'pre-wrap', fontSize: 12, color: '#b8c7dc', maxHeight: 220, overflow: 'auto' } }, a.action_description),
         /*#__PURE__*/React.createElement(ApprovalPagePreview, { a: a }),
         /*#__PURE__*/React.createElement(ApprovalProvenance, { p: a.provenance }),
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
