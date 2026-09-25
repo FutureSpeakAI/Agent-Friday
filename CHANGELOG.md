@@ -218,6 +218,11 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   no local model running, Friday refuses the message and asks whether to
   answer it in the cloud. The refusal and two chat notices point to
   Settings > Models, the tab's current name.
+- The uninstaller undoes the local address: it removes Friday's marked
+  hosts-file block (asking first, since it needs administrator permission)
+  and untrusts the certificate authority Friday made, and reports anything it
+  could not remove. An unattended uninstall leaves the hosts block and says
+  so.
 - The tray follows the server's port. It reads `FRIDAY_PORT` as the server
   does, and the port the server actually bound (recorded in
   `.friday\friday_server.port`) when 3000 was busy, so its health check,

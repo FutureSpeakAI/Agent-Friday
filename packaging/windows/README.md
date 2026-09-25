@@ -102,6 +102,7 @@ to remove itself is not removable in practice.
 | `lib/Deps.ps1` | The three dependency tiers. |
 | `lib/Ollama.ps1` | Install-and-verify cascade, graceful fallback. |
 | `lib/Shortcuts.ps1` | Shortcuts, autostart, Add/Remove Programs. |
+| `lib/LocalAddress.ps1` | Uninstall: removes the marked hosts-file block (elevated) and untrusts Friday's certificate authority. |
 | `lib/Heal.ps1` | Bounded self-repair. Read the header before changing anything. |
 | `tests/Test-Installer.ps1` | 82 assertions. |
 

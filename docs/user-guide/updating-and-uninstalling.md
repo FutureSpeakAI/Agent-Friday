@@ -52,6 +52,20 @@ also removes the `friday-creations` folder on your desktop.
 Keep a [backup](backup-and-restore.md) and your vault passphrase before
 deleting your data. Deleted data cannot be recovered.
 
-If you turned on the [local address](getting-started.md#open-friday-at-a-local-address),
-undo it in Settings → General before uninstalling, so the hosts-file entry and
-the trusted certificate are removed.
+**The local address.** If you turned on the
+[local address](getting-started.md#open-friday-at-a-local-address), the
+uninstaller undoes it:
+
+- **The hosts-file entry.** Only when Friday's marked entry is present, the
+  uninstaller explains and asks; removing it needs administrator permission,
+  so Windows shows its permission prompt. Only the lines between Friday's
+  markers are removed.
+- **The trusted certificate.** The uninstaller removes the certificate
+  authority Friday made from your user's trusted roots (`certutil -user
+  -delstore Root`), identified by the thumbprints recorded in
+  `.friday\local-address`. Windows asks you to confirm.
+
+Anything that could not be removed (a declined prompt, for example) is
+reported at the end with how to remove it by hand. An unattended uninstall
+tries the certificate but does not edit the hosts file, and reports the entry
+as left in place. You can also undo both beforehand in Settings → General.
