@@ -19,12 +19,26 @@ def test_route_count(app):
     assert len(rules) > 200, f"only {len(rules)} routes registered"
 
 
-def test_no_background_threads():
-    """FRIDAY_TESTING must keep the import inert — no daemon loops."""
+#: The loops server.py starts outside FRIDAY_TESTING, by the name a thread
+#: carries: an explicit name, or Python's default "Thread-N (<target>)".
+_BOOT_DAEMONS = ("boot-reconcile", "_start_kill_hotkey",
+                 "_notification_trigger_loop", "warm-embedder",
+                 "_news_archiver_loop", "_network_monitor_loop",
+                 "_prewarm_predicted_boot", "_predictive_prewarm_loop",
+                 "connector_health_monitor_loop", "sweep_loop",
+                 "_residency_boot")
+
+
+def test_no_background_threads(server_module):
+    """FRIDAY_TESTING must keep the import inert — no daemon loops.
+
+    Asserted by NAME, not by counting every thread in the process: this
+    process also runs whatever other test files share the worker, and their
+    workers and caches legitimately start threads of their own."""
     import threading
     names = [t.name for t in threading.enumerate()]
-    # The kill-hotkey / scheduler / archiver loops must not be running.
-    assert threading.active_count() < 6, f"unexpected threads: {names}"
+    running = [n for n in names if any(d in n for d in _BOOT_DAEMONS)]
+    assert not running, f"boot daemons running under FRIDAY_TESTING: {running}"
 
 
 def test_llm_reaches_canned_text_through_the_real_body(server_module):
