@@ -193,16 +193,11 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
         if not ce.is_available():
             return {"status": "skipped", "passed": True, "score": None,
                     "critique": "no vision key", "suggestions": ""}
-        from pathlib import Path
-        p = Path(image_path).expanduser()
-        if not p.exists():
-            cand = ce.CREATIONS_DIR / Path(image_path).name
-            p = cand if cand.exists() else p
-        if not p.exists():
+        # Only an actual image leaves the machine (load_local_image).
+        data, mime = ce.load_local_image(image_path)
+        if data is None:
             return {"status": "skipped", "passed": True, "score": None,
                     "critique": "image not found", "suggestions": ""}
-        data = p.read_bytes()
-        mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
 
         from google.genai import types
         from agent_friday.services import egress_gate as _eg
