@@ -22,8 +22,10 @@ from typing import Any
 
 #: A page that has not reported for this long is taken to be gone.
 STALE_AFTER_S = 120.0
-#: How long a sender waits for the page to say what it did.
-ACK_TIMEOUT_S = 3.0
+#: How long a sender waits for the page to say what it did. The page itself
+#: gives up at five seconds (a large folder's scan, a slow thread fetch), so
+#: a spoken request still answers well inside the voice bridge's limit.
+ACK_TIMEOUT_S = 6.0
 
 _LOCK = threading.Lock()
 _CLIENTS: dict[str, dict] = {}          # client id -> record

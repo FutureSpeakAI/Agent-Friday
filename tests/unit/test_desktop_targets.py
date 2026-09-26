@@ -251,7 +251,9 @@ def test_a_slow_file_search_is_cut_off(monkeypatch, roots):
 ENTS = [
     {"id": "page:concepts/bootstrap", "type": "page", "title": "Bootstrap",
      "provenance": {"wiki_pages": ["concepts/bootstrap.md"]}},
-    {"id": "person:ada", "type": "person", "title": "Ada Lovelace", "description": "mathematician"},
+    # A node the index found: its provenance names a page that MENTIONS it.
+    {"id": "person:ada", "type": "person", "title": "Ada Lovelace", "description": "mathematician",
+     "provenance": {"wiki_pages": ["concepts/bootstrap.md"]}},
     {"id": "project:loom", "type": "project", "title": "Loom", "description": "the Ada project"},
 ]
 

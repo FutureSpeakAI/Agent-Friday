@@ -17082,7 +17082,8 @@ fridayDeclareNav('settings', {
   }))
 });
 // A titled section on the Settings tab now showing, found by its title and
-// scrolled into view. The title it landed on, or '' when there is none.
+// scrolled into view below the pane's sticky heading rather than under it.
+// The title it landed on, or '' when there is none.
 function fridayScrollToSettingsSection(want) {
   const w = String(want || '').trim().toLowerCase();
   if (!w) return '';
@@ -17090,9 +17091,22 @@ function fridayScrollToSettingsSection(want) {
   const title = e => e.getAttribute('data-st-section').toLowerCase();
   const el = els.find(e => title(e) === w) || els.find(e => title(e).indexOf(w) >= 0);
   if (!el) return '';
-  el.scrollIntoView({
-    behavior: 'smooth',
-    block: 'start'
+  let sc = el.parentElement;
+  while (sc && !(sc.scrollHeight > sc.clientHeight && /auto|scroll/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
+  if (!sc) {
+    el.scrollIntoView({
+      block: 'start'
+    });
+    return el.getAttribute('data-st-section');
+  }
+  const top = sc.getBoundingClientRect().top;
+  let cover = 0;
+  sc.querySelectorAll(':scope > *, :scope > * > *').forEach(c => {
+    const r = c.getBoundingClientRect();
+    if (getComputedStyle(c).position === 'sticky' && Math.abs(r.top - top) < 2) cover = Math.max(cover, r.height);
+  });
+  sc.scrollTo({
+    top: sc.scrollTop + el.getBoundingClientRect().top - top - cover - 8
   });
   return el.getAttribute('data-st-section');
 }
@@ -17125,17 +17139,21 @@ function SettingsWS() {
     if (!t || !t.tab && !t.section) return;
     if (t.tab) setTab(settingsTabId(t.tab));
     setShownSection('');
-    // A section: once the tab has drawn it (retried while its panel loads).
+    // A section: once the tab has drawn it, and again while its panels load
+    // and grow above it, until the person scrolls, clicks or types.
     if (t.section) {
-      let found = false;
-      [250, 700, 1500].forEach(ms => setTimeout(() => {
-        if (found) return;
+      let touched = false;
+      const evs = ['wheel', 'pointerdown', 'keydown', 'touchstart'];
+      const stop = () => {
+        touched = true;
+      };
+      evs.forEach(ev => window.addEventListener(ev, stop, true));
+      [250, 700, 1500, 2600].forEach(ms => setTimeout(() => {
+        if (touched) return;
         const hit = fridayScrollToSettingsSection(t.section);
-        if (hit) {
-          found = true;
-          setShownSection(hit);
-        }
+        if (hit) setShownSection(hit);
       }, ms));
+      setTimeout(() => evs.forEach(ev => window.removeEventListener(ev, stop, true)), 2700);
     }
     if (t.tab === 'phone') setTimeout(() => {
       const el = document.getElementById('settings-phone');
@@ -19531,14 +19549,14 @@ function App(){
         if (d.openWins && d.openWins.has(ws)) {
           if (!v.key) return answer({ opened: true, front, matched: true });
           if (!(FRIDAY_TAB_REPORTERS[ws] > 0)) {
-            if (late > 600) return answer({ opened: true, front, matched: null, note: label(ws) + ' does not report what it shows' });
+            if (late > 2500) return answer({ opened: true, front, matched: null, note: label(ws) + ' does not report what it shows' });
           } else {
             const p = shows(ws);
             if (!(v.key in p)) return answer({ opened: true, front, matched: null, note: label(ws) + ' does not report its ' + v.key });
             if (same(v.key, p[v.key], v.value)) return answer({ opened: true, front, matched: true, shown: brief(p) });
-            if (late > 2200) return answer({ opened: true, front, matched: false, shown: brief(p), note: 'it shows ' + (brief(p) || 'its default view') });
+            if (late > 5000) return answer({ opened: true, front, matched: false, shown: brief(p), note: 'it shows ' + (brief(p) || 'its default view') });
           }
-        } else if (late > 2200) {
+        } else if (late > 5000) {
           return answer({ opened: false, matched: false, note: label(ws) + ' did not open' });
         }
         setTimeout(check, 120);

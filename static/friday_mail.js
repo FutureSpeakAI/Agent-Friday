@@ -676,8 +676,9 @@
     useEffect(() => { accounts.forEach(a => loadLabels(a.id)); }, [accounts.length]);
 
     // deep link {workspace:'messages', lane, thread_id, folder, account}.
-    // The thread opens as soon as the list has loaded: from the list when it
-    // is there, and otherwise by its id and account, as a click would.
+    // A thread named with its account opens at once, by its id, as a click
+    // would, without waiting on a slow inbox; one named by id alone waits for
+    // the list, and opens from it when it is there.
     const pending = useRef(null);
     useEffect(() => {
       const apply = t => {
@@ -705,7 +706,7 @@
     const tryPendingRef = useRef(() => {});
     tryPendingRef.current = () => {
       const want = pending.current;
-      if (!want || !data) return;
+      if (!want || (!data && !want.account)) return;
       pending.current = null;
       const acc = accounts.find(a => a.id === want.account) || {};
       const m = all.find(x => x.thread_id === want.id || x.id === want.id) || {

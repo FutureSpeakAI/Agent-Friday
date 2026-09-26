@@ -60,6 +60,11 @@ class _Server:
         route.fulfill(status=200, content_type="application/json",
                       body=json.dumps({"status": "ok", "messages": [], "events": []}))
 
+    def never(self, route):
+        """A Gmail that has not answered yet: the inbox list stays loading."""
+        with self.lock:
+            self.requests.append(route.request.url)
+
 
 @pytest.fixture(scope="module")
 def desk():
@@ -82,7 +87,7 @@ def desk():
             page.route("**/api/desktop/ack", srv.ack)
             page.route("**/api/calendar/day/**", srv.seen)
             page.route("**/api/messages/t-deep**", srv.seen)
-            page.route("**/api/messages?**", srv.seen)
+            page.route("**/api/messages?**", srv.never)
             page.goto(url, wait_until="domcontentloaded")
             page.wait_for_selector(".dock-btn", timeout=60000)
             _until(page, lambda: any((s.get("state") or {}).get("manifest") for s in srv.states),
@@ -140,6 +145,7 @@ def test_a_calendar_day_opens_loads_and_is_confirmed(desk):
 
 
 def test_an_email_that_is_not_in_the_list_is_opened_by_its_id(desk):
+    """Opened by its id and account at once, while the inbox is still loading."""
     page, srv = desk
     res = _command(page, srv, "c-mail", {
         "type": "navigate", "workspace": "messages", "thread_id": "t-deep", "account": "acc1",
@@ -158,13 +164,18 @@ def test_a_settings_section_is_brought_into_view(desk):
     assert page.evaluate("fridayCollectTabState('settings', null)") == {
         "tab": "accounts", "section": "SIGNING PDFS"}
     page.wait_for_timeout(800)                     # the smooth scroll settles
+    # Its heading is on screen: inside the pane, and below the pane's sticky
+    # heading rather than under it.
     inside = page.evaluate("""() => {
       const el = document.querySelector('.st-root section[data-st-section="SIGNING PDFS"]');
       if (!el) return 'missing';
       let sc = el.parentElement;
       while (sc && !(sc.scrollHeight > sc.clientHeight && /auto|scroll/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
       const r = el.getBoundingClientRect(), b = (sc || document.documentElement).getBoundingClientRect();
-      return r.top >= b.top - 2 && r.top < b.bottom - 20;
+      let cover = 0;
+      if (sc) sc.querySelectorAll('*').forEach(c => { const q = c.getBoundingClientRect();
+        if (getComputedStyle(c).position === 'sticky' && Math.abs(q.top - b.top) < 2) cover = Math.max(cover, q.height); });
+      return (r.top >= b.top + cover - 1 && r.top < b.bottom - 20) || {top: r.top, pane: b.top, cover};
     }""")
     assert inside is True, inside
 

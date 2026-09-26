@@ -448,7 +448,14 @@ def _entities() -> list[dict]:
     return KnowledgeGraphStore().load("entities")
 
 
+_PAGE_TYPES = ("page", "soul")
+
+
 def _entity_path(e: dict) -> str | None:
+    """The page a node IS. Only a page (or the soul) is one: any other node's
+    provenance lists the pages that mention it, not a page of its own."""
+    if e.get("type") not in _PAGE_TYPES:
+        return None
     pages = (e.get("provenance") or {}).get("wiki_pages") or []
     return pages[0] if pages else None
 
