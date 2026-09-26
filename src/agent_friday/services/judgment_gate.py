@@ -285,6 +285,9 @@ class ScrubVerdict:
     survivable. The model can be wrong about whether a span is the user's; it
     cannot make an unscrubbed identifier travel, because this runs after it
     and does not consult it.
+
+    `hits` holds kinds ("ssn", "never_send", "reclassify"), never the matched
+    text: callers log it.
     """
 
     def __init__(self, ok: bool, reason: str = "", hits: list[str] | None = None):
@@ -309,8 +312,12 @@ def verify_outgoing(text: str, *, reclassify: bool = True) -> ScrubVerdict:
 
     never = never_send_hits(text)
     if never:
+        # The hits are labels, never the matched text: a never-send hit IS
+        # the user's watchlist entry or a deny-marked paragraph, and the
+        # verdict is written to the egress log. One label per match keeps the
+        # count without the content.
         return ScrubVerdict(False, "never-send material survived the scrub",
-                            never)
+                            ["never_send"] * len(never))
     hard = hard_identifier_hits(text)
     if hard:
         return ScrubVerdict(False, "hard identifier survived the scrub", hard)

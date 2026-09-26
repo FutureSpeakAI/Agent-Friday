@@ -246,6 +246,19 @@ def test_verify_outgoing_fails_closed_when_it_cannot_run(monkeypatch):
         "verification that cannot run must block, not pass"
 
 
+def test_verify_outgoing_names_never_send_hits_without_their_text(monkeypatch):
+    """The verdict's hits are joined into the egress log line and file, so a
+    never-send hit is reported by kind and count, never by the watchlist
+    entry or deny-marked paragraph that matched."""
+    token = "Coldwater Deposition"  # pragma: allowlist secret
+    monkeypatch.setattr(jg, "_PROBE_EXTRA_NEVER", [token])
+    v = jg.verify_outgoing(f"Notes from the {token} are attached.",
+                           reclassify=False)
+    assert not v.ok
+    assert v.hits == ["never_send"]
+    assert token.lower() not in (" ".join(v.hits) + v.reason + repr(v)).lower()
+
+
 # ── §5.5 step 1: the scrub is inside the gate ─────────────────────────────────
 
 def test_scrub_runs_at_the_choke_point_without_a_lookup():
