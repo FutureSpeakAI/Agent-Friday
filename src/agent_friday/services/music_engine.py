@@ -37,11 +37,9 @@ import logging
 import re
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
-from agent_friday.core import CREATIONS_DIR
 
 # Reuse the image/video engine's orb + save + metadata + notify helpers verbatim
 # so music generation surfaces identically to image/video generation.
@@ -508,17 +506,11 @@ def _extract_and_save_audio(operation, client, prompt: str) -> List[Dict[str, st
 
 
 def _load_seed(path: str) -> Optional[bytes]:
-    try:
-        p = Path(path).expanduser()
-        if not p.exists():
-            cand = CREATIONS_DIR / Path(path).name
-            if cand.exists():
-                p = cand
-        if p.exists() and p.is_file():
-            return p.read_bytes()
-    except Exception:
-        pass
-    return None
+    """A seed image's bytes, or None. Only an actual image is ever returned
+    (see creative_engine.load_local_image): these bytes go to a cloud API."""
+    from agent_friday.services.creative_engine import load_local_image
+    data, _mime = load_local_image(path)
+    return data
 
 
 # ═══════════════════════════════════════════════════════════════════════════
