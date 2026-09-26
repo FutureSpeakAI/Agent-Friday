@@ -58,7 +58,7 @@ class TestSonVsDaughter:
 
     def test_daughter_classified_private(self):
         """'daughter' keyword → PRIVATE (covered by TIER_2_KEYWORDS)."""
-        result = _classify("My daughter starts school next week")
+        result = _classify("My daughter has a piano recital next week")
         assert result == Tier.PRIVATE
 
     def test_daughter_in_tier2_keywords(self):
@@ -69,11 +69,11 @@ class TestSonVsDaughter:
         """
         KNOWN GAP: 'son' is NOT in TIER_2_KEYWORDS.
 
-        Without Presidio NER or embeddings, 'My son starts school next week'
+        Without Presidio NER or embeddings, 'My son has a piano recital next week'
         carries no regex hit, no keyword hit → returns PUBLIC.  This test
         documents the gap; fix it by adding 'son' to TIER_2_KEYWORDS.
         """
-        result = _classify("My son starts school next week")
+        result = _classify("My son has a piano recital next week")
         # Document current behaviour: PUBLIC due to missing keyword.
         assert result == Tier.PUBLIC, (
             "GAP: 'son' is not covered by keyword list. "
@@ -290,7 +290,7 @@ class TestLegalCustody:
 
     def test_custody_arrangement_sensitive(self):
         result = _classify(
-            "My custody arrangement says the kids stay with me on weekdays"
+            "My court filing says the house stays with me until spring"
         )
         assert result == Tier.SENSITIVE
 
@@ -323,7 +323,7 @@ class TestMixedContent:
         assert result == Tier.SENSITIVE
 
     def test_private_plus_benign_message_is_private(self):
-        mixed = "I like hiking on weekends. My daughter just started kindergarten."
+        mixed = "I like hiking on weekends. My daughter just started piano lessons."
         result = _classify(mixed)
         assert result == Tier.PRIVATE
 
@@ -384,9 +384,9 @@ class TestVeryLongMessage:
         result = _classify(long_msg)
         assert result == Tier.SENSITIVE
 
-    def test_custody_keyword_buried_in_10k_text(self):
+    def test_legal_keyword_buried_in_10k_text(self):
         filler  = "The weather was lovely today. " * 200
-        needle  = "my custody arrangement is important "
+        needle  = "my court filing is important "
         long_msg = filler + needle + filler
         assert len(long_msg) > 10_000
         result = _classify(long_msg)
@@ -462,7 +462,7 @@ def test_tier3_keyword_batch(phrase, expected):
     "my home address has changed",
     "emergency contact: 555-1234",
     # _TIER2_COMMON — inside a possessive frame.
-    "my daughter just started school",
+    "my daughter just started piano lessons",
     "my partner prefers evenings",
     "our family gathering this weekend",
     "her contact information on file",
