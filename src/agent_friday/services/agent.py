@@ -3478,6 +3478,19 @@ def _task_schedule_id(task_id):
         return (TASKS.get(task_id) or {}).get('schedule_id') or None
 
 
+def _task_conversation_id(task_id):
+    """The conversation a task belongs to, as recorded by `_spawn_task`, or None.
+
+    Read into the session context every one of the task's tool calls runs under,
+    so an approval card raised inside a background run knows where to report.
+    Without it the card carried no conversation, the executor had nowhere to post
+    the outcome, and approving a card from a task looked exactly like approving
+    one that did nothing.
+    """
+    with TASKS_LOCK:
+        return (TASKS.get(task_id) or {}).get('conversation_id') or None
+
+
 def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                  model=None, tools=None):
     """`_task_worker_untraced` under the task's reasoning trace, nested under
@@ -3676,6 +3689,8 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                     max_tokens=16384, model=subagent_model,
                     session_ctx={"authenticated": True, "is_background_task": True,
                                  "task_id": task_id,
+                                 # Where a card raised in this run reports back.
+                                 "conversation_id": _task_conversation_id(task_id),
                                  # A scheduled job's outward actions need a grant
                                  # scoped to that schedule (governance/action_gate).
                                  # Only the scheduler sets it; see _spawn_task.
@@ -3772,7 +3787,10 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                     system=system, system_builder=_sys_for,
                     max_tokens=16384, model=subagent_model,
                     session_ctx={"authenticated": True, "is_background_task": True,
-                         "task_id": task_id},
+                         "task_id": task_id,
+                         # As the main leg: a card raised while steering reports
+                         # into the same conversation, not into Main.
+                         "conversation_id": _task_conversation_id(task_id)},
                     orb_label=f"steer: {steer_msg[:18]}", orb_category='monitoring', orb_icon='🎯',
                     workspace='task',
                 )
@@ -4761,7 +4779,15 @@ def _tool_spawn_task(inp):
         _model = res.model
 
     tid = _spawn_task(name, prompt, desc, on_complete=on_complete,
-                      model=_model)
+                      model=_model,
+                      # WHERE THIS TASK REPORTS. `_spawn_task` has taken this
+                      # since it was written and this caller never passed it, so
+                      # a task spawned from a chat belonged to nobody: its
+                      # approval cards carried no conversation and the result of
+                      # approving one reached no chat. `_CURRENT_CONVERSATION` is
+                      # set by `_execute_tool` for precisely this, and
+                      # `_tool_start_workflow` already reads it.
+                      conversation_id=_CURRENT_CONVERSATION.get())
     return json.dumps({
         'task_id': tid,
         'status': 'running',

@@ -29,10 +29,14 @@ class TestLayerProbe:
 
     def test_self_check_shape(self):
         chk = pl.self_check()
-        assert set(chk) == {"ok", "frozen", "declared", "active", "missing", "detail"}
-        # ok is exactly "nothing declared is missing"
+        assert set(chk) == {"ok", "frozen", "build", "declared", "active",
+                            "missing", "by_design", "detail"}
+        # ok is exactly "nothing declared is missing" -- and `missing` now means
+        # a FAULT, with a layer that is off on purpose in `by_design` instead.
         assert chk["ok"] == (not chk["missing"])
         assert set(chk["active"]).isdisjoint(chk["missing"])
+        assert set(chk["active"]).isdisjoint(chk["by_design"])
+        assert set(chk["missing"]).isdisjoint(chk["by_design"])
 
     def test_local_llm_is_not_counted_as_missing(self):
         """Layer 4 is opt-in per call, not a broken dependency."""
@@ -78,8 +82,25 @@ class TestDescribeHonesty:
         probed = pl.probe_layers()["presidio"]
         assert probed["active"] is False
         assert "OBSERVE-ONLY" in probed["reason"]
-        assert "presidio" in pl.self_check()["missing"]
-        assert "DEGRADED" in pl.describe()
+        # SUPERSEDED 2026-09-26, inverted in place.
+        #
+        # The first two assertions are the point of this test and are unchanged:
+        # importable is not in force, so observe-only presidio is NOT an active
+        # layer. What changed is how that is REPORTED. It used to be listed as
+        # `missing`, which made /api/health say "DEGRADED" about a healthy
+        # install and made boot log a warning about a deliberate choice -- which
+        # the 5.14.2 walkthrough flagged. Off on purpose is now `by_design`;
+        # `missing` and "DEGRADED" are kept for layers that really are down, and
+        # tests/unit/test_health_build_kind_and_observe_only.py asserts both
+        # directions.
+        chk = pl.self_check()
+        assert "presidio" in chk["by_design"]
+        assert "presidio" not in chk["missing"]
+        # Nothing is asserted about "DEGRADED" here: this test leaves
+        # sentence_transformers unavailable, so the line is legitimately degraded
+        # for a DIFFERENT layer, and presidio's classification is the subject.
+        # The headline's wording is covered end to end in
+        # tests/unit/test_health_build_kind_and_observe_only.py.
 
     def test_enforced_presidio_counts_as_active(self, monkeypatch):
         """The other direction: explicitly enforcing it does make it a layer."""

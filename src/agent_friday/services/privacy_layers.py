@@ -90,6 +90,38 @@ def is_frozen() -> bool:
     return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
 
+def _package_dir():
+    """The installed `agent_friday` package directory. Split out so a test can
+    stand somewhere else without moving the process."""
+    from pathlib import Path
+    return Path(__file__).resolve().parents[1]
+
+
+def build_kind() -> str:
+    """Which KIND of build this is: frozen, a source checkout, or installed.
+
+    There are three, and the health line used to offer two -- a PyInstaller
+    bundle or "source checkout" -- so a `pip install`, which is neither, was
+    described to the owner of a clean install as somebody's working copy. That
+    was the 5.14.2 walkthrough's complaint and it is a plain inaccuracy.
+
+    A source checkout is recognised by its shape rather than by elimination: the
+    package sits in `<repo>/src/agent_friday` with the project's own
+    pyproject.toml above it. Anything else is an installed build, and an
+    unreadable filesystem answers "installed build" too -- of the two wrong
+    answers, calling an install a developer's checkout is the more misleading.
+    """
+    if is_frozen():
+        return "frozen build"
+    try:
+        pkg = _package_dir()
+        if pkg.parent.name == "src" and (pkg.parent.parent / "pyproject.toml").is_file():
+            return "source checkout"
+    except Exception:
+        pass
+    return "installed build"
+
+
 def probe_layers() -> Dict[str, dict]:
     """Probe every declared layer. Cheap: no heavy imports, no model loads."""
     out: Dict[str, dict] = {}
@@ -144,15 +176,44 @@ def self_check() -> dict:
     """
     probed = probe_layers()
     declared = [n for n, _l, _m, _a in LAYER_SPECS if n not in _OPT_IN_LAYERS]
-    missing = [n for n in declared if not probed[n]["active"]]
+    inactive = [n for n in declared if not probed[n]["active"]]
+    # A LAYER OFF ON PURPOSE IS NOT A FAULT.
+    #
+    # Presidio ships in the Windows installer's recommended tier and is
+    # deliberately observe-only: classify() consults it only under
+    # FRIDAY_PRESIDIO_ENFORCE=1. Not counting it as active is correct and stays
+    # -- a layer that cannot change an outcome is not a protection, which is why
+    # this module exists. But it was also listed as MISSING, which made
+    # describe() say "DEGRADED" about a working install, and made boot log a
+    # warning about a decision somebody made on purpose.
+    #
+    # So the two are separated: `missing` is a fault, `by_design` is a choice,
+    # and `ok` tracks faults only. `describe()` and `report_at_startup()` both
+    # read `missing`, so both stop crying wolf without either losing its teeth.
+    by_design = [n for n in inactive if _off_by_design(n, probed[n])]
+    missing = [n for n in inactive if n not in by_design]
     return {
         "ok": not missing,
         "frozen": is_frozen(),
+        "build": build_kind(),
         "declared": declared,
         "active": [n for n in declared if probed[n]["active"]],
         "missing": missing,
+        "by_design": by_design,
         "detail": probed,
     }
+
+
+def _off_by_design(name: str, probed: dict) -> bool:
+    """Is this layer inactive because somebody chose that, not because it broke?
+
+    Only the observe-only case qualifies today: presidio present and importable
+    but not enforced. Presidio that is genuinely ABSENT is a fault, because the
+    build claimed a dependency it does not have.
+    """
+    if name != "presidio":
+        return False
+    return "OBSERVE-ONLY" in str(probed.get("reason") or "").upper()
 
 
 def describe() -> str:
@@ -164,15 +225,23 @@ def describe() -> str:
     chk = self_check()
     n = len(chk["active"])
     total = len(chk["declared"])
-    where = "frozen build" if chk["frozen"] else "source checkout"
-    if chk["ok"]:
-        return f"Sensitivity classifier: {n}/{total} layers active ({where})."
+    where = build_kind()
     plain = {l["name"]: l for l in plain_layers()}
+    # Said either way, because a layer nobody mentions is a layer nobody checks
+    # -- but said as a choice, not as a failure.
+    aside = ""
+    if chk["by_design"]:
+        names = ", ".join(chk["by_design"])
+        aside = (" %s installed and observe-only by design, so it is not "
+                 "counted as protection in force." % names)
+    if chk["ok"]:
+        return (f"Sensitivity classifier: {n}/{total} layers active "
+                f"({where}).{aside}")
     miss = "; ".join(f"{m} - {plain[m]['label']} ({plain[m]['status']})"
                      for m in chk["missing"] if m in plain)
     return (
         f"Sensitivity classifier: {n}/{total} layers active ({where}). "
-        f"DEGRADED - not running: {miss}."
+        f"DEGRADED - not running: {miss}.{aside}"
     )
 
 
