@@ -19,7 +19,7 @@ from agent_friday.services.response_provenance import (
 class TestExtractExecutedUrls:
     def test_pulls_url_from_tool_input(self):
         trace = [{"name": "open_url", "input": {"url": "https://reddit.com"}, "result": "opened"}]
-        assert "https://reddit.com" in extract_executed_urls(trace)
+        assert extract_executed_urls(trace) == {"https://reddit.com"}
 
     def test_pulls_urls_embedded_in_result_text(self):
         trace = [{"name": "search_web", "input": {"query": "ai news"},
