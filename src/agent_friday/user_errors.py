@@ -159,10 +159,31 @@ def clip(value, limit: int) -> str:
 
 
 def log_text(what: str, text: str) -> str:
-    """Log an error that arrives as text (no traceback left), under a new id."""
+    """Log an error that arrives as text (no traceback left), under a new id.
+
+    The text is an exception's message, and a message can quote a request
+    (a URL with ?key=..., an Authorization header): anything shaped like a
+    credential is replaced before the line is written."""
     error_id = new_error_id()
-    _log.error("[error %s] %s: %s: %s", error_id, _where(), what, text)
+    _log.error("[error %s] %s: %s: %s", error_id, _where(), what,
+               redact_credentials(text))
     return error_id
+
+
+_QUERY_SECRET = re.compile(
+    r"(?i)\b(key|api_key|apikey|access_token|token|password|secret|sig|signature)=[^&\s\"']+")
+
+
+def redact_credentials(text) -> str:
+    """`text` with every credential shape (services/secret_shapes) and every
+    secret-looking query parameter replaced by a label."""
+    s = str(text)
+    try:
+        from agent_friday.services.secret_shapes import redact
+        s = redact(s)
+    except Exception:  # the shapes are an addition, never a reason to lose the line
+        pass
+    return _QUERY_SECRET.sub(lambda m: m.group(1) + "=[redacted]", s)
 
 
 _PATHISH = re.compile(

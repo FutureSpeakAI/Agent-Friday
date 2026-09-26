@@ -109,6 +109,15 @@ def looks_like_secret(text) -> dict | None:
     return None
 
 
+def redact(text) -> str:
+    """`text` with each value matching a known credential shape replaced by
+    "[redacted <shape id>]". For log lines built from error text."""
+    s = str(text)
+    for sid, _label, rx, _target in _COMPILED:
+        s = rx.sub("[redacted %s]" % sid, s)
+    return s
+
+
 def for_client() -> dict:
     """The list as the browser needs it: patterns as strings, never values."""
     from agent_friday.services.setup_chat_copy import KEY_IN_CHAT

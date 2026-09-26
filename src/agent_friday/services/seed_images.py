@@ -29,6 +29,12 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
 
+def is_network_path(s: str) -> bool:
+    """A UNC or device path (\\\\host\\share, //host/share, \\\\?\\...), which
+    names another machine or a raw device rather than a local file."""
+    return str(s).replace("/", "\\").startswith("\\\\")
+
+
 def resolve(image_path) -> Optional[Path]:
     """The file a seed argument names, resolved, or None.
 
@@ -42,6 +48,11 @@ def resolve(image_path) -> Optional[Path]:
     if not s or "\x00" in s:
         return None
     expanded = os.path.expanduser(s)
+    if is_network_path(expanded):
+        # Resolving or even stat-ing \\host\share on Windows opens a
+        # connection to that host (and offers it the user's credentials)
+        # before any check below has run. A seed image is a local file.
+        return None
     if os.path.isabs(expanded) or (len(expanded) > 1 and expanded[1] == ":"):
         try:
             return Path(os.path.realpath(expanded))

@@ -242,3 +242,26 @@ def _raiser(exc_type):
     def _r(*_a, **_k):
         raise exc_type(INTERNAL)
     return _r
+
+
+# ── the local log and seed images ────────────────────────────────────────────
+
+def test_log_text_does_not_write_a_credential_to_the_log(caplog):
+    from agent_friday.user_errors import log_text
+    key = "AIza" + "B" * 35  # pragma: allowlist secret
+    with caplog.at_level("ERROR", logger="friday.routes.errors"):
+        log_text("Search failed", "GET https://example.test/v1?key=" + key
+                 + "&q=x failed; header sk-ant-" + "c" * 24)
+    logged = caplog.text
+    assert key not in logged and "sk-ant-" + "c" * 24 not in logged
+    assert "Search failed" in logged and "q=x" in logged
+
+
+def test_a_seed_image_on_a_network_share_is_not_touched(monkeypatch):
+    from agent_friday.services import seed_images
+    touched = []
+    monkeypatch.setattr(seed_images.os.path, "realpath",
+                        lambda p: touched.append(p) or p)
+    for p in (r"\\host\share\a.png", "//host/share/a.png", r"\\?\C:\a.png"):
+        assert seed_images.resolve(p) is None, p
+    assert touched == []
