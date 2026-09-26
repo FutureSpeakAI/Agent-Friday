@@ -147,13 +147,18 @@ _ADDRESS_RE = re.compile(
 # Masked account tails and issued identifiers. "account number" as prose was
 # already a strong TIER-3 phrase; these are the shapes carrying the same
 # information WITHOUT saying the words — "Chase account ending 4417".
+#
+# Each run of whitespace below belongs to exactly one quantifier. Adjacent
+# optional pieces that could all match the same spaces (`\s*[:#]?\s*...[-\s]?`)
+# made a long run of spaces after "account number" cost polynomial time; the
+# forms here match the same text with the same spans.
 _ACCT_TAIL_RE = re.compile(
-    r'\b(?:account|acct|card)\b[^.\n]{0,24}?\bending(?:\s+in)?\s+\d{3,6}\b',
+    r'\b(?:account|acct|card)\b[^.\n]{0,24}?\bending\s+(?:in\s+)?\d{3,6}\b',
     re.I,
 )
 _ISSUED_ID_RE = re.compile(
     r'\b(?:policy|member|patient|claim|case|account|acct|invoice)\s*'
-    r'(?:number|no\.?|#|id)\s*[:#]?\s*[A-Za-z]{0,4}[-\s]?\d{4,}\b',
+    r'(?:number|no\.?|#|id)\s*(?:[:#]\s*)?(?:[A-Za-z]{1,4}[-\s]?|-)?\d{4,}\b',
     re.I,
 )
 
