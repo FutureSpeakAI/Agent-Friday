@@ -443,6 +443,51 @@ async def _run_calls_concurrently(calls, one):
     return out
 
 
+#: No voice tool may hold a live call longer than this. Past it the model is
+#: told plainly that nothing came back; the worker thread finishes on its own
+#: (a deep-dive still lands in its cache for the next ask).
+VOICE_TOOL_HARD_LIMIT_S = 20.0
+#: A result slower than this is "late": the conversation has likely moved on.
+VOICE_TOOL_STALE_S = 15.0
+
+
+async def _voice_tool_with_limit(fname, fargs, send, session=None, limit=None, runner=None):
+    """Run one voice tool on a worker thread, bounded by VOICE_TOOL_HARD_LIMIT_S."""
+    runner = runner or _voice_tool_run
+    limit = VOICE_TOOL_HARD_LIMIT_S if limit is None else limit
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(runner, fname, fargs, send, session), limit)
+    except asyncio.TimeoutError:
+        _log.warning("voice tool %s passed its %gs limit; answered without a result",
+                     fname, limit)
+        return (f"The {fname} tool did not finish within {limit:g} seconds, so "
+                f"there is no result. Tell the user in one short sentence that it "
+                f"is taking too long, and offer to try again or do something else. "
+                f"Do not guess at what it would have said.")
+
+
+def _mark_if_stale(result, fname, started_at, user_spoke_at, now):
+    """Prefix a result that arrives after the conversation has moved on.
+
+    A tool call runs while the conversation continues, so a slow answer can
+    land after the user has asked something else, and the model then answers
+    the old question as if it were the new one. A result is late when it took
+    longer than VOICE_TOOL_STALE_S, or took longer than VOICE_TOOL_SLOW_S and
+    the user spoke after the call began.
+    """
+    took = now - started_at
+    spoke_since = user_spoke_at > started_at + 2.0
+    if took <= VOICE_TOOL_STALE_S and not (spoke_since and took > VOICE_TOOL_SLOW_S):
+        return result
+    why = ("the user has spoken since you asked for it" if spoke_since
+           else f"it took {took:.0f} seconds")
+    return (f"[LATE RESULT for {fname}: {why}, so the conversation may have moved on. "
+            f"Do NOT answer an earlier question with it or bring it up unprompted. "
+            f"If the user's current topic is this, use it; otherwise say in one short "
+            f"sentence that it is ready if they want it.]\n{result}")
+
+
 VOICE_TOOL_CHOREOGRAPHY = (
     "TOOL CHOREOGRAPHY (voice): Before EVERY tool call, first finish speaking "
     "one short sentence announcing what you're about to do — for example "
@@ -2676,6 +2721,10 @@ if sock is not None:
             _user_words_ts = [0.0]
             _turn_timed = [True]
             _turn_tools = []
+            # What this call has offered and said, for the voice tools
+            # (services/voice_engine.py): the news tools skip stories Friday
+            # has already told instead of reading the same five again.
+            _voice_session = {"news_offered": [], "spoken": []}
             # The barge window must track CLIENT PLAYBACK, not model streaming:
             # Gemini generates faster than real-time, so the turn often finishes
             # streaming seconds before Friday's voice finishes coming out of the
@@ -2699,6 +2748,9 @@ if sock is not None:
                 out_buf.clear()
                 if not user_text and not agent_text:
                     return
+                if agent_text:
+                    _voice_session["spoken"].append(agent_text)
+                    del _voice_session["spoken"][:-60]
                 try:
                     _persist_voice_turn(user_text, agent_text,
                                         conversation_id=_open_cid[0])
@@ -2856,8 +2908,8 @@ if sock is not None:
                             # absence is proof of narration.
                             _orb_id, _orb_t0 = _voice_orb_start(fname), _time.time()
                             try:
-                                result = await asyncio.to_thread(
-                                    _voice_tool_run, fname, fargs, _safe_send)
+                                result = await _voice_tool_with_limit(
+                                    fname, fargs, _safe_send, _voice_session)
                             except Exception as _te:
                                 _log.error("Voice tool %r failed: %s", fname, _te, exc_info=True)
                                 result = (f"I hit a problem with the {fname} tool "
@@ -2877,6 +2929,8 @@ if sock is not None:
                             # ungated result).
                             result = _gate_voice_tool_result(result, fname)
                             _took = _time.time() - _orb_t0
+                            result = _mark_if_stale(result, fname, _orb_t0,
+                                                    _user_words_ts[0], _time.time())
                             _log.info("voice tool result: %s -> %d chars in %.2fs",
                                       fname, len(result or ''), _took)
                             if _took > VOICE_TOOL_SLOW_S:

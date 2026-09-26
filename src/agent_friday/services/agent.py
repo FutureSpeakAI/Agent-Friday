@@ -1904,13 +1904,49 @@ def _tool_search_wiki(inp):
     return json.dumps({'query': query, 'hits': results}, default=str)[:100_000]
 
 
+def _news_title_key(title) -> str:
+    """A title reduced to letters and digits, for "have we covered this?"."""
+    return re.sub(r"[^a-z0-9]+", "", str(title or "").lower())[:120]
+
+
+def _spread_by_category(pool):
+    """The feed interleaved across categories, most important first in each.
+
+    Taking the first N items of the raw pool took N items of its FIRST
+    category: a spoken "what's in the news?" got five tech stories, and every
+    repeat got the same five. Round-robin over categories, each ordered by
+    breaking-then-score, gives the day's range instead.
+    """
+    by_cat, order = {}, []
+    for it in pool or []:
+        cat = it.get("category") or ""
+        if cat not in by_cat:
+            by_cat[cat] = []
+            order.append(cat)
+        by_cat[cat].append(it)
+    for cat in order:
+        by_cat[cat].sort(key=lambda it: (not it.get("breaking"), -(it.get("score") or 0)))
+    out, i = [], 0
+    while any(i < len(by_cat[c]) for c in order):
+        for cat in order:
+            if i < len(by_cat[cat]):
+                out.append(by_cat[cat][i])
+        i += 1
+    return out
+
+
 def _tool_search_news(inp):
     """Search the live news feed for stories matching a query.
 
     Pulls the current multi-category feed (the same one the News workspace
     shows) and ranks items whose title/snippet/source contain the query terms.
     Returns up to N hits as JSON; with no query, returns the top current
-    stories. Used by the agent loop on every provider.
+    stories spread across categories. Used by the agent loop on every provider.
+
+    `_covered` (titles already told in this conversation) are left out, and
+    `_offered` (titles handed over but not yet told) go after fresh ones. The
+    voice session fills both; when nothing new is left the tool says so, so the
+    model stops recycling the same stories.
     """
     inp = inp or {}
     query = (inp.get('query') or '').strip()
@@ -1919,6 +1955,8 @@ def _tool_search_news(inp):
     except (TypeError, ValueError):
         limit = 8
     limit = max(1, min(25, limit))
+    covered = {_news_title_key(t) for t in (inp.get('_covered') or [])}
+    offered = {_news_title_key(t) for t in (inp.get('_offered') or [])}
 
     try:
         # The conversational read: cached, never a forty-feed wait mid-turn
@@ -1929,26 +1967,35 @@ def _tool_search_news(inp):
         return f"search_news error fetching feed: {e}"
 
     terms = [t for t in re.split(r'\s+', query.lower()) if t]
-    hits = []
-    for it in pool:
+    ranked = pool if terms else _spread_by_category(pool)
+    matched = []
+    for it in ranked:
         hay = f"{it.get('title','')} {it.get('snippet','')} {it.get('source','')}".lower()
-        # No query → surface everything (ranked by the feed's own score);
-        # with a query, require every term to appear somewhere in the item.
+        # With a query, require every term to appear somewhere in the item.
         if terms and not all(t in hay for t in terms):
             continue
-        hits.append({
-            'title': it.get('title', ''),
-            'snippet': it.get('snippet', ''),
-            'url': it.get('url', ''),
-            'source': it.get('source', ''),
-            'category': it.get('category', ''),
-            'trust': it.get('trust_rating') or it.get('trust'),
-            'breaking': it.get('breaking', False),
-        })
-        if len(hits) >= limit:
-            break
+        matched.append(it)
+    fresh = [it for it in matched if _news_title_key(it.get('title')) not in covered]
+    fresh.sort(key=lambda it: _news_title_key(it.get('title')) in offered)   # stable
+    hits = [{
+        'title': it.get('title', ''),
+        'snippet': it.get('snippet', ''),
+        'url': it.get('url', ''),
+        'source': it.get('source', ''),
+        'category': it.get('category', ''),
+        'trust': it.get('trust_rating') or it.get('trust'),
+        'breaking': it.get('breaking', False),
+    } for it in fresh[:limit]]
 
     if not hits:
+        if matched:
+            return json.dumps({'query': query, 'hits': [], 'out_of_stories': True,
+                               'note': ("Every story in the current feed%s has already been "
+                                        "told in this conversation (%d). Say so plainly: "
+                                        "offer the daily briefing (get_briefing), a specific "
+                                        "topic, or a web search, and do not repeat an old "
+                                        "story as if it were new."
+                                        % (" matching %r" % query if query else "", len(matched)))})
         return f"No current news stories matched {query!r}." if query else "No news stories available right now."
     return json.dumps({'query': query, 'hits': hits}, default=str)[:100_000]
 
@@ -2867,7 +2914,8 @@ def _tool_get_briefing(_inp):
     briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
     if briefings_dir.exists():
         for f in briefings_dir.iterdir():
-            if f.is_file() and f.suffix in ('.html', '.md'):
+            # _index.md and other _-prefixed files are wiki bookkeeping, not briefings.
+            if f.is_file() and f.suffix in ('.html', '.md') and not f.name.startswith('_'):
                 candidates.append(f)
     creations_dir = CREATIONS_DIR
     if creations_dir.exists():

@@ -69,20 +69,27 @@ from agent_friday.services.news_engine import (
 
 def _tool_get_article_deep_dive(inp):
     """Voice tool: deep-read + summarize one article. Returns a spoken-ready
-    JSON string with summary, implications, and key quotes."""
+    JSON string with summary, implications, and key quotes.
+
+    The quick read: a spoken answer inside news_engine.DEEP_DIVE_QUICK_BUDGET_S,
+    or the article's opening marked partial, never a minute of silence."""
     inp = inp or {}
     url = (inp.get("url") or "").strip()
     result, _status = _deep_dive_article(url, title=inp.get("title"),
-                                         refresh=bool(inp.get("refresh")))
+                                         refresh=bool(inp.get("refresh")), quick=True)
     if result.get("status") != "ok":
         return json.dumps({"error": result.get("message") or "deep dive failed"})
-    return json.dumps({
+    out = {
         "title": result.get("title"),
         "url": result.get("url"),
         "summary": result.get("summary"),
         "implications": result.get("implications"),
         "key_quotes": (result.get("key_quotes") or [])[:4],
-    }, default=str)
+    }
+    if result.get("partial"):
+        out["partial"] = True
+        out["note"] = result.get("note")
+    return json.dumps(out, default=str)
 
 
 def _tool_get_source_trust(inp):
@@ -256,9 +263,18 @@ _VOICE_LIVE_TOOLS = [
      "current stories matching a query. Returns ranked hits with title, snippet, "
      "source, trust rating, and URL. Use when the user asks for related coverage, "
      "'any other stories on X', or to ground a claim in current reporting. Omit "
-     "the query for the top current stories.",
+     "the query for the day's top stories across every section. Stories you have "
+     "already told in this conversation are left out; if it says out_of_stories, "
+     "say so plainly instead of repeating an old story.",
      {"query": ("string", "Keywords across headline/snippet/source. Blank = top stories."),
       "limit": ("integer", "Max stories (1-25, default 8).")}, []),
+    ("get_briefing",
+     "Read Friday's own daily news briefing for today: the curated, ranked "
+     "summary of the day's important stories across sections. Use it FIRST when "
+     "the user asks for the news, the briefing, 'what's happening in the world' "
+     "or a rundown of the day, then go through it story by story, in plain facts "
+     "(who, what, where), without teasing.",
+     {}, []),
     ("search_web",
      "Search the open web in real time for information that is NOT in the news "
      "feed — background, definitions, people, companies, or events the feed "
@@ -574,10 +590,58 @@ def _json_schema_leaf(types, spec, type_map, pname):
     return types.Schema(type=type_map[jtype], **kwargs)
 
 
-def _voice_tool_run(name, args, send_client):
+VOICE_BRIEFING_CHARS = 7000
+_TOLD_STOPWORDS = {"that", "this", "with", "from", "have", "says", "said", "will",
+                   "about", "after", "over", "into", "their", "they", "what",
+                   "when", "were", "been", "more", "than", "report", "reports"}
+
+
+def _voice_briefing(_inp=None):
+    """The newest daily briefing, trimmed to what one spoken rundown can use."""
+    from agent_friday.services.agent import _tool_get_briefing
+    text = _tool_get_briefing(_inp or {})
+    if len(text) > VOICE_BRIEFING_CHARS:
+        text = text[:VOICE_BRIEFING_CHARS] + " [... the briefing continues; ask for more]"
+    return text
+
+
+def _title_told(title: str, spoken: str) -> bool:
+    """Did Friday actually SAY this story, going by its distinctive words?
+
+    Offering a story to the model is not telling it: it may speak two of five.
+    A story counts as told when at least two of its significant title words,
+    and at least a quarter of them, appear in what Friday said aloud.
+    """
+    words = {w for w in re.findall(r"[a-z0-9']+", (title or "").lower())
+             if len(w) >= 4 and w not in _TOLD_STOPWORDS}
+    if not words:
+        return False
+    spoken_l = (spoken or "").lower()
+    hits = sum(1 for w in words if w in spoken_l)
+    return hits >= 2 and hits / len(words) >= 0.25
+
+
+def _news_args_for_session(args: dict, session) -> dict:
+    """search_news arguments with this conversation's coverage attached."""
+    if not isinstance(session, dict):
+        return args
+    offered = session.setdefault("news_offered", [])
+    spoken = " ".join(session.get("spoken") or [])
+    told = [t for t in offered if _title_told(t, spoken)]
+    out = dict(args)
+    out["_covered"] = told
+    out["_offered"] = [t for t in offered if t not in told]
+    return out
+
+
+def _voice_tool_run(name, args, send_client, session=None):
     """Execute one Live tool call, emit any client-side side effect, and return a
     SHORT text/JSON result for the model to speak from. `send_client(obj)` pushes
-    a WS frame to the browser (navigate action, citation chip). Never raises."""
+    a WS frame to the browser (navigate action, citation chip). Never raises.
+
+    `session` is the live call's own state (the voice bridge keeps one per
+    connection): the stories offered so far and what Friday has said, so the
+    news tools do not recycle the same stories."""
     name = (name or "").strip()
     args = dict(args or {})
 
@@ -664,10 +728,17 @@ def _voice_tool_run(name, args, send_client):
                 return f"Done — opened it in the browser. {res}"
             return (f"I did not open it because the link looks invalid. {res} "
                     f"Tell the user the link appears broken and offer to find the right source.")
+        if name == "get_briefing":
+            return _governed("get_briefing", _voice_briefing, args)
         if name == "search_news":
-            res = _governed("search_news", _tool_search_news, args)
+            res = _governed("search_news", _tool_search_news,
+                            _news_args_for_session(args, session))
             try:
                 hits = (json.loads(res) or {}).get("hits", [])
+                if isinstance(session, dict):
+                    seen = session.setdefault("news_offered", [])
+                    seen.extend(h.get("title") for h in hits
+                                if h.get("title") and h.get("title") not in seen)
                 chips = [{"title": h.get("title"), "source": h.get("source"),
                           "url": h.get("url")} for h in hits[:6] if h.get("url")]
                 if chips:

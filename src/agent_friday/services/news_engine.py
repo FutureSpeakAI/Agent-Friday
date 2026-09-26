@@ -3122,24 +3122,54 @@ def _extract_article_text(url):
     return page_title, re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def _deep_dive_article(url, title=None, refresh=False):
+# A spoken deep-dive has to answer while the question is still the topic.
+# The full read (three paragraphs, 2000 tokens, the whole context prompt) took
+# 60-134 s on a live call. The quick read asks for a short spoken summary and
+# waits at most this long for it; past that the caller gets the article's own
+# opening, and the full answer is cached for the next ask when it lands.
+DEEP_DIVE_QUICK_BUDGET_S = 12.0
+DEEP_DIVE_QUICK_MAX_TOKENS = 450
+DEEP_DIVE_QUICK_BODY_CHARS = 6000
+
+
+def _lead_sentences(body, n=4):
+    """The article's first n sentences, the reporter's own summary of it."""
+    parts = re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", body or "").strip())
+    return " ".join(p for p in parts[:n] if p)
+
+
+def _read_cached_dive(path):
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        cached["cached"] = True
+        return cached
+    except Exception:
+        return None
+
+
+def _deep_dive_article(url, title=None, refresh=False, quick=False):
     """Fetch an article, summarize it with the local/cloud model, and cache it.
 
     Shared by the /api/news/deep-dive route AND the voice/anchor tool. Returns
     (result_dict, http_status); result_dict always carries a "status" key
     ("ok" | "error"). Cached at ~/.friday/news/deep_dives/<url_hash>.json so
-    repeat opens are instant."""
+    repeat opens are instant.
+
+    quick=True is the spoken read: a short summary, answered within
+    DEEP_DIVE_QUICK_BUDGET_S or replaced by the article's opening sentences
+    (marked "partial"). It uses a full cached read when one exists, and caches
+    its own result separately so the News page never shows the short one."""
     url = (url or "").strip()
     if not url or not url.startswith("http"):
         return {"status": "error", "message": "A valid url is required."}, 400
     cache_path = DEEP_DIVE_DIR / f"{_news_url_hash(url)}.json"
-    if not refresh and cache_path.exists():
-        try:
-            cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            cached["cached"] = True
-            return cached, 200
-        except Exception:
-            pass
+    quick_path = DEEP_DIVE_DIR / f"{_news_url_hash(url)}.quick.json"
+    if not refresh:
+        for p in ((cache_path, quick_path) if quick else (cache_path,)):
+            if p.exists():
+                cached = _read_cached_dive(p)
+                if cached is not None:
+                    return cached, 200
     try:
         page_title, body = _extract_article_text(url)
     except Exception as e:
@@ -3152,6 +3182,8 @@ def _deep_dive_article(url, title=None, refresh=False):
                            "a paywall. I can summarize from the headline, or look "
                            "for another source covering the same story."}, 422
     headline = title or page_title or url
+    if quick:
+        return _quick_dive(url, headline, body, quick_path)
     body = body[:14000]  # keep the prompt bounded
     prompt = (
         "You are deep-reading a news article for the user. Use what you know about "
@@ -3191,6 +3223,67 @@ def _deep_dive_article(url, title=None, refresh=False):
     except Exception:
         pass
     return result, 200
+
+
+def _quick_dive(url, headline, body, cache_path):
+    """The spoken deep-dive: short, and never longer than the budget."""
+    body = body[:DEEP_DIVE_QUICK_BODY_CHARS]
+    prompt = (
+        "You are briefing the user, out loud, on one news article. Use what you "
+        "know about them to make the implication specific, not generic.\n\n"
+        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n\nARTICLE TEXT:\n{body}\n\n"
+        "Respond with ONLY a JSON object (no prose, no code fence) with exactly "
+        "these keys:\n"
+        '  "summary": 3-5 plain sentences of what happened: who, what, where, when;\n'
+        '  "implications": 1-2 sentences on what this means for the user;\n'
+        '  "key_quotes": an array of at most 2 short verbatim quotes from the article.'
+    )
+    box = {}
+
+    def work():
+        try:
+            system = _get_friday_system_prompt(
+                keywords=headline, workspace="news",
+                provider=_predict_route_provider(keywords=headline, workspace="news"),
+                vault_control=_gated_vault_control())
+            raw = _generate_text([{"role": "user", "content": prompt}], system=system,
+                                 max_tokens=DEEP_DIVE_QUICK_MAX_TOKENS, workspace='news')
+        except Exception as e:
+            box["error"] = e
+            return
+        parsed = _extract_json_block(raw) or {}
+        quotes = parsed.get("key_quotes")
+        result = {
+            "status": "ok", "url": url, "title": headline,
+            "summary": (parsed.get("summary") or raw or "").strip(),
+            "implications": (parsed.get("implications") or "").strip(),
+            "key_quotes": quotes if isinstance(quotes, list) else [],
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "cached": False, "quick": True,
+        }
+        box["result"] = result
+        try:
+            DEEP_DIVE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    t = threading.Thread(target=work, name="news-quick-dive", daemon=True)
+    t.start()
+    t.join(DEEP_DIVE_QUICK_BUDGET_S)
+    if "result" in box:
+        return box["result"], 200
+    if "error" in box:
+        return {"status": "error", "message": f"Summary generation failed: {box['error']}"}, 502
+    return {
+        "status": "ok", "url": url, "title": headline, "partial": True,
+        "summary": _lead_sentences(body),
+        "implications": "",
+        "key_quotes": [],
+        "note": ("The full read is still being written; this is the article's own "
+                 "opening. Ask again in a minute for the full summary."),
+        "cached": False,
+    }, 200
 
 
 # ═══════════════════════════════════════════════════════════════
