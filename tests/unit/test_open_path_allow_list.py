@@ -293,7 +293,7 @@ def test_a_path_from_a_web_page_stops_at_a_card_with_its_provenance(files, launc
     (card,) = _pending()
     warn = [f for f in card["provenance"]["flags"] if f["severity"] == "warn"]
     assert warn and warn[0]["role"] == "open_target"
-    assert "shop.example.com" in warn[0]["source"]
+    assert warn[0]["source"] == "a web page on shop.example.com"
     assert card["payload"] == {"tool": "open_path", "input": inp,
                                "conversation_id": ""}
 

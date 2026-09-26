@@ -193,7 +193,7 @@ class TestByoWalkthrough:
 
     def test_the_console_is_linked_not_described(self):
         hosts = {urlparse(s.get("url") or "").hostname for s in goc.byo_steps()}
-        assert "console.cloud.google.com" in hosts
+        assert hosts & {"console.cloud.google.com"} == {"console.cloud.google.com"}
 
     def test_the_scopes_are_listed_for_copying(self):
         """Step: 'add these scopes'. Without the list the user guesses, and a
