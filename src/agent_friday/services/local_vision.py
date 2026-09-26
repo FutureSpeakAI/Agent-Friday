@@ -41,6 +41,7 @@ import logging
 import time
 import urllib.error
 import urllib.request
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.local_vision")
 
@@ -114,7 +115,7 @@ def capability(settings: dict | None = None) -> dict:
         base = seat_endpoint(model)
     except Exception as e:
         return {"ok": False, "model": model,
-                "reason": f"could not resolve the seat endpoint ({e})"}
+                "reason": ExceptionText(f"could not resolve the seat endpoint ({e})")}
     if not base:
         return {"ok": False, "model": model,
                 "reason": f"{model} is not currently being served on a local port"}
@@ -171,12 +172,12 @@ def describe(image_b64: str, *, mime: str = "image/png",
         _log.warning("local vision HTTP %s from %s: %s", e.code, url, detail)
         return {"ok": False, "text": None, "model": cap["model"],
                 "seconds": round(time.time() - t0, 1),
-                "reason": f"the local seat answered HTTP {e.code}: {detail}"}
+                "reason": ExceptionText(f"the local seat answered HTTP {e.code}: {detail}")}
     except Exception as e:
         _log.warning("local vision unreachable at %s: %s", url, e)
         return {"ok": False, "text": None, "model": cap["model"],
                 "seconds": round(time.time() - t0, 1),
-                "reason": f"could not reach the local seat ({e})"}
+                "reason": ExceptionText(f"could not reach the local seat ({e})")}
 
     choice = (payload.get("choices") or [{}])[0]
     text = ((choice.get("message") or {}).get("content") or "").strip()

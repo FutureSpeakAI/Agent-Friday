@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.higgsfield_catalog")
 
@@ -434,7 +435,7 @@ def refresh() -> dict:
         try:
             found = _enumerate_type(mtype)
         except Exception as e:
-            errors.append(f"{mtype}: {type(e).__name__}: {e}"[:200])
+            errors.append(ExceptionText(f"{mtype}: {type(e).__name__}: {e}"[:200]))
             continue
         by_type[mtype] = len(found)
         raw.extend(found)

@@ -36,6 +36,7 @@ from agent_friday.core import (
 from agent_friday.services.model_router import (
     _get_context_compressor,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, public_result
 
 context_bp = Blueprint('context', __name__)
 
@@ -56,8 +57,8 @@ def context_compression_stats():
         compaction_stats = _compaction.get_stats()
     except Exception as e:
         compaction_stats = {"error": str(e)}
-    return jsonify({"status": "ok", "compression": stats,
-                    "compaction": compaction_stats})
+    return jsonify(public_result({"status": "ok", "compression": stats,
+                    "compaction": compaction_stats}, "Couldn't load the compression stats"))
 
 
 @context_bp.route('/api/context/search', methods=['POST'])
@@ -141,17 +142,12 @@ def compression_stats():
         compressor = _get_context_compressor(cfg)
         stats = compressor.get_stats()
     except Exception as exc:
-        return jsonify({
-            "status": "error",
-            "message": str(exc),
-            "enabled": bool(cfg.get('enabled', True)),
-            "available": False,
-        }), 200
-    return jsonify({
+        return api_error(exc, "Couldn't load the compression stats", 200, enabled=bool(cfg.get('enabled', True)), available=False)
+    return jsonify(public_result({
         "status": "ok",
         "powered_by": "Headroom (https://github.com/chopratejas/headroom)",
         **stats,
-    })
+    }, "Couldn't load the compression stats"))
 
 
 @context_bp.route('/api/context/range', methods=['DELETE'])

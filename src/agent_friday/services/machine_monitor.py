@@ -61,6 +61,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.machine_monitor")
 
@@ -435,8 +436,8 @@ def _verdict_display(sample_: dict, profile: dict | None) -> dict:
         reserve = resolve_display_reserve(prof)
     except Exception as e:
         return {"status": "unknown", "basis": "unknown",
-               "explanation": "could not resolve the display reserve: %s"
-                              % e}
+               "explanation": ExceptionText("could not resolve the display reserve: %s"
+                              % e)}
     breached = free < reserve["mib"]
     return {
         "status": "breached" if breached else "ok",

@@ -100,6 +100,7 @@ from agent_friday.services.voice_engine import (
     resolve_live_thinking_level,
     validate_gemini_key,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 voice_bp = Blueprint('voice', __name__)
 
@@ -991,7 +992,7 @@ def tts():
 
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't speak that")
 
 
 @voice_bp.route('/api/audio/<path:filename>')
@@ -1728,8 +1729,7 @@ def voice_transcribe():
         try:
             pcm, rate = _wav_to_pcm16(raw)
         except Exception as e:
-            return jsonify({"status": "error",
-                            "error": f"could not read the WAV: {e}"}), 400
+            return api_error(e, "Could not read the WAV", 400, key="error")
     else:
         pcm = raw
 
@@ -1756,16 +1756,16 @@ def voice_transcribe():
             from agent_friday.services.voice_manifest import plain_language_refusal
             msg, _action = plain_language_refusal(e, "ear")
         except Exception:
-            msg = f"{type(e).__name__}: {e}"
+            msg = error_text(e, "Couldn't transcribe the audio")
         _log.warning("push-to-transcribe failed: %s: %s", type(e).__name__, e)
-        return jsonify({"status": "error", "error": msg,
-                        "engine": "local"}), 503
+        return jsonify(public_result({"status": "error", "error": msg,
+                        "engine": "local"}, "Couldn't transcribe the audio")), 503
 
-    return jsonify({"status": "ok", "text": text, "engine": "local",
+    return jsonify(public_result({"status": "ok", "text": text, "engine": "local",
                     "device": getattr(asr, "_device", None) or "cpu",
                     "why_cpu": getattr(asr, "_why_cpu", "") or "",
                     "audio_s": round(seconds, 2),
-                    "ms": int((_time.time() - t0) * 1000)})
+                    "ms": int((_time.time() - t0) * 1000)}, "Couldn't transcribe the audio"))
 
 
 @voice_bp.route('/api/voice/setup/status')
@@ -1878,8 +1878,8 @@ def voice_setup_status():
                       "detail": "Browser will prompt for mic permission on first session."})
 
     all_ok = all(s["status"] == "ok" for s in steps if s["status"] != "unknown")
-    return jsonify({"ready": all_ok, "engine": resolved, "steps": steps,
-                    "engine_info": engine_info})
+    return jsonify(public_result({"ready": all_ok, "engine": resolved, "steps": steps,
+                    "engine_info": engine_info}, "Couldn't check the voice setup"))
 
 
 @voice_bp.route('/api/voice/setup/test', methods=['POST'])
@@ -1902,18 +1902,14 @@ def voice_setup_test():
                            "Install local voice (Settings → Voice → Setup Wizard) "
                            "or configure a Gemini API key.",
             }), 503
-        return jsonify({
+        return jsonify(public_result({
             "status": "ok",
             "audio_b64": _b64.b64encode(wav_data).decode(),
             "format": "wav",
-        })
+        }, "Couldn't test the voice"))
     except Exception as e:
         _log.warning("voice setup test TTS failed: %s", e, exc_info=True)
-        return jsonify({
-            "status": "error",
-            "message": f"TTS synthesis failed: {type(e).__name__} — {e}. "
-                       f"Check that voice dependencies are installed.",
-        }), 500
+        return api_error(e, "Voice synthesis failed; check that voice dependencies are installed")
 
 
 @voice_bp.route('/api/voice/setup/install', methods=['POST'])

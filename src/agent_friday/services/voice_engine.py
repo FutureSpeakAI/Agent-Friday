@@ -64,6 +64,7 @@ from agent_friday.services.news_engine import (
     _deep_dive_article,
     _voice_domain_of,
 )  # noqa: E501
+from agent_friday.user_errors import ExceptionText
 
 
 
@@ -1198,7 +1199,7 @@ def validate_gemini_key(key, timeout=5.0, force=False):
             except Exception:
                 pass
             ok = False
-            detail = f"HTTP {he.code}: {' '.join(body.split())[:160]}"
+            detail = ExceptionText(f"HTTP {he.code}: {' '.join(body.split())[:160]}")
     except Exception as e:
         # DNS down / offline / proxy — NOT a key verdict; don't cache.
         return True, f"unverifiable ({type(e).__name__}) — assuming ok"

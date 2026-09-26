@@ -41,6 +41,7 @@ from pathlib import Path
 from agent_friday.paths import friday_home
 from agent_friday.services import setup_chat_copy as copy
 from agent_friday.services import style_guard
+from agent_friday.user_errors import UserFacingValueError
 
 _LOCK = threading.RLock()
 
@@ -118,7 +119,7 @@ def set_name(name: str) -> None:
 def record_answer(qid: str, text: str, *, skipped: bool = False) -> None:
     ids = {q[0] for q in copy.QUESTIONS}
     if qid not in ids:
-        raise ValueError("unknown question %r" % qid)
+        raise UserFacingValueError("unknown question %r" % qid)
     with _LOCK:
         p = load_profile()
         p["answers"][qid] = {"text": "" if skipped else str(text or "")[:1000],

@@ -57,6 +57,7 @@ from agent_friday.services.local_voice import (
     _module_installed,
     _resample_pcm16,
 )
+from agent_friday.user_errors import ExceptionText
 
 # Cache the (large) NeMo/HF checkpoints under ~/.friday/models/nemo so they
 # survive reinstalls, are inspectable, and never pollute the Tier-1
@@ -314,7 +315,7 @@ def _probe_gpu_status() -> dict:
             info["source"] = "torch"
             info["detail"] = "torch installed but CUDA not available"
         except Exception as e:
-            info["detail"] = f"torch probe failed: {str(e)[:80]}"
+            info["detail"] = ExceptionText(f"torch probe failed: {str(e)[:80]}")
 
     # 2) nvidia-smi (via ollama_manager.detect_hardware) — total VRAM only.
     try:
@@ -337,7 +338,7 @@ def _probe_gpu_status() -> dict:
                 info["detail"] = (f"{gpu} ({vram}GB) — install torch-CUDA to run NeMo")
     except Exception as e:
         if not info["detail"]:
-            info["detail"] = str(e)[:120]
+            info["detail"] = ExceptionText(str(e)[:120])
     return info
 
 
@@ -768,4 +769,4 @@ def nemo_health() -> dict:
         }
     except Exception as e:
         return {"engine": "nvidia-nemo", "status": "error",
-                "detail": str(e)[:160], "available": False, "models_ready": False}
+                "detail": ExceptionText(str(e)[:160]), "available": False, "models_ready": False}

@@ -39,6 +39,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from agent_friday.user_errors import UserFacingError
 
 log = logging.getLogger(__name__)
 
@@ -242,11 +243,16 @@ PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 
-class CloudVoiceError(RuntimeError):
-    """A cloud voice call failed. Carries a classified reason code."""
+class CloudVoiceError(UserFacingError, RuntimeError):
+    """A cloud voice call failed. Carries a classified reason code.
 
-    def __init__(self, message: str, *, code: str = "cloud_voice_failed"):
-        super().__init__(message)
+    The message is written for the user. Where a provider's or library's own
+    text explains the failure it rides in `detail`, which is what str()
+    returns (the model and the log see it; a route shows only the message)."""
+
+    def __init__(self, message: str, *, code: str = "cloud_voice_failed",
+                 detail: str | None = None):
+        super().__init__(message, detail=detail)
         self.code = code
 
 
@@ -261,8 +267,8 @@ class CloudVoiceUnavailable(CloudVoiceError):
     """
 
     def __init__(self, message: str, *, code: str, offer: str | None = None,
-                 requested: str = ""):
-        super().__init__(message, code=code)
+                 requested: str = "", detail: str | None = None):
+        super().__init__(message, code=code, detail=detail)
         self.offer = offer
         self.requested = requested
 
@@ -620,8 +626,10 @@ def gate_synthesis_input(text: str, provider: str) -> str:
         from agent_friday.services import egress_gate as _eg
     except Exception as e:
         raise CloudVoiceUnavailable(
-            "the privacy gate could not be reached, so nothing was sent to "
-            "%s (%s)" % (provider, e),
+            "the privacy gate could not be reached, so nothing was sent to %s"
+            % provider,
+            detail="the privacy gate could not be reached, so nothing was sent to "
+                   "%s (%s)" % (provider, e),
             code="cloud_voice_gate_unavailable",
             offer="Speak this with Friday's local voice instead.",
             requested=provider)
@@ -631,14 +639,16 @@ def gate_synthesis_input(text: str, provider: str) -> str:
     except Exception as e:
         if _never_send is not None and isinstance(e, _never_send):
             raise CloudVoiceUnavailable(
-                "this text contains something that never leaves this device "
-                "(%s)" % e,
+                "this text contains something that never leaves this device",
+                detail="this text contains something that never leaves this device "
+                       "(%s)" % e,
                 code="cloud_voice_never_send",
                 offer="Speak this with Friday's local voice instead.",
                 requested=provider)
         raise CloudVoiceUnavailable(
-            "the privacy gate failed, so nothing was sent to %s (%s)"
-            % (provider, e),
+            "the privacy gate failed, so nothing was sent to %s" % provider,
+            detail="the privacy gate failed, so nothing was sent to %s (%s)"
+                   % (provider, e),
             code="cloud_voice_gate_failed",
             offer="Speak this with Friday's local voice instead.",
             requested=provider)
@@ -773,7 +783,8 @@ def _synth_elevenlabs(text: str, key: str, model: str, voice: str):
             json={"text": text, "model_id": model}, timeout=_TIMEOUT)
     except Exception as e:
         raise CloudVoiceUnavailable(
-            "could not reach ElevenLabs (%s)" % e,
+            "could not reach ElevenLabs",
+            detail="could not reach ElevenLabs (%s)" % e,
             code="cloud_voice_network",
             offer="Use Friday's local voice for now.",
             requested="elevenlabs")
@@ -798,7 +809,8 @@ def _synth_inworld(text: str, key: str, model: str, voice: str):
             timeout=_TIMEOUT)
     except Exception as e:
         raise CloudVoiceUnavailable(
-            "could not reach Inworld (%s)" % e,
+            "could not reach Inworld",
+            detail="could not reach Inworld (%s)" % e,
             code="cloud_voice_network",
             offer="Use Friday's local voice for now.",
             requested="inworld")
@@ -831,21 +843,24 @@ def _raise_for_status(resp, provider: str, label: str) -> None:
         detail = (getattr(resp, "text", "") or "")[:300]
     if resp.status_code in (401, 403):
         raise CloudVoiceUnavailable(
-            "%s rejected the API key (%s)" % (label, detail or resp.status_code),
+            "%s rejected the API key (HTTP %d)" % (label, resp.status_code),
+            detail="%s rejected the API key (%s)" % (label, detail or resp.status_code),
             code="cloud_voice_auth",
             offer=("Check the key in Settings then Voice, or use Friday's "
                    "local voice."),
             requested=provider)
     if resp.status_code == 429 or "quota" in detail.lower():
         raise CloudVoiceUnavailable(
-            "%s is out of credits or rate-limited (%s)"
-            % (label, detail or resp.status_code),
+            "%s is out of credits or rate-limited (HTTP %d)" % (label, resp.status_code),
+            detail="%s is out of credits or rate-limited (%s)"
+                   % (label, detail or resp.status_code),
             code="cloud_voice_quota",
             offer="Top up your %s plan, or use Friday's local voice." % label,
             requested=provider)
     raise CloudVoiceUnavailable(
-        "%s returned HTTP %d: %s" % (label, resp.status_code,
-                                     detail or "(no detail)"),
+        "%s returned HTTP %d" % (label, resp.status_code),
+        detail="%s returned HTTP %d: %s" % (label, resp.status_code,
+                                            detail or "(no detail)"),
         code="cloud_voice_http",
         offer="Use Friday's local voice for now.",
         requested=provider)

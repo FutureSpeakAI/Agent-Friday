@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 from flask import Blueprint, g, jsonify, request
 
 from agent_friday.services import setup_chat as sc
+from agent_friday.routes._errors import api_error
 
 setup_chat_bp = Blueprint("setup_chat", __name__)
 
@@ -67,7 +68,7 @@ def _body() -> dict:
 
 
 def _refused(e: sc.Refused):
-    return jsonify({"ok": False, **(e.payload or {"error": str(e)})}), 422
+    return jsonify({"ok": False, **(e.payload or {"error": e.user_message})}), 422
 
 
 @setup_chat_bp.route("/api/setup-chat/state", methods=["GET"])
@@ -91,7 +92,7 @@ def setup_chat_answer():
     except sc.Refused as e:
         return _refused(e)
     except sc.Conflict as e:
-        return jsonify({"ok": False, "error": "conflict", "message": str(e),
+        return jsonify({"ok": False, "error": "conflict", "message": e.user_message,
                         **sc.view()}), 409
 
 
@@ -110,7 +111,7 @@ def setup_chat_goto():
     try:
         return jsonify({"ok": True, **sc.goto(str(_body().get("stage") or ""))})
     except sc.Conflict as e:
-        return jsonify({"ok": False, "error": "conflict", "message": str(e)}), 409
+        return api_error(e, "Couldn't go to that step", 409, shape="ok", key="message", error="conflict")
 
 
 @setup_chat_bp.route("/api/setup-chat/secret-shapes", methods=["GET"])
@@ -150,7 +151,7 @@ def setup_chat_research_start():
         return jsonify({"ok": False, "error": "no_model",
                         "message": "No model is available to read pages yet."}), 409
     except ValueError as e:
-        return jsonify({"ok": False, "error": "no_seeds", "message": str(e)}), 400
+        return api_error(e, "Couldn't start the research", 400, shape="ok", key="message", error="no_seeds")
     st = sc.load_state()
     st["reader"] = reader
     st["research"] = {"state": "running", "job_id": out["job_id"],
@@ -171,7 +172,7 @@ def setup_chat_research_review():
     except KeyError:
         return jsonify({"ok": False, "error": "no research to review"}), 404
     except ValueError as e:
-        return jsonify({"ok": False, "error": "refused", "message": str(e)}), 422
+        return api_error(e, "Couldn't review the research", 422, shape="ok", key="message", error="refused")
     return jsonify({"ok": True, **out, "research": sc.research_view()})
 
 
@@ -194,7 +195,7 @@ def setup_chat_profile_answers():
     except sc.Refused as e:
         return _refused(e)
     except ValueError as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return api_error(e, "Couldn't save the answers", 400, shape="ok")
     if b.get("rebuild"):
         st = sc.load_state()
         p = setup_profile.load_profile()

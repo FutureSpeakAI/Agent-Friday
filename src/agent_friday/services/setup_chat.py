@@ -38,18 +38,21 @@ from agent_friday.paths import friday_home
 from agent_friday.services import secret_shapes
 from agent_friday.services import setup_chat_copy as copy
 from agent_friday.services import setup_profile as profile
+from agent_friday.user_errors import UserFacingError, log_failure
 
 _LOCK = threading.RLock()
 
 STAGES = copy.STAGES
 
 
-class Conflict(Exception):
-    """The answer was for a stage the chat is no longer on."""
+class Conflict(UserFacingError):
+    """The answer was for a stage the chat is no longer on. The message is
+    written for the user."""
 
 
-class Refused(ValueError):
-    """The answer cannot be accepted; `payload` says why, without its value."""
+class Refused(UserFacingError, ValueError):
+    """The answer cannot be accepted; `payload` says why, without its value.
+    The message is written for the user."""
 
     def __init__(self, message, payload=None):
         super().__init__(message)
@@ -509,7 +512,10 @@ def _on_research_seeds(st, transcript, value, text):
         _enter(st, transcript, "questions")
         return
     except ValueError as e:
-        raise Refused(str(e), {"error": "no_seeds", "message": str(e)})
+        msg = (e.user_message if isinstance(e, UserFacingError)
+               else "Couldn't start the research (error %s)"
+               % log_failure(e, "Setup research failed to start"))
+        raise Refused(msg, {"error": "no_seeds", "message": msg})
     st["research"] = {"state": "running", "job_id": out["job_id"],
                       "task_id": out.get("task_id") or ""}
     msg = copy.RESEARCH_STARTED
