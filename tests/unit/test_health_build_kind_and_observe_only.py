@@ -134,15 +134,62 @@ def test_a_layer_that_really_is_down_is_still_degraded(monkeypatch):
     assert "DEGRADED" in text and "embedding" in text, text
 
 
-def test_a_missing_dependency_is_still_degraded(monkeypatch):
-    """Nothing installed at all: presidio is then genuinely absent, not
-    deliberately inert, and that is a fault."""
+def test_presidio_absent_from_the_build_is_intended_not_degraded(monkeypatch):
+    """SUPERSEDED 2026-09-26: this asserted the opposite.
+
+    A build that deliberately leaves Presidio out is the normal case -- the
+    capability report already says "presidio_analyzer absent by design" -- and
+    two parts of one product must not disagree about whether the same state is
+    intended. So absent reads as a choice, like observe-only, and the line says
+    which of the two it is.
+    """
     monkeypatch.delenv("FRIDAY_PRESIDIO_ENFORCE", raising=False)
-    monkeypatch.setattr(pl, "_module_available", lambda m: False)
+    monkeypatch.setattr(pl, "_module_available",
+                        lambda m: m != "presidio_analyzer")
+    monkeypatch.setattr(pl, "_embedding_runtime",
+                        lambda mod: (True, "%s loaded" % mod))
+    chk = pl.self_check()
+    assert "presidio" in chk["by_design"], chk
+    assert "presidio" not in chk["missing"], chk
+    assert chk["ok"] is True
+    text = pl.describe()
+    assert "DEGRADED" not in text, text
+    assert "not installed in this build" in text, text
+
+
+def test_presidio_asked_for_and_missing_is_a_fault(monkeypatch):
+    """Enforcement is somebody saying they want it deciding. Then absent is a
+    fault, whatever the default would have been."""
+    monkeypatch.setenv("FRIDAY_PRESIDIO_ENFORCE", "1")
+    monkeypatch.setattr(pl, "_module_available",
+                        lambda m: m != "presidio_analyzer")
+    monkeypatch.setattr(pl, "_embedding_runtime",
+                        lambda mod: (True, "%s loaded" % mod))
     chk = pl.self_check()
     assert "presidio" in chk["missing"], chk
     assert chk["ok"] is False
     assert "DEGRADED" in pl.describe()
+
+
+def test_the_semantic_layer_absent_is_still_degraded(monkeypatch):
+    """Layer 3 is shipped by the installer by default, so its absence means an
+    install that meant to have it went wrong. Still a fault."""
+    monkeypatch.delenv("FRIDAY_PRESIDIO_ENFORCE", raising=False)
+    monkeypatch.setattr(pl, "_module_available",
+                        lambda m: m != "sentence_transformers")
+    chk = pl.self_check()
+    assert "embedding" in chk["missing"], chk
+    assert "embedding" not in chk["by_design"], chk
+    assert chk["ok"] is False
+    assert "DEGRADED" in pl.describe()
+
+
+def test_observe_only_still_says_observe_only(monkeypatch):
+    """The two by-design states are distinguishable in the line."""
+    _presidio_installed_observe_only(monkeypatch)
+    text = pl.describe()
+    assert "observe-only" in text, text
+    assert "not installed in this build" not in text, text
 
 
 def test_enforced_presidio_is_an_active_layer(monkeypatch):

@@ -204,16 +204,35 @@ def self_check() -> dict:
     }
 
 
+#: Layers this build does not commit to shipping or running. Inactive, they are
+#: a CHOICE and not a fault, however they came to be inactive -- absent from the
+#: build entirely, or installed and deliberately observe-only.
+#:
+#: Presidio is here because the capability report already describes it that way
+#: ("presidio_analyzer absent by design -- the classifier runs Layers 1a+1b
+#: only"), and two parts of one product must not disagree about whether the same
+#: state is intended. Layer 3 is deliberately NOT here: the Windows installer
+#: ships sentence_transformers by default, so its absence means something went
+#: wrong with an install that meant to have it.
+_BY_DESIGN_OPTIONAL = frozenset({"presidio"})
+
+
 def _off_by_design(name: str, probed: dict) -> bool:
     """Is this layer inactive because somebody chose that, not because it broke?
 
-    Only the observe-only case qualifies today: presidio present and importable
-    but not enforced. Presidio that is genuinely ABSENT is a fault, because the
-    build claimed a dependency it does not have.
+    True for a layer the build never promised (`_BY_DESIGN_OPTIONAL`), whether it
+    is absent or present-but-inert. False for everything else, so a layer that is
+    installed or expected and is down still reads as a fault.
+
+    The exception is asking for it: with FRIDAY_PRESIDIO_ENFORCE=1 somebody has
+    said they want Presidio deciding, and a layer that was asked for and cannot
+    run is a fault no matter what the default would have been.
     """
-    if name != "presidio":
+    if name not in _BY_DESIGN_OPTIONAL:
         return False
-    return "OBSERVE-ONLY" in str(probed.get("reason") or "").upper()
+    if name == "presidio" and enforcement_enabled():
+        return False
+    return True
 
 
 def describe() -> str:
@@ -231,9 +250,17 @@ def describe() -> str:
     # -- but said as a choice, not as a failure.
     aside = ""
     if chk["by_design"]:
-        names = ", ".join(chk["by_design"])
-        aside = (" %s installed and observe-only by design, so it is not "
-                 "counted as protection in force." % names)
+        # Say WHICH state it is in, because "by design" covers both a layer this
+        # build leaves out and one it ships but keeps inert, and the reader is
+        # entitled to know which.
+        bits = []
+        for m in chk["by_design"]:
+            reason = str((chk["detail"].get(m) or {}).get("reason") or "")
+            how = ("installed and observe-only" if "OBSERVE-ONLY" in reason.upper()
+                   else "not installed in this build")
+            bits.append("%s %s" % (m, how))
+        aside = (" %s by design, so it is not counted as protection in force."
+                 % "; ".join(bits))
     if chk["ok"]:
         return (f"Sensitivity classifier: {n}/{total} layers active "
                 f"({where}).{aside}")
