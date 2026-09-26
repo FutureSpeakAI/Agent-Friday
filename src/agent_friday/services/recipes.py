@@ -8,7 +8,7 @@ import yaml, os, re, time, threading, uuid
 from pathlib import Path
 from datetime import datetime
 
-from agent_friday.paths import friday_home
+from agent_friday.paths import contained, friday_home, safe_name
 
 RECIPES_DIR = friday_home() / "recipes"
 RECIPES_DIR.mkdir(parents=True, exist_ok=True)
@@ -85,6 +85,12 @@ class Recipe:
         return plan
 
 
+def recipe_path(name: str) -> Path:
+    """The YAML file for a recipe name. Raises ValueError unless the name is
+    one plain file name inside RECIPES_DIR."""
+    return contained(RECIPES_DIR, safe_name("%s.yaml" % name, what="recipe name"))
+
+
 def load_recipe(path: str) -> Recipe:
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
@@ -105,7 +111,7 @@ def list_recipes() -> list:
 
 def save_recipe(data: dict) -> str:
     name = data.get("name", "unnamed").replace(" ", "-").lower()
-    path = RECIPES_DIR / f"{name}.yaml"
+    path = recipe_path(name)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
     return str(path)

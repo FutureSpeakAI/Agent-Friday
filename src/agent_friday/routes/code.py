@@ -26,6 +26,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import contained
 from agent_friday.core import (
     HOME,
     VIBE_TERMINALS,
@@ -671,7 +672,7 @@ def code_plans_list():
 @code_bp.route('/api/code/plan/<plan_id>')
 def code_plan_get(plan_id):
     pid = re.sub(r'[^\w\-]', '', plan_id)
-    p = CODE_PLANS_DIR / f"{pid}.json"
+    p = contained(CODE_PLANS_DIR, f"{pid}.json")
     if not p.exists():
         return jsonify({"status": "error", "message": "plan not found"}), 404
     try:
@@ -685,7 +686,7 @@ def code_apply():
     """Write the file changes from a saved plan onto disk (inside ~/Projects/)."""
     data = request.get_json(silent=True) or {}
     pid = re.sub(r'[^\w\-]', '', data.get('plan_id', ''))
-    p = CODE_PLANS_DIR / f"{pid}.json"
+    p = contained(CODE_PLANS_DIR, f"{pid}.json")
     if not p.exists():
         return jsonify({"status": "error", "message": "plan not found"}), 404
     try:

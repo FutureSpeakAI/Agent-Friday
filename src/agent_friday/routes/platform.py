@@ -28,7 +28,10 @@ platform_bp = Blueprint("platform", __name__)
 # ── Recipes ──────────────────────────────────────────────────────────────────
 
 def _find_recipe(name: str):
-    path = recipes.RECIPES_DIR / f"{name}.yaml"
+    try:
+        path = recipes.recipe_path(name)
+    except ValueError:
+        return None
     if not path.exists():
         return None
     return recipes.load_recipe(str(path))
@@ -46,7 +49,10 @@ def api_recipes_save():
         recipes.Recipe(data).validate()
     except recipes.RecipeValidationError as e:
         return jsonify({"error": str(e)}), 400
-    path = recipes.save_recipe(data)
+    try:
+        path = recipes.save_recipe(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify({"ok": True, "path": path})
 
 
@@ -665,7 +671,10 @@ def api_distros_save():
     data = request.get_json(silent=True) or {}
     if not (data.get("name") or "").strip():
         return jsonify({"error": "distro requires a 'name'"}), 400
-    path = distributions.save_distro(data)
+    try:
+        path = distributions.save_distro(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify({"ok": True, "path": path})
 
 

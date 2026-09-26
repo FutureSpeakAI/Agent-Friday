@@ -42,6 +42,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from agent_friday.paths import contained, safe_name
+
 _log = logging.getLogger("friday.task_journal")
 
 _LOCK = threading.RLock()
@@ -74,7 +76,10 @@ def tasks_dir() -> Path:
 
 
 def task_dir(task_id: str) -> Path:
-    return tasks_dir() / str(task_id)
+    """The task's journal directory. Raises ValueError for an id that is not
+    a single plain name: a task id arrives in URLs, and `..` must never turn a
+    delete of one task into a delete of the directory above it."""
+    return contained(tasks_dir(), safe_name(task_id, what="task id"))
 
 
 def _index_path() -> Path:
@@ -231,7 +236,10 @@ def append(task_id: str, kind: str, **fields) -> Optional[int]:
 
 def read(task_id: str, since: int = 0, limit: Optional[int] = None) -> List[dict]:
     """Events with seq > since, oldest first."""
-    p = task_dir(task_id) / "journal.jsonl"
+    try:
+        p = task_dir(task_id) / "journal.jsonl"
+    except ValueError:
+        return []
     if not p.exists():
         return []
     out: List[dict] = []
@@ -278,7 +286,10 @@ def write_state(task_id: str, state: Dict[str, Any]) -> bool:
 
 
 def read_state(task_id: str) -> Optional[Dict[str, Any]]:
-    p = task_dir(task_id) / "state.json"
+    try:
+        p = task_dir(task_id) / "state.json"
+    except ValueError:
+        return None
     if not p.exists():
         return None
     try:
@@ -309,7 +320,10 @@ def write_blob(task_id: str, name: str, obj: Any) -> bool:
 
 
 def read_blob(task_id: str, name: str) -> Optional[Any]:
-    p = task_dir(task_id) / name
+    try:
+        p = task_dir(task_id) / name
+    except ValueError:
+        return None
     if not p.exists():
         return None
     try:
@@ -337,8 +351,8 @@ def blob_exists(task_id: str, name: str) -> bool:
 
 
 def delete_blob(task_id: str, name: str) -> bool:
-    p = task_dir(task_id) / name
     try:
+        p = task_dir(task_id) / name
         if p.exists():
             p.unlink()
             return True
@@ -426,8 +440,11 @@ def _on_write_failure(task_id: str, detail: str) -> None:
 def delete(task_id: str) -> bool:
     """Remove a task's journal directory and mark it deleted in the index.
     The user-visible delete; never automatic."""
-    with _LOCK:
+    try:
         d = task_dir(task_id)
+    except ValueError:
+        return False
+    with _LOCK:
         existed = d.exists()
         if existed:
             shutil.rmtree(d, ignore_errors=True)

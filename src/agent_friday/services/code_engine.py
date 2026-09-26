@@ -285,7 +285,9 @@ def _safe_project_path(target):
         raw = os.path.join(_projects_root(), raw)
     rp = os.path.realpath(raw)
     root = _projects_root()
-    if rp == root or rp.startswith(root + os.sep):
+    if rp == root:
+        return root
+    if rp.startswith(root + os.sep):
         return rp
     return None
 

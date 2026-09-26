@@ -64,7 +64,11 @@ def api_skills_import():
             name = request.form.get('name') or None
             tmpd = Path(_tf.mkdtemp(prefix='skup_'))
             try:
-                dest = tmpd / (upload.filename or 'skill.zip')
+                # The upload keeps its own name (the extension picks zip or
+                # yaml) but never its directories: it lands inside tmpd.
+                from agent_friday.paths import contained
+                base = (upload.filename or '').replace('\\', '/').rsplit('/', 1)[-1]
+                dest = contained(tmpd, base if base not in ('', '.', '..') else 'skill.zip')
                 upload.save(str(dest))
                 res = _skreg.import_skill(dest, name=name)
             finally:

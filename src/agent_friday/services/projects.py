@@ -45,6 +45,7 @@ import time
 from pathlib import Path
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.paths import contained, safe_name
 
 _LOCK = threading.RLock()
 
@@ -59,7 +60,9 @@ def _root() -> Path:
 
 
 def _dir(pid: str) -> Path:
-    return _root() / pid
+    """The project's folder. Raises ValueError unless the id is one plain name
+    inside the projects root; ids arrive in URLs."""
+    return contained(_root(), safe_name(pid, what="project id"))
 
 
 def new_id() -> str:
@@ -104,7 +107,10 @@ def _blank(pid: str, name: str) -> dict:
 def load(pid: str) -> dict | None:
     if not pid:
         return None
-    p = _dir(pid) / "project.json"
+    try:
+        p = _dir(pid) / "project.json"
+    except ValueError:
+        return None
     if not p.exists():
         return None
     try:
@@ -194,9 +200,9 @@ def delete(pid: str) -> int:
             if conv.get("project") == pid:
                 _conv.patch(conv["id"], project=None)
                 detached += 1
-        d = _dir(pid)
-        p = d / "project.json"
         try:
+            d = _dir(pid)
+            p = d / "project.json"
             if p.exists():
                 p.unlink()
             if d.exists() and not any(d.iterdir()):

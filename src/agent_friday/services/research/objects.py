@@ -46,7 +46,10 @@ def research_root() -> Path:
 
 
 def commission_dir(commission_id: str) -> Path:
-    return research_root() / commission_id
+    """The commission's folder. Raises ValueError unless the id is one plain
+    name inside the research root; ids arrive in URLs and tool calls."""
+    from agent_friday.paths import contained, safe_name
+    return contained(research_root(), safe_name(commission_id, what="commission id"))
 
 
 DEFAULT_BUDGET = {
@@ -210,8 +213,8 @@ class Commission:
 
     @classmethod
     def load(cls, commission_id: str) -> "Commission | None":
-        p = commission_dir(commission_id) / "commission.json"
         try:
+            p = commission_dir(commission_id) / "commission.json"
             d = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             return None

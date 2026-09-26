@@ -29,6 +29,7 @@ _log = logging.getLogger("friday.misc_engine")
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import contained, safe_name
 from agent_friday.core import (
     FRIDAY_DIR,
     HOME,
@@ -455,7 +456,9 @@ def _enrich_calendar_event(event_id, research):
     # Try MCP-based Google Calendar update
     # The gcal tools are invoked at the agent/MCP layer, not directly here.
     # This endpoint stores the enrichment and exposes it for MCP tool orchestration.
-    enrichment_file = FLOW_QUEUE_DIR / f"calendar-enrich-{event_id}.json"
+    # The event id comes from the request; it names one file in the queue.
+    enrichment_file = contained(FLOW_QUEUE_DIR, safe_name(
+        f"calendar-enrich-{event_id}.json", what="event id"))
     payload = {
         "event_id": event_id,
         "research": research.strip(),

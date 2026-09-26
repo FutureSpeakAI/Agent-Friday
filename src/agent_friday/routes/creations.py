@@ -27,6 +27,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import contained, safe_name
 from agent_friday.core import (
     CREATIONS_DIR,
     login_required,
@@ -114,12 +115,17 @@ def serve_creation(filename):
     # filename must not become a way to read the disk.
     try:
         from agent_friday.services import office_engine as _oe
-        if not (CREATIONS_DIR / filename).exists():
-            base = _oe.DOCUMENTS_DIR.resolve()
-            for candidate in (base / filename,
-                              base / _oe.RENDER_DIR / filename):
-                full = candidate.resolve()
-                if (full.is_file() and base in full.parents):
+        try:
+            in_creations = contained(CREATIONS_DIR, filename).exists()
+        except ValueError:
+            in_creations = False
+        if not in_creations:
+            for rel in (filename, f"{_oe.RENDER_DIR}/{filename}"):
+                try:
+                    full = contained(_oe.DOCUMENTS_DIR, rel)
+                except ValueError:
+                    continue
+                if full.is_file():
                     return send_from_directory(str(full.parent), full.name)
     except Exception:
         pass
@@ -137,8 +143,11 @@ def serve_creation_framed(filename):
     except Exception:
         pass
     safe = os.path.basename(filename)
-    fpath = CREATIONS_DIR / safe
-    if not fpath.exists() or not fpath.is_file():
+    try:
+        fpath = contained(CREATIONS_DIR, safe_name(safe, what="creation name"))
+    except ValueError:
+        return ("Creation not found.", 404)
+    if not fpath.is_file():
         return ("Creation not found.", 404)
     ext = fpath.suffix.lower().lstrip('.')
     # Everything interpolated into the page is escaped: the file name, and the
@@ -551,12 +560,23 @@ def provenance_license_options():
                     "default": provenance.DEFAULT_LICENSE_TERMS})
 
 
+def _creation_file(filename):
+    """The creation a URL names by its file name, or None: only the last path
+    component counts, and it must be an existing file directly inside
+    CREATIONS_DIR."""
+    try:
+        p = contained(CREATIONS_DIR, safe_name(Path(filename).name, what="creation name"))
+    except ValueError:
+        return None
+    return p if p.is_file() else None
+
+
 @creations_bp.route('/api/provenance/by-file/<path:filename>/license', methods=['POST'])
 def provenance_set_license(filename):
     """Owner changes a creation's license terms (append-only edit, re-signed)."""
     from agent_friday.services import provenance
-    p = CREATIONS_DIR / Path(filename).name
-    if not p.exists():
+    p = _creation_file(filename)
+    if p is None:
         return jsonify({"status": "error", "message": "Creation not found."})
     manifest = provenance.manifest_for_file(p)
     if not manifest:
@@ -575,8 +595,8 @@ def provenance_by_file(filename):
     """Verify provenance for a creation by filename (hashes the file, reads its
     sidecar)."""
     from agent_friday.services import provenance
-    p = CREATIONS_DIR / Path(filename).name
-    if not p.exists():
+    p = _creation_file(filename)
+    if p is None:
         return jsonify({"status": "error", "message": "Creation not found."})
     manifest = provenance.manifest_for_file(p)
     if not manifest:

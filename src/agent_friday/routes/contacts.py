@@ -26,6 +26,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import contained, safe_name
 from agent_friday.core import (
     FRIDAY_DIR,
     VIBE_TERMINALS,
@@ -399,8 +400,14 @@ def get_contact(name):
         return jsonify({"status": "error", "message": "Contact not found"}), 404
 
     # Look for a stored research file.
-    research_file = _contacts_research_dir() / f"{target.replace(' ', '_')}.md"
-    research = research_file.read_text(encoding='utf-8') if research_file.exists() else ''
+    # A contact's research note is one file in the research folder; a name
+    # that is not a plain file name has none.
+    try:
+        research_file = contained(_contacts_research_dir(), safe_name(
+            f"{target.replace(' ', '_')}.md", what="contact name"))
+        research = research_file.read_text(encoding='utf-8') if research_file.exists() else ''
+    except ValueError:
+        research = ''
 
     return jsonify({"status": "ok", "contact": match, "research": research})
 
@@ -413,7 +420,11 @@ def contacts_research():
     if not name:
         return jsonify({"status": "error", "message": "name required"}), 400
     key = name.lower().replace(' ', '_')
-    research_file = _contacts_research_dir() / f"{key}.md"
+    try:
+        research_file = contained(_contacts_research_dir(), safe_name(
+            f"{key}.md", what="contact name"))
+    except ValueError:
+        return jsonify({"status": "error", "message": "invalid contact name"}), 400
     stamp = datetime.now().isoformat()
     if not research_file.exists():
         research_file.write_text(

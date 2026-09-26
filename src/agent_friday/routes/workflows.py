@@ -29,6 +29,7 @@ _log = logging.getLogger("friday.routes.workflows")
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import contained, safe_name
 from agent_friday.core import (
     login_required,
     VIBE_TERMINALS,
@@ -150,12 +151,13 @@ def list_content_drafts():
 @workflows_bp.route('/api/content/drafts/<filename>')
 def serve_content_draft(filename):
     """Serve a saved draft HTML file for browser viewing."""
-    safe_name = Path(filename).name
-    filepath = CONTENT_DRAFTS_DIR / safe_name
-    if not filepath.exists() or not filepath.is_file():
+    try:
+        filepath = contained(CONTENT_DRAFTS_DIR, safe_name(filename, what="draft name"))
+    except ValueError:
         return jsonify({'status': 'not_found'}), 404
-    CONTENT_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-    return send_from_directory(str(CONTENT_DRAFTS_DIR), safe_name)
+    if not filepath.is_file():
+        return jsonify({'status': 'not_found'}), 404
+    return send_from_directory(str(filepath.parent), filepath.name)
 
 
 @workflows_bp.route('/api/flow', methods=['POST'])
@@ -221,7 +223,13 @@ def confirm_draft():
     if not draft_id:
         return jsonify({"status": "error", "message": "No draft_id provided"}), 400
 
-    draft_file = FLOW_QUEUE_DIR / f"gmail-draft-{draft_id}.json"
+    # The id names one queued file; it must not steer the read-modify-write
+    # below at any other JSON on the disk.
+    try:
+        draft_file = contained(FLOW_QUEUE_DIR, safe_name(
+            f"gmail-draft-{draft_id}.json", what="draft id"))
+    except ValueError:
+        return jsonify({"status": "error", "message": "Draft not found"}), 404
     if not draft_file.exists():
         return jsonify({"status": "error", "message": "Draft not found"}), 404
 

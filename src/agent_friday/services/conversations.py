@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.paths import contained, safe_name
 
 # The conversation everything unaddressed reports into: voice, channels, the
 # scheduler, and any caller that predates conversation_id. Named rather than
@@ -54,7 +55,9 @@ def _root() -> Path:
 
 
 def _dir(cid: str) -> Path:
-    return _root() / cid
+    """The conversation's folder. Raises ValueError unless the id is one plain
+    name inside the conversations root; ids arrive in requests."""
+    return contained(_root(), safe_name(cid, what="conversation id"))
 
 
 def new_id() -> str:
@@ -112,7 +115,10 @@ def _blank(cid: str, title: str = "New chat") -> dict:
 # ── Metadata ────────────────────────────────────────────────────────────────
 
 def load(cid: str) -> dict | None:
-    p = _dir(cid) / "conversation.json"
+    try:
+        p = _dir(cid) / "conversation.json"
+    except ValueError:
+        return None
     if not p.exists():
         return None
     try:
@@ -278,7 +284,10 @@ def append(cid: str, message: dict) -> dict:
 
 
 def messages(cid: str, limit: int | None = None) -> list[dict]:
-    p = _dir(cid) / "messages.jsonl"
+    try:
+        p = _dir(cid) / "messages.jsonl"
+    except ValueError:
+        return []
     if not p.exists():
         return []
     out = []

@@ -7,7 +7,7 @@ Layered config profiles for different user personas (journalist, developer, etc.
 import yaml, os, sys
 from pathlib import Path
 
-from agent_friday.paths import friday_home
+from agent_friday.paths import contained, friday_home, safe_name
 
 DISTROS_DIR = friday_home() / "distros"
 DISTROS_DIR.mkdir(parents=True, exist_ok=True)
@@ -88,9 +88,15 @@ class Distribution:
         self.raw = data
 
 
+def _distro_path(name: str) -> Path:
+    """The YAML file for a distribution name. Raises ValueError unless the
+    name is one plain file name inside DISTROS_DIR."""
+    return contained(DISTROS_DIR, safe_name("%s.yaml" % name, what="distribution name"))
+
+
 def load_distro(name: str) -> Distribution:
     # Check custom distros first
-    custom_path = DISTROS_DIR / f"{name}.yaml"
+    custom_path = _distro_path(name)
     if custom_path.exists():
         with open(custom_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
@@ -125,7 +131,7 @@ def list_distros() -> list:
 
 def save_distro(data: dict) -> str:
     name = data.get("name", "custom").replace(" ", "-").lower()
-    path = DISTROS_DIR / f"{name}.yaml"
+    path = _distro_path(name)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
     return str(path)
