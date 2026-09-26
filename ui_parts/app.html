@@ -6637,9 +6637,11 @@ function SystemWS(){
   const [apBusy,setApBusy]=useState('');
   const apRef=useRef(null);
   const refreshApprovals=()=>fetch('/api/approvals?status=pending').then(r=>r.json()).then(d=>setApprovals(Array.isArray(d?.approvals)?d.approvals:[])).catch(()=>{});
+  // The list follows the page's approval feed, so a card decided anywhere leaves it at once.
+  useEffect(()=>fridayApprovalFeed.subscribe(setApprovals),[]);
   const decideApproval=async(id,decision)=>{
     if(apBusy)return;setApBusy(id);
-    try{await fetch('/api/approvals/'+encodeURIComponent(id)+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})})}catch(e){}
+    await fridayDecideApproval(id,decision);
     setApBusy('');refreshApprovals();
   };
   // Deep-link: notifications target {workspace:'system',tab:'self-improvement'|'approvals'} → scroll the card into view.
@@ -6756,17 +6758,7 @@ function SystemWS(){
       </div>
       {approvals.length===0
         ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>Nothing waiting on you. Actions Friday won't take on her own — connecting Google, gated goal steps, spend — show up here.</div>
-        :approvals.map(a=><div key={a.approval_id} className="card" style={{marginBottom:6,padding:8}}>
-            <div style={{fontSize:12,color:'#ddd'}}>{a.title}</div>
-            {a.action_description&&<div style={{fontSize:11,color:'#999',marginTop:2}}>{a.action_description}</div>}
-            <ApprovalPagePreview a={a}/>
-            <ApprovalProvenance p={a.provenance}/>
-            <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginTop:4}}>{a.kind} · {a.policy_class}{a.expires_at?' · expires '+new Date(a.expires_at*1000).toLocaleString():''}</div>
-            <div style={{display:'flex',gap:6,marginTop:6}}>
-              <button className="btn" style={{fontSize:11,padding:'2px 10px',color:'#00ff80'}} disabled={!!apBusy} onClick={()=>decideApproval(a.approval_id,'approve')}>Approve</button>
-              <button className="btn" style={{fontSize:11,padding:'2px 10px',color:'#ff0080'}} disabled={!!apBusy} onClick={()=>decideApproval(a.approval_id,'deny')}>Deny</button>
-            </div>
-          </div>)}
+        :approvals.map(a=><ApprovalCardBody key={a.approval_id} a={a} busy={apBusy} onDecide={decideApproval}/>)}
     </div>
 
     <div className="card-title">Disk Space</div>
@@ -17613,17 +17605,8 @@ function ApprovalProvenance({p}){
   </div>;
 }
 function StandaloneApprovals(){
-  const[items,setItems]=useState([]);const[open,setOpen]=useState(false);const[busy,setBusy]=useState('');const[fresh,setFresh]=useState(null);
-  const seen=useRef(null);
-  const load=useCallback(()=>fetch('/api/approvals?status=pending').then(r=>r.json()).then(d=>{
-    const list=Array.isArray(d&&d.approvals)?d.approvals:[];
-    if(seen.current){const nu=list.find(a=>!seen.current.has(a.approval_id));if(nu)setFresh(nu)}
-    seen.current=new Set(list.map(a=>a.approval_id));setItems(list);
-  }).catch(()=>{}),[]);
-  useEffect(()=>{load();const iv=setInterval(()=>{if(document.visibilityState!=='hidden')load()},8000);const onVis=()=>{if(document.visibilityState==='visible')load()};document.addEventListener('visibilitychange',onVis);return()=>{clearInterval(iv);document.removeEventListener('visibilitychange',onVis)}},[load]);
-  useEffect(()=>{if(!fresh)return;const t=setTimeout(()=>setFresh(null),12000);return()=>clearTimeout(t)},[fresh]);
-  const decide=(id,decision)=>{setBusy(id);fetch('/api/approvals/'+encodeURIComponent(id)+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})}).catch(()=>{}).then(()=>{setBusy('');load()})};
-  useEffect(()=>{window.__fridayPendingApprovals=items.length},[items.length]);
+  const items=useApprovalFeed();const[open,setOpen]=useState(false);const[busy,setBusy]=useState('');
+  const decide=(id,decision)=>{setBusy(id);fridayDecideApproval(id,decision).then(()=>setBusy(''))};
   return(<>
     <button className={'ws-tab-ask'+(items.length?'':' none')} data-testid="ws-tab-approvals" onClick={()=>setOpen(v=>!v)} title={items.length?'Friday is waiting for your approval':'Nothing is waiting for your approval'}>{items.length?'✋ '+items.length+' waiting for you':'✋ No approvals waiting'}</button>
     {open&&<div className="ws-tab-drawer" role="dialog" aria-label="Approvals">
@@ -17639,8 +17622,178 @@ function StandaloneApprovals(){
           <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#ef4444',color:'#fca5a5'}} onClick={()=>decide(a.approval_id,'deny')}>Deny</button>
         </div></div>)}
     </div>}
-    {fresh&&!open&&<div className="ws-tab-toast" role="status">✋ Friday is asking: {fresh.title||'an approval'}<button className="ws-tab-link" onClick={()=>{setOpen(true);setFresh(null)}}>Review</button></div>}
   </>);
+}
+// ── Approval cards in every open Friday page ──
+// One feed per page (/api/approvals/events, services/approval_feed.py): the
+// server sends the pending list on connect, then each card as it is raised and
+// each decision as it happens, wherever it was made. The popup, the System
+// list and a workspace tab's drawer all read this one list, so a decision in
+// any tab, by voice or by a text reply takes the card off every page at once.
+//
+// The tabs of one address share ONE stream. A browser allows about six open
+// connections per address, and a stream per tab would use them up and stall
+// every other request once enough Friday tabs were open. The tab holding the
+// "friday-approvals-feed" Web Lock holds the stream and relays each event to
+// the others on a BroadcastChannel; a tab that joins asks it for the list.
+// A holder gives the stream up when its page is closed or frozen (a sleeping
+// tab), and another tab takes over and gets the list afresh from the server;
+// a frozen tab that wakes queues for the stream again rather than assuming it
+// still holds it. A holder that stops relaying without either (a crash) is
+// taken over after FEED_SILENT_MS without a server heartbeat.
+const FEED_SILENT_MS = 60000;
+const fridayApprovalFeed = (() => {
+  let cards = new Map(), es = null, started = false, leader = false, heard = Date.now(), release = null;
+  const listeners = new Set();
+  let bc = null;
+  try { bc = new BroadcastChannel('friday-approvals'); } catch (_) {}
+  const list = () => Array.from(cards.values()).sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+  const emit = () => {
+    const l = list();
+    window.__fridayPendingApprovals = l.length;
+    listeners.forEach(fn => { try { fn(l); } catch (_) {} });
+  };
+  const apply = d => {
+    if (!d || !d.type) return;
+    heard = Date.now();
+    if (d.type === 'snapshot') { cards = new Map((d.pending || []).map(a => [a.approval_id, a])); emit(); }
+    else if (d.type === 'pending' && d.approval && d.approval.status === 'pending') { cards.set(d.approval.approval_id, d.approval); emit(); }
+    else if (d.type === 'resolved') { if (cards.delete(d.approval_id)) emit(); }
+  };
+  const onServer = e => {
+    let d;
+    try { d = JSON.parse(e.data); } catch (_) { return; }
+    apply(d);
+    if (bc) { try { bc.postMessage(d); } catch (_) {} }
+  };
+  const connect = () => {
+    if (es) return;
+    try {
+      es = new EventSource('/api/approvals/events');
+      es.onmessage = onServer;
+      // EventSource retries a dropped stream by itself and gets the pending
+      // list again on reconnect. A refused one (signed out, server restarting
+      // behind the relay) is closed for good, so it is reopened here.
+      es.onerror = () => { if (es && es.readyState === 2) { es = null; if (leader) setTimeout(connect, 5000); } };
+    } catch (_) { es = null; if (leader) setTimeout(connect, 5000); }
+  };
+  const lead = () => { leader = true; heard = Date.now(); connect(); };
+  const follow = () => {
+    leader = false;
+    if (es) { try { es.close(); } catch (_) {} es = null; }
+  };
+  const claim = steal => {
+    // Held until this tab gives it up (relinquish), or until another tab
+    // steals it, which rejects the request here.
+    navigator.locks.request('friday-approvals-feed', steal ? { steal: true } : {},
+      () => new Promise(res => { release = res; lead(); })).catch(() => { release = null; follow(); claim(false); });
+  };
+  const relinquish = () => {
+    const r = release;
+    release = null;
+    follow();
+    if (r) r();
+  };
+  const start = () => {
+    if (!(bc && navigator.locks && navigator.locks.request)) { lead(); return; }
+    bc.onmessage = e => {
+      const d = e.data || {};
+      if (d.type === 'hello') { if (leader) bc.postMessage({ type: 'snapshot', pending: list() }); return; }
+      if (!leader) apply(d);
+    };
+    claim(false);
+    bc.postMessage({ type: 'hello' });
+    window.addEventListener('pagehide', relinquish);
+    document.addEventListener('freeze', relinquish);
+    // Waking never assumes the stream is still ours: give it up and queue again.
+    const rejoin = () => { relinquish(); claim(false); };
+    document.addEventListener('resume', rejoin);
+    window.addEventListener('pageshow', e => { if (e.persisted) rejoin(); });
+    setInterval(() => {
+      if (!leader && Date.now() - heard > FEED_SILENT_MS) { heard = Date.now(); claim(true); }
+    }, 5000);
+  };
+  return {
+    subscribe(fn) {
+      listeners.add(fn);
+      if (!started) { started = true; start(); }
+      fn(list());
+      return () => { listeners.delete(fn); };
+    },
+    drop(id) { if (cards.delete(id)) emit(); },
+    isLeader() { return leader; },
+  };
+})();
+window.fridayApprovalFeed = fridayApprovalFeed;
+function useApprovalFeed() {
+  const [items, setItems] = useState([]);
+  useEffect(() => fridayApprovalFeed.subscribe(setItems), []);
+  return items;
+}
+// Approve or decline from any page. Exactly one decision wins (the server
+// decides under one lock); a page that lost the race is told what happened.
+function fridayDecideApproval(id, decision) {
+  return fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision })
+  }).then(r => r.json()).then(d => {
+    if (d && d.ok) fridayApprovalFeed.drop(id);
+    if (d && d.already_decided) {
+      const a = d.approval || {}, st = a.status;
+      const what = st === 'approved' ? 'approved' : st === 'denied' ? 'declined' : st === 'expired' ? 'expired' : st || 'decided';
+      const by = st === 'expired' ? '' : /sms/.test(a.decided_by || '') ? ' by text message' : /voice/.test(a.decided_by || '') ? ' by voice' : ' elsewhere';
+      fridayToast('Already decided: this was ' + what + by + '.');
+    }
+    return d;
+  }).catch(() => { fridayToast('Could not reach Friday to record that. The card is still waiting.'); return null; });
+}
+// One approval card: what it will do, where its details came from, and the
+// two buttons. The System list and the popup render this same body.
+function ApprovalCardBody({ a, busy, onDecide }) {
+  return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id}>
+    <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
+    {a.action_description && <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}
+    <ApprovalPagePreview a={a} />
+    <ApprovalProvenance p={a.provenance} />
+    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 4 }}>{a.kind} · {a.policy_class}{a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''}</div>
+    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#00ff80' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'approve')}>Approve</button>
+      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#ff0080' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'deny')}>Deny</button>
+    </div>
+  </div>);
+}
+// The popup: on every page, whatever is open or focused, as long as a card is
+// waiting. "Later" folds it in this page only, to a pill on the desktop and the
+// chat page, and to the header's own "waiting for you" button in a workspace
+// tab (a pill there would cover the workspace's controls); a new card opens it.
+function ApprovalPopups() {
+  const items = useApprovalFeed();
+  const [later, setLater] = useState(false);
+  const [busy, setBusy] = useState('');
+  const seen = useRef(new Set());
+  useEffect(() => {
+    const fresh = items.some(a => !seen.current.has(a.approval_id));
+    seen.current = new Set(items.map(a => a.approval_id));
+    if (fresh) setLater(false);
+  }, [items]);
+  if (!items.length) return null;
+  const decide = (id, decision) => {
+    if (busy) return;
+    setBusy(id);
+    fridayDecideApproval(id, decision).then(() => setBusy(''));
+  };
+  const pos = { position: 'fixed', top: 48, right: 16, zIndex: 9800 };
+  if (later && window.__FRIDAY_STANDALONE__) return null;
+  if (later) return <button type="button" className="btn" data-testid="approval-popup-pill"
+    style={Object.assign({}, pos, { borderColor: 'rgba(245,158,11,0.6)', color: '#f59e0b', background: 'rgba(10,14,26,0.9)' })}
+    onClick={() => setLater(false)}>✋ {items.length === 1 ? '1 approval waiting' : items.length + ' approvals waiting'}</button>;
+  return (<div className="card" role="dialog" aria-label="Friday is waiting for your approval" data-testid="approval-popup"
+    style={Object.assign({}, pos, { width: 'min(400px, calc(100vw - 32px))', maxHeight: 'calc(100vh - 150px)', overflowY: 'auto', padding: 10, border: '1px solid rgba(245,158,11,0.25)' })}>
+    <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span>✋ Approvals<span style={{ color: '#f59e0b', fontSize: 11, marginLeft: 6 }}>({items.length} pending)</span></span>
+      <button type="button" className="btn" style={{ fontSize: 11, padding: '2px 8px' }} title="Hide this until the next card. The card keeps waiting." onClick={() => setLater(true)}>Later</button>
+    </div>
+    {items.map(a => <ApprovalCardBody key={a.approval_id} a={a} busy={busy} onDecide={decide} />)}
+  </div>);
 }
 function StandaloneShell({ws,children}){
   // The desktop's wordmark shows the agent's own name when it has been renamed.
@@ -19859,12 +20012,14 @@ function App(){
   if(STANDALONE_WS&&STANDALONE_WS!=='settings'){
     const sw=wsInfo[STANDALONE_WS];
     return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
+      <ApprovalPopups/>
       {sw?<StandaloneShell ws={sw}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
         :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the Friday desktop</a></div>}
     </WsCustomCtx.Provider>);
   }
 
   return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
+    <ApprovalPopups/>
     {/* ── First-run setup chat. index.html puts the consent screens
          (ConsentFlow, not mirrored here) in front of it. ── */}
     {!setupDone&&<SetupChat onDone={finishSetupChat}/>}

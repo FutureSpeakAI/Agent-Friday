@@ -373,6 +373,7 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     _upsert(record)
     if record["status"] == "pending":
         _notify_pending(record)
+        _feed("card_pending", record)
     return record
 
 
@@ -465,23 +466,38 @@ def decide(approval_id: str, decision: str, *, decided_by: str = "owner",
     card unchanged) — blocked (Law-1) and already-decided cards can't be
     re-opened through this path. Fires any registered decision hook for the
     card's `kind` (best-effort; a hook failure is logged, never raised)."""
+    rec, _won = decide_with_outcome(approval_id, decision, decided_by=decided_by, note=note)
+    return rec
+
+
+def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "owner",
+                        note: str = "") -> tuple:
+    """`decide()`, also saying whether THIS call made the decision.
+
+    Returns (record, won). `won` is True for exactly one caller per card: the
+    check that the card is still pending and the write that decides it happen
+    under one lock, so two pages (or a page and a voice command) deciding at
+    once cannot both act; every other caller gets the card as it now stands
+    and won=False. (None, False) for an unknown id.
+    """
     if decision not in ("approve", "deny"):
         raise ValueError("decision must be 'approve' or 'deny'")
     with _LOCK:
         recs = _read_store()
         rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
         if rec is None:
-            return None
+            return None, False
         if rec.get("status") != "pending":
-            return dict(rec)
+            return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
         rec["decision_note"] = note
         _write_store(recs)
         out = dict(rec)
+    _feed("card_resolved", out)
     _fire_hook(out)
-    return out
+    return out, True
 
 
 def expire_stale() -> int:
@@ -506,8 +522,20 @@ def expire_stale() -> int:
         if expired:
             _write_store(recs)
     for rec in expired:
+        _feed("card_resolved", rec)
         _fire_hook(rec)
     return len(expired)
+
+
+def _feed(name: str, record: Dict[str, Any]) -> None:
+    """Tell every open Friday page (services/approval_feed.py). Best-effort:
+    a page that misses this picks the card up from the pending list when it
+    reconnects, and nothing here can fail an approval."""
+    try:
+        from agent_friday.services import approval_feed
+        getattr(approval_feed, name)(record)
+    except Exception as e:
+        _log.warning("approval feed unavailable: %s", e)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

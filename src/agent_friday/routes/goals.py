@@ -24,6 +24,8 @@ approve + receipts + review":
   GET    /api/approvals                           list (?status=, ?subject_type=, ?kind=)
   GET    /api/approvals/<approval_id>              detail
   POST   /api/approvals/<approval_id>/decide       {"decision": "approve"|"deny", "note"?}
+                                                   -> {"won": bool, "already_decided": bool}
+  GET    /api/approvals/events                    SSE: pending list, then pending/resolved
 
 Reads are open (mirrors routes/scheduler.py's own read/mutate split);
 mutations require an authenticated session (@login_required — loopback
@@ -217,11 +219,65 @@ def decide_approval_route(approval_id):
     decision = (data.get("decision") or "").strip().lower()
     if decision not in ("approve", "deny"):
         return jsonify({"ok": False, "error": "decision must be 'approve' or 'deny'"}), 400
-    rec = _approvals.decide(approval_id, decision, decided_by=data.get("decided_by", "owner"),
-                            note=data.get("note", ""))
+    rec, won = _approvals.decide_with_outcome(
+        approval_id, decision, decided_by=data.get("decided_by", "owner"),
+        note=data.get("note", ""))
     if not rec:
         return jsonify({"ok": False, "error": "not found"}), 404
-    return jsonify({"ok": True, "approval": rec})
+    # `won` is False when the card was already decided (in another tab, by
+    # voice, by a text reply) or had expired: this request changed nothing,
+    # and the page says so instead of implying its click did.
+    return jsonify({"ok": True, "approval": rec, "won": won, "already_decided": not won})
+
+
+#: Seconds between heartbeats on a quiet approvals stream.
+BEAT_S = 20
+
+
+@goals_bp.route("/api/approvals/events", methods=["GET"])
+@login_required
+def approval_events_route():
+    """SSE: every open Friday page's feed of approval cards
+    (services/approval_feed.py). The first frame is the full pending list, so
+    a page that opens or reconnects later has every waiting card; after that,
+    `pending` and `resolved` frames as cards are created and decided, and a
+    `beat` frame when nothing has happened for BEAT_S seconds.
+
+    The pages of one address share one stream between them (the browser
+    allows about six open connections per address, and a stream per tab would
+    use them up): one tab holds it and relays to the others, see
+    fridayApprovalFeed in index.html."""
+    import json as _json
+    import queue as _queue
+    from flask import Response, stream_with_context
+    from agent_friday.services import approval_feed
+
+    def stream():
+        # Subscribe BEFORE reading the list: a card created in between then
+        # arrives twice (the page keys cards by id) rather than not at all.
+        q = approval_feed.subscribe()
+        try:
+            pending = _approvals.list_approvals(status="pending")
+            yield "data: " + _json.dumps({"type": "snapshot", "pending": pending},
+                                         default=str) + "\n\n"
+            while True:
+                try:
+                    evt = q.get(timeout=BEAT_S)
+                except _queue.Empty:
+                    # A data frame, not an SSE comment: the tab holding the
+                    # stream passes it on, and the other tabs of that address
+                    # take the stream over when they stop hearing it.
+                    yield 'data: {"type": "beat"}\n\n'
+                    continue
+                if evt.get("type") == "resync":
+                    evt = {"type": "snapshot",
+                           "pending": _approvals.list_approvals(status="pending")}
+                yield "data: " + _json.dumps(evt, default=str) + "\n\n"
+        finally:
+            approval_feed.unsubscribe(q)
+
+    return Response(stream_with_context(stream()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ── Governance grants: outward powers for work nobody is watching ──────────
