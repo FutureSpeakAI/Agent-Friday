@@ -30,8 +30,8 @@ import json
 
 import pytest
 
-ADDR = "1131 Nonexistent Blvd, Austin, TX 78702"
-OWNER_HOME = "4412 Imaginary Cove Lane, Pflugerville, TX 78660"
+ADDR = "1131 Nonexistent Blvd, Springfield, IL 62701"
+OWNER_HOME = "4412 Imaginary Cove Lane, Shelbyville, IL 62565"
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def owner_records(tmp_path, monkeypatch):
     """An owner-records corpus holding the owner's home address."""
     from agent_friday.privacy import public_provenance as pp
     monkeypatch.setattr(pp, "_owner_corpus",
-                        lambda: {pp._norm(OWNER_HOME), pp._norm("Janet Jay")})
+                        lambda: {pp._norm(OWNER_HOME), pp._norm("Alex Example")})
     return pp
 
 
@@ -90,8 +90,8 @@ def test_the_owners_home_address_is_blocked_even_from_a_public_page(key,
 
 def test_a_contact_name_from_the_owners_records_is_blocked(key, owner_records):
     from agent_friday.privacy import public_provenance as pp
-    _from_web(key, "Janet Jay")
-    ok, why = pp.exempt({"title": "Janet Jay", "location": "Janet Jay"},
+    _from_web(key, "Alex Example")
+    ok, why = pp.exempt({"title": "Alex Example", "location": "Alex Example"},
                         action="create_calendar_event", taint_key=key)
     assert not ok, why
 
@@ -135,7 +135,7 @@ def test_never_exempt_types_stay_blocked_even_on_a_web_page(value, label,
 @pytest.mark.parametrize("value", [
     "512-555-0137",                               # a business phone
     "https://example-restaurant.com/menu",        # a URL
-    "The Nonexistent Theatre, Austin",            # a place name
+    "The Nonexistent Theatre, Springfield",            # a place name
 ])
 def test_business_contact_types_reach_a_cloud_seat(value, key, owner_records,
                                                   tmp_path):
