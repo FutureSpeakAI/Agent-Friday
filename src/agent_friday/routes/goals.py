@@ -52,6 +52,7 @@ from agent_friday.core import login_required
 from agent_friday.services import goals as _goals
 from agent_friday.services import approvals as _approvals
 from agent_friday.routes._errors import api_error, public_result
+from agent_friday.user_errors import message_only
 
 goals_bp = Blueprint("goals", __name__)
 
@@ -371,7 +372,10 @@ def list_outward_tools():
         except Exception:
             klass, why = action_gate.OUTWARD, "unclassified"
         if klass == action_gate.OUTWARD and name not in action_gate.SELF_GATED:
-            out.append({"name": name, "why": why, "label": _GRANT_LABELS.get(name)
+            # The gate's explanation is meant for the owner; only its message
+            # travels (docs/security/codeql-dismissals.md).
+            out.append({"name": name, "why": message_only(why),
+                        "label": _GRANT_LABELS.get(name)
                         or _connector_label(name)})
     return jsonify({"tools": out})
 
