@@ -90,31 +90,35 @@ def _auth_tokens() -> list:
 
 
 def _check(kind: str, *, ws: bool = False):
-    """Steps 1-5 above. Returns (cfg, params) on success, or a Response."""
+    """Steps 1-5 above. Returns (refusal, None) or (None, (kind, cfg, params)).
+
+    A refusal is always a bodiless _plain() status, and it is the only thing a
+    route returns from here unchanged: the request's own fields never travel
+    in the same value as the response."""
     ck = _client_key()
     if not _GUARD.admit(ck):
-        return _plain(429)
+        return _plain(429), None
     cfg = config.load()
     tokens = _auth_tokens()
     if not cfg.get("enabled") or not cfg.get("public_base_url") or not tokens:
-        return _plain(503)
+        return _plain(503), None
     params = [] if ws else list(request.form.items(multi=True))
     url = _public_url(cfg, ws=ws)
     sig = request.headers.get("X-Twilio-Signature", "")
     if not signature.validate(tokens, url, params, sig):
         _log.warning("phone ingress: bad signature on %s", request.path)
-        return _plain(403 if _GUARD.record_bad(ck) else 429)
+        return _plain(403 if _GUARD.record_bad(ck) else 429), None
     if not ws:
         acct = dict(params).get("AccountSid", "")
         if not cfg.get("account_sid") or acct != cfg["account_sid"]:
-            return _plain(403)
+            return _plain(403), None
     try:
         if spool.seen_before(guard.replay_key(url, params, sig)):
-            return ("replay", cfg, dict(params))
+            return None, ("replay", cfg, dict(params))
     except Exception as e:
         _log.error("phone ingress: replay store unavailable (%s); refusing", e)
-        return _plain(503)
-    return (kind, cfg, dict(params))
+        return _plain(503), None
+    return None, (kind, cfg, dict(params))
 
 
 def _spool(kind: str, sid: str, data: dict) -> Optional[Response]:
@@ -175,9 +179,9 @@ def create_app() -> Flask:
 
     @app.route("/twilio/sms", methods=["POST"])
     def sms_in():
-        r = _check("sms_in")
-        if isinstance(r, Response):
-            return r
+        refusal, r = _check("sms_in")
+        if refusal is not None:
+            return refusal
         kind, _cfg, p = r
         if kind != "replay":
             err = _spool("sms_in", p.get("MessageSid", ""), _pick(p, _SMS_FIELDS))
@@ -187,9 +191,9 @@ def create_app() -> Flask:
 
     @app.route("/twilio/sms-status", methods=["POST"])
     def sms_status():
-        r = _check("sms_status")
-        if isinstance(r, Response):
-            return r
+        refusal, r = _check("sms_status")
+        if refusal is not None:
+            return refusal
         kind, _cfg, p = r
         if kind != "replay":
             sid = "%s:%s" % (p.get("MessageSid", ""), p.get("MessageStatus", ""))
@@ -200,9 +204,9 @@ def create_app() -> Flask:
 
     @app.route("/twilio/voice", methods=["POST"])
     def voice_in():
-        r = _check("call_in")
-        if isinstance(r, Response):
-            return r
+        refusal, r = _check("call_in")
+        if refusal is not None:
+            return refusal
         kind, cfg, p = r
         if kind != "replay":
             err = _spool("call_in", p.get("CallSid", ""), _pick(p, _CALL_FIELDS))
@@ -212,16 +216,16 @@ def create_app() -> Flask:
 
     @app.route("/twilio/voice-done", methods=["POST"])
     def voice_done():
-        r = _check("voice_done")
-        if isinstance(r, Response):
-            return r
+        refusal, r = _check("voice_done")
+        if refusal is not None:
+            return refusal
         return _twiml("<Say>Thank you. Goodbye.</Say><Hangup/>")
 
     @app.route("/twilio/recording", methods=["POST"])
     def recording():
-        r = _check("recording")
-        if isinstance(r, Response):
-            return r
+        refusal, r = _check("recording")
+        if refusal is not None:
+            return refusal
         kind, _cfg, p = r
         if kind != "replay" and p.get("RecordingStatus") == "completed":
             err = _spool("recording", p.get("RecordingSid", ""), _pick(p, _REC_FIELDS))
@@ -231,9 +235,9 @@ def create_app() -> Flask:
 
     @app.route("/twilio/call-status", methods=["POST"])
     def call_status():
-        r = _check("call_status")
-        if isinstance(r, Response):
-            return r
+        refusal, r = _check("call_status")
+        if refusal is not None:
+            return refusal
         kind, _cfg, p = r
         if kind != "replay":
             sid = "%s:%s" % (p.get("CallSid", ""), p.get("CallStatus", ""))
@@ -278,8 +282,8 @@ def _register_media_ws(app: Flask) -> None:
 
     @sock.route("/twilio/media")
     def media(ws):
-        r = _check("media", ws=True)
-        if isinstance(r, Response):
+        refusal, r = _check("media", ws=True)
+        if refusal is not None:
             ws.close(reason=1008)
             return
         from agent_friday.phone import live_call
