@@ -418,7 +418,9 @@ def _meeting_record(account_id: str, ev: dict, owner: set, names: dict,
         if addr in skip or (n and _norm(n) in skip_names):
             skip.add(addr)
             continue
-        if is_automated(addr) or addr.endswith("resource.calendar.google.com"):
+        # A room or resource booking, by the domain after the @ (not a suffix
+        # of the whole address, which would also match a lookalike domain).
+        if is_automated(addr) or _domain(addr) == "resource.calendar.google.com":
             continue
         if addr not in people:
             people.append(addr)

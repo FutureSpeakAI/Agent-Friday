@@ -488,7 +488,8 @@ def _normalize_entry(entry):
 
     snippet = _clean_feed_text(entry.get("summary", "") or entry.get("description", ""))
     # Google News summaries are usually a junk list of related links — drop them.
-    if "news.google.com" in (link or "") and (
+    from agent_friday.services.web_safety import url_host_matches
+    if url_host_matches(link, "news.google.com") and (
         not snippet or "View Full Coverage" in snippet or len(snippet) > 400
     ):
         snippet = ""
@@ -3104,10 +3105,14 @@ def _extract_article_text(url):
 
     Returns (page_title, text). Strips script/style/nav chrome and joins the
     article's paragraph text; falls back to whole-container text for thin <p>
-    markup. Raises on network/parse failure."""
-    import requests as _req
+    markup. Raises on network/parse failure, and raises
+    web_safety.UnsafeURLError for a URL (or redirect hop) that points at this
+    machine or its network: the URL comes from a feed, the page, or the voice
+    model, none of which may steer a fetch inward."""
     from bs4 import BeautifulSoup
-    resp = _req.get(url, timeout=15, headers={
+
+    from agent_friday.services.web_safety import safe_get
+    resp = safe_get(url, timeout=15, headers={
         "User-Agent": "Mozilla/5.0 FridayAgent/1.0",
     })
     resp.raise_for_status()

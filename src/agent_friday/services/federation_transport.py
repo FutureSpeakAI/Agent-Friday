@@ -426,7 +426,15 @@ def send_to_peer(
     envelope_dict: Dict[str, Any],
     timeout: int = 15,
 ) -> Dict[str, Any]:
-    """HTTP POST the envelope to {peer_endpoint}/api/federation/inbox."""
+    """HTTP POST the envelope to {peer_endpoint}/api/federation/inbox.
+
+    The endpoint must be a plain http(s) base URL (web_safety.check_peer_endpoint):
+    it can come from a peer's own advertised card, and urllib would otherwise
+    open file:// or ftp:// just as readily."""
+    from agent_friday.services.web_safety import check_peer_endpoint
+    ok, why = check_peer_endpoint(peer_endpoint)
+    if not ok:
+        return {"ok": False, "error": f"refused_endpoint: {why}"}
     try:
         url = peer_endpoint.rstrip("/") + "/api/federation/inbox"
         body = json.dumps(envelope_dict).encode("utf-8")

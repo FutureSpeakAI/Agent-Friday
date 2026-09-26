@@ -21,6 +21,7 @@ from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import compute_provider as prov
 from agent_friday.services import compute_client as client
+from agent_friday.services.web_safety import UnsafeURLError
 
 compute_bp = Blueprint("compute", __name__)
 
@@ -185,6 +186,8 @@ def send_job():
     try:
         result = client.request_job(endpoint, task_spec, offered_mψ)
         return jsonify({"ok": True, "job": result})
+    except UnsafeURLError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
         traceback.print_exc()
         return jsonify({"ok": False, "error": str(e)}), 500
