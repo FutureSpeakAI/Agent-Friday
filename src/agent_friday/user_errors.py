@@ -21,6 +21,7 @@ This module does not import Flask or the route layer, so services can use it.
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 
 _log = logging.getLogger("friday.routes.errors")
@@ -136,3 +137,27 @@ def log_text(what: str, text: str) -> str:
     error_id = new_error_id()
     _log.error("[error %s] %s: %s: %s", error_id, _where(), what, text)
     return error_id
+
+
+_PATHISH = re.compile(
+    r"(?:[A-Za-z]:[\\/]|\\\\|/(?:home|Users|usr|var|tmp|opt|etc|mnt|srv|root)/)"
+    r"[^\s'\"()<>,;]*")
+
+
+def message_only(value, limit: int = 200) -> str:
+    """The message of an exception (or text) that is deliberately shown to the
+    user or the model: one line, no traceback, no file paths, bounded length.
+
+    For the few places that pass an error's words on on purpose (a governance
+    explanation, a data source the model must say is unavailable) rather than
+    hiding them behind an error id.
+    """
+    text = str(value if not isinstance(value, BaseException) else
+               (value.args[0] if value.args and isinstance(value.args[0], str)
+                else value))
+    line = next((ln.strip() for ln in text.splitlines()
+                 if ln.strip() and not ln.strip().startswith(("Traceback", "File \""))), "")
+    line = _PATHISH.sub("<path>", line)
+    if len(line) > limit:
+        line = line[:limit - 1].rstrip() + "…"
+    return line or "unknown error"
