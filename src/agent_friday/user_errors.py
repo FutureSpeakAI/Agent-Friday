@@ -31,12 +31,17 @@ class UserFacingError(Exception):
 
     `status`, when the raiser sets it, is the HTTP status the route answers
     with; left as None, the route keeps the status it uses for the failure.
+
+    `detail`, when given, is what `str(exc)` returns: the full account for
+    the model and the log (a provider's own error text, say), while routes
+    show only `user_message`.
     """
 
     status: int | None = None
 
-    def __init__(self, user_message: str, status: int | None = None):
-        super().__init__(user_message)
+    def __init__(self, user_message: str, status: int | None = None,
+                 detail: str | None = None):
+        super().__init__(user_message if detail is None else detail)
         self.user_message = str(user_message)
         if status is not None:
             self.status = status
@@ -48,6 +53,10 @@ class UserFacingValueError(UserFacingError, ValueError):
     Subclasses `ValueError` so existing `except ValueError` handlers and
     callers that test for it keep working.
     """
+
+
+class UserFacingRuntimeError(UserFacingError, RuntimeError):
+    """A `RuntimeError` with a user-worded message."""
 
 
 class UserFacingPermissionError(UserFacingError, PermissionError):
