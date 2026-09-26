@@ -213,8 +213,11 @@ def kokoro_import_status(refresh: bool = False) -> dict:
             # retrying WITHOUT evicting the half-built modules a lost race
             # leaves behind only returns the same broken objects
             # (services/ml_imports).
-            from agent_friday.services.ml_imports import import_module
-            import_module("kokoro").KPipeline  # noqa: B018
+            from agent_friday.services.ml_imports import guarded
+
+            def _imp():
+                from kokoro import KPipeline  # noqa: F401
+            guarded(_imp)
             res = {"ok": True, "error": "", "missing": ""}
         except BaseException as e:  # noqa: BLE001 - any failure means unusable
             res = {"ok": False,
@@ -531,8 +534,12 @@ class KokoroTTS:
                 log.warning("espeak fallback not wired: %s",
                             esp.get("detail") or "unknown reason")
             try:
-                from agent_friday.services.ml_imports import guarded, import_module
-                KPipeline = import_module("kokoro").KPipeline
+                from agent_friday.services.ml_imports import guarded
+
+                def _imp():
+                    from kokoro import KPipeline
+                    return KPipeline
+                KPipeline = guarded(_imp)
                 log.info("kokoro load voice=%s device=%s lang=%s espeak=%s",
                          self.voice, device, self.lang_code, esp["wired"])
                 # misaki/espeak import during construction: also guarded.

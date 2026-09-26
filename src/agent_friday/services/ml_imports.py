@@ -56,8 +56,10 @@ def purge_partial_imports() -> list:
         for name, mod in list(sys.modules.items()):
             if not name.startswith(ML_ROOTS):
                 continue
-            spec = getattr(mod, "__spec__", None)
-            if mod is None or (spec is not None and getattr(spec, "_initializing", False)):
+            # A None entry is a deliberately blocked import, not a half-built
+            # module: leave it, or the retry imports what was blocked.
+            spec = getattr(mod, "__spec__", None) if mod is not None else None
+            if spec is not None and getattr(spec, "_initializing", False):
                 doomed.append(name)
         for name in doomed:
             sys.modules.pop(name, None)

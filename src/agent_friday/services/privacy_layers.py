@@ -168,11 +168,11 @@ def describe() -> str:
     if chk["ok"]:
         return f"Sensitivity classifier: {n}/{total} layers active ({where})."
     plain = {l["name"]: l for l in plain_layers()}
-    miss = "; ".join(f"{plain[m]['label']}: {plain[m]['status']}"
+    miss = "; ".join(f"{m} - {plain[m]['label']} ({plain[m]['status']})"
                      for m in chk["missing"] if m in plain)
     return (
         f"Sensitivity classifier: {n}/{total} layers active ({where}). "
-        f"Not running - {miss}."
+        f"DEGRADED - not running: {miss}."
     )
 
 

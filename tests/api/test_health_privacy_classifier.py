@@ -32,7 +32,7 @@ def test_health_reports_a_failed_layer3_as_degraded(client, monkeypatch):
     sem = _layer(p, "embedding")
     assert sem["label"] == "Semantic check" and sem["active"] is False
     assert sem["status"].startswith("starting") and "held" in sem["status"]
-    assert "Semantic check: starting" in p["summary"]
+    assert "Semantic check (starting" in p["summary"]
     assert "ml_preload" in p
 
 
@@ -52,5 +52,5 @@ def test_a_packaged_build_says_not_installed_and_is_not_degraded(client, monkeyp
     p = _privacy(client)
     assert p["degraded"] is False
     assert _layer(p, "embedding")["status"] == "not installed in this build"
-    assert "Semantic check: not installed in this build" in p["summary"]
+    assert "Semantic check (not installed in this build)" in p["summary"]
     assert _layer(p, "regex")["status"] == "on" and _layer(p, "keyword")["status"] == "on"
