@@ -91,6 +91,7 @@ chat_bp = Blueprint('chat', __name__)
 # logger writes to ~/.friday/friday.log, so log tracebacks there — stderr from
 # traceback.print_exc() is simply lost in production.
 import logging as _logging
+from agent_friday.routes._errors import api_error, error_text, log_failure, public_result
 _LOG = _logging.getLogger("friday.chat")
 
 # security-boundary.md §19 row 11: the vision prompt sent alongside a
@@ -871,11 +872,11 @@ def chat():
                 _save_chat_history(CHAT_HISTORY)
             except Exception:
                 pass
-            return jsonify({
+            return jsonify(public_result({
                 "response": _open_reply, "user_msg": _u, "friday_msg": _f,
                 "sources": [], "tool_trace": [{"tool": "open_path", "result": _open_reply}],
                 "seat_events": _seat_events,
-            })
+            }, "Couldn't open that"))
 
         # ── Vision capture. THE ROUTING MODE IS CHECKED BEFORE THE SEND. ──
         #
@@ -1671,7 +1672,9 @@ def chat():
                     _local_only_msg = (
                         "I could not get an answer out of "
                         + str(_route_info.get('model') or 'the local model')
-                        + " just now (" + str(_ole)[:160] + ").\n\n"
+                        + " just now (error "
+                        + log_failure(_ole, "Local model failed in local-only mode")
+                        + ").\n\n"
                         "You are in **local only** mode, so I did not send this "
                         "to a cloud model. Options: wait and try again once the "
                         "GPU is free, pick a smaller local model, or switch the "
@@ -2137,7 +2140,7 @@ def chat():
         except Exception:
             pass
 
-        return jsonify({
+        return jsonify(public_result({
             "response": reply,
             # WHO ACTUALLY ANSWERED. Every refusal path here already reports
             # the model (seat_missing, cloud_only_no_key, local_only_refused) —
@@ -2190,11 +2193,11 @@ def chat():
             # the turn — same principle as local_fallback above. Absent on
             # every turn that kept its tools, which is the normal case.
             "tool_surface": _tool_surface,
-        })
+        }, "Couldn't answer that message"))
     except Exception as e:
         traceback.print_exc()  # console launches; a no-op loss under pythonw
         _LOG.exception("chat turn failed")
-        return jsonify({"response": f"[Friday offline] {str(e)}"})
+        return jsonify({"response": "[Friday offline] " + error_text(e, "Couldn't answer that message")})
     finally:
         try:
             core.turn_end()
@@ -2634,15 +2637,15 @@ def chat_send():
             except Exception:
                 pass
 
-        return jsonify({"status": "ok", "user_msg": user_msg, "friday_msg": friday_msg,
+        return jsonify(public_result({"status": "ok", "user_msg": user_msg, "friday_msg": friday_msg,
                         "sources": sources, "tool_trace": tool_trace,
                         "model": _seat_model, "seat": _seat_class,
                         "seat_events": _seat_events,
                         "seat_notice": _send_seat_notice,
-                        "fallback_chain": _fallback_chain})
+                        "fallback_chain": _fallback_chain}, "Couldn't send the message"))
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't send the message")
     finally:
         try:
             core.turn_end()
@@ -2724,7 +2727,7 @@ def memory_search():
         })
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "error": str(e), "results": []}), 500
+        return api_error(e, "Couldn't search memory", key="error", results=[])
 
 
 @chat_bp.route('/api/sources/dossier/<session_id>', methods=['GET'])
@@ -2843,5 +2846,4 @@ def sources_dossier(session_id):
         })
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "error": str(e),
-                        "session_id": session_id}), 500
+        return api_error(e, "Couldn't load the sources", key="error", session_id=session_id)

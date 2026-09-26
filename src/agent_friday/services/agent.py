@@ -98,6 +98,7 @@ from agent_friday.services.wiki_engine import (
     wiki_read_text,
     wiki_write_text,
 )  # noqa: E501
+from agent_friday.user_errors import ExceptionText, UserFacingValueError
 
 
 
@@ -2347,7 +2348,7 @@ def _open_app(name):
             subprocess.Popen([exe])
             return f"Done — I launched **{name.strip()}** for you."
         except Exception as e:
-            return f"I tried to launch {name.strip()} but hit an error: {e}"
+            return ExceptionText(f"I tried to launch {name.strip()} but hit an error: {e}")
     shell_exe = _OPEN_SHELL_APPS.get(key)
     if shell_exe:
         try:
@@ -2356,7 +2357,7 @@ def _open_app(name):
             subprocess.Popen(['cmd', '/c', 'start', '', shell_exe])
             return f"Done — I launched **{name.strip()}** for you."
         except Exception as e:
-            return f"I tried to launch {name.strip()} but hit an error: {e}"
+            return ExceptionText(f"I tried to launch {name.strip()} but hit an error: {e}")
     return None
 
 
@@ -2501,8 +2502,8 @@ def _perform_open(target, in_browser=False):
                     raise RuntimeError("no browser could be launched")
                 where = "your browser"
         except Exception as e:
-            return (f"I tried to open {resolved} in a browser tab but hit an "
-                    f"error: {e}")
+            return (ExceptionText(f"I tried to open {resolved} in a browser tab but hit an "
+                    f"error: {e}"))
         return (f"Done — I opened **{Path(resolved).name}** in {where}."
                 f"\n\n`{url}`")
     try:
@@ -2513,7 +2514,7 @@ def _perform_open(target, in_browser=False):
         else:
             subprocess.Popen(['xdg-open', resolved])
     except Exception as e:
-        return f"I tried to open {resolved} but hit an error: {e}"
+        return ExceptionText(f"I tried to open {resolved} but hit an error: {e}")
     name = Path(resolved).name or resolved
     return f"Done — I opened **{name}** for you.\n\n`{resolved}`"
 
@@ -4363,12 +4364,12 @@ def save_workflow_chain(defn):
     name = (defn or {}).get('name') or ''
     steps = (defn or {}).get('steps') or []
     if not name or not isinstance(steps, list) or not steps:
-        raise ValueError("chain requires 'name' and a non-empty 'steps' list")
+        raise UserFacingValueError("chain requires 'name' and a non-empty 'steps' list")
     norm_steps = []
     for i, s in enumerate(steps):
         s = s or {}
         if not (s.get('prompt') or '').strip():
-            raise ValueError(f"step {i} is missing a 'prompt'")
+            raise UserFacingValueError(f"step {i} is missing a 'prompt'")
         norm_steps.append({
             'name': (s.get('name') or f'Step {i + 1}').strip()[:120],
             'prompt': s['prompt'].strip(),

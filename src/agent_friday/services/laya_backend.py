@@ -86,6 +86,7 @@ _agent_lock = threading.Lock()
 #: Serialises the ML-stack import against any other thread doing the same.
 #: See `_load_now` - transformers 5.x lazy namespace + concurrent boot import.
 from agent_friday.services.ml_imports import ML_IMPORT_LOCK, ML_ROOTS  # noqa: E402
+from agent_friday.user_errors import ExceptionText, exception_text
 _IMPORT_LOCK = ML_IMPORT_LOCK   # shared with every ML importer (services/ml_imports)
 _load_error: Optional[str] = None
 _loading = False
@@ -210,7 +211,7 @@ def _load_now():
         return agent
     except Exception as e:
         with _agent_lock:
-            _load_error = "%s: %s" % (type(e).__name__, e)
+            _load_error = ExceptionText("%s: %s" % (type(e).__name__, e))
         # SCHEDULE THE NEXT ATTEMPT RATHER THAN WAITING FOR A DECISION.
         #
         # A boot-time failure here is usually an import race, not a
@@ -472,7 +473,7 @@ def union_backend(question: str, state: str, **kw):
         severity, conf, detail = _answer_bounded(state)
     except LayaTooSlow as e:
         return kw_answer, None, dict(kw_detail, union="keyword-only",
-                                     reason=str(e))
+                                     reason=exception_text(e))
     except Exception as e:
         return kw_answer, None, dict(kw_detail, union="keyword-only",
                                      reason="laya error: %s" % e)

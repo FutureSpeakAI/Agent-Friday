@@ -23,6 +23,7 @@ never blocked on compression.
 """
 
 import os
+from agent_friday.user_errors import ExceptionText
 
 # Rough chars-per-token estimate used only to decide whether a payload is big
 # enough to be worth compressing. Token-accurate counting is Headroom's job.
@@ -259,7 +260,7 @@ class ContextCompressor:
             self._version = getattr(_hr, '__version__', None)
         except Exception as exc:
             self._import_failed = True
-            self._unavailable_reason = "headroom-ai is not installed (%s)" % exc
+            self._unavailable_reason = ExceptionText("headroom-ai is not installed (%s)" % exc)
             print(f"  [HEADROOM] library unavailable, compression disabled: {exc}")
             return None
         try:
@@ -279,7 +280,7 @@ class ContextCompressor:
             return compress
         except Exception as exc:
             self._import_failed = True
-            self._unavailable_reason = "headroom-ai failed to load (%s)" % exc
+            self._unavailable_reason = ExceptionText("headroom-ai failed to load (%s)" % exc)
             print(f"  [HEADROOM] library unavailable, compression disabled: {exc}")
             return None
 

@@ -30,6 +30,7 @@ import threading
 import time
 import wave
 from pathlib import Path
+from agent_friday.user_errors import ExceptionText
 
 log = logging.getLogger("friday.voice_manifest")
 
@@ -197,8 +198,10 @@ def plain_language_refusal(exc, stage_noun="voice"):
                 f"usually a model still loading on a cold start — try again "
                 f"in a moment.", retry)
 
-    return (f"Friday couldn't prove her {stage_noun} works right now: "
-            f"{name}: {text[:160]}", retry)
+    # Shown verbatim to the model and the log; the HTTP boundary swaps it
+    # for an error id (routes._errors.public_result).
+    return (ExceptionText(f"Friday couldn't prove her {stage_noun} works right now: "
+                          f"{name}: {text[:160]}"), retry)
 
 
 class ProofRefused(RuntimeError):

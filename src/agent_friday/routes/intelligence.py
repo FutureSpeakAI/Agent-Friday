@@ -20,6 +20,7 @@ import time
 
 from flask import Blueprint, jsonify
 from agent_friday.paths import friday_home
+from agent_friday.routes._errors import error_text, public_result
 
 intelligence_bp = Blueprint("intelligence", __name__)
 
@@ -742,12 +743,12 @@ def build_starter_set(profile: dict) -> dict:
         chain_voice = rp.plan_chain(profile, [], voice_stages, resident={},
                                     cloud_ok=cloud_ok)
     except Exception as e:
-        chain_voice = {"error": str(e)}
+        chain_voice = {"error": error_text(e, "Could not read the voice chain")}
     try:
         chain_with_image = rp.plan_chain(profile, [], image_stages,
                                          resident={}, cloud_ok=cloud_ok)
     except Exception as e:
-        chain_with_image = {"error": str(e)}
+        chain_with_image = {"error": error_text(e, "Could not read the image chain")}
 
     reserve = hc.resolve_display_reserve(profile)
 
@@ -989,7 +990,7 @@ def _model_soup(settings: dict, routing: dict, costs: dict, seats: dict,
                     if isinstance(snap.get("roles"), dict) else None)
                    or snap.get("chain_why")}
     except Exception as e:
-        consent = {"answered": None, "error": str(e)}
+        consent = {"answered": None, "error": error_text(e, "Could not read the cloud consent")}
     kg = str(((settings.get("knowledge_graph") or {}).get("indexing_mode"))
              or "local").lower()
     posture = {
@@ -1324,7 +1325,7 @@ def api_intelligence():
         local_models = local_models_catalog(hwp.get(), sizes)
     except Exception as exc:
         local_models = {"text": [], "image": [], "video": [], "voice": [], "embed": [],
-                        "error": "%s: %s" % (type(exc).__name__, exc)}
+                        "error": error_text(exc, "Could not list the local models")}
 
     # ── Providers, including whether they have ever actually served ──────────
     #
@@ -1399,9 +1400,9 @@ def api_intelligence():
     try:
         soup = _model_soup(settings, routing, costs, seats, providers, labels)
     except Exception as exc:
-        soup = {"error": "%s: %s" % (type(exc).__name__, exc)}
+        soup = {"error": error_text(exc, "Could not build the model card")}
 
-    return jsonify({
+    return jsonify(public_result({
         "status": "ok",
         "serving": costs["serving"],
         "residency_help": RESIDENCY_HELP,
@@ -1442,4 +1443,4 @@ def api_intelligence():
         "residency_reading": _res_state,
         "residency_age": _mp.age_note(_res_at, _res_state),
         "now": time.time(),
-    })
+    }, "Couldn't load the intelligence card"))

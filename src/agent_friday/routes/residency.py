@@ -17,6 +17,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import api_error, public_result
 
 residency_bp = Blueprint("residency", __name__)
 
@@ -34,8 +35,7 @@ def status():
         from agent_friday.services.residency_arbiter import get_arbiter
         arb = get_arbiter()
     except Exception as e:
-        return jsonify({"governing": False,
-                        "error": "%s: %s" % (type(e).__name__, e)})
+        return api_error(e, "Couldn't read the residency status", 200, shape="bare", governing=False)
     if arb is None:
         return jsonify({
             "governing": False,
@@ -109,8 +109,7 @@ def machine():
     try:
         from agent_friday.services import machine_monitor as mm
     except Exception as e:
-        return jsonify({"status": "error",
-                        "message": "%s: %s" % (type(e).__name__, e)}), 500
+        return api_error(e, "Couldn't read the machine status")
     ours = 0
     try:
         from agent_friday.services.residency_arbiter import get_arbiter
@@ -121,7 +120,7 @@ def machine():
         pass
     s = mm.sample(ours_resident_mib=ours)
     v = mm.verdict(s)
-    return jsonify({"status": "ok", "sample": s, "verdict": v})
+    return jsonify(public_result({"status": "ok", "sample": s, "verdict": v}, "Couldn't read the machine status"))
 
 
 @residency_bp.route("/api/models/fetch/preflight", methods=["GET"])
@@ -159,10 +158,10 @@ def fetch_preflight():
                    for r in cat.get(section) or []
                    if r["model_id"] == model_id), None)
         if row is None:
-            return jsonify({
+            return jsonify(public_result({
                 "status": "error",
                 "message": "%r is not a model Friday knows how to run "
-                          "locally" % model_id}), 404
+                          "locally" % model_id}, "Couldn't check the model download")), 404
 
         s = mm.sample(ours_resident_mib=0)
         v = mm.verdict(s, _track_history=False)
@@ -209,11 +208,10 @@ def fetch_preflight():
             "feel": ((v.get("display") or {}).get("explanation")
                      or "Machine state could not be read."),
         }
-        return jsonify({"status": "ok", "model_id": model_id, "row": row,
-                        "card": card})
+        return jsonify(public_result({"status": "ok", "model_id": model_id, "row": row,
+                        "card": card}, "Couldn't check the model download"))
     except Exception as e:
-        return jsonify({"status": "error",
-                        "message": "%s: %s" % (type(e).__name__, e)}), 500
+        return api_error(e, "Couldn't check the model download")
 
 
 @residency_bp.route("/api/machine/level", methods=["POST"])
@@ -282,7 +280,7 @@ def replan():
                                   for r, s in (plan.get("seats") or {}).items()},
                         "n_entries": len(arb.entries)})
     except Exception as e:
-        return jsonify({"error": "%s: %s" % (type(e).__name__, e)}), 500
+        return api_error(e, "Couldn't replan residency", shape="bare")
 
 
 @residency_bp.route("/api/residency/preview", methods=["POST"])
@@ -302,8 +300,7 @@ def preview():
         from agent_friday.services.residency_arbiter import get_arbiter
         arb = get_arbiter()
     except Exception as e:
-        return jsonify({"status": "error",
-                        "message": "%s: %s" % (type(e).__name__, e)}), 500
+        return api_error(e, "Couldn't preview the residency plan")
     data = request.get_json(silent=True) or {}
     assignments = data.get("assignments") or {}
     if not isinstance(assignments, dict):

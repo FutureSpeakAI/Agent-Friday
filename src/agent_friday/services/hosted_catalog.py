@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import time
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.hosted_catalog")
 
@@ -241,7 +242,7 @@ def refresh(provider: str) -> dict:
     except Exception as e:
         _log.warning("hosted catalog refresh failed for %s: %s", name, e)
         return {"status": "error", "provider": name, "count": 0,
-                "error": f"{type(e).__name__}: {e}"[:300]}
+                "error": ExceptionText(f"{type(e).__name__}: {e}"[:300])}
     if not normalized:
         return {"status": "error", "provider": name, "count": 0,
                 "error": "provider returned an empty model list — "
