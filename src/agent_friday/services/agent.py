@@ -8238,8 +8238,6 @@ def _confirmation_question(name, tool_input):
         except Exception:
             pass
         return f"Would you like me to open {tgt} on your computer?"
-    if name in ("generate_video", "generate_music"):
-        return f"{_taint_title(name, inp)} — shall I go ahead?"
     if name == "navigate":
         tgt = inp.get("workspace") or "that workspace"
         return f"I can switch you to the {tgt} workspace — shall I?"
