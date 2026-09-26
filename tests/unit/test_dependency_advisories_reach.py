@@ -10,7 +10,6 @@ docs/security/dependency-advisories.md explains each alert.
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -30,10 +29,16 @@ def test_the_windows_installer_never_installs_the_nemo_stack():
 
 
 def test_the_gpu_voice_extra_is_not_in_all():
-    extras = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
-        "project"]["optional-dependencies"]
-    joined = " ".join(extras.get("all", [])).lower()
+    # Read as text: services/app_version.py is the one parser of this file.
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    block = re.search(r"(?ms)^all = \[\n(.*?)^\]", text)
+    assert block, "the [all] extra was not found"
+    entries = [line.split("#", 1)[0].strip().lower()
+               for line in block.group(1).splitlines()]
+    joined = " ".join(e for e in entries if e)
+    assert "nemo" in text.lower()
     assert "voice-local-gpu" not in joined and "nemo" not in joined
+    assert "chromadb" in joined, "the [all] block was misread"
 
 
 @pytest.mark.parametrize("name,expected", [
