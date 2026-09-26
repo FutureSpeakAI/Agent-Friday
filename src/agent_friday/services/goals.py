@@ -190,6 +190,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from agent_friday.paths import contained, friday_home, safe_name
 from agent_friday.services import approvals
 from agent_friday.services import qa_gates
+from agent_friday.user_errors import ExceptionText, UserFacingValueError, exception_text
 
 _log = logging.getLogger("friday.goals")
 
@@ -431,7 +432,7 @@ def transition_goal(goal_id: str, new_status: str, *, reason: str = "") -> Dict[
     exist, ValueError on an illegal transition (current status not
     permitted to move to new_status) — same status is a true no-op."""
     if new_status not in STATUSES:
-        raise ValueError(f"unknown status: {new_status!r}")
+        raise UserFacingValueError(f"unknown status: {new_status!r}")
 
     def _fn(goal):
         cur = goal.get("status")
@@ -439,7 +440,7 @@ def transition_goal(goal_id: str, new_status: str, *, reason: str = "") -> Dict[
             return goal
         allowed = _ALLOWED_TRANSITIONS.get(cur, set())
         if new_status not in allowed:
-            raise ValueError(f"illegal transition {cur!r} -> {new_status!r}")
+            raise UserFacingValueError(f"illegal transition {cur!r} -> {new_status!r}")
         goal["status"] = new_status
         goal.setdefault("history", []).append({
             "at": _now_iso(), "from": cur, "to": new_status, "reason": reason,
@@ -760,7 +761,7 @@ def _default_executor(goal: Dict[str, Any], milestone: Dict[str, Any], *,
     try:
         from agent_friday.services.agent import _spawn_task, _task_snapshot
     except Exception as e:
-        return {"ok": False, "text": "", "cost_mψ": 0, "error": f"agent unavailable: {e}"}
+        return {"ok": False, "text": "", "cost_mψ": 0, "error": ExceptionText(f"agent unavailable: {e}")}
 
     hard_gate_approved = bool(milestone.get("_hard_gate_approved"))
     try:
@@ -774,7 +775,7 @@ def _default_executor(goal: Dict[str, Any], milestone: Dict[str, Any], *,
         # _spawn_task fails CLOSED when a required scope can't be applied —
         # never fall back to spawning unscoped. See its own docstring.
         return {"ok": False, "text": "", "cost_mψ": 0,
-                "error": f"could not safely dispatch milestone: {e}"}
+                "error": ExceptionText(f"could not safely dispatch milestone: {e}")}
     timeout = int(goal.get("milestone_timeout_seconds") or DEFAULT_MILESTONE_TIMEOUT_SECONDS)
     deadline = time.time() + timeout
     terminal = {"complete", "completed", "completed_unverified", "failed",
@@ -812,7 +813,7 @@ def _execute_milestone_work(goal: Dict[str, Any], milestone: Dict[str, Any], *,
     try:
         return _EXECUTOR(goal, milestone, critique_hint=critique_hint)
     except Exception as e:
-        return {"ok": False, "text": "", "cost_mψ": 0, "error": f"executor raised: {e}"}
+        return {"ok": False, "text": "", "cost_mψ": 0, "error": ExceptionText(f"executor raised: {e}")}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1182,7 +1183,7 @@ def latest_review() -> Optional[Dict[str, Any]]:
     try:
         return {"date": f.stem, "path": str(f), "content": f.read_text(encoding="utf-8")}
     except Exception as e:
-        return {"date": f.stem, "path": str(f), "content": "", "error": str(e)}
+        return {"date": f.stem, "path": str(f), "content": "", "error": exception_text(e)}
 
 
 def run_weekly_review() -> Dict[str, Any]:

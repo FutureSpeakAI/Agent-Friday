@@ -19,6 +19,7 @@ from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import work_queue as wq
 from agent_friday.services import workflow_plan as wp
+from agent_friday.routes._errors import api_error, public_result
 
 work_plan_bp = Blueprint("work_plan", __name__)
 
@@ -53,7 +54,7 @@ def create_proposal():
                         summary=body.get("summary") or "",
                         workflow_id=body.get("workflow_id"))
     except Exception as e:
-        return jsonify({"error": "%s: %s" % (type(e).__name__, e)}), 400
+        return api_error(e, "Couldn't create the proposal", 400, shape="bare")
     return jsonify({"proposal": prop})
 
 
@@ -81,8 +82,8 @@ def decide_proposal(pid):
                     per_task=body.get("per_task") or {})
     if not out.get("ok"):
         code = 409 if out.get("blocked") else 400
-        return jsonify(out), code
-    return jsonify(out)
+        return jsonify(public_result(out, "Couldn't record the decision")), code
+    return jsonify(public_result(out, "Couldn't record the decision"))
 
 
 @work_plan_bp.route("/api/work/proposals/<pid>", methods=["DELETE"])

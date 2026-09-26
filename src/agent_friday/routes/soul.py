@@ -10,6 +10,7 @@ FutureSpeak.AI · Asimov's Mind
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import soul
+from agent_friday.routes._errors import public_result
 
 soul_bp = Blueprint("soul", __name__)
 
@@ -27,13 +28,13 @@ def save_soul():
     data = request.get_json(silent=True) or {}
     res = soul.save_soul(data.get("text", ""))
     code = 200 if res.get("ok") else 400
-    return jsonify(res), code
+    return jsonify(public_result(res, "Couldn't save the soul")), code
 
 
 @soul_bp.route("/api/soul/reset", methods=["POST"])
 @login_required
 def reset_soul():
-    return jsonify(soul.reset_soul())
+    return jsonify(public_result(soul.reset_soul(), "Couldn't reset the soul"))
 
 
 @soul_bp.route("/api/soul/history", methods=["GET"])

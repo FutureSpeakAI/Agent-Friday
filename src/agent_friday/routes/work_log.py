@@ -9,6 +9,7 @@ from flask import Blueprint, jsonify, request
 
 from agent_friday.core import login_required
 from agent_friday.services import work_log as wl
+from agent_friday.routes._errors import api_error
 
 work_log_bp = Blueprint("work_log", __name__)
 
@@ -26,7 +27,7 @@ def get_log():
         entries = wl.get_log(limit, offset, workspace, worker_type, since, until)
         return jsonify({"ok": True, "entries": entries, "count": len(entries)})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't load the work log", shape="ok")
 
 
 @work_log_bp.route("/api/work-log/<work_id>", methods=["GET"])
@@ -47,4 +48,4 @@ def prune():
         count = wl.delete_old_entries(days)
         return jsonify({"ok": True, "deleted": count})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't prune the work log", shape="ok")

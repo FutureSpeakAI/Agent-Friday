@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import UserFacingValueError
 
 _log = logging.getLogger("friday.desktop_grants")
 _LOCK = threading.RLock()
@@ -164,9 +165,9 @@ def set_grant(app, tier: str) -> dict:
     """Owner-only (the authenticated settings route). Returns the new list."""
     a = normalize_app(app)
     if not a:
-        raise ValueError("name the app by its program file, for example notepad.exe")
+        raise UserFacingValueError("name the app by its program file, for example notepad.exe")
     if tier not in TIERS:
-        raise ValueError(f"tier must be one of {', '.join(TIERS)}")
+        raise UserFacingValueError(f"tier must be one of {', '.join(TIERS)}")
     with _LOCK:
         cur = load()
         cur["apps"][a] = tier
