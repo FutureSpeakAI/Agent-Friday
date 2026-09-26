@@ -412,6 +412,12 @@ function fridayNavManifest() {
 // switches the UI, "open my Downloads" actually reveals the folder. Each action
 // is dispatched here. Unknown action types are ignored so the backend can add
 // new ones without breaking older clients.
+// A URL an action opens comes from the server's reply, which carries model
+// output; only http(s) may be opened, never javascript:, data: or file:.
+function fridayHttpUrl(u){
+  try{const x=new URL(String(u||''),window.location.href);
+    return (x.protocol==='http:'||x.protocol==='https:')?x.href:'';}catch(_){return '';}
+}
 function fridayRunActions(actions){
   if(!Array.isArray(actions)||!actions.length)return;
   try{console.info('[friday] running %s action(s):',actions.length,actions);}catch(_){}
@@ -432,11 +438,12 @@ function fridayRunActions(actions){
         fetch('/api/computer/open',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({path:a.path||a.target})}).catch(()=>{});
       }else if(a.type==='open_url'&&a.url){
-        try{window.open(a.url,'_blank','noopener');}catch(_){}
+        const u=fridayHttpUrl(a.url);
+        if(u){try{window.open(u,'_blank','noopener');}catch(_){}}
       }else if(a.type==='open_last_source'){
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
-        const u=window._fridayLastVoiceSource;
+        const u=fridayHttpUrl(window._fridayLastVoiceSource);
         if(u){try{window.open(u,'_blank','noopener');}catch(_){}}
       }
     }catch(err){try{console.warn('[friday] action failed',a,err);}catch(_){}}
