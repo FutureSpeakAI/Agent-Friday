@@ -177,7 +177,7 @@ def find_events(query: str, *, days_back: int = 60, days_ahead: int = 400,
                 include_series: bool = True, account_id=None) -> dict:
     """Search the calendar by text. {ok, events[], series[]} or {error}.
 
-    `include_series` is what makes "ALL of my entries about a chiropractor"
+    `include_series` is what makes "ALL of my entries about a dentist"
     answerable. Recurring appointments come back from the API as individual
     instances; patching one changes one appointment. Patching the series master
     changes every occurrence, which is what "all" means to a person.
