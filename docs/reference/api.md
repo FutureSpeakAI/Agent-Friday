@@ -439,7 +439,7 @@ authoritative shape, not this snippet):
 ```json
 {
   "status": "ok",
-  "version": "5.14.1",
+  "version": "5.14.2",
   "mood": "...",
   "memory_entries": 128,
   "vault_count": 42,

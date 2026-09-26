@@ -1,6 +1,6 @@
 # Known Issues
 
-**As of 2026-09-25, for 5.14.1.**
+**As of 2026-09-26, for 5.14.2.**
 
 This file lists what is broken, unverified, or deliberately limited in a way
 you may hit. Each entry was checked against the code on that date. Fixed

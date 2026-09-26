@@ -27,7 +27,7 @@ wheels = [
 
 [[package]]
 name = "agent-friday"
-version = "5.14.1"
+version = "5.14.2"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

@@ -3,12 +3,104 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current release: **5.14.1**.
+> **Note:** Pre-1.0 releases have been archived. Current release: **5.14.2**.
 >
 > Entries for 5.7.0 and 5.8.1 are not recorded here — those releases were
 > tagged without a changelog entry.
 
 ---
+
+## [5.14.2] - 2026-09-26
+
+Approved actions now run, the privacy check no longer fails open, and voice
+conversations hold together. The plain-language summary is in
+[RELEASE_NOTES.md](RELEASE_NOTES.md).
+
+### Fixed
+
+- **An approved card never ran its action (5.14.0 and 5.14.1).** The
+  governance gate has two approval paths. `confirm` asks yes/no inside the
+  turn and proceeds; `card` refuses the call with "[APPROVAL CARD RAISED]" and
+  stores a card, on the assumption that the model would repeat the identical
+  call once it was approved. Nothing ever repeated it, so an approved card
+  ended `approved, consumed: false` and the action never happened.
+  `services/approval_executor` now makes that call on approval, from any
+  surface and however long after the turn, through `_execute_tool`, carrying
+  the card id in session context the model cannot write. The checkpoint
+  accepts it only for an approved, unspent card describing exactly this tool
+  with exactly these arguments. It runs exactly once: `decide` acts only on a
+  pending card, `claim_for_execution` is a compare-and-set under the store
+  lock, and the checkpoint marks the card consumed. The outcome is appended
+  to the conversation that raised the card, and both chat windows (docked and
+  undocked) re-read the transcript on a push, so the result appears without a
+  reload.
+- **A raised card was recorded as a success.** `[APPROVAL CARD RAISED]` and
+  four other refusal prefixes were missing from `_TOOL_DENY_SENTINELS`, so
+  the tool-call record said `ok` while the decision was still pending. A
+  raised card is now `pending`, and every failed call records a reason
+  derived from its sentinel only, never from the result text.
+- **Cloud egress failed open while the semantic check (Layer 3) was down.**
+  Text with no keyword signal went to cloud providers as PUBLIC whenever
+  Layer 3 was installed but could not run, leaving only the pattern filters.
+  It is now held: the chat and voice surfaces show a notice with "Send anyway
+  (pattern filters only)" and "Wait for full check", and a hold outside a
+  turn raises a notification. A build without the semantic check keeps
+  sending, as designed. Health and Settings › Privacy & Approvals › Privacy
+  check list each layer's plain status.
+- **A boot-time ML import race** could evict half-built `transformers`
+  modules and take down the privacy classifier (cached for the life of the
+  process) and Kokoro ("cannot import name 'AlbertModel'"). Every ML importer
+  shares one reentrant lock, purges only mid-import modules, and retries a
+  failure once; the classifier retries a failure after 30 s.
+- **A business's published address was treated as the owner's data**, so a
+  calendar event at a restaurant read from its own website was refused for a
+  cloud seat. One value is exempt when six conditions hold: it is the sole
+  cause, it came from a web page, the provider authored the arguments, it is
+  a business-contact type, it never matches the owner's own records, and the
+  exemption is logged. No detector is loosened.
+- **Approval-card labels came from the arguments' wording**, so calendar
+  entries were labelled `spend` when their notes said "buy" or "order". The
+  class now comes from the governance verdict, refined by the tool name only.
+- **A local tier could pick a cloud model** (`large_local` resolved
+  `heavy_hitter or reasoning`, and a cloud `heavy_hitter` won), then refuse
+  with "bonsai2:27b IS NOT LOADED (SERVING: bonsai2:27b)". A local tier now
+  considers only local candidates, and a refusal names what is bound and
+  what is serving.
+- **Voice:**
+  - The spoken news spreads across sections and does not repeat what Friday
+    already said in the call.
+  - Every voice tool answers within 20 seconds or says nothing came back, and
+    a late result is labelled late.
+  - The session language is pinned (the configured language, or en-US).
+  - Speech must last 400 ms before it starts a turn or interrupts.
+  - Words spoken while a Gemini Live leg renews are replayed to the new leg
+    when the gap is 10 seconds or less.
+  - The saved persona opens and closes the instruction and outranks generic
+    tone hints.
+  - One rule sizes replies to the moment.
+  - News is evidence-first.
+  - The vault wording follows `model_routing.vault_local_only`.
+
+### Added
+
+- **"Who is talking"** in Settings › Voice › Listening. In "Several people"
+  mode, Friday answers only when addressed, and decides once per reply.
+- **Approval cards pop up in every open Friday tab**, and disappear
+  everywhere when decided. They are fed by `GET /api/approvals/events`. The
+  tab that loses a race says "Already decided".
+- **`navigate_to`** opens one exact thing on the desktop and confirms only
+  what the page reports showing. **`check_situation`** reports open
+  workspaces, resources, loaded models, running work, and today's spend.
+  Both are internal tools; `navigate_to` is ring 1.
+
+### Changed
+
+- The provenance tests use fictional places and names.
+
+### Security
+
+- Dependabot status is unchanged: see
+  [docs/security/dependency-advisories.md](docs/security/dependency-advisories.md).
 
 ## [5.14.1] - 2026-09-25
 
