@@ -651,7 +651,7 @@ DEFAULT_PROVIDERS = [
     # NeMo installed AND a CUDA GPU with enough VRAM). Without that stack it shows
     # as an unavailable upgrade with an install hint — it never gates Tier-1.
     # The heavy torch/CUDA + NeMo deps are a separate opt-in install step
-    # (`.[voice-local-gpu]` + a torch-CUDA wheel). See docs/user-guide/local-voice-gpu-tier.md.
+    # (the Settings voice installer's GPU target). See docs/user-guide/local-voice-gpu-tier.md.
     {
         "name": "nvidia-nemo",
         "label": "NVIDIA NeMo (GPU · premium)",

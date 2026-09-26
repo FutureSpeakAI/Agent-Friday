@@ -20,7 +20,8 @@ Design rules (identical philosophy to Tier-1, so both tiers coexist cleanly):
   * **Never import torch / nemo at module load.** Everything heavy is imported
     lazily inside ``load()``/``transcribe()``/``synthesize()``. Importing this
     module is free and CI-safe — the GPU stack is an opt-in install
-    (``pip install -e .[voice-local-gpu]`` + a torch-CUDA wheel).
+    (the Settings voice installer's GPU target: a torch-CUDA wheel plus a
+    pinned ``nemo_toolkit[asr]``; NeMo is not a pip extra).
   * **Graceful degradation.** If torch/NeMo aren't importable or no CUDA GPU is
     present, the backends report unavailable and the engine falls back to Tier-1
     (CPU) — the user always gets *some* local voice.
@@ -717,8 +718,8 @@ def nemo_health() -> dict:
                            "missing module. Fix: pip install nltk")
             else:
                 _detail = ("NeMo GPU voice not installed (missing: "
-                           + ", ".join(_missing) + ") — opt-in "
-                           "`.[voice-local-gpu]` + a torch-CUDA wheel")
+                           + ", ".join(_missing) + ") — install it with "
+                           "the GPU voice installer in Settings (torch-CUDA + NeMo)")
             return {
                 "engine": "nvidia-nemo", "status": "missing",
                 "detail": _detail,

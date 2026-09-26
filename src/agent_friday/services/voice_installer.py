@@ -106,7 +106,9 @@ TARGETS = {
         "stages": [
             ["install",
              "torch==%s" % _TORCH_PIN, "torchaudio==%s" % _TORCHAUDIO_PIN,
-             "nemo_toolkit[asr]>=2.6",
+             # Pinned with the torch pair: NeMo is installed only here, never
+             # from pyproject or uv.lock (docs/security/dependency-advisories.md).
+             "nemo_toolkit[asr]==3.0.0",
              "--extra-index-url", _TORCH_CUDA_INDEX],
         ],
         # Reported success means THIS imports, in a subprocess, after pip is

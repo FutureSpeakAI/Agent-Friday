@@ -1,10 +1,10 @@
-"""The conditions that keep the open dependency advisories out of reach.
+"""The NeMo stack stays out of the scanned dependency set, and what NeMo may load.
 
 Lightning and Hydra (code execution from an untrusted checkpoint or config) and
 NLTK (paths in its data loaders) arrive only with NVIDIA NeMo, the opt-in GPU
-voice tier. None has an installable fix: NeMo caps Lightning and Hydra below the
-patched versions, and NLTK's newest release is affected. What keeps them
-unreachable is where NeMo can come from and what it may load.
+voice tier. NeMo caps Lightning and Hydra below their fixed releases, so NeMo is
+not a pip extra and is not in uv.lock: the Settings voice installer installs it
+as its own pinned step. What it may load is held to NVIDIA's own models.
 docs/security/dependency-advisories.md explains each alert.
 """
 from __future__ import annotations
@@ -28,17 +28,28 @@ def test_the_windows_installer_never_installs_the_nemo_stack():
             assert not any(n.startswith(pkg) for n in names), (req.name, pkg)
 
 
-def test_the_gpu_voice_extra_is_not_in_all():
+def test_pyproject_declares_no_nemo_stack():
     # Read as text: services/app_version.py is the one parser of this file.
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    block = re.search(r"(?ms)^all = \[\n(.*?)^\]", text)
-    assert block, "the [all] extra was not found"
-    entries = [line.split("#", 1)[0].strip().lower()
-               for line in block.group(1).splitlines()]
-    joined = " ".join(e for e in entries if e)
-    assert "nemo" in text.lower()
-    assert "voice-local-gpu" not in joined and "nemo" not in joined
-    assert "chromadb" in joined, "the [all] block was misread"
+    code = " ".join(line.split("#", 1)[0] for line in text.splitlines()).lower()
+    assert "voice-local-gpu =" not in code
+    for pkg in ("nemo_toolkit", "nemo-toolkit", "lightning", "hydra-core", "nltk"):
+        assert pkg not in code, pkg
+    assert "chromadb" in code, "pyproject.toml was misread"
+
+
+def test_the_lock_holds_no_nemo_stack():
+    lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
+    names = re.findall(r'(?m)^name = "([^"]+)"', lock)
+    assert "chromadb" in names, "uv.lock was misread"
+    for pkg in ("nemo-toolkit", "lightning", "pytorch-lightning", "hydra-core", "nltk"):
+        assert pkg not in names, pkg
+
+
+def test_the_voice_installer_pins_nemo_in_its_own_step():
+    from agent_friday.services import voice_installer as vi
+    stage = " ".join(" ".join(st) for st in vi.TARGETS["voice-local-gpu"]["stages"])
+    assert re.search(r"nemo_toolkit\[asr\]==\d+\.\d+\.\d+", stage), stage
 
 
 @pytest.mark.parametrize("name,expected", [
