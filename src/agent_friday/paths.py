@@ -162,6 +162,53 @@ def runtime_dir() -> Path:
         return friday_home() / "runtime"
 
 
+def contained(root, rel, *, allow_root: bool = False) -> Path:
+    """Join a caller-supplied name or relative path under a Friday-owned root.
+
+    Returns the fully resolved path, or raises ``ValueError`` when the result
+    is not strictly inside ``root``. Every request-, model- or tool-supplied
+    name that is joined under a fixed directory (the wiki, meetings,
+    conversations, creations, uploads and the like) goes through here before
+    anything reads, writes or deletes it.
+
+    The check runs on the resolved path, so it covers ``..`` segments,
+    absolute paths (``os.path.join`` discards the root for them), Windows
+    drive letters and drive-relative forms (``C:x``), UNC and device paths,
+    and symlinks or junctions inside ``root`` that point outside it. A NUL
+    byte is refused outright. ``allow_root`` permits the root itself (an
+    empty ``rel``); it is off by default so a delete can never be aimed at
+    the whole directory.
+    """
+    rel_s = os.fspath(rel) if rel is not None else ""
+    if "\x00" in rel_s:
+        raise ValueError("path contains a NUL byte")
+    base = os.path.realpath(os.fspath(root))
+    full = os.path.realpath(os.path.join(base, rel_s))
+    if full == base:
+        if allow_root:
+            return Path(base)
+        raise ValueError("path resolves to the root itself")
+    prefix = base if base.endswith(os.sep) else base + os.sep
+    if not full.startswith(prefix):
+        raise ValueError("path escapes its root")
+    return Path(full)
+
+
+def safe_name(name, *, what: str = "name") -> str:
+    """Return ``name`` when it is a single, plain path component.
+
+    For identifiers that become one file or directory name under a root (an
+    id, a slug, a filename). Refuses separators, drive letters, ``.``/``..``
+    and NUL, raising ``ValueError`` instead of silently rewriting the value,
+    so a lookup for a hostile id finds nothing rather than something else.
+    """
+    s = "" if name is None else str(name)
+    if (not s or s in (".", "..") or "\x00" in s or "/" in s or "\\" in s
+            or ":" in s):
+        raise ValueError("invalid %s" % what)
+    return s
+
+
 DEFAULT_SERVER_PORT = 3000
 
 
