@@ -436,6 +436,22 @@ def test_refresh_grant_on_expiry(request, oauth_dir):
                 if t["grant_type"] == "refresh_token"]) == 1
 
 
+def test_oauth_record_is_never_written_in_clear_text(oauth_dir, monkeypatch):
+    """OAuth tokens reach disk only through the credential store. When the
+    store cannot be imported the write fails; it does not fall back to
+    writing the tokens as plain JSON."""
+    import agent_friday.services as services_pkg
+    monkeypatch.delattr(services_pkg, "credential_store", raising=False)
+    monkeypatch.setitem(sys.modules, "agent_friday.services.credential_store",
+                        None)
+    with pytest.raises(ImportError):
+        mcp_oauth._write_record("remote", {
+            "tokens": {"access_token": "plain-canary"}})  # pragma: allowlist secret
+    written = list(oauth_dir.rglob("*")) if oauth_dir.exists() else []
+    assert not any(p.is_file() and b"plain-canary" in p.read_bytes()
+                   for p in written), "OAuth tokens were written in clear text"
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  Extension security — plaintext-HTTP remote URLs are blocked
 # ══════════════════════════════════════════════════════════════════════════
