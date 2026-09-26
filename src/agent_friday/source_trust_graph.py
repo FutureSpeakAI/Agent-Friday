@@ -74,7 +74,9 @@ _MAX_OBSERVATIONS = 400
 
 # Seed reputations so a brand-new graph still produces sensible badges. These
 # mirror the static trust map in server.py; the live graph diverges from them
-# as real observations accumulate.
+# as real observations accumulate. No city's local press belongs here: local
+# outlets come from the owner's `news_local_sources` setting (see
+# local_beat_sources), so no install trusts another city's press by default.
 _SEED_HIGH = {
     "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "npr.org",
     "arstechnica.com", "theverge.com", "wired.com", "nature.com",
@@ -84,7 +86,7 @@ _SEED_HIGH = {
     "theguardian.com", "politico.com", "theintercept.com", "talkingpointsmemo.com",
     "motherjones.com", "theatlantic.com", "fortune.com", "cnbc.com",
     "marketwatch.com", "businessinsider.com", "texastribune.org",
-    "texasmonthly.com", "austinmonitor.com", "kut.org", "scientificamerican.com",
+    "scientificamerican.com",
     "carbonbrief.org", "niemanlab.org", "cjr.org", "poynter.org",
 }
 _SEED_LOW = {
@@ -146,15 +148,62 @@ def _extract_domain(url_or_text):
     return s.strip(".")
 
 
+#: Upper bound on the owner's Local beat list; a settings file is not a feed
+#: directory, and every entry costs a feed request per fetch.
+_MAX_LOCAL_SOURCES = 50
+_DOMAIN_RX = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$")
+
+
+def normalize_local_sources(raw):
+    """Bare, de-duplicated domains from a `news_local_sources` value.
+
+    Accepts a list or a comma/newline separated string of domains or URLs.
+    Anything that does not reduce to a dotted hostname is dropped, so a
+    malformed setting yields fewer sources, never an exception.
+    """
+    if isinstance(raw, str):
+        items = re.split(r"[,\r\n]", raw)
+    elif isinstance(raw, (list, tuple)):
+        items = raw
+    else:
+        return ()
+    out = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        domain = _extract_domain(item)
+        if domain and _DOMAIN_RX.match(domain) and domain not in out:
+            out.append(domain)
+        if len(out) >= _MAX_LOCAL_SOURCES:
+            break
+    return tuple(out)
+
+
+def local_beat_sources():
+    """The outlets the owner named for their Local beat (the
+    `news_local_sources` setting), as bare domains in the owner's order.
+
+    Nothing ships here: an install with no setting has no local outlets, and
+    an unreadable settings file means none rather than an error. These
+    domains seed at the same high trust as `_SEED_HIGH`.
+    """
+    try:
+        from agent_friday.core import _load_settings
+        raw = (_load_settings() or {}).get("news_local_sources")
+    except Exception:
+        return ()
+    return normalize_local_sources(raw)
+
+
 def _seed_for(domain):
     """Seed dimension scores for a source we've never observed.
 
     Seeds are chosen so the composite lands green (≥0.7) for the static
-    high-trust set, red (<0.4) for the known low-trust set, and neutral yellow
+    high-trust set and the owner's Local beat outlets, red (<0.4) for the known low-trust set, and neutral yellow
     for everything unknown — matching the old static badge behaviour until real
     observations move the needle.
     """
-    if domain in _SEED_HIGH:
+    if domain in _SEED_HIGH or domain in local_beat_sources():
         base = 0.75
     elif domain in _SEED_LOW:
         base = 0.30

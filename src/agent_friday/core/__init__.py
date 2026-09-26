@@ -2066,8 +2066,13 @@ DEFAULT_SETTINGS = {
     "auto_open_created_files": False,
     "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
-    # The place Local news covers ("Portland, Oregon"); empty means no Local beat.
+    # The Local beat is the owner's to name; nothing ships with a city.
+    # news_local_area: the place Local news covers, as free text.
+    # news_local_sources: outlet domains for that beat, fetched as Local
+    # feeds and trusted like the built-in high-trust outlets
+    # (source_trust_graph.local_beat_sources). Both empty means no Local beat.
     "news_local_area": "",
+    "news_local_sources": [],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
     "tts_voice": "Aoede",                  # any of the 30 Gemini-TTS voices
