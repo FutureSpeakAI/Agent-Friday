@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Optional
 
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.services.web_safety import UnsafeURLError, check_peer_endpoint
+from agent_friday.user_errors import exception_text
 
 DB_PATH = FRIDAY_DIR / "compute_sent_jobs.db"
 _LOCK = threading.RLock()
@@ -206,7 +207,7 @@ def request_job(
         with urllib.request.urlopen(req, timeout=15) as resp:
             response = json.loads(resp.read())
     except Exception as exc:
-        response = {"error": str(exc)}
+        response = {"error": exception_text(exc)}
 
     with _LOCK, _conn() as c:
         c.execute(

@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import agent_friday.core as core
+from agent_friday.user_errors import exception_text
 
 # ── optional crypto deps ──────────────────────────────────────────────────────
 try:
@@ -387,7 +388,7 @@ def decrypt_message(envelope_dict: Dict[str, Any]) -> Dict[str, Any]:
             "sender_pubkey": sender_pub,
         }
     except Exception as e:
-        return {"ok": False, "error": str(e), "sender_pubkey": envelope_dict.get("sender_pubkey", "")}
+        return {"ok": False, "error": exception_text(e), "sender_pubkey": envelope_dict.get("sender_pubkey", "")}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -450,4 +451,4 @@ def send_to_peer(
     except urllib.error.HTTPError as e:
         return {"ok": False, "error": f"http_{e.code}", "status": e.code}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}

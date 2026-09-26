@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
+from agent_friday.routes._errors import api_error, public_result
 
 research_bp = Blueprint("research", __name__)
 
@@ -41,7 +42,7 @@ def api_research_propose():
             disposition=body.get("disposition") or "now_local",
             budget=body.get("budget")))
     except Exception as e:
-        return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
+        return api_error(e, "Couldn't propose the research", shape="bare")
 
 
 @research_bp.route("/api/research/<cid>/run", methods=["POST"])
@@ -100,7 +101,7 @@ def api_privacy_gate():
     try:
         return jsonify(jg.state())
     except Exception as e:
-        return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
+        return api_error(e, "Couldn't check the privacy gate", shape="bare")
 
 
 @research_bp.route("/api/privacy/left-the-machine")
@@ -156,7 +157,7 @@ def api_search_backend():
         # Live entitlement checks — these spend real requests, so opt-in.
         out["verify"] = {"brave": web_search.verify_key(),
                          "firecrawl": firecrawl.verify()}
-    return jsonify(out)
+    return jsonify(public_result(out, "Couldn't check the search backend"))
 
 
 @research_bp.route("/api/gpu/headroom")

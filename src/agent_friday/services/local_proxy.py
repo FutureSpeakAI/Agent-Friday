@@ -29,6 +29,7 @@ import socket
 import ssl
 import threading
 import time
+from agent_friday.user_errors import ExceptionText
 
 HANDSHAKE_TIMEOUT_S = 10
 HEAD_TIMEOUT_S = 10
@@ -182,7 +183,7 @@ class LocalProxy:
                         who = port_holder(port)
                         self.listening[kind][addr] = (
                             f"port {port} is in use by {who}" if who else
-                            f"could not listen on port {port}: {e.strerror or e}")
+                            ExceptionText(f"could not listen on port {port}: {e.strerror or e}"))
                         continue
                     handler = self._https_client if kind == "https" else self._http_client
                     if ctx is not None:

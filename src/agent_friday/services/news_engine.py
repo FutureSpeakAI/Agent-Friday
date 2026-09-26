@@ -49,6 +49,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.user_errors import ExceptionText
 
 # Not visible via the star-import cascade (it is bound in voice_engine, an
 # UPPER layer) — import the leaf module directly so the editorial/digest/front
@@ -3213,7 +3214,7 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
     try:
         page_title, body = _extract_article_text(url)
     except Exception as e:
-        return {"status": "error", "message": f"Couldn't fetch the article: {e}"}, 502
+        return {"status": "error", "message": ExceptionText(f"Couldn't fetch the article: {e}")}, 502
     if len(body) < 200:
         # Thin extraction is very often a paywall or bot-wall — say so, so the
         # voice/anchor path warns the user instead of failing opaquely.
@@ -3244,7 +3245,7 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
         raw = _generate_text([{"role": "user", "content": prompt}],
                              system=system, max_tokens=2000, workspace='news')
     except Exception as e:
-        return {"status": "error", "message": f"Summary generation failed: {e}"}, 502
+        return {"status": "error", "message": ExceptionText(f"Summary generation failed: {e}")}, 502
     parsed = _extract_json_block(raw) or {}
     quotes = parsed.get("key_quotes")
     result = {
