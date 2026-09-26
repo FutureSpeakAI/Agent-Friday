@@ -373,7 +373,7 @@ def list_outward_tools():
             klass, why = action_gate.OUTWARD, "unclassified"
         if klass == action_gate.OUTWARD and name not in action_gate.SELF_GATED:
             # The gate's explanation is meant for the owner; only its message
-            # travels (docs/security/codeql-dismissals.md).
+            # travels (docs/security/codeql-residual.md).
             out.append({"name": name, "why": message_only(why),
                         "label": _GRANT_LABELS.get(name)
                         or _connector_label(name)})
