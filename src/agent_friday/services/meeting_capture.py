@@ -64,6 +64,8 @@ import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from agent_friday.paths import contained
+
 log = logging.getLogger("friday.meetings")
 
 CONSENT_TEXT = ("Recording laws differ by place; many require everyone's "
@@ -276,9 +278,9 @@ def _root() -> Path:
 
 
 def _dir(mid: str) -> Path:
-    if not _ID_RE.match(str(mid or "")):
+    if not _ID_RE.fullmatch(str(mid or "")):
         raise MeetingError("not_found", "No such meeting.", 404)
-    return _root() / mid
+    return contained(_root(), mid)
 
 
 def _protect(data: bytes) -> bytes:

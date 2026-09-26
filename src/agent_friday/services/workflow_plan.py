@@ -40,6 +40,7 @@ import uuid
 from pathlib import Path
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.paths import contained, safe_name
 from agent_friday.services import work_queue as wq
 
 _LOCK = threading.RLock()
@@ -302,7 +303,7 @@ def dismiss(proposal_id: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _path(proposal_id: str) -> Path:
-    return proposals_dir() / ("%s.json" % proposal_id)
+    return contained(proposals_dir(), safe_name("%s.json" % proposal_id, what="proposal id"))
 
 
 def _save(prop: dict) -> None:

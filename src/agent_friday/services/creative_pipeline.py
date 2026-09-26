@@ -36,6 +36,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.paths import contained, safe_name
 
 PIPELINES_DIR = FRIDAY_DIR / "pipelines"
 RUNS_DIR = PIPELINES_DIR / "runs"
@@ -253,8 +254,17 @@ def get_pipeline(pipeline_id: str) -> Optional[Dict[str, Any]]:
     """Full pipeline definition by id (built-in or custom)."""
     if pipeline_id in _BUILTIN_TEMPLATES:
         return json.loads(json.dumps(_BUILTIN_TEMPLATES[pipeline_id]))  # deep copy
-    p = DEFS_DIR / f"{pipeline_id}.json"
+    try:
+        p = _def_path(pipeline_id)
+    except ValueError:
+        return None
     return _read_json(p)
+
+
+def _def_path(pipeline_id: str) -> Path:
+    """A custom pipeline's file. Raises ValueError unless the id is one plain
+    name inside DEFS_DIR."""
+    return contained(DEFS_DIR, safe_name("%s.json" % pipeline_id, what="pipeline id"))
 
 
 def register_pipeline(definition: Dict[str, Any]) -> Dict[str, Any]:
@@ -264,9 +274,13 @@ def register_pipeline(definition: Dict[str, Any]) -> Dict[str, Any]:
     if not ok:
         return {"status": "error", "message": err}
     pid = definition.get("id") or f"pipeline-{uuid.uuid4().hex[:8]}"
+    try:
+        path = _def_path(pid)
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
     definition["id"] = pid
     definition.setdefault("name", pid)
-    _write_json(DEFS_DIR / f"{pid}.json", definition)
+    _write_json(path, definition)
     return {"status": "ok", "id": pid}
 
 
@@ -368,11 +382,14 @@ def _write_json(path: Path, data: Dict[str, Any]) -> None:
 
 
 def _run_path(run_id: str) -> Path:
-    return RUNS_DIR / f"{run_id}.json"
+    return contained(RUNS_DIR, safe_name("%s.json" % run_id, what="run id"))
 
 
 def get_run(run_id: str) -> Optional[Dict[str, Any]]:
-    return _read_json(_run_path(run_id))
+    try:
+        return _read_json(_run_path(run_id))
+    except ValueError:
+        return None
 
 
 def list_runs(limit: int = 50) -> List[Dict[str, Any]]:

@@ -60,14 +60,24 @@ except Exception:
 
 
 def _find_briefing_path(filename):
-    """Return the Path for a briefing file, checking both known locations."""
-    # Location 1: Desktop/friday-creations (legacy daily-briefing-*.html files)
-    p1 = HOME / 'Desktop' / 'friday-creations' / filename
-    if p1.exists() and p1.name.startswith('daily-briefing'):
+    """Return the Path for a briefing file, checking both known locations.
+
+    `filename` comes from the URL and must name one file directly inside one
+    of the two briefing folders; anything else (`..`, a backslash, a drive)
+    finds nothing.
+    """
+    from agent_friday.paths import contained, safe_name
+    try:
+        name = safe_name(filename, what="briefing name")
+        # Location 1: Desktop/friday-creations (legacy daily-briefing-*.html files)
+        p1 = contained(HOME / 'Desktop' / 'friday-creations', name)
+        # Location 2: ~/.friday/wiki/briefings (date-named files like 2026-04-14.html)
+        p2 = contained(HOME / '.friday' / 'wiki' / 'briefings', name)
+    except ValueError:
+        return None
+    if p1.is_file() and p1.name.startswith('daily-briefing'):
         return p1
-    # Location 2: ~/.friday/wiki/briefings (date-named files like 2026-04-14.html)
-    p2 = HOME / '.friday' / 'wiki' / 'briefings' / filename
-    if p2.exists():
+    if p2.is_file():
         return p2
     return None
 

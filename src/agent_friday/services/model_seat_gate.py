@@ -32,6 +32,7 @@ from pathlib import Path
 _seat_logger = logging.getLogger("friday.model_seat_gate")
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.paths import contained
 from agent_friday.services.tool_integrity import find_pseudo_toolcalls
 
 GATE_DIR = FRIDAY_DIR / "model_seat_conformance"
@@ -69,7 +70,9 @@ _GATE_SYSTEM_PROMPT = (
 
 
 def _safe_name(model: str, provider: str) -> str:
-    return f"{provider}__{model}".replace("/", "_").replace(":", "_")
+    # One file name: every separator a model id can carry becomes "_".
+    return (f"{provider}__{model}".replace("/", "_").replace("\\", "_")
+            .replace(":", "_"))
 
 
 def _tool_names_and_schema():
@@ -312,10 +315,10 @@ def save_status(model: str, provider: str, result: dict) -> Path:
     GATE_DIR.mkdir(parents=True, exist_ok=True)
     base = _safe_name(model, provider)
     if result.get("inconclusive"):
-        path = GATE_DIR / f"{base}.inconclusive.json"
+        path = contained(GATE_DIR, f"{base}.inconclusive.json")
         path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         return path
-    path = GATE_DIR / f"{base}.json"
+    path = contained(GATE_DIR, f"{base}.json")
     path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     return path
 

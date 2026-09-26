@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.paths import contained, safe_name
 
 PROVENANCE_DIR = FRIDAY_DIR / "provenance"
 LEDGER_FILE = PROVENANCE_DIR / "ledger.jsonl"
@@ -258,7 +259,7 @@ def sign_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:
 
 def _sidecar_path(content_hash: str) -> Path:
     safe = content_hash.replace("sha256:", "").replace(":", "_")
-    return PROVENANCE_DIR / f"{safe}.jsonld"
+    return contained(PROVENANCE_DIR, safe_name("%s.jsonld" % safe, what="content hash"))
 
 
 def _ledger_tail_hash() -> str:
@@ -463,8 +464,12 @@ def verify_manifest(manifest_or_path) -> Dict[str, Any]:
     declared = art.get("content_hash")
     checks["hash_ok"] = None
     if declared:
-        cand = core.CREATIONS_DIR / art.get("filename", "")
-        if cand.exists():
+        try:
+            cand = contained(core.CREATIONS_DIR,
+                             safe_name(art.get("filename", ""), what="filename"))
+        except ValueError:
+            cand = None
+        if cand is not None and cand.is_file():
             checks["hash_ok"] = (hash_file(cand) == declared)
 
     # Ledger chain presence

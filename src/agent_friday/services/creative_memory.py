@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.paths import contained, safe_name
 
 PROJECTS_DIR = FRIDAY_DIR / "projects"
 _ACTIVE_FILE = PROJECTS_DIR / "active.json"
@@ -64,7 +65,9 @@ def _now() -> str:
 
 
 def _project_dir(project_id: str) -> Path:
-    return PROJECTS_DIR / project_id
+    """The project's folder. Raises ValueError unless the id is one plain name
+    inside PROJECTS_DIR: ids arrive in URLs and delete_project rmtree's this."""
+    return contained(PROJECTS_DIR, safe_name(project_id, what="project id"))
 
 
 def _bible_path(project_id: str) -> Path:
@@ -156,7 +159,10 @@ def list_projects() -> List[Dict[str, Any]]:
 
 def get_project(project_id: str) -> Optional[Dict[str, Any]]:
     """Full Series Bible for a project, or None if it doesn't exist."""
-    return _read_json(_bible_path(project_id))
+    try:
+        return _read_json(_bible_path(project_id))
+    except ValueError:
+        return None
 
 
 def update_project(project_id: str, *, name: Optional[str] = None,
@@ -176,7 +182,10 @@ def delete_project(project_id: str) -> bool:
     """Delete a project and its Bible. Clears the active pointer if it pointed
     here. Returns True if something was removed."""
     with _LOCK:
-        d = _project_dir(project_id)
+        try:
+            d = _project_dir(project_id)
+        except ValueError:
+            return False
         if not d.exists():
             return False
         import shutil

@@ -187,7 +187,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from agent_friday.paths import friday_home
+from agent_friday.paths import contained, friday_home, safe_name
 from agent_friday.services import approvals
 from agent_friday.services import qa_gates
 
@@ -264,11 +264,14 @@ def _is_overdue(due_value: Any, *, now: Optional[float] = None) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _goal_path(goal_id: str) -> Path:
-    return GOALS_DIR / f"{goal_id}.json"
+    return contained(GOALS_DIR, safe_name("%s.json" % goal_id, what="goal id"))
 
 
 def _read_goal_file(goal_id: str) -> Optional[Dict[str, Any]]:
-    p = _goal_path(goal_id)
+    try:
+        p = _goal_path(goal_id)
+    except ValueError:
+        return None
     if not p.exists():
         return None
     try:
