@@ -414,7 +414,7 @@ function fridayNavManifest() {
 // new ones without breaking older clients.
 function fridayRunActions(actions){
   if(!Array.isArray(actions)||!actions.length)return;
-  try{console.info('[friday] running '+actions.length+' action(s):',actions);}catch(_){}
+  try{console.info('[friday] running %s action(s):',actions.length,actions);}catch(_){}
   for(const a of actions){
     if(!a||typeof a!=='object')continue;
     try{
