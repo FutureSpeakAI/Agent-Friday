@@ -12,6 +12,7 @@ import threading
 import asyncio
 import re
 import html
+import urllib.parse
 import calendar
 import time as _time
 import hashlib as _hashlib
@@ -140,8 +141,10 @@ def serve_creation_framed(filename):
     if not fpath.exists() or not fpath.is_file():
         return ("Creation not found.", 404)
     ext = fpath.suffix.lower().lstrip('.')
-    raw_url = f"/api/creations/{safe}"
-    home_url = request.host_url.rstrip('/') or 'http://localhost:3000'
+    # Everything interpolated into the page is escaped: the file name, and the
+    # Host header the return link is built from.
+    raw_url = html.escape("/api/creations/" + urllib.parse.quote(safe))
+    home_url = html.escape(request.host_url.rstrip('/') or 'http://localhost:3000')
     title = html.escape(safe)
 
     if ext in ('html', 'htm'):
@@ -163,7 +166,9 @@ def serve_creation_framed(filename):
             md_raw = f"Could not read creation: {e}"
         # Render client-side with marked (already a project dependency); fall back
         # to escaped <pre> if the CDN is unreachable (offline-safe).
-        md_json = json.dumps(md_raw)
+        # '<' becomes a JSON escape, so '</script>' in the document cannot
+        # close the tag.
+        md_json = json.dumps(md_raw).replace('<', '\\u003c')
         body = (
             '<div class="fc-doc"><div id="fc-md"></div>'
             '<pre id="fc-md-fallback" style="display:none;white-space:pre-wrap"></pre></div>'
