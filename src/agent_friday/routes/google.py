@@ -151,14 +151,14 @@ def google_auth_callback():
 
     err = request.args.get('error')
     if err:
-        return f"<h2>Google authorization failed</h2><p>{err}</p>", 400
+        return f"<h2>Google authorization failed</h2><p>{html.escape(err)}</p>", 400
     cfg, _ = _google_client_config()
     if not cfg:
         return "<h2>Google OAuth client missing</h2>", 400
     try:
         from google_auth_oauthlib.flow import Flow
     except Exception as e:
-        return f"<h2>google-auth-oauthlib not installed</h2><p>{e}</p>", 500
+        return f"<h2>google-auth-oauthlib not installed</h2><p>{html.escape(str(e))}</p>", 500
     state = session.get('google_oauth_state')
     verifier = session.get('google_oauth_verifier')
     saved_redirect = session.get('google_oauth_redirect_uri')
@@ -198,7 +198,7 @@ def google_auth_callback():
             "You can close this tab and regenerate your briefing.</p>"
         )
     except Exception as e:
-        return f"<h2>Token exchange failed</h2><p>{e}</p>", 500
+        return f"<h2>Token exchange failed</h2><p>{html.escape(str(e))}</p>", 500
 
 
 @google_bp.route('/api/google/status')

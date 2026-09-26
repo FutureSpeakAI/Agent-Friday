@@ -103,7 +103,8 @@ _RETIRED_WORKSPACES = {'edition': None, 'home': None}
 
 @core_bp.route('/w/<ws_id>')
 def serve_workspace_tab(ws_id):
-    if not _WS_ID.match(ws_id or ''):
+    # fullmatch: `$` in match() also accepts a trailing newline.
+    if not _WS_ID.fullmatch(ws_id or ''):
         return "Not a workspace name.", 404
     if ws_id in _RETIRED_WORKSPACES:
         # None means "the desktop itself". Home and Edition were both landing
@@ -119,8 +120,10 @@ def serve_workspace_tab(ws_id):
         for k, v in defaults.items():
             args.setdefault(k, v)
         return redirect('/w/' + target + ('?' + urlencode(args) if args else ''))
+    # The name is [a-z0-9_-] by now, so escaping changes nothing; it keeps the
+    # rule local: nothing from the URL reaches the page unescaped.
     return _serve_index(
-        f'<script>window.__FRIDAY_STANDALONE__="{ws_id}";'
+        f'<script>window.__FRIDAY_STANDALONE__="{html.escape(ws_id)}";'
         'document.documentElement.classList.add("ws-standalone");</script>')
 
 
