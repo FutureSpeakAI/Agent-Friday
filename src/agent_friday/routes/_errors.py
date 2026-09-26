@@ -29,6 +29,13 @@ the same key:
 {"ok": False, "reason": ...}); any other keyword is added to the body as is
 (`results=[]`, `accounts=[]`).
 
+A service result dict that a route returns to the browser goes through
+`public_result(result, what)`. The service keeps the real error text for the
+model (agent tools read the same dict) and marks it with `exception_text(e)`;
+`public_result` logs each marked value under an error id and replaces it with
+"<what> (error <id>)". Literal messages a service writes for the user are
+plain strings and pass through unchanged.
+
 This module's name starts with "_" so blueprint auto-discovery skips it.
 """
 from __future__ import annotations
@@ -38,12 +45,15 @@ import html
 from flask import jsonify
 
 from agent_friday.user_errors import (  # noqa: F401  (re-exported for routes)
+    ExceptionText,
     UserFacingError,
     UserFacingLookupError,
     UserFacingPermissionError,
     UserFacingValueError,
     error_text,
+    exception_text,
     log_failure,
+    log_text,
     new_error_id,
 )
 
@@ -84,3 +94,24 @@ def html_error(exc: BaseException, what: str, status: int = 500):
     else:
         detail = "Error %s. The details are in Friday's log." % log_failure(exc, what)
     return "<h2>%s</h2><p>%s</p>" % (html.escape(what), html.escape(detail)), status
+
+
+def public_result(result, what: str):
+    """The browser-safe form of a service result.
+
+    Top-level values marked with `exception_text` become "<what> (error <id>)"
+    and are logged under that id, and "error_id" is added. A result with no
+    marked value, or one that is not a dict, is returned unchanged. The
+    service's own dict is never mutated: the model path keeps the real text.
+    """
+    if not isinstance(result, dict):
+        return result
+    marked = [k for k, v in result.items() if isinstance(v, ExceptionText)]
+    if not marked:
+        return result
+    error_id = log_text(what, "; ".join("%s=%s" % (k, result[k]) for k in marked))
+    safe = {k: v for k, v in result.items() if k not in marked}
+    for k in marked:
+        safe[k] = "%s (error %s)" % (what, error_id)
+    safe["error_id"] = error_id
+    return safe

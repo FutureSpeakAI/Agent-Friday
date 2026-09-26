@@ -87,7 +87,38 @@ def log_failure(exc: BaseException, what: str) -> str:
 
 def error_text(exc: BaseException, what: str) -> str:
     """The text a user sees for `exc`: its message if it is a UserFacingError,
-    otherwise `what` plus an error id (and `exc` is logged under that id)."""
+    otherwise `what` plus an error id (and `exc` is logged under that id).
+
+    For HTTP responses only. A result the model reads through an agent tool
+    keeps the real text; use `exception_text` there."""
     if isinstance(exc, UserFacingError):
         return exc.user_message
     return "%s (error %s)" % (what, log_failure(exc, what))
+
+
+class ExceptionText(str):
+    """An exception's text, marked as such.
+
+    A service result dict has two audiences: the model (through agent tools),
+    which needs the real error to explain a failure, and the browser (through
+    a route), which must not see internals. The service writes the real text
+    as `exception_text(e)`; it compares, prints and serialises exactly like the
+    plain string, so the model path is unchanged. At the HTTP boundary
+    `routes._errors.public_result` recognises the mark and swaps the text for
+    "<what> (error <id>)". Literal messages a service writes for the user are
+    plain strings and pass through.
+    """
+
+    __slots__ = ()
+
+
+def exception_text(exc: BaseException) -> ExceptionText:
+    """`str(exc)`, marked as exception text for the HTTP boundary."""
+    return ExceptionText(str(exc))
+
+
+def log_text(what: str, text: str) -> str:
+    """Log an error that arrives as text (no traceback left), under a new id."""
+    error_id = new_error_id()
+    _log.error("[error %s] %s: %s: %s", error_id, _where(), what, text)
+    return error_id

@@ -145,3 +145,37 @@ def test_works_outside_a_request(caplog):
     with caplog.at_level(logging.ERROR, logger="friday.routes.errors"):
         eid = _errors.log_failure(_raise(RuntimeError("x")), "background")
     assert eid in caplog.text
+
+
+# Service results: the model keeps the real text, the browser gets an id.
+
+def test_exception_text_is_the_same_string_for_the_model():
+    import json
+    from agent_friday.user_errors import exception_text
+    t = exception_text(_raise(RuntimeError(INTERNAL)))
+    assert t == INTERNAL and str(t) == INTERNAL
+    assert json.dumps({"error": t}) == json.dumps({"error": INTERNAL})
+
+
+def test_public_result_swaps_marked_text_and_keeps_the_rest(app, caplog):
+    from agent_friday.routes._errors import public_result
+    from agent_friday.user_errors import exception_text
+    res = {"ok": False, "error": exception_text(_raise(OSError(INTERNAL))), "found": False}
+    with app.test_request_context("/api/content/posts/1"):
+        with caplog.at_level(logging.ERROR, logger="friday.routes.errors"):
+            out = public_result(res, "Couldn't load the post")
+    assert out["ok"] is False and out["found"] is False
+    assert out["error"] == "Couldn't load the post (error %s)" % out["error_id"]
+    assert INTERNAL not in str(out)
+    assert INTERNAL in caplog.text and out["error_id"] in caplog.text
+    assert res["error"] == INTERNAL  # the service's dict, which tools read, is untouched
+
+
+def test_public_result_passes_literal_messages_and_success_through(app):
+    from agent_friday.routes._errors import public_result
+    with app.test_request_context("/x"):
+        lit = {"ok": False, "error": "Pick at least one platform."}
+        assert public_result(lit, "w") is lit
+        ok = {"ok": True, "post": {"id": 1}}
+        assert public_result(ok, "w") is ok
+        assert public_result([1, 2], "w") == [1, 2]
