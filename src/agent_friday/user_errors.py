@@ -112,9 +112,14 @@ class ExceptionText(str):
     __slots__ = ()
 
 
-def exception_text(exc: BaseException) -> ExceptionText:
-    """`str(exc)`, marked as exception text for the HTTP boundary."""
-    return ExceptionText(str(exc))
+def exception_text(exc: BaseException, template: str = "%s") -> ExceptionText:
+    """`template % str(exc)`, marked as exception text for the HTTP boundary.
+
+    `exception_text(e, "Gmail refused the message: %s")` gives the model the
+    same sentence it always had; the browser gets "<what> (error <id>)".
+    Formatting a marked value into another string drops the mark, so a
+    service builds the whole sentence here rather than around the result."""
+    return ExceptionText(template % (str(exc),))
 
 
 def log_text(what: str, text: str) -> str:
