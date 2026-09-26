@@ -2792,6 +2792,7 @@ def _build_anchor_briefing(edition):
     """
     if not edition:
         return "", []
+    from agent_friday.services.voice_persona import VOICE_ANCHOR_RULES
 
     sources = []
 
@@ -2828,6 +2829,7 @@ def _build_anchor_briefing(edition):
         "out loud (for example, 'according to Reuters'). Open with a brief anchor "
         "greeting, then go straight into the lead story. Keep it warm, crisp, and "
         "authoritative.\n\n"
+        + VOICE_ANCHOR_RULES + "\n"
         "You are a FULLY AGENTIC anchor — you have live tools, so don't answer "
         "from memory alone when a tool would do better. When the user asks a "
         "question, USE them:\n"

@@ -99,8 +99,9 @@ def test_the_language_is_always_pinned():
 def test_personal_questions_go_to_her_own_knowledge():
     assert "set up a fully local voice mode" not in SRC
     assert "That information is in my Sovereign Vault" not in SRC.replace('"\n            "', "")
-    rule = rv.VOICE_PERSONAL_QUESTIONS
+    # The rule depends on the real vault setting (test_voice_persona_and_news).
+    rule = rv.vault_rule(True, True)
     assert "search_wiki" in rule and "ask_friday" in rule and "withheld" in rule
-    assert "+ VOICE_PERSONAL_QUESTIONS" in SRC
+    assert "+ vault_rule(_vault_open, _mind_ready)" in SRC
     names = [t[0] for t in ve._VOICE_LIVE_TOOLS]
     assert "search_wiki" in names and "ask_friday" in names

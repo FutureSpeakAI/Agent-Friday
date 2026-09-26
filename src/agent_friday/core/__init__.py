@@ -3411,18 +3411,25 @@ def _load_voice_demo():
     return text
 
 
+#: Text-chat reply length and tone, from Settings. Named so the live voice
+#: prompt can remove them: voice sets its own length by the moment and its
+#: tone from the voice persona (services/voice_persona.py).
+RESPONSE_LENGTH_HINTS = {
+    'concise': 'Be terse — 1–3 sentences unless detail is explicitly required.',
+    'standard': 'Be reasonably brief — direct answer plus the minimum useful context.',
+    'detailed': 'Be thorough — explain reasoning, list options, surface tradeoffs.',
+}
+COMMUNICATION_STYLE_HINTS = {
+    'professional': 'Tone: composed, professional, plainspoken.',
+    'casual':       'Tone: relaxed and conversational, like a trusted colleague.',
+    'technical':    'Tone: precise and technical; use exact terminology and code where helpful.',
+}
+
+
 def _settings_system_prefix(settings, personality):
     """Build the prefix that gets prepended to every chat system prompt."""
-    length_hint = {
-        'concise': 'Be terse — 1–3 sentences unless detail is explicitly required.',
-        'standard': 'Be reasonably brief — direct answer plus the minimum useful context.',
-        'detailed': 'Be thorough — explain reasoning, list options, surface tradeoffs.',
-    }.get(settings.get('response_length', 'standard'), '')
-    style_hint = {
-        'professional': 'Tone: composed, professional, plainspoken.',
-        'casual':       'Tone: relaxed and conversational, like a trusted colleague.',
-        'technical':    'Tone: precise and technical; use exact terminology and code where helpful.',
-    }.get(settings.get('communication_style', 'professional'), '')
+    length_hint = RESPONSE_LENGTH_HINTS.get(settings.get('response_length', 'standard'), '')
+    style_hint = COMMUNICATION_STYLE_HINTS.get(settings.get('communication_style', 'professional'), '')
     # TWO SETTINGS ABOUT CITATIONS, ONE PROMPT. `include_sources` (default
     # True) put a vague "always cite the source inline" here; `cite_sources`
     # (Source Production Mode, default False) appends CITATION_INSTRUCTIONS —

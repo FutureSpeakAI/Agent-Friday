@@ -137,7 +137,11 @@ class VoicePersonality:
 
     def build_system_instruction(self, base_instruction: str,
                                   mood: Optional[str] = None,
-                                  affective_dialog: Optional[bool] = None) -> str:
+                                  affective_dialog: Optional[bool] = None,
+                                  persona: bool = False) -> str:
+        """persona: the user saved a voice persona. The mood then shifts only
+        energy and pace; the mood styles' own tone words ("warm but
+        professional", "casual and friendly") would argue with the persona."""
         style = self.get_voice_style(mood)
         m = (mood or self._current_mood).lower()
         profile = VOICE_MOOD_PROFILES.get(m)
@@ -151,10 +155,16 @@ class VoicePersonality:
         use_affective = affective_dialog if affective_dialog is not None else self._affective_dialog
         affective_block = AFFECTIVE_DIALOG_INSTRUCTION if use_affective else ""
 
-        mood_block = (
-            f"\n=== CURRENT MOOD: {m.upper()} ===\n"
-            f"Voice style: {style}{pace_hint}\n\n"
-        )
+        if persona:
+            mood_block = (
+                f"\n=== CURRENT MOOD: {m.upper()} ===\n"
+                f"Keep your character; let this mood shift only your energy and pace.{pace_hint}\n\n"
+            )
+        else:
+            mood_block = (
+                f"\n=== CURRENT MOOD: {m.upper()} ===\n"
+                f"Voice style: {style}{pace_hint}\n\n"
+            )
         return affective_block + mood_block + base_instruction
 
 

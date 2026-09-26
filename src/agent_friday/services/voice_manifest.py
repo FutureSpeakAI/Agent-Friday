@@ -712,12 +712,16 @@ class VoiceManifest:
                          if "ask_friday" in names else
                          f"{len(names)} native tools; no path to your context")}
 
-    def describe_for_model(self) -> str:
+    def describe_for_model(self, vault_open: bool = False) -> str:
         """The model's self-description, generated from the proofs (§3.1 rule 3).
 
         A stage that is not proven is described AS unproven; no engine is
         named for a refused stage, so the model cannot claim a pipeline the
         manifest does not hold.
+
+        vault_open (model_routing.vault_local_only is false): the user's notes
+        reach the cloud session through its own prompt and the search_wiki
+        tool, so an unready local model closes only the ask_friday path.
         """
         s = {k: self.snapshot_stage(k) for k in STAGES}
 
@@ -745,10 +749,17 @@ class VoiceManifest:
                 tail = ("Questions about the user's own notes, memory or knowledge "
                         "graph are answered by their local model through the "
                         "`ask_friday` tool.")
+            elif vault_open:
+                tail = ("Friday's local model is not running right now, so "
+                        "`ask_friday` is unavailable; the user's vault is open to "
+                        "this session, so their notes reach you through this "
+                        "prompt and the `search_wiki` tool.")
             else:
-                tail = ("Friday's local model is NOT available right now, so you "
-                        "have no path to the user's notes, memory or knowledge "
-                        "graph; say so plainly if asked.")
+                tail = ("Friday's local model is NOT available right now and the "
+                        "user keeps their vault local-only, so you have no path to "
+                        "their private vault content, memory or knowledge graph "
+                        "(`search_wiki` still finds notes that are not private); "
+                        "say so plainly if asked.")
             return ("You are Gemini Live; the microphone audio is sent to Google. "
                     + tail)
 

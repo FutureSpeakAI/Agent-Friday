@@ -475,6 +475,22 @@ SEAM_REPLAY_MAX_GAP_S = 10.0
 SEAM_REPLAY_MAX_AUDIO_S = 10.0
 
 
+def _leg_config(types, per_model_kwargs, handle=None):
+    """The LiveConnectConfig for one leg of a call.
+
+    Every leg, including a resumed one, is built from the same kwargs, so the
+    system instruction (with the persona) and the context-window compression
+    setting are sent again in full on each reconnect; resumption only adds the
+    handle. Within a leg the bridge also repeats the persona as a note every
+    few turns (voice_persona.persona_due), so holding the character does not
+    depend on what the server's compression keeps.
+    """
+    kw = dict(per_model_kwargs)
+    if handle:
+        kw["session_resumption"] = types.SessionResumptionConfig(handle=handle)
+    return types.LiveConnectConfig(**kw)
+
+
 def _seam_replay_plan(heard_text, answered, seam_chunks, gap_s):
     """What to carry into a renewed Gemini leg: (unanswered words, mic chunks).
 
@@ -521,17 +537,11 @@ def _mark_if_stale(result, fname, started_at, user_spoke_at, now):
             f"sentence that it is ready if they want it.]\n{result}")
 
 
-# Questions about the user's own life are answered from their own knowledge,
-# through the tools that reach it, not deflected with a stock paragraph. What
-# the local model will not release comes back from ask_friday as a withheld
-# marker (the egress gate), and only then is anything "private".
-VOICE_PERSONAL_QUESTIONS = (
-    "PERSONAL QUESTIONS: When the user asks about themselves, their family, "
-    "friends, people they know, their plans, or anything in their own life, look "
-    "it up: call search_wiki first, and if that does not answer it, call "
-    "ask_friday, which asks their own local model with their full context. Only "
-    "say something is private or unavailable when a tool result says it was "
-    "withheld or found nothing, and then say exactly that.\n"
+# The persona, the adaptive length rule, the news rules and the vault-aware
+# personal-questions rule are shared with the briefings: services/voice_persona.py.
+from agent_friday.services.voice_persona import (  # noqa: E402
+    VOICE_ANCHOR_RULES, VOICE_LENGTH_RULE, compose_live_instruction,
+    persona_due, persona_reminder, strip_text_chat_hints, vault_rule,
 )
 
 # Several people may be in the room, and the live model answers every
@@ -2403,37 +2413,39 @@ if sock is not None:
         # context are answered by their local model through `ask_friday`" (or,
         # with no resident seat, that there is NO such path). Gemini has no
         # other source for what it is.
+        # The real vault setting, not an assumption: with vault_local_only
+        # false the user chose to let their vault reach cloud models (through
+        # the privacy gate), and the context above already carries it.
+        _vault_open = not _vault_local_only()
+        _mind_ready = False
         try:
             _cm = _vm.get_manifest()
             _cm.refresh_selection(_load_settings() or {})
-            _cloud_self = _cm.describe_for_model() if _cm.mode == "gemini" else ""
+            _mind_ready = bool(_cm.snapshot_stage("mind").get("ready"))
+            _cloud_self = (_cm.describe_for_model(vault_open=_vault_open)
+                           if _cm.mode == "gemini" else "")
         except Exception:
             _cloud_self = ""
         live_language, live_language_name = _live_language(_get_voice_language())
+        live_style = _get_voice_style_prompt()
+        # Voice sets its own length and, with a persona, its own tone: the
+        # text-chat settings' "be reasonably brief" / "professional" lines
+        # would otherwise contradict both (services/voice_persona.py).
+        full_ctx = strip_text_chat_hints(full_ctx, keep_tone=not live_style)
         voice_prefix = (
             "You are Agent Friday, a sovereign personal AI assistant.\n"
             + (_cloud_self + "\n" if _cloud_self else "")
             + "You are having a LIVE VOICE conversation — be natural and speak like a person.\n"
-            "CRITICAL LENGTH RULE: When the user asks you to explain something in detail, "
-            "go deep. Give thorough, multi-paragraph spoken responses. Do not cut yourself "
-            "short. The user will tell you when they've heard enough. Default to comprehensive "
-            "when asked 'tell me about', 'explain', 'go into detail', 'walk me through', or "
-            "similar. This applies especially to questions about how you work — your systems, "
-            "the pipeline, the vault, disinformation mitigation, security, anti-sycophancy: when "
-            "asked to explain any of these, give the full multi-paragraph walkthrough, not a "
-            "one-line summary. Only be brief when the question is simple or the user asks for "
-            "brevity. "
-            "In voice, deliver long answers in short, clear sentences with natural pauses so "
-            "they can follow and interrupt — length comes from covering the substance, not "
-            "from cramming.\n"
+            + VOICE_LENGTH_RULE +
             "NEVER use markdown formatting — no asterisks, headers, or bullet points. Speak naturally.\n"
-            "Use contractions and casual tone. When it fits, ask a follow-up question to keep the conversation flowing.\n"
+            "Use contractions. When it fits, ask a follow-up question to keep the conversation flowing.\n"
             "Never state that an action succeeded unless the tool result in this turn says so. "
             "A withheld, failed, or missing result is reported as exactly that — say what "
             "happened, not what you expected to happen. This complements, not replaces, your "
             "anti-fabrication directive.\n"
-            + VOICE_PERSONAL_QUESTIONS + VOICE_CROSSTALK_RULE
+            + vault_rule(_vault_open, _mind_ready) + VOICE_CROSSTALK_RULE
             + VOICE_ENGLISH_RULE.format(language=live_language_name) + "\n"
+            + VOICE_ANCHOR_RULES + "\n"
             + VOICE_TOOL_CHOREOGRAPHY
         )
         # security-boundary.md §19 row 1: this whole literal is Friday-authored
@@ -2499,7 +2511,6 @@ if sock is not None:
         # default (v1beta) endpoint, which reliably accepts API-key auth.
 
         live_voice = _get_live_voice()
-        live_style = _get_voice_style_prompt()
         live_settings = _load_settings() or {}
 
         live_temperature = live_settings.get("voice_temperature")
@@ -2526,7 +2537,7 @@ if sock is not None:
             _vp.affective_dialog = live_affective
             system_instruction = _vp.build_system_instruction(
                 voice_prefix + full_ctx + _voice_tool_surface_note(),
-                affective_dialog=live_affective)
+                affective_dialog=live_affective, persona=bool(live_style))
         except Exception:
             system_instruction = voice_prefix + full_ctx + _voice_tool_surface_note()
         if live_proactive is None:
@@ -2579,9 +2590,10 @@ if sock is not None:
         # answered in Italian mid-conversation.
         speech_kwargs["language_code"] = live_language
 
-        sys_text = system_instruction
-        if live_style:
-            sys_text = f"Speaking style: {live_style}\n\n{sys_text}"
+        # The persona opens and closes the instruction (voice_persona), so it
+        # is neither the first line of a long prompt that everything after it
+        # outvotes, nor lost at the far end of the context.
+        sys_text = compose_live_instruction(live_style, system_instruction)
         # Continuity, tone and the tool-surface note are appended after the
         # context, so the action policy is re-placed last and derived text
         # stripped of overrides before the gate sees the final instruction.
@@ -2837,6 +2849,10 @@ if sock is not None:
             _quiet_turn = [False]
             _friday_done_ts = [None]          # when Friday last finished a voiced reply
             _leg_ended_ts = [None]            # when the previous Gemini leg closed (seam replay)
+            # The saved persona is repeated to the model after every reconnect
+            # and every PERSONA_REPIN_EVERY_TURNS voiced replies (voice_persona).
+            _persona_note = persona_reminder(live_style)
+            _voiced_turns = [0]
             # The barge window must track CLIENT PLAYBACK, not model streaming:
             # Gemini generates faster than real-time, so the turn often finishes
             # streaming seconds before Friday's voice finishes coming out of the
@@ -3344,14 +3360,28 @@ if sock is not None:
                                             if getattr(sc, 'turn_complete', False):
                                                 _model_speaking[0] = False
                                                 _barged_turn[0] = False
+                                                _repin = False
                                                 if _quiet_turn[0]:
                                                     out_buf.clear()   # never voiced: not Friday's words
                                                     _quiet_turn[0] = False
                                                 elif out_buf:
                                                     _friday_done_ts[0] = _time.time()
+                                                    _voiced_turns[0] += 1
+                                                    _repin = persona_due(_voiced_turns[0])
                                                 _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
                                                 _flush_turn()
                                                 _safe_send({"type": "turn_end"})
+                                                if _repin and _persona_note:
+                                                    # Between turns, as a note that joins the
+                                                    # user's next turn (turn_complete=False),
+                                                    # so it neither interrupts nor asks for a reply.
+                                                    _repin = False
+                                                    try:
+                                                        await sess.send_client_content(
+                                                            turns={"role": "user", "parts": [{"text": _persona_note}]},
+                                                            turn_complete=False)
+                                                    except Exception as _pne:
+                                                        _vlog(f'persona re-pin failed: {_pne}')
                                             if getattr(sc, 'interrupted', False):
                                                 _model_speaking[0] = False
                                                 _barged_turn[0] = False
@@ -3573,9 +3603,7 @@ if sock is not None:
                         for _try in range(1, _max_tries + 1):
                             _with_handle = _use_handle if (_use_handle and _try < _max_tries) else None
                             if _with_handle:
-                                _kw = dict(per_model_kwargs)
-                                _kw["session_resumption"] = types.SessionResumptionConfig(handle=_with_handle)
-                                _cfg_try = types.LiveConnectConfig(**_kw)
+                                _cfg_try = _leg_config(types, per_model_kwargs, _with_handle)
                             else:
                                 _cfg_try = per_model_cfg
                             if _use_handle and not _with_handle:
@@ -3676,6 +3704,15 @@ if sock is not None:
                                 _pending_txt, _replay = _seam_replay_plan(
                                     ''.join(in_buf), bool(''.join(out_buf).strip()),
                                     _seam_chunks, _gap)
+                                # A new leg: hold the character across the seam.
+                                # First, so carried-over words follow it.
+                                if _persona_note and not done.is_set():
+                                    try:
+                                        await session_ai.send_client_content(
+                                            turns={"role": "user", "parts": [{"text": _persona_note}]},
+                                            turn_complete=False)
+                                    except Exception as _pne:
+                                        _vlog(f'persona re-pin (reconnect) failed: {_pne}')
                                 if _pending_txt and not done.is_set():
                                     try:
                                         await session_ai.send_client_content(

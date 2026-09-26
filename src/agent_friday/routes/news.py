@@ -49,6 +49,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.services.voice_persona import WRITTEN_NEWS_RULES
 from agent_friday.services.news_engine import (
     BANNED_SOURCES_FILE,
     BOOSTED_SOURCES_FILE,
@@ -383,7 +384,8 @@ def generate_briefing():
             "and tight bullet points. Lead with the most urgent item. Be specific — "
             "use real names, dates, and details from the live data and my context, "
             "not placeholders.\n\n"
-            f"{live_context}"
+            + WRITTEN_NEWS_RULES + "\n"
+            + f"{live_context}"
         )
         # ALL generation calls must carry Friday's vault/wiki context.
         system = _get_friday_system_prompt(
