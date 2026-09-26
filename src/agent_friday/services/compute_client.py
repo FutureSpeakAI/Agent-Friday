@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.services.web_safety import UnsafeURLError, check_peer_endpoint
 
 DB_PATH = FRIDAY_DIR / "compute_sent_jobs.db"
 _LOCK = threading.RLock()
@@ -135,6 +136,8 @@ def find_providers(capability_type: str) -> List[dict]:
 
         # Try to fetch their capability card
         for endpoint in endpoints[:1]:  # try first endpoint
+            if not check_peer_endpoint(str(endpoint))[0]:
+                continue
             try:
                 url = endpoint.rstrip("/") + "/api/federation/capabilities"
                 req = urllib.request.Request(url, method="GET")
@@ -159,7 +162,13 @@ def request_job(
     task_spec: dict,
     offered_mψ: int = 1_000,
 ) -> dict:
-    """Send a job to a provider. Returns the job_request dict (with job_id)."""
+    """Send a job to a provider. Returns the job_request dict (with job_id).
+
+    Raises web_safety.UnsafeURLError, before anything is recorded or spent,
+    for an endpoint that is not a plain http(s) base URL."""
+    ok, why = check_peer_endpoint(provider_endpoint)
+    if not ok:
+        raise UnsafeURLError(f"refusing provider endpoint {provider_endpoint!r}: {why}")
     prompt = task_spec.get("prompt", "")
     context = task_spec.get("context", {})
 
@@ -224,7 +233,10 @@ def request_job(
 
 def await_result(job_id: str, provider_endpoint: str, timeout: float = 300.0) -> dict:
     """Poll the provider until the job completes or timeout."""
-    url = provider_endpoint.rstrip("/") + f"/api/federation/compute/status/{job_id}"
+    ok, why = check_peer_endpoint(provider_endpoint)
+    if not ok:
+        raise UnsafeURLError(f"refusing provider endpoint {provider_endpoint!r}: {why}")
+    url =provider_endpoint.rstrip("/") + f"/api/federation/compute/status/{job_id}"
     deadline = time.time() + timeout
     poll_interval = 3.0
 

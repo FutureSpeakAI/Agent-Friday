@@ -448,7 +448,8 @@ def _unwrap_ddg(href: str) -> str:
     if href.startswith("//"):
         href = "https:" + href
     p = urlparse(href)
-    if "duckduckgo.com" in (p.netloc or "") and p.path.startswith("/l/"):
+    from agent_friday.services.web_safety import hostname_matches
+    if hostname_matches(p.hostname or "", "duckduckgo.com") and p.path.startswith("/l/"):
         target = (parse_qs(p.query).get("uddg") or [""])[0]
         if target:
             return unquote(target)
