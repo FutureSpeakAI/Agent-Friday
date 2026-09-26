@@ -7,10 +7,10 @@ owner's disk, so (services/seed_images.py):
 
   * a file inside the creations folders is used without asking;
   * a file the owner named in this conversation is used without asking;
-  * anything else is outward: the governance checkpoint holds the call for a
-    decision (an approval card when nobody is in the chat, or when the path
-    came from outside content), and the engines refuse to read the file
-    unless the running call carries that decision.
+  * anything else is outward and is decided on an approval card, in a chat
+    as well as in background work (action_gate.CARD_ONLY_WHEN_OUTWARD), and
+    the engines refuse to read the file unless the running call carries that
+    decision.
 
 No network: the tool handler here reads the seed through the real
 `creative_engine.load_local_image` and records whether bytes came back.
@@ -164,13 +164,44 @@ def test_after_approval_it_proceeds_once(dirs, read):
     assert len(read) == 1
 
 
-def test_in_chat_a_path_the_model_named_is_asked_about_first(dirs, read):
+def test_in_chat_a_path_the_model_named_raises_a_card_not_a_question(dirs, read):
+    """Owner's decision: uploading an arbitrary photo is decided on a card,
+    even in an interactive chat with nothing from outside content."""
     ctx = _turn("make a moody video of the sea")
-    out = agent._execute_tool("generate_video", {"prompt": "p", "image_path": dirs["outside"]},
-                              session_ctx=ctx)
-    assert "CONFIRMATION REQUIRED" in out, out
-    assert "private.jpg" in out and "Upload" in out
+    inp = {"prompt": "p", "image_path": dirs["outside"]}
+    v = action_gate.authorize("generate_video", inp, ctx, tainted=False)
+    assert v.action == "card", v
+    out = agent._execute_tool("generate_video", inp, session_ctx=ctx)
+    assert "APPROVAL CARD RAISED" in out, out
+    assert "CONFIRMATION REQUIRED" not in out
     assert read == []
+    (card,) = _pending()
+    assert "private.jpg" in card["title"] and "Upload" in card["title"]
+    # A yes in chat does not stand in for the card.
+    out = agent._execute_tool("generate_video", inp, session_ctx=_turn("yes"))
+    assert read == []
+    assert len(_pending()) == 1
+
+
+def test_in_chat_an_approved_card_runs_once(dirs, read):
+    from agent_friday.services import approval_executor as ex
+    ex.register()
+    inp = {"prompt": "p", "image_path": dirs["outside"]}
+    agent._execute_tool("generate_video", inp,
+                        session_ctx=_turn("make a moody video of the sea"))
+    (card,) = _pending()
+    approvals.decide(card["approval_id"], "approve", decided_by="owner")
+    assert read == [("generate_video", dirs["outside"], True)], read
+    approvals.decide(card["approval_id"], "approve", decided_by="owner")
+    assert len(read) == 1
+
+
+def test_the_card_only_rule_does_not_touch_other_tools(dirs, tmp_path):
+    ctx = _turn("write my notes")
+    v = action_gate.authorize("write_file", {"path": str(tmp_path / "notes.txt"),
+                                             "content": "x"}, ctx, tainted=False)
+    assert v.action == "confirm"
+    assert action_gate.CARD_ONLY_WHEN_OUTWARD == {"generate_video", "generate_music"}
 
 
 def test_a_path_from_outside_content_raises_a_card_even_in_chat(dirs, read):

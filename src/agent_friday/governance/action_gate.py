@@ -223,6 +223,12 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          # By the seed image they upload: services/seed_images.py.
                          "generate_video", "generate_music"})
 
+#: Tools whose outward case is decided on a card even in an interactive chat,
+#: never by a yes/no question. generate_video and generate_music are outward
+#: only when a seed image outside Friday's creations, not named by the owner,
+#: would be uploaded to a cloud service; a card shows the owner which file.
+CARD_ONLY_WHEN_OUTWARD = frozenset({"generate_video", "generate_music"})
+
 _READ_VERBS = ("get", "list", "search", "read", "fetch", "query", "find", "check",
                "lookup", "describe", "show", "view", "count", "status", "explore",
                "balance", "info")
@@ -686,7 +692,7 @@ def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
         g = _use_grant(tool_name, ctx)
         if g is not None:
             return Verdict("allow", klass, f"pre-approved grant {g['grant_id']}", grant=g)
-    if _interactive(ctx) and not tainted:
+    if _interactive(ctx) and not tainted and tool_name not in CARD_ONLY_WHEN_OUTWARD:
         return Verdict("confirm", klass, why)
     return Verdict("card", klass, why)
 

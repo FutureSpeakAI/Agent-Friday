@@ -15,7 +15,8 @@ So a seed image is used without a decision only when it is:
     a path, so it does not come through here.
 
 Anything else waits for the owner: the governance checkpoint classifies the
-call as outward (a yes in chat, or an approval card), and the engines refuse
+call as outward and decides it on an approval card, in a chat as well
+(`action_gate.CARD_ONLY_WHEN_OUTWARD`), and the engines refuse
 to read the file unless the call is running on that decision
 (`action_gate.owner_decision`). Containment is checked with
 `paths.contained` on the resolved path, so `..`, symlinks and junctions that
