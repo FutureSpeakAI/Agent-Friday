@@ -49,6 +49,7 @@ from agent_friday.user_errors import (  # noqa: F401  (re-exported for routes)
     UserFacingError,
     UserFacingLookupError,
     UserFacingPermissionError,
+    UserFacingRuntimeError,
     UserFacingValueError,
     error_text,
     exception_text,
