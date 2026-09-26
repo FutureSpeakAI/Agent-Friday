@@ -68,6 +68,8 @@ def test_addressed_to_friday():
 def test_the_bridge_keeps_unaddressed_replies_off_the_speakers():
     assert "if _barged_turn[0] or _quiet_turn[0]:" in SRC
     assert "_addressed(_heard, _last, _since)" in SRC
+    # Only as a reply starts, never partway through one.
+    assert "if _room and _reply_starting:" in SRC
     assert "_voice_room_mode(live_settings)" in SRC
 
 

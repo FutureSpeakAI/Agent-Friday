@@ -3292,6 +3292,7 @@ if sock is not None:
                                                             # window here (best available
                                                             # approximation of audio onset).
                                                             _barge.reset_turn()
+                                                        _reply_starting = not _model_speaking[0]
                                                         _model_speaking[0] = True
                                                         if not _turn_timed[0]:
                                                             _turn_timed[0] = True
@@ -3300,7 +3301,10 @@ if sock is not None:
                                                                 _time.time() - _user_words_ts[0], model_name,
                                                                 (" after tools " + ", ".join(_turn_tools)) if _turn_tools else "")
                                                             _turn_tools.clear()
-                                                            if _room:
+                                                            # Decided once, as a reply starts: words
+                                                            # heard while she is already answering
+                                                            # never silence a reply midway.
+                                                            if _room and _reply_starting:
                                                                 _heard = ''.join(in_buf).strip()
                                                                 _since = (None if _friday_done_ts[0] is None
                                                                           else _time.time() - _friday_done_ts[0])
