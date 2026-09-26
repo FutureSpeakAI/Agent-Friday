@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 
 from agent_friday.paths import contained, friday_home, safe_name
+from agent_friday.user_errors import UserFacingError, exception_text
 
 RECIPES_DIR = friday_home() / "recipes"
 RECIPES_DIR.mkdir(parents=True, exist_ok=True)
@@ -30,8 +31,8 @@ def _interpolate(value, variables, unset_fmt="<unset:{}>"):
         value,
     )
 
-class RecipeValidationError(Exception):
-    pass
+class RecipeValidationError(UserFacingError):
+    """A recipe that does not validate; the message lists what to fix."""
 
 class Recipe:
     def __init__(self, data: dict, path: str = None):
@@ -105,7 +106,7 @@ def list_recipes() -> list:
             recipes.append({"name": r.name, "description": r.description, "author": r.author,
                            "version": r.version, "path": str(f), "triggers": r.triggers})
         except Exception as e:
-            recipes.append({"name": f.stem, "error": str(e), "path": str(f)})
+            recipes.append({"name": f.stem, "error": exception_text(e), "path": str(f)})
     return recipes
 
 

@@ -69,6 +69,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, log_failure
 
 workflows_bp = Blueprint('workflows', __name__)
 
@@ -88,7 +89,7 @@ def draft_generate():
         return jsonify(resp), code
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't draft the workflow")
 
 
 @workflows_bp.route('/api/draft/deploy', methods=['POST'])
@@ -115,7 +116,7 @@ def draft_deploy():
         except subprocess.TimeoutExpired:
             return jsonify({"status": "error", "message": "Clipboard operation timed out"}), 500
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)}), 500
+            return api_error(e, "Couldn't deploy the draft")
 
     elif destination == 'gmail_draft':
         # Frontend handles Gmail draft creation via MCP tools — return acknowledgment
@@ -240,7 +241,7 @@ def confirm_draft():
         draft_file.write_text(json.dumps(draft, indent=2), encoding='utf-8')
         return jsonify({"status": "ok", "draft_id": draft_id})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't confirm the draft")
 
 
 @workflows_bp.route('/api/routines')
@@ -351,8 +352,8 @@ def run_routine(routine_id):
     except Exception as exc:
         return jsonify({
             "status": "error", "routine": routine_id,
-            "message": "Could not reach the scheduler to run %s: %s"
-                       % (reg['label'], exc),
+            "message": "Could not reach the scheduler to run %s (error %s)"
+                       % (reg['label'], log_failure(exc, "Routine run: scheduler unreachable")),
         }), 500
 
     stamp = datetime.now().isoformat()
@@ -791,10 +792,10 @@ def workflow_chains_create():
         stored = save_workflow_chain(data)
         return jsonify({"status": "ok", "chain": stored})
     except ValueError as ve:
-        return jsonify({"status": "error", "message": str(ve)}), 400
+        return api_error(ve, "Couldn't create the workflow chain", 400)
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't create the workflow chain")
 
 
 @workflows_bp.route('/api/workflows/chains/<name>', methods=['GET'])
@@ -852,7 +853,7 @@ def workflows_overview():
         return jsonify(dict(_wo.overview(), status="ok"))
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the workflows")
 
 
 @workflows_bp.route('/api/workflows/draft', methods=['POST'])
@@ -865,7 +866,7 @@ def workflows_draft():
         return jsonify({"status": "ok",
                         "draft": _wo.draft_from_text(data.get('text'), generate=_generate_text)})
     except ValueError as ve:
-        return jsonify({"status": "error", "message": str(ve)}), 400
+        return api_error(ve, "Couldn't draft the workflow", 400)
 
 
 @workflows_bp.route('/api/workflows/save', methods=['POST'])
@@ -877,7 +878,7 @@ def workflows_save():
     try:
         return jsonify(dict(_wo.save(request.get_json(silent=True) or {}), status="ok"))
     except ValueError as ve:
-        return jsonify({"status": "error", "message": str(ve)}), 400
+        return api_error(ve, "Couldn't save the workflow", 400)
 
 
 @workflows_bp.route('/api/workflows/remove', methods=['POST'])
@@ -889,5 +890,5 @@ def workflows_remove():
     try:
         gone = _wo.delete(slug=data.get('slug'), schedule_id=data.get('schedule_id'))
     except ValueError as ve:
-        return jsonify({"status": "error", "message": str(ve)}), 400
+        return api_error(ve, "Couldn't remove the workflow", 400)
     return jsonify({"status": "ok" if gone else "not_found"}), (200 if gone else 404)

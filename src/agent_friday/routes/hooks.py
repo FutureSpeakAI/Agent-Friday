@@ -9,6 +9,7 @@ from flask import Blueprint, jsonify, request
 import agent_friday.core as core
 from agent_friday.core import login_required, _load_settings_raw, _save_settings
 from agent_friday.services import tool_hooks as _hooks
+from agent_friday.routes._errors import api_error
 
 hooks_bp = Blueprint('hooks', __name__)
 
@@ -20,7 +21,7 @@ def list_hooks():
         return jsonify({"status": "ok", "hooks": _hooks.list_hooks()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the hooks")
 
 
 @hooks_bp.route('/api/hooks/<name>', methods=['POST'])
@@ -48,4 +49,4 @@ def toggle_hook(name):
         return jsonify({"status": "ok", "name": name, "enabled": enabled})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't change the hook")

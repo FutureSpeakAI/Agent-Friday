@@ -23,6 +23,7 @@ from agent_friday.routing.provider_descriptors import (
     provider_env_keys,
     validate_descriptor,
 )
+from agent_friday.user_errors import ExceptionText, UserFacingValueError
 
 _log = logging.getLogger("friday.provider_registry")
 
@@ -738,7 +739,7 @@ class ProviderRegistry:
                 self._origins[norm["name"]] = "file"
             except Exception as e:
                 _log.warning("skipping provider descriptor %s: %s", f.name, e)
-                self._load_errors.append({"file": f.name, "error": str(e)[:300]})
+                self._load_errors.append({"file": f.name, "error": ExceptionText(str(e)[:300])})
 
     def load_errors(self):
         """Descriptor files that failed to load this session (name + reason)."""
@@ -763,7 +764,7 @@ class ProviderRegistry:
         if validate:
             ok, errors, _warnings = validate_descriptor(data)
             if not ok:
-                raise ValueError("; ".join(errors))
+                raise UserFacingValueError("; ".join(errors))
         norm = normalize_descriptor(data)
         name = norm.get("name", "custom")
         self._providers[name] = norm
@@ -785,7 +786,7 @@ class ProviderRegistry:
         merged = {**current, **(patch or {}), "name": name}
         ok, errors, _warnings = validate_descriptor(merged)
         if not ok:
-            raise ValueError("; ".join(errors))
+            raise UserFacingValueError("; ".join(errors))
         norm = normalize_descriptor(merged)
         self._providers[name] = norm
         path = PROVIDERS_DIR / f"{name}.json"

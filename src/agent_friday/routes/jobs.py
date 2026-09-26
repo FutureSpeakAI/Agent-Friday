@@ -39,6 +39,7 @@ from flask import Blueprint, jsonify, request
 from agent_friday.seed.data.job_tracker_schema import JobTracker
 from agent_friday.seed.skills.application_engine import engine as app_engine
 from agent_friday.seed.skills.job_scanner import scanner as job_scanner
+from agent_friday.routes._errors import log_text
 
 jobs_bp = Blueprint("jobs", __name__)
 
@@ -110,7 +111,28 @@ def api_jobs_scan():
         notify=_notify_adapter,
         keyword_set_override=keywords if isinstance(keywords, list) else None,
     )
-    return jsonify(result)
+    return jsonify(_public_scan(result))
+
+
+#: Error lines the scanner builds from an exception's text ("fetcher error:
+#: ..."). The scanner is a standalone seed skill and keeps them; the browser
+#: gets the kind of failure and an error id, and the log gets the text.
+_SCAN_EXCEPTION_PREFIXES = ("fetcher error", "process error")
+
+
+def _public_scan(result):
+    errs = result.get("errors") if isinstance(result, dict) else None
+    if not errs:
+        return result
+    shown = []
+    for msg in errs:
+        kind = next((k for k in _SCAN_EXCEPTION_PREFIXES
+                     if isinstance(msg, str) and msg.startswith(k + ":")), None)
+        if kind is None:
+            shown.append(msg)
+        else:
+            shown.append("%s (error %s)" % (kind, log_text("Job scan " + kind, msg)))
+    return dict(result, errors=shown)
 
 
 @jobs_bp.route("/api/pipeline/jobs/<job_id>/apply", methods=["POST"])
