@@ -1064,7 +1064,7 @@ def _local_mind_proven() -> bool:
         return False
 
 
-def _voice_context_reach(engine, tool_names=None, local_mind_ready=None):
+def _voice_context_reach(engine, tool_names=None, local_mind_ready=None, vault_open=None):
     """F3 of voice-mode-diagnosis-and-repair.md: can the model in this voice
     loop call tools and reach the knowledge graph / memory? Said at session
     start, in one line, instead of letting a cloud session run a degraded loop
@@ -1076,6 +1076,11 @@ def _voice_context_reach(engine, tool_names=None, local_mind_ready=None):
     reach ONLY when that is true -- saying "full context via the local model"
     in the same payload whose manifest says the local model is not available
     is the self-description lie §3.1 exists to make impossible.
+
+    `vault_open` (None reads model_routing.vault_local_only) keeps the HUD in
+    step with what the model is told: with the vault open to cloud sessions an
+    unready local model closes only memory and the knowledge graph, not the
+    user's notes.
     """
     engine = str(engine or "local").strip().lower()
     if engine == "gemini":
@@ -1110,6 +1115,25 @@ def _voice_context_reach(engine, tool_names=None, local_mind_ready=None):
             # The relay exists but has nothing to relay to. Say that, in the
             # same words the manifest's describe_for_model() uses, so the
             # HUD and the model agree.
+            if vault_open is None:
+                try:
+                    vault_open = not _vault_local_only()
+                except Exception:
+                    vault_open = False
+            if vault_open:
+                return {"engine": "gemini", "tool_capable": True,
+                        "tools": len(names), "knowledge_graph": False, "memory": False,
+                        "full_context": False, "via_local": False, "vault_open": True,
+                        "line": (f"{len(names) - 1} native tools + ask_friday; Friday's "
+                                 "local model is not running, so memory and the "
+                                 "knowledge graph are out of reach, but your vault is "
+                                 "open to this session: your notes reach it through its "
+                                 "context and wiki search"),
+                        "notice": ("Cloud voice (Gemini Live) is running. Friday's local "
+                                   "model is not available right now, so it cannot reach "
+                                   "your memory or knowledge graph; your vault is open to "
+                                   "cloud sessions, so your notes are available through "
+                                   "its context and wiki search.")}
             return {"engine": "gemini", "tool_capable": True,
                     "tools": len(names), "knowledge_graph": False, "memory": False,
                     "full_context": False, "via_local": False,

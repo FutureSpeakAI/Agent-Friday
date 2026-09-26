@@ -182,3 +182,22 @@ def test_every_news_surface_carries_the_rules():
     assert "WRITTEN_NEWS_RULES" in inspect.getsource(sch._afternoon_briefing_job)
     prompt, _ = ne._build_anchor_briefing({"headline": "H", "lead": {}})
     assert vp.NEWS_EVIDENCE_CONSTITUTION in prompt
+
+
+def test_the_hud_notice_follows_the_vault_setting():
+    names = ["query_calendar", "check_email", "search_wiki", "ask_friday"]
+    opened = rv._voice_context_reach("gemini", names, local_mind_ready=False, vault_open=True)
+    assert opened["vault_open"] is True and opened["memory"] is False
+    assert "your vault is open" in opened["notice"] and "your notes" in opened["notice"]
+    assert "notes, memory and knowledge graph are out of reach" not in opened["line"]
+    locked = rv._voice_context_reach("gemini", names, local_mind_ready=False, vault_open=False)
+    assert "cannot reach your knowledge graph or memory" in locked["notice"]
+    assert "notes, memory and knowledge graph are out of" in locked["line"]
+
+
+def test_the_hud_reads_the_real_setting_when_not_told(monkeypatch):
+    names = ["query_calendar", "ask_friday"]
+    monkeypatch.setattr(rv, "_vault_local_only", lambda: False)
+    assert rv._voice_context_reach("gemini", names, local_mind_ready=False).get("vault_open") is True
+    monkeypatch.setattr(rv, "_vault_local_only", lambda: True)
+    assert "vault_open" not in rv._voice_context_reach("gemini", names, local_mind_ready=False)
