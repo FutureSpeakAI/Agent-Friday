@@ -8958,6 +8958,35 @@ function ConversationWindow({
     const t = setTimeout(() => openConvQuiet(cid), 500);
     return () => clearTimeout(t);
   }, [voiceHere, SH.mainMsgCount]);
+
+  /* An APPROVED CARD FINISHING is news this window has to show.
+     The executor (services/approval_executor) runs an approved action long
+     after the turn that raised the card has ended, and appends what happened to
+     the conversation. This window fetches a transcript when it opens or
+     switches and never polls, so without this the owner would approve
+     something, watch nothing change, and have to reload to find out it had
+     worked -- which is the complaint that produced the executor in the first
+     place.
+     The event carries no content: it says which conversation moved, and the
+     transcript is re-read from the store, so what renders is always what was
+     actually written. */
+  useEffect(() => {
+    if (!cid) return;
+    let es = null, stopped = false;
+    const client = 'chat-' + Math.random().toString(36).slice(2, 10);
+    try {
+      es = new EventSource('/api/desktop/events?client=' + client + '&kind=chat');
+    } catch (e) { return; }
+    es.onmessage = e => {
+      if (stopped) return;
+      let m = null;
+      try { m = JSON.parse(e.data); } catch (_) { return; }
+      if (!m || m.type !== 'approval_result') return;
+      if (m.conversation_id && m.conversation_id !== cid) return;
+      openConvQuiet(cid);
+    };
+    return () => { stopped = true; try { es && es.close(); } catch (_) {} };
+  }, [cid]);
   const openConvQuiet = id => apiFetch('/api/conversations/' + encodeURIComponent(id) + '/messages')
     .then(r => r.json())
     .then(d => {

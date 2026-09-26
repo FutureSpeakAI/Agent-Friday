@@ -137,6 +137,32 @@ def send(actions: list, verify: dict | None = None,
             "page": rec.get("kind")}
 
 
+def broadcast(event: dict, kind: str = "chat") -> int:
+    """Push one event to EVERY connected page of `kind`. Returns how many got it.
+
+    `send` above is a COMMAND: it picks the single best page and waits for that
+    page to say what it did. This is the other shape -- news, to whoever is
+    looking. An approved action finishing is news: it can be true in three open
+    tabs at once, none of them owes an answer, and the executor that publishes it
+    must not be blocked waiting for a browser.
+
+    Never raises and never blocks. A page whose queue is full is skipped rather
+    than waited for: this is called from the approval executor, where the action
+    has already happened and losing the notification must not undo it.
+    """
+    sent = 0
+    with _LOCK:
+        recs = [r for r in _CLIENTS.values()
+                if r.get("kind") == kind and r.get("queue") is not None]
+    for rec in recs:
+        try:
+            rec["queue"].put_nowait(dict(event))
+            sent += 1
+        except Exception:
+            continue
+    return sent
+
+
 def ack(cmd_id: str, payload: dict | None) -> bool:
     """A page's report of what a command did. False for an unknown id."""
     with _LOCK:

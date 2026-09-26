@@ -1433,6 +1433,11 @@ def chat():
         _sess_ctx = {
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "provider": _provider,
+            # Which conversation this turn belongs to. An approval card raised
+            # here carries it, so services/approval_executor can report the
+            # outcome back into this chat when the owner approves the card
+            # later -- possibly from the System workspace with no turn running.
+            "conversation_id": _conv_id_from(data) or "",
         }
         # Wire this turn into the ask-first action flow: stamps the session id so
         # the confirmation gate is live, and grants a pending action when this

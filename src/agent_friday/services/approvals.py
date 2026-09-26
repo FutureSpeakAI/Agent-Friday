@@ -394,6 +394,36 @@ def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
                   used_at=time.time(), used_detail=detail or {})
 
 
+def claim_for_execution(approval_id: str) -> bool:
+    """Claim an approved card for a single execution. True for exactly one caller.
+
+    An approved card has to be RUN by something (services/approval_executor),
+    and everything that can approve one can approve it twice: the card click, a
+    chat yes, voice, a second browser tab, a cross-tab popup. The claim is what
+    makes "one decision, one action" hold when two of those land in the same
+    instant -- the check and the write happen together under the store lock, so
+    the second caller sees the claim the first one made.
+
+    This is deliberately NOT `consumed`. `consumed` means the action completed
+    (see `mark_used`), and the governance checkpoint reads it to let the
+    executor's call through exactly once. A card claimed but not yet consumed is
+    one whose action is in flight.
+    """
+    with _LOCK:
+        recs = _read_store()
+        for r in recs:
+            if r.get("approval_id") != approval_id:
+                continue
+            if r.get("status") != "approved":
+                return False
+            if r.get("consumed") or r.get("executing_at"):
+                return False
+            r["executing_at"] = time.time()
+            _write_store(recs)
+            return True
+    return False
+
+
 def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
     """Mark a freshly-approved card as consumed. Returns (record, was_first)
     — was_first is True only the FIRST time this is observed."""

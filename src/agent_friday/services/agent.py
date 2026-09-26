@@ -2194,6 +2194,18 @@ except Exception:
     pass
 
 
+# An APPROVED CARD HAS TO RUN. The deferred path refuses the call and stores the
+# card; something has to make the call again once the owner says yes, and until
+# 2026-09-25 nothing did. services/approval_executor is that something; it
+# imports this module lazily, inside the call, so registering it here is not a
+# cycle.
+try:
+    from agent_friday.services import approval_executor as _approval_executor
+    _approval_executor.register()
+except Exception as _e:                                    # pragma: no cover
+    _log.warning("approval executor not registered: %s", _e)
+
+
 def _looks_like_local_path(value):
     """Return a usable local path if `value` names one, else None.
 
@@ -8610,6 +8622,29 @@ def _hook_governance(ctx):
                                         session_ctx=ctx.session_ctx)
     if not allowed:
         return _hooks.DENY(f"[GOVERNANCE DENY] {reason}")
+
+    # AN ALREADY-APPROVED CARD, BEING CARRIED OUT.
+    #
+    # services/approval_executor makes the second call the deferred path always
+    # assumed somebody would make. The decision has been taken by the owner, so
+    # re-deciding it here would either raise a duplicate card or ask a question
+    # nobody is present to answer.
+    #
+    # The card id arrives in session_ctx, which the EXECUTOR sets -- never the
+    # model, which cannot write session_ctx. It is still checked rather than
+    # trusted: the card must be approved, unspent, and describe exactly this
+    # tool with exactly these arguments. Anything else is refused, and the
+    # consume is what stops a replay.
+    _card_id = (ctx.session_ctx or {}).get("approved_card")
+    if _card_id:
+        _ok, _why = _approved_card_allows(_card_id, ctx.tool_name, ctx.input)
+        if _ok:
+            ctx.meta["approved_card"] = _card_id
+            return _hooks.ALLOW
+        return _hooks.DENY(
+            f"[NOT RUN] '{ctx.tool_name}' was offered as an approved action but "
+            f"the card does not authorise it: {_why}")
+
     from agent_friday.governance import action_gate as _gate
     key = _taint_mod.ledger_key(ctx.session_ctx)
     d = _taint_mod.evaluate(key, ctx.tool_name, _taint_input(ctx))
@@ -8638,6 +8673,44 @@ def _hook_governance(ctx):
     if ctx.tool_name in _taint_mod.SELF_CARDING:
         return _hooks.ALLOW
     return _taint_card(ctx, d, key)
+
+
+def _approved_card_allows(approval_id, tool_name, args):
+    """May this exact call run on the strength of that card? Consumes it if so.
+
+    Returns (allowed, why_not). The argument comparison is on the JSON form with
+    sorted keys, so dict ordering cannot make a matching pair look different --
+    and a mismatch is refused rather than treated as close enough, because the
+    card's wording is what the owner actually agreed to.
+    """
+    try:
+        from agent_friday.services import approvals as _appr
+        rec = _appr.get_approval(approval_id)
+    except Exception as e:
+        return False, f"the approvals store could not be read ({e})"
+    if rec is None:
+        return False, "no such approval"
+    if rec.get("status") != "approved":
+        return False, f"its status is {rec.get('status')!r}, not approved"
+    if rec.get("consumed"):
+        return False, "it has already been used"
+    payload = rec.get("payload") or {}
+    if payload.get("tool") != tool_name:
+        return False, (f"it authorises {payload.get('tool')!r}, "
+                       f"not {tool_name!r}")
+
+    def _norm(d):
+        try:
+            return json.dumps(d or {}, sort_keys=True, default=str)
+        except Exception:
+            return None
+    if _norm(payload.get("input")) != _norm(args):
+        return False, "its details differ from what was approved"
+    try:
+        _appr.mark_used(approval_id, f"tool:{tool_name}")
+    except Exception as e:
+        return False, f"the approval could not be marked used ({e})"
+    return True, ""
 
 
 def _taint_card(ctx, decision, key):
@@ -8676,7 +8749,14 @@ def _taint_card(ctx, decision, key):
                     action_description=f"{name} {json.dumps(inp, default=str)[:600]}",
                     description=why_text,
                     force_gate=True,
-                    payload={"tool": name, "input": inp},
+                    # The conversation id rides along so the executor can
+                    # report back into the chat that raised the card. Without
+                    # it an approval decided in the System workspace completes
+                    # in silence, which is how five events that never existed
+                    # went unnoticed for four turns.
+                    payload={"tool": name, "input": inp,
+                             "conversation_id": (ctx.session_ctx or {}).get(
+                                 "conversation_id") or ""},
                     requested_by="taint_gate")
             finally:
                 _taint_mod.CURRENT.reset(_ptok)
@@ -9493,7 +9573,18 @@ def _tool_orb_meta(name):
 _TOOL_DENY_SENTINELS = (
     "[VAULT-ZT DENY]", "[VAULT ACCESS DENIED]", "[CONFIRMATION REQUIRED]",
     "[GOVERNANCE DENY]", "[SANDBOX DENY]",
+    # These five were MISSING, and the tuple's own warning below says what that
+    # costs: anything unrecognised is classified 'ok'. A write_file refused by
+    # the taint gate was recorded twice as a success while the owner had not yet
+    # decided, which is how an itinerary that never existed looked like one that
+    # did. Adding a refusal message means adding it here in the same edit.
+    "[BLOCKED", "[GOVERNANCE HOLD]", "[DECLINED]", "[NOT RUN]",
 )
+
+#: Raised a card and stopped. NOT a denial -- nobody refused it, and it may yet
+#: run when the owner decides (services/approval_executor). It is emphatically
+#: not a success either, which is the distinction the ledger was missing.
+_TOOL_PENDING_SENTINELS = ("[APPROVAL CARD RAISED]",)
 # "TOOL CALL FAILED" is the unknown-name message _execute_tool now returns.
 # It MUST be listed here: _tool_call_status classifies anything unrecognised as
 # 'ok', so a failure prefix missing from this tuple is a failed call reporting
@@ -9503,13 +9594,32 @@ _TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:", "TOOL CALL FAILED")
 
 
 def _tool_call_status(result):
-    """Classify a tool result string: 'ok' | 'deny' | 'error'."""
+    """Classify a tool result string: 'ok' | 'pending' | 'deny' | 'error'."""
     r = result if isinstance(result, str) else ""
+    if r.startswith(_TOOL_PENDING_SENTINELS):
+        return "pending"
     if r.startswith(_TOOL_DENY_SENTINELS):
         return "deny"
     if r.startswith(_TOOL_ERROR_SENTINELS):
         return "error"
     return "ok"
+
+
+def _tool_call_reason(result, status):
+    """A short, content-free reason for a call that did not succeed.
+
+    Derived from the sentinel the result STARTS with, never from the rest of it.
+    The ledger is plaintext metadata: a tool result can quote a street address or
+    the body of an email, and none of that may be written here.
+    """
+    if status == "ok":
+        return ""
+    r = result if isinstance(result, str) else ""
+    for sentinel in (_TOOL_PENDING_SENTINELS + _TOOL_DENY_SENTINELS
+                     + _TOOL_ERROR_SENTINELS):
+        if r.startswith(sentinel):
+            return sentinel.strip("[]() ").lower() or status
+    return status
 
 
 def _tier_safe_summary(payload, limit=120, kind="args"):
@@ -9607,10 +9717,13 @@ def _ledger_tool_call(name, result, duration_ms, orb_id, session_ctx):
     """B4: append a metadata-only tool_call event to the activity ledger."""
     try:
         from agent_friday.services import activity_ledger as _al
+        _status = _tool_call_status(result)
         _al.record(
             "tool_call",
             tool=name,
-            ok=(_tool_call_status(result) == "ok"),
+            ok=(_status == "ok"),
+            status=_status,
+            reason=_tool_call_reason(result, _status) or None,
             duration_ms=int(duration_ms),
             orb_id=orb_id,
             task_id=(session_ctx or {}).get("task_id"),

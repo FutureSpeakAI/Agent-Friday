@@ -32,7 +32,13 @@ _ALLOWED_FIELDS = {
         "model", "provider", "seat", "duration_ms",
         "tokens_in", "tokens_out", "orb_id", "task_id", "workspace",
     },
-    "tool_call": {"tool", "ok", "duration_ms", "orb_id", "task_id"},
+    # `status` and `reason` exist because ok=False on its own cannot be
+    # diagnosed: 24 calls failed in one 2026-09-25 conversation and every
+    # reason was empty, so the transcript had to be read to find out why.
+    # `reason` is a CLASSIFICATION, never the tool's output -- this file is
+    # plaintext and /api/processes serves from the same box.
+    "tool_call": {"tool", "ok", "status", "reason", "duration_ms", "orb_id",
+                  "task_id"},
     "subagent_spawn": {"task_id", "description", "model"},
     # A task journal served to a principal other than the local user
     # (task-visibility.md TV11): what left, to whom, and whether the gate
