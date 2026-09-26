@@ -489,9 +489,25 @@ def friday_health():
             "deployment": "unknown",
         }
 
+    # The privacy classifier as it is RUNNING, not as installed: Layer 3 can
+    # be installed and down (a boot-time import race), and while it is, cloud
+    # egress fails closed. Also whether the boot-time ML preload succeeded.
+    _privacy = {}
+    try:
+        from agent_friday.services.privacy_layers import describe as _pl_describe
+        from agent_friday.services.sensitivity_classifier import layer3_state
+        from agent_friday.services.ml_imports import status as _ml_status
+        _l3 = layer3_state()
+        _privacy = {"summary": _pl_describe(), "layer3": _l3,
+                    "degraded": not _l3["ready"] and _l3["state"] != "not loaded yet",
+                    "ml_preload": _ml_status()}
+    except Exception as _pe:
+        _privacy = {"summary": "unknown", "error": str(_pe)[:160], "degraded": True}
+
     return jsonify({
         "status": _status,
         "inference": _inference,
+        "privacy_classifier": _privacy,
         "health_schema_version": _boot_health["health_schema_version"],
         "boot_critical_ok": _boot_health["boot_critical_ok"],
         "boot_status": _boot_health["boot_status"],

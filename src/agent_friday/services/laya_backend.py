@@ -85,7 +85,8 @@ _agent = None
 _agent_lock = threading.Lock()
 #: Serialises the ML-stack import against any other thread doing the same.
 #: See `_load_now` - transformers 5.x lazy namespace + concurrent boot import.
-_IMPORT_LOCK = threading.Lock()
+from agent_friday.services.ml_imports import ML_IMPORT_LOCK, ML_ROOTS  # noqa: E402
+_IMPORT_LOCK = ML_IMPORT_LOCK   # shared with every ML importer (services/ml_imports)
 _load_error: Optional[str] = None
 _loading = False
 
@@ -159,40 +160,18 @@ def status() -> dict:
 
 
 #: The ML stack, in dependency order. Purged together or not at all.
-_ML_ROOTS = ("laya", "transformers", "huggingface_hub", "tokenizers")
+_ML_ROOTS = ML_ROOTS
 
 
 def _purge_partial_imports() -> None:
-    """Drop half-built ML modules from sys.modules before importing them.
+    """Evict half-built ML modules, under the lock every ML importer holds.
 
-    A PARTIALLY INITIALISED MODULE IS STICKY, and that is what made the first
-    two attempts at this bug insufficient. When two threads import
-    `huggingface_hub` at boot, one can leave a half-built module object in
-    `sys.modules`; every later import returns that same corpse, so the error
-    changes shape - `XetConnectionInfo`, then `logging`, then whatever the
-    next missing attribute is - while never getting better. Retrying cannot
-    help, because retrying is exactly what returns the cached broken object.
-
-    So a retry starts by evicting them. Only modules that are ACTUALLY broken
-    are dropped: a module that finished importing has no reason to be
-    re-imported, and evicting a good one would discard state other callers
-    hold references to.
+    It used to take Laya's own lock only, and a module that is "half-built"
+    by this test is also one another thread is importing right now: the
+    privacy classifier lost Layer 3 to exactly that (services/ml_imports).
     """
-    import sys
-    doomed = []
-    for name, mod in list(sys.modules.items()):
-        if not name.startswith(_ML_ROOTS):
-            continue
-        # `__spec__._initializing` is True while a module is mid-import, and
-        # a module left behind by a failed import keeps it set.
-        spec = getattr(mod, "__spec__", None)
-        if mod is None or (spec is not None and getattr(spec, "_initializing", False)):
-            doomed.append(name)
-    for name in doomed:
-        sys.modules.pop(name, None)
-    if doomed:
-        _log.info("evicted %d half-built ML module(s) before retrying: %s",
-                  len(doomed), ", ".join(sorted(doomed)[:4]))
+    from agent_friday.services.ml_imports import purge_partial_imports
+    purge_partial_imports()
 
 
 def _load_now():

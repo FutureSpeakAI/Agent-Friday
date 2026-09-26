@@ -50,7 +50,8 @@ def _embedder(step: Step) -> None:
     not evidence that it will.
     """
     try:
-        from sentence_transformers import SentenceTransformer
+        from agent_friday.services.ml_imports import import_module as _ml_import  # shared ML import lock
+        SentenceTransformer = _ml_import("sentence_transformers").SentenceTransformer
     except ImportError:
         step.state = "skipped"
         step.detail = ("sentence-transformers isn't installed — memory will "

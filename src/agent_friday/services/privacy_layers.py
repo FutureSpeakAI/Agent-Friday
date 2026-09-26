@@ -69,6 +69,22 @@ def _module_available(mod: str) -> Optional[bool]:
         return None
 
 
+def _embedding_runtime(mod: str):
+    """(active, reason) for Layer 3 from the classifier's own load state."""
+    try:
+        from agent_friday.services.sensitivity_classifier import layer3_state
+        st = layer3_state()
+    except Exception as e:  # noqa: BLE001
+        return False, f"{mod} installed; state unreadable ({type(e).__name__})"
+    if st["ready"]:
+        return True, f"{mod} loaded and running"
+    if st["state"] == "not loaded yet":
+        # Loads on the first egress decision (and at boot, after the ML preload).
+        return True, f"{mod} installed; loads on first use"
+    return False, (f"{mod} installed but the model load failed, retrying "
+                   f"({st['error'] or 'no detail'}); cloud egress fails closed meanwhile")
+
+
 def is_frozen() -> bool:
     """True when running from a PyInstaller bundle."""
     return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
@@ -103,6 +119,11 @@ def probe_layers() -> Dict[str, dict]:
                         f"outcome (set {ENFORCE_ENV}=1 to enforce; rejected by "
                         f"measurement on the reference machine)"
                     )
+                elif name == "embedding":
+                    # Installed is not running. A boot-time import race used to
+                    # leave Layer 3 down while this probe, which only asks
+                    # whether the name resolves, reported it active.
+                    active, reason = _embedding_runtime(mod)
                 else:
                     active, reason = True, f"{mod} importable"
             else:

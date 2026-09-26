@@ -296,6 +296,24 @@ def _register_decision_backends():
         _log.warning("could not decide whether to warm laya: %s", _e)
 
 
+def _start_ml_preload():
+    """Import the shared ML stack once, first, on its own thread.
+
+    Laya's warm-up, the privacy classifier's embedder, Kokoro and the prewarm
+    all import transformers during boot. They now share one import lock
+    (services/ml_imports), and this preload does the first, expensive import
+    before any of them, so the lazily built namespace is finished by the time
+    they arrive. Its outcome is in /api/health (privacy_classifier.ml_preload).
+    """
+    if _TESTING:
+        return
+    def _run():
+        from agent_friday.services import ml_imports
+        ml_imports.preload()
+    threading.Thread(target=_run, daemon=True, name="ml-preload").start()
+
+
+_start_ml_preload()
 _register_decision_backends()
 
 

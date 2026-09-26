@@ -124,7 +124,8 @@ def _ensure_index(tools) -> bool:
             return True
         try:
             import numpy as np
-            from sentence_transformers import SentenceTransformer
+            from agent_friday.services.ml_imports import import_module as _ml_import  # shared ML import lock
+            SentenceTransformer = _ml_import("sentence_transformers").SentenceTransformer
         except Exception as e:
             _log.info("tool selection unavailable (%s) -- sending all tools", e)
             return False
@@ -226,7 +227,8 @@ def rank_texts(texts, query: str):
         return None
     try:
         import numpy as np
-        from sentence_transformers import SentenceTransformer
+        from agent_friday.services.ml_imports import import_module as _ml_import  # shared ML import lock
+        SentenceTransformer = _ml_import("sentence_transformers").SentenceTransformer
     except Exception:
         return None
     try:

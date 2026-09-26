@@ -227,42 +227,83 @@ _UNTRIED = object()   # sentinel: distinguishes "not attempted" from "failed"
 _EMBEDDING_LOCK  = threading.Lock()
 _EXEMPLAR_EMBEDS = None      # lazy-loaded numpy array
 _EMBEDDER        = _UNTRIED  # lazy-loaded SentenceTransformer
+#: A failed load is retried after this long. Success is kept for good.
+_EMBEDDER_RETRY_S = 30.0
+_EMBEDDER_FAILED_AT = 0.0
+_EMBEDDER_ERROR = ""
+
+
+def _layer3_expected() -> bool:
+    """Is Layer 3 installed here, so that not having it is a fault?
+
+    The packaged .exe leaves sentence_transformers out on purpose (AgentFriday.spec);
+    there the layer is absent by design and reported as such by privacy_layers.
+    """
+    try:
+        import importlib.util
+        return importlib.util.find_spec("sentence_transformers") is not None
+    except Exception:
+        return True          # cannot tell: assume it should be there (fail closed)
 
 
 def _load_embedder():
     """Lazy-load the sentence-transformers model (same one as context_pruner).
 
-    Caches failure via _UNTRIED for the same reason as _load_presidio: storing
-    None on failure made None mean both "untried" and "unavailable", so a
-    missing dependency was retried on every single call. This matters most in
-    the frozen build, where sentence_transformers is excluded outright and the
-    retry is therefore permanent.
+    The import runs under the lock every ML importer shares (services/ml_imports):
+    a boot-time race with another importer used to cost Layer 3 for the life
+    of the process, because the failure was cached forever. Now success is
+    cached for good and a failure is retried after _EMBEDDER_RETRY_S; where the
+    dependency is not installed at all (the packaged build) nothing is retried.
     """
-    global _EMBEDDER, _EXEMPLAR_EMBEDS
-    if _EMBEDDER is not _UNTRIED:
+    global _EMBEDDER, _EXEMPLAR_EMBEDS, _EMBEDDER_FAILED_AT, _EMBEDDER_ERROR
+    import time as _time
+    if _EMBEDDER is not _UNTRIED and _EMBEDDER is not None:
         return _EMBEDDER
+    if _EMBEDDER is None and (not _layer3_expected()
+                              or _time.monotonic() - _EMBEDDER_FAILED_AT < _EMBEDDER_RETRY_S):
+        return None
     with _EMBEDDING_LOCK:
-        if _EMBEDDER is not _UNTRIED:
+        if _EMBEDDER is not _UNTRIED and _EMBEDDER is not None:
             return _EMBEDDER
-        try:
+
+        def _load():
             from sentence_transformers import SentenceTransformer
             # A missing model is fetched with a visible notice, never silently.
             from agent_friday.services import embedder_cache
             embedder_cache.ensure_available("the privacy classifier")
             model = SentenceTransformer('all-MiniLM-L6-v2')
-            _EMBEDDER = model
-            _EXEMPLAR_EMBEDS = model.encode(
-                _SENSITIVE_EXEMPLARS, normalize_embeddings=True
-            )
+            return model, model.encode(_SENSITIVE_EXEMPLARS, normalize_embeddings=True)
+
+        try:
+            from agent_friday.services.ml_imports import guarded
+            model, embeds = guarded(_load)
+            _EMBEDDER, _EXEMPLAR_EMBEDS, _EMBEDDER_ERROR = model, embeds, ""
+            _log.info("sensitivity classifier Layer 3 (embedding similarity) ready")
         except Exception as exc:
+            _EMBEDDER_ERROR = "%s: %s" % (type(exc).__name__, str(exc)[:200])
             _log.warning(
                 "sensitivity classifier Layer 3 (embedding similarity) UNAVAILABLE: "
-                "%s: %s - egress classification is running without semantic matching.",
-                type(exc).__name__, exc,
+                "%s - %s", _EMBEDDER_ERROR,
+                ("cloud egress fails closed (unsignalled text is withheld as PRIVATE) "
+                 "and the load is retried in %ds" % _EMBEDDER_RETRY_S)
+                if _layer3_expected() else
+                "not installed in this build; egress runs without semantic matching.",
             )
             _EMBEDDER = None
             _EXEMPLAR_EMBEDS = None
+            _EMBEDDER_FAILED_AT = _time.monotonic()
     return _EMBEDDER
+
+
+def layer3_state() -> dict:
+    """What Layer 3 is doing right now, for health and privacy_layers."""
+    if _EMBEDDER is _UNTRIED:
+        return {"state": "not loaded yet", "ready": False, "error": ""}
+    if _EMBEDDER is None:
+        if not _layer3_expected():
+            return {"state": "not installed", "ready": False, "error": _EMBEDDER_ERROR}
+        return {"state": "failed, retrying", "ready": False, "error": _EMBEDDER_ERROR}
+    return {"state": "ready", "ready": True, "error": ""}
 
 
 _PRESIDIO_LOCK = threading.Lock()
@@ -488,7 +529,7 @@ def _embedding_tier(text: str) -> tuple[int, float]:
     """
     embedder = _load_embedder()
     if embedder is None or _EXEMPLAR_EMBEDS is None:
-        return 0, 0.0
+        return -1, 0.0       # unavailable (not "below threshold")
     try:
         import numpy as _np
         embed = embedder.encode([text[:512]], normalize_embeddings=True)[0]
@@ -500,7 +541,7 @@ def _embedding_tier(text: str) -> tuple[int, float]:
             return Tier.PRIVATE, max_sim
         return 0, max_sim
     except Exception:
-        return 0, 0.0
+        return -1, 0.0       # it could not look: unavailable, not "nothing found"
 
 
 def _llm_seat() -> str | None:
@@ -730,6 +771,15 @@ def classify(
 
     # Layer 3: embedding similarity — fail-closed for the ambiguous zone
     emb_tier, emb_sim = _embedding_tier(content) if use_embeddings else (0, 0.0)
+    # FAIL CLOSED FOR CLOUD EGRESS. Layer 3 is the only layer that catches
+    # personal content with no keyword in it, and the egress gate's base
+    # default is PUBLIC. So when it is installed but cannot run (a boot-time
+    # import race, a load failure, an encode error), unsignalled text bound
+    # for a cloud provider is PRIVATE until it can. Absent by design (the
+    # packaged build) is reported by privacy_layers, not guessed at here.
+    layer3_down = emb_tier < 0 and egress and _layer3_expected()
+    if emb_tier < 0:
+        emb_tier = 0
     if emb_tier == Tier.SENSITIVE:
         return Tier.SENSITIVE
 
@@ -742,6 +792,8 @@ def classify(
 
     # Aggregate: most-sensitive result wins
     candidates = [t for t in [regex, kw, presidio, emb_tier, llm] if t > 0]
+    if layer3_down:
+        candidates.append(Tier.PRIVATE)
     if candidates:
         return max(candidates)
     return default

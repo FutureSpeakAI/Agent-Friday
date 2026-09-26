@@ -209,7 +209,12 @@ def kokoro_import_status(refresh: bool = False) -> dict:
             # Failed, and the cooldown has passed: ask again rather than
             # repeat an answer that may have been a boot-time accident.
         try:
-            from kokoro import KPipeline  # noqa: F401
+            # Under the lock every ML importer shares, with one purge-retry:
+            # retrying WITHOUT evicting the half-built modules a lost race
+            # leaves behind only returns the same broken objects
+            # (services/ml_imports).
+            from agent_friday.services.ml_imports import import_module
+            import_module("kokoro").KPipeline  # noqa: B018
             res = {"ok": True, "error": "", "missing": ""}
         except BaseException as e:  # noqa: BLE001 - any failure means unusable
             res = {"ok": False,
@@ -526,10 +531,12 @@ class KokoroTTS:
                 log.warning("espeak fallback not wired: %s",
                             esp.get("detail") or "unknown reason")
             try:
-                from kokoro import KPipeline
+                from agent_friday.services.ml_imports import guarded, import_module
+                KPipeline = import_module("kokoro").KPipeline
                 log.info("kokoro load voice=%s device=%s lang=%s espeak=%s",
                          self.voice, device, self.lang_code, esp["wired"])
-                pipeline = KPipeline(lang_code=self.lang_code, device=device)
+                # misaki/espeak import during construction: also guarded.
+                pipeline = guarded(KPipeline, lang_code=self.lang_code, device=device)
             except KokoroUnavailable:
                 raise
             except BaseException as e:  # noqa: BLE001

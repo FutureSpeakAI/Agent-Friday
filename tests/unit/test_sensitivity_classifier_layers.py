@@ -134,7 +134,8 @@ class TestGracefulDegradation:
     def test_missing_embedder_returns_zero(self, monkeypatch):
         monkeypatch.setattr(sc, "_load_embedder", lambda: None)
         monkeypatch.setattr(sc, "_EXEMPLAR_EMBEDS", None, raising=False)
-        assert sc._embedding_tier("anything") == (0, 0.0)
+        # Unavailable is not "nothing found": the egress path fails closed on -1.
+        assert sc._embedding_tier("anything") == (-1, 0.0)
 
     def test_missing_presidio_returns_zero(self, monkeypatch):
         monkeypatch.setattr(sc, "_load_presidio", lambda: None)
