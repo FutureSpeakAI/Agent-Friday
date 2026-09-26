@@ -6270,7 +6270,7 @@ function fridayNavManifest() {
 function fridayRunActions(actions) {
   if (!Array.isArray(actions) || !actions.length) return;
   try {
-    console.info('[friday] running ' + actions.length + ' action(s):', actions);
+    console.info('[friday] running %s action(s):', actions.length, actions);
   } catch (_) {}
   for (const a of actions) {
     if (!a || typeof a !== 'object') continue;
@@ -52369,7 +52369,7 @@ function App() {
       } else if (m.type === 'error-nonfatal') {
         setVoiceNotices(p => p.some(n => n.code === m.code) ? p : p.concat([m]));
       } else if (m.type === 'manifest' || m.type === 'turn_receipt') {
-        window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: ' + m.type, m);
+        window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: %s', m.type, m);
         if (m.type === 'turn_receipt') setVoicePartial('');
       } else if (m.type === 'egress_notice') {
         setVoiceEgress({
