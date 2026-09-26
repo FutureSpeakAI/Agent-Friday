@@ -27,6 +27,7 @@ import re
 from datetime import datetime
 
 from agent_friday.core import CREATIONS_DIR
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.showcase")
 
@@ -152,7 +153,7 @@ def generate_presentation(topic, slides=None, style=None, workspace=None):
     except Exception as e:
         _log.warning("presentation spec generation failed: %s", e, exc_info=True)
         return {"status": "error",
-                "message": f"Could not generate the deck outline: {e}"}
+                "message": ExceptionText(f"Could not generate the deck outline: {e}")}
     if not spec or not isinstance(spec.get("slides"), list) or not spec["slides"]:
         return {"status": "error",
                 "message": "The text model did not return a usable deck outline."}
@@ -326,7 +327,7 @@ def generate_website(brief, pages=None, style=None, workspace=None):
     except Exception as e:
         _log.warning("website spec generation failed: %s", e, exc_info=True)
         return {"status": "error",
-                "message": f"Could not generate the site spec: {e}"}
+                "message": ExceptionText(f"Could not generate the site spec: {e}")}
     if not spec or not isinstance(spec.get("pages"), list) or not spec["pages"]:
         return {"status": "error",
                 "message": "The text model did not return a usable site spec."}

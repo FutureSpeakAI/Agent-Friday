@@ -8,9 +8,9 @@ Routes — Creative Pipeline engine + Scene DNA + QA gates + Take comparison.
 
 Mutation endpoints return HTTP 200 with status-in-body (project convention).
 """
-import traceback
 from flask import Blueprint, jsonify, request
 
+from agent_friday.routes._errors import api_error, public_result
 from agent_friday.services import creative_pipeline as cp
 from agent_friday.services import scene_dna as sd
 from agent_friday.services import qa_gates
@@ -19,18 +19,13 @@ from agent_friday.services import take_comparison as tc
 creative_pipeline_bp = Blueprint('creative_pipeline', __name__)
 
 
-def _err(e, code=500):
-    traceback.print_exc()
-    return jsonify({"status": "error", "message": str(e)}), code
-
-
 # ═══ PIPELINE DEFINITIONS ════════════════════════════════════════
 @creative_pipeline_bp.route('/api/pipelines/templates', methods=['GET'])
 def pipeline_templates():
     try:
         return jsonify({"status": "ok", "templates": cp.list_templates()})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't load the pipeline templates")
 
 
 @creative_pipeline_bp.route('/api/pipelines', methods=['POST'])
@@ -39,7 +34,7 @@ def pipeline_register():
     try:
         return jsonify(cp.register_pipeline(data))
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't save the pipeline")
 
 
 @creative_pipeline_bp.route('/api/pipelines/<pipeline_id>', methods=['GET'])
@@ -50,7 +45,7 @@ def pipeline_get(pipeline_id):
             return jsonify({"status": "error", "message": "not found"}), 404
         return jsonify({"status": "ok", "pipeline": d})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't load the pipeline")
 
 
 # ═══ PIPELINE RUNS ═══════════════════════════════════════════════
@@ -59,7 +54,7 @@ def runs_list():
     try:
         return jsonify({"status": "ok", "runs": cp.list_runs()})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't list the pipeline runs")
 
 
 @creative_pipeline_bp.route('/api/pipelines/runs', methods=['POST'])
@@ -84,7 +79,7 @@ def run_create():
                 run = cp.get_run(run['run_id'])
         return jsonify({"status": "ok", "run": run})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't create the run")
 
 
 @creative_pipeline_bp.route('/api/pipelines/runs/<run_id>', methods=['GET'])
@@ -95,7 +90,7 @@ def run_get(run_id):
             return jsonify({"status": "error", "message": "not found"}), 404
         return jsonify({"status": "ok", "run": run})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't load the run")
 
 
 @creative_pipeline_bp.route('/api/pipelines/runs/<run_id>/start', methods=['POST'])
@@ -104,20 +99,20 @@ def run_start(run_id):
     try:
         if data.get('sync'):
             run = cp.run(run_id, until_checkpoint=not data.get('run_to_end'))
-            return jsonify({"status": "ok", "run": run})
+            return jsonify(public_result({"status": "ok", "run": run}, "Couldn't start the run"))
         res = cp.start_async(run_id, until_checkpoint=not data.get('run_to_end'))
-        return jsonify(res if res.get('status') == 'error'
-                       else {"status": "ok", **res, "run": cp.get_run(run_id)})
+        return jsonify(public_result(res if res.get('status') == 'error'
+                       else {"status": "ok", **res, "run": cp.get_run(run_id)}, "Couldn't start the run"))
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't start the run")
 
 
 @creative_pipeline_bp.route('/api/pipelines/runs/<run_id>/advance', methods=['POST'])
 def run_advance(run_id):
     try:
-        return jsonify({"status": "ok", "run": cp.advance(run_id)})
+        return jsonify(public_result({"status": "ok", "run": cp.advance(run_id)}, "Couldn't advance the run"))
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't advance the run")
 
 
 @creative_pipeline_bp.route('/api/pipelines/runs/<run_id>/resume', methods=['POST'])
@@ -132,9 +127,9 @@ def run_resume(run_id):
         else:
             cp.start_async(run_id, until_checkpoint=not data.get('run_to_end'))
             run = cp.get_run(run_id)
-        return jsonify({"status": "ok", "run": run})
+        return jsonify(public_result({"status": "ok", "run": run}, "Couldn't resume the run"))
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't resume the run")
 
 
 @creative_pipeline_bp.route('/api/pipelines/runs/<run_id>/intervene', methods=['POST'])
@@ -144,7 +139,7 @@ def run_intervene(run_id):
         return jsonify({"status": "ok",
                         "run": cp.intervene(run_id, data.get('context_updates') or {})})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't change the run")
 
 
 # ═══ SCENE DNA ═══════════════════════════════════════════════════
@@ -154,7 +149,7 @@ def scene_dna_layers():
         return jsonify({"status": "ok", "layers": sd.layers(),
                         "labels": sd.describe_layers(), "empty": sd.empty()})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't load the scene layers")
 
 
 @creative_pipeline_bp.route('/api/scene-dna/validate', methods=['POST'])
@@ -165,7 +160,7 @@ def scene_dna_validate():
         return jsonify({"status": "ok", "scene_dna": clean,
                         "prompt": sd.render(clean)})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't validate the scene")
 
 
 @creative_pipeline_bp.route('/api/scene-dna/edit', methods=['POST'])
@@ -181,7 +176,7 @@ def scene_dna_edit():
         return jsonify({"status": "ok", "scene_dna": updated,
                         "prompt": sd.render(updated)})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't edit the scene")
 
 
 # ═══ QA GATE ═════════════════════════════════════════════════════
@@ -190,7 +185,7 @@ def qa_config():
     try:
         return jsonify({"status": "ok", "config": qa_gates.qa_config()})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't load the quality settings")
 
 
 @creative_pipeline_bp.route('/api/qa/evaluate', methods=['POST'])
@@ -204,9 +199,9 @@ def qa_evaluate():
         else:
             verdict = qa_gates.evaluate_text(content, intent,
                                             workspace=data.get('workspace') or '')
-        return jsonify({"status": "ok", "verdict": verdict})
+        return jsonify(public_result({"status": "ok", "verdict": verdict}, "Couldn't evaluate the take"))
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't evaluate the take")
 
 
 # ═══ TAKE COMPARISON ═════════════════════════════════════════════
@@ -221,9 +216,9 @@ def takes_images():
             prompt, n=data.get('n', 3), model=data.get('model'),
             style=data.get('style'), aspect_ratio=data.get('aspect_ratio') or '1:1',
             intent=data.get('intent') or '')
-        return jsonify(res)
+        return jsonify(public_result(res, "Couldn't compare the image takes"))
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't compare the image takes")
 
 
 @creative_pipeline_bp.route('/api/takes/text', methods=['POST'])
@@ -246,6 +241,6 @@ def takes_text():
                                   temperature=temps[i % len(temps)],
                                   workspace=workspace)
         res = tc.compare_text(intent, _gen, n=data.get('n', 3), workspace=workspace)
-        return jsonify(res)
+        return jsonify(public_result(res, "Couldn't compare the text takes"))
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't compare the text takes")

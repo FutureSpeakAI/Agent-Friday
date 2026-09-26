@@ -11,12 +11,15 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from agent_friday.core import login_required
 from agent_friday.services import studio_files as sf
+from agent_friday.routes._errors import api_error
 
 studio_files_bp = Blueprint('studio_files', __name__)
 
 
-def _denied(e):
-    return jsonify({'status': 'denied', 'error': str(e)}), 403
+def _denied(e: sf.Denied):
+    """403 with the refusal as written: Denied is a UserFacingError whose
+    message names the rule, never the filesystem."""
+    return jsonify({'status': 'denied', 'error': e.user_message}), 403
 
 
 def _same_origin_json():
@@ -77,7 +80,7 @@ def sf_raw():
     except sf.Denied as e:
         return _denied(e)
     if not p.is_file():
-        return _denied('not a file')
+        return _denied(sf.Denied('not a file'))
     mimetype, inline = sf.serve_type(p)
     resp = send_file(str(p), mimetype=mimetype, conditional=True,
                      as_attachment=not inline and mimetype == 'application/octet-stream',
@@ -101,7 +104,7 @@ def sf_open():
     except sf.Denied as e:
         return _denied(e)
     except OSError as e:
-        return jsonify({'status': 'error', 'error': str(e)[:200]}), 500
+        return api_error(e, "Couldn't open the file", key="error")
 
 
 @studio_files_bp.route('/api/studio-files/reveal', methods=['POST'])
@@ -116,7 +119,7 @@ def sf_reveal():
     except sf.Denied as e:
         return _denied(e)
     except OSError as e:
-        return jsonify({'status': 'error', 'error': str(e)[:200]}), 500
+        return api_error(e, "Couldn't show the file", key="error")
 
 
 @studio_files_bp.route('/api/studio-files/request-change', methods=['POST'])

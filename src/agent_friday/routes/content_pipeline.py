@@ -51,6 +51,7 @@ import agent_friday.core as core
 from agent_friday.services import content_pipeline as store
 from agent_friday.services import content_composer as composer
 from agent_friday.services import platforms as platform_registry
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 content_pipeline_bp = Blueprint("content_pipeline", __name__)
 
@@ -127,7 +128,7 @@ def _kick_publisher() -> Dict[str, Any]:
             res = kick()
             return res if isinstance(res, dict) else {"kicked": bool(res)}
         except Exception as e:
-            return {"kicked": False, "reason": str(e)}
+            return {"kicked": False, "reason": error_text(e, "Couldn't start publishing now")}
     for fn_name in ("tick", "run_once", "dispatch_due"):
         fn = getattr(_pub, fn_name, None)
         if callable(fn):
@@ -136,7 +137,7 @@ def _kick_publisher() -> Dict[str, Any]:
                 return {"kicked": True, "via": fn_name,
                         "result": res if isinstance(res, dict) else None}
             except Exception as e:
-                return {"kicked": False, "reason": str(e)}
+                return {"kicked": False, "reason": error_text(e, "Couldn't start publishing now")}
     return {"kicked": False, "reason": "publisher has no tick entry point"}
 
 
@@ -296,7 +297,7 @@ def content_posts_list():
         source_kind=args.get("source") or None,
         limit=int(args.get("limit") or 50),
         offset=int(args.get("offset") or 0))
-    return jsonify(res)
+    return jsonify(public_result(res, "Couldn't load the posts"))
 
 
 @content_pipeline_bp.route("/api/content/posts", methods=["POST"])
@@ -313,17 +314,17 @@ def content_posts_create():
         provenance=data.get("provenance") or {},
         license=data.get("license") or {},
         tags=data.get("tags") or [])
-    return jsonify(res)
+    return jsonify(public_result(res, "Couldn't create the post"))
 
 
 @content_pipeline_bp.route("/api/content/posts/<post_id>", methods=["GET"])
 def content_post_get(post_id):
-    return jsonify(store.get_post(post_id))
+    return jsonify(public_result(store.get_post(post_id), "Couldn't load the post"))
 
 
 @content_pipeline_bp.route("/api/content/posts/<post_id>", methods=["PATCH"])
 def content_post_patch(post_id):
-    return jsonify(store.update_post(post_id, _json()))
+    return jsonify(public_result(store.update_post(post_id, _json()), "Couldn't save the post"))
 
 
 @content_pipeline_bp.route("/api/content/posts/<post_id>", methods=["DELETE"])
@@ -339,7 +340,7 @@ def content_post_delete(post_id):
                  if t.get("status") == "CONFIRMED" and t.get("platform_post_id")]
     out = store.delete_post(post_id)
     if not out.get("ok"):
-        return jsonify(out)
+        return jsonify(public_result(out, "Couldn't delete the post"))
     takedowns: List[Dict[str, Any]] = []
     if request.args.get("takedown") in ("1", "true", "yes"):
         for t in confirmed:
@@ -351,7 +352,7 @@ def content_post_delete(post_id):
             try:
                 res = adapter.delete(t["platform_post_id"])
             except Exception as e:
-                res = {"ok": False, "error": str(e)}
+                res = {"ok": False, "error": error_text(e, "Couldn't take the post down")}
             res = res if isinstance(res, dict) else {"ok": False}
             takedowns.append({"target_id": t["id"], **res})
             store.append_publish_log({
@@ -360,7 +361,7 @@ def content_post_delete(post_id):
                 "ok": bool(res.get("ok"))})
     if takedowns:
         out["takedowns"] = takedowns
-    return jsonify(out)
+    return jsonify(public_result(out, "Couldn't delete the post"))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -372,7 +373,7 @@ def content_post_compose(post_id):
     data = _json()
     got = store.get_post(post_id)
     if not got.get("ok"):
-        return jsonify(got)
+        return jsonify(public_result(got, "Couldn't compose the post"))
     res = composer.adapt(
         got["post"],
         platforms=data.get("platforms") or None,
@@ -382,7 +383,7 @@ def content_post_compose(post_id):
         refreshed = store.get_post(post_id)
         if refreshed.get("ok"):
             res["post"] = refreshed["post"]
-    return jsonify(res)
+    return jsonify(public_result(res, "Couldn't compose the post"))
 
 
 @content_pipeline_bp.route("/api/content/posts/<post_id>/schedule", methods=["POST"])
@@ -392,7 +393,7 @@ def content_post_schedule(post_id):
     data = _json()
     got = store.get_post(post_id)
     if not got.get("ok"):
-        return jsonify(got)
+        return jsonify(public_result(got, "Couldn't schedule the post"))
     post = got["post"]
     platforms = [t.get("platform") for t in (post.get("targets") or [])
                  if t.get("platform")]
@@ -405,12 +406,12 @@ def content_post_schedule(post_id):
         resolved_optimal = sched["publish_at"] is not None
     res = store.schedule_post(post_id, sched)
     if not res.get("ok"):
-        return jsonify(res)
+        return jsonify(public_result(res, "Couldn't schedule the post"))
     res["conflicts"] = _find_conflicts(
         platforms, sched.get("publish_at"), cs["conflict_window_hours"],
         exclude_post=post_id)
     res["resolved_optimal"] = resolved_optimal
-    return jsonify(res)
+    return jsonify(public_result(res, "Couldn't schedule the post"))
 
 
 @content_pipeline_bp.route("/api/content/posts/<post_id>/publish-now", methods=["POST"])
@@ -420,13 +421,13 @@ def content_post_publish_now(post_id):
     res = store.publish_now(post_id)
     if res.get("ok"):
         res["dispatch"] = _kick_publisher()
-    return jsonify(res)
+    return jsonify(public_result(res, "Couldn't publish the post"))
 
 
 @content_pipeline_bp.route("/api/content/posts/<post_id>/cancel", methods=["POST"])
 def content_post_cancel(post_id):
     data = _json()
-    return jsonify(store.cancel_post(post_id, target_id=data.get("target_id")))
+    return jsonify(public_result(store.cancel_post(post_id, target_id=data.get("target_id")), "Couldn't cancel the post"))
 
 
 @content_pipeline_bp.route("/api/content/posts/<post_id>/release", methods=["POST"])
@@ -441,7 +442,7 @@ def content_post_release(post_id):
     res = store.release_held(post_id, target_id=data.get("target_id"))
     if res.get("ok"):
         res["dispatch"] = _kick_publisher()
-    return jsonify(res)
+    return jsonify(public_result(res, "Couldn't release the post"))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -451,11 +452,11 @@ def content_post_release(post_id):
 @content_pipeline_bp.route("/api/content/preview", methods=["POST"])
 def content_preview():
     data = _json()
-    return jsonify(composer.preview(
+    return jsonify(public_result(composer.preview(
         str(data.get("body") or ""),
         _coerce_assets(data.get("assets")),
         str(data.get("platform") or ""),
-        str(data.get("format") or "")))
+        str(data.get("format") or "")), "Couldn't preview the post"))
 
 
 # §9.2 default spread per dominant asset kind (each entry = one target).
@@ -484,7 +485,7 @@ def content_repurpose():
     if not body and source.get("kind") == "post" and source.get("ref"):
         got = store.get_post(str(source["ref"]))
         if not got.get("ok"):
-            return jsonify(got)
+            return jsonify(public_result(got, "Couldn't repurpose the content"))
         src_post = got["post"]
         body = src_post.get("body") or ""
         title = title or src_post.get("title") or ""
@@ -509,16 +510,16 @@ def content_repurpose():
                 "src_kind": str(source.get("kind") or "")},
         tags=tags)
     if not created.get("ok"):
-        return jsonify(created)
+        return jsonify(public_result(created, "Couldn't repurpose the content"))
     post = created["post"]
     adapted = composer.adapt(post, platforms=spread)
     refreshed = store.get_post(post["id"])
-    return jsonify({
+    return jsonify(public_result({
         "ok": True,
         "post": refreshed.get("post") if refreshed.get("ok") else post,
         "spread": spread,
         "warnings": (created.get("warnings") or []) + (adapted.get("warnings") or []),
-    })
+    }, "Couldn't repurpose the content"))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -590,9 +591,9 @@ def content_pause():
     cfg["pause_all"] = desired
     saved = platform_registry.save_config(cfg)
     if not saved.get("ok"):
-        return jsonify({"ok": False,
-                        "error": saved.get("error") or "failed to persist pause state"})
-    return jsonify({"ok": True, "paused": platform_registry.publishing_paused()})
+        return jsonify(public_result({"ok": False,
+                        "error": saved.get("error") or "failed to persist pause state"}, "Couldn't change the publishing pause"))
+    return jsonify(public_result({"ok": True, "paused": platform_registry.publishing_paused()}, "Couldn't change the publishing pause"))
 
 
 @content_pipeline_bp.route("/api/content/calendar", methods=["GET"])
@@ -721,15 +722,15 @@ def content_analytics_summary():
 def content_analytics_post(post_id):
     got = store.get_post(post_id)
     if not got.get("ok"):
-        return jsonify(got)
+        return jsonify(public_result(got, "Couldn't load the post analytics"))
     snaps = store.get_snapshots(post_id=post_id, limit=500)
-    return jsonify({
+    return jsonify(public_result({
         "ok": True,
         "post_id": post_id,
         "analytics": got["post"].get("analytics") or {},
         "targets": got["post"].get("targets") or [],
         "snapshots": snaps.get("snapshots") or [],
-    })
+    }, "Couldn't load the post analytics"))
 
 
 @content_pipeline_bp.route("/api/content/analytics/refresh/<target_id>", methods=["POST"])
@@ -737,19 +738,19 @@ def content_analytics_refresh(target_id):
     """Manual metric poll for one target, budget-aware (§8.1)."""
     got = store.get_target(target_id)
     if not got.get("ok"):
-        return jsonify(got)
+        return jsonify(public_result(got, "Couldn't refresh the analytics"))
     t = got["target"]
     if t.get("status") != "CONFIRMED" or not t.get("platform_post_id"):
         return jsonify({"ok": False,
                         "error": "target has no confirmed platform post to poll"})
     adapter = platform_registry.get_adapter(t.get("platform") or "")
     if adapter is None:
-        return jsonify({"ok": False,
-                        "error": f"adapter unavailable: {t.get('platform')}"})
+        return jsonify(public_result({"ok": False,
+                        "error": f"adapter unavailable: {t.get('platform')}"}, "Couldn't refresh the analytics"))
     try:
         metrics = adapter.fetch_metrics(t["platform_post_id"])
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+        return api_error(e, "Couldn't refresh the analytics", 200, shape="ok")
     if not metrics:
         return jsonify({"ok": False,
                         "error": "platform reported no metrics for this post"})
@@ -757,7 +758,7 @@ def content_analytics_refresh(target_id):
                                            raw={"metrics": metrics})
     if res.get("ok"):
         res["metrics"] = metrics
-    return jsonify(res)
+    return jsonify(public_result(res, "Couldn't refresh the analytics"))
 
 
 @content_pipeline_bp.route("/api/content/insights", methods=["GET"])
@@ -775,10 +776,10 @@ def content_insights():
             try:
                 res = fn()
             except Exception as e:
-                return jsonify({"ok": False, "error": str(e)})
+                return api_error(e, "Couldn't load the content insights", 200, shape="ok")
             if isinstance(res, dict):
-                return jsonify(res)
-            return jsonify({"ok": True, "insights": list(res or [])})
+                return jsonify(public_result(res, "Couldn't load the content insights"))
+            return jsonify(public_result({"ok": True, "insights": list(res or [])}, "Couldn't load the content insights"))
     return jsonify({"ok": True, "insights": []})
 
 
@@ -833,9 +834,9 @@ def content_platform_connect(name):
     data = _json()
     adapter = platform_registry.get_adapter(name)
     if adapter is None:
-        return jsonify({"ok": False,
+        return jsonify(public_result({"ok": False,
                         "error": platform_registry.import_error(name)
-                        or f"unknown platform: {name}"})
+                        or f"unknown platform: {name}"}, "Couldn't connect the platform"))
     options = dict(data.get("options")) if isinstance(data.get("options"), dict) else {}
     # The Accounts tab posts the non-secret identity fields at the TOP level
     # ({identifier, secret} for Bluesky, {instance, secret} for Mastodon) —
@@ -851,7 +852,7 @@ def content_platform_connect(name):
         cfg = platform_registry.configure_platform(
             name, options, secret_value=pasted or None)
         if not cfg.get("ok"):
-            return jsonify(cfg)
+            return jsonify(public_result(cfg, "Couldn't connect the platform"))
         if pasted:
             # A pasted secret must yield a LIVE, verified session at connect
             # time (§4.1) — storing it alone leaves publish()/fetch_metrics()
@@ -883,27 +884,27 @@ def content_platform_connect(name):
                 out["error"] = (st.get("last_error")
                                 or "the pasted credential did not produce a "
                                    "live session — check it and try again")
-            return jsonify(out)
+            return jsonify(public_result(out, "Couldn't connect the platform"))
     state = _issue_state(adapter.name)
     try:
         url = adapter.connect_url(state)
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+        return api_error(e, "Couldn't connect the platform", 200, shape="ok")
     if url:
-        return jsonify({"ok": True, "mode": "oauth", "connect_url": url,
-                        "state": state})
+        return jsonify(public_result({"ok": True, "mode": "oauth", "connect_url": url,
+                        "state": state}, "Couldn't connect the platform"))
     # Tokenless / manual adapters: no browser hop needed.
     with _OAUTH_LOCK:
         _OAUTH_STATES.pop(state, None)
     if adapter.auth_mode in ("token", "app_password"):
-        return jsonify({"ok": True, "mode": adapter.auth_mode,
+        return jsonify(public_result({"ok": True, "mode": adapter.auth_mode,
                         "needs": "secret",
                         "message": f"{adapter.label} uses a pasted "
                                    f"{adapter.auth_mode.replace('_', ' ')} — "
                                    "POST it as {secret: ...}",
-                        "status": adapter.status()})
-    return jsonify({"ok": True, "mode": adapter.auth_mode,
-                    "status": adapter.status()})
+                        "status": adapter.status()}, "Couldn't connect the platform"))
+    return jsonify(public_result({"ok": True, "mode": adapter.auth_mode,
+                    "status": adapter.status()}, "Couldn't connect the platform"))
 
 
 @content_pipeline_bp.route("/api/content/platforms/<name>/callback", methods=["GET"])
@@ -972,25 +973,25 @@ def content_platform_test(name):
     supports one, otherwise a refresh + status probe."""
     adapter = platform_registry.get_adapter(name)
     if adapter is None:
-        return jsonify({"ok": False,
+        return jsonify(public_result({"ok": False,
                         "error": platform_registry.import_error(name)
-                        or f"unknown platform: {name}"})
+                        or f"unknown platform: {name}"}, "Couldn't test the platform"))
     tester = getattr(adapter, "test_post", None) or getattr(adapter, "test", None)
     if callable(tester):
         try:
             res = tester()
             if isinstance(res, dict):
-                return jsonify(res)
+                return jsonify(public_result(res, "Couldn't test the platform"))
         except Exception as e:
-            return jsonify({"ok": False, "error": str(e)})
+            return api_error(e, "Couldn't test the platform", 200, shape="ok")
     try:
         usable = bool(adapter.refresh())
     except Exception:
         usable = False
     st = adapter.status()
-    return jsonify({"ok": bool(usable and st.get("connected")),
+    return jsonify(public_result({"ok": bool(usable and st.get("connected")),
                     "connected": bool(st.get("connected")),
-                    "status": st})
+                    "status": st}, "Couldn't test the platform"))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -999,13 +1000,13 @@ def content_platform_test(name):
 
 @content_pipeline_bp.route("/api/content/voice-cards/<platform>", methods=["GET"])
 def content_voice_card_get(platform):
-    return jsonify(composer.get_voice_card(platform))
+    return jsonify(public_result(composer.get_voice_card(platform), "Couldn't load the voice card"))
 
 
 @content_pipeline_bp.route("/api/content/voice-cards/<platform>", methods=["POST"])
 def content_voice_card_set(platform):
     data = _json()
-    return jsonify(composer.set_voice_card(platform, str(data.get("text") or "")))
+    return jsonify(public_result(composer.set_voice_card(platform, str(data.get("text") or "")), "Couldn't save the voice card"))
 
 
 @content_pipeline_bp.route("/api/content/export", methods=["GET"])

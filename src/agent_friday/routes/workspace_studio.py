@@ -15,6 +15,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )
+from agent_friday.routes._errors import api_error
 
 ws_studio_bp = Blueprint('ws_studio', __name__)
 
@@ -29,7 +30,7 @@ def ws_customizations():
         return jsonify({"status": "ok", "customizations": all_customizations()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the workspace customizations")
 
 
 @ws_studio_bp.route('/api/workspace/<ws_id>/chat', methods=['GET'])
@@ -46,7 +47,7 @@ def ws_chat_get(ws_id):
         })
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the workspace chat")
 
 
 @ws_studio_bp.route('/api/workspace/<ws_id>/chat', methods=['POST'])
@@ -70,7 +71,7 @@ def ws_chat_post(ws_id):
         return jsonify(result)
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't send the workspace message")
 
 
 @ws_studio_bp.route('/api/workspace/<ws_id>/chat/clear', methods=['POST'])
@@ -80,7 +81,7 @@ def ws_chat_clear(ws_id):
         return jsonify({"status": "ok", "chat": doc.get("chat", [])})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't clear the workspace chat")
 
 
 @ws_studio_bp.route('/api/workspace/<ws_id>/revert', methods=['POST'])
@@ -101,7 +102,7 @@ def ws_revert(ws_id):
         })
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't revert the workspace")
 
 
 @ws_studio_bp.route('/api/workspace/<ws_id>/reset', methods=['POST'])
@@ -116,4 +117,4 @@ def ws_reset(ws_id):
         })
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't reset the workspace")

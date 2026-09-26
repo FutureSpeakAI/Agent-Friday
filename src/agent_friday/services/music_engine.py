@@ -47,6 +47,7 @@ from agent_friday.services.creative_engine import (
     _orb_start, _orb_update, _orb_fail, _defer, _safe_remove,
     _save_bytes, _file_record, _write_metadata, _notify, _timestamp,
 )
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.music_engine")
 
@@ -282,7 +283,7 @@ def cloud_music_available() -> tuple:
                            "(generate_music) — upgrade the SDK to enable cloud music")
         return True, None
     except Exception as e:
-        return False, f"google-genai unavailable: {e}"
+        return False, ExceptionText(f"google-genai unavailable: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -424,7 +425,7 @@ def generate_music(prompt: str, *,
         _orb_fail(orb)
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"Music generation failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Music generation failed: {e}")}
 
 
 def _generate_music_cloud(client, types, api_model, full_prompt, *, mode, lyrics,
@@ -573,7 +574,7 @@ def _demo_music(full_prompt, model, api_model, mode, lyrics,
     except Exception as e:
         _orb_fail(orb)
         return {"status": "unavailable",
-                "message": f"Music unavailable ({why}); demo mode failed: {e}"}
+                "message": ExceptionText(f"Music unavailable ({why}); demo mode failed: {e}")}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
