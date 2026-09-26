@@ -29,10 +29,11 @@ actually happened, and ask Friday again if it did not. Nothing was done that
 you did not approve: the failure was that approved things were not done.
 
 Now, when you approve a card, the action runs, exactly once, even if you
-approve it in two tabs at the same moment. The result appears in the
-conversation that asked for it, without reloading the page. A card that is
-waiting is recorded as waiting, not as a success, and a failed action records
-why it failed.
+approve it in two tabs at the same moment. For a card raised in a chat, the
+result appears in that chat without reloading the page. A card raised by a
+background task does not report back to the chat yet (see Known issues). A
+card that is waiting is recorded as waiting, not as a success, and a failed
+action records why it failed.
 
 **The privacy check could fall back to pattern filters alone.** Before text
 goes to a cloud model, Friday checks it for personal information in layers.
@@ -65,9 +66,10 @@ actually shows. Ask how things are going, and she can tell you which
 workspaces are open, how busy the PC is, which models are loaded, what is
 running, and what you have spent today.
 
-**"Who is talking" for voice.** In Settings › Voice › Listening you can tell
-Friday there are several people in the room. She then answers only when she is
-spoken to by name, or when someone is replying to her.
+**"Who is talking" for voice.** With the Cloud (Gemini Live) voice engine,
+Settings › Voice & Tracking › Listening lets you tell Friday there are several
+people in the room. She then answers only when she is spoken to by name, or
+when someone is replying to her.
 
 ## What changed
 

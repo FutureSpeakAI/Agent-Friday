@@ -37,6 +37,11 @@ you hit something that is not here, please open an issue.
   "shall I?" on its own before calling the tool, your yes is not yet the
   checkpoint's question; the checkpoint then asks once more for that exact
   action.
+- **A background task's approved card does not report back to your chat.** A
+  card raised inside a chat turn posts its result into that chat when you
+  approve it. A card raised by a background task (including one you started
+  from the chat) carries no conversation, so the action runs, once, but the
+  chat that started the task is not told. The card itself records the outcome.
 - **Built-in scheduled jobs on a cloud-only install wait for your answer.**
   With no local model serving they run on a cloud model only after you say yes
   (in the setup chat, or Settings → Spending); until then they stay paused,

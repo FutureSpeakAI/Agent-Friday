@@ -33,7 +33,8 @@ conversations hold together. The plain-language summary is in
   lock, and the checkpoint marks the card consumed. The outcome is appended
   to the conversation that raised the card, and both chat windows (docked and
   undocked) re-read the transcript on a push, so the result appears without a
-  reload.
+  reload. A card raised by a background task carries no conversation id, so
+  its result is recorded on the card but not posted to a chat (KNOWN_ISSUES).
 - **A raised card was recorded as a success.** `[APPROVAL CARD RAISED]` and
   four other refusal prefixes were missing from `_TOOL_DENY_SENTINELS`, so
   the tool-call record said `ok` while the decision was still pending. A
