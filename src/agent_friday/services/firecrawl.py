@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
+from agent_friday.user_errors import ExceptionText, exception_text
 
 _log = logging.getLogger("friday.firecrawl")
 
@@ -158,13 +159,13 @@ def _gate_outbound(value: str, field: str) -> tuple[str, str]:
     try:
         from agent_friday.services import egress_gate as _eg
     except Exception as e:
-        return "", f"the privacy gate could not be reached ({e}) — not sent to Firecrawl"
+        return "", ExceptionText(f"the privacy gate could not be reached ({e}) — not sent to Firecrawl")
     try:
         gated = _eg._gate_text(value, "firecrawl", field)
     except _eg.NeverSendBlocked as nb:
         return "", str(nb)
     except Exception as e:
-        return "", f"the privacy gate failed ({e}) — not sent to Firecrawl"
+        return "", ExceptionText(f"the privacy gate failed ({e}) — not sent to Firecrawl")
     if gated != value:
         return "", ("this contained content that stays on this device, so it "
                     "was not sent to Firecrawl — rephrase without the private "
@@ -186,12 +187,12 @@ def _post(path: str, body: dict, timeout: int) -> tuple[dict | None, str]:
         pass
     except Exception as e:
         if type(e).__name__ == "SpendCapReached":
-            return None, str(e)
+            return None, exception_text(e)
     try:
         r = requests.post(f"{BASE}{path}", headers=_headers(), json=body,
                           timeout=timeout)
     except Exception as e:
-        return None, f"{type(e).__name__}: {e}"
+        return None, ExceptionText(f"{type(e).__name__}: {e}")
     if r.status_code == 401:
         return None, "Firecrawl rejected the API key (HTTP 401)"
     if r.status_code == 402:
@@ -203,7 +204,7 @@ def _post(path: str, body: dict, timeout: int) -> tuple[dict | None, str]:
     try:
         return r.json(), ""
     except Exception as e:
-        return None, f"Firecrawl returned unparseable JSON: {e}"
+        return None, ExceptionText(f"Firecrawl returned unparseable JSON: {e}")
 
 
 def _results_of(payload: dict) -> list:
@@ -307,7 +308,7 @@ def credits() -> dict:
         d = (r.json() or {}).get("data") or {}
         return {"ok": True, **d}
     except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return {"ok": False, "error": ExceptionText(f"{type(e).__name__}: {e}")}
 
 
 def verify() -> dict:

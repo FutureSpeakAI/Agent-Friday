@@ -18,6 +18,7 @@ from flask import Blueprint, jsonify, request
 
 from agent_friday.core import _is_local_request, login_required
 from agent_friday.services import browser_session
+from agent_friday.routes._errors import api_error
 
 browser_bp = Blueprint("browser", __name__)
 
@@ -53,7 +54,7 @@ def browser_close():
     try:
         closed = browser_session.close_session()
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't close the browser", shape="ok")
     return jsonify({"ok": True, "closed": closed, **browser_session.profile_status()})
 
 
@@ -66,7 +67,7 @@ def browser_profile_clear():
     try:
         res = browser_session.clear_profile()
     except browser_session.BrowserRefused as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return api_error(e, "Couldn't clear the browser profile", 400, shape="ok")
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't clear the browser profile", shape="ok")
     return jsonify({"ok": True, **res, **browser_session.profile_status()})

@@ -14,6 +14,7 @@ from flask import Blueprint, jsonify, request
 
 import agent_friday.core as core
 from agent_friday.services import local_address as la
+from agent_friday.routes._errors import error_text, public_result
 
 local_address_bp = Blueprint("local_address", __name__)
 
@@ -39,7 +40,7 @@ def local_address_ping():
 @local_address_bp.route("/api/local-address")
 def local_address_status():
     fresh = request.args.get("refresh") in ("1", "true")
-    return jsonify(la.status(refresh=fresh))
+    return jsonify(public_result(la.status(refresh=fresh), "Couldn't read the local address"))
 
 
 @local_address_bp.route("/api/local-address/host", methods=["POST"])
@@ -52,11 +53,11 @@ def local_address_set_host():
     if host:
         problem = la.host_problem(host)
         if problem:
-            return jsonify({"ok": False, "message": problem}), 400
+            return jsonify(public_result({"ok": False, "message": problem}, "Couldn't save the address")), 400
     la.save_block({"host": host})
     if la._PROXY["proxy"] is not None:
         la.start_listeners()             # re-open under the new name, new certificate
-    return jsonify({"ok": True, "status": la.status(refresh=True)})
+    return jsonify(public_result({"ok": True, "status": la.status(refresh=True)}, "Couldn't save the address"))
 
 
 @local_address_bp.route("/api/local-address/serve", methods=["POST"])
@@ -72,18 +73,18 @@ def local_address_serve():
         try:
             result = la.start_listeners()
         except Exception as e:
-            return jsonify({"ok": False, "message": f"Could not open the address: {e}",
-                            "status": la.status(refresh=True)}), 500
+            return jsonify(public_result({"ok": False, "message": error_text(e, "Could not open the address"),
+                            "status": la.status(refresh=True)}, "Could not open the address")), 500
     else:
         la.stop_listeners()
-    return jsonify({"ok": True, "result": result, "status": la.status(refresh=True)})
+    return jsonify(public_result({"ok": True, "result": result, "status": la.status(refresh=True)}, "Could not open the address"))
 
 
 def _job(started):
     ok, message = started
     if not ok:
-        return jsonify({"ok": False, "message": message, "status": la.status()}), 409
-    return jsonify({"ok": True, "job": la.job_status()})
+        return jsonify(public_result({"ok": False, "message": message, "status": la.status()}, "Couldn't start that change")), 409
+    return jsonify(public_result({"ok": True, "job": la.job_status()}, "Couldn't start that change"))
 
 
 @local_address_bp.route("/api/local-address/hosts-entry", methods=["POST"])
@@ -123,4 +124,4 @@ def local_address_google():
         return _refused(refusal)
     body = request.get_json(silent=True) or {}
     ok, message = la.set_oauth_named(bool(body.get("use")), bool(body.get("confirmed")))
-    return jsonify({"ok": ok, "message": message, "status": la.status(refresh=True)}), (200 if ok else 400)
+    return jsonify(public_result({"ok": ok, "message": message, "status": la.status(refresh=True)}, "Couldn't change the Google sign-in address")), (200 if ok else 400)

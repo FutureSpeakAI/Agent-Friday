@@ -57,6 +57,7 @@ import urllib.request
 from pathlib import Path
 
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import ExceptionText
 
 DEFAULT_SLUG = "friday"
 PING_PATH = "/api/local-address/ping"
@@ -237,7 +238,7 @@ def _opener(verify: bool):
 
 def _short(e) -> str:
     r = getattr(e, "reason", None)
-    return str(r if r is not None else e)[:160]
+    return ExceptionText(str(r if r is not None else e)[:160])
 
 
 def resolves_to_loopback(host: str) -> bool:

@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.user_errors import exception_text
 
 DB_PATH = FRIDAY_DIR / "federation.db"
 FEDERATION_VERSION = "1.0"
@@ -589,5 +590,5 @@ def handshake(
         )
         return result
     except Exception as e:
-        result["error"] = str(e)
+        result["error"] = exception_text(e)
         return result

@@ -26,6 +26,7 @@ from agent_friday.services.connectors import (
     meeting_context,
     workspace_connectors,
 )
+from agent_friday.routes._errors import api_error
 
 connectors_bp = Blueprint('connectors', __name__)
 
@@ -49,7 +50,7 @@ def api_connectors_list():
         })
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the connectors")
 
 
 @connectors_bp.route('/api/connectors/catalogue', methods=['GET'])
@@ -68,7 +69,7 @@ def api_connectors_catalogue():
         return jsonify({"status": "ok", **_reg.catalogue()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the connector catalogue")
 
 
 @connectors_bp.route('/api/credentials/inventory', methods=['GET'])
@@ -87,7 +88,7 @@ def api_credentials_inventory():
         return jsonify({"status": "ok", **_cs.inventory()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the credentials list")
 
 
 @connectors_bp.route('/api/connectors/health', methods=['GET'])
@@ -97,7 +98,7 @@ def api_connectors_health():
         return jsonify({"status": "ok", "health": connectors_health()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't check the connectors")
 
 
 @connectors_bp.route('/api/connectors/intelligence', methods=['GET'])
@@ -107,7 +108,7 @@ def api_connectors_intelligence():
         return jsonify({"status": "ok", "intelligence": connector_intelligence()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load connector insights")
 
 
 @connectors_bp.route('/api/connectors/meeting-context', methods=['POST'])
@@ -124,7 +125,7 @@ def api_connectors_meeting_context():
         return jsonify({"status": "ok", "context": meeting_context(event)})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't gather the meeting context")
 
 
 @connectors_bp.route('/api/connectors/<key>', methods=['GET'])
@@ -138,7 +139,7 @@ def api_connector_get(key):
         return jsonify({"status": "ok", "connector": conn})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the connector")
 
 
 @connectors_bp.route('/api/workspaces/<ws>/connectors', methods=['GET'])
@@ -150,7 +151,7 @@ def api_workspace_connectors(ws):
                         "connectors": workspace_connectors(ws)})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the workspace connectors")
 
 
 @connectors_bp.route('/api/connectors/<key>/connect', methods=['POST'])
@@ -169,7 +170,7 @@ def api_connector_connect(key):
         return jsonify({"status": "ok" if result.get("ok") else "error", **result}), code
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't connect")
 
 
 @connectors_bp.route('/api/connectors/<key>/disconnect', methods=['POST'])
@@ -184,4 +185,4 @@ def api_connector_disconnect(key):
         return jsonify({"status": "ok" if result.get("ok") else "error", **result}), code
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't disconnect")

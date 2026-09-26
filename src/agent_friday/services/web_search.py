@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import time
 from typing import Any
+from agent_friday.user_errors import ExceptionText
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -121,6 +122,14 @@ _FC_HEALTH: dict = {"state": UNVERIFIED, "proven_on": None, "detail": "",
                     "checked_at": 0.0}
 
 
+def _keep_mark(parts, text: str) -> str:
+    """`text`, still marked as exception text if any of `parts` was, so the
+    HTTP boundary can keep it out of a response (the model reads it as is)."""
+    if any(isinstance(p, ExceptionText) for p in parts):
+        return ExceptionText(text)
+    return text
+
+
 def health_state() -> dict:
     """Brave's three-state health, plus what it was proven against.
 
@@ -192,7 +201,7 @@ def verify_key(key: str | None = None) -> dict:
                              headers={"Accept": "application/json",
                                       "X-Subscription-Token": k}, timeout=20)
         except Exception as e:
-            out["endpoints"][name] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            out["endpoints"][name] = {"ok": False, "error": ExceptionText(f"{type(e).__name__}: {e}")}
             continue
         entry = {"ok": r.status_code == 200, "http": r.status_code}
         if r.status_code != 200:
@@ -514,13 +523,13 @@ def _gate_search_query(query: str, provider: str) -> tuple[str, str]:
     try:
         from agent_friday.services import egress_gate as _eg
     except Exception as e:
-        return "", f"the privacy gate could not be reached ({e}) — search not sent"
+        return "", ExceptionText(f"the privacy gate could not be reached ({e}) — search not sent")
     try:
         gated = _eg._gate_text(query, provider, "web_search.query")
     except _eg.NeverSendBlocked as nb:
         return "", str(nb)
     except Exception as e:
-        return "", f"the privacy gate failed ({e}) — search not sent"
+        return "", ExceptionText(f"the privacy gate failed ({e}) — search not sent")
     if gated != query:
         return "", ("your query contained content that stays on this "
                     "device, so it was not sent to any search engine — "
@@ -610,22 +619,23 @@ def search(query: str, count: int = 10) -> dict:
             out = fn(q, count)
         except Exception as e:
             out = {"status": SearchStatus.BACKEND_BROKEN,
-                   "detail": f"{type(e).__name__}: {e}"}
+                   "detail": ExceptionText(f"{type(e).__name__}: {e}")}
         _note_backend_health(name, out)
         if out.get("status") == SearchStatus.OK:
             out["results"] = _normalise_rows(out.get("results"))
             out["query"] = q
             out["backend"] = name
             if tried:
-                out["detail"] = (f"{', '.join(tried)} failed; {name} answered. "
-                                 + (out.get("detail") or "")).strip()
+                out["detail"] = _keep_mark(tried, (f"{', '.join(tried)} failed; {name} answered. "
+                                                   + (out.get("detail") or "")).strip())
             return out
-        tried.append(f"{name} ({out.get('detail') or out.get('status')})")
+        tried.append(_keep_mark([out.get("detail")],
+                                f"{name} ({out.get('detail') or out.get('status')})"))
         last = out
     last.setdefault("results", [])
     last["query"] = q
     last["backend"] = runners[-1][0] if runners else "none"
-    last["detail"] = "; ".join(tried)
+    last["detail"] = _keep_mark(tried, "; ".join(tried))
     # With no Firecrawl key, every query can fall to the DuckDuckGo scrape
     # and its HTTP 202 anti-bot walls, and without this note the model tells
     # the user "I don't have Firecrawl wired up as a tool right now, nothing

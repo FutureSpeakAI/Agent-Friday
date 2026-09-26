@@ -22,6 +22,7 @@ from agent_friday.core import login_required
 from agent_friday.services import compute_provider as prov
 from agent_friday.services import compute_client as client
 from agent_friday.services.web_safety import UnsafeURLError
+from agent_friday.routes._errors import api_error, public_result
 
 compute_bp = Blueprint("compute", __name__)
 
@@ -34,7 +35,7 @@ def get_capabilities():
     try:
         return jsonify(prov.advertise_capabilities())
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return api_error(e, "Couldn't load the compute capabilities", shape="bare")
 
 
 @compute_bp.route("/api/federation/compute/request", methods=["POST"])
@@ -136,7 +137,7 @@ def active_jobs():
     try:
         return jsonify({"ok": True, "jobs": prov.get_active_jobs()})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't list the compute jobs", shape="ok")
 
 
 @compute_bp.route("/api/federation/capabilities/toggle", methods=["POST"])
@@ -171,7 +172,7 @@ def find_providers(capability):
         providers = client.find_providers(capability)
         return jsonify({"ok": True, "providers": providers, "count": len(providers)})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't find compute providers", shape="ok")
 
 
 @compute_bp.route("/api/compute/send", methods=["POST"])
@@ -185,12 +186,12 @@ def send_job():
         return jsonify({"error": "provider_endpoint required"}), 400
     try:
         result = client.request_job(endpoint, task_spec, offered_mψ)
-        return jsonify({"ok": True, "job": result})
+        return jsonify(public_result({"ok": True, "job": result}, "Couldn't send the compute job"))
     except UnsafeURLError as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return api_error(e, "That provider address is not allowed", 400, shape="ok")
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't send the compute job", shape="ok")
 
 
 @compute_bp.route("/api/compute/sent", methods=["GET"])
