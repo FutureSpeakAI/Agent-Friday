@@ -350,6 +350,15 @@ def generate_music(prompt: str, *,
     if seed_image_path:
         seeds.insert(0, seed_image_path)
     seeds = seeds[:10]   # Lyria 3 accepts up to 10 reference stills
+    # A seed from outside Friday's creations is uploaded only on the owner's
+    # say-so (services/seed_images.py).
+    from agent_friday.services import seed_images as _si
+    for _seed in seeds:
+        _ok, _why = _si.check_running_call(_seed)
+        if not _ok:
+            return {"status": "needs_approval",
+                    "message": (f"The seed image was not uploaded: {_why}. It "
+                                f"needs the owner's approval first.")}
 
     available, why = cloud_music_available()
     if not available:

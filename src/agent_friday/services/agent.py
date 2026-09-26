@@ -934,7 +934,15 @@ def _maybe_auto_open(path) -> None:
     try:
         if not _load_settings().get('auto_open_created_files'):
             return
-        _perform_open(str(path))
+        # Only a document, picture, recording or folder opens on its own. The
+        # owner's decision behind the write that created the file was about
+        # writing it, not running it, so it is not carried into the open.
+        from agent_friday.governance import action_gate as _gate_mod
+        _tok = _gate_mod.DECIDED.set(None)
+        try:
+            _perform_open(str(path))
+        finally:
+            _gate_mod.DECIDED.reset(_tok)
     except Exception as e:
         print(f"  [auto-open] skipped for {path}: {e}")
 
@@ -2466,6 +2474,17 @@ def _perform_open(target, in_browser=False):
     resolved = _resolve_open_target(target)
     if not resolved:
         return None
+    # Only documents, pictures, recordings and folders open without a
+    # decision (services/open_safety.py). The governance checkpoint already
+    # holds anything else for the owner; this is the second check, so a
+    # caller that reaches here without that decision cannot run a program.
+    from agent_friday.governance import action_gate as _gate_mod
+    from agent_friday.services import open_safety as _open_safety
+    _safe, _why = _open_safety.judge(resolved)
+    if not _safe and not _gate_mod.owner_decision():
+        return (f"[NOT OPENED] {Path(resolved).name} was not opened: {_why}. "
+                f"Opening it could run a program, so it needs the owner's "
+                f"approval first. Nothing was run.")
     if in_browser:
         try:
             url = Path(resolved).resolve().as_uri()
@@ -2543,6 +2562,16 @@ def _maybe_handle_open_intent(message):
     target = re.sub(r'^(the|my|a|an|up|to|that|this)\s+', '', target, flags=re.IGNORECASE).strip()
     if not target or re.match(r'^https?://', target, re.IGNORECASE):
         return None  # URLs are handled by the browser / open_url path
+    _app_key = re.sub(r'\s+', ' ', target.lower().strip())
+    if _app_key not in _OPEN_APPS and _app_key not in _OPEN_SHELL_APPS:
+        resolved = _resolve_open_target(target)
+        if resolved:
+            from agent_friday.services import open_safety as _open_safety
+            if not _open_safety.judge(resolved)[0]:
+                # Not a document, picture, recording or folder: the model
+                # handles it through open_path, where the governance
+                # checkpoint asks the owner before anything runs.
+                return None
     return _perform_open(target)
 
 
@@ -8199,7 +8228,18 @@ def _confirmation_question(name, tool_input):
         return f"Would you like me to open {tgt} in your browser?"
     if name == "open_path":
         tgt = inp.get("path") or inp.get("target") or "that"
+        try:
+            from agent_friday.services import open_safety as _open_safety
+            from agent_friday.governance.action_gate import OUTWARD as _OUT
+            if _open_safety.classify_open(inp)[0] == _OUT:
+                return (f"{tgt} is not a document, picture or folder, and "
+                        f"opening it could run a program. Do you want me to "
+                        f"open it anyway?")
+        except Exception:
+            pass
         return f"Would you like me to open {tgt} on your computer?"
+    if name in ("generate_video", "generate_music"):
+        return f"{_taint_title(name, inp)} — shall I go ahead?"
     if name == "navigate":
         tgt = inp.get("workspace") or "that workspace"
         return f"I can switch you to the {tgt} workspace — shall I?"
@@ -8400,6 +8440,12 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # Provenance of this call's arguments, for any approval card the
         # handler raises (the email card is created inside draft_email).
         _ttok = _taint_mod.CURRENT.set(ctx.meta.get("taint"))
+        _ktok = _taint_mod.CURRENT_KEY.set(_taint_mod.ledger_key(session_ctx))
+        # The owner's decision behind this call, as the hooks established it
+        # (approved card, grant, or a chat yes to exactly this call). A handler
+        # whose action needs one checks it again before acting.
+        from agent_friday.governance import action_gate as _gate_mod
+        _dtok = _gate_mod.DECIDED.set(ctx.meta.get("owner_decided"))
         _sc = session_ctx or {}
         _owner_tok = _CURRENT_OWNER_TEXT.set(
             "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
@@ -8408,6 +8454,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             result = handler(ctx.input)
         finally:
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
+            _gate_mod.DECIDED.reset(_dtok)
+            _taint_mod.CURRENT_KEY.reset(_ktok)
             _taint_mod.CURRENT.reset(_ttok)
             _CURRENT_CONVERSATION.reset(_tok)
         if not isinstance(result, str):
@@ -8510,6 +8558,9 @@ def _hook_confirmation_gate(ctx):
             # already happened.
             _resolve_escalated_card(_entry.get("approval_id"))
             _clear_pending(_sid, _fp)
+            # The owner answered yes to exactly this call.
+            if isinstance(getattr(ctx, "meta", None), dict):
+                ctx.meta["owner_decided"] = f"chat:{_fp}"
             return _hooks.ALLOW
 
         _state = _record_pending_confirmation(_sid, name, ctx.input, turn=_turn)
@@ -8671,6 +8722,7 @@ def _hook_governance(ctx):
         _ok, _why = _approved_card_allows(_card_id, ctx.tool_name, ctx.input)
         if _ok:
             ctx.meta["approved_card"] = _card_id
+            ctx.meta["owner_decided"] = _card_id
             return _hooks.ALLOW
         return _hooks.DENY(
             f"[NOT RUN] '{ctx.tool_name}' was offered as an approved action but "
@@ -8690,6 +8742,9 @@ def _hook_governance(ctx):
                         tainted=(d.action == "ask"))
     ctx.meta["governance"] = v
     if v.action == "allow":
+        if v.grant:
+            # A scoped, expiring grant the owner created is their decision.
+            ctx.meta["owner_decided"] = v.grant.get("grant_id")
         return _hooks.ALLOW
     if v.action == "deny":
         return _hooks.DENY(
@@ -8797,6 +8852,7 @@ def _taint_card(ctx, decision, key):
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
             _appr.mark_used(rec["approval_id"], f"tool:{name}")
             ctx.meta["taint_card_approved"] = True
+            ctx.meta["owner_decided"] = rec["approval_id"]
             return _hooks.ALLOW
         if rec and rec.get("status") in ("denied", "blocked"):
             return _hooks.DENY(
@@ -8869,6 +8925,18 @@ def _taint_title(name, inp):
         return f"Open {_short_txt(inp.get('url'))}"
     if name == "write_file":
         return f"Write the file {_short_txt(inp.get('path'))}"
+    if name == "open_path":
+        return f"Open {_short_txt(inp.get('path') or inp.get('target'))} on this computer"
+    if name in ("generate_video", "generate_music"):
+        from agent_friday.services import seed_images as _si
+        seeds = _si.seed_args(name, inp)
+        what = "a video" if name == "generate_video" else "music"
+        if seeds:
+            # The file names; the full paths are in the card's action text.
+            names = [Path(s).name or s for s in seeds]
+            return (f"Upload {_short_txt(names)} to a cloud service to "
+                    f"make {what}")
+        return f"Make {what} with a cloud service"
     if name == "run_command":
         return f"Run a command: {_short_txt(inp.get('command'))}"
     if name in ("learn_skill", "correct_wiki", "propose_wiki_update"):

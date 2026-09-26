@@ -305,30 +305,63 @@ def daily_creation_by_date(date):
 @login_required
 def api_computer_open():
     """Open a folder or file on the user's machine (powers the notification
-    "Open Folder" button + any UI that needs to reveal a path). Low-risk: opens
-    /reveals only, never writes or deletes. Accepts a friendly name or a path."""
+    "Open Folder" button + any UI that needs to reveal a path). Opens or
+    reveals only, never writes or deletes. Accepts a friendly name or a path.
+
+    The owner's click is a direct action, but the same allow-list as the
+    `open_path` tool applies (services/open_safety.py): documents, pictures,
+    recordings and folders open; anything else could run a program, so it
+    raises an approval card and opens only once the owner has approved it.
+    """
+    from agent_friday.governance import action_gate as _gate
+    from agent_friday.services import open_safety as _open_safety
+    from agent_friday.services.agent import (_OPEN_APPS, _OPEN_SHELL_APPS,
+                                             _resolve_open_target)
     data = request.get_json(silent=True) or {}
     path = (data.get('path') or data.get('target') or '').strip()
     if not path:
         return jsonify({"status": "error", "message": "path required"}), 400
-    result = _perform_open(path)
-    if result is not None:
-        return jsonify({"status": "ok", "message": result})
-    # Fall back to a raw shell-open for any existing path the friendly resolver
-    # didn't recognize (e.g. an absolute file path outside the alias set).
+    app_key = re.sub(r'\s+', ' ', path.lower())
+    resolved = None
+    if app_key not in _OPEN_APPS and app_key not in _OPEN_SHELL_APPS:
+        resolved = _resolve_open_target(path)
+        if not resolved:
+            try:
+                p = Path(path).expanduser()
+                resolved = str(p.resolve()) if p.exists() else None
+            except Exception:
+                resolved = None
+    safe, why = _open_safety.judge(resolved) if resolved else (True, "")
+    decided = None
+    if not safe:
+        real = str(_open_safety.real_target(resolved) or resolved)
+        name = Path(real).name or real
+        v = _gate.authorize_external(
+            "open_path", {"path": real}, requested_by="computer_open_route",
+            title=f"Open {name} on this computer",
+            description=(f"{why}. Opening it could run a program. Approve only "
+                         f"if you expect {real} to run."),
+            action_description=f"open {real}")
+        if v.action != "allow":
+            waiting = v.action == "card"
+            return jsonify({
+                "status": "needs_approval" if waiting else "refused",
+                "message": (f"{name} was not opened: {why}. "
+                            + ("An approval card is waiting in System → "
+                               "Approvals; open it again once you approve it."
+                               if waiting else v.reason)),
+            }), 403
+        decided = "external:open_path"
+    token = _gate.DECIDED.set(decided)
     try:
-        p = Path(path).expanduser()
-        if p.exists():
-            if sys.platform == 'win32':
-                os.startfile(str(p))  # type: ignore[attr-defined]
-            elif sys.platform == 'darwin':
-                subprocess.Popen(['open', str(p)])
-            else:
-                subprocess.Popen(['xdg-open', str(p)])
-            return jsonify({"status": "ok", "opened": str(p)})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-    return jsonify({"status": "error", "message": f"Could not resolve {path!r}"}), 404
+        # A known application, or a friendly name, opens through the same
+        # helper the tool uses; it judges the target again before opening.
+        result = _perform_open(resolved or path)
+    finally:
+        _gate.DECIDED.reset(token)
+    if result is None:
+        return jsonify({"status": "error", "message": f"Could not resolve {path!r}"}), 404
+    return jsonify({"status": "ok", "message": result})
 
 
 def _flatten_first_file(result):
