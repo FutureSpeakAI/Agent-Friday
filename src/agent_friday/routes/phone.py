@@ -24,6 +24,7 @@ from flask import Blueprint, jsonify, request
 
 from agent_friday.core import _is_local_request, login_required
 from agent_friday.phone import config, service
+from agent_friday.routes._errors import UserFacingValueError, api_error, public_result
 
 phone_bp = Blueprint("phone", __name__)
 
@@ -42,7 +43,9 @@ def _guard(write: bool = True):
 
 
 def _refused(e: Exception, code: int = 400):
-    return jsonify({"ok": False, "error": str(e)}), code
+    """A refusal (PhoneRefused, ConfigError: UserFacingErrors) is shown as
+    written; anything else is logged and answered with an error id."""
+    return api_error(e, "The phone could not do that", code, shape="ok")
 
 
 @phone_bp.route("/api/phone/status", methods=["GET"])
@@ -51,7 +54,7 @@ def phone_status():
     bad = _guard(write=False)
     if bad:
         return bad
-    return jsonify({"ok": True, **service.status()})
+    return jsonify(public_result({"ok": True, **service.status()}, "Couldn't read the phone status"))
 
 
 @phone_bp.route("/api/phone/config", methods=["POST"])
@@ -65,7 +68,7 @@ def phone_config():
     except (config.ConfigError, ValueError, TypeError) as e:
         return _refused(e)
     ingress = service.apply_enabled_state()
-    return jsonify({"ok": True, "ingress": ingress, **service.status()})
+    return jsonify(public_result({"ok": True, "ingress": ingress, **service.status()}, "Couldn't save the phone settings"))
 
 
 @phone_bp.route("/api/phone/secret", methods=["POST"])
@@ -80,8 +83,8 @@ def phone_secret_set():
     except config.ConfigError as e:
         return _refused(e)
     ingress = service.apply_enabled_state()
-    return jsonify({"ok": True, "protection": method, "ingress": ingress,
-                    "status": config.secret_status(str(body.get("name")))})
+    return jsonify(public_result({"ok": True, "protection": method, "ingress": ingress,
+                    "status": config.secret_status(str(body.get("name")))}, "Couldn't save the phone secret"))
 
 
 @phone_bp.route("/api/phone/secret/<name>", methods=["DELETE"])
@@ -91,7 +94,7 @@ def phone_secret_delete(name):
     if bad:
         return bad
     if name not in config.SECRET_NAMES:
-        return _refused(ValueError("unknown secret"))
+        return _refused(UserFacingValueError("unknown secret"))
     config.delete_secret(name)
     service.apply_enabled_state()
     return jsonify({"ok": True, "status": config.secret_status(name)})
@@ -163,7 +166,7 @@ def phone_test_sms():
         return bad
     owner = config.verified_owner_cell()
     if not owner:
-        return _refused(ValueError("verify your cell first"))
+        return _refused(UserFacingValueError("verify your cell first"))
     try:
         return jsonify({"ok": True, **service.request_sms(
             to=owner, body="Friday test text: the phone line works.",

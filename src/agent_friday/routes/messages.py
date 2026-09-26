@@ -49,6 +49,8 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.routes._errors import ExceptionText, api_error, error_text, public_result
+from agent_friday.user_errors import exception_text
 
 messages_bp = Blueprint('messages', __name__)
 
@@ -88,7 +90,7 @@ def api_messages():
     folder = (request.args.get("folder") or "").strip()
     folder_q = folder_query(folder)
     if folder and folder_q is None:
-        return jsonify({"status": "error", "message": "unknown folder %r" % folder}), 400
+        return jsonify(public_result({"status": "error", "message": "unknown folder %r" % folder}, "Couldn't read mail")), 400
     if folder_q:
         gmail_q = (folder_q + " " + (gmail_q or "")).strip()
         include_archived = True
@@ -147,7 +149,7 @@ def api_messages():
         # Nothing could be read: a failure, never "no mail". No total.
         out.update(status="error", search_failed=True, total=None,
                    error=_failure_text(result.get("errors") or []))
-    return jsonify(out)
+    return jsonify(public_result(out, "Couldn't read mail"))
 
 
 #: Gmail's folders, as the searches Gmail itself uses for them.
@@ -181,7 +183,12 @@ def _failure_text(errors):
     for e in errors:
         who = e.get("label") or "An account"
         parts.append("%s: %s" % (who, e.get("error") or "unknown error"))
-    return "Couldn't read mail. " + " ".join(parts) if parts else "Couldn't read mail."
+    text = "Couldn't read mail. " + " ".join(parts) if parts else "Couldn't read mail."
+    # Exception text from a mail fetch stays marked, so public_result() can
+    # keep it out of the response while the log keeps it.
+    if any(isinstance(e.get("error"), ExceptionText) for e in errors):
+        return ExceptionText(text)
+    return text
 
 
 
@@ -215,7 +222,7 @@ def api_messages_stats():
         # The dock badge must not read a failure as "0 to do".
         out.update(status="error", search_failed=True, counts=None, total=None,
                    actionable=None, error=_failure_text(result.get("errors") or []))
-    return jsonify(out)
+    return jsonify(public_result(out, "Couldn't read mail"))
 
 
 @messages_bp.route('/api/messages/attachment')
@@ -334,12 +341,12 @@ def api_messages_classify():
             learned = message_triage.record_signal(sender, lane)
         except Exception as e:
             # A correction that fails to teach must still move the message.
-            learned = {"ok": False, "error": str(e)}
+            learned = {"ok": False, "error": error_text(e, "Couldn't learn from that correction")}
     message_triage._collect_cache.clear()
     # `before` lets the UI undo the move with /api/messages/restore. The
     # sender lesson is not unlearned by an undo; it is one weak vote.
-    return jsonify({"status": "ok", "id": mid, "lane": lane,
-                    "learned": learned, "before": {mid: before}})
+    return jsonify(public_result({"status": "ok", "id": mid, "lane": lane,
+                    "learned": learned, "before": {mid: before}}, "Couldn't move the message"))
 
 
 _LOCAL_ACTIONS = ("archive", "unarchive", "snooze", "unsnooze", "flag", "unflag", "read", "unread",
@@ -424,14 +431,14 @@ def api_messages_action():
     if not ids or not action:
         return jsonify({"status": "error", "message": "id(s) and action required"}), 400
     if action not in _LOCAL_ACTIONS:
-        return jsonify({"status": "error", "message": f"unknown action {action}"}), 400
+        return jsonify(public_result({"status": "error", "message": f"unknown action {action}"}, "Couldn't change the message")), 400
     if action in NEEDS_APPROVAL_FROM_FRIDAY and not _is_owner(data.get("requested_by")):
         from agent_friday.services import mail_proposals
-        return jsonify(mail_proposals.propose(action, ids, data.get("gmail") or [],
+        return jsonify(public_result(mail_proposals.propose(action, ids, data.get("gmail") or [],
                                               requested_by=str(data.get("requested_by")),
-                                              reason=str(data.get("reason") or ""))), 202
+                                              reason=str(data.get("reason") or "")), "Couldn't change the message")), 202
     out = run_action(action, ids, data.get("gmail"), data)
-    return jsonify(out)
+    return jsonify(public_result(out, "Couldn't change the message"))
 
 
 def run_action(action, ids, gmail_items, data=None):
@@ -452,7 +459,9 @@ def run_action(action, ids, gmail_items, data=None):
            "not_changed": not_changed}
     if not before and not_changed:
         out["status"] = "error"
-        out["message"] = "Gmail did not make the change: " + next(iter(not_changed.values()))
+        _why = next(iter(not_changed.values()))
+        out["message"] = (ExceptionText if isinstance(_why, ExceptionText) else str)(
+            "Gmail did not make the change: " + _why)
     if len(before) == 1:
         mid = next(iter(before))
         out.update(id=mid, state=state[mid])
@@ -494,7 +503,7 @@ def _sync_gmail(action, ids, items):
         except Exception as e:
             status[aid] = "failed"
             for cid, _ in pairs:
-                not_changed[cid] = str(e)
+                not_changed[cid] = exception_text(e)
             continue
         changes[aid] = res["changed"]
         status[aid] = "failed" if res["failed"] and not res["changed"] else "synced"
@@ -517,11 +526,11 @@ def api_messages_restore():
             from agent_friday.services import gmail_mailbox as gm
             gfailed.update(gm.undo(aid, changed)["failed"])
         except Exception as e:
-            gfailed[aid] = str(e)
+            gfailed[aid] = exception_text(e)
     if not isinstance(states, dict) or not states:
         if body.get("gmail_changes"):
             message_triage._collect_cache.clear()
-            return jsonify({"status": "ok" if not gfailed else "partial", "restored": 0, "gmail_failed": gfailed})
+            return jsonify(public_result({"status": "ok" if not gfailed else "partial", "restored": 0, "gmail_failed": gfailed}, "Couldn't restore the message"))
         return jsonify({"status": "error", "message": "states required"}), 400
     allowed = {"archived", "snoozed_until", "flagged", "read", "unread", "lane_override", "sender",
                "trashed", "spam", "important", "muted"}
@@ -535,8 +544,8 @@ def api_messages_restore():
                 state.pop(str(mid), None)
         _save_message_state(state)
     message_triage._collect_cache.clear()
-    return jsonify({"status": "ok" if not gfailed else "partial", "restored": len(states),
-                    "gmail_failed": gfailed})
+    return jsonify(public_result({"status": "ok" if not gfailed else "partial", "restored": len(states),
+                    "gmail_failed": gfailed}, "Couldn't restore the message"))
 
 
 @messages_bp.route('/api/messages/draft', methods=['POST'])
@@ -577,7 +586,7 @@ def api_messages_draft():
                                system=system, max_tokens=1200, workspace='messages')
         return jsonify({"status": "ok", "draft": draft})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't draft the reply")
 
 
 @messages_bp.route('/api/messages/learn', methods=['POST'])

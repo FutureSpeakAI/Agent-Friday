@@ -39,6 +39,7 @@ from agent_friday.services.calendar_engine import (
     _google_client_config,
     _google_client_type,
 )
+from agent_friday.user_errors import ExceptionText, UserFacingRuntimeError, exception_text
 
 # ── scopes ───────────────────────────────────────────────────────────────────
 # New connections request the fuller set the multi-account feature needs:
@@ -585,7 +586,7 @@ def credentials_for(account_id: str):
         _mark_status(account_id, _classify_credential_error(e))
         cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
                        success=False, error=type(e).__name__,
-                       detail=str(e)[:200])
+                       detail=ExceptionText(str(e)[:200]))
         return None
     if creds is None:
         # NO TOKEN ON DISK, and the index still claiming whatever it last
@@ -972,7 +973,7 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None,
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return [{"error": f"google-api-python-client not installed: {e}", "error_kind": "other"}]
+        return [{"error": ExceptionText(f"google-api-python-client not installed: {e}"), "error_kind": "other"}]
     from agent_friday.services import gmail_api
     out, seen = [], set()
     try:
@@ -1075,7 +1076,7 @@ def _calendar_for_creds(creds, start, end) -> list:
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return [{"error": f"google-api-python-client not installed: {e}"}]
+        return [{"error": ExceptionText(f"google-api-python-client not installed: {e}")}]
     try:
         svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
         resp = svc.events().list(
@@ -1096,7 +1097,7 @@ def _calendar_for_creds(creds, start, end) -> list:
             })
         return out
     except Exception as e:
-        return [{"error": f"Calendar fetch failed: {e}"}]
+        return [{"error": ExceptionText(f"Calendar fetch failed: {e}")}]
 
 
 def drive_list(account_id: str, folder_id: str = "root", page_size: int = 50) -> dict:
@@ -1114,7 +1115,7 @@ def drive_list(account_id: str, folder_id: str = "root", page_size: int = 50) ->
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return {"error": f"google-api-python-client not installed: {e}"}
+        return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     try:
         svc = build("drive", "v3", credentials=creds, cache_discovery=False)
         q = f"'{folder_id}' in parents and trashed = false"
@@ -1137,8 +1138,8 @@ def drive_list(account_id: str, folder_id: str = "root", page_size: int = 50) ->
         # A 403 saying the API is off at the Cloud project is the difference
         # between "Drive is broken" and "Drive was never switched on", and the
         # user can only act on the second if someone writes it down.
-        note_service_result("drive", False, str(e))
-        return {"error": f"Drive fetch failed: {e}", "account_id": account_id}
+        note_service_result("drive", False, exception_text(e))
+        return {"error": ExceptionText(f"Drive fetch failed: {e}"), "account_id": account_id}
 
 
 def merged_drive_search(query: str = "", max_results: int = 20) -> dict:
@@ -1177,7 +1178,7 @@ def _drive_search_for_creds(creds, query: str, max_results: int) -> list:
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return [{"error": f"google-api-python-client not installed: {e}"}]
+        return [{"error": ExceptionText(f"google-api-python-client not installed: {e}")}]
     try:
         svc = build("drive", "v3", credentials=creds, cache_discovery=False)
         safe_q = (query or "").strip().replace("\\", "\\\\").replace("'", "\\'")
@@ -1196,7 +1197,7 @@ def _drive_search_for_creds(creds, query: str, max_results: int) -> list:
             })
         return out
     except Exception as e:
-        return [{"error": f"Drive search failed: {e}"}]
+        return [{"error": ExceptionText(f"Drive search failed: {e}")}]
 
 
 _DOC_MIME = "application/vnd.google-apps.document"
@@ -1213,7 +1214,7 @@ def read_doc_or_sheet(account_id: str, file_id: str, mime_type: str | None = Non
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return {"error": f"google-api-python-client not installed: {e}"}
+        return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     name = ""
     try:
         if not mime_type:
@@ -1242,7 +1243,7 @@ def read_doc_or_sheet(account_id: str, file_id: str, mime_type: str | None = Non
                    "type": "sheet", "sheet_name": first_sheet, "rows": values[:200]}
         return {"error": f"Unsupported file type for reading: {mime_type}"}
     except Exception as e:
-        return {"error": f"Doc/Sheet read failed: {e}"}
+        return {"error": ExceptionText(f"Doc/Sheet read failed: {e}")}
 
 
 def _extract_doc_text(doc: dict) -> str:
@@ -1286,7 +1287,7 @@ def _tasks_for_creds(creds, max_results: int) -> list:
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return [{"error": f"google-api-python-client not installed: {e}"}]
+        return [{"error": ExceptionText(f"google-api-python-client not installed: {e}")}]
     try:
         svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
         lists_resp = svc.tasklists().list(maxResults=10).execute()
@@ -1312,7 +1313,7 @@ def _tasks_for_creds(creds, max_results: int) -> list:
                     return out
         return out
     except Exception as e:
-        return [{"error": f"Tasks fetch failed: {e}"}]
+        return [{"error": ExceptionText(f"Tasks fetch failed: {e}")}]
 
 
 # ── writes ───────────────────────────────────────────────────────────────────
@@ -1327,7 +1328,7 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return {"error": f"google-api-python-client not installed: {e}"}
+        return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     try:
         svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
         if task_id:
@@ -1337,20 +1338,20 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
         return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
                 "status": result.get("status", "needsAction"), "due": result.get("due", "")}
     except Exception as e:
-        return {"error": f"Tasks write failed: {e}"}
+        return {"error": ExceptionText(f"Tasks write failed: {e}")}
 
 
 def _delete_task_for_creds(creds, tasklist_id: str, task_id: str) -> dict:
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return {"error": f"google-api-python-client not installed: {e}"}
+        return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     try:
         svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
         svc.tasks().delete(tasklist=tasklist_id, task=task_id).execute()
         return {"deleted": True, "id": task_id}
     except Exception as e:
-        return {"error": f"Tasks delete failed: {e}"}
+        return {"error": ExceptionText(f"Tasks delete failed: {e}")}
 
 
 def _gate_task_text(body: dict) -> tuple[dict, str]:
@@ -1364,7 +1365,7 @@ def _gate_task_text(body: dict) -> tuple[dict, str]:
     try:
         from agent_friday.services import egress_gate as _eg
     except Exception as e:
-        return out, f"the privacy gate could not be reached ({e})"
+        return out, ExceptionText(f"the privacy gate could not be reached ({e})")
     for field in ("title", "notes"):
         val = out.get(field)
         if not val:
@@ -1372,7 +1373,7 @@ def _gate_task_text(body: dict) -> tuple[dict, str]:
         try:
             gated = _eg._gate_text(str(val), "google", f"tasks.{field}")
         except Exception as e:
-            return out, f"the privacy gate refused the {field} ({e})"
+            return out, ExceptionText(f"the privacy gate refused the {field} ({e})")
         if field == "title" and not gated:
             return out, "the title was withheld by the privacy gate"
         out[field] = gated
@@ -1489,7 +1490,7 @@ def _contacts_for_creds(creds, query: str, max_results: int) -> list:
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return [{"error": f"google-api-python-client not installed: {e}"}]
+        return [{"error": ExceptionText(f"google-api-python-client not installed: {e}")}]
     try:
         svc = build("people", "v1", credentials=creds, cache_discovery=False)
         ql = (query or "").strip().lower()
@@ -1513,7 +1514,7 @@ def _contacts_for_creds(creds, query: str, max_results: int) -> list:
                 break
         return out
     except Exception as e:
-        return [{"error": f"Contacts fetch failed: {e}"}]
+        return [{"error": ExceptionText(f"Contacts fetch failed: {e}")}]
 
 
 # ── OAuth flow helpers (per-account) ─────────────────────────────────────────
@@ -1588,7 +1589,7 @@ def build_auth_flow(state: str | None = None, include_send: bool = False,
         # at ~/.friday/credentials.json" asks a person who only wants their
         # mail summarised to know what an OAuth client is and where ~/.friday
         # lives on Windows; that is a wall, not an instruction.
-        raise RuntimeError(
+        raise UserFacingRuntimeError(
             "Friday has no Google sign-in configured yet. Open Settings -> "
             "Accounts & Keys -> Google and choose \"Use my own Google sign-in\" "
             "to set one up -- Friday walks you through it."

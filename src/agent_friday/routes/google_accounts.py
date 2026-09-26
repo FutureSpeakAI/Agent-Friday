@@ -28,6 +28,7 @@ from flask import Blueprint, jsonify, request, session
 
 from agent_friday.services import google_accounts as ga
 from agent_friday.services import credential_store as cs
+from agent_friday.routes._errors import api_error, html_error
 
 google_accounts_bp = Blueprint("google_accounts", __name__)
 
@@ -116,7 +117,7 @@ def list_google_accounts():
             "oauth": oauth_info,
         })
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't list the Google accounts")
 
 
 @google_accounts_bp.route("/api/google/accounts/connect", methods=["POST"])
@@ -215,7 +216,7 @@ def connect_google_account():
             )
         return jsonify(resp)
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
+        return api_error(e, "Couldn't start connecting the Google account", 400)
 
 
 @google_accounts_bp.route("/api/google/accounts/callback")
@@ -300,7 +301,7 @@ def google_account_callback():
             + send_line
         )
     except Exception as e:
-        return f"<h2>Token exchange failed</h2><p>{e}</p>", 500
+        return html_error(e, "Token exchange failed")
 
 
 @google_accounts_bp.route("/api/google/accounts/mailbox-scopes")
@@ -337,7 +338,7 @@ def google_oauth_byo():
     try:
         goc.save_byo(body.get("client_id"), body.get("client_secret"))
     except ValueError as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
+        return api_error(e, "Couldn't save the Google sign-in client", 400)
     # Never echo what was sent -- the response says only that it landed.
     return jsonify({"status": "ok", "active": ga.active_client_kind()})
 

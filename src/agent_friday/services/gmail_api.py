@@ -20,6 +20,7 @@ import json
 import logging
 import random
 import time
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger(__name__)
 
@@ -65,12 +66,12 @@ def describe(exc) -> dict:
                 'message': "Gmail is limiting how fast Friday can read this account right now "
                            "(Google's rate limit). Nothing is wrong with the account; try again in a minute."}
     if status in (401,) or 'invalid_grant' in msg or 'insufficient' in r or (status == 403 and 'permission' in msg.lower()):
-        return {'kind': 'auth', 'message': "Gmail refused access for this account; it may need reconnecting. (%s)" % msg[:160]}
+        return {'kind': 'auth', 'message': ExceptionText("Gmail refused access for this account; it may need reconnecting. (%s)" % msg[:160])}
     if status == 404:
         return {'kind': 'not_found', 'message': 'Gmail could not find that message or thread.'}
     if status == 400:
-        return {'kind': 'bad_request', 'message': 'Gmail rejected the request: %s' % msg[:200]}
-    return {'kind': 'other', 'message': 'Gmail request failed: %s' % msg[:200]}
+        return {'kind': 'bad_request', 'message': ExceptionText('Gmail rejected the request: %s' % msg[:200])}
+    return {'kind': 'other', 'message': ExceptionText('Gmail request failed: %s' % msg[:200])}
 
 
 def _retryable(exc) -> bool:

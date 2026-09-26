@@ -52,6 +52,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error
 
 calendar_bp = Blueprint('calendar', __name__)
 
@@ -204,7 +205,7 @@ def api_calendar_prep(event_id):
             pass
         return jsonify({"status": "ok", "prep": prep, "cached": False})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't prepare for the event")
 
 
 @calendar_bp.route('/api/calendar/quick-add', methods=['POST'])
@@ -236,7 +237,7 @@ def api_calendar_quick_add():
         m = re.search(r"\{.*\}", raw, re.S)
         parsed = json.loads(m.group(0)) if m else {}
     except Exception as e:
-        return jsonify({"status": "error", "message": f"parse failed: {e}"}), 500
+        return api_error(e, "Couldn't add the event")
 
     title = (parsed.get("title") or text)[:200]
     start_time = parsed.get("start_time") or ""
@@ -327,4 +328,4 @@ def calendar_enrich():
     except ValueError as e:
         return jsonify({"status": "error", "message": str(e)}), 400
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't enrich the calendar")

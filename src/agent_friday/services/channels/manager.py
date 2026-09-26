@@ -19,6 +19,7 @@ import threading
 import time
 from typing import Any, Dict, Optional
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import ExceptionText, exception_text
 
 # Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
 # module along with everything else (see agent_friday/paths.py).
@@ -75,7 +76,7 @@ def save_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             os.replace(tmp, CONFIG_PATH)
             return {"ok": True}
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": exception_text(e)}
 
 
 def configure_channel(name: str, opts: Dict[str, Any], *, token: Optional[str] = None) -> Dict[str, Any]:  # pragma: allowlist secret
@@ -107,7 +108,7 @@ def configure_channel(name: str, opts: Dict[str, Any], *, token: Optional[str] =
             from agent_friday.services import credential_store
             credential_store.set_provider_key(f"channel_{name}", token)
         except Exception as e:
-            return {"ok": False, "error": f"token store failed: {e}"}
+            return {"ok": False, "error": ExceptionText(f"token store failed: {e}")}
     # push options to a live adapter if one exists
     a = _ADAPTERS.get(name)
     if a is not None:
@@ -200,7 +201,7 @@ def _channel_health(name: str, running: bool, cfg: Dict[str, Any]):
     try:
         key_state = credential_store.provider_key_status("channel_%s" % name)
     except Exception as e:
-        return _ch.unknown(detail="%s: %s" % (type(e).__name__, e),
+        return _ch.unknown(detail=ExceptionText("%s: %s" % (type(e).__name__, e)),
                            source="channels")
     h = _ch.from_provider_key_status(key_state, name)
     if not h.healthy:

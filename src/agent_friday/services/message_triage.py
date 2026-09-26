@@ -51,6 +51,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from agent_friday.services import calendar_engine as ce
+from agent_friday.user_errors import exception_text
 
 log = logging.getLogger(__name__)
 
@@ -503,13 +504,14 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True,
                 errors.append({
                     "account_id": err.get("account_id"),
                     "label": err.get("label"),
-                    "error": str(err.get("error") or "unknown error"),
+                    "error": (err.get("error") if isinstance(err.get("error"), str) and err.get("error")
+                              else str(err.get("error") or "unknown error")),
                     "kind": err.get("kind") or "other",
                     "partial": bool(err.get("partial")),
                 })
     except Exception as exc:
         log.warning("message_triage: merged fan-out failed (%s), trying legacy", exc)
-        errors.append({"account_id": None, "label": "merged fetch", "error": str(exc)})
+        errors.append({"account_id": None, "label": "merged fetch", "error": exception_text(exc)})
         raw_messages = []
 
     # Fallback 1: legacy single-account path (never for a search).
@@ -523,7 +525,7 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True,
                 source = "cache" if legacy_source == "cache" else "legacy"
         except Exception as exc:
             log.warning("message_triage: legacy collect failed: %s", exc)
-            errors.append({"account_id": None, "label": "legacy fetch", "error": str(exc)})
+            errors.append({"account_id": None, "label": "legacy fetch", "error": exception_text(exc)})
 
     # Fallback 2: cache (never for a search).
     if not raw_messages and use_cache_on_error and not query:

@@ -52,6 +52,7 @@ Half a client is no client. An id with no secret cannot complete a flow, so
 offering it would march someone through the warning screen to reach an error.
 """
 from __future__ import annotations
+from agent_friday.user_errors import UserFacingValueError
 
 # ── The shipped client ───────────────────────────────────────────────────────
 # PASTE THE DESKTOP CLIENT HERE. Public on purpose — see the module docstring
@@ -337,7 +338,7 @@ def save_byo(client_id: str, client_secret: str) -> None:
     cid = (client_id or "").strip()
     sec = (client_secret or "").strip()
     if not cid or not sec:
-        raise ValueError("both the Client ID and the Client secret are needed")
+        raise UserFacingValueError("both the Client ID and the Client secret are needed")
     from agent_friday.services import credential_store as cs
     cs.set_provider_key(_BYO_ID, cid)
     cs.set_provider_key(_BYO_SECRET, sec)
