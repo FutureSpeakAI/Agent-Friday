@@ -264,7 +264,7 @@ def windows_root_thumbprints() -> set:
         for der, enc, _trust in ssl.enum_certificates("ROOT"):
             if enc != "x509_asn":
                 continue
-            h = hashlib.sha1(der).hexdigest().upper()
+            h = hashlib.sha1(der, usedforsecurity=False).hexdigest().upper()
             out.add(":".join(h[i:i + 2] for i in range(0, len(h), 2)))
     except Exception:
         pass
