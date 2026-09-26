@@ -10,6 +10,7 @@ FutureSpeak.AI · Asimov's Mind
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import learning_loop
+from agent_friday.routes._errors import public_result
 
 learning_bp = Blueprint("learning", __name__)
 
@@ -17,7 +18,7 @@ learning_bp = Blueprint("learning", __name__)
 @learning_bp.route("/api/learning/state", methods=["GET"])
 @login_required
 def learning_state():
-    return jsonify({"ok": True, "state": learning_loop.state()})
+    return jsonify(public_result({"ok": True, "state": learning_loop.state()}, "Couldn't read the learning state"))
 
 
 @learning_bp.route("/api/learning/skills", methods=["GET"])
@@ -30,7 +31,7 @@ def learning_skills():
 @learning_bp.route("/api/learning/epoch", methods=["POST"])
 @login_required
 def learning_epoch():
-    return jsonify(learning_loop.run_epoch())
+    return jsonify(public_result(learning_loop.run_epoch(), "Couldn't run the learning epoch"))
 
 
 @learning_bp.route("/api/learning/observe", methods=["POST"])
@@ -39,7 +40,7 @@ def learning_observe():
     d = request.get_json(silent=True) or {}
     if not d.get("task_type") or "success" not in d:
         return jsonify({"ok": False, "error": "task_type and success required"}), 400
-    return jsonify(learning_loop.observe(
+    return jsonify(public_result(learning_loop.observe(
         d["task_type"], d.get("prompt", ""), approach=d.get("approach", "default"),
         success=bool(d["success"]), satisfaction=d.get("satisfaction"),
-        revisions=int(d.get("revisions", 0)), workspace=d.get("workspace", "")))
+        revisions=int(d.get("revisions", 0)), workspace=d.get("workspace", "")), "Couldn't record the observation"))

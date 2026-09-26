@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime
+from agent_friday.user_errors import UserFacingValueError
 
 _log = logging.getLogger("friday.scheduled_cloud")
 
@@ -193,15 +194,15 @@ def save(patch: dict) -> dict:
         try:
             every = int(patch["heartbeat_every_minutes"])
         except (TypeError, ValueError):
-            raise ValueError("heartbeat_every_minutes must be a number of minutes")
+            raise UserFacingValueError("heartbeat_every_minutes must be a number of minutes")
         if every not in HEARTBEAT_CADENCES:
-            raise ValueError("heartbeat_every_minutes must be one of %s"
+            raise UserFacingValueError("heartbeat_every_minutes must be one of %s"
                              % ", ".join(str(c) for c in HEARTBEAT_CADENCES))
         new["heartbeat_every_minutes"] = every
     for key in ("heartbeat_model", "job_model"):
         if key in patch:
             if not _known_model(patch[key]):
-                raise ValueError("%s must be a priced model" % key)
+                raise UserFacingValueError("%s must be a priced model" % key)
             new[key] = str(patch[key])
     core._save_settings({"scheduled_cloud": new})
     if new.get("allow"):

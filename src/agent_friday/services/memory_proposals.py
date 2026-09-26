@@ -67,6 +67,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.user_errors import ExceptionText, exception_text
 
 _log = logging.getLogger("friday.memory_proposals")
 
@@ -128,7 +129,7 @@ def seat() -> Dict[str, Any]:
         provider = (entry.get("provider") or "").strip()
     except Exception as exc:                                # noqa: BLE001
         return {"assigned": False, "model": "", "provider": "",
-                "reason": f"settings unreadable: {exc}"}
+                "reason": ExceptionText(f"settings unreadable: {exc}")}
     if not model:
         return {"assigned": False, "model": "", "provider": provider,
                 "reason": "No model assigned to the memory_manager seat. "
@@ -351,11 +352,11 @@ def propose(day: Optional[str] = None, *, memory=None,
         raw = _ask_seat(prompt, s["model"], s["provider"])
     except SeatUnavailable as exc:
         _log.warning("memory proposal FAILED for %s: %s", day, exc)
-        _notify_seat_refusal(str(exc))
+        _notify_seat_refusal(exception_text(exc))
         return {"ok": False, "day": day, "seat": s,
                 "turns_reviewed": len(turns), "facts": [], "stored": 0,
-                "reason": str(exc),
-                "summary": f"Reviewed nothing for {day} — {exc}"}
+                "reason": exception_text(exc),
+                "summary": ExceptionText(f"Reviewed nothing for {day} — {exc}")}
     took_ms = int((time.time() - t0) * 1000)
 
     facts = _parse_facts(raw)

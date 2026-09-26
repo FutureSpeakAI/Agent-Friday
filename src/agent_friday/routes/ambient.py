@@ -35,6 +35,7 @@ from agent_friday.services.predictive_workspaces import (
     prewarm_predicted,
     record_workspace_usage,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error
 
 ambient_bp = Blueprint('ambient', __name__)
 
@@ -48,7 +49,7 @@ def ambient_state():
         return jsonify({"status": "ok", "state": get_ambient_state()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't read the ambient state")
 
 
 # ═══ PREDICTIVE WORKSPACES ════════════════════════════════════
@@ -83,7 +84,7 @@ def workspace_predictions():
         return jsonify({"status": "ok", "predictions": preds})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load workspace predictions")
 
 
 @ambient_bp.route('/api/workspace/prewarm', methods=['POST'])
@@ -93,4 +94,4 @@ def workspace_prewarm():
         warmed = prewarm_predicted()
         return jsonify({"status": "ok", "warmed": warmed})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't prepare the workspace")

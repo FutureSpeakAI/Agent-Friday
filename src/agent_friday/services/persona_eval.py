@@ -81,6 +81,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agent_friday.core import _load_settings
 from agent_friday.services import introspection
+from agent_friday.user_errors import ExceptionText, exception_text
 
 _log = logging.getLogger("friday.persona_eval")
 
@@ -318,11 +319,11 @@ def score_transcript(item: Dict[str, Any], response_text: str,
     try:
         epi = introspection.score_response_epistemics(response_text)
     except Exception as e:
-        epi = {"composite": 0.0, "error": str(e)}
+        epi = {"composite": 0.0, "error": exception_text(e)}
     try:
         syc = introspection.score_response_sycophancy(response_text)
     except Exception as e:
-        syc = {"index": 1.0, "error": str(e)}
+        syc = {"index": 1.0, "error": exception_text(e)}
     soul = score_soul_alignment(response_text, rubric)
 
     composite = _clamp01(
@@ -600,7 +601,7 @@ def run_live_eval(providers: Optional[List[str]] = None,
             _gated_vault_control, _get_friday_system_prompt)
         from agent_friday.routing import provider_descriptors as _pd
     except Exception as e:
-        return {"ok": False, "mode": "live", "error": f"model_router unavailable: {e}"}
+        return {"ok": False, "mode": "live", "error": ExceptionText(f"model_router unavailable: {e}")}
 
     candidates = _text_capable_providers()
     if providers:
@@ -632,11 +633,11 @@ def run_live_eval(providers: Optional[List[str]] = None,
                 text = _dispatch_provider(prov, prompt, sys_prompt)
                 item_results.append(score_transcript(item, text, threshold=threshold))
             except UnsupportedProviderError as e:
-                skipped.append({"provider": name, "reason": str(e)})
+                skipped.append({"provider": name, "reason": exception_text(e)})
                 unsupported = True
                 break
             except Exception as e:
-                errors.append({"id": item.get("id"), "error": str(e)})
+                errors.append({"id": item.get("id"), "error": exception_text(e)})
         if unsupported or not item_results:
             continue
         flagged = [r for r in item_results if not r["passed"]]

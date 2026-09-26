@@ -15,6 +15,7 @@ deferred to A8 (UI pass).
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import persona_eval
+from agent_friday.routes._errors import public_result
 
 persona_bp = Blueprint("persona", __name__)
 
@@ -28,4 +29,4 @@ def persona_eval_route():
 
     threshold = request.args.get("threshold", type=float)
     result = persona_eval.run_eval(mode=mode, threshold=threshold)
-    return jsonify(result), (200 if result.get("ok") else 400)
+    return jsonify(public_result(result, "Couldn't evaluate the persona")), (200 if result.get("ok") else 400)

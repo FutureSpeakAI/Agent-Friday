@@ -7,6 +7,7 @@ import traceback
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import scheduler as _sched
+from agent_friday.routes._errors import api_error
 
 scheduler_bp = Blueprint('scheduler', __name__)
 
@@ -19,7 +20,7 @@ def list_schedules():
                         "builtin_tasks": sorted(_sched.BUILTIN_TASKS.keys())})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the schedules")
 
 
 @scheduler_bp.route('/api/schedules', methods=['POST'])
@@ -34,7 +35,7 @@ def create_schedule():
         return jsonify({"status": "ok", "schedule": rec})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't create the schedule")
 
 
 @scheduler_bp.route('/api/schedules/<sid>', methods=['GET'])
@@ -97,4 +98,4 @@ def history(sid):
         return jsonify({"status": "ok",
                         "history": _sched.run_history(sid, limit=limit)})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the schedule history")

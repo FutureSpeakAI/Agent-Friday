@@ -27,6 +27,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import exception_text
 
 # Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
 # module along with everything else (see agent_friday/paths.py).
@@ -143,7 +144,7 @@ def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Di
             conn.close()
             return {"ok": True, "key": key, "value": value}
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": exception_text(e)}
 
 
 def _nudge_trait(key: str, target: float, weight: float = 0.15) -> None:
@@ -221,7 +222,7 @@ def observe_message(text: str, *, role: str = "user", workspace: str = "",
         _record_signal("message", f"{workspace}:{len(text.split())}w")
         return {"ok": True}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def observe_event(kind: str, value: str) -> Dict[str, Any]:
@@ -240,7 +241,7 @@ def observe_event(kind: str, value: str) -> Dict[str, Any]:
             _bump_counter(f"workflow.workspace.{_slug(value)}")
         return {"ok": True}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def note_fact(category: str, text: str, *, confidence: float = 0.6,
@@ -285,7 +286,7 @@ def note_fact(category: str, text: str, *, confidence: float = 0.6,
             conn.close()
             return {"ok": True, "fact_id": fid}
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": exception_text(e)}
 
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
@@ -404,7 +405,7 @@ def profile() -> Dict[str, Any]:
             "active_hours": _active_hours(),
         }
     except Exception as e:
-        return {"available": False, "error": str(e), "traits": {}, "facts": []}
+        return {"available": False, "error": exception_text(e), "traits": {}, "facts": []}
 
 
 def forget(category: Optional[str] = None) -> Dict[str, Any]:
@@ -422,7 +423,7 @@ def forget(category: Optional[str] = None) -> Dict[str, Any]:
             conn.close()
             return {"ok": True, "category": category or "all"}
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": exception_text(e)}
 
 
 # ── internals ─────────────────────────────────────────────────────────────────

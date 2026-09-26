@@ -34,6 +34,7 @@ import uuid
 from pathlib import Path
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.user_errors import ExceptionText, UserFacingValueError
 
 # Priority order, highest first. Straight from the latency classes in
 # docs/design/implemented/symphony-of-intelligence.md §2.4: an interactive turn has someone
@@ -167,13 +168,13 @@ def enqueue(title: str, spec: str, cls: str = "background",
     hold or be reported.
     """
     if cls not in CLASSES:
-        raise ValueError("unknown class %r; expected one of %s"
+        raise UserFacingValueError("unknown class %r; expected one of %s"
                          % (cls, ", ".join(CLASSES)))
     if disposition not in DISPOSITIONS:
-        raise ValueError("unknown disposition %r; expected one of %s"
+        raise UserFacingValueError("unknown disposition %r; expected one of %s"
                          % (disposition, ", ".join(DISPOSITIONS)))
     if touches_vault and disposition == "now_cloud":
-        raise ValueError(
+        raise UserFacingValueError(
             "this work reads vault-tier material, which never leaves the "
             "machine while Vault Local-Only is on. The router would force "
             "it local in that case (model_router._route_vault), so "
@@ -333,7 +334,7 @@ def drain(cls: str, runner, *, arbiter=None, min_items: int = 1,
                 done.append(it["id"])
             except Exception as e:
                 update(it["id"], status="failed",
-                       error="%s: %s" % (type(e).__name__, str(e)[:300]),
+                       error=ExceptionText("%s: %s" % (type(e).__name__, str(e)[:300])),
                        finished_at=time.time(),
                        took_s=round(time.time() - t_item, 2))
                 failed.append(it["id"])

@@ -34,6 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import ExceptionText
 
 FRIDAY_DIR = friday_home()
 PERSONALITY_FILE = FRIDAY_DIR / "personality.json"
@@ -251,7 +252,7 @@ def epistemic_score(limit: int = 20, memory=None) -> Dict[str, Any]:
             return {
                 "available": False,
                 "analyzed": 0,
-                "reason": f"conversation memory unavailable: {e}",
+                "reason": ExceptionText(f"conversation memory unavailable: {e}"),
             }
 
     if not getattr(memory, "available", lambda: False)():
@@ -463,7 +464,7 @@ def personality_check_sycophancy(limit: int = 20, memory=None) -> Dict[str, Any]
             memory = get_conversation_memory()
         except Exception as e:
             return {"available": False, "analyzed": 0,
-                    "reason": f"conversation memory unavailable: {e}"}
+                    "reason": ExceptionText(f"conversation memory unavailable: {e}")}
 
     if not getattr(memory, "available", lambda: False)():
         return {"available": False, "analyzed": 0,

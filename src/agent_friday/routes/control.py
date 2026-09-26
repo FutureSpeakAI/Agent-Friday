@@ -38,6 +38,7 @@ from agent_friday.services.agent import (
     _cc_persist,
     _pag,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error
 
 control_bp = Blueprint('control', __name__)
 
@@ -114,7 +115,7 @@ def cc_app_grants():
                                        "app": _dg.normalize_app(app),
                                        "tier": data.get('tier')})
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't update the app permissions", 400, shape="bare")
     return jsonify({"apps": apps, "tiers": list(_dg.TIERS)})
 
 
@@ -167,7 +168,7 @@ def scan_file_grant_target():
     try:
         p = _P(path).expanduser().resolve()
     except Exception as e:
-        return jsonify({"error": f"invalid path: {e}"}), 400
+        return api_error(e, "Couldn't scan that path", 400, shape="bare")
     if not p.exists() or not p.is_file():
         return jsonify({"error": f"{p} does not exist or is not a file"}), 404
     return jsonify(_fg.scan_path(p))
@@ -198,9 +199,9 @@ def create_file_grant():
         else:
             return jsonify({"error": "scope must be 'file', 'folder', or 'glob'"}), 400
     except FileNotFoundError as e:
-        return jsonify({"error": str(e)}), 404
+        return api_error(e, "Couldn't grant access to that path", 404, shape="bare")
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't grant access to that path", 400, shape="bare")
     _log_context("file_grant_created", {"id": event.get("id"), "type": event.get("type")})
     return jsonify({"status": "ok", "grant": event})
 
@@ -218,7 +219,7 @@ def create_deny_mark():
     try:
         event = _fg.create_deny_mark(path, scope)
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't mark that path as off limits", 400, shape="bare")
     _log_context("file_deny_mark_created", {"id": event.get("id"), "type": event.get("type")})
     return jsonify({"status": "ok", "deny": event})
 

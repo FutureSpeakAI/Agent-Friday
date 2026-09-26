@@ -8,6 +8,7 @@ import traceback
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import cost_meter as _cm
+from agent_friday.routes._errors import api_error
 
 costs_bp = Blueprint('costs', __name__)
 
@@ -22,7 +23,7 @@ def costs_summary():
         return jsonify({"status": "ok", "summary": _cm.summary(rng, frm, to)})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the cost summary")
 
 
 @costs_bp.route('/api/costs/timeseries')
@@ -33,7 +34,7 @@ def costs_timeseries():
     try:
         return jsonify({"status": "ok", "series": _cm.timeseries(rng, bucket)})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the cost history")
 
 
 @costs_bp.route('/api/costs/scheduled')
@@ -43,7 +44,7 @@ def costs_scheduled():
     try:
         return jsonify({"status": "ok", "scheduled": _cm.by_schedule(rng)})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the scheduled costs")
 
 
 @costs_bp.route('/api/costs/budget', methods=['GET'])
@@ -59,7 +60,7 @@ def hard_stop_status():
         return jsonify({"status": "ok", **_sg.status()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the spending limit")
 
 
 @costs_bp.route('/api/costs/budget', methods=['POST'])
@@ -70,7 +71,7 @@ def set_budget():
         return jsonify({"status": "ok", "budget": _cm.set_budget(patch)})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't save the budget")
 
 
 @costs_bp.route('/api/costs/scheduled-cloud', methods=['GET'])
@@ -82,7 +83,7 @@ def scheduled_cloud_view():
         return jsonify({"status": "ok", **_sc.view()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the scheduled cloud settings")
 
 
 @costs_bp.route('/api/costs/scheduled-cloud', methods=['POST'])
@@ -95,8 +96,8 @@ def scheduled_cloud_save():
     try:
         _sc.save(patch)
     except ValueError as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
+        return api_error(e, "Couldn't save the scheduled cloud settings", 400)
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't save the scheduled cloud settings")
     return jsonify({"status": "ok", **_sc.view()})

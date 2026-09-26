@@ -21,6 +21,7 @@ from flask import Blueprint, jsonify, request
 
 from agent_friday.core import _is_local_request, login_required
 from agent_friday.services import pdf_signing
+from agent_friday.routes._errors import api_error
 
 documents_bp = Blueprint("documents", __name__)
 
@@ -57,7 +58,7 @@ def signing_image_set():
     try:
         pdf_signing.set_signature_image(pdf_signing.decode_b64(body.get("image_b64")))
     except pdf_signing.SignRefused as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return api_error(e, "Couldn't save the signature image", 400, shape="ok")
     return jsonify({"ok": True, **pdf_signing.status()})
 
 
@@ -82,7 +83,7 @@ def signing_certificate_set():
         pdf_signing.set_certificate(pdf_signing.decode_b64(body.get("certificate_b64")),
                                     str(body.get("passphrase") or ""))
     except pdf_signing.SignRefused as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return api_error(e, "Couldn't save the signing certificate", 400, shape="ok")
     return jsonify({"ok": True, **pdf_signing.status()})
 
 

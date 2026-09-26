@@ -27,6 +27,7 @@ import uuid
 from collections import Counter
 from typing import Any, Dict, List, Optional
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import exception_text
 
 # Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
 # module along with everything else (see agent_friday/paths.py).
@@ -177,7 +178,7 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
                 "topics": topics, "consolidated": consolidated,
                 "pruned": pruned, "capped": capped, "summary": summary}
     except Exception as e:
-        return {"ok": False, "day": day, "error": str(e)}
+        return {"ok": False, "day": day, "error": exception_text(e)}
 
 
 def recent_dreams(n: int = 7) -> List[Dict[str, Any]]:
@@ -219,7 +220,7 @@ def state() -> Dict[str, Any]:
             "last_summary": last[2] if last else None,
         }
     except Exception as e:
-        return {"available": False, "error": str(e)}
+        return {"available": False, "error": exception_text(e)}
 
 
 # ── extraction internals ──────────────────────────────────────────────────────

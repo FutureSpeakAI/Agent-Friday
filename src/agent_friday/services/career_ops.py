@@ -45,6 +45,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from agent_friday.user_errors import UserFacingError
 
 _log = logging.getLogger("friday.career_ops")
 
@@ -59,7 +60,7 @@ UNTRUSTED_NOTE = ("Job postings, portal listings and email text are someone else
 OWNER_ANSWERS = "(The candidate answers this question personally.)"
 
 
-class CareerError(Exception):
+class CareerError(UserFacingError):
     """The request cannot be carried out; the message says why."""
 
 

@@ -6,19 +6,13 @@ and exactly one place a refusal is worded.
 
 Envelope follows `routes/residency.py`, the closest sibling: {"status": "ok"|"error"}.
 """
-import traceback
-
 from flask import Blueprint, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import api_error
 from agent_friday.services import arbiter as _arb
 
 arbiter_bp = Blueprint('arbiter', __name__)
-
-
-def _err(e):
-    traceback.print_exc()
-    return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @arbiter_bp.route('/api/arbiter/status')
@@ -30,7 +24,7 @@ def arbiter_status():
                         "presets": [{"name": k, "label": v["label"]}
                                     for k, v in _arb.PRESETS.items()]})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't read the resource status")
 
 
 @arbiter_bp.route('/api/arbiter/leases')
@@ -39,7 +33,7 @@ def arbiter_leases():
         return jsonify({"status": "ok",
                         "leases": _arb.held(request.args.get('resource'))})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't list the resource leases")
 
 
 @arbiter_bp.route('/api/arbiter/events')
@@ -48,7 +42,7 @@ def arbiter_events():
         limit = int(request.args.get('limit') or 50)
         return jsonify({"status": "ok", "events": _arb.events(limit)})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't load the resource events")
 
 
 @arbiter_bp.route('/api/arbiter/acquire', methods=['POST'])
@@ -69,7 +63,7 @@ def arbiter_acquire():
             allow_evict=bool(body.get('allow_evict')))
         return jsonify({"status": "ok", "decision": d})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't reserve the resource")
 
 
 @arbiter_bp.route('/api/arbiter/release', methods=['POST'])
@@ -80,7 +74,7 @@ def arbiter_release():
         return jsonify({"status": "ok",
                         "result": _arb.release(body.get('lease_id'))})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't release the resource")
 
 
 @arbiter_bp.route('/api/arbiter/foreign-hold', methods=['POST'])
@@ -94,7 +88,7 @@ def arbiter_foreign_hold():
             body.get('holder') or 'foreign process',
             purpose=body.get('purpose'), ttl_s=body.get('ttl_s'))})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't record the outside hold")
 
 
 @arbiter_bp.route('/api/arbiter/foreign-hold/preset', methods=['POST'])
@@ -107,7 +101,7 @@ def arbiter_foreign_preset():
             body.get('preset') or 'training', body.get('holder'),
             purpose=body.get('purpose'), ttl_s=body.get('ttl_s'))})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't apply the hold preset")
 
 
 @arbiter_bp.route('/api/arbiter/eviction-plan', methods=['POST'])
@@ -120,7 +114,7 @@ def arbiter_eviction_plan():
             body.get('resource'), int(body.get('need') or 0),
             requester=body.get('requester'))})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't plan what to unload")
 
 
 @arbiter_bp.route('/api/arbiter/evict', methods=['POST'])
@@ -131,7 +125,7 @@ def arbiter_evict():
         return jsonify({"status": "ok", "result": _arb.evict(
             body.get('lease_id'), reason=body.get('reason'))})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't unload the model")
 
 
 @arbiter_bp.route('/api/arbiter/restore', methods=['POST'])
@@ -142,4 +136,4 @@ def arbiter_restore():
         return jsonify({"status": "ok",
                         "decision": _arb.restore(body.get('lease_id'))})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't restore the model")

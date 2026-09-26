@@ -30,6 +30,7 @@ from typing import Optional
 
 from agent_friday.paths import friday_home
 from agent_friday.services import pdf_forms
+from agent_friday.user_errors import UserFacingError
 
 _log = logging.getLogger("friday.pdf_signing")
 
@@ -46,7 +47,7 @@ _MAX_UPLOAD = 5 * 1024 * 1024
 _DEFAULT_W, _DEFAULT_H, _MARGIN = 180.0, 60.0, 72.0
 
 
-class SignRefused(Exception):
+class SignRefused(UserFacingError):
     """Nothing was signed; the message says why."""
 
 
@@ -105,7 +106,8 @@ def set_signature_image(data: bytes) -> str:
             buf = io.BytesIO()
             im.save(buf, "PNG")
     except Exception as e:
-        raise SignRefused(f"that is not an image Friday can read: {e}")
+        raise SignRefused("that is not an image Friday can read",
+                          detail=f"that is not an image Friday can read: {e}")
     method = _write(_IMAGE, buf.getvalue())
     _audit("signature_image_set", method=method)
     return method
@@ -123,7 +125,8 @@ def _load_p12(p12: bytes, passphrase: str):
         key, cert, _extra = pkcs12.load_key_and_certificates(
             p12, passphrase.encode("utf-8") if passphrase else None)
     except Exception as e:
-        raise SignRefused(f"the certificate file or its passphrase is not valid: {e}")
+        raise SignRefused("the certificate file or its passphrase is not valid",
+                          detail=f"the certificate file or its passphrase is not valid: {e}")
     if key is None or cert is None:
         raise SignRefused("the certificate file must contain both a certificate "
                           "and its private key (a .p12 / .pfx file)")

@@ -21,6 +21,7 @@ from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import scheduler as _sched
 from agent_friday.services import update_check as _uc
+from agent_friday.routes._errors import api_error
 
 updates_bp = Blueprint('updates', __name__)
 
@@ -33,7 +34,7 @@ def updates_status():
         return jsonify({"status": "ok", **_uc.status()})
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the update status")
 
 
 @updates_bp.route('/api/updates/check', methods=['POST'])
@@ -46,7 +47,7 @@ def updates_check_now():
         return jsonify({"status": "ok", "result": result, **_uc.status()})
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't check for updates")
 
 
 @updates_bp.route('/api/updates/enabled', methods=['POST'])
@@ -66,4 +67,4 @@ def updates_set_enabled():
                         **_uc.status()})
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't change the update setting")

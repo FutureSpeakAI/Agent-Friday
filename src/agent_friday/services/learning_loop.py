@@ -28,6 +28,7 @@ import uuid
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import exception_text
 
 # Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
 # module along with everything else (see agent_friday/paths.py).
@@ -139,7 +140,7 @@ def observe(task_type: str, prompt: str, *, approach: str, success: bool,
             conn.close()
         return {"ok": True, "obs_id": obs_id}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 # ── Candidate mining ──────────────────────────────────────────────────────────
@@ -235,7 +236,7 @@ def record_trial(skill_id: str, success: bool, satisfaction: Optional[float] = N
         new_score = score_skill(skill_id)
         return {"ok": True, "score": new_score}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def score_skill(skill_id: str) -> float:
@@ -380,7 +381,7 @@ def run_epoch() -> Dict[str, Any]:
         return {"ok": True, "mined": len(mined), "promoted": changed,
                 "counts": st.get("counts", {})}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def state() -> Dict[str, Any]:
@@ -405,7 +406,7 @@ def state() -> Dict[str, Any]:
             "enabled": _enabled(),
         }
     except Exception as e:
-        return {"available": False, "error": str(e), "counts": {}}
+        return {"available": False, "error": exception_text(e), "counts": {}}
 
 
 # ── internals ─────────────────────────────────────────────────────────────────

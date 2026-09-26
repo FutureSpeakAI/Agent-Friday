@@ -57,6 +57,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from agent_friday.user_errors import UserFacingValueError
 
 _MAX_EXPIRY_DAYS = 30
 _APPEND_LOCK = threading.Lock()
@@ -378,9 +379,9 @@ def create_scope_grant(path_or_pattern: str, kind: str, expiry_days: float) -> d
     folder/glob grant cannot be content-pinned and a permanent one is exactly
     the quiet gate-bypass this feature must not become."""
     if kind not in ("folder", "glob"):
-        raise ValueError("kind must be 'folder' or 'glob'")
+        raise UserFacingValueError("kind must be 'folder' or 'glob'")
     if not expiry_days or expiry_days <= 0 or expiry_days > _MAX_EXPIRY_DAYS:
-        raise ValueError(f"expiry_days is required and must be in (0, {_MAX_EXPIRY_DAYS}]")
+        raise UserFacingValueError(f"expiry_days is required and must be in (0, {_MAX_EXPIRY_DAYS}]")
     if kind == "folder":
         p = str(Path(path_or_pattern).expanduser().resolve())
     else:
@@ -399,7 +400,7 @@ def create_scope_grant(path_or_pattern: str, kind: str, expiry_days: float) -> d
 
 def create_deny_mark(path_or_pattern: str, kind: str) -> dict:
     if kind not in ("file", "folder", "glob"):
-        raise ValueError("kind must be 'file', 'folder', or 'glob'")
+        raise UserFacingValueError("kind must be 'file', 'folder', or 'glob'")
     if kind == "glob":
         p = str(Path(path_or_pattern).expanduser())
     else:
@@ -565,8 +566,12 @@ def list_unverified() -> list[dict]:
             if not isinstance(ev, dict) or not isinstance(sig, str):
                 raise ValueError("malformed record")
         except Exception as e:
+            # Said in words, not the parser's own text: this list is shown in
+            # the browser for review.
+            why = ("the line is not valid JSON" if isinstance(e, json.JSONDecodeError)
+                   else "the line is missing its event or signature")
             out.append({"event": None, "verified": False, "line_sha256": sha,
-                        "why": "the line could not be parsed (%s)" % e})
+                        "why": "the line could not be parsed (%s)" % why})
             continue
         if hmac.compare_digest(sig, _hmac_hex(ev, key)):
             continue

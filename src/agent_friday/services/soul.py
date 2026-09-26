@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import exception_text
 
 # Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
 # module along with everything else (see agent_friday/paths.py).
@@ -190,7 +191,7 @@ def save_soul(text: str) -> Dict[str, Any]:
             _invalidate()
             return {"ok": True, "bytes": len(raw.encode("utf-8"))}
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": exception_text(e)}
 
 
 def reset_soul() -> Dict[str, Any]:

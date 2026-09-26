@@ -20,6 +20,7 @@ from flask import Blueprint, jsonify, request
 
 from agent_friday.core import login_required
 from agent_friday.services import memory_proposals as mp
+from agent_friday.routes._errors import api_error, public_result
 
 memory_proposals_bp = Blueprint("memory_proposals", __name__)
 
@@ -30,10 +31,10 @@ def api_memory_proposals_propose():
     data = request.get_json(silent=True) or {}
     try:
         result = mp.propose(day=data.get("day"))
-        return jsonify(result)
+        return jsonify(public_result(result, "Couldn't propose the memory"))
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"ok": False, "reason": str(e)}), 500
+        return api_error(e, "Couldn't propose the memory", shape="ok", key="reason")
 
 
 @memory_proposals_bp.route("/api/memory/proposals/pending", methods=["GET"])
@@ -45,7 +46,7 @@ def api_memory_proposals_pending():
         return jsonify({"ok": True, "facts": mp.pending(day=day, limit=limit)})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"ok": False, "reason": str(e)}), 500
+        return api_error(e, "Couldn't load the pending memories", shape="ok", key="reason")
 
 
 @memory_proposals_bp.route("/api/memory/proposals/approve", methods=["POST"])
@@ -56,7 +57,7 @@ def api_memory_proposals_approve():
         return jsonify(mp.approve(data.get("fact_ids") or []))
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"ok": False, "reason": str(e)}), 500
+        return api_error(e, "Couldn't approve the memory", shape="ok", key="reason")
 
 
 @memory_proposals_bp.route("/api/memory/proposals/reject", methods=["POST"])
@@ -67,14 +68,14 @@ def api_memory_proposals_reject():
         return jsonify(mp.reject(data.get("fact_ids") or []))
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"ok": False, "reason": str(e)}), 500
+        return api_error(e, "Couldn't reject the memory", shape="ok", key="reason")
 
 
 @memory_proposals_bp.route("/api/memory/proposals/state", methods=["GET"])
 @login_required
 def api_memory_proposals_state():
     try:
-        return jsonify({"ok": True, **mp.state()})
+        return jsonify(public_result({"ok": True, **mp.state()}, "Couldn't load the memory state"))
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"ok": False, "reason": str(e)}), 500
+        return api_error(e, "Couldn't load the memory state", shape="ok", key="reason")
