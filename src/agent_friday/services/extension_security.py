@@ -207,7 +207,22 @@ _BLOCK_PATTERNS = [
 # Looks like a real secret rather than a placeholder.
 _SECRET_KEY_HINT = re.compile(r"key|token|secret|password|passwd|pwd|credential|auth", re.I)
 _SECRET_VALUE_HINT = re.compile(r"\b(?:sk|ghp|gho|ghs|xox[baprs]|pk|AKIA)[-_]?[A-Za-z0-9]{12,}")
-_PLACEHOLDER = re.compile(r"\$\{|\$\(|<[^>]+>|your[_-]|changeme|placeholder|example|xxxx", re.I)
+_PLACEHOLDER = re.compile(r"\$\{|\$\(|your[_-]|changeme|placeholder|example|xxxx", re.I)
+
+
+def _has_angle_placeholder(v: str) -> bool:
+    """True when `v` contains `<something>`: a "<", at least one character that
+    is not ">", then ">". A scan rather than the regex `<[^>]+>`, which rescans
+    to the end of the string from every "<" when no ">" follows."""
+    i = v.find("<")
+    while i != -1:
+        j = v.find(">", i + 1)
+        if j == -1:
+            return False
+        if j > i + 1:
+            return True
+        i = v.find("<", j + 1)
+    return False
 
 
 def _launcher_name(command: str) -> str:
@@ -226,7 +241,7 @@ def _is_inline_secret(key: str, value) -> bool:
     if not isinstance(value, str):
         return False
     v = value.strip()
-    if len(v) < 8 or _PLACEHOLDER.search(v):
+    if len(v) < 8 or _PLACEHOLDER.search(v) or _has_angle_placeholder(v):
         return False
     return bool(_SECRET_KEY_HINT.search(key or "")) or bool(_SECRET_VALUE_HINT.search(v))
 

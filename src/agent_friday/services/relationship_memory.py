@@ -84,7 +84,10 @@ _AUTOMATED = re.compile(
     r"^(?:no-?reply|do-?not-?reply|donotreply|notifications?|notify|alerts?|"
     r"mailer-daemon|postmaster|bounces?|automated|calendar-notification)(?:[+.\-_].*)?$",
     re.I)
-_EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
+# The domain needs a dot with at least one character on each side. Matching
+# up to the FIRST such dot keeps the check linear; `[^@..]+\.[^@..]+$` tried
+# every dot in the domain and rescanned the tail each time.
+_EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>][^@\s,;<>.]*\.[^@\s,;<>]+$")
 _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 

@@ -184,7 +184,7 @@ def parse_when(text, now=None):
         return ({"trigger": trigger, "spec": spec}, _strip(raw, spans), note)
 
     # Every N minutes / hours.
-    m = re.search(r"\b(?:every|each)\s+(\d+|[a-z]+)?\s*(minute|min|hour|hr)s?\b", t)
+    m = re.search(r"\b(?:every|each)\s+(?:(\d+|[a-z]+)\s*)?(minute|min|hour|hr)s?\b", t)
     if m:
         n = _num(m.group(1)) if m.group(1) else 1
         if n:
@@ -259,7 +259,7 @@ def _strip(raw, spans):
     for a, b in sorted(spans, reverse=True):
         out = out[:a] + " " + out[b:]
     out = re.sub(r"\s+", " ", out)
-    out = re.sub(r"\s+([,.;:!?])", r"\1", out)
+    out = re.sub(r"(?<!\s)\s+([,.;:!?])", r"\1", out)
     out = re.sub(r"^[\s,;:.-]*(?:(?:and|then)\b|,)?\s*", "", out, flags=re.I)
     out = re.sub(r"^(?:please|can you|could you|i want you to|i'd like you to)\s+", "", out, flags=re.I)
     out = out.strip(" ,;:-")

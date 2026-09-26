@@ -755,10 +755,8 @@ def _html_to_text(html):
         text = soup.get_text(separator='\n', strip=True)
         return re.sub(r'\n{3,}', '\n\n', text)
     except ImportError:
-        text = re.sub(r'<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>', ' ', html, flags=re.I | re.S)
-        text = re.sub(r'<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>', ' ', text, flags=re.I | re.S)
-        text = re.sub(r'<[^>]+>', ' ', text)
-        return re.sub(r'\s+', ' ', text).strip()
+        from agent_friday.services.html_text import html_to_text
+        return html_to_text(html)
 
 
 def _tool_search_web(inp):
@@ -2362,7 +2360,7 @@ def _resolve_open_target(target):
         return None
     raw = target.strip().strip('"').strip("'")
     low = re.sub(r'\s+', ' ', raw.lower()).strip()
-    low = re.sub(r'\s+(folder|directory|dir|file)$', '', low).strip()
+    low = re.sub(r'(?<!\s)\s+(folder|directory|dir|file)$', '', low).strip()
     repo = Path(__file__).resolve().parents[3]  # agent.py is src/agent_friday/services/ → repo root
     aliases = {
         'downloads': HOME / 'Downloads', 'download': HOME / 'Downloads',
@@ -2516,8 +2514,14 @@ _OPEN_VERB_RE = re.compile(
     r'^\s*(?:can you |could you |would you |will you |please |hey |ok |okay |yo |'
     r'friday[,:\s]+)*'
     r'(open up|open|launch|reveal|show me|show|bring up|pull up|take me to|'
-    r'switch to|switch|go to|jump to|navigate to)\s+'
-    r'(.+?)[\s?.!]*$',
+    r'switch to|switch|go to|jump to|navigate to)\s+(?=\S)'
+    # The target runs to its last character that is not whitespace or ?.!
+    # (or, when it has none, is its first character), and only trailing
+    # whitespace and ?.! may follow. This is the target `(.+?)[\s?.!]*$`
+    # produced, written so no two quantifiers can claim the same characters:
+    # the lazy form retried the trailing class at every position and went
+    # quadratic on long runs of spaces.
+    r'([^\n]*[^\s?.!]|[?.!])[\s?.!]*$',
     re.IGNORECASE,
 )
 
@@ -2620,8 +2624,8 @@ def _resolve_workspace(name):
     low = re.sub(r'^(the|my|a|an)\s+', '', low).strip()
     # TRAILING POLITENESS IS AS COMMON AS LEADING POLITENESS, AND USED TO BE FATAL.
     #
-    # _OPEN_VERB_RE eats a leading "please "; its target group is `(.+?)[\s?.!]*$`,
-    # which does not, so "open workflows please" arrives here as
+    # _OPEN_VERB_RE eats a leading "please "; its target group stops only at
+    # trailing whitespace and ?.!, so "open workflows please" arrives here as
     # "workflows please" and resolves to nothing. The request then falls through
     # to the model, which narrates a navigation it never performed ("Navigating
     # you to the Code workspace") while no navigation occurs.
@@ -2629,7 +2633,10 @@ def _resolve_workspace(name):
     # Front-loaded politeness ("Please open settings.") already works; trailing
     # politeness is what needs stripping. Stripped repeatedly so "please now"
     # and "for me thanks" both reduce.
-    _tail = (r'\s+(please|now|thanks|thank you|for me|pls|plz|ok|okay|'
+    # `(?<!\s)` starts the match only at the beginning of a whitespace run
+    # (where the leftmost match starts anyway), so a long run of spaces is
+    # scanned once rather than once per space.
+    _tail = (r'(?<!\s)\s+(please|now|thanks|thank you|for me|pls|plz|ok|okay|'
              r'right now|real quick|if you can|would you|will you)$')
     while True:
         _stripped = re.sub(_tail, '', low).strip()
@@ -2643,7 +2650,7 @@ def _resolve_workspace(name):
     if hit:
         return hit
     # Fall back to stripping a trailing UI-noise word: "news tab" → "news".
-    stripped = re.sub(r'\s+(workspace|tab|panel|page|screen|view|window|section|menu)$', '', low).strip()
+    stripped = re.sub(r'(?<!\s)\s+(workspace|tab|panel|page|screen|view|window|section|menu)$', '', low).strip()
     return _WORKSPACE_ALIASES.get(stripped)
 
 
@@ -2997,10 +3004,8 @@ def _tool_get_briefing(_inp):
     try:
         text = latest.read_text(encoding='utf-8', errors='replace')
         if latest.suffix == '.html':
-            text = re.sub(r'<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>', ' ', text, flags=re.I)
-            text = re.sub(r'<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>', ' ', text, flags=re.I)
-            text = re.sub(r'<[^>]+>', ' ', text)
-            text = re.sub(r'\s+', ' ', text).strip()
+            from agent_friday.services.html_text import html_to_text
+            text = html_to_text(text)
         return f"[{latest.name}]\n{text[:100_000]}"
     except Exception as e:
         return f"Briefing read error: {e}"

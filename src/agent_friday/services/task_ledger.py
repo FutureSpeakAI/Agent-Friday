@@ -45,7 +45,9 @@ _VIEW_MAX_FILES = 40
 
 _PATH_KEYS = ("path", "file", "file_path", "filename", "dest", "destination",
               "target", "output_path", "src", "source_path", "directory", "dir")
-_SECTION = re.compile(r"^\s*(GOAL|PLAN|DONE|FACTS|FILES|NEXT)\s*:\s*(.*)$", re.I)
+# Group 2 keeps the whitespace after the colon; absorb_summary strips it. A
+# `\s*` before `(.*)` would give two quantifiers the same spaces to fight over.
+_SECTION = re.compile(r"^\s*(GOAL|PLAN|DONE|FACTS|FILES|NEXT)\s*:(.*)$", re.I)
 
 
 def _journal():

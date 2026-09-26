@@ -61,7 +61,9 @@ GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 APPROVAL_KIND = "external_message"
 SUBJECT_TYPE = "email"
 
-_ADDR = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+# The domain needs a dot with at least one character on each side; matching up
+# to the FIRST such dot keeps the check linear in the address length.
+_ADDR = re.compile(r"^[^@\s,;]+@[^@\s,;][^@\s,;.]*\.[^@\s,;]+$")
 
 #: After approval, how long a message waits for "Undo" before it goes.
 UNDO_SECONDS = 10

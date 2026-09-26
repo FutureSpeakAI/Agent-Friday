@@ -85,7 +85,7 @@ def sanitize(text) -> tuple[str, int]:
                 out_lines.append(line)
                 continue
             # Keep a bullet marker and indentation, check the sentences after it.
-            m = re.match(r"^(\s*(?:[-*+]|\d+\.)?\s*)(.*)$", line)
+            m = re.match(r"^(\s*(?:(?:[-*+]|\d+\.)\s*)?)(.*)$", line)
             lead, body = (m.group(1), m.group(2)) if m else ("", line)
             parts = [p for p in _SENTENCE_SPLIT.split(body) if p is not None]
             kept = []

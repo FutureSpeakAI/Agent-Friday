@@ -460,7 +460,11 @@ def _extract_title(title: str, body: str, platform: str,
     limit = int(caps.get("title_limit") or _TITLE_LIMITS.get(platform) or 0)
     text = (title or "").strip()
     if not text:
-        m = re.search(r"^#{1,3}\s+(.+)$", body or "", re.MULTILINE)
+        # `\S` pins where the heading text starts, so `\s+` and the text
+        # cannot trade whitespace. A heading with nothing after it (only
+        # whitespace to the end) found a blank title before and finds none
+        # now; either way the first-sentence fallback below supplies it.
+        m = re.search(r"^#{1,3}\s+(\S.*)$", body or "", re.MULTILINE)
         if m:
             text = m.group(1).strip()
     if not text:
