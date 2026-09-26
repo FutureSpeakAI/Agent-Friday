@@ -33,8 +33,20 @@ conversations hold together. The plain-language summary is in
   lock, and the checkpoint marks the card consumed. The outcome is appended
   to the conversation that raised the card, and both chat windows (docked and
   undocked) re-read the transcript on a push, so the result appears without a
-  reload. A card raised by a background task carries no conversation id, so
-  its result is recorded on the card but not posted to a chat (KNOWN_ISSUES).
+  reload. A task spawned from a chat carries that conversation, so a card it
+  raises reports back the same way.
+- **The health line called an installed build a source checkout, and called a
+  deliberate choice a fault.** `privacy_layers.describe()` chose between a
+  PyInstaller bundle and "source checkout", so a `pip install` -- neither -- was
+  described as a working copy; `build_kind()` now names three states and
+  recognises a checkout by its shape (`<repo>/src/agent_friday` beside the
+  project's pyproject.toml) rather than by elimination. Presidio ships in the
+  installer's recommended tier and is deliberately observe-only, and was
+  reported as `DEGRADED - not running`; `self_check()` now separates
+  `by_design` from `missing`, `ok` tracks faults only, and the layer is still
+  named in the headline as a choice. It still does not count as active -- a
+  layer that cannot change an outcome is not protection -- and a layer that
+  really is down is still DEGRADED.
 - **A raised card was recorded as a success.** `[APPROVAL CARD RAISED]` and
   four other refusal prefixes were missing from `_TOOL_DENY_SENTINELS`, so
   the tool-call record said `ok` while the decision was still pending. A

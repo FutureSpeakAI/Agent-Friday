@@ -30,10 +30,9 @@ you did not approve: the failure was that approved things were not done.
 
 Now, when you approve a card, the action runs, exactly once, even if you
 approve it in two tabs at the same moment. For a card raised in a chat, the
-result appears in that chat without reloading the page. A card raised by a
-background task does not report back to the chat yet (see Known issues). A
-card that is waiting is recorded as waiting, not as a success, and a failed
-action records why it failed.
+result appears in that chat without reloading the page, and so does one raised
+by a background task you started from a chat. A card that is waiting is recorded
+as waiting, not as a success, and a failed action records why it failed.
 
 **The privacy check could fall back to pattern filters alone.** Before text
 goes to a cloud model, Friday checks it for personal information in layers.
@@ -104,6 +103,10 @@ when someone is replying to her.
   as spending because its notes mention buying tickets.
 - **Local tasks use your local model.** A job meant for a model on your PC no
   longer picks a cloud model and then refuses with a confusing message.
+- **Honest about which build you are running.** The health summary called an
+  installed copy a "source checkout", and reported a privacy layer that is
+  switched off on purpose as though something were broken. Both now say what is
+  actually true; a layer that really is down is still reported as such.
 - **Steadier startup.** A race while Friday loads could stop the privacy check
   or the Kokoro voice from starting. It no longer can.
 
