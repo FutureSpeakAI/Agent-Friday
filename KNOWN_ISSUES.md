@@ -156,7 +156,6 @@ or Windows credential protection.
 - **Linux OS mode has no durable secret store.** Credential and passphrase
   storage fail closed there; the supported path is `FRIDAY_VAULT_PASSPHRASE` in
   the environment.
-- **`web_safety.py`, the SSRF guard, has no tests of its own.**
 - **Dependencies are declared with `>=` floors.** A `uv.lock` is committed
   but nothing installs from it.
 - **ChromaDB has four advisories with no fixed release (two critical, two
