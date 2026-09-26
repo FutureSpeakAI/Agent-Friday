@@ -47,7 +47,35 @@ _DEFAULT_LOG = friday_home() / "vault" / "retrieval-log.jsonl"
 # record of what was RETRIEVED, before any send exists to gate.
 _ACTION_HINT = {1: "allow", 2: "redact", 3: "drop"}
 
-_SECTION_NAME_RE = re.compile(r"==\s*([A-Za-z0-9 /\-\(\):,\.']+?)\s*==")
+_SECTION_NAME_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 /-():,.'")
+
+
+def _section_header(text: str) -> str | None:
+    """The name inside the first '== NAME ==' header, or None.
+
+    NAME is the text between two '==' markers: nothing but letters, digits,
+    spaces and / - ( ) : , . ' once surrounding whitespace is set aside, and
+    not empty. A header of spaces only counts as a header with an empty name.
+    This is what `==\\s*([A-Za-z0-9 /\\-\\(\\):,\\.']+?)\\s*==` matched, as a scan:
+    that regex let its three quantifiers share spaces and went polynomial on
+    a long run of them.
+    """
+    i = text.find("==")
+    while i != -1:
+        j = text.find("=", i + 2)
+        if j == -1:
+            return None
+        if text.startswith("==", j):
+            seg = text[i + 2:j]
+            core = seg.strip()
+            if core:
+                if all(c in _SECTION_NAME_CHARS for c in core):
+                    return core
+            elif " " in seg:
+                return ""
+        i = text.find("==", i + 1)
+    return None
 
 
 def derive_section_name(text: str, index: int) -> str:
@@ -62,9 +90,9 @@ def derive_section_name(text: str, index: int) -> str:
     the trailing clock block) fall back to a positional slot.
     """
     if text:
-        m = _SECTION_NAME_RE.search(text[:160])
-        if m:
-            name = re.sub(r"[^a-z0-9]+", "_", m.group(1).strip().lower()).strip("_")
+        header = _section_header(text[:160])
+        if header is not None:
+            name = re.sub(r"[^a-z0-9]+", "_", header.lower()).strip("_")
             if name:
                 return name[:60]
     return f"section_{index}"

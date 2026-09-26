@@ -218,7 +218,10 @@ def _domain(site) -> str:
         host = (urlparse(s).hostname or "").lower()
     except Exception:
         return ""
-    if not re.fullmatch(r"[a-z0-9.\-]+\.[a-z]{2,}", host or ""):
+    # A dotted name ending in an alphabetic TLD. Split at the last dot rather
+    # than letting one regex backtrack over every dot in the name.
+    head, dot, tld = (host or "").rpartition(".")
+    if not (dot and re.fullmatch(r"[a-z0-9.\-]+", head) and re.fullmatch(r"[a-z]{2,}", tld)):
         return ""
     return host
 

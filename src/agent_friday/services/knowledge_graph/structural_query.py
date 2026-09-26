@@ -10,6 +10,7 @@ Operates on the in-memory index produced by ``wiki_graph.build_wiki_index``
 
 from __future__ import annotations
 
+import bisect
 import re
 from collections import deque
 from typing import Any
@@ -109,12 +110,54 @@ def find_path(index: dict[str, dict], source_slug: str, target_slug: str,
 
 # ── query classification ──────────────────────────────────────
 
-_PATH_PATTERNS = re.compile(
-    r"how (?:is|are|does) (.+?) (?:connected|related|linked) to (.+?)[\?]?$"
-    r"|trace (?:the )?(?:chain|path) from (.+?) to (.+?)[\?]?$"
-    r"|what connects (.+?) (?:to|and) (.+?)[\?]?$",
-    re.IGNORECASE,
+# "How is A connected to B?" and its two siblings, as (lead-in, separator).
+# A path question reads: lead-in, A, separator, B, an optional "?", end. A is
+# the shortest text before a separator and B is the rest of the line, so the
+# match is found by scanning for lead-ins and separators once each rather than
+# by a regex whose two lazy groups retry each other from every position.
+_PATH_FORMS = tuple(
+    (re.compile("(?=(%s))" % lead, re.IGNORECASE), re.compile("(?=(%s))" % sep, re.IGNORECASE))
+    for lead, sep in (
+        (r"how (?:is|are|does) ", r" (?:connected|related|linked) to "),
+        (r"trace (?:the )?(?:chain|path) from ", r" to "),
+        (r"what connects ", r" (?:to|and) "),
+    )
 )
+
+
+def _path_terms(question: str) -> list[str] | None:
+    """[A, B] for a path question, else None.
+
+    Returns exactly what the regex
+    `how (?:is|are|does) (.+?) (?:connected|related|linked) to (.+?)[\\?]?$`
+    (and its "trace ... from" and "what connects" alternatives, searched
+    case-insensitively) captured. Neither group can cross a newline and the
+    match must reach the end, so only the last line (ignoring one trailing
+    newline) can hold it; the leftmost lead-in on that line wins, A ends at
+    the first separator after it, and B is what follows, minus one final "?".
+    """
+    body = question[:-1] if question.endswith("\n") else question
+    line = body[body.rfind("\n") + 1:]
+    best = None
+    for lead_re, sep_re in _PATH_FORMS:
+        seps = [(m.start(), m.start() + len(m.group(1))) for m in sep_re.finditer(line)]
+        sep_starts = [p for p, _e in seps]
+        for m in lead_re.finditer(line):
+            s = m.start()
+            if best is not None and s >= best[0]:
+                break
+            a_start = s + len(m.group(1))
+            k = bisect.bisect_left(sep_starts, a_start + 1)   # A is at least one character
+            if k == len(seps):
+                break                  # no separator after this lead-in, nor after any later one
+            p, e = seps[k]
+            if e >= len(line):
+                continue               # B would be empty; later separators end later still
+            rest = line[e:]
+            b = rest[:-1] if len(rest) > 1 and rest.endswith("?") else rest
+            best = (s, [line[a_start:p], b])
+            break
+    return best[1] if best else None
 _GAP_PATTERNS = re.compile(
     r"what (?:do|don'?t) I (?:not )?know about|what.?s missing|what gaps|open questions",
     re.IGNORECASE,
@@ -140,10 +183,8 @@ def classify_query(question: str) -> tuple[str, list[str]]:
     "thematic" is a Tier B hint (global search over community reports); the
     structural fallback answers it with community labels.
     """
-    m = _PATH_PATTERNS.search(question)
-    if m:
-        groups = [g for g in m.groups() if g]
-        terms = groups[:2] if len(groups) >= 2 else [question]
+    terms = _path_terms(question)
+    if terms:
         return "path", terms
 
     if _GAP_PATTERNS.search(question):

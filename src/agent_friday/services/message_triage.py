@@ -175,7 +175,11 @@ def _fallback_lane() -> str:
 # Normalisation helpers
 # --------------------------------------------------------------------------
 
-_EMAIL_RE = re.compile(r"[\w\.\-\+']+@[\w\.\-]+\.\w+")
+# The lookbehind starts a match only at the beginning of a run of local-part
+# characters. The leftmost match always starts there anyway (the local part
+# can always extend left over the run), so results are unchanged, but a long
+# run with no "@" is scanned once instead of once per character.
+_EMAIL_RE = re.compile(r"(?<![\w.\-+'])[\w.\-+']+@[\w.\-]+\.\w+")
 
 
 def _email_of(msg: Dict[str, Any]) -> str:
