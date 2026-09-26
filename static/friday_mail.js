@@ -53,6 +53,13 @@
     ['sent', '📤', 'Sent'], ['drafts', '📝', 'Drafts'], ['scheduled', '🗓', 'Scheduled'], ['all', '🗂', 'All Mail'],
     ['spam', '⚠', 'Spam'], ['trash', '🗑', 'Trash']
   ];
+  // What the Messages workspace can be opened to (index.html's
+  // fridayDeclareNav; queued, since this script loads first).
+  (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['messages', {
+    keys: ['thread_id', 'account', 'subject', 'from', 'lane', 'folder', 'reply'],
+    sections: Object.keys(LANES).map(id => ({ id, label: LANES[id][0], key: 'lane' }))
+      .concat(FOLDERS.filter(f => f[0]).map(f => ({ id: f[0], label: f[2], key: 'folder' })))
+  }]);
   const CATEGORIES = [['primary', 'Primary'], ['social', 'Social'], ['promotions', 'Promotions'], ['updates', 'Updates'], ['forums', 'Forums']];
   const folderName = f => { if (!f) return 'Priority'; if (f.indexOf('label:') === 0) return f.slice(6); if (f.indexOf('category:') === 0) return 'Inbox · ' + f.slice(9); const x = FOLDERS.find(r => r[0] === f); return x ? x[2] : f; };
   const SEARCH_CHIPS = [['has:attachment', '📎 Has attachment'], ['is:unread', '● Unread'], ['is:starred', '⭐ Starred'], ['newer_than:7d', '🕑 Last 7 days'], ['to:me', '→ To me'], ['from:me', '← From me'], ['larger:5M', '⬛ Over 5 MB']];
@@ -668,10 +675,20 @@
     // every account's own labels, for the side, the rows and the label menu
     useEffect(() => { accounts.forEach(a => loadLabels(a.id)); }, [accounts.length]);
 
-    // deep link {workspace:'messages', lane, thread_id, folder}
+    // deep link {workspace:'messages', lane, thread_id, folder, account}.
+    // The thread opens as soon as the list has loaded: from the list when it
+    // is there, and otherwise by its id and account, as a click would.
     const pending = useRef(null);
     useEffect(() => {
-      const apply = t => { if (!t || t.workspace !== 'messages') return; if (t.lane) setLane(t.lane); if (t.folder != null) setFolder(t.folder); if (t.thread_id) pending.current = { id: t.thread_id, reply: !!t.reply }; };
+      const apply = t => {
+        if (!t || t.workspace !== 'messages') return;
+        if (t.lane) setLane(t.lane);
+        if (t.folder != null) setFolder(t.folder);
+        if (t.thread_id) {
+          pending.current = { id: t.thread_id, reply: !!t.reply, account: t.account || '', subject: t.subject || '', from: t.from || '' };
+          setTimeout(() => tryPendingRef.current(), 0);
+        }
+      };
       apply(window.__fridayNavTarget);
       const f = e => apply(e.detail || {});
       window.addEventListener('friday-nav', f);
@@ -685,12 +702,20 @@
     const all = (data && data.messages) || [];
     const shown = all.filter(m => (acct === 'all' || m.account_id === acct) && (lane === 'all' || m.lane === lane) && (!unreadOnly || m.unread));
     const replyWhenOpen = useRef(null);
-    useEffect(() => {
-      if (!pending.current || !all.length) return;
+    const tryPendingRef = useRef(() => {});
+    tryPendingRef.current = () => {
       const want = pending.current;
-      const m = all.find(x => x.thread_id === want.id || x.id === want.id);
-      if (m) { pending.current = null; if (want.reply) replyWhenOpen.current = m.id; openThread(m); }
-    }, [data]);
+      if (!want || !data) return;
+      pending.current = null;
+      const acc = accounts.find(a => a.id === want.account) || {};
+      const m = all.find(x => x.thread_id === want.id || x.id === want.id) || {
+        id: want.id, thread_id: want.id, account_id: want.account, account_label: acc.label || '',
+        account_color: acc.color, subject: want.subject, sender: want.from, snippet: '',
+        labels: [], lane: 'all', unread: false, flagged: false };
+      if (want.reply) replyWhenOpen.current = m.id;
+      openThread(m);
+    };
+    useEffect(() => { tryPendingRef.current(); }, [data]);
     // "Reply" from 3D triage: open the conversation, then start the reply
     useEffect(() => {
       if (open && replyWhenOpen.current === open.card.id && open.res && open.res.status === 'ok') { replyWhenOpen.current = null; startReply('reply'); }

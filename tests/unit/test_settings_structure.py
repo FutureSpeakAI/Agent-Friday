@@ -55,6 +55,15 @@ def _settings_ws(src: str) -> str:
     return src[start:end]
 
 
+def _rail(src: str) -> str:
+    """The rail's own list, SETTINGS_TABS: SettingsWS draws it, and the
+    desktop's navigation manifest declares the same tabs from it."""
+    assert re.search(r"const TABS\s*=\s*SETTINGS_TABS\s*;", _settings_ws(src)), (
+        "SettingsWS no longer draws SETTINGS_TABS")
+    start = src.index("const SETTINGS_TABS")
+    return src[start:src.index("fridayDeclareNav('settings'", start)]
+
+
 def _tabs(body: str):
     # Both spellings: index.html's precompiled `id: 'x',\n label: 'Y'` and
     # app.html's `{id:'x',label:'Y'}`.
@@ -63,7 +72,7 @@ def _tabs(body: str):
 
 @UI_FILES
 def test_settings_rail_is_the_eight_task_tabs_plus_about(path):
-    tabs = _tabs(_settings_ws(path.read_text(encoding="utf-8")))
+    tabs = _tabs(_rail(path.read_text(encoding="utf-8")))
     assert tabs == EXPECTED_TABS, "%s rail is %s" % (path.name, tabs)
 
 
@@ -82,7 +91,7 @@ def test_held_features_do_not_surface(path):
     assert re.search(r"const SETTINGS_SHOW_HELD_FEATURES\s*=\s*false;", src), (
         "%s: the switch for Federation/Economy is missing or on" % path.name)
     for held in ("federation", "economy"):
-        assert not re.search(r"id:\s*'%s'" % held, body), (
+        assert not re.search(r"id:\s*'%s'" % held, body + _rail(src)), (
             "%s: %s is on hold and must not be a Settings tab" % (path.name, held))
         # The panel may stay in the source, but only behind the switch.
         for m in re.finditer(r"SettingsTab%s\b" % held.capitalize(), body):

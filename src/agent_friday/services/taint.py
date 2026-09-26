@@ -188,7 +188,7 @@ def note_carried(key: str, carrier: str, text: str):
 # a third party. A value found there is shown on a card for information only.
 OWN_DATA_TOOLS = {"search_contacts", "list_sending_accounts", "list_tasks",
                   "read_wiki", "search_wiki", "personality_show",
-                  "list_workspace_history", "workflow_status"}
+                  "list_workspace_history", "workflow_status", "check_situation"}
 
 # Fields in a structured result that name the other party of a message. A
 # reply to the sender of an email is the ordinary case; a new address found in
@@ -455,6 +455,9 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "book_slot": {"attendees": "recipient", "description": "message_body"},
     # Holds invite nobody; their slots are times Friday computed.
     "hold_slots": {},
+    # Opening an item on the owner's own screen, and reading Friday's state.
+    "navigate_to": {},
+    "check_situation": {},
     "release_holds": {},
     "find_free_slots": {},
     "text_by_phone": {"to": "recipient", "body": "message_body"},

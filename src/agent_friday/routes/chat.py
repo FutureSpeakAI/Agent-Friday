@@ -1340,6 +1340,13 @@ def chat():
                 pass
             if _extra_system:
                 sp = sp + "\n" + _extra_system
+            # A situation the model pinned with check_situation(pin=true):
+            # read now, from memory, on every turn of this conversation.
+            try:
+                from agent_friday.services.situation import pinned_block
+                sp = sp + pinned_block(_conversation_id)
+            except Exception:
+                pass
             if voice_mode:
                 sp = (
                     "=== VOICE MODE ACTIVE ===\n"
@@ -2369,6 +2376,13 @@ def chat_send():
                     prompt = prompt + "\n" + _mem_block
             except Exception as _mb_err:
                 print(f"  [MEMORY] /chat/send recall skipped: {_mb_err}")
+            # A situation the model pinned with check_situation(pin=true):
+            # read now, from memory, on every turn of this conversation.
+            try:
+                from agent_friday.services.situation import pinned_block
+                prompt = prompt + pinned_block(_conversation_id)
+            except Exception:
+                pass
             # Assembled here, not by `_get_friday_system_prompt`: the policy
             # and the override strip are applied here, last.
             return seal_system_prompt(prompt, "/api/chat/send prompt")

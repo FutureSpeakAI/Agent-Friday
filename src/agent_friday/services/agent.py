@@ -672,6 +672,18 @@ CLAUDE_TOOLS = [
                       "required": ["model"]}},
     {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: career, knowledge (the wiki's pages and its graph), studio, trust, system, news, draft, code, finance, health, contacts, content, messages, calendar, family, futurespeak.",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
+    {"name": "navigate_to", "description": "Open one specific thing on the user's Friday desktop, on screen: a workspace section or tab, an email thread in Messages, a file in Studio's file browser, a wiki page or graph node in Knowledge, a Settings tab or section, a calendar day or meeting, a contact card, or a content post. Pass the user's own words as query ('the Harbor Legal email', 'my budget spreadsheet', 'model settings') or an exact id you already have. It is the user's own screen, so no approval is needed. NAV_OK means the desktop confirmed it; NAV_PARTIAL, the window opened on something else; NAV_FAIL gives the reason and closest matches.",
+     "input_schema": {"type": "object", "properties": {
+         "kind": {"type": "string", "enum": ["workspace", "email", "file", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post"]},
+         "query": {"type": "string", "description": "The user's words for the thing."},
+         "id": {"type": "string", "description": "An exact id: Gmail thread id, file path, wiki path, graph node id, YYYY-MM-DD, meeting or post id."},
+         "workspace": {"type": "string", "description": "For kind=workspace: which workspace."},
+         "section": {"type": "string", "description": "A tab or section by name or id, e.g. 'feed', 'Models', 'Hard stop'."}},
+         "required": ["kind"]}},
+    {"name": "check_situation", "description": "Check what is happening right now, instantly, from Friday's live state: open and focused workspaces, CPU, RAM, GPU memory and disk, which models are loaded or serving, running chat turns, tasks, background and scheduled jobs, queue depth, stand-down, and today's spend. Use it for any question about current activity or load. pin=true keeps a live summary in view on every later turn of this conversation; pin=false stops that.",
+     "input_schema": {"type": "object", "properties": {
+         "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
+         "pin": {"type": "boolean"}}}},
     {"name": "revert_workspace", "description": "Undo a change Friday made to one of the user's workspaces. Use whenever the user says 'roll that back', 'undo that', 'put it back', or 'restore my workspace to how it was this morning'. Modes: 'undo' (the most recent change), 'as_of' (the state at a time — pass when), 'version' (a specific version_id from the history), 'reset' (back to baseline). Every undo is itself snapshotted, so an undo can be undone. Call list_workspace_history first if you need to see what changed.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id, e.g. 'studio', 'news', 'calendar'."},
@@ -2704,6 +2716,51 @@ def _tool_navigate(inp):
                 + ", ".join(sorted(set(_WORKSPACE_ALIASES.values()))))
     label = _WORKSPACE_LABELS.get(ws, ws.title())
     return f"NAV_OK:{ws} — Opening the {label} workspace for the user now."
+
+
+def _tool_navigate_to(inp):
+    """Tool handler: open one specific thing on the owner's desktop.
+
+    services/desktop_targets resolves the user's words to an id (an email
+    thread, a file, a wiki page, a Settings section...) and pushes it to the
+    desktop page, which says what it actually showed. Only that confirmation
+    earns NAV_OK; the reply-honesty check keys off the 'navigate' in the name.
+    """
+    inp = inp or {}
+    from agent_friday.services.desktop_targets import open_on_desktop
+    r = open_on_desktop(inp.get('kind') or '', query=inp.get('query') or '',
+                        id=inp.get('id') or '', workspace=inp.get('workspace') or '',
+                        section=inp.get('section') or '')
+    return r['text']
+
+
+def _current_conversation_id():
+    """The conversation of the chat turn running on this thread, if any."""
+    tid = getattr(core._TURN_LOCAL, 'turn_id', None)
+    if not tid:
+        return None
+    with core._TURNS_LOCK:
+        return (core._TURNS.get(tid) or {}).get('conversation_id')
+
+
+def _tool_check_situation(inp):
+    """Tool handler: the live situation, from state the server already holds
+    (services/situation), optionally pinned into this conversation's turns."""
+    inp = inp or {}
+    from agent_friday.services import situation
+    note = ''
+    if inp.get('pin') is not None:
+        conv = _current_conversation_id()
+        if conv:
+            situation.set_pinned(conv, bool(inp.get('pin')))
+            note = ('\n(Pinned: a live summary is now in view on every turn of this '
+                    'conversation.)' if inp.get('pin') else '\n(Unpinned.)')
+        else:
+            note = '\n(Nothing pinned: this call is not part of a chat conversation.)'
+    snap = situation.snapshot()
+    if (inp.get('detail') or 'brief') == 'full':
+        return json.dumps(situation.compact(snap), default=str) + note
+    return situation.brief(snap) + note
 
 
 def _tool_switch_model(inp):
@@ -5534,6 +5591,8 @@ CLAUDE_TOOL_HANDLERS = {
     "open_url": _tool_open_url,
     "open_path": _tool_open_path,
     "navigate": _tool_navigate,
+    "navigate_to": _tool_navigate_to,
+    "check_situation": _tool_check_situation,
     "switch_model": _tool_switch_model,
     "draft_email": _tool_draft_email,
     "text_by_phone": _tool_text_by_phone,
@@ -5930,6 +5989,10 @@ TOOL_RINGS: dict[str, int] = {
     "personality_show":     0,   # introspection — reads personality.json
     "personality_check_sycophancy": 0,  # introspection — reads conversation memory
     "navigate":             0,   # UI-only hint; client performs the move
+    # Moves the owner's own desktop to one item. Ring 1 rather than 0 so a
+    # phone-origin turn (ring 0 only) cannot drive the screen at home.
+    "navigate_to":          1,
+    "check_situation":      0,   # reads state the server already holds
     # Ring 1 — WRITE (local state mutation, always allowed)
     "write_file":           1,
     "write_clipboard":      1,

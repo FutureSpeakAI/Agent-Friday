@@ -112,7 +112,7 @@ ROUTE_MODULES = [
     'activity', 'arbiter',
     'ambient', 'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code',
     'compute', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations',
-    'control', 'core_routes',
+    'control', 'core_routes', 'desktop',
     'costs', 'creations', 'creative_pipeline', 'defederation', 'documents', 'dreaming',
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'goals',
     'gmail_send',
@@ -590,6 +590,14 @@ if not _TESTING:
         _mm.start_loop()
     except Exception as _mm_err:
         print(f"  Machine monitor: unavailable ({_mm_err})")
+
+    # The situation snapshot's CPU figure (services/situation): the change in
+    # cpu_times every few seconds, so a question about load never waits.
+    try:
+        from agent_friday.services import situation as _situation
+        _situation.start_cpu_sampler()
+    except Exception as _sit_err:
+        print(f"  Situation CPU sampler: unavailable ({_sit_err})")
 
 
 def _resolve_bind_port():

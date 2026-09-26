@@ -338,11 +338,15 @@ function useNavTarget(workspace,handler){
   },[workspace]);
 }
 // WHAT A WORKSPACE HANDS THE TAB IT MOVES INTO: the keys useNavTarget reads
-// back, answered synchronously inside the click that opens the tab.
+// back, answered synchronously inside the click that opens the tab. The same
+// answer is how the desktop confirms a navigate_to command landed, so which
+// workspaces are mounted and answering is counted in FRIDAY_TAB_REPORTERS.
+const FRIDAY_TAB_REPORTERS={};
 function useTabState(workspace,get){
   const ref=useRef(get);ref.current=get;
   useEffect(()=>{const on=e=>{const d=e&&e.detail;if(!d||d.workspace!==workspace||!d.params)return;try{Object.assign(d.params,ref.current()||{})}catch(_){}};
-    window.addEventListener('friday:tab-state',on);return()=>window.removeEventListener('friday:tab-state',on)},[workspace]);
+    window.addEventListener('friday:tab-state',on);FRIDAY_TAB_REPORTERS[workspace]=(FRIDAY_TAB_REPORTERS[workspace]||0)+1;
+    return()=>{window.removeEventListener('friday:tab-state',on);FRIDAY_TAB_REPORTERS[workspace]=Math.max(0,(FRIDAY_TAB_REPORTERS[workspace]||1)-1)}},[workspace]);
 }
 window.fridayUseTabState=useTabState;
 // A workspace's main scrolling pane: the frame itself, or the pane inside it for
@@ -358,6 +362,48 @@ function fridayCollectTabState(id,root){
   try{const sc=fridayMainScroller(root);const range=sc?sc.scrollHeight-sc.clientHeight:0;if(params.scroll==null&&sc&&sc.scrollTop>4)params.scroll=(sc.scrollTop/range).toFixed(3)}catch(e){}
   Object.keys(params).forEach(k=>{const v=params[k];if(v==null||v===''||v===false)delete params[k];else params[k]=String(v)});
   return params;
+}
+/* WHAT EACH WORKSPACE CAN BE OPENED TO. Every workspace with a deep-link
+   handler declares, beside that handler, the keys it reads and the sections it
+   can show, taken from its own tab or view list. The desktop reports the whole
+   set to the server, so Friday's navigate_to resolves "model settings" or "the
+   feed" against what the workspaces actually accept. A script loaded before
+   this one queues its declaration on window.__fridayNavDecls. */
+const FRIDAY_NAV = {};
+function fridayDeclareNav(workspace, spec) {
+  FRIDAY_NAV[workspace] = Object.assign({}, FRIDAY_NAV[workspace] || {}, spec);
+}
+(Array.isArray(window.__fridayNavDecls) ? window.__fridayNavDecls : []).forEach(d => fridayDeclareNav(d[0], d[1]));
+window.__fridayNavDecls = {
+  push: d => fridayDeclareNav(d[0], d[1])
+};
+function fridayNavManifest() {
+  const workspaces = {};
+  WS.forEach(w => {
+    workspaces[w.id] = {
+      label: w.label
+    };
+  });
+  Object.keys(FRIDAY_NAV).forEach(id => {
+    const s = FRIDAY_NAV[id];
+    workspaces[id] = Object.assign(workspaces[id] || {
+      label: id
+    }, {
+      key: s.key || null,
+      keys: s.keys || [],
+      sections: (s.sections || []).map(x => ({
+        id: x.id,
+        label: x.label,
+        key: x.key || undefined,
+        aliases: x.aliases || undefined,
+        parts: x.parts || undefined,
+        with: x.with || undefined
+      }))
+    });
+  });
+  return {
+    workspaces
+  };
 }
 // ═══ ACTION BUS ═══
 // The chat backend can return structured actions alongside its text reply:
@@ -2733,15 +2779,9 @@ function KnowledgeGraphWS(props){
         other: other.filter((e, i, a) => a.findIndex(x => x.id === e.id) === i).sort(byTitle)
       };
     };
-    // Fly to a page's node and light it with its links. False when the page
-    // has no node (yet): the caller retries after the next load.
-    S.focusPath = (path, o) => {
+    // Light a node and the nodes joined to it, and fly the camera there.
+    const focusEnt = (ent, set, o) => {
       const opt = o || {};
-      const ent = entForPath(path);
-      if (!ent) return false;
-      const L = S.linksForPath(path);
-      const set = new Set([ent.id]);
-      L.from.concat(L.to, L.other).forEach(e => set.add(e.id));
       S.focusSet = set;
       S.setEdgeFocus(ent.__idx);
       S.refreshHighlight();
@@ -2765,6 +2805,27 @@ function KnowledgeGraphWS(props){
         idleSpin = false;
       }
       return true;
+    };
+    // Fly to a page's node and light it with its links. False when the page
+    // has no node (yet): the caller retries after the next load.
+    S.focusPath = (path, o) => {
+      const ent = entForPath(path);
+      if (!ent) return false;
+      const L = S.linksForPath(path);
+      const set = new Set([ent.id]);
+      L.from.concat(L.to, L.other).forEach(e => set.add(e.id));
+      return focusEnt(ent, set, o);
+    };
+    // Any node by id: a person, project or idea the index found, which has
+    // no page of its own, as well as a page. Lit with everything joined to it.
+    S.focusNode = (id, o) => {
+      const ent = S.entById && S.entById[id];
+      if (!ent) return false;
+      const set = new Set([ent.id]);
+      (S.relationships || []).forEach(r => {
+        if (r.source === ent.id && S.entById[r.target]) set.add(r.target);else if (r.target === ent.id && S.entById[r.source]) set.add(r.source);
+      });
+      return focusEnt(ent, set, o);
     };
     // A wiki section is a tower in Sections and a ring in Rings: arrange
     // that way (Rings if already showing, else Sections), light the section's
@@ -3315,6 +3376,11 @@ const KW_VIEWS = [{
   label: 'Pages',
   tip: 'The pages only'
 }];
+fridayDeclareNav('knowledge', {
+  key: 'view',
+  keys: ['view', 'path', 'page', 'query', 'section', 'node'],
+  sections: KW_VIEWS
+});
 // Same key the server gives a page node (wiki_graph._page_key): the relative
 // path without .md, each segment trimmed, lower-cased, spaces to dashes.
 function kwPageKey(path) {
@@ -3395,6 +3461,7 @@ function KnowledgeWS() {
   const [note, setNote] = useState('');
   const pendingPath = useRef(null); // a page to fly to once the graph has it
   const pendingName = useRef(null); // a cited page name to resolve once loaded
+  const pendingNode = useRef(null); // a graph node to focus once loaded
   const viewRef = useRef(view);
   viewRef.current = view;
   const pageRef = useRef(page);
@@ -3479,8 +3546,24 @@ function KnowledgeWS() {
     const S = gref.current;
     if (S && S.clearFocus) S.clearFocus();
   }, []);
+  // A graph node by id, such as a person or project with no page of its own:
+  // lit and flown to in the galaxy, once the graph has it.
+  const focusNode = useCallback(id => {
+    const S = gref.current;
+    if (!S || !S.focusNode || !S.entities || !S.entities.length) {
+      pendingNode.current = id;
+      return false;
+    }
+    if (viewRef.current === 'pages') setView('split');
+    if (S.focusNode(id, {
+      fly: true,
+      select: true
+    })) return true;
+    flash('That node is not in the graph right now.');
+    return false;
+  }, [setView, flash]);
   // What its own tab (↗) opens on: the keys useNavTarget below reads.
-  useTabState('knowledge', () => ({ view, query: q, path: page || '' }));
+  useTabState('knowledge', () => ({ view, query: q, path: page || '', node: sel && sel.type !== 'page' && sel.type !== 'soul' ? sel.id : '' }));
   useNavTarget('knowledge', t => {
     if (t.view && KW_VIEWS.some(x => x.id === t.view)) setView(t.view);
     if (t.query) setQ(String(t.query));else if (t.path || t.page) setQ('');
@@ -3488,6 +3571,7 @@ function KnowledgeWS() {
       view: t.view
     });else if (t.page) resolveName(String(t.page));
     if (t.section) focusSection(String(t.section));
+    if (t.node) focusNode(String(t.node));
   });
 
   // ── the graph's side of the conversation ──
@@ -3510,6 +3594,10 @@ function KnowledgeWS() {
       pendingName.current = null;
       resolveName(n);
     }
+    if (pendingNode.current && S.focusNode && S.focusNode(pendingNode.current, {
+      fly: true,
+      select: true
+    })) pendingNode.current = null;
   }, [resolveName]);
   const onSelect = useCallback(ent => {
     setSel(ent || null);
@@ -5271,6 +5359,9 @@ function StudioPromptBar({onCreated}){
     </div>}
   </div>);
 }
+// Studio's views, as its view buttons name them.
+const STUDIO_VIEWS=[{id:'generate',label:'Generate'},{id:'music',label:'Music'},{id:'timeline',label:'Timeline'},{id:'production',label:'Production'},{id:'gallery',label:'Gallery'},{id:'projects',label:'Projects'},{id:'files',label:'Files 3D',aliases:['files','file browser','folders']}];
+fridayDeclareNav('studio',{key:'view',keys:['view','root','path','file','creation','creation_title','creation_date'],sections:STUDIO_VIEWS});
 function StudioWS(){
   const[creations,setCreations]=useState([]);const[loading,setLoading]=useState(true);const[view,setView]=useState('gallery');
   const[selected,setSelected]=useState(null);const[preview,setPreview]=useState('');const[filter,setFilter]=useState('all');
@@ -5290,10 +5381,14 @@ function StudioWS(){
   const openCreation=async f=>{setSelected(f);const ext=(f.name||'').split('.').pop().toLowerCase();if(ext==='md'){try{const r=await fetch('/api/creations/'+f.name);setPreview(await r.text())}catch(e){setPreview('')}}else{setPreview('')}};
   // Deep-link: a notification's "Open Document" button navigates here with
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
+  // What it is showing: the view, and in Files 3D the folder and chosen file.
+  useTabState('studio',()=>{const f=view==='files'&&window.__files3dShowing||{};return{view,root:f.root,path:f.path,file:f.file}});
   useNavTarget('studio',t=>{
     if(!t)return;
-    // {view:'files', root, path} opens that folder in the 3D file browser.
-    if(t.view==='files'){if(t.root)window.__files3dOpen={root:t.root,path:t.path||''};setView('files');window.dispatchEvent(new Event('friday-files3d-open'));return;}
+    // {view:'files', root, path, file} opens that folder in the 3D file
+    // browser, with the file chosen when one is named.
+    if(t.view==='files'){if(t.root)window.__files3dOpen={root:t.root,path:t.path||'',file:t.file||''};setView('files');window.dispatchEvent(new Event('friday-files3d-open'));return;}
+    if(t.view&&STUDIO_VIEWS.some(v=>v.id===t.view)&&!t.creation&&!t.creation_title&&!t.creation_date){setView(t.view);return;}
     if(t.creation){loadCreations();openCreation({name:t.creation});return;}
     // Older daily-creation notifications carry only a title/date — resolve that
     // to the materialized file in the gallery, then open it.
@@ -6439,6 +6534,7 @@ function TaskRecordsCard(){
     {obs&&obs.revoked&&<div style={{marginTop:6,fontSize:10,color:'#888'}}>Observer credential revoked.</div>}
   </div>);
 }
+fridayDeclareNav('system',{key:'tab',keys:['tab'],sections:[{id:'self-improvement',label:'Self-improvement'},{id:'approvals',label:'Approvals'}]});
 function SystemWS(){
   const[sys,setSys]=useState(null);const[loading,setLoading]=useState(true);
   // Context log state
@@ -6950,8 +7046,10 @@ function DevProcs({onLog}){
     </div>}
   </div>);
 }
+const CODE_TABS=[{id:'repos',ico:'📁',label:'Repos'},{id:'vibe',ico:'✨',label:'Vibe'},{id:'git',ico:'🔀',label:'Git'},{id:'files',ico:'🗂',label:'Files'},{id:'procs',ico:'⚙️',label:'Procs'},{id:'logs',ico:'📡',label:'Logs'}];
+fridayDeclareNav('code',{key:'tab',keys:['tab'],sections:CODE_TABS});
 function CodeWS(){
-  const TABS=[{id:'repos',ico:'📁',label:'Repos'},{id:'vibe',ico:'✨',label:'Vibe'},{id:'git',ico:'🔀',label:'Git'},{id:'files',ico:'🗂',label:'Files'},{id:'procs',ico:'⚙️',label:'Procs'},{id:'logs',ico:'📡',label:'Logs'}];
+  const TABS=CODE_TABS;
   const[tab,setTab]=useState('repos');
   const[repos,setRepos]=useState([]);const[repoLoading,setRepoLoading]=useState(true);
   const[logs,setLogs]=useState([]);const[unseen,setUnseen]=useState(0);const[srcFilter,setSrcFilter]=useState('');
@@ -7160,6 +7258,8 @@ function archiveToCard(a,boostedSet){
 // mm:ss for the audio-player timecode (NaN/∞-safe).
 function _fmtDur(sec){if(!sec||!isFinite(sec)||sec<0)return'0:00';const s=Math.floor(sec);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 
+const NEWS_TABS=[{id:'frontpage',label:'Front Page'},{id:'feed',label:'Feed'},{id:'readlater',label:'Read Later'},{id:'notes',label:'My Notes'},{id:'briefings',label:'Briefings'},{id:'weekly',label:'Weekly'},{id:'editorial',label:'Editorial'},{id:'trust',label:'Trust'}];
+fridayDeclareNav('news',{key:'tab',keys:['tab'],sections:NEWS_TABS});
 function NewsWS(){
   const[tab,setTab]=useState('frontpage');
   const[feed,setFeed]=useState([]);const[feedLoading,setFeedLoading]=useState(true);const[feedAt,setFeedAt]=useState('');
@@ -8141,6 +8241,7 @@ const CAL_START_HOUR=6, CAL_END_HOUR=24, CAL_HOUR_PX=52;
 function calY(iso){const d=new Date(iso);if(isNaN(d))return 0;const h=d.getHours()+d.getMinutes()/60;return Math.max(0,(h-CAL_START_HOUR)*CAL_HOUR_PX);}
 function calFmtTime(iso){const d=new Date(iso);if(isNaN(d))return'';return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
 
+fridayDeclareNav('calendar',{keys:['date','view','meeting_id'],sections:[{id:'meetings',label:'Meetings',key:'view'}]});
 function CalendarWS(){
   const[today,setToday]=useState(null);const[loading,setLoading]=useState(true);
   const[week,setWeek]=useState([]);const[sel,setSel]=useState(null);// selected date iso (null=today)
@@ -8153,7 +8254,7 @@ function CalendarWS(){
   const tlRef=useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   useTabState('calendar',()=>({date:sel||''})); // what its own tab opens on
-  useNavTarget('calendar',t=>{if(t.date)setSel(t.date);});
+  useNavTarget('calendar',t=>{if(!t.date)return;setSel(t.date);loadDay(t.date);});
 
   const loadToday=()=>fetch('/api/calendar/today').then(r=>r.json()).then(d=>{setToday(d);setLoading(false)}).catch(()=>setLoading(false));
   const loadWeek=()=>fetch('/api/calendar/week').then(r=>r.json()).then(d=>setWeek(d.days||[])).catch(()=>{});
@@ -8641,6 +8742,7 @@ function ModelSearchPicker({catalog,value,onPick,autoFocus,placeholder}){
     </div>
   </div>;
 }
+fridayDeclareNav('draft',{key:'prefillMode',keys:['seedId','prefillPrompt','prefillMode','prefillContext','seedNote'],sections:DRAFT_MODES.map(m=>({id:m.id,label:m.label}))});
 function DraftWS(){
   const[mode,setMode]=useState('freeform');
   const[prompt,setPrompt]=useState('');
@@ -8982,6 +9084,7 @@ function PersonTimelineCard({name}){
     {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:4}}>{msg}</div>}
   </div>);
 }
+fridayDeclareNav('contacts',{keys:['name']});
 function ContactsWS(){
   const[contacts,setContacts]=useState([]);const[loading,setLoading]=useState(true);const[q,setQ]=useState('');
   const[selected,setSelected]=useState(null);const[detail,setDetail]=useState(null);const[detailLoad,setDetailLoad]=useState(false);
@@ -9876,6 +9979,8 @@ function QuickPostHost(){
 }
 
 // ═══ CONTENT WORKSPACE v2 — the tab shell (spec §10.1) ═══
+const CONTENT_TABS=[['compose','✍️ Compose'],['calendar','📅 Calendar'],['queue','📋 Queue'],['analytics','📈 Analytics'],['accounts','🔗 Accounts'],['ideas','💡 Ideas']];
+fridayDeclareNav('content',{key:'tab',keys:['tab','post'],sections:CONTENT_TABS.map(t=>({id:t[0],label:t[1].replace(/^\S+\s+/,'')}))});
 function ContentWS(){
   const[tab,setTab]=useState('compose');
   const[plats,setPlats]=useState([]);const[qsum,setQsum]=useState(null);
@@ -9895,7 +10000,7 @@ function ContentWS(){
       setPrefillPost(id);setTab('compose');
     }catch(_){/* backend absent — stay on Ideas */}
   };
-  const TABS=[['compose','✍️ Compose'],['calendar','📅 Calendar'],['queue','📋 Queue'],['analytics','📈 Analytics'],['accounts','🔗 Accounts'],['ideas','💡 Ideas']];
+  const TABS=CONTENT_TABS;
   const connN=plats.filter(p=>p.status&&p.status.connected).length;
   const heldN=((qsum&&qsum.held)||[]).length;
   const upN=((qsum&&(qsum.upcoming||qsum.queue))||[]).length;
@@ -13297,6 +13402,7 @@ function StSection({
   children
 }) {
   return /*#__PURE__*/React.createElement("section", {
+    "data-st-section": typeof title === 'string' ? title : undefined,
     style: {
       marginBottom: 30
     }
@@ -16922,6 +17028,74 @@ function settingsTabId(t) {
   if (SETTINGS_SHOW_HELD_FEATURES && (t === 'federation' || t === 'economy')) return t;
   return SETTINGS_TAB_ALIASES[t] || t;
 }
+// Two edits, always. An entry here with no branch in the render chain below
+// gives a rail item that selects a blank pane; a branch with no entry here
+// gives a panel nothing can reach. `sub` is the one line under the heading.
+const SETTINGS_TABS = [{
+  id: 'general',
+  label: 'General',
+  sub: 'Her name, her personality, which workspaces the dock offers, and your profile from the setup chat.'
+}, {
+  id: 'intelligence',
+  label: 'Models',
+  sub: 'Which model does each job, and whether it runs on this machine or in the cloud.'
+}, {
+  // Spend keys and the accounts Friday may use sit together: both are
+  // things a person connects once and then forgets about.
+  id: 'accounts',
+  label: 'Accounts & Keys',
+  sub: 'The setup checklist, model provider keys, Google accounts and tool servers.'
+}, {
+  id: 'privacy',
+  label: 'Privacy & Approvals',
+  sub: 'What may leave this machine, what needs your sign-off, and your data.'
+}, {
+  id: 'appearance',
+  label: 'Appearance & 3D',
+  sub: 'The dock, its depth, and how much the 3D views move and glow.'
+}, {
+  id: 'voice',
+  label: 'Voice & Tracking',
+  sub: 'How Friday listens and speaks, and how the camera follows your head and hand.'
+}, {
+  // This entry must never be dropped: without it the Spending panel's
+  // fetches run into nothing and budget alerts cannot be armed.
+  id: 'costs',
+  label: 'Spending',
+  sub: 'What cloud models have cost, and the limits you set.'
+}, {
+  id: 'advanced',
+  label: 'Advanced',
+  sub: 'Rarely needed controls and diagnostics. Nothing here is required for everyday use.'
+}].concat(SETTINGS_SHOW_HELD_FEATURES ? SETTINGS_HELD_TABS : []).concat([{
+  id: 'about',
+  label: 'About',
+  sub: 'Version, updates and credits.'
+}]);
+fridayDeclareNav('settings', {
+  key: 'tab',
+  keys: ['tab', 'section'],
+  sections: SETTINGS_TABS.map(t => ({
+    id: t.id,
+    label: t.label,
+    aliases: Object.keys(SETTINGS_TAB_ALIASES).filter(a => SETTINGS_TAB_ALIASES[a] === t.id)
+  }))
+});
+// A titled section on the Settings tab now showing, found by its title and
+// scrolled into view. The title it landed on, or '' when there is none.
+function fridayScrollToSettingsSection(want) {
+  const w = String(want || '').trim().toLowerCase();
+  if (!w) return '';
+  const els = Array.from(document.querySelectorAll('.st-root section[data-st-section]'));
+  const title = e => e.getAttribute('data-st-section').toLowerCase();
+  const el = els.find(e => title(e) === w) || els.find(e => title(e).indexOf(w) >= 0);
+  if (!el) return '';
+  el.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start'
+  });
+  return el.getAttribute('data-st-section');
+}
 function SettingsWS() {
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
   // Settings straight onto Accounts & Keys. The global covers a window that
@@ -16942,9 +17116,27 @@ function SettingsWS() {
   }, []);
   // A notification's target ({workspace:'settings', tab}) lands on that tab;
   // 'phone' opens Accounts & Keys scrolled to the Phone section.
+  const [shownSection, setShownSection] = useState('');
+  useTabState('settings', () => ({
+    tab,
+    section: shownSection
+  }));
   useNavTarget('settings', t => {
-    if (!t || !t.tab) return;
-    setTab(settingsTabId(t.tab));
+    if (!t || !t.tab && !t.section) return;
+    if (t.tab) setTab(settingsTabId(t.tab));
+    setShownSection('');
+    // A section: once the tab has drawn it (retried while its panel loads).
+    if (t.section) {
+      let found = false;
+      [250, 700, 1500].forEach(ms => setTimeout(() => {
+        if (found) return;
+        const hit = fridayScrollToSettingsSection(t.section);
+        if (hit) {
+          found = true;
+          setShownSection(hit);
+        }
+      }, ms));
+    }
     if (t.tab === 'phone') setTimeout(() => {
       const el = document.getElementById('settings-phone');
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -16955,50 +17147,7 @@ function SettingsWS() {
     save,
     msg
   } = useSettings();
-  // Two edits, always. An entry here with no branch in the render chain below
-  // gives a rail item that selects a blank pane; a branch with no entry here
-  // gives a panel nothing can reach. `sub` is the one line under the heading.
-  const TABS = [{
-    id: 'general',
-    label: 'General',
-    sub: 'Her name, her personality, which workspaces the dock offers, and your profile from the setup chat.'
-  }, {
-    id: 'intelligence',
-    label: 'Models',
-    sub: 'Which model does each job, and whether it runs on this machine or in the cloud.'
-  }, {
-    // Spend keys and the accounts Friday may use sit together: both are
-    // things a person connects once and then forgets about.
-    id: 'accounts',
-    label: 'Accounts & Keys',
-    sub: 'The setup checklist, model provider keys, Google accounts and tool servers.'
-  }, {
-    id: 'privacy',
-    label: 'Privacy & Approvals',
-    sub: 'What may leave this machine, what needs your sign-off, and your data.'
-  }, {
-    id: 'appearance',
-    label: 'Appearance & 3D',
-    sub: 'The dock, its depth, and how much the 3D views move and glow.'
-  }, {
-    id: 'voice',
-    label: 'Voice & Tracking',
-    sub: 'How Friday listens and speaks, and how the camera follows your head and hand.'
-  }, {
-    // This entry must never be dropped: without it the Spending panel's
-    // fetches run into nothing and budget alerts cannot be armed.
-    id: 'costs',
-    label: 'Spending',
-    sub: 'What cloud models have cost, and the limits you set.'
-  }, {
-    id: 'advanced',
-    label: 'Advanced',
-    sub: 'Rarely needed controls and diagnostics. Nothing here is required for everyday use.'
-  }].concat(SETTINGS_SHOW_HELD_FEATURES ? SETTINGS_HELD_TABS : []).concat([{
-    id: 'about',
-    label: 'About',
-    sub: 'Version, updates and credits.'
-  }]);
+  const TABS = SETTINGS_TABS;
   const cur = TABS.filter(t => t.id === tab)[0] || TABS[0];
   const ok = msg && msg.indexOf('Error') !== 0;
   return /*#__PURE__*/React.createElement("div", {
@@ -19257,6 +19406,201 @@ function App(){
   // Global workspace opener — lets any child component (e.g. NewsWS "Share to
   // Draft") open + deep-link a workspace without prop-drilling openWs.
   useEffect(()=>{window.fridayOpenWorkspace=(t)=>{if(!t||!t.workspace)return;t=fridayResolveTarget(t);openWs(t.workspace);fridayNavigate(t)};return()=>{if(window.fridayOpenWorkspace)delete window.fridayOpenWorkspace}},[]);
+  /* THE PAGE'S HALF OF navigate_to AND check_situation (routes/desktop.py).
+     The server pushes a command down one EventSource; the desktop runs it
+     through the action bus, then reads back what the workspace itself says it
+     shows (its tab state) and answers with that, so Friday reports what the
+     screen confirmed rather than what it sent. Every page -- the desktop, a
+     workspace tab, the undocked chat -- reports which windows are open, which
+     is in front and what each shows; the situation snapshot reads that report
+     and never has to ask a page anything. Only the desktop holds the stream:
+     a tab or a chat window cannot open a workspace window, and every held
+     stream is one of the six connections a browser allows to one address. */
+  const deskRef = useRef({});
+  deskRef.current = { openWins, focusWin, chatOpen };
+  const deskSoonRef = useRef(null);
+  useEffect(() => {
+    if (deskSoonRef.current) deskSoonRef.current();
+  }, [openWins, focusWin, chatOpen]);
+  useEffect(() => {
+    const tabWs = STANDALONE_WS && STANDALONE_WS !== 'settings' ? STANDALONE_WS : null;
+    const kind = tabWs ? 'tab' : window.__FRIDAY_CHROME__ === 'chat' ? 'chat' : 'desktop';
+    const client = 'p' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    let es = null, stopped = false, timer = null, last = '', withManifest = true;
+    const label = id => {
+      const w = WS.find(x => x.id === id);
+      return w ? w.label : String(id || '');
+    };
+    // What a workspace says it shows, keys it reports but leaves empty kept.
+    const shows = id => {
+      const params = {};
+      try {
+        window.dispatchEvent(new CustomEvent('friday:tab-state', { detail: { workspace: id, params } }));
+      } catch (e) {}
+      delete params.scroll;
+      return params;
+    };
+    const brief = p => Object.keys(p).filter(k => p[k] != null && p[k] !== '' && p[k] !== false)
+      .map(k => k + '=' + String(p[k]).slice(0, 80)).join(', ').slice(0, 200);
+    const win = id => {
+      const key = (FRIDAY_NAV[id] || {}).key;
+      const p = key ? shows(id) : {};
+      return { workspace: id, label: label(id), section: key && p[key] ? String(p[key]) : undefined };
+    };
+    const describe = () => {
+      const d = deskRef.current;
+      const open = tabWs ? [tabWs] : kind === 'chat' ? [] : Array.from(d.openWins || []);
+      const f = tabWs || d.focusWin;
+      let focused = null;
+      if (f && String(f).indexOf('chat:') === 0) focused = { workspace: 'chat', label: 'Chat', detail: 'conversation ' + String(f).slice(5) };
+      else if (f && open.indexOf(f) >= 0) focused = Object.assign(win(f), { detail: brief(shows(f)) || undefined });
+      return {
+        kind,
+        visible: document.visibilityState === 'visible',
+        focused: document.hasFocus(),
+        open: open.map(win),
+        focused_window: focused,
+        chat: { open: kind === 'chat' || !!d.chatOpen }
+      };
+    };
+    const post = (url, body, extra) => apiFetch(url, Object.assign({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }, extra || {}));
+    const report = force => {
+      if (stopped) return;
+      let st;
+      try { st = describe(); } catch (e) { return; }
+      const key = JSON.stringify(st);
+      if (!force && !withManifest && key === last) return;
+      last = key;
+      if (withManifest) {
+        try { st.manifest = fridayNavManifest(); } catch (e) {}
+      }
+      // The server says when it holds no manifest from this page (a restart).
+      post('/api/desktop/state', { client, state: st }).then(r => r.json()).then(d => {
+        withManifest = !!(d && d.want_manifest);
+      }).catch(() => {});
+    };
+    const soon = ms => {
+      clearTimeout(timer);
+      timer = setTimeout(() => report(false), ms == null ? 300 : ms);
+    };
+    deskSoonRef.current = soon;
+    const same = (key, a, b) => {
+      const n = v => {
+        let s = String(v == null ? '' : v).trim().toLowerCase().replace(/\\/g, '/');
+        if (key === 'file') s = s.split('/').pop();
+        if (key === 'path') s = s.replace(/^\/+/, '').replace(/\.md$/, '');
+        return s;
+      };
+      return n(a) === n(b);
+    };
+    const run = cmd => {
+      const acts = Array.isArray(cmd.actions) ? cmd.actions : [];
+      const v = cmd.verify || {};
+      const nav = acts.find(a => a && a.type === 'navigate' && a.workspace);
+      const ws = nav ? fridayWorkspaceId(nav.workspace) : '';
+      const t0 = Date.now();
+      let answered = false;
+      const answer = result => {
+        if (answered) return;
+        answered = true;
+        post('/api/desktop/ack', {
+          id: cmd.id,
+          result: Object.assign({ label: label(ws), visible: document.visibilityState === 'visible', ms: Date.now() - t0 }, result)
+        }).catch(() => {});
+        soon(400);
+      };
+      try {
+        fridayRunActions(acts);
+      } catch (e) {
+        answer({ opened: false, matched: false, note: 'the page could not run it: ' + e });
+        return;
+      }
+      if (!ws) {
+        answer({ opened: true, matched: null });
+        return;
+      }
+      // Wait for the window, then for the workspace to say it shows the thing.
+      const check = () => {
+        const d = deskRef.current;
+        const late = Date.now() - t0;
+        const front = d.focusWin === ws;
+        if (d.openWins && d.openWins.has(ws)) {
+          if (!v.key) return answer({ opened: true, front, matched: true });
+          if (!(FRIDAY_TAB_REPORTERS[ws] > 0)) {
+            if (late > 600) return answer({ opened: true, front, matched: null, note: label(ws) + ' does not report what it shows' });
+          } else {
+            const p = shows(ws);
+            if (!(v.key in p)) return answer({ opened: true, front, matched: null, note: label(ws) + ' does not report its ' + v.key });
+            if (same(v.key, p[v.key], v.value)) return answer({ opened: true, front, matched: true, shown: brief(p) });
+            if (late > 2200) return answer({ opened: true, front, matched: false, shown: brief(p), note: 'it shows ' + (brief(p) || 'its default view') });
+          }
+        } else if (late > 2200) {
+          return answer({ opened: false, matched: false, note: label(ws) + ' did not open' });
+        }
+        setTimeout(check, 120);
+      };
+      setTimeout(check, 60);
+    };
+    const connect = () => {
+      if (stopped || kind !== 'desktop') return;
+      try {
+        es = new EventSource('/api/desktop/events?client=' + client + '&kind=' + kind);
+      } catch (e) {
+        es = null;
+        return;
+      }
+      es.onmessage = e => {
+        let m = null;
+        try { m = JSON.parse(e.data); } catch (_) { return; }
+        if (!m) return;
+        if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);
+      };
+    };
+    connect();
+    if (kind !== 'desktop') report(true);
+    const onNav = () => soon(700);
+    const onSeen = () => soon(150);
+    const onTouch = () => soon(1200);
+    const onBack = e => {
+      if (!e.persisted) return;
+      // Back from the page cache: the server forgot this page when it left.
+      withManifest = true;
+      try { if (es) es.close(); } catch (_) {}
+      connect();
+      report(true);
+    };
+    const onGone = () => {
+      try {
+        post('/api/desktop/state', { client, state: { kind, closed: true } }, { keepalive: true }).catch(() => {});
+      } catch (e) {}
+    };
+    window.addEventListener('friday-nav', onNav);
+    document.addEventListener('visibilitychange', onSeen);
+    window.addEventListener('focus', onSeen);
+    window.addEventListener('blur', onSeen);
+    window.addEventListener('pointerup', onTouch, true);
+    window.addEventListener('pageshow', onBack);
+    window.addEventListener('pagehide', onGone);
+    const beat = setInterval(() => report(true), 30000);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      clearInterval(beat);
+      deskSoonRef.current = null;
+      try { if (es) es.close(); } catch (e) {}
+      window.removeEventListener('friday-nav', onNav);
+      document.removeEventListener('visibilitychange', onSeen);
+      window.removeEventListener('focus', onSeen);
+      window.removeEventListener('blur', onSeen);
+      window.removeEventListener('pointerup', onTouch, true);
+      window.removeEventListener('pageshow', onBack);
+      window.removeEventListener('pagehide', onGone);
+    };
+  }, []);
   // The one writer for dock_custom. Settings → Appearance & 3D lives inside SettingsWS,
   // which reads through useSettings() — a parallel store over the same POST
   // endpoint that does not feed agentSettings. Routing the write back here means

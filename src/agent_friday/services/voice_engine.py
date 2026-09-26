@@ -425,6 +425,11 @@ _VOICE_SHARED_TOOLS = (
     "open_path",
     "search_email",
     "screenshot",
+    # The desktop and the live situation, the same in voice as in text. Both
+    # answer inside the bridge's hard limit: navigate_to resolves within its
+    # own budgets and check_situation reads memory.
+    "navigate_to",
+    "check_situation",
 )
 
 

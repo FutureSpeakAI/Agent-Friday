@@ -2267,13 +2267,27 @@
       }).catch(() => setErr('Could not reach the file service.'));
     }, []);
 
-    // Deep link: StudioWS stores {root, path} and fires friday-files3d-open.
+    // Deep link: StudioWS stores {root, path, file} and fires
+    // friday-files3d-open. A file is chosen once the scan of its folder lands.
+    const pendingFileRef = useRef(null);
     const openPending = () => {
       const o = window.__files3dOpen;
       if (!o) return;
       window.__files3dOpen = null;
+      pendingFileRef.current = o.file ? (o.path ? o.path + '/' + o.file : o.file) : null;
+      if (o.root === rootRef.current && (o.path || '') === pathRef.current && itemsRef.current.length) {
+        choosePending();
+        return;
+      }
       setRoot(o.root); setPath(o.path || '');
     };
+    function choosePending() {
+      const want = pendingFileRef.current;
+      if (!want) return;
+      pendingFileRef.current = null;
+      const i = itemsRef.current.findIndex(x => x.rel === want);
+      if (i >= 0) choose(i, true);
+    }
     useEffect(() => {
       window.addEventListener('friday-files3d-open', openPending);
       return () => window.removeEventListener('friday-files3d-open', openPending);
@@ -2291,6 +2305,7 @@
         itemsRef.current = list;
         const eng = engRef.current;
         if (eng) { eng.setData(list, r, j.path); eng.select(-1); reapplyHeld(); }
+        choosePending();
       }).catch(() => { setLoading(false); setErr('Scan failed.'); });
     }, []);
     useEffect(() => { if (root) scan(root, path); }, [root, path, scan]);
@@ -2350,6 +2365,8 @@
       }
     }
     const rootRef = useRef(''); rootRef.current = root;
+    const selItem = sel >= 0 ? items[sel] : null;
+    window.__files3dShowing = { root, path, file: selItem && !selItem.dir ? selItem.name : '' };
     function pick(i, activate) {
       if (i < 0) { setSel(-1); engRef.current && engRef.current.select(-1); setPreview(null); return; }
       const it = itemsRef.current[i];

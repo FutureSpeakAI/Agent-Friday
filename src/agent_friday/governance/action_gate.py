@@ -159,6 +159,10 @@ INTERNAL_TOOLS = frozenset({
     "search_drive", "read_doc", "list_tasks", "complete_task", "create_task",
     "update_task", "search_contacts", "read_wiki", "search_wiki", "search_news",
     "open_url", "open_path", "navigate", "switch_model", "list_sending_accounts",
+    # The owner's own desktop: navigate_to opens an item in Friday's UI and
+    # check_situation reads state the server already holds. Neither reaches
+    # anyone else.
+    "navigate_to", "check_situation",
     "get_career_pipeline", "get_briefing", "spawn_task", "propose_wiki_update",
     # Background research reads the web and runs local models; its report
     # lands in the conversation. Nothing it does reaches another person.
