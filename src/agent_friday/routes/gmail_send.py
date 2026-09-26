@@ -26,6 +26,7 @@ from agent_friday.services import gmail_send as _gs
 # The same reason: its approval hook carries out mail changes Friday proposed
 # and the owner approved.
 from agent_friday.services import mail_proposals as _mp  # noqa: F401
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 gmail_send_bp = Blueprint("gmail_send", __name__)
 
@@ -121,15 +122,19 @@ def mail_contacts():
 def _mailbox_call(fn):
     from agent_friday.services import gmail_mailbox as gm
     try:
-        return jsonify({"status": "ok", **fn(gm)})
+        return jsonify(public_result({"status": "ok", **fn(gm)}, "Couldn't change the mailbox"))
     except gm.NotPermitted as e:
-        return jsonify({"status": "not_permitted", "message": str(e) + ". Use Reconnect with sending in Settings."}), 403
+        return jsonify(public_result({"status": "not_permitted", "message": error_text(e, "Couldn't change the mailbox")
+                        + ". Use Reconnect with sending in Settings."}, "Couldn't change the mailbox")), 403
     except ValueError as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
+        return api_error(e, "Couldn't change the mailbox", 400)
     except Exception as e:
         from agent_friday.services import gmail_api
         d = gmail_api.describe(e)
-        return jsonify({"status": "error", "kind": d.get("kind"), "message": d.get("message") or str(e)}), 502
+        return jsonify(public_result(
+            {"status": "error", "kind": d.get("kind"),
+             "message": d.get("message") or error_text(e, "Couldn't change the mailbox")},
+            "Couldn't change the mailbox")), 502
 
 
 @gmail_send_bp.route("/api/mail/labels", methods=["GET", "POST"])
@@ -190,7 +195,10 @@ def mail_original():
     except Exception as e:
         from agent_friday.services import gmail_api
         d = gmail_api.describe(e)
-        return jsonify({"status": "error", "kind": d.get("kind"), "message": d.get("message") or str(e)}), 502
+        return jsonify(public_result(
+            {"status": "error", "kind": d.get("kind"),
+             "message": d.get("message") or error_text(e, "Couldn't load the original message")},
+            "Couldn't load the original message")), 502
     if request.args.get("dl"):
         resp = Response(raw, mimetype="message/rfc822")
         resp.headers["Content-Disposition"] = 'attachment; filename="message-%s.eml"' % "".join(c for c in mid if c.isalnum())[:40]
@@ -220,9 +228,9 @@ def mail_unsubscribe():
         return jsonify({"status": "error", "message": "account_id and message_id are required"}), 400
     from agent_friday.routes.messages import _is_owner
     if not _is_owner(b.get("requested_by")):
-        return jsonify(_mp.propose("unsubscribe", [mid], [], requested_by=str(b.get("requested_by")),
+        return jsonify(public_result(_mp.propose("unsubscribe", [mid], [], requested_by=str(b.get("requested_by")),
                                    reason=str(b.get("reason") or ""),
-                                   extra={"account_id": aid, "message_id": mid, "sender": str(b.get("sender") or "")})), 202
+                                   extra={"account_id": aid, "message_id": mid, "sender": str(b.get("sender") or "")}), "Couldn't unsubscribe")), 202
     if not b.get("confirmed"):
         return jsonify({"status": "error", "message": "Unsubscribing tells the sender this address is read; confirm it first."}), 400
     return _mailbox_call(lambda gm: mu.unsubscribe(aid, mid))
@@ -240,7 +248,7 @@ def mail_held_cancel(approval_id):
     try:
         return jsonify({"status": "ok", **_gs.cancel(approval_id)})
     except _gs.SendRefused as e:
-        return jsonify({"status": "refused", "message": str(e)}), 409
+        return jsonify({"status": "refused", "message": error_text(e, "Couldn't cancel the held message")}), 409
 
 
 @gmail_send_bp.route("/api/mail/draft", methods=["POST"])
@@ -257,7 +265,7 @@ def mail_draft():
             attachments=_attachments_for(body))
         return jsonify({"status": "ok", **out})
     except _gs.SendRefused as e:
-        return jsonify({"status": "refused", "message": str(e)}), 400
+        return jsonify({"status": "refused", "message": error_text(e, "Couldn't save the draft")}), 400
 
 
 @gmail_send_bp.route("/api/mail/attachment", methods=["POST"])
@@ -270,7 +278,7 @@ def mail_attachment_upload():
     try:
         meta = _gs.store_attachment(f.read(), f.filename or "attachment", f.mimetype or "")
     except _gs.SendRefused as e:
-        return jsonify({"status": "refused", "message": str(e)}), 400
+        return jsonify({"status": "refused", "message": error_text(e, "Couldn't add the attachment")}), 400
     return jsonify({"status": "ok", **meta})
 
 
@@ -294,9 +302,9 @@ def mail_request():
             send_at=body.get("send_at") or None,
         )
     except _gs.SendRefused as e:
-        return jsonify({"status": "refused", "message": str(e)}), 400
+        return jsonify({"status": "refused", "message": error_text(e, "Couldn't prepare the message")}), 400
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't prepare the message")
     return jsonify({"status": "ok", "approval_id": result.get("approval_id"),
                     "approval_status": result.get("status"),
                     "message": "Waiting for your approval. Nothing has been "
@@ -321,7 +329,7 @@ def mail_send():
     try:
         result = _gs.send(approval_id)
     except _gs.SendRefused as e:
-        return jsonify({"status": "refused", "message": str(e)}), 409
+        return jsonify({"status": "refused", "message": error_text(e, "Couldn't send the message")}), 409
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't send the message")
     return jsonify({"status": "ok", **result})

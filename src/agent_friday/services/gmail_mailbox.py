@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 
 from agent_friday.services import gmail_api
+from agent_friday.user_errors import UserFacingError, UserFacingValueError, exception_text
 
 _log = logging.getLogger("friday.gmail_mailbox")
 
@@ -47,8 +48,8 @@ _FORBIDDEN = {"TRASH", "SENT", "DRAFT", "CHAT"}
 _SPAM_ONLY = {"SPAM"}
 
 
-class NotPermitted(RuntimeError):
-    """The account has not granted gmail.modify."""
+class NotPermitted(UserFacingError, RuntimeError):
+    """The account has not granted gmail.modify. Its message is written for the user."""
 
 
 def can_modify(account_id: str) -> bool:
@@ -83,9 +84,9 @@ def modify_threads(account_id: str, thread_ids, add=(), remove=(), _allow=()) ->
     add, remove = [l for l in add if l], [l for l in remove if l]
     touched = set(add) | set(remove)
     if _FORBIDDEN & touched:
-        raise ValueError("Trash and Gmail's own labels are not changed as labels")
+        raise UserFacingValueError("Trash and Gmail's own labels are not changed as labels")
     if (_SPAM_ONLY & touched) - set(_allow):
-        raise ValueError("spam is reported with the spam action, not as a label")
+        raise UserFacingValueError("spam is reported with the spam action, not as a label")
     svc = _svc(account_id)
     changed, failed = {}, {}
     for tid in dict.fromkeys(t for t in thread_ids if t):
@@ -100,9 +101,9 @@ def modify_threads(account_id: str, thread_ids, add=(), remove=(), _allow=()) ->
                     userId="me", id=tid, body={"addLabelIds": to_add, "removeLabelIds": to_remove}))
             changed[tid] = {"added": [l for l in to_add if l not in before], "removed": to_remove}
         except gmail_api.GmailError as e:
-            failed[tid] = str(e)
+            failed[tid] = exception_text(e)
         except Exception as e:                   # one bad conversation never stops the rest
-            failed[tid] = gmail_api.describe(e).get("message") or str(e)
+            failed[tid] = gmail_api.describe(e).get("message") or exception_text(e)
     return {"changed": changed, "failed": failed}
 
 
@@ -119,9 +120,9 @@ def trash_threads(account_id: str, thread_ids, restore: bool = False) -> dict:
             gmail_api.execute(call(userId="me", id=tid))
             changed[tid] = {"untrashed": True} if restore else {"trashed": True}
         except gmail_api.GmailError as e:
-            failed[tid] = str(e)
+            failed[tid] = exception_text(e)
         except Exception as e:                   # one bad conversation never stops the rest
-            failed[tid] = gmail_api.describe(e).get("message") or str(e)
+            failed[tid] = gmail_api.describe(e).get("message") or exception_text(e)
     return {"changed": changed, "failed": failed}
 
 
@@ -129,7 +130,7 @@ def apply_action(account_id: str, thread_ids, action: str) -> dict:
     if action in TRASH_ACTIONS:
         return trash_threads(account_id, thread_ids, restore=(action == "untrash"))
     if action not in ACTIONS:
-        raise ValueError("unknown mailbox action %r" % action)
+        raise UserFacingValueError("unknown mailbox action %r" % action)
     add, remove = ACTIONS[action]
     return modify_threads(account_id, thread_ids, add, remove,
                           _allow=_SPAM_ONLY if action in ("spam", "notspam") else ())
@@ -145,7 +146,7 @@ def undo(account_id: str, changed: dict) -> dict:
                 call = svc.users().threads().untrash if ch.get("trashed") else svc.users().threads().trash
                 gmail_api.execute(call(userId="me", id=tid))
             except Exception as e:
-                failed[tid] = str(e)
+                failed[tid] = exception_text(e)
             continue
         add, remove = list(ch.get("removed") or []), list(ch.get("added") or [])
         if _FORBIDDEN & (set(add) | set(remove)):
@@ -157,7 +158,7 @@ def undo(account_id: str, changed: dict) -> dict:
             gmail_api.execute(svc.users().threads().modify(
                 userId="me", id=tid, body={"addLabelIds": add, "removeLabelIds": remove}))
         except Exception as e:
-            failed[tid] = str(e)
+            failed[tid] = exception_text(e)
     return {"failed": failed}
 
 
@@ -184,7 +185,7 @@ def list_labels(account_id: str) -> list:
 def create_label(account_id: str, name: str) -> dict:
     name = (name or "").strip()[:225]
     if not name:
-        raise ValueError("a label needs a name")
+        raise UserFacingValueError("a label needs a name")
     svc = _svc(account_id)
     lab = gmail_api.execute(svc.users().labels().create(userId="me", body={
         "name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"}))

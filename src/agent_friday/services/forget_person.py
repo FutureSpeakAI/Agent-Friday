@@ -56,6 +56,7 @@ import threading
 from pathlib import Path
 
 import agent_friday.core as core
+from agent_friday.user_errors import ExceptionText
 
 _LOCK = threading.RLock()
 
@@ -440,7 +441,7 @@ def forget(name: str) -> dict:
         except Exception as e:
             # Said in the receipt rather than swallowed: the tombstone above
             # already stops new entries, but existing ones are still there.
-            removed["timeline_error"] = str(e)[:200]
+            removed["timeline_error"] = ExceptionText(str(e)[:200])
 
         return {
             "name": name,

@@ -39,6 +39,7 @@ from agent_friday.services.calendar_engine import (
     _google_redirect_uri,
     _write_google_token,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, html_error
 
 google_bp = Blueprint('google', __name__)
 
@@ -95,7 +96,7 @@ def google_auth_start():
     try:
         from google_auth_oauthlib.flow import Flow
     except Exception as e:
-        return jsonify({"status": "error", "message": f"google-auth-oauthlib not installed: {e}"}), 500
+        return api_error(e, "Google sign-in needs google-auth-oauthlib, which is not installed")
     try:
         client_type = _google_client_type(cfg) or "installed"
         # A Desktop ("installed") client gets the pinned loopback callback
@@ -138,7 +139,7 @@ def google_auth_start():
             )
         return jsonify(resp)
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't start Google sign-in")
 
 
 @google_bp.route('/api/google/auth/callback')
@@ -158,7 +159,7 @@ def google_auth_callback():
     try:
         from google_auth_oauthlib.flow import Flow
     except Exception as e:
-        return f"<h2>google-auth-oauthlib not installed</h2><p>{html.escape(str(e))}</p>", 500
+        return html_error(e, "google-auth-oauthlib not installed")
     state = session.get('google_oauth_state')
     verifier = session.get('google_oauth_verifier')
     saved_redirect = session.get('google_oauth_redirect_uri')
@@ -198,7 +199,7 @@ def google_auth_callback():
             "You can close this tab and regenerate your briefing.</p>"
         )
     except Exception as e:
-        return f"<h2>Token exchange failed</h2><p>{html.escape(str(e))}</p>", 500
+        return html_error(e, "Token exchange failed")
 
 
 @google_bp.route('/api/google/status')

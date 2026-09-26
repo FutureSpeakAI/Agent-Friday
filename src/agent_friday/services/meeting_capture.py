@@ -65,6 +65,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from agent_friday.paths import contained
+from agent_friday.user_errors import ExceptionText, UserFacingError, log_failure
 
 log = logging.getLogger("friday.meetings")
 
@@ -110,11 +111,13 @@ STOP_REASONS = {
 _ID_RE = re.compile(r"^[0-9a-f]{12}$")
 
 
-class MeetingError(Exception):
-    """A refusal with a code the route turns into a status."""
+class MeetingError(UserFacingError):
+    """A refusal with a code the route turns into a status. The message is
+    written for the user; a library's own text rides in `detail` (str())."""
 
-    def __init__(self, code: str, message: str, status: int = 400):
-        super().__init__(message)
+    def __init__(self, code: str, message: str, status: int = 400,
+                 detail: str | None = None):
+        super().__init__(message, status=status, detail=detail)
         self.code = code
         self.status = status
 
@@ -208,7 +211,8 @@ def _default_asr_check() -> str:
                     "Set up local voice first; recording without it would "
                     "keep audio nobody can read back.")
     except Exception as e:
-        return "Local voice is unavailable: %s" % e
+        return ("Local voice is unavailable (error %s)."
+                % log_failure(e, "Local voice check for meeting capture failed"))
     return ""
 
 
@@ -535,7 +539,10 @@ class MeetingManager:
             except Exception as e:
                 raise MeetingError("storage_locked",
                                    "Friday cannot encrypt the transcript right "
-                                   "now (%s), so nothing was recorded." % e, 503)
+                                   "now (error %s), so nothing was recorded."
+                                   % log_failure(e, "Meeting transcript encryption failed"), 503,
+                                   detail="Friday cannot encrypt the transcript right "
+                                          "now (%s), so nothing was recorded." % e)
             title = " ".join(str(title or "").split())[:200]
             event_id = str(event_id or "")[:200]
             if not title:
@@ -584,10 +591,12 @@ class MeetingManager:
                 r.q.put(None)
                 m["state"] = "error"
                 m["stop_reason"] = "device_error"
-                m["error"] = str(e)[:300]
+                _why = ("The microphone would not start (error %s)."
+                        % log_failure(e, "Meeting microphone failed"))
+                m["error"] = _why
                 self._save(m)
-                raise MeetingError("device_error",
-                                   "The microphone would not start: %s" % e, 503)
+                raise MeetingError("device_error", _why, 503,
+                                   detail="The microphone would not start: %s" % e)
             self._active = r
             self._busy[mid] = r.worker
             r.watchdog = threading.Thread(target=self._watch, args=(r,),
@@ -764,7 +773,7 @@ class MeetingManager:
                 rows.append(_row(_load(d.name)))
             except Exception as e:
                 rows.append({"id": d.name, "title": "(unreadable)",
-                             "state": "unreadable", "error": str(e)[:200]})
+                             "state": "unreadable", "error": ExceptionText(str(e)[:200])})
         rows.sort(key=lambda x: x.get("started_at") or "", reverse=True)
         return rows
 

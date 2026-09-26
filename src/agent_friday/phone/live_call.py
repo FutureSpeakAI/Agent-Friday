@@ -48,6 +48,8 @@ import time
 from typing import Callable, Optional
 from xml.sax.saxutils import escape, quoteattr
 
+from agent_friday.user_errors import ExceptionText
+
 _log = logging.getLogger("friday.phone.live")
 
 TWILIO_RATE = 8000
@@ -130,7 +132,7 @@ def why_unavailable() -> str:
         if not lv.get_local_voice_engine().available():
             return "the local voice engine is not ready"
     except Exception as e:
-        return "local voice could not be checked: %s" % e
+        return ExceptionText("local voice could not be checked: %s" % e)
     return ""
 
 

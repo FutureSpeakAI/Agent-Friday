@@ -50,6 +50,7 @@ from email.utils import getaddresses
 from pathlib import Path
 
 import agent_friday.core as core
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.relationships")
 _LOCK = threading.RLock()
@@ -471,7 +472,7 @@ def sync(now: datetime | None = None) -> dict:
             try:
                 got = _fetch_gmail(acct, q)
             except Exception as e:
-                errors.append({"account_id": aid, "service": "gmail", "error": str(e)[:200]})
+                errors.append({"account_id": aid, "service": "gmail", "error": ExceptionText(str(e)[:200])})
                 continue
             high = after or 0
             for m in got.get("messages") or []:
@@ -500,7 +501,7 @@ def sync(now: datetime | None = None) -> dict:
             try:
                 events = _fetch_calendar(acct, start, now)
             except Exception as e:
-                errors.append({"account_id": aid, "service": "calendar", "error": str(e)[:200]})
+                errors.append({"account_id": aid, "service": "calendar", "error": ExceptionText(str(e)[:200])})
                 continue
             for ev in events:
                 rec = _meeting_record(aid, ev, owner, names, set(f_emails), f_names)
@@ -800,7 +801,7 @@ def tick(now: datetime | None = None) -> dict:
             result["synced"] = sync(now)
     except Exception as e:  # noqa: BLE001
         _log.warning("relationships: sync failed: %s", e)
-        result["sync_error"] = str(e)[:200]
+        result["sync_error"] = ExceptionText(str(e)[:200])
     try:
         with _LOCK:
             due = {f["id"] for f in due_follow_ups(now)}

@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from agent_friday.services.channels.base import ChannelAdapter
+from agent_friday.user_errors import ExceptionText, exception_text
 
 
 def _discord_available() -> bool:
@@ -52,7 +53,7 @@ class DiscordBridge(ChannelAdapter):
             import asyncio
             import discord  # type: ignore
         except Exception as e:
-            self._last_error = f"discord import failed: {e}"
+            self._last_error = ExceptionText(f"discord import failed: {e}")
             self._running = False
             return
 
@@ -85,7 +86,7 @@ class DiscordBridge(ChannelAdapter):
         try:
             loop.run_until_complete(client.start(token))
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
         finally:
             self._running = False
 
@@ -112,5 +113,5 @@ class DiscordBridge(ChannelAdapter):
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return {"ok": resp.status in (200, 201)}
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e)}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e)}
