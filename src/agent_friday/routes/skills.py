@@ -33,6 +33,7 @@ from agent_friday.core import (
     process_register,
     process_update,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error
 
 skills_bp = Blueprint('skills', __name__)
 
@@ -48,7 +49,7 @@ def api_skills_list():
         skills = _skreg.list_skills()
         return jsonify({"skills": skills, "count": len(skills)})
     except Exception as e:
-        return jsonify({"error": str(e), "skills": [], "count": 0}), 500
+        return api_error(e, "Couldn't load the skills", shape="bare", skills=[], count=0)
 
 
 @skills_bp.route('/api/skills/import', methods=['POST'])
@@ -81,7 +82,7 @@ def api_skills_import():
             res = _skreg.import_skill(src, name=data.get('name'))
         return jsonify({"status": "ok", **res})
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't import the skill", 400, shape="bare")
 
 
 @skills_bp.route('/api/skills/<name>/export', methods=['GET'])
@@ -93,9 +94,9 @@ def api_skills_export(name):
         z = _skreg.export_skill(name)
         return send_file(str(z), as_attachment=True, download_name=f"{name}.zip")
     except FileNotFoundError as e:
-        return jsonify({"error": str(e)}), 404
+        return api_error(e, "Couldn't export the skill", 404, shape="bare")
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return api_error(e, "Couldn't export the skill", shape="bare")
 
 
 @skills_bp.route('/api/skillopt/state', methods=['GET'])
@@ -106,7 +107,7 @@ def api_skillopt_state():
         from agent_friday.skillopt_engine import export_fleet_state
         return jsonify(export_fleet_state())
     except Exception as e:
-        return jsonify({"error": str(e), "skills": []})
+        return api_error(e, "Couldn't load the skill optimizer state", 200, shape="bare", skills=[])
 
 
 @skills_bp.route('/api/skills/reload', methods=['POST'])
@@ -125,7 +126,7 @@ def api_skills_reload():
         return jsonify({"ok": True, "skills_loaded": len(skills),
                         "skills": [s.get("name", "") for s in skills]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return api_error(e, "Couldn't reload the skills", shape="bare")
 
 
 # ── Skill hot-reload watcher ──────────────────────────────────────────────────
@@ -211,8 +212,7 @@ def ollama_status():
             "model_count": len(models),
         })
     except Exception as e:
-        return jsonify({"available": False, "error": str(e), "models": [],
-                        "model_count": 0})
+        return api_error(e, "Couldn't reach Ollama", 200, shape="bare", available=False, models=[], model_count=0)
 
 
 @skills_bp.route('/api/ollama/models')
@@ -238,8 +238,7 @@ def ollama_models():
             "available": True,
         })
     except Exception as e:
-        return jsonify({"installed": [], "recommended": [], "available": False,
-                        "error": str(e)})
+        return api_error(e, "Couldn't list the Ollama models", 200, shape="bare", installed=[], recommended=[], available=False)
 
 
 @skills_bp.route('/api/ollama/pull/preflight')
@@ -332,4 +331,4 @@ def ollama_pull():
         threading.Thread(target=_do_pull, daemon=True).start()
         return jsonify({"status": "pulling", "task_id": pid, "model": model_name})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return api_error(e, "Couldn't pull the model", shape="bare")

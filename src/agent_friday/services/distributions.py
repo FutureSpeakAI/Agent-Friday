@@ -8,6 +8,7 @@ import yaml, os, sys
 from pathlib import Path
 
 from agent_friday.paths import contained, friday_home, safe_name
+from agent_friday.user_errors import UserFacingValueError
 
 DISTROS_DIR = friday_home() / "distros"
 DISTROS_DIR.mkdir(parents=True, exist_ok=True)
@@ -104,7 +105,7 @@ def load_distro(name: str) -> Distribution:
     # Fall back to built-in
     if name in BUILTIN_DISTROS:
         return Distribution(BUILTIN_DISTROS[name])
-    raise ValueError(f"Unknown distribution: {name}")
+    raise UserFacingValueError(f"Unknown distribution: {name}")
 
 
 def list_distros() -> list:

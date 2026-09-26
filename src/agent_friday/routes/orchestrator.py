@@ -19,6 +19,7 @@ from agent_friday.services.orchestrator import (
     WorkerTask,
     get_orchestrator,
 )
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 orchestrator_bp = Blueprint("orchestrator", __name__)
 
@@ -35,12 +36,12 @@ def orchestrator_status():
         from agent_friday.services.worker_adapters.ollama_adapter import _probe_ollama
         ollama = _probe_ollama(timeout=2.0)
     except Exception as exc:
-        ollama = {"available": False, "models": [], "error": str(exc)}
+        ollama = {"available": False, "models": [], "error": error_text(exc, "Couldn't reach Ollama")}
     try:
         workers = _orch().list_active_workers()
     except Exception:
         workers = []
-    return jsonify({
+    return jsonify(public_result({
         "ok": True,
         "workers_active": len(workers),
         "ollama": {
@@ -50,7 +51,7 @@ def orchestrator_status():
             "error": ollama.get("error"),
         },
         "adapters": ["ollama", "claude_code", "python_script", "http_api"],
-    })
+    }, "Couldn't read the orchestrator status"))
 
 
 @orchestrator_bp.route("/api/orchestrator/workers", methods=["GET"])
@@ -59,7 +60,7 @@ def list_workers():
     try:
         return jsonify({"ok": True, "workers": _orch().list_active_workers()})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't list the workers", shape="ok")
 
 
 @orchestrator_bp.route("/api/orchestrator/cleanup", methods=["POST"])
@@ -93,7 +94,7 @@ def cleanup_zombies():
         return jsonify({"ok": True, "cleaned": len(killed), "ids": killed})
     except Exception as exc:
         traceback.print_exc()
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return api_error(exc, "Couldn't clean up the workers", shape="ok")
 
 
 @orchestrator_bp.route("/api/orchestrator/delegate", methods=["POST"])
@@ -130,7 +131,7 @@ def delegate():
         return jsonify({"ok": True, "result": result.to_dict()})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't delegate the task", shape="ok")
 
 
 @orchestrator_bp.route("/api/orchestrator/spawn", methods=["POST"])
@@ -167,7 +168,7 @@ def spawn():
         worker_id = _orch().spawn_worker(task)
         return jsonify({"ok": True, "worker_id": worker_id, "task_id": task.task_id})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't start the worker", shape="ok")
 
 
 @orchestrator_bp.route("/api/orchestrator/workers/<worker_id>", methods=["GET"])

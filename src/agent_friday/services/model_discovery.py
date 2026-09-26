@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.model_discovery")
 
@@ -320,13 +321,13 @@ def refresh_models(provider, timeout: float = 20.0) -> dict:
     except Exception as e:
         _log.warning("model discovery failed for %s (%s): %s", name, url, e)
         return {"ok": False, "provider": name, "count": 0,
-                "error": f"{type(e).__name__}: {e}"[:300]}
+                "error": ExceptionText(f"{type(e).__name__}: {e}"[:300])}
 
     try:
         models = parser(payload)
     except Exception as e:
         return {"ok": False, "provider": name, "count": 0,
-                "error": f"parser error: {e}"[:300]}
+                "error": ExceptionText(f"parser error: {e}"[:300])}
 
     max_models = int(disc.get("max_models") or 0)
     if max_models > 0:
@@ -381,7 +382,7 @@ def _refresh_via_module(prov: dict) -> dict:
         # Never let one provider's connector take the whole sweep down.
         _log.warning("mcp discovery refresh failed for %s: %s", name, e)
         return {"status": "error", "provider": name,
-                "error": f"{type(e).__name__}: {e}"[:200]}
+                "error": ExceptionText(f"{type(e).__name__}: {e}"[:200])}
 
 
 def next_sweep_delay(results, attempts: int) -> float:

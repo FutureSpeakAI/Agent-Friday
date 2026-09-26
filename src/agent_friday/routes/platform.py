@@ -21,6 +21,7 @@ from flask import Blueprint, jsonify, request
 from agent_friday.services import distributions, extension_security, hints, recipes, subagents
 from agent_friday.services.prompt_manager import SEGMENT_KEYS, PromptManager
 from agent_friday.services.provider_registry import get_provider_registry
+from agent_friday.routes._errors import UserFacingError, api_error, error_text, public_result
 
 platform_bp = Blueprint("platform", __name__)
 
@@ -39,7 +40,7 @@ def _find_recipe(name: str):
 
 @platform_bp.route("/api/recipes", methods=["GET"])
 def api_recipes_list():
-    return jsonify({"recipes": recipes.list_recipes()})
+    return jsonify(public_result({"recipes": recipes.list_recipes()}, "Couldn't load the recipes"))
 
 
 @platform_bp.route("/api/recipes", methods=["POST"])
@@ -48,11 +49,11 @@ def api_recipes_save():
     try:
         recipes.Recipe(data).validate()
     except recipes.RecipeValidationError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't save the recipe", 400, shape="bare")
     try:
         path = recipes.save_recipe(data)
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't save the recipe", 400, shape="bare")
     return jsonify({"ok": True, "path": path})
 
 
@@ -65,7 +66,7 @@ def api_recipes_validate(name):
         r.validate()
         return jsonify({"valid": True, "steps": len(r.steps)})
     except recipes.RecipeValidationError as e:
-        return jsonify({"valid": False, "errors": str(e)})
+        return api_error(e, "Couldn't validate the recipe", 200, shape="bare", key="errors", valid=False)
 
 
 @platform_bp.route("/api/recipes/<name>/dry-run", methods=["POST"])
@@ -109,7 +110,7 @@ def api_recipes_run(name):
             description=r.description,
         )
     except KeyError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't run the recipe", 400, shape="bare")
     return jsonify({"ok": True, **spawned, "plan": plan})
 
 
@@ -179,7 +180,7 @@ def api_providers_list():
     errors = reg.load_errors()
     if errors:
         resp["descriptor_errors"] = errors
-    return jsonify(resp)
+    return jsonify(public_result(resp, "Couldn't list the providers"))
 
 
 @platform_bp.route("/api/providers/templates", methods=["GET"])
@@ -195,8 +196,9 @@ def api_providers_add():
     try:
         path = get_provider_registry().add_provider(data)
     except ValueError as e:
-        return jsonify({"error": str(e),
-                        "errors": [s.strip() for s in str(e).split(";")]}), 400
+        msg = (e.user_message if isinstance(e, UserFacingError)
+               else error_text(e, "Couldn't add the provider"))
+        return jsonify({"error": msg, "errors": [s.strip() for s in msg.split(";")]}), 400
     # A new/changed provider may serve models the picker should show.
     try:
         from agent_friday.services.model_discovery import invalidate_cache
@@ -226,7 +228,7 @@ def api_providers_patch(name):
     except KeyError:
         return jsonify({"error": f"provider '{name}' not found"}), 404
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't update the provider", 400, shape="bare")
     return jsonify({"ok": True, "provider": updated})
 
 
@@ -260,7 +262,7 @@ def api_providers_health():
             c["stats"] = provider_health.stats(c.get("provider", ""))
         except Exception:
             c["stats"] = None
-    return jsonify({"providers": checks})
+    return jsonify(public_result({"providers": checks}, "Couldn't check the providers"))
 
 
 @platform_bp.route("/api/providers/<name>/test", methods=["POST"])
@@ -273,7 +275,7 @@ def api_provider_test(name):
     reg = get_provider_registry()
     prov = reg.get_provider(name)
     if not prov:
-        return jsonify({"error": f"provider '{name}' not found"}), 404
+        return jsonify(public_result({"error": f"provider '{name}' not found"}, "Couldn't test the provider")), 404
     body = request.get_json(silent=True) or {}
     do_ping = bool(body.get("ping"))
     ptype = prov.get("type", "")
@@ -299,7 +301,7 @@ def api_provider_test(name):
                           detail=None if ok else "Ollama daemon not reachable")
         except Exception as e:
             result["detail"] = str(e)[:200]
-        return jsonify(result)
+        return jsonify(public_result(result, "Couldn't test the provider"))
 
     if ptype in ("local-voice", "nemo-local", "higgsfield", "kie"):
         # These three provider types are not chat/completions APIs and have
@@ -316,13 +318,13 @@ def api_provider_test(name):
         result.update(status=chk.get("status"), detail=chk.get("detail"))
         if chk.get("credits") is not None:
             result["credits"] = chk["credits"]
-        return jsonify(result)
+        return jsonify(public_result(result, "Couldn't test the provider"))
 
     import requests
     base = (prov.get("base_url") or "").rstrip("/")
     if not base:
         result["detail"] = "provider has no base_url"
-        return jsonify(result), 400
+        return jsonify(public_result(result, "Couldn't test the provider")), 400
     headers = auth_headers(prov, api_key)
     t0 = _t.time()
     try:
@@ -396,7 +398,7 @@ def api_provider_test(name):
         result["verdict_detail"] = _kv.explain(
             result["verdict"], prov.get("label") or name)
 
-    return jsonify(result)
+    return jsonify(public_result(result, "Couldn't test the provider"))
 
 
 @platform_bp.route("/api/providers/<name>/models/refresh", methods=["POST"])
@@ -409,7 +411,7 @@ def api_provider_models_refresh(name):
         status = 404
     elif (res.get("error") or "").startswith(("provider has no", "no API key")):
         status = 400
-    return jsonify(res), status
+    return jsonify(public_result(res, "Couldn't refresh the provider's models")), status
 
 
 @platform_bp.route("/api/models/search", methods=["GET"])
@@ -663,7 +665,7 @@ def api_distros_get(name):
     try:
         return jsonify(distributions.load_distro(name).raw)
     except ValueError as e:
-        return jsonify({"error": str(e)}), 404
+        return api_error(e, "Couldn't load the distribution", 404, shape="bare")
 
 
 @platform_bp.route("/api/distros", methods=["POST"])
@@ -686,7 +688,7 @@ def api_distros_apply(name):
     try:
         delta = distributions.apply_distro(name)
     except ValueError as e:
-        return jsonify({"error": str(e)}), 404
+        return api_error(e, "Couldn't apply the distribution", 404, shape="bare")
     merged = core._save_settings(delta)
     return jsonify({"ok": True, "distribution": name, "applied": delta, "settings": merged})
 
@@ -840,7 +842,7 @@ def api_health_full():
     except Exception:
         out["mcp_servers"] = 0
 
-    return jsonify(out)
+    return jsonify(public_result(out, "Couldn't run the full health check"))
 
 
 # ── Scoped subagents ─────────────────────────────────────────────────────────
@@ -856,7 +858,7 @@ def api_subagent_scope_save():
     try:
         return jsonify({"ok": True, "scope": subagents.save_custom_scope(data)})
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't save the subagent scope", 400, shape="bare")
 
 
 @platform_bp.route("/api/subagents", methods=["GET"])
@@ -878,7 +880,7 @@ def api_subagents_spawn():
             description=data.get("description") or "",
         )
     except KeyError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't start the subagent", 400, shape="bare")
     return jsonify({"ok": True, **spawned})
 
 

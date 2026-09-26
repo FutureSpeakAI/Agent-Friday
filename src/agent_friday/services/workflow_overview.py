@@ -25,6 +25,7 @@ import json
 import re
 import time as _time
 from datetime import datetime, timedelta
+from agent_friday.user_errors import UserFacingValueError
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
              "Saturday", "Sunday"]
@@ -370,7 +371,7 @@ def draft_from_text(text, *, generate=None, now=None) -> dict:
     """A reviewable draft for a plain-language request. Saves nothing."""
     text = (text or "").strip()
     if not text:
-        raise ValueError("Describe what you want Friday to do.")
+        raise UserFacingValueError("Describe what you want Friday to do.")
     when, rest, note = parse_when(text, now=now)
     task_text = rest or text
     drafted = _model_draft(task_text, generate) if generate else None
@@ -548,23 +549,23 @@ def save(draft) -> dict:
     name = str(draft.get("name") or "").strip()
     steps = _clean_steps(draft.get("steps"))
     if not name:
-        raise ValueError("Give the workflow a name.")
+        raise UserFacingValueError("Give the workflow a name.")
     if not steps:
-        raise ValueError("Add at least one step that says what Friday should do.")
+        raise UserFacingValueError("Add at least one step that says what Friday should do.")
     old_slug = draft.get("slug") or None
     new_slug = _agent._chain_slug(name)
     if new_slug != old_slug and _agent.load_workflow_chain(new_slug):
-        raise ValueError(f"There's already a workflow called “{name}”. Pick another name.")
+        raise UserFacingValueError(f"There's already a workflow called “{name}”. Pick another name.")
     rec = _linked_schedule(old_slug, draft.get("schedule_id"))
     if rec and rec.get("source") == "builtin":
-        raise ValueError("Friday's built-in routines can be switched on or off, not edited.")
+        raise UserFacingValueError("Friday's built-in routines can be switched on or off, not edited.")
     when = draft.get("when") or None
     if when:
         trig = when.get("trigger")
         if trig not in ("daily", "weekly", "interval", "once"):
-            raise ValueError("That timing isn't one Friday can keep.")
+            raise UserFacingValueError("That timing isn't one Friday can keep.")
         if trig == "once" and float((when.get("spec") or {}).get("at") or 0) <= _time.time():
-            raise ValueError("That time has already passed.")
+            raise UserFacingValueError("That time has already passed.")
     stored = _agent.save_workflow_chain({
         "name": name, "description": str(draft.get("description") or "").strip()[:300],
         "steps": [{"name": s["name"], "prompt": s["prompt"]} for s in steps]})
@@ -595,7 +596,7 @@ def delete(slug=None, schedule_id=None) -> bool:
     from agent_friday.services import scheduler as _sched
     rec = _linked_schedule(slug, schedule_id)
     if rec and rec.get("source") == "builtin":
-        raise ValueError("Friday's built-in routines can be switched off, not deleted.")
+        raise UserFacingValueError("Friday's built-in routines can be switched off, not deleted.")
     gone = False
     if rec:
         gone = _sched.delete_schedule(rec["id"]) or gone
