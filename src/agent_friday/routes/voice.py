@@ -488,6 +488,66 @@ def _mark_if_stale(result, fname, started_at, user_spoke_at, now):
             f"sentence that it is ready if they want it.]\n{result}")
 
 
+# Questions about the user's own life are answered from their own knowledge,
+# through the tools that reach it, not deflected with a stock paragraph. What
+# the local model will not release comes back from ask_friday as a withheld
+# marker (the egress gate), and only then is anything "private".
+VOICE_PERSONAL_QUESTIONS = (
+    "PERSONAL QUESTIONS: When the user asks about themselves, their family, "
+    "friends, people they know, their plans, or anything in their own life, look "
+    "it up: call search_wiki first, and if that does not answer it, call "
+    "ask_friday, which asks their own local model with their full context. Only "
+    "say something is private or unavailable when a tool result says it was "
+    "withheld or found nothing, and then say exactly that.\n"
+)
+
+# Several people may be in the room, and the live model answers every
+# utterance it hears.
+VOICE_CROSSTALK_RULE = (
+    "PEOPLE TALKING TO EACH OTHER: There may be more than one person in the room. "
+    "If what you hear is people talking to each other, a fragment, a single word, "
+    "or background speech that is not addressed to you, do not answer it: stay "
+    "silent and wait. Answer when someone speaks to you (by name, or with a "
+    "question or request clearly meant for you), or when they are replying to "
+    "something you just asked.\n"
+)
+
+# The live model's own speech recognition sometimes hears English as another
+# language and then answers in it.
+VOICE_ENGLISH_RULE = (
+    "LANGUAGE: Always speak {language}. If what you heard looks like another "
+    "language, it is almost certainly {language} misheard: answer in {language}, "
+    "and if it made no sense, ask them to say it again.\n"
+)
+
+#: The language the live session hears and speaks when none is configured.
+VOICE_DEFAULT_LANGUAGE = "en-US"
+_LANGUAGE_NAMES = {"en": "English", "fr": "French", "es": "Spanish", "de": "German",
+                   "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "ja": "Japanese",
+                   "ko": "Korean", "zh": "Chinese", "hi": "Hindi", "ar": "Arabic"}
+
+
+def _live_language(configured) -> tuple:
+    """(BCP-47 code, spoken name) for the live session; English unless set."""
+    code = str(configured or "").strip() or VOICE_DEFAULT_LANGUAGE
+    return code, _LANGUAGE_NAMES.get(code.split("-")[0].lower(), code)
+
+
+def _addressed(user_text, friday_last_text, since_friday_s, window_s=10.0) -> bool:
+    """In a room of several people: was this said to Friday?
+
+    Yes when it names her, when she just asked a question, or when it follows
+    her last reply closely enough to be an answer to it.
+    """
+    if "friday" in (user_text or "").lower():
+        return True
+    if since_friday_s is None:
+        return False
+    if (friday_last_text or "").rstrip().endswith("?") and since_friday_s <= 30.0:
+        return True
+    return since_friday_s <= window_s
+
+
 VOICE_TOOL_CHOREOGRAPHY = (
     "TOOL CHOREOGRAPHY (voice): Before EVERY tool call, first finish speaking "
     "one short sentence announcing what you're about to do — for example "
@@ -784,7 +844,21 @@ def _record_mic_audio_egress(event: str, byte_len: int = 0) -> None:
         _log.warning("mic-audio ledger row failed (%s): %s", event, _re)
 
 
-def _build_realtime_input_config(types, interruption_mode="auto"):
+#: How long speech must last before it counts as the user starting to talk
+#: (the Live API's prefix_padding_ms). A cough, a one-word aside or a fragment
+#: of someone else's conversation is shorter than this, so it neither starts a
+#: turn nor cuts Friday off; a real interruption is sustained. "room" (several
+#: people talking, not all to Friday) asks for longer.
+VOICE_SPEECH_START_MS = {"one": 400, "room": 700}
+
+
+def _voice_room_mode(settings) -> str:
+    """'room' when several people are talking in the room, else 'one'."""
+    v = str((settings or {}).get("voice_room_mode") or "one").strip().lower()
+    return "room" if v == "room" else "one"
+
+
+def _build_realtime_input_config(types, interruption_mode="auto", room_mode="one"):
     """Build the Live API RealtimeInputConfig.
 
     Barge-in is ON by default. Per Google's current Live API docs
@@ -813,7 +887,7 @@ def _build_realtime_input_config(types, interruption_mode="auto"):
     aad = types.AutomaticActivityDetection(
         disabled=False,
         silence_duration_ms=800,
-        prefix_padding_ms=200,
+        prefix_padding_ms=VOICE_SPEECH_START_MS.get(room_mode, VOICE_SPEECH_START_MS["one"]),
         # LOW start sensitivity: require louder/clearer speech to trip VAD.
         # Friday's own speaker bleed (echo) is quieter than a real user, so LOW
         # makes the server less likely to mistake echo for the start of a turn.
@@ -2302,6 +2376,7 @@ if sock is not None:
             _cloud_self = _cm.describe_for_model() if _cm.mode == "gemini" else ""
         except Exception:
             _cloud_self = ""
+        live_language, live_language_name = _live_language(_get_voice_language())
         voice_prefix = (
             "You are Agent Friday, a sovereign personal AI assistant.\n"
             + (_cloud_self + "\n" if _cloud_self else "")
@@ -2324,13 +2399,8 @@ if sock is not None:
             "A withheld, failed, or missing result is reported as exactly that — say what "
             "happened, not what you expected to happen. This complements, not replaces, your "
             "anti-fabrication directive.\n"
-            "For questions about personal financial data, health records, family legal "
-            "matters, or other sensitive vault content, tell the user: 'That information "
-            "is in my Sovereign Vault, which I can only access through local processing. "
-            "If you'd like, I can set up a fully local voice mode using Whisper and a "
-            "local TTS engine — that way we can have voice conversations about anything, "
-            "including your private data, without any of it leaving this machine. Want me "
-            "to check if your hardware can handle it?'\n\n"
+            + VOICE_PERSONAL_QUESTIONS + VOICE_CROSSTALK_RULE
+            + VOICE_ENGLISH_RULE.format(language=live_language_name) + "\n"
             + VOICE_TOOL_CHOREOGRAPHY
         )
         # security-boundary.md §19 row 1: this whole literal is Friday-authored
@@ -2396,7 +2466,6 @@ if sock is not None:
         # default (v1beta) endpoint, which reliably accepts API-key auth.
 
         live_voice = _get_live_voice()
-        live_language = _get_voice_language()
         live_style = _get_voice_style_prompt()
         live_settings = _load_settings() or {}
 
@@ -2473,8 +2542,9 @@ if sock is not None:
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=live_voice)
             )
         }
-        if live_language:
-            speech_kwargs["language_code"] = live_language
+        # Always set: with no language_code the model chose its own, and once
+        # answered in Italian mid-conversation.
+        speech_kwargs["language_code"] = live_language
 
         sys_text = system_instruction
         if live_style:
@@ -2504,7 +2574,8 @@ if sock is not None:
             # Echo/interruption + VAD tuning. Built by a helper so the
             # activity_handling / turn_coverage fields degrade gracefully on
             # older google-genai SDKs that don't define those enums yet.
-            realtime_input_config=_build_realtime_input_config(types, live_interruption_mode),
+            realtime_input_config=_build_realtime_input_config(
+                types, live_interruption_mode, _voice_room_mode(live_settings)),
         )
         _no_barge = live_interruption_mode in (
             "no-barge", "no_barge", "nobarge", "speaker-safe", "speaker_safe",
@@ -2725,6 +2796,13 @@ if sock is not None:
             # (services/voice_engine.py): the news tools skip stories Friday
             # has already told instead of reading the same five again.
             _voice_session = {"news_offered": [], "spoken": []}
+            # Room mode (Settings: several people talking): a reply to speech
+            # that was not said to Friday is kept off the speakers and the
+            # transcript. The model still answers everything it hears; this
+            # is the bridge deciding what is voiced (see _addressed).
+            _room = _voice_room_mode(live_settings) == "room"
+            _quiet_turn = [False]
+            _friday_done_ts = [None]          # when Friday last finished a voiced reply
             # The barge window must track CLIENT PLAYBACK, not model streaming:
             # Gemini generates faster than real-time, so the turn often finishes
             # streaming seconds before Friday's voice finishes coming out of the
@@ -3152,7 +3230,8 @@ if sock is not None:
                                             if out_tr and getattr(out_tr, 'text', None):
                                                 _vlog(f'output_transcription: {out_tr.text!r}')
                                                 out_buf.append(out_tr.text)
-                                                _safe_send({"type": "text", "text": out_tr.text})
+                                                if not _quiet_turn[0]:
+                                                    _safe_send({"type": "text", "text": out_tr.text})
                                             in_tr = getattr(sc, 'input_transcription', None)
                                             if in_tr and getattr(in_tr, 'text', None):
                                                 _vlog(f'input_transcription: {in_tr.text!r}')
@@ -3187,8 +3266,18 @@ if sock is not None:
                                                                 _time.time() - _user_words_ts[0], model_name,
                                                                 (" after tools " + ", ".join(_turn_tools)) if _turn_tools else "")
                                                             _turn_tools.clear()
+                                                            if _room:
+                                                                _heard = ''.join(in_buf).strip()
+                                                                _since = (None if _friday_done_ts[0] is None
+                                                                          else _time.time() - _friday_done_ts[0])
+                                                                _last = (_voice_session["spoken"] or [""])[-1]
+                                                                if not _addressed(_heard, _last, _since):
+                                                                    _quiet_turn[0] = True
+                                                                    _log.info("voice turn: not voiced, room mode and "
+                                                                              "not addressed to Friday (%d chars heard)",
+                                                                              len(_heard))
                                                         _audio_bytes_from_gemini += len(il.data)
-                                                        if _barged_turn[0]:
+                                                        if _barged_turn[0] or _quiet_turn[0]:
                                                             # User barged in — swallow the
                                                             # rest of this turn's audio so
                                                             # nothing more reaches the
@@ -3212,16 +3301,25 @@ if sock is not None:
                                                     pt = getattr(part, 'text', None)
                                                     if pt:
                                                         out_buf.append(pt)
-                                                        _safe_send({"type": "text", "text": pt})
+                                                        if not _quiet_turn[0]:
+                                                            _safe_send({"type": "text", "text": pt})
                                             if getattr(sc, 'turn_complete', False):
                                                 _model_speaking[0] = False
                                                 _barged_turn[0] = False
+                                                if _quiet_turn[0]:
+                                                    out_buf.clear()   # never voiced: not Friday's words
+                                                    _quiet_turn[0] = False
+                                                elif out_buf:
+                                                    _friday_done_ts[0] = _time.time()
                                                 _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
                                                 _flush_turn()
                                                 _safe_send({"type": "turn_end"})
                                             if getattr(sc, 'interrupted', False):
                                                 _model_speaking[0] = False
                                                 _barged_turn[0] = False
+                                                if _quiet_turn[0]:
+                                                    out_buf.clear()
+                                                    _quiet_turn[0] = False
                                                 # The client flushes its buffer on
                                                 # this signal — playback stops now.
                                                 _est_play_end_ts[0] = 0.0

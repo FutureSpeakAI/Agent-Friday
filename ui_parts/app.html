@@ -14086,6 +14086,13 @@ function SettingsTabVoice({s,save}){
           ))}
         </div>
       </StRow>}
+      {gem&&<StRow label="Who is talking" desc="With several people in the room, Friday answers only when she is spoken to by name, or when someone replies to her. Takes effect on the next voice session.">
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {[{k:'one',l:'Just me (default)'},{k:'room',l:'Several people'}].map(o=>(
+            <button key={o.k} className={`settings-btn ${(s.voice_room_mode==='room'?'room':'one')===o.k?'active':''}`} onClick={()=>save({voice_room_mode:o.k})} style={{fontSize:11}}>{o.l}</button>
+          ))}
+        </div>
+      </StRow>}
       {!gem&&<StSavedSlider label="Pause before Friday replies" desc="How long a silence counts as the end of what you said. Longer suits slow speech; shorter feels snappier."
         value={s.voice_silence_ms??800} min={300} max={2000} step={100} fmt={v=>Math.round(v)+' ms'}
         onSave={v=>save({voice_silence_ms:Math.round(v)})}/>}
@@ -14103,7 +14110,7 @@ function SettingsTabVoice({s,save}){
       <StRow label="Speaking style" desc="A few words on how she should sound. Saved when you click away.">
         <input className="input" style={{width:'100%'}} defaultValue={s.voice_style_prompt||''} key={'vs'+s.voice_style_prompt} onBlur={e=>save({voice_style_prompt:e.target.value})} placeholder="e.g. warm, concise, news anchor"/>
       </StRow>
-      <StRow label="Language" desc="A language code such as en-US or fr-FR. Leave blank for Gemini's default.">
+      <StRow label="Language" desc="A language code such as en-US or fr-FR. Leave blank for US English.">
         <input className="input" style={{width:'100%'}} defaultValue={s.voice_language||''} key={'vl'+s.voice_language} onBlur={e=>save({voice_language:e.target.value})} placeholder="e.g. en-US"/>
       </StRow>
     </StSection>}

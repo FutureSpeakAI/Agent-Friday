@@ -2088,6 +2088,7 @@ DEFAULT_SETTINGS = {
     # START_OF_ACTIVITY_INTERRUPTS (true barge-in; only safe when there's no
     # speaker bleed). Default speaker-safe because most users are on speakers.
     "voice_interruption_mode": "auto",     # "auto"/"headphones" (barge-in, default) | "no-barge" (open-speakers echo-safe: no native interruption)
+    "voice_room_mode": "one",              # "one" person talking to Friday | "room" (several people; she answers only when addressed)
     # ── Voice engine selection ──
     # LOCAL is the default; cloud (Gemini Live) is the opt-in. The mic button
     # resolves this via GET /api/voice/session-info → /ws/voice-local (local) or
