@@ -49,7 +49,6 @@ from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
 from agent_friday.core import CREATIONS_DIR, FRIDAY_DIR
-from agent_friday.paths import contained, safe_name
 
 # Metadata lives OUTSIDE the creations folder so the Studio gallery (which lists
 # every file in CREATIONS_DIR) is not polluted with .json sidecars.
@@ -1003,6 +1002,12 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
     # Resolve a seed image (image-to-video) from a path if bytes weren't given.
     seed_bytes, seed_mime = image_bytes, image_mime
     if seed_bytes is None and image_path:
+        from agent_friday.services import seed_images as _si
+        ok, why = _si.check_running_call(image_path)
+        if not ok:
+            return {"status": "needs_approval",
+                    "message": (f"The seed image was not uploaded: {why}. It "
+                                f"needs the owner's approval first.")}
         seed_bytes, seed_mime = _load_seed_image(image_path)
         if seed_bytes is None:
             return {"status": "error",
@@ -1166,23 +1171,22 @@ def load_local_image(image_path: str):
     """Read a local image the owner or the model named, for sending to a
     vision or generation API. Returns (bytes, mime) or (None, None).
 
-    Accepts an absolute path, a home-relative path, or a bare creation
-    filename in CREATIONS_DIR. The path is the owner's to choose, so it is
-    not confined to a root; what leaves the machine is. Only bytes that are
-    themselves an image are returned, so a path pointed at a key file, a
-    settings export or any other document never reaches a cloud call dressed
-    as a seed image.
+    Accepts an absolute path, a home-relative path, or a creation filename in
+    CREATIONS_DIR (services/seed_images.resolve). A file outside Friday's
+    creations is read only when the owner named it in this conversation or
+    approved this call (seed_images.check_running_call); anything else is
+    refused here even if a caller skipped the governance checkpoint. Only
+    bytes that are themselves an image are returned, so a path pointed at a
+    key file, a settings export or any other document never reaches a cloud
+    call dressed as a seed image.
     """
     try:
-        p = Path(image_path).expanduser()
-        if not p.exists():
-            try:
-                cand = contained(CREATIONS_DIR, safe_name(Path(image_path).name))
-            except ValueError:
-                cand = None
-            if cand is not None and cand.exists():
-                p = cand
-        if not p.is_file():
+        from agent_friday.services import seed_images as _si
+        p = _si.resolve(image_path)
+        if p is None or not p.is_file():
+            return None, None
+        ok, _why = _si.check_running_call(image_path)
+        if not ok:
             return None, None
         data = p.read_bytes()
         mime = _image_mime(data)

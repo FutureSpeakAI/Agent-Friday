@@ -193,7 +193,14 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
         if not ce.is_available():
             return {"status": "skipped", "passed": True, "score": None,
                     "critique": "no vision key", "suggestions": ""}
-        # Only an actual image leaves the machine (load_local_image).
+        # Only an actual image, from Friday's creations or one the owner
+        # named or approved, leaves the machine (load_local_image).
+        from agent_friday.services import seed_images as _si
+        _ok, _why = _si.check_running_call(image_path)
+        if not _ok:
+            return {"status": "skipped", "passed": True, "score": None,
+                    "critique": f"image not sent for review: {_why}",
+                    "suggestions": ""}
         data, mime = ce.load_local_image(image_path)
         if data is None:
             return {"status": "skipped", "passed": True, "score": None,
