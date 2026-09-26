@@ -13,7 +13,7 @@ and the universal fallback — both tiers coexist.
 | TTS | Piper (VITS→ONNX, CPU) | NeMo FastPitch + HiFi-GAN (GPU) |
 | Deps | onnxruntime (~150–300 MB) | torch-CUDA + NeMo (~3–6 GB) |
 | Hardware | any CPU | NVIDIA GPU, ≥4 GB free VRAM |
-| Install | `.[voice-local-lite]` (in `[all]`) | `.[voice-local-gpu]` (opt-in, **not** in `[all]`) |
+| Install | `.[voice-local-lite]` (in `[all]`) | Settings voice installer (opt-in; not a pip extra) |
 
 ## Requirements
 
@@ -24,7 +24,10 @@ and the universal fallback — both tiers coexist.
 - **CUDA:** a torch build matching your CUDA runtime. The installers default to
   the CUDA 12.4 wheel index (`https://download.pytorch.org/whl/cu124`). Pick the
   index URL that matches your driver from the PyTorch site if 12.4 isn't right.
-- **NeMo:** `nemo_toolkit[asr,tts]>=2.6` (pulled by `.[voice-local-gpu]`).
+- **NeMo:** `nemo_toolkit[asr]==3.0.0`, installed by its own step. NeMo is not
+  a pip extra and is not in `uv.lock`, because it caps two of its dependencies
+  below their security fixes; see
+  [dependency advisories](../security/dependency-advisories.md).
 
 ## Install
 
@@ -34,14 +37,14 @@ The installers do not currently auto-detect GPUs — install Tier-2 by hand.
 
 ```bash
 venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cu124
-venv/bin/pip install -e .[voice-local-gpu]
+venv/bin/pip install "nemo_toolkit[asr]==3.0.0"
 ```
 
 **Windows:**
 
 ```powershell
 venv\Scripts\pip.exe install torch --index-url https://download.pytorch.org/whl/cu124
-venv\Scripts\pip.exe install -e .[voice-local-gpu]
+venv\Scripts\pip.exe install "nemo_toolkit[asr]==3.0.0"
 ```
 
 > **Windows is best-effort.** NeMo is Linux-first; on Windows+RTX it usually
@@ -85,7 +88,7 @@ CI has no GPU, so the NeMo inference path is validated manually. The CPU/wiring
 path is covered by `tests/unit/test_nemo_voice.py` and
 `tests/unit/test_local_voice.py`.
 
-1. **Install:** `.[voice-local-gpu]` + torch-CUDA (above).
+1. **Install:** torch-CUDA + `nemo_toolkit[asr]==3.0.0` (above), or the GPU voice installer in Settings.
 2. **Detect:** `friday health` → expect
    `Local voice (Tier-2 · NeMo GPU): needs_download` (deps + GPU detected, models
    not yet fetched) and a `Hardware: GPU=… VRAM=…GB` line.

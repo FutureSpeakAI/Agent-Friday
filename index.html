@@ -6267,10 +6267,20 @@ function fridayNavManifest() {
 // switches the UI, "open my Downloads" actually reveals the folder. Each action
 // is dispatched here. Unknown action types are ignored so the backend can add
 // new ones without breaking older clients.
+// A URL an action opens comes from the server's reply, which carries model
+// output; only http(s) may be opened, never javascript:, data: or file:.
+function fridayHttpUrl(u) {
+  try {
+    const x = new URL(String(u || ''), window.location.href);
+    return x.protocol === 'http:' || x.protocol === 'https:' ? x.href : '';
+  } catch (_) {
+    return '';
+  }
+}
 function fridayRunActions(actions) {
   if (!Array.isArray(actions) || !actions.length) return;
   try {
-    console.info('[friday] running ' + actions.length + ' action(s):', actions);
+    console.info('[friday] running %s action(s):', actions.length, actions);
   } catch (_) {}
   for (const a of actions) {
     if (!a || typeof a !== 'object') continue;
@@ -6309,13 +6319,16 @@ function fridayRunActions(actions) {
           })
         }).catch(() => {});
       } else if (a.type === 'open_url' && a.url) {
-        try {
-          window.open(a.url, '_blank', 'noopener');
-        } catch (_) {}
+        const u = fridayHttpUrl(a.url);
+        if (u) {
+          try {
+            window.open(u, '_blank', 'noopener');
+          } catch (_) {}
+        }
       } else if (a.type === 'open_last_source') {
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
-        const u = window._fridayLastVoiceSource;
+        const u = fridayHttpUrl(window._fridayLastVoiceSource);
         if (u) {
           try {
             window.open(u, '_blank', 'noopener');
@@ -25318,6 +25331,44 @@ fridayDeclareNav('news', {
   keys: ['tab'],
   sections: NEWS_TABS
 });
+// The Local beat is the owner's setting: the place Local news covers and the
+// outlets it reads (news_local_area, news_local_sources). Nothing ships with a
+// city; both empty means no Local section. Listed outlets are trusted like the
+// built-in high-trust sources.
+function NewsLocalBeatSettings() {
+  const h = React.createElement;
+  const [area, setArea] = useState(null);
+  const [sources, setSources] = useState('');
+  const [note, setNote] = useState('');
+  useEffect(() => {
+    apiFetch('/api/settings').then(r => r.json()).then(d => {
+      const s = (d && d.settings) || {};
+      setSources((Array.isArray(s.news_local_sources) ? s.news_local_sources : []).join('\n'));
+      setArea(String(s.news_local_area || ''));
+    }).catch(() => {
+      setArea('');
+      setNote('Could not load the Local beat.');
+    });
+  }, []);
+  const save = patch => apiFetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: patch })
+  }).then(r => r.json().catch(() => ({})).then(b => {
+    if (!r.ok || b.status === 'error') throw new Error(b.message || b.error || 'the server refused it (' + r.status + ')');
+    setNote('Saved.');
+  })).catch(e => setNote('NOT saved: ' + (e.message || e)));
+  const commit = () => save({
+    news_local_area: (area || '').trim(),
+    news_local_sources: sources.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
+  });
+  if (area === null) return null;
+  return h(React.Fragment, null,
+    h('div', { className: 'card-title', style: { marginTop: 14 } }, 'Local beat'),
+    h('input', { className: 'input', 'aria-label': 'City or area for Local news', style: { width: '100%', fontSize: 11 }, value: area, placeholder: 'City or area (empty: no Local news)', onChange: e => setArea(e.target.value), onBlur: commit }),
+    h('textarea', { className: 'input', 'aria-label': 'Local news outlets', rows: 3, style: { width: '100%', fontSize: 11, marginTop: 6, resize: 'vertical' }, value: sources, placeholder: 'Local outlets, one domain per line or comma-separated', onChange: e => setSources(e.target.value), onBlur: commit }),
+    note && h('div', { role: 'status', style: { fontSize: 10, color: '#777', marginTop: 4 } }, note));
+}
 function NewsWS() {
   const [tab, setTab] = useState('frontpage');
   const [feed, setFeed] = useState([]);
@@ -25854,7 +25905,12 @@ function NewsWS() {
     if (!window._fridayMoodSignals) window._fridayMoodSignals = {};
     window._fridayMoodSignals.ttsActive = true;
     try {
-      const text = htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 8000);
+      const _doc = new DOMParser().parseFromString(htmlContent, 'text/html');
+      _doc.querySelectorAll('script,style').forEach(n => n.remove());
+      const _walk = _doc.createTreeWalker(_doc.documentElement, NodeFilter.SHOW_TEXT);
+      const _parts = [];
+      while (_walk.nextNode()) _parts.push(_walk.currentNode.nodeValue);
+      const text = _parts.join(' ').replace(/\s+/g, ' ').trim().substring(0, 8000);
       const r = await fetch('/api/voice/tts', {
         method: 'POST',
         headers: {
@@ -27935,7 +27991,7 @@ function NewsWS() {
     key: c,
     className: 'toggle-pill ' + (prefs.categories_enabled[c] ? 'on' : ''),
     onClick: () => toggleCat(c)
-  }, c))), /*#__PURE__*/React.createElement("div", {
+  }, c))), /*#__PURE__*/React.createElement(NewsLocalBeatSettings, null), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: '#777',
@@ -52369,7 +52425,7 @@ function App() {
       } else if (m.type === 'error-nonfatal') {
         setVoiceNotices(p => p.some(n => n.code === m.code) ? p : p.concat([m]));
       } else if (m.type === 'manifest' || m.type === 'turn_receipt') {
-        window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: ' + m.type, m);
+        window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: %s', m.type, m);
         if (m.type === 'turn_receipt') setVoicePartial('');
       } else if (m.type === 'egress_notice') {
         setVoiceEgress({

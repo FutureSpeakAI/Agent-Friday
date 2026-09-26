@@ -12,6 +12,7 @@ import uuid
 from typing import TYPE_CHECKING, Dict
 
 from agent_friday.services.worker_adapters.base import BaseAdapter, WorkerStatus
+from agent_friday.user_errors import ExceptionText, exception_text
 
 if TYPE_CHECKING:
     from agent_friday.services.orchestrator import WorkerTask, WorkerResult
@@ -42,7 +43,7 @@ def _probe_ollama(base: str = _OLLAMA_BASE, timeout: float = 3.0) -> dict:
         return {"available": False, "models": [],
                 "error": "Ollama is not running. Start it with `ollama serve`."}
     except Exception as exc:
-        return {"available": False, "models": [], "error": str(exc)}
+        return {"available": False, "models": [], "error": exception_text(exc)}
 
 
 class OllamaAdapter(BaseAdapter):
@@ -124,7 +125,7 @@ class OllamaAdapter(BaseAdapter):
             with _JOBS_LOCK:
                 _JOBS[aid].update({
                     "status": WorkerStatus.FAILED,
-                    "error": f"egress gate blocked this task: {exc}",
+                    "error": ExceptionText(f"egress gate blocked this task: {exc}"),
                 })
             return
 
@@ -154,7 +155,7 @@ class OllamaAdapter(BaseAdapter):
             with _JOBS_LOCK:
                 _JOBS[aid].update({
                     "status": WorkerStatus.FAILED,
-                    "error": str(exc),
+                    "error": exception_text(exc),
                 })
 
     def poll(self, aid: str) -> WorkerStatus:

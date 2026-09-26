@@ -39,6 +39,7 @@ import threading
 import time
 import urllib.request
 from collections import deque
+from agent_friday.user_errors import ExceptionText
 
 _CACHE: dict = {}
 _TTL = 20.0  # seconds
@@ -219,7 +220,7 @@ def _check(name, deep=False) -> dict:
             return {"provider": name, "status": "ok" if ok else "down",
                     "detail": "daemon reachable" if ok else "Ollama not running"}
         except Exception as e:
-            return {"provider": name, "status": "down", "detail": str(e)[:120]}
+            return {"provider": name, "status": "down", "detail": ExceptionText(str(e)[:120])}
 
     if ptype == "local-voice":
         # Tier-1 on-device voice. "ok" only when deps are importable AND the
@@ -230,7 +231,7 @@ def _check(name, deep=False) -> dict:
             return {"provider": name, "status": h.get("status", "unknown"),
                     "detail": h.get("detail", "")}
         except Exception as e:
-            return {"provider": name, "status": "missing", "detail": str(e)[:120]}
+            return {"provider": name, "status": "missing", "detail": ExceptionText(str(e)[:120])}
 
     if ptype == "nemo-local":
         # Tier-2 GPU premium voice. "ok" only when torch+NeMo are installed AND a
@@ -242,7 +243,7 @@ def _check(name, deep=False) -> dict:
             return {"provider": name, "status": h.get("status", "unknown"),
                     "detail": h.get("detail", "")}
         except Exception as e:
-            return {"provider": name, "status": "missing", "detail": str(e)[:120]}
+            return {"provider": name, "status": "missing", "detail": ExceptionText(str(e)[:120])}
 
     if ptype == "comfyui":
         # auth:{"type":"none"} means _has_key() below would short-circuit to
@@ -255,7 +256,7 @@ def _check(name, deep=False) -> dict:
                     "detail": "server reachable" if ok
                               else "ComfyUI not running on 127.0.0.1"}
         except Exception as e:
-            return {"provider": name, "status": "down", "detail": str(e)[:120]}
+            return {"provider": name, "status": "down", "detail": ExceptionText(str(e)[:120])}
 
     if ptype == "higgsfield":
         # Same auth:{"type":"none"} shape as comfyui, but a correct liveness
@@ -269,7 +270,7 @@ def _check(name, deep=False) -> dict:
                     "detail": "connector reachable" if ok
                               else "MCP connector not reachable/authorized"}
         except Exception as e:
-            return {"provider": name, "status": "down", "detail": str(e)[:120]}
+            return {"provider": name, "status": "down", "detail": ExceptionText(str(e)[:120])}
 
     _ks = _key_state(prov)
     if _ks != "ok":
@@ -310,7 +311,7 @@ def _check(name, deep=False) -> dict:
                 return {"provider": name, "status": "ok" if code < 400 else "error",
                         "detail": f"HTTP {code}"}
         except Exception as e:
-            return {"provider": name, "status": "error", "detail": str(e)[:120]}
+            return {"provider": name, "status": "error", "detail": ExceptionText(str(e)[:120])}
 
     if deep and ptype == "kie":
         # kie.ai is neither ollama/anthropic (handled by inference_probe above,
@@ -327,7 +328,7 @@ def _check(name, deep=False) -> dict:
             from agent_friday.services import kie_generate as _kie
             return _kie.check_credentials(name)
         except Exception as e:
-            return {"provider": name, "status": "error", "detail": str(e)[:160]}
+            return {"provider": name, "status": "error", "detail": ExceptionText(str(e)[:160])}
 
     # Shallow path. A present key proves CONFIGURATION only — never that
     # inference works (decision D1). `proved_inference: False` says so
@@ -768,7 +769,7 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
                 return _result("unhealthy", slow, True)
             return _result("ok", f"generated in {ms}ms", True)
     except Exception as e:
-        return _result("down", f"{type(e).__name__}: {str(e)[:100]}", False)
+        return _result("down", ExceptionText(f"{type(e).__name__}: {str(e)[:100]}"), False)
 
     return None
 

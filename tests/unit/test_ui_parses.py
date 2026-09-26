@@ -42,7 +42,7 @@ needs_node = pytest.mark.skipif(not node, reason="node is not on PATH")
 def _inline_scripts(text):
     """Every inline <script> body, with its 1-based start line."""
     out = []
-    for m in re.finditer(r"<script([^>]*)>(.*?)</script>", text, flags=re.S | re.I):
+    for m in re.finditer(r"<script\b([^>]*)>(.*?)</script\b[^>]*>", text, flags=re.S | re.I):
         attrs, body = m.group(1), m.group(2)
         if "src=" in attrs:
             continue
@@ -78,7 +78,7 @@ def test_every_inline_script_in_index_html_parses(tmp_path):
 def test_app_html_jsx_compiles(tmp_path):
     """Nothing serves app.html today, so a break here is silent until a build."""
     src = APP.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"<script[^>]*>(.*)</script>", src, flags=re.S)
+    m = re.search(r"<script\b[^>]*>(.*)</script\b[^>]*>", src, flags=re.S | re.I)
     if m:
         src = m.group(1)
     src_file = tmp_path / "app.jsx"

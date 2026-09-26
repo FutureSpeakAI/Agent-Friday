@@ -104,6 +104,7 @@ from agent_friday.services.news_engine import (
 from agent_friday.services.voice_engine import (
     _synthesize_tts_wav,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 news_bp = Blueprint('news', __name__)
 
@@ -422,7 +423,7 @@ def generate_briefing():
             "is_html": False,
         })
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't generate the briefing")
 
 
 @news_bp.route('/api/news/front-page/weekly/latest')
@@ -446,7 +447,7 @@ def front_page_weekly_generate():
         _notify_weekly_digest(digest, manual=True)
         return jsonify({"status": "ok", "digest": digest})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't generate the weekly front page")
 
 
 @news_bp.route('/api/news/editorial/latest')
@@ -478,7 +479,7 @@ def editorial_generate():
         _notify_weekly_editorial(ed, manual=True)
         return jsonify({"status": "ok", "editorial": ed})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't write the editorial")
 
 
 @news_bp.route('/api/news/editorial/<week_id>')
@@ -508,7 +509,7 @@ def front_page_generate():
         _notify_front_page(edition, slot, manual=True)
         return jsonify({"status": "ok", "edition": edition})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't generate the front page")
 
 
 @news_bp.route('/api/news/front-page/latest')
@@ -562,7 +563,7 @@ def front_page_audio():
         return send_file(buf, mimetype='audio/wav')
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't make the front page audio")
 
 
 @news_bp.route('/api/news/anchor-briefing', methods=['POST'])
@@ -662,7 +663,7 @@ def news_share_to_draft_get(draft_id):
         return jsonify({"status": "ok",
                         "seed": json.loads(path.read_text(encoding="utf-8"))})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the shared draft")
 
 
 @news_bp.route('/api/news/annotate', methods=['POST', 'DELETE'])
@@ -873,7 +874,7 @@ def api_source_trust_all():
         rows = g.leaderboard(limit=1000)
         return jsonify({"status": "ok", "sources": rows, "count": len(rows)})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load source trust")
 
 
 @news_bp.route('/api/source-trust/leaderboard')
@@ -889,7 +890,7 @@ def api_source_trust_leaderboard():
         rows = get_source_trust_graph(friday_dir=FRIDAY_DIR).leaderboard(limit=limit)
         return jsonify({"status": "ok", "leaderboard": rows, "count": len(rows)})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the source leaderboard")
 
 
 @news_bp.route('/api/source-trust/observe', methods=['POST'])
@@ -919,7 +920,7 @@ def api_source_trust_observe():
                             "message": "invalid dimension or signal"}), 400
         return jsonify({"status": "ok", "source": rec})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't record the source observation")
 
 
 @news_bp.route('/api/source-trust/<path:domain>')
@@ -933,7 +934,7 @@ def api_source_trust_one(domain):
             return jsonify({"status": "error", "message": "source not found"}), 404
         return jsonify({"status": "ok", "source": rec})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load that source")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -961,7 +962,7 @@ def api_federation_attestations():
             "imported_count": len(imported),
         })
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the attestations")
 
 
 @news_bp.route('/api/federation/attestations/sign', methods=['POST'])
@@ -986,7 +987,7 @@ def api_federation_sign():
         federation.record_attestation(att, friday_dir=FRIDAY_DIR)
         return jsonify({"status": "ok", "attestation": att})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't sign the attestation")
 
 
 @news_bp.route('/api/federation/attestations/import', methods=['POST'])
@@ -1003,10 +1004,10 @@ def api_federation_import():
             results.append(federation.import_attestation(
                 att, governance_key_fn=_get_governance_key, friday_dir=FRIDAY_DIR))
         except Exception as e:
-            results.append({"accepted": False, "reason": str(e)})
+            results.append({"accepted": False, "reason": error_text(e, "Couldn't import the attestation")})
     accepted = sum(1 for r in results if r.get("accepted"))
-    return jsonify({"status": "ok", "accepted": accepted,
-                    "total": len(results), "results": results})
+    return jsonify(public_result({"status": "ok", "accepted": accepted,
+                    "total": len(results), "results": results}, "Couldn't import the attestations"))
 
 
 @news_bp.route('/api/federation/trust-scores')
@@ -1033,7 +1034,7 @@ def api_federation_trust_scores():
             "count": len(scores),
         })
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the trust scores")
 
 
 @news_bp.route('/api/news/source-stats', methods=['GET', 'POST'])
@@ -1105,4 +1106,4 @@ def news_deep_dive():
     data = request.get_json(silent=True) or {}
     result, status = _deep_dive_article(
         data.get("url"), title=data.get("title"), refresh=bool(data.get("refresh")))
-    return jsonify(result), status
+    return jsonify(public_result(result, "Couldn't dive into the article")), status

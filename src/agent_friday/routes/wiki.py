@@ -46,6 +46,7 @@ from agent_friday.services.wiki_engine import (
     wiki_read_text,
     wiki_write_text,
 )  # noqa: E501
+from agent_friday.routes._errors import log_failure
 
 wiki_bp = Blueprint('wiki', __name__)
 
@@ -370,7 +371,8 @@ def wiki_setup_research():
                     f"_This file was auto-created from profile setup. Fill in details as you learn them._\n"
                 )
         except Exception as e:
-            content = f"# Draft\n\n[Draft generation failed: {e}]\n\n{base_context}"
+            content = ("# Draft\n\n[Draft generation failed (error %s)]\n\n%s"
+                       % (log_failure(e, "Wiki setup draft failed"), base_context))
         pid = _propose_wiki_update(
             file=rel, section=section, new_value=content,
             reason=f"New-user setup research for {full_name or 'unknown user'}",

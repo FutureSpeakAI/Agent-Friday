@@ -60,6 +60,11 @@ _log = logging.getLogger("friday.taint")
 CURRENT: contextvars.ContextVar = contextvars.ContextVar("friday_taint_current",
                                                           default=None)
 
+#: The ledger key of the tool call currently executing, set beside CURRENT, so
+#: a handler can ask whether a value came from the owner's own words.
+CURRENT_KEY: contextvars.ContextVar = contextvars.ContextVar("friday_taint_key",
+                                                              default=None)
+
 # ── Ledger ──────────────────────────────────────────────────────────────────
 
 #: How long something Friday read keeps counting as a source. Long enough to
@@ -435,6 +440,8 @@ POLICY = {
     "fetch_url": "note",          # see _url_decision: verbatim reads are reading
     "open_url": "note",
     "write_path": "ask",
+    "open_target": "ask",
+    "upload_file": "ask",
     "delete_target": "ask",
     "command": "ask",
     "instruction": "ask",
@@ -466,6 +473,13 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "save_output": {"url": "fetch_url", "folder": "write_path", "filename": "write_path"},
     "open_url": {"url": "open_url"},
     "write_file": {"path": "write_path"},
+    # A file to open that came from outside content waits for a card whatever
+    # its type: "open the attachment" is the classic injection.
+    "open_path": {"path": "open_target", "target": "open_target"},
+    # A seed image is uploaded to a cloud service.
+    "generate_video": {"image_path": "upload_file"},
+    "generate_music": {"seed_image_path": "upload_file",
+                       "seed_image_paths": "upload_file"},
     "run_command": {"command": "command"},
     "run_sandboxed": {"code": "command"},
     "spawn_interactive_session": {"command": "command"},
@@ -647,6 +661,8 @@ _ROLE_WORDS = {
     "fetch_url": "The web address {v}",
     "open_url": "The web address {v}",
     "write_path": "The file location {v}",
+    "open_target": "The file to open ({v})",
+    "upload_file": "The file to upload ({v})",
     "delete_target": "The item to delete ({v})",
     "command": "Part of this command",
     "instruction": "These instructions",

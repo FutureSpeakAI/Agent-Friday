@@ -241,7 +241,10 @@ def voice_start_my_day():
     try:
         ctx = _gather_live_briefing_context()
     except Exception as e:
-        ctx = f"(could not load all live data: {e})"
+        # The model must be able to say a source failed; it gets the message
+        # only (docs/security/codeql-dismissals.md).
+        from agent_friday.user_errors import message_only
+        ctx = f"(could not load all live data: {message_only(e)})"
     tasks = _vc_tasks()
     prompt = (
         "[START MY DAY — the user asked for their morning voice briefing.]\n\n"

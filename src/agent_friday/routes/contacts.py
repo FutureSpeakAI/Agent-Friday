@@ -26,6 +26,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import contained, safe_name
 from agent_friday.core import (
     FRIDAY_DIR,
     VIBE_TERMINALS,
@@ -37,6 +38,7 @@ from agent_friday.services.misc_engine import (
     _contacts_research_dir,
     _load_trust_graph,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, public_result
 
 contacts_bp = Blueprint('contacts', __name__)
 
@@ -157,7 +159,7 @@ def set_personality():
         pfile.write_text(json.dumps(pdata, indent=2), encoding='utf-8')
         return jsonify({"status": "ok", "trait": trait, "value": float(value)})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't save the personality")
 
 
 @contacts_bp.route('/api/trust/edit', methods=['POST'])
@@ -181,7 +183,7 @@ def edit_trust():
             return jsonify({"status": "error", "message": err}), code
         return jsonify({"status": "ok", "person": person_key})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't save the trust change")
 
 
 @contacts_bp.route('/api/trust/add-person', methods=['POST'])
@@ -205,7 +207,7 @@ def add_trust_person():
             return jsonify({"status": "error", "message": err}), code
         return jsonify({"status": "ok", "key": key, "name": name})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't add the person")
 
 
 # -- The right to be forgotten, for people who never agreed to be recorded -----
@@ -228,7 +230,7 @@ def people_records(name):
         from agent_friday.services import forget_person as fp
         return jsonify({"status": "ok", "report": fp.find(name)})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load that person's records")
 
 
 @contacts_bp.route('/api/people/forget', methods=['POST'])
@@ -245,9 +247,9 @@ def people_forget():
         return jsonify({"status": "error", "message": "No name specified"}), 400
     try:
         from agent_friday.services import forget_person as fp
-        return jsonify({"status": "ok", "receipt": fp.forget(name)})
+        return jsonify(public_result({"status": "ok", "receipt": fp.forget(name)}, "Couldn't forget that person"))
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't forget that person")
 
 
 @contacts_bp.route('/api/people/forgotten', methods=['GET', 'POST'])
@@ -268,7 +270,7 @@ def people_forgotten():
             return jsonify({"status": "error", "message": "No name specified"}), 400
         return jsonify({"status": "ok", "result": fp.unforget(name)})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the forgotten list")
 
 
 # -- Relationship memory -------------------------------------------------------
@@ -281,9 +283,9 @@ def people_forgotten():
 def relationships_person(name):
     from agent_friday.services import relationship_memory as rm
     try:
-        return jsonify({"status": "ok", "timeline": rm.person_timeline(name, limit=30)})
+        return jsonify(public_result({"status": "ok", "timeline": rm.person_timeline(name, limit=30)}, "Couldn't load the relationship"))
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the relationship")
 
 
 @contacts_bp.route('/api/relationships/config', methods=['GET', 'POST'])
@@ -300,7 +302,7 @@ def relationships_config():
     except (TypeError, ValueError):
         return jsonify({"status": "error", "message": "numbers only"}), 400
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't save the relationship settings")
 
 
 @contacts_bp.route('/api/relationships/sync', methods=['POST'])
@@ -308,9 +310,9 @@ def relationships_sync():
     """Sync now: reads the owner's own mail and calendar headers."""
     from agent_friday.services import relationship_memory as rm
     try:
-        return jsonify({"status": "ok", "result": rm.sync()})
+        return jsonify(public_result({"status": "ok", "result": rm.sync()}, "Couldn't sync relationships"))
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't sync relationships")
 
 
 @contacts_bp.route('/api/relationships/follow-ups', methods=['GET', 'POST'])
@@ -357,7 +359,7 @@ def contacts_google_write():
             {"id": r.get("id"), "email": r.get("email"), "label": r.get("label"),
              "can_save": r.get("id") in ok} for r in ga.list_accounts()]})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e), "accounts": []}), 500
+        return api_error(e, "Couldn't check Google Contacts access", accounts=[])
 
 
 @contacts_bp.route('/api/contacts')
@@ -399,8 +401,14 @@ def get_contact(name):
         return jsonify({"status": "error", "message": "Contact not found"}), 404
 
     # Look for a stored research file.
-    research_file = _contacts_research_dir() / f"{target.replace(' ', '_')}.md"
-    research = research_file.read_text(encoding='utf-8') if research_file.exists() else ''
+    # A contact's research note is one file in the research folder; a name
+    # that is not a plain file name has none.
+    try:
+        research_file = contained(_contacts_research_dir(), safe_name(
+            f"{target.replace(' ', '_')}.md", what="contact name"))
+        research = research_file.read_text(encoding='utf-8') if research_file.exists() else ''
+    except ValueError:
+        research = ''
 
     return jsonify({"status": "ok", "contact": match, "research": research})
 
@@ -413,7 +421,11 @@ def contacts_research():
     if not name:
         return jsonify({"status": "error", "message": "name required"}), 400
     key = name.lower().replace(' ', '_')
-    research_file = _contacts_research_dir() / f"{key}.md"
+    try:
+        research_file = contained(_contacts_research_dir(), safe_name(
+            f"{key}.md", what="contact name"))
+    except ValueError:
+        return jsonify({"status": "error", "message": "invalid contact name"}), 400
     stamp = datetime.now().isoformat()
     if not research_file.exists():
         research_file.write_text(

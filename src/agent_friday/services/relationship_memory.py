@@ -50,6 +50,7 @@ from email.utils import getaddresses
 from pathlib import Path
 
 import agent_friday.core as core
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.relationships")
 _LOCK = threading.RLock()
@@ -84,7 +85,10 @@ _AUTOMATED = re.compile(
     r"^(?:no-?reply|do-?not-?reply|donotreply|notifications?|notify|alerts?|"
     r"mailer-daemon|postmaster|bounces?|automated|calendar-notification)(?:[+.\-_].*)?$",
     re.I)
-_EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
+# The domain needs a dot with at least one character on each side. Matching
+# up to the FIRST such dot keeps the check linear; `[^@..]+\.[^@..]+$` tried
+# every dot in the domain and rescanned the tail each time.
+_EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>][^@\s,;<>.]*\.[^@\s,;<>]+$")
 _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
@@ -418,7 +422,9 @@ def _meeting_record(account_id: str, ev: dict, owner: set, names: dict,
         if addr in skip or (n and _norm(n) in skip_names):
             skip.add(addr)
             continue
-        if is_automated(addr) or addr.endswith("resource.calendar.google.com"):
+        # A room or resource booking, by the domain after the @ (not a suffix
+        # of the whole address, which would also match a lookalike domain).
+        if is_automated(addr) or _domain(addr) == "resource.calendar.google.com":
             continue
         if addr not in people:
             people.append(addr)
@@ -466,7 +472,7 @@ def sync(now: datetime | None = None) -> dict:
             try:
                 got = _fetch_gmail(acct, q)
             except Exception as e:
-                errors.append({"account_id": aid, "service": "gmail", "error": str(e)[:200]})
+                errors.append({"account_id": aid, "service": "gmail", "error": ExceptionText(str(e)[:200])})
                 continue
             high = after or 0
             for m in got.get("messages") or []:
@@ -495,7 +501,7 @@ def sync(now: datetime | None = None) -> dict:
             try:
                 events = _fetch_calendar(acct, start, now)
             except Exception as e:
-                errors.append({"account_id": aid, "service": "calendar", "error": str(e)[:200]})
+                errors.append({"account_id": aid, "service": "calendar", "error": ExceptionText(str(e)[:200])})
                 continue
             for ev in events:
                 rec = _meeting_record(aid, ev, owner, names, set(f_emails), f_names)
@@ -795,7 +801,7 @@ def tick(now: datetime | None = None) -> dict:
             result["synced"] = sync(now)
     except Exception as e:  # noqa: BLE001
         _log.warning("relationships: sync failed: %s", e)
-        result["sync_error"] = str(e)[:200]
+        result["sync_error"] = ExceptionText(str(e)[:200])
     try:
         with _LOCK:
             due = {f["id"] for f in due_follow_ups(now)}

@@ -45,6 +45,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agent_friday.services.platforms import base as pbase
 from agent_friday.services.platforms.base import PlatformAdapter
+from agent_friday.user_errors import exception_text
 
 # ── fixed, content-free error strings (§12.5) ────────────────────────────────
 ERR_SERVICES_UNAVAILABLE = "federation services unavailable"
@@ -244,7 +245,7 @@ def record_event(listing_id: str, event: str, n: int = 1,
                 con.close()
         return {"ok": True, "listing_id": lid, "event": ev, "recorded": n}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def _count_completed_purchases(mk: Any, listing_id: str) -> Tuple[Optional[int], Optional[int]]:
@@ -374,8 +375,8 @@ class FederationAdapter(PlatformAdapter):
             opts["tags"] = _collect_tags(opts.get("tags"), post.get("tags"))
             return res
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e), "warnings": []}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e), "warnings": []}
 
     # ── publish path ──────────────────────────────────────────────────────────
     def _first_asset_path(self, assets: Any) -> Optional[Path]:
@@ -411,7 +412,7 @@ class FederationAdapter(PlatformAdapter):
             path.write_text(text, encoding="utf-8")
             return path
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
             return None
 
     def _listing_url(self, listing_id: str) -> str:
@@ -479,7 +480,7 @@ class FederationAdapter(PlatformAdapter):
                     result["failed"] += 1
             return result
         except Exception as e:
-            result["error"] = str(e)
+            result["error"] = exception_text(e)
             return result
 
     def publish(self, prepared: Dict[str, Any]) -> Dict[str, Any]:
@@ -578,8 +579,8 @@ class FederationAdapter(PlatformAdapter):
                 },
             }
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e)}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e)}
 
     def delete(self, platform_post_id: str) -> Dict[str, Any]:
         """Native takedown: remove the marketplace listing."""
@@ -596,8 +597,8 @@ class FederationAdapter(PlatformAdapter):
                 return {"ok": True, "deleted": True}
             return {"ok": False, "deleted": False, "error": ERR_DELETE_FAILED}
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e)}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e)}
 
     # ── analytics path (§8.2 Federation column) ──────────────────────────────
     def fetch_metrics(self, platform_post_id: str) -> Optional[Dict[str, Any]]:
@@ -639,7 +640,7 @@ class FederationAdapter(PlatformAdapter):
                     out["revenue_mpsi"] = revenue
             return out
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
             return None
 
     def fetch_account_metrics(self) -> Optional[Dict[str, Any]]:

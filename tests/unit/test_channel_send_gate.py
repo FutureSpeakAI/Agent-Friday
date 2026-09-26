@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agent_friday.services.channels.base import ChannelAdapter
 from agent_friday.services import egress_gate
 
-TIER2_SECRET = "my custody hearing is on the 14th, my SSN is 123-45-6789"  # pragma: allowlist secret
+TIER2_SECRET = "my court hearing is on the 14th, my SSN is 123-45-6789"  # pragma: allowlist secret
 
 
 class _FakeAdapter(ChannelAdapter):

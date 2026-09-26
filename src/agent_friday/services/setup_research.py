@@ -44,6 +44,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import UserFacingValueError
 
 _log = logging.getLogger("friday.setup_research")
 _LOCK = threading.RLock()
@@ -218,7 +219,10 @@ def _domain(site) -> str:
         host = (urlparse(s).hostname or "").lower()
     except Exception:
         return ""
-    if not re.fullmatch(r"[a-z0-9.\-]+\.[a-z]{2,}", host or ""):
+    # A dotted name ending in an alphabetic TLD. Split at the last dot rather
+    # than letting one regex backtrack over every dot in the name.
+    head, dot, tld = (host or "").rpartition(".")
+    if not (dot and re.fullmatch(r"[a-z0-9.\-]+", head) and re.fullmatch(r"[a-z]{2,}", tld)):
         return ""
     return host
 
@@ -408,7 +412,7 @@ def start(seeds: dict, reader: dict, *, engine: ResearchEngine | None = None,
         raise NoModel("no model is available to read pages")
     plan = build_queries(seeds)
     if not plan["queries"]:
-        raise ValueError("nothing to search for: add your name or a handle")
+        raise UserFacingValueError("nothing to search for: add your name or a handle")
     job = {"id": uuid.uuid4().hex[:12], "created": time.time(), "status": "running",
            "reader": {k: reader.get(k, "") for k in ("kind", "model", "provider")},
            "plan": plan, "candidates": [], "dropped": {}, "counts": {},
@@ -602,7 +606,7 @@ def review(job_id: str, decisions: list) -> dict:
                 if not edited:
                     continue
                 if looks_like_instruction(edited):
-                    raise ValueError("an edited finding cannot contain instructions")
+                    raise UserFacingValueError("an edited finding cannot contain instructions")
                 text = edited
             eid = integration.ingest_fact(
                 text, source_kind="research",

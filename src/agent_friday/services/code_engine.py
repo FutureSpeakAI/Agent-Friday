@@ -34,6 +34,7 @@ from agent_friday.core import (
     _POPEN_FLAGS,
     _safe_under_home,
 )  # noqa: E501
+from agent_friday.user_errors import exception_text
 
 
 
@@ -285,7 +286,9 @@ def _safe_project_path(target):
         raw = os.path.join(_projects_root(), raw)
     rp = os.path.realpath(raw)
     root = _projects_root()
-    if rp == root or rp.startswith(root + os.sep):
+    if rp == root:
+        return root
+    if rp.startswith(root + os.sep):
         return rp
     return None
 
@@ -362,7 +365,7 @@ def _git_repo_summary(repo_path):
     except subprocess.TimeoutExpired:
         card["error"] = "git timed out"
     except Exception as e:
-        card["error"] = str(e)
+        card["error"] = exception_text(e)
     return card
 
 

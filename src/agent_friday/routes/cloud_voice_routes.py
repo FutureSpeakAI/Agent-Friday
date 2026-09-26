@@ -19,6 +19,7 @@ import logging
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.services import cloud_voice, voice_indicator
+from agent_friday.routes._errors import api_error
 
 log = logging.getLogger(__name__)
 
@@ -80,22 +81,22 @@ def cloud_voice_tts():
         # Surface and offer. Never substitute.
         voice_indicator.record_degraded(
             requested=(e.requested or provider or "cloud"),
-            serving=None, reason=str(e), offer=e.offer)
+            serving=None, reason=e.user_message, offer=e.offer)
         return jsonify({
             "status": "unavailable",
             "surfaced": True,
             "substituted": False,
             "code": e.code,
-            "message": str(e),
+            "message": e.user_message,
             "offer": e.offer,
             "requested": e.requested or provider,
         }), 503
     except cloud_voice.CloudVoiceError as e:
         return jsonify({"status": "error", "code": e.code,
-                        "message": str(e)}), 400
+                        "message": e.user_message}), 400
     except Exception as e:  # pragma: no cover - defensive
         log.exception("cloud voice synthesis failed")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't speak with the cloud voice")
 
     # Written AFTER the response is served, FROM the served path.
     voice_indicator.record_served(

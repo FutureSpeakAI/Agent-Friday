@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import agent_friday.core as core
+from agent_friday.user_errors import exception_text
 
 # ── optional crypto deps ──────────────────────────────────────────────────────
 try:
@@ -387,7 +388,7 @@ def decrypt_message(envelope_dict: Dict[str, Any]) -> Dict[str, Any]:
             "sender_pubkey": sender_pub,
         }
     except Exception as e:
-        return {"ok": False, "error": str(e), "sender_pubkey": envelope_dict.get("sender_pubkey", "")}
+        return {"ok": False, "error": exception_text(e), "sender_pubkey": envelope_dict.get("sender_pubkey", "")}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -426,7 +427,15 @@ def send_to_peer(
     envelope_dict: Dict[str, Any],
     timeout: int = 15,
 ) -> Dict[str, Any]:
-    """HTTP POST the envelope to {peer_endpoint}/api/federation/inbox."""
+    """HTTP POST the envelope to {peer_endpoint}/api/federation/inbox.
+
+    The endpoint must be a plain http(s) base URL (web_safety.check_peer_endpoint):
+    it can come from a peer's own advertised card, and urllib would otherwise
+    open file:// or ftp:// just as readily."""
+    from agent_friday.services.web_safety import check_peer_endpoint
+    ok, why = check_peer_endpoint(peer_endpoint)
+    if not ok:
+        return {"ok": False, "error": f"refused_endpoint: {why}"}
     try:
         url = peer_endpoint.rstrip("/") + "/api/federation/inbox"
         body = json.dumps(envelope_dict).encode("utf-8")
@@ -442,4 +451,4 @@ def send_to_peer(
     except urllib.error.HTTPError as e:
         return {"ok": False, "error": f"http_{e.code}", "status": e.code}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}

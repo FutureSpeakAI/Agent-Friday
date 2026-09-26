@@ -252,8 +252,13 @@ class BehavioralMonitor:
 
         # File / path references the user explicitly named.
         referenced_paths = []
-        for m in re.findall(r"[\w./\\-]+\.\w{1,5}\b", msg):
-            referenced_paths.append(os.path.basename(m))
+        # Matches start only at the beginning of a run of path characters: a
+        # run holds at most one match and it always starts there, so the
+        # result is unchanged while a long run without an extension is
+        # scanned once instead of once per character.
+        for m in re.findall(r"(?<![\w./\\-])[\w./\\-]+\.\w{1,5}\b", msg):
+            # Either separator: the text names Windows paths whatever OS reads it.
+            referenced_paths.append(re.split(r"[\\/]", m)[-1])
         referenced_paths = sorted(set(referenced_paths))
 
         # Highest ring the phrasing reasonably justifies. Default to NETWORK

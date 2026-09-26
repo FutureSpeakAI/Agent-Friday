@@ -12,6 +12,7 @@ import threading
 import asyncio
 import re
 import html
+import urllib.parse
 import calendar
 import time as _time
 import hashlib as _hashlib
@@ -26,6 +27,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import contained, safe_name
 from agent_friday.core import (
     CREATIONS_DIR,
     login_required,
@@ -42,6 +44,7 @@ from agent_friday.services.creations import (
     _sync_daily_creation_files,
     generate_daily_creation,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 creations_bp = Blueprint('creations', __name__)
 
@@ -113,12 +116,17 @@ def serve_creation(filename):
     # filename must not become a way to read the disk.
     try:
         from agent_friday.services import office_engine as _oe
-        if not (CREATIONS_DIR / filename).exists():
-            base = _oe.DOCUMENTS_DIR.resolve()
-            for candidate in (base / filename,
-                              base / _oe.RENDER_DIR / filename):
-                full = candidate.resolve()
-                if (full.is_file() and base in full.parents):
+        try:
+            in_creations = contained(CREATIONS_DIR, filename).exists()
+        except ValueError:
+            in_creations = False
+        if not in_creations:
+            for rel in (filename, f"{_oe.RENDER_DIR}/{filename}"):
+                try:
+                    full = contained(_oe.DOCUMENTS_DIR, rel)
+                except ValueError:
+                    continue
+                if full.is_file():
                     return send_from_directory(str(full.parent), full.name)
     except Exception:
         pass
@@ -136,12 +144,17 @@ def serve_creation_framed(filename):
     except Exception:
         pass
     safe = os.path.basename(filename)
-    fpath = CREATIONS_DIR / safe
-    if not fpath.exists() or not fpath.is_file():
+    try:
+        fpath = contained(CREATIONS_DIR, safe_name(safe, what="creation name"))
+    except ValueError:
+        return ("Creation not found.", 404)
+    if not fpath.is_file():
         return ("Creation not found.", 404)
     ext = fpath.suffix.lower().lstrip('.')
-    raw_url = f"/api/creations/{safe}"
-    home_url = request.host_url.rstrip('/') or 'http://localhost:3000'
+    # Everything interpolated into the page is escaped: the file name, and the
+    # Host header the return link is built from.
+    raw_url = html.escape("/api/creations/" + urllib.parse.quote(safe))
+    home_url = html.escape(request.host_url.rstrip('/') or 'http://localhost:3000')
     title = html.escape(safe)
 
     if ext in ('html', 'htm'):
@@ -160,10 +173,12 @@ def serve_creation_framed(filename):
         try:
             md_raw = fpath.read_text(encoding='utf-8', errors='replace')
         except Exception as e:
-            md_raw = f"Could not read creation: {e}"
+            md_raw = error_text(e, "Could not read this creation")
         # Render client-side with marked (already a project dependency); fall back
         # to escaped <pre> if the CDN is unreachable (offline-safe).
-        md_json = json.dumps(md_raw)
+        # '<' becomes a JSON escape, so '</script>' in the document cannot
+        # close the tag.
+        md_json = json.dumps(md_raw).replace('<', '\\u003c')
         body = (
             '<div class="fc-doc"><div id="fc-md"></div>'
             '<pre id="fc-md-fallback" style="display:none;white-space:pre-wrap"></pre></div>'
@@ -249,7 +264,7 @@ def daily_creation_latest():
     try:
         return jsonify({"status": "ok", "creation": json.loads(path.read_text(encoding="utf-8"))})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the daily creation")
 
 
 @creations_bp.route('/api/creations/daily')
@@ -284,37 +299,70 @@ def daily_creation_by_date(date):
     try:
         return jsonify({"status": "ok", "creation": json.loads(path.read_text(encoding="utf-8"))})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load that day's creation")
 
 
 @creations_bp.route('/api/computer/open', methods=['POST'])
 @login_required
 def api_computer_open():
     """Open a folder or file on the user's machine (powers the notification
-    "Open Folder" button + any UI that needs to reveal a path). Low-risk: opens
-    /reveals only, never writes or deletes. Accepts a friendly name or a path."""
+    "Open Folder" button + any UI that needs to reveal a path). Opens or
+    reveals only, never writes or deletes. Accepts a friendly name or a path.
+
+    The owner's click is a direct action, but the same allow-list as the
+    `open_path` tool applies (services/open_safety.py): documents, pictures,
+    recordings and folders open; anything else could run a program, so it
+    raises an approval card and opens only once the owner has approved it.
+    """
+    from agent_friday.governance import action_gate as _gate
+    from agent_friday.services import open_safety as _open_safety
+    from agent_friday.services.agent import (_OPEN_APPS, _OPEN_SHELL_APPS,
+                                             _resolve_open_target)
     data = request.get_json(silent=True) or {}
     path = (data.get('path') or data.get('target') or '').strip()
     if not path:
         return jsonify({"status": "error", "message": "path required"}), 400
-    result = _perform_open(path)
-    if result is not None:
-        return jsonify({"status": "ok", "message": result})
-    # Fall back to a raw shell-open for any existing path the friendly resolver
-    # didn't recognize (e.g. an absolute file path outside the alias set).
+    app_key = re.sub(r'\s+', ' ', path.lower())
+    resolved = None
+    if app_key not in _OPEN_APPS and app_key not in _OPEN_SHELL_APPS:
+        resolved = _resolve_open_target(path)
+        if not resolved:
+            try:
+                p = Path(path).expanduser()
+                resolved = str(p.resolve()) if p.exists() else None
+            except Exception:
+                resolved = None
+    safe, why = _open_safety.judge(resolved) if resolved else (True, "")
+    decided = None
+    if not safe:
+        real = str(_open_safety.real_target(resolved) or resolved)
+        name = Path(real).name or real
+        v = _gate.authorize_external(
+            "open_path", {"path": real}, requested_by="computer_open_route",
+            title=f"Open {name} on this computer",
+            description=(f"{why}. Opening it could run a program. Approve only "
+                         f"if you expect {real} to run."),
+            action_description=f"open {real}")
+        if v.action != "allow":
+            waiting = v.action == "card"
+            return jsonify({
+                "status": "needs_approval" if waiting else "refused",
+                "message": (f"{name} was not opened: {why}. "
+                            + ("An approval card is waiting in System → "
+                               "Approvals; open it again once you approve it."
+                               if waiting else v.reason)),
+            }), 403
+        decided = "external:open_path"
+    token = _gate.DECIDED.set(decided)
     try:
-        p = Path(path).expanduser()
-        if p.exists():
-            if sys.platform == 'win32':
-                os.startfile(str(p))  # type: ignore[attr-defined]
-            elif sys.platform == 'darwin':
-                subprocess.Popen(['open', str(p)])
-            else:
-                subprocess.Popen(['xdg-open', str(p)])
-            return jsonify({"status": "ok", "opened": str(p)})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-    return jsonify({"status": "error", "message": f"Could not resolve {path!r}"}), 404
+        # A known application, or a friendly name, opens through the same
+        # helper the tool uses; it judges the target again before opening.
+        result = _perform_open(resolved or path)
+    finally:
+        _gate.DECIDED.reset(token)
+    if result is None:
+        return jsonify(public_result({"status": "error", "message": f"Could not resolve {path!r}"}, "Couldn't open that")), 404
+    return jsonify(public_result({"status": "ok", "message": result}, "Couldn't open that"))
 
 
 def _flatten_first_file(result):
@@ -358,7 +406,7 @@ def create_image():
     )
     # The body carries status ('ok'|'blocked'|'unavailable'|'error'); these create
     # routes return HTTP 200 by convention (clients branch on the body's status).
-    return jsonify(_flatten_first_file(result))
+    return jsonify(public_result(_flatten_first_file(result), "Couldn't make the image"))
 
 
 @creations_bp.route('/api/create/music', methods=['POST'])
@@ -383,7 +431,7 @@ def create_music():
         project_id=data.get('project_id'),
         license=data.get('license'),
     )
-    return jsonify(_flatten_first_file(result))
+    return jsonify(public_result(_flatten_first_file(result), "Couldn't make the music"))
 
 
 @creations_bp.route('/api/create/music/available', methods=['GET'])
@@ -393,7 +441,7 @@ def music_available():
     current google-genai SDK lacks the batch generate_music surface."""
     from agent_friday.services import music_engine
     ok, reason = music_engine.cloud_music_available()
-    return jsonify({"available": ok, "reason": reason or None})
+    return jsonify(public_result({"available": ok, "reason": reason or None}, "Couldn't check music generation"))
 
 
 @creations_bp.route('/api/create/availability')
@@ -411,13 +459,13 @@ def create_availability():
     try:
         music_ok, music_reason = music_engine.cloud_music_available()
     except Exception as e:
-        music_ok, music_reason = False, str(e)
+        music_ok, music_reason = False, error_text(e, "Music generation is unavailable")
     try:
         from agent_friday.services.demo_mode import is_demo
         text_ok = not is_demo()
     except Exception:
         text_ok = True
-    return jsonify({"status": "ok", "types": {
+    return jsonify(public_result({"status": "ok", "types": {
         "image": {"available": gem, "reason": None if gem else key_msg},
         "video": {"available": gem, "reason": None if gem else key_msg},
         "music": {"available": bool(music_ok),
@@ -431,7 +479,7 @@ def create_availability():
                      "OpenAI-compatible endpoint, or Ollama in "
                      "Settings → Accounts & Keys.")},
         "code-art": {"available": gem, "reason": None if gem else key_msg},
-    }})
+    }}, "Couldn't check what can be created"))
 
 
 @creations_bp.route('/api/create/text', methods=['POST'])
@@ -480,7 +528,7 @@ def create_text():
                         "files": [{"filename": filename, "url": url}]})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)})
+        return api_error(e, "Couldn't write that", 200)
 
 
 @creations_bp.route('/api/create/timeline', methods=['POST'])
@@ -515,7 +563,7 @@ def create_timeline():
                     "exports": data.get('exports') or ["mp4-1080p"]}
     result = timeline_engine.compose(timeline, project_id=data.get('project_id'),
                                      license=data.get('license'))
-    return jsonify(_flatten_first_file(result))
+    return jsonify(public_result(_flatten_first_file(result), "Couldn't make the timeline"))
 
 
 @creations_bp.route('/api/timeline/formats')
@@ -546,12 +594,23 @@ def provenance_license_options():
                     "default": provenance.DEFAULT_LICENSE_TERMS})
 
 
+def _creation_file(filename):
+    """The creation a URL names by its file name, or None: only the last path
+    component counts, and it must be an existing file directly inside
+    CREATIONS_DIR."""
+    try:
+        p = contained(CREATIONS_DIR, safe_name(Path(filename).name, what="creation name"))
+    except ValueError:
+        return None
+    return p if p.is_file() else None
+
+
 @creations_bp.route('/api/provenance/by-file/<path:filename>/license', methods=['POST'])
 def provenance_set_license(filename):
     """Owner changes a creation's license terms (append-only edit, re-signed)."""
     from agent_friday.services import provenance
-    p = CREATIONS_DIR / Path(filename).name
-    if not p.exists():
+    p = _creation_file(filename)
+    if p is None:
         return jsonify({"status": "error", "message": "Creation not found."})
     manifest = provenance.manifest_for_file(p)
     if not manifest:
@@ -570,8 +629,8 @@ def provenance_by_file(filename):
     """Verify provenance for a creation by filename (hashes the file, reads its
     sidecar)."""
     from agent_friday.services import provenance
-    p = CREATIONS_DIR / Path(filename).name
-    if not p.exists():
+    p = _creation_file(filename)
+    if p is None:
         return jsonify({"status": "error", "message": "Creation not found."})
     manifest = provenance.manifest_for_file(p)
     if not manifest:
@@ -612,7 +671,7 @@ def create_code_art():
         return jsonify({"status": "ok", "filename": filename, "url": f"/api/creations/{filename}"})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)})
+        return api_error(e, "Couldn't make the code art", 200)
 
 
 @creations_bp.route('/api/create/poem', methods=['POST'])
@@ -640,7 +699,7 @@ def create_poem():
         return jsonify({"status": "ok", "text": text, "filename": filename})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)})
+        return api_error(e, "Couldn't write the poem", 200)
 
 
 @creations_bp.route('/api/create/presentation', methods=['POST'])
@@ -657,7 +716,7 @@ def create_presentation():
         style=data.get('style'),
         workspace=data.get('workspace'),
     )
-    return jsonify(result)
+    return jsonify(public_result(result, "Couldn't make the presentation"))
 
 
 @creations_bp.route('/api/create/website', methods=['POST'])
@@ -671,7 +730,7 @@ def create_website():
         style=data.get('style'),
         workspace=data.get('workspace'),
     )
-    return jsonify(result)
+    return jsonify(public_result(result, "Couldn't make the website"))
 
 
 @creations_bp.route('/api/create/video', methods=['POST'])
@@ -690,4 +749,4 @@ def create_video():
         image_path=data.get('image_path'),
         license=data.get('license'),
     )
-    return jsonify(_flatten_first_file(result))
+    return jsonify(public_result(_flatten_first_file(result), "Couldn't make the video"))

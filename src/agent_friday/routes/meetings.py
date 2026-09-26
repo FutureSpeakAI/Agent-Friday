@@ -22,6 +22,7 @@ this machine: a remote session or an observer credential is refused.
 from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.services import meeting_capture as mc
+from agent_friday.routes._errors import api_error, public_result
 
 meetings_bp = Blueprint('meetings', __name__)
 
@@ -42,7 +43,7 @@ def _gate():
 
 
 def _fail(e: mc.MeetingError):
-    return jsonify({"status": "error", "code": e.code, "error": str(e)}), e.status
+    return jsonify({"status": "error", "code": e.code, "error": e.user_message}), e.status
 
 
 @meetings_bp.route('/api/meetings/status')
@@ -86,7 +87,7 @@ def meetings_stop():
 
 @meetings_bp.route('/api/meetings')
 def meetings_list():
-    return jsonify({"status": "ok", "meetings": mc.get_manager().list()})
+    return jsonify(public_result({"status": "ok", "meetings": mc.get_manager().list()}, "Couldn't list the meetings"))
 
 
 @meetings_bp.route('/api/meetings/<mid>', methods=['GET', 'DELETE'])
@@ -141,8 +142,7 @@ def meetings_follow_up(mid):
         except mc.MeetingError:
             raise
         except Exception as e:
-            return jsonify({"status": "error", "code": "not_queued",
-                            "error": str(e)[:300]}), 400
+            return api_error(e, "Couldn't prepare the follow-up", 400, key="error", code="not_queued")
         return jsonify({"status": "ok"} | out)
     except mc.MeetingError as e:
         return _fail(e)

@@ -49,6 +49,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.user_errors import ExceptionText
 
 # Not visible via the star-import cascade (it is bound in voice_engine, an
 # UPPER layer) — import the leaf module directly so the editorial/digest/front
@@ -60,14 +61,24 @@ except Exception:
 
 
 def _find_briefing_path(filename):
-    """Return the Path for a briefing file, checking both known locations."""
-    # Location 1: Desktop/friday-creations (legacy daily-briefing-*.html files)
-    p1 = HOME / 'Desktop' / 'friday-creations' / filename
-    if p1.exists() and p1.name.startswith('daily-briefing'):
+    """Return the Path for a briefing file, checking both known locations.
+
+    `filename` comes from the URL and must name one file directly inside one
+    of the two briefing folders; anything else (`..`, a backslash, a drive)
+    finds nothing.
+    """
+    from agent_friday.paths import contained, safe_name
+    try:
+        name = safe_name(filename, what="briefing name")
+        # Location 1: Desktop/friday-creations (legacy daily-briefing-*.html files)
+        p1 = contained(HOME / 'Desktop' / 'friday-creations', name)
+        # Location 2: ~/.friday/wiki/briefings (date-named files like 2026-04-14.html)
+        p2 = contained(HOME / '.friday' / 'wiki' / 'briefings', name)
+    except ValueError:
+        return None
+    if p1.is_file() and p1.name.startswith('daily-briefing'):
         return p1
-    # Location 2: ~/.friday/wiki/briefings (date-named files like 2026-04-14.html)
-    p2 = HOME / '.friday' / 'wiki' / 'briefings' / filename
-    if p2.exists():
+    if p2.is_file():
         return p2
     return None
 
@@ -197,8 +208,9 @@ NEWS_CATEGORIES = {
     },
     "Local": {
         "color": "local",
-        # Built at read time from the `news_local_area` setting (see
-        # category_meta). With no area set there is no Local beat.
+        # Built at read time from the `news_local_area` and
+        # `news_local_sources` settings (see category_meta). With neither
+        # set there is no Local beat.
         "query": "",
         "feeds": [],
     },
@@ -247,7 +259,9 @@ DEFAULT_BRIEFING_PREFS = {
 
 # A small static trust map — well-known domains we can color-rate without a
 # live reputation service. Everything unknown is "neutral" (yellow). The user's
-# own ban/boost decisions always override this.
+# own ban/boost decisions always override this. No city's local press is in
+# this map: the owner's Local beat outlets (`news_local_sources`) get the same
+# treatment at read time, see _trust_rating.
 _TRUSTED_DOMAINS = {
     "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "npr.org",
     "arstechnica.com", "theverge.com", "wired.com", "nature.com",
@@ -258,7 +272,7 @@ _TRUSTED_DOMAINS = {
     "theguardian.com", "politico.com", "theintercept.com", "talkingpointsmemo.com",
     "motherjones.com", "theatlantic.com", "fortune.com", "cnbc.com",
     "marketwatch.com", "businessinsider.com", "texastribune.org",
-    "texasmonthly.com", "austinmonitor.com", "kut.org", "scientificamerican.com",
+    "scientificamerican.com",
     "carbonbrief.org", "niemanlab.org", "cjr.org", "poynter.org",
 }
 _LOW_TRUST_DOMAINS = {
@@ -388,7 +402,7 @@ def _trust_rating(domain, banned=None, boosted=None):
                 get_source_trust_graph(friday_dir=FRIDAY_DIR).score_for(domain))
         except Exception:
             pass
-    if domain in _TRUSTED_DOMAINS:
+    if domain in _TRUSTED_DOMAINS or domain in _local_sources():
         return "green"
     if domain in _LOW_TRUST_DOMAINS:
         return "red"
@@ -488,7 +502,8 @@ def _normalize_entry(entry):
 
     snippet = _clean_feed_text(entry.get("summary", "") or entry.get("description", ""))
     # Google News summaries are usually a junk list of related links — drop them.
-    if "news.google.com" in (link or "") and (
+    from agent_friday.services.web_safety import url_host_matches
+    if url_host_matches(link, "news.google.com") and (
         not snippet or "View Full Coverage" in snippet or len(snippet) > 400
     ):
         snippet = ""
@@ -601,6 +616,9 @@ def _brave_results(query, limit=8):
     endpoint and the research pipeline's web endpoint — they differ only in
     path, not in auth.
     """
+    if not (query or "").strip():
+        # An empty beat (Local with nothing set) has nothing to search for.
+        return []
     try:
         from agent_friday.services.web_search import brave_key as _bk
         key = _bk()
@@ -1304,19 +1322,36 @@ def _local_area() -> str:
         return ""
 
 
+def _local_sources() -> tuple:
+    """The outlets the owner named for Local news (`news_local_sources`), as
+    bare domains, or () when none are set or settings cannot be read."""
+    try:
+        from agent_friday.source_trust_graph import local_beat_sources
+        return local_beat_sources()
+    except Exception:
+        return ()
+
+
 def category_meta(cat):
-    """A category's feeds and query. Local is built from the owner's area:
-    a Google News search for that place, and nothing at all when no area is
-    set, so no install reads another city's news by default."""
+    """A category's feeds and query. Local is built from the owner's
+    settings: a Google News search for their area plus one feed per outlet
+    they listed, and nothing at all when neither is set, so no install reads
+    another city's news by default."""
     meta = NEWS_CATEGORIES.get(cat)
     if not meta or cat != "Local":
         return meta
     area = _local_area()
-    if not area:
+    sources = _local_sources()
+    if not area and not sources:
         return dict(meta, feeds=[], query="")
     from urllib.parse import quote_plus
-    return dict(meta, query=f"{area} local news today",
-                feeds=[_GOOGLE_NEWS + quote_plus(f"{area} local news") + "+when:24h"])
+    feeds = []
+    if area:
+        feeds.append(_GOOGLE_NEWS + quote_plus(f"{area} local news") + "+when:24h")
+    feeds.extend(_GOOGLE_NEWS + "when:24h+source:" + quote_plus(d) for d in sources)
+    query = (f"{area} local news today" if area
+             else " OR ".join(f"site:{d}" for d in sources))
+    return dict(meta, query=query, feeds=feeds)
 
 
 def _classify_brutalist_headline(title):
@@ -3104,10 +3139,14 @@ def _extract_article_text(url):
 
     Returns (page_title, text). Strips script/style/nav chrome and joins the
     article's paragraph text; falls back to whole-container text for thin <p>
-    markup. Raises on network/parse failure."""
-    import requests as _req
+    markup. Raises on network/parse failure, and raises
+    web_safety.UnsafeURLError for a URL (or redirect hop) that points at this
+    machine or its network: the URL comes from a feed, the page, or the voice
+    model, none of which may steer a fetch inward."""
     from bs4 import BeautifulSoup
-    resp = _req.get(url, timeout=15, headers={
+
+    from agent_friday.services.web_safety import safe_get
+    resp = safe_get(url, timeout=15, headers={
         "User-Agent": "Mozilla/5.0 FridayAgent/1.0",
     })
     resp.raise_for_status()
@@ -3175,7 +3214,7 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
     try:
         page_title, body = _extract_article_text(url)
     except Exception as e:
-        return {"status": "error", "message": f"Couldn't fetch the article: {e}"}, 502
+        return {"status": "error", "message": ExceptionText(f"Couldn't fetch the article: {e}")}, 502
     if len(body) < 200:
         # Thin extraction is very often a paywall or bot-wall — say so, so the
         # voice/anchor path warns the user instead of failing opaquely.
@@ -3206,7 +3245,7 @@ def _deep_dive_article(url, title=None, refresh=False, quick=False):
         raw = _generate_text([{"role": "user", "content": prompt}],
                              system=system, max_tokens=2000, workspace='news')
     except Exception as e:
-        return {"status": "error", "message": f"Summary generation failed: {e}"}, 502
+        return {"status": "error", "message": ExceptionText(f"Summary generation failed: {e}")}, 502
     parsed = _extract_json_block(raw) or {}
     quotes = parsed.get("key_quotes")
     result = {

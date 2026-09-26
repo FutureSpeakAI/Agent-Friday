@@ -152,7 +152,7 @@ def test_facts_from_earlier_legs_survive_a_new_legs_first_compaction():
     ledger["facts"] = ["0:3,1:5,2:8"]
 
     def summarize(text, n):
-        return "FACTS: " + ",".join(sorted(set(re.findall(r"\d+:\d", text))))
+        return "FACTS: " + ",".join(sorted(set(re.findall(r"(?<!\d)\d+:\d", text))))
     convo = [{"role": "system", "content": "sys"},
              {"role": "user", "content": tl.continuation_prompt("inspect every batch", ledger,
                                                                "the previous stretch reached its rounds limit")}]

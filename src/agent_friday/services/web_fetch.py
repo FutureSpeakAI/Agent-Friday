@@ -65,12 +65,8 @@ def _html_to_text(html: str) -> str:
         text = soup.get_text(separator="\n", strip=True)
         return re.sub(r"\n{3,}", "\n\n", text)
     except ImportError:
-        text = re.sub(r"<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>", " ", html,
-                      flags=re.I | re.S)
-        text = re.sub(r"<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>", " ", text,
-                      flags=re.I | re.S)
-        text = re.sub(r"<[^>]+>", " ", text)
-        return re.sub(r"\s+", " ", text).strip()
+        from agent_friday.services.html_text import html_to_text
+        return html_to_text(html)
 
 
 def _title_of(html: str) -> str:

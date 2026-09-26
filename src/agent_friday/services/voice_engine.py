@@ -64,6 +64,7 @@ from agent_friday.services.news_engine import (
     _deep_dive_article,
     _voice_domain_of,
 )  # noqa: E501
+from agent_friday.user_errors import ExceptionText
 
 
 
@@ -1154,6 +1155,9 @@ LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
 
 _KEY_CHECK_CACHE = {}
 _KEY_CHECK_TTL = 600.0  # seconds; per-key verdicts are cached
+# The cache is indexed by a keyed digest of the API key under a per-process
+# random secret, so an entry id is not a stable fingerprint of the key.
+_KEY_CHECK_SALT = secrets.token_bytes(32)
 
 
 def validate_gemini_key(key, timeout=5.0, force=False):
@@ -1171,7 +1175,8 @@ def validate_gemini_key(key, timeout=5.0, force=False):
         return False, "no key"
     if os.environ.get("FRIDAY_TESTING"):
         return True, "testing mode — not validated"
-    cache_id = _hashlib.sha256(key.encode()).hexdigest()[:16]
+    cache_id = _hmac.new(_KEY_CHECK_SALT, key.encode(),
+                         _hashlib.sha256).hexdigest()[:16]
     now = _time.time()
     if not force:
         hit = _KEY_CHECK_CACHE.get(cache_id)
@@ -1194,7 +1199,7 @@ def validate_gemini_key(key, timeout=5.0, force=False):
             except Exception:
                 pass
             ok = False
-            detail = f"HTTP {he.code}: {' '.join(body.split())[:160]}"
+            detail = ExceptionText(f"HTTP {he.code}: {' '.join(body.split())[:160]}")
     except Exception as e:
         # DNS down / offline / proxy — NOT a key verdict; don't cache.
         return True, f"unverifiable ({type(e).__name__}) — assuming ok"
@@ -1476,15 +1481,8 @@ Trust the user's judgment; push back when you genuinely disagree, but don't lect
 
 
 def _strip_html(raw: str) -> str:
-    raw = re.sub(r'<script\b[^>]*>.*?</script>', ' ', raw, flags=re.S | re.I)
-    raw = re.sub(r'<style\b[^>]*>.*?</style>', ' ', raw, flags=re.S | re.I)
-    raw = re.sub(r'<[^>]+>', ' ', raw)
-    raw = re.sub(r'&nbsp;', ' ', raw)
-    raw = re.sub(r'&amp;', '&', raw)
-    raw = re.sub(r'&lt;', '<', raw)
-    raw = re.sub(r'&gt;', '>', raw)
-    raw = re.sub(r'\s+', ' ', raw)
-    return raw.strip()
+    from agent_friday.services.html_text import html_to_text
+    return html_to_text(raw)
 
 
 # In-process TTL cache for _load_live_context(). It is called on EVERY chat

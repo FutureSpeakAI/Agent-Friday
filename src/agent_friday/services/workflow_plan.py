@@ -40,7 +40,9 @@ import uuid
 from pathlib import Path
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.paths import contained, safe_name
 from agent_friday.services import work_queue as wq
+from agent_friday.user_errors import exception_text
 
 _LOCK = threading.RLock()
 
@@ -273,7 +275,7 @@ def decide(proposal_id: str, execution: str | None = None, *,
                 est_s_cloud=t.get("est_s_cloud"))
             enqueued.append(item["id"])
         except ValueError as e:
-            refused.append({"task": t["title"], "reason": str(e)})
+            refused.append({"task": t["title"], "reason": exception_text(e)})
 
     prop["status"] = "decided"
     prop["decision"] = {
@@ -302,7 +304,7 @@ def dismiss(proposal_id: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _path(proposal_id: str) -> Path:
-    return proposals_dir() / ("%s.json" % proposal_id)
+    return contained(proposals_dir(), safe_name("%s.json" % proposal_id, what="proposal id"))
 
 
 def _save(prop: dict) -> None:

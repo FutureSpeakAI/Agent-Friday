@@ -26,6 +26,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import contained
 from agent_friday.core import (
     HOME,
     VIBE_TERMINALS,
@@ -57,6 +58,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 code_bp = Blueprint('code', __name__)
 
@@ -250,16 +252,16 @@ def repos_scan():
     from agent_friday.services import swr_cache
     root = PROJECTS_DIR
     if not root.exists():
-        return jsonify({"status": "ok", "repos": [], "root": str(root),
-                        "message": "~/Projects does not exist yet."})
+        return jsonify(public_result({"status": "ok", "repos": [], "root": str(root),
+                        "message": "~/Projects does not exist yet."}, "Couldn't scan the repositories"))
     if request.args.get('fresh') in ('1', 'true', 'yes'):
         swr_cache.invalidate("repos.")
     try:
         repos, as_of = swr_cache.get("repos.scan:" + str(root), lambda: _scan_repos(root), fresh_for=20)
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-    return jsonify({"status": "ok", "repos": repos, "root": str(root), "count": len(repos),
-                    "as_of": datetime.fromtimestamp(as_of).isoformat(timespec="seconds")})
+        return api_error(e, "Couldn't scan the repositories")
+    return jsonify(public_result({"status": "ok", "repos": repos, "root": str(root), "count": len(repos),
+                    "as_of": datetime.fromtimestamp(as_of).isoformat(timespec="seconds")}, "Couldn't scan the repositories"))
 
 
 @code_bp.route('/api/repos/<name>/status')
@@ -278,7 +280,7 @@ def repos_status(name):
     except Exception:
         pass
     card["files"] = files
-    return jsonify({"status": "ok", "repo": card})
+    return jsonify(public_result({"status": "ok", "repo": card}, "Couldn't load the repository"))
 
 
 @code_bp.route('/api/git/diff')
@@ -306,7 +308,7 @@ def git_diff():
                 diff = "Untracked files:\n" + "\n".join("  + " + f for f in files)
         return jsonify({"status": "ok", "diff": diff})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the diff")
 
 
 @code_bp.route('/api/git/branches')
@@ -320,7 +322,7 @@ def git_branches():
         branches = [b.strip() for b in cp.stdout.splitlines() if b.strip()]
         return jsonify({"status": "ok", "branches": branches, "current": cur})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't list the branches")
 
 
 @code_bp.route('/api/git/pull', methods=['POST'])
@@ -335,7 +337,7 @@ def git_pull():
     except subprocess.TimeoutExpired:
         return jsonify({"status": "error", "message": "pull timed out"}), 504
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't pull")
 
 
 @code_bp.route('/api/git/push', methods=['POST'])
@@ -356,7 +358,7 @@ def git_push():
     except subprocess.TimeoutExpired:
         return jsonify({"status": "error", "message": "push timed out"}), 504
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't push")
 
 
 @code_bp.route('/api/git/checkout', methods=['POST'])
@@ -374,7 +376,7 @@ def git_checkout():
         cp = _dev_git(rp, *args, timeout=30)
         return jsonify(_git_result(rp, cp, "checkout " + branch))
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't switch branch")
 
 
 @code_bp.route('/api/git/branch', methods=['POST'])
@@ -390,7 +392,7 @@ def git_branch_create():
         cp = _dev_git(rp, "checkout", "-b", name, timeout=30)
         return jsonify(_git_result(rp, cp, "branch " + name))
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't create the branch")
 
 
 @code_bp.route('/api/git/commit', methods=['POST'])
@@ -411,7 +413,7 @@ def git_commit():
             res["message"] = "Nothing to commit — working tree clean."
         return jsonify(res)
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't commit")
 
 
 @code_bp.route('/api/git/pr', methods=['POST'])
@@ -453,7 +455,7 @@ def git_pr():
     except subprocess.TimeoutExpired:
         return jsonify({"status": "error", "message": "gh pr create timed out"}), 504
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't open the pull request")
 
 
 @code_bp.route('/api/files/list')
@@ -480,7 +482,7 @@ def files_list():
                 "size": size,
             })
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't list the files")
     parent = None
     if os.path.realpath(target) != _projects_root():
         parent = os.path.relpath(os.path.dirname(target), _projects_root()).replace("\\", "/")
@@ -504,7 +506,7 @@ def files_read():
         with open(target, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't read the file")
     ext = os.path.splitext(target)[1].lstrip('.').lower()
     return jsonify({"status": "ok", "content": content, "lang": _LANG_BY_EXT.get(ext, 'plaintext'),
                     "ext": ext, "size": size, "lines": content.count("\n") + 1,
@@ -577,7 +579,7 @@ def code_plan():
         raw = _generate_text([{"role": "user", "content": user_prompt}], system=system, max_tokens=16384, workspace='code')
     except Exception as e:
         _code_log(f"plan failed: {e}", source="vibe", level="error")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't plan the change")
 
     # Extract the JSON object from the response (tolerate stray fences/prose).
     plan_obj = None
@@ -671,13 +673,13 @@ def code_plans_list():
 @code_bp.route('/api/code/plan/<plan_id>')
 def code_plan_get(plan_id):
     pid = re.sub(r'[^\w\-]', '', plan_id)
-    p = CODE_PLANS_DIR / f"{pid}.json"
+    p = contained(CODE_PLANS_DIR, f"{pid}.json")
     if not p.exists():
         return jsonify({"status": "error", "message": "plan not found"}), 404
     try:
         return jsonify({"status": "ok", "plan": json.loads(p.read_text(encoding="utf-8"))})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the plan")
 
 
 @code_bp.route('/api/code/apply', methods=['POST'])
@@ -685,13 +687,13 @@ def code_apply():
     """Write the file changes from a saved plan onto disk (inside ~/Projects/)."""
     data = request.get_json(silent=True) or {}
     pid = re.sub(r'[^\w\-]', '', data.get('plan_id', ''))
-    p = CODE_PLANS_DIR / f"{pid}.json"
+    p = contained(CODE_PLANS_DIR, f"{pid}.json")
     if not p.exists():
         return jsonify({"status": "error", "message": "plan not found"}), 404
     try:
         record = json.loads(p.read_text(encoding="utf-8"))
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't apply the change")
     rp = _repo_path(record.get("repo_path") or record.get("repo") or "")
     if not rp:
         return jsonify({"status": "error", "message": "repo no longer found"}), 404
@@ -763,7 +765,7 @@ def code_apply():
             applied.append(rel)
             _code_log(f"applied {f.get('action','write')}: {rel}", source="vibe", level="info")
         except Exception as e:
-            failed.append({"path": rel, "error": str(e)})
+            failed.append({"path": rel, "error": error_text(e, "Couldn't write the file")})
             _code_log(f"apply failed {rel}: {e}", source="vibe", level="error")
 
     record["applied"] = True
@@ -811,7 +813,7 @@ def code_kill():
         subprocess.run(["taskkill", "/PID", str(os_pid), "/T", "/F"],
                        capture_output=True, creationflags=_POPEN_FLAGS)
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't stop the task")
     if pid_or_id in VIBE_TERMINALS:
         VIBE_TERMINALS[pid_or_id]["status"] = "stopped"
         VIBE_TERMINALS[pid_or_id]["stopped"] = datetime.now().isoformat()

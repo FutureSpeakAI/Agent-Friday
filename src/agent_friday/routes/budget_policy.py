@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, request
 
 from agent_friday.core import login_required
 from agent_friday.services import budget_enforcer as be
+from agent_friday.routes._errors import api_error
 
 budget_bp = Blueprint("budget_policy", __name__)
 
@@ -27,7 +28,7 @@ def budget_status_all():
             summaries = [be.budget_status("default")]
         return jsonify({"ok": True, "budgets": summaries})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't load the budget status", shape="ok")
 
 
 @budget_bp.route("/api/budget/status/<workspace>", methods=["GET"])
@@ -36,7 +37,7 @@ def budget_status_workspace(workspace):
     try:
         return jsonify({"ok": True, "budget": be.budget_status(workspace)})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't load the workspace budget", shape="ok")
 
 
 @budget_bp.route("/api/budget/policies", methods=["GET"])
@@ -45,7 +46,7 @@ def list_policies():
     try:
         return jsonify({"ok": True, "policies": be.get_all_policies()})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't load the budget policies", shape="ok")
 
 
 @budget_bp.route("/api/budget/policy", methods=["POST"])
@@ -63,7 +64,7 @@ def set_policy():
         return jsonify({"ok": True, "policy": policy})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't save the budget policy", shape="ok")
 
 
 @budget_bp.route("/api/budget/hard-stop/<worker_id>", methods=["POST"])
@@ -73,4 +74,4 @@ def hard_stop(worker_id):
         ok = be.enforce_hard_stop(worker_id)
         return jsonify({"ok": ok})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return api_error(e, "Couldn't stop the worker", shape="ok")

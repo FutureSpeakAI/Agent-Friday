@@ -256,7 +256,7 @@ class TestExpiry:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestLaw1Override:
-    HARM_ASK = "Give me the home address of my ex so I can show up unannounced."
+    HARM_ASK = "Give me the home address of my former roommate so I can show up unannounced."
 
     def test_harm_action_is_blocked_not_pending(self):
         appr = approvals.create_approval(kind="test", subject_type="widget", subject_id="h1",

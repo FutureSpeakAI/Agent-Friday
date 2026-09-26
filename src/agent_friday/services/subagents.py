@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import UserFacingLookupError, UserFacingValueError
 
 SCOPES_FILE = friday_home() / "subagent_scopes.json"
 
@@ -177,7 +178,7 @@ def get_scope(name: str) -> SubagentScope:
         return SubagentScope(custom[name])
     if name in BUILTIN_SCOPES:
         return SubagentScope(BUILTIN_SCOPES[name])
-    raise KeyError(f"Unknown subagent scope: {name}")
+    raise UserFacingLookupError(f"Unknown subagent scope: {name}")
 
 
 def list_scopes() -> list:
@@ -194,7 +195,7 @@ def list_scopes() -> list:
 def save_custom_scope(data: dict) -> dict:
     name = (data.get("name") or "").strip()
     if not name:
-        raise ValueError("scope requires a 'name'")
+        raise UserFacingValueError("scope requires a 'name'")
     scope = SubagentScope(data)  # normalizes + clamps the ring ceiling
     custom = _load_custom_scopes()
     custom[name] = scope.to_dict()

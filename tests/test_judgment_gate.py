@@ -57,12 +57,12 @@ PROBES = {
                   "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA"),  # pragma: allowlist secret
     "vault_doc": ("Open the file at vault/finances/2025-tax-return.pdf",
                   "vault/finances/2025-tax-return.pdf"),
-    "legal_1p":  ("My custody hearing is on the 14th and my lawyer says my ex "
-                  "will contest the settlement figure I proposed for our daughter.",
-                  "custody hearing is on the 14th"),
-    "medical_1p": ("My A1C came back at 8.2 and my doctor wants to change my "
+    "legal_1p":  ("My court hearing is on the 14th and my advocate says the agency "
+                  "will contest the claim I filed last spring.",
+                  "court hearing is on the 14th"),
+    "medical_1p": ("My blood pressure came back high and my doctor wants to change my "
                    "prescription before my next appointment.",
-                   "A1C came back at 8.2"),
+                   "blood pressure came back high"),
 }
 
 HEADLINE = "Trump asks US Supreme Court to allow ballroom work to continue"
@@ -244,6 +244,19 @@ def test_verify_outgoing_fails_closed_when_it_cannot_run(monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
     assert not jg.verify_outgoing("anything").ok, \
         "verification that cannot run must block, not pass"
+
+
+def test_verify_outgoing_names_never_send_hits_without_their_text(monkeypatch):
+    """The verdict's hits are joined into the egress log line and file, so a
+    never-send hit is reported by kind and count, never by the watchlist
+    entry or deny-marked paragraph that matched."""
+    token = "Coldwater Deposition"  # pragma: allowlist secret
+    monkeypatch.setattr(jg, "_PROBE_EXTRA_NEVER", [token])
+    v = jg.verify_outgoing(f"Notes from the {token} are attached.",
+                           reclassify=False)
+    assert not v.ok
+    assert v.hits == ["never_send"]
+    assert token.lower() not in (" ".join(v.hits) + v.reason + repr(v)).lower()
 
 
 # ── §5.5 step 1: the scrub is inside the gate ─────────────────────────────────
@@ -462,7 +475,7 @@ def test_scoper_accepts_sub_questions_as_bare_strings():
     ("Cook County court records show the contractor filed for bankruptcy", False),
     ("Point2 Technology raised a $136M Series B", False),
     # Genuine first person must be caught.
-    ("My custody hearing is on the 14th", True),
+    ("My court hearing is on the 14th", True),
     ("I owe about $14,000 on the second mortgage", True),
     ("he told us the deal was done", True),
     ("We are meeting my lawyer tomorrow", True),
@@ -483,10 +496,10 @@ def test_user_substance_requires_the_scrub_to_actually_separate(judging,
 
     A scrub that replaced nothing did not separate identity from substance."""
     judging(jg.USER_SUBSTANCE, "the user's own affairs")
-    probe = ("My custody hearing is on the 14th and my lawyer says my ex will "
-             "contest the settlement figure I proposed for our daughter.")
+    probe = ("My court hearing is on the 14th and my advocate says the agency will "
+             "contest the claim I filed last spring.")
     out, _err = _seal(probe)
-    assert "custody hearing is on the 14th" not in out, (
+    assert "court hearing is on the 14th" not in out, (
         f"first-person material with nothing scrubbable travelled: {out[:200]!r}")
 
 

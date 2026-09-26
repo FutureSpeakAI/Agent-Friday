@@ -34,6 +34,7 @@ from agent_friday.services.misc_engine import (
     FINANCE_DIR,
     HEALTH_DIR,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error
 
 fh_bp = Blueprint('finance_health', __name__)
 
@@ -47,7 +48,7 @@ def finance_portfolio():
             data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
+            return api_error(e, "Couldn't load the portfolio", 200)
     # Create template if missing — generic placeholders, no personal data.
     template = {"positions": [{"ticker": "EXMPL", "shares": 0, "cost_basis": 0}], "accounts": ["Your Brokerage Account"]}
     _vault_write_text(path, json.dumps(template, indent=2))
@@ -62,7 +63,7 @@ def finance_perks():
             data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
+            return api_error(e, "Couldn't load the perks", 200)
     template = {"perks": [{"name": "Perk name", "value": "$X/yr", "used": False, "expires": "", "notes": ""}]}
     _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
@@ -94,7 +95,7 @@ def health_medications():
             data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
+            return api_error(e, "Couldn't load the medications", 200)
     template = {"medications": [{"name": "Example Medication", "dose": "", "frequency": "", "notes": ""}]}
     _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
@@ -108,7 +109,7 @@ def health_appointments():
             data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
+            return api_error(e, "Couldn't load the appointments", 200)
     template = {"appointments": [{"provider": "", "type": "", "email": "", "next": "", "frequency": ""}]}
     _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
@@ -122,7 +123,7 @@ def health_insurance():
             data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
+            return api_error(e, "Couldn't load the insurance details", 200)
     template = {"insurance": {"provider": "Your Insurance Provider", "plan": "Add your plan name", "policy_number": "Add your policy number", "group_number": "Add your group number"}}
     _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
@@ -136,7 +137,7 @@ def health_vehicles():
             data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
+            return api_error(e, "Couldn't load the vehicles", 200)
     template = {"vehicles": [{"name": "Your Vehicle", "miles": "", "notes": "", "mechanic": "", "service_history": []}], "mechanics": []}
     _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})

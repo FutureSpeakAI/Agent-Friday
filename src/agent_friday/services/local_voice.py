@@ -42,6 +42,7 @@ import wave
 from pathlib import Path
 
 from agent_friday.paths import friday_home, voice_assets_dir
+from agent_friday.user_errors import ExceptionText
 
 # Local voice had no logger at all — its entire diagnostic output was two bare
 # print() calls landing in an unrotated server_stderr.log the repo elsewhere
@@ -450,7 +451,7 @@ class WhisperASR:
                     % (free / (1024 ** 3)))
             return "cuda", "float16", ""
         except Exception as exc:              # torch missing, driver trouble
-            return "cpu", "int8", str(exc)[:80]
+            return "cpu", "int8", ExceptionText(str(exc)[:80])
 
     def load(self, progress=None):
         if self._model is not None:
@@ -484,7 +485,7 @@ class WhisperASR:
                     raise
                 log.warning("local voice: whisper on CUDA failed (%s); "
                              "falling back to CPU int8", str(exc)[:160])
-                device, compute, why_cpu = "cpu", "int8", str(exc)[:80]
+                device, compute, why_cpu = "cpu", "int8", ExceptionText(str(exc)[:80])
                 size = resolve_whisper_model(self.requested_size, device)
                 self._model = WhisperModel(
                     size, device=device, compute_type=compute,
@@ -1024,7 +1025,7 @@ class LocalVoiceEngine:
                     log.warning("kokoro unavailable: code=%s %s", e.code, e.message)
                     self._ready = False
                     return False
-                self.last_error = f"{type(e).__name__}: {e}"
+                self.last_error = ExceptionText(f"{type(e).__name__}: {e}")
                 log.error("model load failed tier=%s: %s: %s",
                           self.active_tier(), type(e).__name__, e, exc_info=True)
                 # GPU load failed → one graceful retry on the CPU tier.
@@ -1044,7 +1045,7 @@ class LocalVoiceEngine:
                         self._ready = True
                         self.last_error = ""
                     except Exception as e2:  # pragma: no cover
-                        self.last_error = f"{type(e2).__name__}: {e2}"
+                        self.last_error = ExceptionText(f"{type(e2).__name__}: {e2}")
                         log.error("CPU fallback load failed after GPU degrade: "
                                   "%s: %s", type(e2).__name__, e2, exc_info=True)
                         self._ready = False
@@ -1086,7 +1087,7 @@ class LocalVoiceEngine:
             code = getattr(e, "code", "")
             if code:
                 self.last_error_code = code
-                self.last_error = getattr(e, "message", None) or str(e)[:200]
+                self.last_error = getattr(e, "message", None) or ExceptionText(str(e)[:200])
                 log.error("tts refusal code=%s %s", code, self.last_error)
             raise
         self._record("tts", (time.perf_counter() - t0) * 1000.0)
@@ -1193,14 +1194,14 @@ class LocalVoiceEngine:
             out["kokoro"] = kokoro_health()
         except Exception as e:
             out["kokoro"] = {"engine": "local-kokoro", "status": "error",
-                             "detail": str(e)[:120], "available": False}
+                             "detail": ExceptionText(str(e)[:120]), "available": False}
         # Tier-2 (GPU/NeMo) readiness — best-effort, never fatal to this block.
         try:
             from agent_friday.services.nemo_voice import nemo_health
             out["gpu"] = nemo_health()
         except Exception as e:
             out["gpu"] = {"engine": "nvidia-nemo", "status": "error",
-                          "detail": str(e)[:120], "available": False}
+                          "detail": ExceptionText(str(e)[:120]), "available": False}
         return out
 
 
@@ -1223,7 +1224,7 @@ def local_voice_health() -> dict:
         return get_local_voice_engine().health()
     except Exception as e:
         return {"engine": "local-voice-lite", "status": "error",
-                "detail": str(e)[:160], "available": False, "models_ready": False}
+                "detail": ExceptionText(str(e)[:160]), "available": False, "models_ready": False}
 
 
 def split_sentences(text: str):

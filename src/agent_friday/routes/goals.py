@@ -51,6 +51,8 @@ from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import goals as _goals
 from agent_friday.services import approvals as _approvals
+from agent_friday.routes._errors import api_error, public_result
+from agent_friday.user_errors import message_only
 
 goals_bp = Blueprint("goals", __name__)
 
@@ -91,7 +93,7 @@ def create_goal_route():
             verification_mode=verification_mode, status=status,
         )
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return api_error(e, "Couldn't create the goal", 400, shape="ok")
     return jsonify({"ok": True, "goal": goal}), 201
 
 
@@ -125,7 +127,7 @@ def transition_goal_route(goal_id):
     except KeyError:
         return jsonify({"ok": False, "error": "not found"}), 404
     except ValueError as e:
-        return jsonify({"ok": False, "error": str(e)}), 409
+        return api_error(e, "Couldn't update the goal", 409, shape="ok")
     return jsonify({"ok": True, "goal": goal})
 
 
@@ -147,8 +149,8 @@ def run_milestone_route(goal_id, milestone_id):
     result = _goals.run_milestone(goal_id, milestone_id)
     if "error" in result and result.get("status") is None:
         # goal/milestone not found, or goal not active — a request-shape problem
-        return jsonify(result), 404 if "not found" in (result.get("error") or "") else 409
-    return jsonify(result), 200
+        return jsonify(public_result(result, "Couldn't run the milestone")), 404 if "not found" in (result.get("error") or "") else 409
+    return jsonify(public_result(result, "Couldn't run the milestone")), 200
 
 
 @goals_bp.route("/api/goals/<goal_id>/receipts", methods=["GET"])
@@ -168,7 +170,7 @@ def get_review_route():
     review = _goals.latest_review()
     if not review:
         return jsonify({"ok": True, "review": None})
-    return jsonify({"ok": True, "review": review})
+    return jsonify(public_result({"ok": True, "review": review}, "Couldn't load the review"))
 
 
 @goals_bp.route("/api/goals/review/run", methods=["POST"])
@@ -305,7 +307,7 @@ def create_governance_grant():
             max_uses=int(body.get("max_uses", 1)), created_by="owner",
             note=str(body.get("note") or ""))
     except (TypeError, ValueError) as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't create the grant", 400, shape="bare")
     return jsonify({"grant": g}), 201
 
 
@@ -370,7 +372,10 @@ def list_outward_tools():
         except Exception:
             klass, why = action_gate.OUTWARD, "unclassified"
         if klass == action_gate.OUTWARD and name not in action_gate.SELF_GATED:
-            out.append({"name": name, "why": why, "label": _GRANT_LABELS.get(name)
+            # The gate's explanation is meant for the owner; only its message
+            # travels (docs/security/codeql-dismissals.md).
+            out.append({"name": name, "why": message_only(why),
+                        "label": _GRANT_LABELS.get(name)
                         or _connector_label(name)})
     return jsonify({"tools": out})
 

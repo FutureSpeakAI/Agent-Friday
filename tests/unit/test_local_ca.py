@@ -118,6 +118,7 @@ def _serve_once(cert_pem: bytes, key_pem: bytes, tmp_path):
 def _handshake(port, ca_file, server_name):
     # With a cafile, create_default_context trusts ONLY that file, not the system.
     ctx = ssl.create_default_context(cafile=str(ca_file))
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
         with ctx.wrap_socket(raw, server_hostname=server_name) as s:
             s.send(b"x")

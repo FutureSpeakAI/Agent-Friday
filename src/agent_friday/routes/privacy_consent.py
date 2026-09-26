@@ -14,6 +14,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from agent_friday.privacy import cloud_consent
+from agent_friday.routes._errors import api_error
 
 privacy_consent_bp = Blueprint("privacy_consent", __name__)
 
@@ -36,7 +37,7 @@ def get_cloud_consent_status():
             payload["capability"] = cloud_consent.assess_local_capability()
         return jsonify({"status": "ok", **payload})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the cloud consent")
 
 
 @privacy_consent_bp.route("/api/privacy/cloud-consent", methods=["POST"])
@@ -55,7 +56,7 @@ def post_cloud_consent():
     try:
         record = cloud_consent.record_consent(choice)
     except cloud_consent.ConsentRejected as e:
-        return jsonify({"status": "error", "message": str(e)}), 409
+        return api_error(e, "Couldn't save the cloud consent", 409)
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't save the cloud consent")
     return jsonify({"status": "ok", **record})

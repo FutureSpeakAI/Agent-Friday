@@ -37,6 +37,7 @@ import re
 import threading
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -158,7 +159,7 @@ INTERNAL_TOOLS = frozenset({
     "list_workspace_history", "find_calendar_events", "search_email",
     "search_drive", "read_doc", "list_tasks", "complete_task", "create_task",
     "update_task", "search_contacts", "read_wiki", "search_wiki", "search_news",
-    "open_url", "open_path", "navigate", "switch_model", "list_sending_accounts",
+    "open_url", "navigate", "switch_model", "list_sending_accounts",
     # The owner's own desktop: navigate_to opens an item in Friday's UI and
     # check_situation reads state the server already holds. Neither reaches
     # anyone else.
@@ -168,8 +169,7 @@ INTERNAL_TOOLS = frozenset({
     # lands in the conversation. Nothing it does reaches another person.
     "deep_research",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
-    "personality_check_sycophancy", "generate_image", "generate_video",
-    "generate_music", "compose_timeline", "create_presentation", "create_website",
+    "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it
     "create_workflow", "run_workflow", "workflow_status", "creative_project",
     "start_creative_pipeline", "compare_image_takes", "content_post_status",
@@ -217,7 +217,17 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          "screenshot", "scroll",
                          # Friday's browser, by the element acted on:
                          # services/browser_session.classify.
-                         "browser_click", "browser_type"})
+                         "browser_click", "browser_type",
+                         # By what it opens: services/open_safety.py.
+                         "open_path",
+                         # By the seed image they upload: services/seed_images.py.
+                         "generate_video", "generate_music"})
+
+#: Tools whose outward case is decided on a card even in an interactive chat,
+#: never by a yes/no question. generate_video and generate_music are outward
+#: only when a seed image outside Friday's creations, not named by the owner,
+#: would be uploaded to a cloud service; a card shows the owner which file.
+CARD_ONLY_WHEN_OUTWARD = frozenset({"generate_video", "generate_music"})
 
 _READ_VERBS = ("get", "list", "search", "read", "fetch", "query", "find", "check",
                "lookup", "describe", "show", "view", "count", "status", "explore",
@@ -314,6 +324,11 @@ def _output_dirs() -> list:
     return out
 
 
+def output_dirs() -> list:
+    """Friday's output folders (see `_output_dirs`)."""
+    return _output_dirs()
+
+
 def _in_output_dir(p: Path) -> bool:
     for d in _output_dirs():
         if p == d or d in p.parents:
@@ -383,9 +398,23 @@ def _laya_down() -> bool:
         return True
 
 
-def classify(tool_name: str, args: Optional[dict]) -> tuple:
-    """(INTERNAL|OUTWARD|"forbidden", why). Unknown tools are OUTWARD."""
+def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -> tuple:
+    """(INTERNAL|OUTWARD|"forbidden", why). Unknown tools are OUTWARD.
+
+    `ctx` is the call's session context, when there is one: a seed image the
+    owner named in this conversation is theirs to send.
+    """
     a = args or {}
+    if tool_name == "open_path":
+        # An allow-list, not a deny-list: documents, pictures, recordings and
+        # folders open; anything that could run code waits for a decision.
+        from agent_friday.services import open_safety as _os
+        return _os.classify_open(a)
+    if tool_name in ("generate_video", "generate_music"):
+        # A seed image outside Friday's creations that the owner did not name
+        # would be uploaded to a cloud service.
+        from agent_friday.services import seed_images as _si
+        return _si.classify(tool_name, a, ctx)
     if tool_name == "run_command":
         return classify_command(str(a.get("command") or ""))
     if tool_name == "run_sandboxed":
@@ -584,6 +613,20 @@ class Verdict:
     detail: dict = field(default_factory=dict)
 
 
+#: The owner's decision behind the tool call running now: an approved card's
+#: id, a scoped grant's id, or the chat confirmation the owner answered yes.
+#: `agent._execute_tool` sets it around the handler from what the hooks
+#: established; the model has no way to set it. A handler whose action needs
+#: a decision (opening a non-allow-listed file, uploading a seed image from
+#: outside Friday's creations) checks it as a second line behind this gate.
+DECIDED: ContextVar = ContextVar("friday_owner_decision", default=None)
+
+
+def owner_decision() -> Optional[str]:
+    """The id of the owner's decision behind the running call, or None."""
+    return DECIDED.get()
+
+
 def _interactive(ctx: dict) -> bool:
     return bool(ctx.get("session_id")) and not (
         ctx.get("is_background_task") or ctx.get("scheduled") or ctx.get("confirm_bypass"))
@@ -603,7 +646,7 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
     ctx = session_ctx or {}
     failed = None
     try:
-        klass, why = classify(tool_name, args)
+        klass, why = classify(tool_name, args, ctx)
     except Exception as e:
         klass, why, failed = OUTWARD, "", f"classification failed ({e})"
     try:
@@ -649,7 +692,7 @@ def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
         g = _use_grant(tool_name, ctx)
         if g is not None:
             return Verdict("allow", klass, f"pre-approved grant {g['grant_id']}", grant=g)
-    if _interactive(ctx) and not tainted:
+    if _interactive(ctx) and not tainted and tool_name not in CARD_ONLY_WHEN_OUTWARD:
         return Verdict("confirm", klass, why)
     return Verdict("card", klass, why)
 

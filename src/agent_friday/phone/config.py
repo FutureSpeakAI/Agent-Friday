@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import UserFacingError
 
 _LOCK = threading.RLock()
 
@@ -129,7 +130,7 @@ def _write(cfg: dict) -> None:
     tmp.replace(p)
 
 
-class ConfigError(ValueError):
+class ConfigError(UserFacingError, ValueError):
     """A setting that was refused, with a sentence saying why."""
 
 

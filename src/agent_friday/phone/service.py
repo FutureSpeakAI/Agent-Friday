@@ -43,6 +43,7 @@ import uuid
 from typing import Any, Optional
 
 from agent_friday.phone import config, spool
+from agent_friday.user_errors import ExceptionText, UserFacingError, log_failure, log_text
 
 _log = logging.getLogger("friday.phone")
 
@@ -60,8 +61,9 @@ MAX_SMS_CHARS = 1200
 _STATE_LOCK = threading.RLock()
 
 
-class PhoneRefused(RuntimeError):
-    """An action that did not happen, and says why in plain words."""
+class PhoneRefused(UserFacingError, RuntimeError):
+    """An action that did not happen, and says why in plain words. Where a
+    library's own text explains it, that rides in `detail` (str())."""
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -152,9 +154,11 @@ def checkpoint(action: str, target: str, *, approval: Optional[dict] = None) -> 
     """
     cfg = config.load()
 
-    def refuse(reason: str):
+    def refuse(reason: str, shown: Optional[str] = None):
+        """Record `reason` in full; show `shown` when the reason carries
+        exception text."""
         _record_decision(action, target, "deny", reason)
-        raise PhoneRefused(reason)
+        raise PhoneRefused(shown or reason, detail=reason if shown else None)
 
     if not cfg.get("enabled"):
         refuse("the phone is switched off in Settings")
@@ -169,7 +173,7 @@ def checkpoint(action: str, target: str, *, approval: Optional[dict] = None) -> 
         raise
     except Exception as e:
         if type(e).__name__ == "SpendCapReached":
-            refuse("the spending hard stop has tripped: %s" % e)
+            refuse("the spending hard stop has tripped: %s" % getattr(e, "user_message", ""))
     owner = config.verified_owner_cell()
 
     if action in ("verify_sms", "verify_call"):
@@ -212,7 +216,9 @@ def checkpoint(action: str, target: str, *, approval: Optional[dict] = None) -> 
     except PhoneRefused:
         raise
     except Exception as e:
-        refuse("held: the governance receipt could not be written (%s)" % e)
+        refuse("held: the governance receipt could not be written (%s)" % e,
+               shown="held: the governance receipt could not be written (error %s)"
+                     % log_failure(e, "Phone checkpoint receipt failed"))
     _record_decision(action, target, "allow", "ok")
 
 
@@ -239,7 +245,8 @@ def _send_sms_now(to: str, body: str, *, detail: str) -> dict:
     except Exception as e:
         spool.ledger_add(channel="sms", direction="out", party=to, status="failed",
                          detail="%s — %s" % (detail, str(e)[:150]))
-        raise PhoneRefused("Twilio did not take the text: %s" % str(e)[:200])
+        raise PhoneRefused("Twilio did not take the text (error %s)." % log_failure(e, "Twilio send failed"),
+                           detail="Twilio did not take the text: %s" % str(e)[:200])
     spool.ledger_add(channel="sms", direction="out", party=to, sid=res.get("sid") or "",
                      status=res.get("status") or "queued", detail=detail,
                      units=int(res.get("num_segments") or 1))
@@ -426,7 +433,12 @@ def request_call(*, to: str, message: str = "", live: bool = False,
     if live:
         from agent_friday.phone import live_call
         if not live_call.available():
-            raise PhoneRefused("live calls are not available: %s" % live_call.why_unavailable())
+            why = live_call.why_unavailable()
+            if isinstance(why, ExceptionText):
+                raise PhoneRefused("live calls are not available (error %s)."
+                                   % log_text("Live call check failed", why),
+                                   detail="live calls are not available: %s" % why)
+            raise PhoneRefused("live calls are not available: %s" % why)
     fp = fingerprint("call", to_n, message + ("|live" if live else ""))
     existing = _live_card(fp)
     if existing:

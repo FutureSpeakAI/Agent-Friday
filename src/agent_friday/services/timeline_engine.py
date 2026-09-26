@@ -43,6 +43,7 @@ from agent_friday.services.creative_engine import (
     _orb_start, _orb_update, _orb_fail, _defer, _safe_remove,
     _write_metadata, _notify, _timestamp,
 )
+from agent_friday.user_errors import ExceptionText
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -110,6 +111,12 @@ def validate_timeline(tl: Optional[Dict[str, Any]]) -> Tuple[bool, List[str]]:
     errs: List[str] = []
     if not isinstance(tl, dict):
         return False, ["timeline must be an object"]
+    if tl.get("timeline_id") is not None:
+        from agent_friday.paths import safe_name
+        try:
+            safe_name(str(tl.get("timeline_id")), what="timeline_id")
+        except ValueError:
+            return False, ["timeline_id must be a plain name (no folders)"]
     tracks = tl.get("tracks")
     if not isinstance(tracks, list) or not tracks:
         errs.append("timeline needs a non-empty 'tracks' list")
@@ -474,7 +481,7 @@ def compose(timeline: Dict[str, Any], *, project_id: Optional[str] = None,
         _orb_fail(orb)
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"Timeline composition failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Timeline composition failed: {e}")}
 
 
 def _demo_compose(timeline, timeline_id, profiles, project_id, license=None) -> Dict[str, Any]:
@@ -520,7 +527,7 @@ def _demo_compose(timeline, timeline_id, profiles, project_id, license=None) -> 
                     "description instead of a rendered video. Install "
                     "agent-friday[compose] to render.")}
     except Exception as e:
-        return {"status": "error", "message": f"Timeline demo failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Timeline demo failed: {e}")}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -567,7 +574,8 @@ def _persist_timeline(timeline: Dict[str, Any], timeline_id: str) -> None:
         d.mkdir(parents=True, exist_ok=True)
         timeline = dict(timeline)
         timeline["timeline_id"] = timeline_id
-        (d / f"{timeline_id}.json").write_text(
+        from agent_friday.paths import contained, safe_name
+        contained(d, safe_name("%s.json" % timeline_id, what="timeline_id")).write_text(
             json.dumps(timeline, indent=2, default=str), encoding="utf-8")
     except Exception:
         pass

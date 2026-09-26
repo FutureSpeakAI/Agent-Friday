@@ -37,11 +37,9 @@ import logging
 import re
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
-from agent_friday.core import CREATIONS_DIR
 
 # Reuse the image/video engine's orb + save + metadata + notify helpers verbatim
 # so music generation surfaces identically to image/video generation.
@@ -49,6 +47,7 @@ from agent_friday.services.creative_engine import (
     _orb_start, _orb_update, _orb_fail, _defer, _safe_remove,
     _save_bytes, _file_record, _write_metadata, _notify, _timestamp,
 )
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.music_engine")
 
@@ -284,7 +283,7 @@ def cloud_music_available() -> tuple:
                            "(generate_music) — upgrade the SDK to enable cloud music")
         return True, None
     except Exception as e:
-        return False, f"google-genai unavailable: {e}"
+        return False, ExceptionText(f"google-genai unavailable: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -352,6 +351,15 @@ def generate_music(prompt: str, *,
     if seed_image_path:
         seeds.insert(0, seed_image_path)
     seeds = seeds[:10]   # Lyria 3 accepts up to 10 reference stills
+    # A seed from outside Friday's creations is uploaded only on the owner's
+    # say-so (services/seed_images.py).
+    from agent_friday.services import seed_images as _si
+    for _seed in seeds:
+        _ok, _why = _si.check_running_call(_seed)
+        if not _ok:
+            return {"status": "needs_approval",
+                    "message": (f"The seed image was not uploaded: {_why}. It "
+                                f"needs the owner's approval first.")}
 
     available, why = cloud_music_available()
     if not available:
@@ -417,7 +425,7 @@ def generate_music(prompt: str, *,
         _orb_fail(orb)
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"Music generation failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Music generation failed: {e}")}
 
 
 def _generate_music_cloud(client, types, api_model, full_prompt, *, mode, lyrics,
@@ -508,17 +516,11 @@ def _extract_and_save_audio(operation, client, prompt: str) -> List[Dict[str, st
 
 
 def _load_seed(path: str) -> Optional[bytes]:
-    try:
-        p = Path(path).expanduser()
-        if not p.exists():
-            cand = CREATIONS_DIR / Path(path).name
-            if cand.exists():
-                p = cand
-        if p.exists() and p.is_file():
-            return p.read_bytes()
-    except Exception:
-        pass
-    return None
+    """A seed image's bytes, or None. Only an actual image is ever returned
+    (see creative_engine.load_local_image): these bytes go to a cloud API."""
+    from agent_friday.services.creative_engine import load_local_image
+    data, _mime = load_local_image(path)
+    return data
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -572,7 +574,7 @@ def _demo_music(full_prompt, model, api_model, mode, lyrics,
     except Exception as e:
         _orb_fail(orb)
         return {"status": "unavailable",
-                "message": f"Music unavailable ({why}); demo mode failed: {e}"}
+                "message": ExceptionText(f"Music unavailable ({why}); demo mode failed: {e}")}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

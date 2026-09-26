@@ -63,6 +63,7 @@ from agent_friday.services.misc_engine import (
 from agent_friday.services.notifications import (
     _flush_offline_queue,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 core_bp = Blueprint('core_routes', __name__)
 
@@ -103,7 +104,8 @@ _RETIRED_WORKSPACES = {'edition': None, 'home': None}
 
 @core_bp.route('/w/<ws_id>')
 def serve_workspace_tab(ws_id):
-    if not _WS_ID.match(ws_id or ''):
+    # fullmatch: `$` in match() also accepts a trailing newline.
+    if not _WS_ID.fullmatch(ws_id or ''):
         return "Not a workspace name.", 404
     if ws_id in _RETIRED_WORKSPACES:
         # None means "the desktop itself". Home and Edition were both landing
@@ -119,8 +121,10 @@ def serve_workspace_tab(ws_id):
         for k, v in defaults.items():
             args.setdefault(k, v)
         return redirect('/w/' + target + ('?' + urlencode(args) if args else ''))
+    # The name is [a-z0-9_-] by now, so escaping changes nothing; it keeps the
+    # rule local: nothing from the URL reaches the page unescaped.
     return _serve_index(
-        f'<script>window.__FRIDAY_STANDALONE__="{ws_id}";'
+        f'<script>window.__FRIDAY_STANDALONE__="{html.escape(ws_id)}";'
         'document.documentElement.classList.add("ws-standalone");</script>')
 
 
@@ -262,7 +266,7 @@ def friday_capabilities():
         from agent_friday.services import capability_preflight as _cp
         return jsonify(_cp.status())
     except Exception as e:
-        return jsonify({"error": str(e)[:200]}), 500
+        return api_error(e, "Couldn't check the capabilities", shape="bare")
 
 
 @core_bp.route('/api/decisions/gate_status')
@@ -294,8 +298,8 @@ def decisions_gate_status():
         out["effective_backend"] = out["selected_backend"]
         out["shadow"] = _dec.shadow_backend()
     except Exception as e:
-        out["explain"] = "could not read the decision settings: %s" % e
-        return jsonify(out)
+        out["explain"] = error_text(e, "Could not read the decision settings")
+        return jsonify(public_result(out, "Couldn't read the decision gate"))
 
     try:
         from agent_friday.services import laya_backend as _laya
@@ -317,7 +321,7 @@ def decisions_gate_status():
         out["mode_meaning"] = _laya.MODE_MEANING
     except Exception as e:
         out["laya"] = {"ready": False, "loading": False,
-                       "error": "%s: %s" % (type(e).__name__, e)}
+                       "error": error_text(e, "Could not read the Laya status")}
 
     wants_laya = (out["selected_backend"] in ("laya", "laya-union")
                   or out.get("shadow") in ("laya", "laya-union"))
@@ -353,7 +357,7 @@ def decisions_gate_status():
                 % (slow, "" if slow == 1 else "s"))
     else:
         out["explain"] = "The keyword scan alone is deciding."
-    return jsonify(out)
+    return jsonify(public_result(out, "Couldn't read the decision gate"))
 
 
 @core_bp.route('/api/health')
@@ -446,7 +450,7 @@ def friday_health():
         _inference = inference_health()
     except Exception as _e:
         _inference = {"status": "unknown", "providers": [],
-                      "detail": str(_e)[:120]}
+                      "detail": error_text(_e, "Could not check inference health")}
     _status = _inference.get("status") or "unknown"
 
     # ── Declared capabilities whose dependency may be absent ─────────────
@@ -460,7 +464,7 @@ def friday_health():
         from agent_friday.services import capability_preflight as _cp
         _capabilities = _cp.status()
     except Exception as _ce:
-        _capabilities = {"missing_required": [], "detail": str(_ce)[:120]}
+        _capabilities = {"missing_required": [], "detail": error_text(_ce, "Could not check the capabilities")}
 
     # ── Boot-critical health contract (PR-6, OS-mode sequence) ────────────
     # A DIFFERENT question from `_status` above: `_status` is inference
@@ -484,7 +488,7 @@ def friday_health():
             "boot_critical_ok": False,
             "boot_status": "failed",
             "subsystems": {"health_check": {"ok": False,
-                                            "detail": str(_he)[:200],
+                                            "detail": error_text(_he, "Could not run the boot health check"),
                                             "critical": True}},
             "deployment": "unknown",
         }
@@ -507,9 +511,9 @@ def friday_health():
                     "degraded": _l3["state"] == "failed, retrying",
                     "ml_preload": _ml_status()}
     except Exception as _pe:
-        _privacy = {"summary": "unknown", "error": str(_pe)[:160], "degraded": True}
+        _privacy = {"summary": "unknown", "error": error_text(_pe, "Could not read the privacy classifier state"), "degraded": True}
 
-    return jsonify({
+    return jsonify(public_result({
         "status": _status,
         "inference": _inference,
         "privacy_classifier": _privacy,
@@ -563,7 +567,7 @@ def friday_health():
                 f"ring_{k}": v for k, v in sorted(ring_counts.items())
             },
         },
-    })
+    }, "Couldn't check Friday's health"))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -641,9 +645,7 @@ def list_models():
             },
         })
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e),
-                        "roles": {}, "models": [], "providers": [],
-                        "voice_engines": [], "catalog_meta": {}}), 200
+        return api_error(e, "Couldn't list the models", 200, roles={}, models=[], providers=[], voice_engines=[], catalog_meta={})
 
 
 _CATALOG_KICK_AT = {}  # provider -> monotonic seconds of last background kick
@@ -703,19 +705,19 @@ def refresh_models_catalog():
         provider = str(body.get("provider") or "").strip().lower()
         if provider:
             if provider not in known:
-                return jsonify({
+                return jsonify(public_result({
                     "status": "error",
                     "message": f"unknown provider '{provider}' — one of: "
-                               f"{', '.join(known)}"}), 400
+                               f"{', '.join(known)}"}, "Couldn't refresh the model catalog")), 400
             results = ({provider: _hf_cat.refresh()}
                        if provider == _hf_cat.PROVIDER
                        else {provider: refresh(provider)})
         else:
             results = refresh_all()
             results[_hf_cat.PROVIDER] = _hf_cat.refresh()
-        return jsonify({"status": "ok", "results": results})
+        return jsonify(public_result({"status": "ok", "results": results}, "Couldn't refresh the model catalog"))
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't refresh the model catalog")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -769,7 +771,7 @@ def system_info():
         return jsonify({"status": "ok", "disks": disks, "processes": procs,
                         "processes_as_of": datetime.fromtimestamp(as_of).isoformat(timespec="seconds")})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+        return api_error(e, "Couldn't read the system information", 200)
 
 
 @core_bp.route('/api/system/network-status')
@@ -832,7 +834,7 @@ def system_offline_queue_flush():
         return jsonify({"status": "ok", **result})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't flush the offline queue")
 
 
 @core_bp.route('/api/countdowns')
@@ -938,7 +940,7 @@ def api_onboarding_acks():
         tmp.write_text(_json.dumps(state, indent=2), encoding="utf-8")
         os.replace(tmp, path)
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't save the onboarding state")
     return jsonify({"status": "ok", "acks": state})
 
 
@@ -962,7 +964,7 @@ def api_setup_skip():
         _SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
         _SETUP_MARKER.write_text(datetime.now().isoformat(), encoding='utf-8')
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't skip setup")
     return jsonify({"status": "ok"})
 
 
@@ -982,7 +984,7 @@ def api_setup_complete():
     try:
         return jsonify(complete_setup(data))
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't finish setup")
 
 
 # ── Agent Settings endpoints ──────────────────────────────────
@@ -1084,7 +1086,7 @@ def api_capabilities_state():
         return jsonify({"status": "ok", "capabilities": _cs.as_dicts(),
                         "states": list(_cs.STATES)})
     except Exception as e:
-        return jsonify({"status": "error", "error": f"{type(e).__name__}: {e}"}), 500
+        return api_error(e, "Couldn't load the capabilities", key="error")
 
 
 _LOCAL_SEAT_PROVIDERS = frozenset({"ollama-local", "llama-cpp-local", "arbiter-local",
@@ -1277,7 +1279,7 @@ def api_settings():
         })
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't save the settings")
 
 
 # ── MCP server management API ────────────────────────────────────────────────
@@ -1316,7 +1318,7 @@ def api_mcp_status():
         })
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the MCP status")
 
 
 @core_bp.route('/api/mcp/servers', methods=['GET', 'POST'])
@@ -1338,7 +1340,7 @@ def api_mcp_servers():
         return jsonify({"status": "ok", "config": cfg, "reload": reload_result})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't update the MCP servers")
 
 
 @core_bp.route('/api/mcp/restart', methods=['POST'])
@@ -1359,7 +1361,7 @@ def api_mcp_restart():
                         "agent_friday.server": _MCP_MANAGER.status().get(name, {})})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't restart the MCP server")
 
 
 @core_bp.route('/api/mcp/authorize', methods=['POST'])
@@ -1389,7 +1391,7 @@ def api_mcp_authorize():
                         **result}), code
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't start the MCP sign-in")
 
 
 @core_bp.route('/api/mcp/authorize/status', methods=['GET'])
@@ -1406,7 +1408,7 @@ def api_mcp_authorize_status():
         return jsonify({"status": "ok", **mgr.auth_status(name)})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't check the MCP sign-in")
 
 
 @core_bp.route('/api/mcp/reload', methods=['POST'])
@@ -1417,7 +1419,7 @@ def api_mcp_reload():
         return jsonify({"status": "ok", "reload": result})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't reload the MCP servers")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1436,9 +1438,7 @@ def model_stats():
         stats['mode'] = routing_cfg.get('mode', 'cloud_only')
         return jsonify(stats)
     except Exception as e:
-        return jsonify({"error": str(e), "mode": "cloud_only",
-                        "local_requests": 0, "cloud_requests": 0,
-                        "estimated_savings": 0})
+        return api_error(e, "Couldn't load the model stats", 200, shape="bare", mode="cloud_only", local_requests=0, cloud_requests=0, estimated_savings=0)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1566,7 +1566,7 @@ def analyze_file():
                                 "posting or a resume, note the key "
                                 "requirements. Be concise."))
                 except Exception as _e:
-                    _res = {"ok": False, "reason": "local vision raised %s" % _e}
+                    _res = {"ok": False, "reason": error_text(_e, "Local vision failed")}
                 if _res.get("ok"):
                     _analyze_record('local:' + str(_res.get('model')), 'allow',
                                     'described on-device; nothing left the machine',
@@ -1577,11 +1577,11 @@ def analyze_file():
                                     "vision_events": []})
                 if local_only:
                     _analyze_record('gemini', 'block',
-                                    'local_only: image withheld (%s)' % _res.get("reason"),
+                                    'local_only: image withheld (%s)' % public_result(_res.get("reason"), "Local vision failed"),
                                     nbytes)
                     return _analyze_withheld(
                         filename, "that image",
-                        "The local seat could not read it: %s." % _res.get("reason"),
+                        "The local seat could not read it: %s." % public_result(_res.get("reason"), "Local vision failed"),
                         "Give the conversational seat a model with a vision "
                         "projector, or switch to Local preferred and I will "
                         "use the cloud when the local seat cannot.")
@@ -1710,4 +1710,4 @@ def analyze_file():
             return jsonify({"filename": filename, "type": ext, "analysis": f"File received ({len(content)} bytes). Type: .{ext} — drop a text, image, or PDF for full analysis."})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"filename": filename, "analysis": f"Analysis error: {str(e)}"})
+        return api_error(e, "Couldn't analyze the file", 200, shape="bare", key="analysis", filename=filename)

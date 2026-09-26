@@ -30,6 +30,7 @@ from agent_friday.services import federation_transport as transport
 from agent_friday.services import marketplace
 from agent_friday.services import economy
 from agent_friday.services import moderation
+from agent_friday.routes._errors import error_text, public_result
 
 federation_bp = Blueprint("federation", __name__)
 
@@ -126,14 +127,15 @@ def federation_inbox():
 
     result = transport.decrypt_message(data)
     if not result.get("ok"):
-        return jsonify({"error": "decryption failed", "detail": result.get("error")}), 400
+        return jsonify(public_result({"error": "decryption failed",
+                        "detail": public_result(result.get("error"), "decryption failed")}, "Couldn't handle the peer message")), 400
 
     payload = result.get("payload") or {}
     msg_type = result.get("msg_type", "")
 
     # Dispatch to handler
     response_payload = _handle_federation_message(msg_type, payload, result["sender_pubkey"])
-    return jsonify({"ok": True, "msg_type": msg_type, "response": response_payload})
+    return jsonify(public_result({"ok": True, "msg_type": msg_type, "response": response_payload}, "Couldn't handle the peer message"))
 
 
 def _gate_outbound_strings(obj, field: str):
@@ -203,9 +205,9 @@ def federation_settings_sync():
     # user wrote; nothing here may leave unclassified.
     clear, field = _gate_outbound_strings(delta, "settings_sync")
     if not clear:
-        return jsonify({"error": "withheld by the egress gate", "field": field,
+        return jsonify(public_result({"error": "withheld by the egress gate", "field": field,
                         "detail": "a setting value did not clear the privacy gate; "
-                                  "nothing was sent to any peer"}), 403
+                                  "nothing was sent to any peer"}, "Couldn't sync settings")), 403
 
     peers = fed.get_peers()
     if peer_id_filter:
@@ -231,11 +233,12 @@ def federation_settings_sync():
             results.append({"peer": peer.get("agent_id"), "ok": res.get("ok", False),
                             "result": res})
         except Exception as e:
-            results.append({"peer": peer.get("agent_id"), "ok": False, "error": str(e)})
+            results.append({"peer": peer.get("agent_id"), "ok": False,
+                            "error": error_text(e, "Couldn't sync settings to that peer")})
 
     sent_ok = sum(1 for r in results if r["ok"])
-    return jsonify({"ok": True, "sent": sent_ok, "total_peers": len(peers),
-                    "keys_synced": list(delta.keys()), "results": results})
+    return jsonify(public_result({"ok": True, "sent": sent_ok, "total_peers": len(peers),
+                    "keys_synced": list(delta.keys()), "results": results}, "Couldn't sync settings"))
 
 
 @federation_bp.route("/api/federation/send", methods=["POST"])
@@ -252,16 +255,16 @@ def send_federation_message():
 
     clear, field = _gate_outbound_strings(payload, f"federation.{msg_type}")
     if not clear:
-        return jsonify({"error": "withheld by the egress gate", "field": field,
+        return jsonify(public_result({"error": "withheld by the egress gate", "field": field,
                         "detail": "the payload did not clear the privacy gate; "
-                                  "nothing was sent"}), 403
+                                  "nothing was sent"}, "Couldn't send the peer message")), 403
 
     envelope = transport.build_message(msg_type, payload, recipient_pubkey)
     if not envelope:
         return jsonify({"error": "failed to build encrypted envelope"}), 500
 
     result = transport.send_to_peer(peer_endpoint, envelope)
-    return jsonify({"ok": result.get("ok", False), "result": result})
+    return jsonify(public_result({"ok": result.get("ok", False), "result": result}, "Couldn't send the peer message"))
 
 
 # ── Federation: Well-known endpoint (for discovery by peers) ─────────────────
@@ -376,17 +379,17 @@ def purchase_content():
             payment_confirmed=True,
         )
         if not result or not result.get("ok"):
-            return jsonify({"error": "purchase failed", "detail": result}), 400
-        return jsonify({"ok": True, "receipt": result.get("receipt"), "transfer": result.get("transfer_record")})
+            return jsonify(public_result({"error": "purchase failed", "detail": result}, "Couldn't complete the purchase")), 400
+        return jsonify(public_result({"ok": True, "receipt": result.get("receipt"), "transfer": result.get("transfer_record")}, "Couldn't complete the purchase"))
 
     intent = marketplace.purchase_intent(
         listing_id=listing_id,
         buyer_agent_id=buyer_agent_id or "",
     )
     if not intent or not intent.get("ok"):
-        return jsonify({"error": "purchase blocked by policy or listing unavailable",
-                        "detail": intent}), 400
-    return jsonify({"ok": True, "invoice": intent.get("invoice"), "listing": intent.get("listing")})
+        return jsonify(public_result({"error": "purchase blocked by policy or listing unavailable",
+                        "detail": intent}, "Couldn't complete the purchase")), 400
+    return jsonify(public_result({"ok": True, "invoice": intent.get("invoice"), "listing": intent.get("listing")}, "Couldn't complete the purchase"))
 
 
 # ── Marketplace: Policy ───────────────────────────────────────────────────────
@@ -528,7 +531,7 @@ def scan_content():
         metadata=metadata,
     )
     status = 200 if not result.get("blocked") else 422
-    return jsonify(result), status
+    return jsonify(public_result(result, "Couldn't scan the content")), status
 
 
 # ── Moderation: Policy ────────────────────────────────────────────────────────
@@ -616,7 +619,7 @@ def _handle_federation_message(msg_type: str, payload: dict, sender_pubkey: str)
                 return {"applied": list(safe_delta.keys()), "count": len(safe_delta)}
             except Exception as e:
                 _log.warning("Settings sync apply failed: %s", e)
-                return {"error": str(e)}
+                return {"error": error_text(e, "Settings sync failed on this device")}
         return {"applied": [], "count": 0}
 
     return {"msg_type": msg_type, "status": "received"}

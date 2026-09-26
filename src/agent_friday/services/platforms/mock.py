@@ -22,6 +22,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from agent_friday.services.platforms.base import PlatformAdapter
+from agent_friday.user_errors import exception_text
 
 
 class MockPlatformAdapter(PlatformAdapter):
@@ -183,8 +184,8 @@ class MockPlatformAdapter(PlatformAdapter):
             return {"ok": True, "post_url": f"mock://post/{pid}",
                     "platform_post_id": pid, "raw": {"id": pid}}
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e)}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e)}
 
     def delete(self, platform_post_id: str) -> Dict[str, Any]:
         pid = str(platform_post_id)

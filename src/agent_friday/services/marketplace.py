@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.user_errors import exception_text
 
 DB_PATH = FRIDAY_DIR / "marketplace.db"
 _LOCK = threading.RLock()
@@ -448,7 +449,7 @@ def purchase_intent(
         }
     except Exception as e:
         print(f"  [marketplace] purchase_intent failed: {e}")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def complete_purchase(
@@ -529,4 +530,4 @@ def complete_purchase(
         return {"ok": True, "transfer_record": transfer_record, "receipt": receipt}
     except Exception as e:
         print(f"  [marketplace] complete_purchase failed: {e}")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}

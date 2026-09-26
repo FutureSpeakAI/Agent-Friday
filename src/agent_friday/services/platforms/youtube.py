@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base import PlatformAdapter, _now_utc, _parse_iso
+from agent_friday.user_errors import exception_text
 
 _log = logging.getLogger("friday.platforms.youtube")
 
@@ -388,7 +389,7 @@ class YouTubeAdapter(PlatformAdapter):
                                             "youtube.upload — reconnect with the "
                                             "YouTube scopes")
         except Exception as e:
-            out["last_error"] = str(e)
+            out["last_error"] = exception_text(e)
         return out
 
     # ── publish path ──────────────────────────────────────────────────────────
@@ -542,8 +543,8 @@ class YouTubeAdapter(PlatformAdapter):
             }
             return {"ok": True, "prepared": prepared, "warnings": warnings}
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e), "warnings": []}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e), "warnings": []}
 
     # ── shared HTTP plumbing ──────────────────────────────────────────────────
     def _auth_token(self) -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -826,7 +827,7 @@ class YouTubeAdapter(PlatformAdapter):
                 out["publish_at"] = status_obj["publishAt"]
             return out
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
             _log.warning("youtube publish failed: %s: %s", type(e).__name__, e)
             return {"ok": False, "error": E_PUBLISH_FAILED}
 
@@ -850,7 +851,7 @@ class YouTubeAdapter(PlatformAdapter):
             return {"ok": True, "platform_post_id": str(platform_post_id),
                     "privacy_status": "private", "native_scheduled": False}
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
             return {"ok": False, "error": E_UPDATE_FAILED}
 
     def delete(self, platform_post_id: str) -> Dict[str, Any]:
@@ -868,7 +869,7 @@ class YouTubeAdapter(PlatformAdapter):
                 return {"ok": True, "deleted": True}
             return self._error_envelope(resp, E_DELETE_FAILED)
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
             return {"ok": False, "error": E_DELETE_FAILED}
 
     # ── analytics path (§4.6 — best in class) ─────────────────────────────────
@@ -941,7 +942,7 @@ class YouTubeAdapter(PlatformAdapter):
 
             return metrics
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
             return None
 
     def fetch_account_metrics(self) -> Optional[Dict[str, Any]]:
@@ -973,7 +974,7 @@ class YouTubeAdapter(PlatformAdapter):
                     "posts": _n(stats.get("videoCount")),
                     "fetched_at": _iso_z(_now_utc())}
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
             return None
 
 

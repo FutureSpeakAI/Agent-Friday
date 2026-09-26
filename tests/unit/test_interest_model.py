@@ -149,7 +149,7 @@ class TestConstraintsSurviveUnrelatedFactVolume:
                        for f in profile_facts)
 
     def test_constraints_truncated_count_zero_when_nothing_truncated(self):
-        um.note_fact("constraint", "Never contact my ex", confidence=0.9)
+        um.note_fact("constraint", "Never contact my former roommate", confidence=0.9)
         model = im.assemble_interest_model()
         assert model["constraints_truncated_count"] == 0
 
@@ -251,7 +251,7 @@ class TestAssembleInterestModel:
 
     def test_deterministic_when_store_unchanged(self):
         um.note_fact("preference", "I prefer terse answers", confidence=0.7)
-        um.note_fact("constraint", "Never contact my ex", confidence=0.9)
+        um.note_fact("constraint", "Never contact my former roommate", confidence=0.9)
         assert im.assemble_interest_model() == im.assemble_interest_model()
 
     def test_includes_constraint_written_via_record_constraint(self):

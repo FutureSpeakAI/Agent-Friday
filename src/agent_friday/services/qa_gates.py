@@ -28,6 +28,7 @@ import re
 from typing import Any, Callable, Dict, Optional
 
 from agent_friday.core import _load_settings
+from agent_friday.user_errors import ExceptionText
 
 # Mirrors DEFAULT_SETTINGS["qa_gates"]; used when the key is absent/partial.
 _QA_DEFAULTS = {
@@ -161,7 +162,7 @@ def evaluate_text(content: str, intent: str, *,
                              temperature=0.2, workspace=workspace or "review")
     except Exception as e:
         return {"status": "skipped", "passed": True, "score": None,
-                "critique": f"evaluator unavailable: {e}", "suggestions": ""}
+                "critique": ExceptionText(f"evaluator unavailable: {e}"), "suggestions": ""}
 
     verdict = _parse_score(raw)
     score = verdict["score"]
@@ -193,16 +194,18 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
         if not ce.is_available():
             return {"status": "skipped", "passed": True, "score": None,
                     "critique": "no vision key", "suggestions": ""}
-        from pathlib import Path
-        p = Path(image_path).expanduser()
-        if not p.exists():
-            cand = ce.CREATIONS_DIR / Path(image_path).name
-            p = cand if cand.exists() else p
-        if not p.exists():
+        # Only an actual image, from Friday's creations or one the owner
+        # named or approved, leaves the machine (load_local_image).
+        from agent_friday.services import seed_images as _si
+        _ok, _why = _si.check_running_call(image_path)
+        if not _ok:
+            return {"status": "skipped", "passed": True, "score": None,
+                    "critique": f"image not sent for review: {_why}",
+                    "suggestions": ""}
+        data, mime = ce.load_local_image(image_path)
+        if data is None:
             return {"status": "skipped", "passed": True, "score": None,
                     "critique": "image not found", "suggestions": ""}
-        data = p.read_bytes()
-        mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
 
         from google.genai import types
         from agent_friday.services import egress_gate as _eg
@@ -224,7 +227,7 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
         raw = getattr(resp, "text", "") or ""
     except Exception as e:
         return {"status": "skipped", "passed": True, "score": None,
-                "critique": f"vision evaluator unavailable: {e}", "suggestions": ""}
+                "critique": ExceptionText(f"vision evaluator unavailable: {e}"), "suggestions": ""}
 
     verdict = _parse_score(raw)
     score = verdict["score"]

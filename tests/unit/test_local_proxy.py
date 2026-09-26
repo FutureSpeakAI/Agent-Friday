@@ -82,6 +82,7 @@ def _proxy(upstream_port, certs, redirect=False, **kw):
 
 def _https_get(port, certs, path="/x", host=HOST):
     ctx = ssl.create_default_context(cafile=str(certs / local_ca.CA_CERT))
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     conn = http.client.HTTPSConnection("127.0.0.1", port, timeout=10, context=ctx)
     # SNI and certificate check against the NAME, while connecting to loopback
     conn.sock = ctx.wrap_socket(socket.create_connection(("127.0.0.1", port), timeout=10),

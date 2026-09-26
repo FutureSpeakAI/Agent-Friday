@@ -13,6 +13,7 @@ import urllib.request
 from typing import Any, Dict, List
 
 from agent_friday.services.channels.base import ChannelAdapter
+from agent_friday.user_errors import exception_text
 
 _API = "https://api.telegram.org/bot{token}/{method}"
 
@@ -63,8 +64,8 @@ class TelegramBridge(ChannelAdapter):
                           {"chat_id": chat_id, "text": text[:4096]})
             return {"ok": bool(r.get("ok"))}
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e)}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e)}
 
     # ── helpers for tests / callers ──────────────────────────────────────────
     @staticmethod

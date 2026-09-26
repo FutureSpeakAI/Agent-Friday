@@ -51,6 +51,7 @@ from agent_friday.services.model_router import (
     _get_vault_control,
     _latest_session_summary,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, public_result
 
 insights_bp = Blueprint('insights', __name__)
 
@@ -81,7 +82,7 @@ def career_set_path():
     try:
         career_ops.set_root(str(data.get('path') or ''))
     except career_ops.CareerError as e:
-        return jsonify({'error': str(e)}), 400
+        return api_error(e, "Couldn't set the career folder", 400, shape="bare")
     return jsonify(career_ops.status())
 
 
@@ -269,7 +270,7 @@ def get_behavioral_report():
     try:
         return jsonify({"status": "ok", **get_behavioral_monitor().get_latest_report()})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the behavior report")
 
 
 @insights_bp.route('/api/security/behavioral-history')
@@ -280,7 +281,7 @@ def get_behavioral_history():
     try:
         return jsonify({"status": "ok", **get_behavioral_monitor().get_history_summary()})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the behavior history")
 
 
 @insights_bp.route('/api/security/risk-score')
@@ -292,7 +293,7 @@ def get_behavioral_risk_score():
     try:
         return jsonify({"status": "ok", **get_behavioral_monitor().get_risk_score()})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the risk score")
 
 
 @insights_bp.route('/api/vault/status')
@@ -458,7 +459,7 @@ def data_erase():
     try:
         shutil.rmtree(FRIDAY_DIR)
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Erase failed: {e}"}), 500
+        return api_error(e, "Erase failed")
     return jsonify({"status": "ok", "erased": True, "files": count,
                     "message": "All local Friday data erased. Restart for a clean first run."})
 
@@ -622,7 +623,7 @@ def api_self_improvement_run():
         return report
 
     if data.get('wait'):
-        return jsonify({"status": "ok", "report": _run()})
+        return jsonify(public_result({"status": "ok", "report": _run()}, "Couldn't run the self-improvement report"))
 
     def _bg():
         try:

@@ -50,6 +50,7 @@ import json
 import logging
 import re
 from email.message import EmailMessage
+from agent_friday.user_errors import UserFacingError, log_failure
 
 _log = logging.getLogger("friday.gmail_send")
 
@@ -61,7 +62,9 @@ GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 APPROVAL_KIND = "external_message"
 SUBJECT_TYPE = "email"
 
-_ADDR = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+# The domain needs a dot with at least one character on each side; matching up
+# to the FIRST such dot keeps the check linear in the address length.
+_ADDR = re.compile(r"^[^@\s,;]+@[^@\s,;][^@\s,;.]*\.[^@\s,;]+$")
 
 #: After approval, how long a message waits for "Undo" before it goes.
 UNDO_SECONDS = 10
@@ -71,8 +74,10 @@ LATE_LIMIT_S = 15 * 60
 MAX_SCHEDULE_S = 30 * 86400
 
 
-class SendRefused(RuntimeError):
-    """A send that did not happen, and says why."""
+class SendRefused(UserFacingError, RuntimeError):
+    """A send that did not happen, and says why. The message is written for
+    the user; where a provider's own text explains the failure it rides in
+    `detail` (what str() returns, for the model and the log)."""
 
 
 def scope_granted(account_id: str | None = None) -> bool:
@@ -476,7 +481,9 @@ def send(approval_id: str) -> dict:
         _gate.record_external("gmail:send", surface="mail", approval_id=approval_id,
                               target=_fingerprint_target(payload))
     except _gate.Held as e:
-        raise SendRefused("held: %s. Nothing was sent." % e)
+        raise SendRefused("held by the action checkpoint (error %s). Nothing was sent."
+                          % log_failure(e, "Mail send held by the action checkpoint"),
+                          detail="held: %s. Nothing was sent." % e)
 
     _burned, was_first = _ap._consume(appr)
     if not was_first:
@@ -490,7 +497,8 @@ def send(approval_id: str) -> dict:
     except Exception as e:
         _log.warning("send failed: %s", e)
         _outbox_record(appr, ok=False, error=str(e)[:500])
-        raise SendRefused("Gmail refused the message: %s" % str(e)[:300])
+        raise SendRefused("Gmail refused the message (error %s)." % log_failure(e, "Gmail send failed"),
+                          detail="Gmail refused the message: %s" % str(e)[:300])
 
     _ap.mark_used(approval_id, "gmail_send", {"message_id": sent.get("id"),
                                               "thread_id": sent.get("threadId")})
@@ -566,7 +574,8 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
     try:
         d = gmail_api.execute(svc.users().drafts().create(userId="me", body={"message": msg}))
     except gmail_api.GmailError as e:
-        raise SendRefused("Gmail did not save the draft: %s" % e)
+        raise SendRefused("Gmail did not save the draft (error %s)." % log_failure(e, "Gmail draft failed"),
+                          detail="Gmail did not save the draft: %s" % e)
     return {"ok": True, "draft_id": d.get("id"), "account_id": account_id}
 
 

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.user_errors import exception_text
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CONSTANTS
@@ -351,6 +352,6 @@ def scan(
             "verdict": "error",
             "harm_level": None,
             "tags": [],
-            "reason": str(e),
+            "reason": exception_text(e),
             "scan_id": scan_id,
         }

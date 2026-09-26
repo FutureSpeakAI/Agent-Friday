@@ -29,6 +29,7 @@ _log = logging.getLogger("friday.routes.workflows")
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import contained, safe_name
 from agent_friday.core import (
     login_required,
     VIBE_TERMINALS,
@@ -68,6 +69,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _predict_route_provider,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, log_failure
 
 workflows_bp = Blueprint('workflows', __name__)
 
@@ -87,7 +89,7 @@ def draft_generate():
         return jsonify(resp), code
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't draft the workflow")
 
 
 @workflows_bp.route('/api/draft/deploy', methods=['POST'])
@@ -114,7 +116,7 @@ def draft_deploy():
         except subprocess.TimeoutExpired:
             return jsonify({"status": "error", "message": "Clipboard operation timed out"}), 500
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)}), 500
+            return api_error(e, "Couldn't deploy the draft")
 
     elif destination == 'gmail_draft':
         # Frontend handles Gmail draft creation via MCP tools — return acknowledgment
@@ -150,12 +152,13 @@ def list_content_drafts():
 @workflows_bp.route('/api/content/drafts/<filename>')
 def serve_content_draft(filename):
     """Serve a saved draft HTML file for browser viewing."""
-    safe_name = Path(filename).name
-    filepath = CONTENT_DRAFTS_DIR / safe_name
-    if not filepath.exists() or not filepath.is_file():
+    try:
+        filepath = contained(CONTENT_DRAFTS_DIR, safe_name(filename, what="draft name"))
+    except ValueError:
         return jsonify({'status': 'not_found'}), 404
-    CONTENT_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-    return send_from_directory(str(CONTENT_DRAFTS_DIR), safe_name)
+    if not filepath.is_file():
+        return jsonify({'status': 'not_found'}), 404
+    return send_from_directory(str(filepath.parent), filepath.name)
 
 
 @workflows_bp.route('/api/flow', methods=['POST'])
@@ -221,7 +224,13 @@ def confirm_draft():
     if not draft_id:
         return jsonify({"status": "error", "message": "No draft_id provided"}), 400
 
-    draft_file = FLOW_QUEUE_DIR / f"gmail-draft-{draft_id}.json"
+    # The id names one queued file; it must not steer the read-modify-write
+    # below at any other JSON on the disk.
+    try:
+        draft_file = contained(FLOW_QUEUE_DIR, safe_name(
+            f"gmail-draft-{draft_id}.json", what="draft id"))
+    except ValueError:
+        return jsonify({"status": "error", "message": "Draft not found"}), 404
     if not draft_file.exists():
         return jsonify({"status": "error", "message": "Draft not found"}), 404
 
@@ -232,7 +241,7 @@ def confirm_draft():
         draft_file.write_text(json.dumps(draft, indent=2), encoding='utf-8')
         return jsonify({"status": "ok", "draft_id": draft_id})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't confirm the draft")
 
 
 @workflows_bp.route('/api/routines')
@@ -343,8 +352,8 @@ def run_routine(routine_id):
     except Exception as exc:
         return jsonify({
             "status": "error", "routine": routine_id,
-            "message": "Could not reach the scheduler to run %s: %s"
-                       % (reg['label'], exc),
+            "message": "Could not reach the scheduler to run %s (error %s)"
+                       % (reg['label'], log_failure(exc, "Routine run: scheduler unreachable")),
         }), 500
 
     stamp = datetime.now().isoformat()
@@ -783,10 +792,10 @@ def workflow_chains_create():
         stored = save_workflow_chain(data)
         return jsonify({"status": "ok", "chain": stored})
     except ValueError as ve:
-        return jsonify({"status": "error", "message": str(ve)}), 400
+        return api_error(ve, "Couldn't create the workflow chain", 400)
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't create the workflow chain")
 
 
 @workflows_bp.route('/api/workflows/chains/<name>', methods=['GET'])
@@ -844,7 +853,7 @@ def workflows_overview():
         return jsonify(dict(_wo.overview(), status="ok"))
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the workflows")
 
 
 @workflows_bp.route('/api/workflows/draft', methods=['POST'])
@@ -857,7 +866,7 @@ def workflows_draft():
         return jsonify({"status": "ok",
                         "draft": _wo.draft_from_text(data.get('text'), generate=_generate_text)})
     except ValueError as ve:
-        return jsonify({"status": "error", "message": str(ve)}), 400
+        return api_error(ve, "Couldn't draft the workflow", 400)
 
 
 @workflows_bp.route('/api/workflows/save', methods=['POST'])
@@ -869,7 +878,7 @@ def workflows_save():
     try:
         return jsonify(dict(_wo.save(request.get_json(silent=True) or {}), status="ok"))
     except ValueError as ve:
-        return jsonify({"status": "error", "message": str(ve)}), 400
+        return api_error(ve, "Couldn't save the workflow", 400)
 
 
 @workflows_bp.route('/api/workflows/remove', methods=['POST'])
@@ -881,5 +890,5 @@ def workflows_remove():
     try:
         gone = _wo.delete(slug=data.get('slug'), schedule_id=data.get('schedule_id'))
     except ValueError as ve:
-        return jsonify({"status": "error", "message": str(ve)}), 400
+        return api_error(ve, "Couldn't remove the workflow", 400)
     return jsonify({"status": "ok" if gone else "not_found"}), (200 if gone else 404)

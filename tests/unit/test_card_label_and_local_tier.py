@@ -27,7 +27,7 @@ import pytest
 
 # ── P5: the card's label describes the ACTION, not its arguments ────────────
 
-TICKET_NOTES = 'tickets $35 each, order at texasperformingarts.org'
+TICKET_NOTES = 'tickets $35 each, order at tickets.example.org'
 
 
 def _store(tmp_path, monkeypatch):
@@ -72,7 +72,7 @@ def test_one_instruction_gets_one_label(tmp_path, monkeypatch):
     because some venues mention a price and others do not."""
     from agent_friday.services import agent as ag
     notes = ["quiet room, no stairs", TICKET_NOTES, "seated show",
-             "buy tickets at broadwayinaustin.com", "book ahead"]
+             "buy tickets at theatre.example.com", "book ahead"]
     seen = {ag._gate_policy_class("create_calendar_event", {"notes": n})
             for n in notes}
     assert len(seen) == 1, "one instruction produced labels %r" % (seen,)

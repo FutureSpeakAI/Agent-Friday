@@ -412,9 +412,15 @@ function fridayNavManifest() {
 // switches the UI, "open my Downloads" actually reveals the folder. Each action
 // is dispatched here. Unknown action types are ignored so the backend can add
 // new ones without breaking older clients.
+// A URL an action opens comes from the server's reply, which carries model
+// output; only http(s) may be opened, never javascript:, data: or file:.
+function fridayHttpUrl(u){
+  try{const x=new URL(String(u||''),window.location.href);
+    return (x.protocol==='http:'||x.protocol==='https:')?x.href:'';}catch(_){return '';}
+}
 function fridayRunActions(actions){
   if(!Array.isArray(actions)||!actions.length)return;
-  try{console.info('[friday] running '+actions.length+' action(s):',actions);}catch(_){}
+  try{console.info('[friday] running %s action(s):',actions.length,actions);}catch(_){}
   for(const a of actions){
     if(!a||typeof a!=='object')continue;
     try{
@@ -432,11 +438,12 @@ function fridayRunActions(actions){
         fetch('/api/computer/open',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({path:a.path||a.target})}).catch(()=>{});
       }else if(a.type==='open_url'&&a.url){
-        try{window.open(a.url,'_blank','noopener');}catch(_){}
+        const u=fridayHttpUrl(a.url);
+        if(u){try{window.open(u,'_blank','noopener');}catch(_){}}
       }else if(a.type==='open_last_source'){
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
-        const u=window._fridayLastVoiceSource;
+        const u=fridayHttpUrl(window._fridayLastVoiceSource);
         if(u){try{window.open(u,'_blank','noopener');}catch(_){}}
       }
     }catch(err){try{console.warn('[friday] action failed',a,err);}catch(_){}}
@@ -7312,6 +7319,44 @@ function _fmtDur(sec){if(!sec||!isFinite(sec)||sec<0)return'0:00';const s=Math.f
 
 const NEWS_TABS=[{id:'frontpage',label:'Front Page'},{id:'feed',label:'Feed'},{id:'readlater',label:'Read Later'},{id:'notes',label:'My Notes'},{id:'briefings',label:'Briefings'},{id:'weekly',label:'Weekly'},{id:'editorial',label:'Editorial'},{id:'trust',label:'Trust'}];
 fridayDeclareNav('news',{key:'tab',keys:['tab'],sections:NEWS_TABS});
+// The Local beat is the owner's setting: the place Local news covers and the
+// outlets it reads (news_local_area, news_local_sources). Nothing ships with a
+// city; both empty means no Local section. Listed outlets are trusted like the
+// built-in high-trust sources.
+function NewsLocalBeatSettings() {
+  const h = React.createElement;
+  const [area, setArea] = useState(null);
+  const [sources, setSources] = useState('');
+  const [note, setNote] = useState('');
+  useEffect(() => {
+    apiFetch('/api/settings').then(r => r.json()).then(d => {
+      const s = (d && d.settings) || {};
+      setSources((Array.isArray(s.news_local_sources) ? s.news_local_sources : []).join('\n'));
+      setArea(String(s.news_local_area || ''));
+    }).catch(() => {
+      setArea('');
+      setNote('Could not load the Local beat.');
+    });
+  }, []);
+  const save = patch => apiFetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: patch })
+  }).then(r => r.json().catch(() => ({})).then(b => {
+    if (!r.ok || b.status === 'error') throw new Error(b.message || b.error || 'the server refused it (' + r.status + ')');
+    setNote('Saved.');
+  })).catch(e => setNote('NOT saved: ' + (e.message || e)));
+  const commit = () => save({
+    news_local_area: (area || '').trim(),
+    news_local_sources: sources.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
+  });
+  if (area === null) return null;
+  return h(React.Fragment, null,
+    h('div', { className: 'card-title', style: { marginTop: 14 } }, 'Local beat'),
+    h('input', { className: 'input', 'aria-label': 'City or area for Local news', style: { width: '100%', fontSize: 11 }, value: area, placeholder: 'City or area (empty: no Local news)', onChange: e => setArea(e.target.value), onBlur: commit }),
+    h('textarea', { className: 'input', 'aria-label': 'Local news outlets', rows: 3, style: { width: '100%', fontSize: 11, marginTop: 6, resize: 'vertical' }, value: sources, placeholder: 'Local outlets, one domain per line or comma-separated', onChange: e => setSources(e.target.value), onBlur: commit }),
+    note && h('div', { role: 'status', style: { fontSize: 10, color: '#777', marginTop: 4 } }, note));
+}
 function NewsWS(){
   const[tab,setTab]=useState('frontpage');
   const[feed,setFeed]=useState([]);const[feedLoading,setFeedLoading]=useState(true);const[feedAt,setFeedAt]=useState('');
@@ -7450,7 +7495,7 @@ function NewsWS(){
 
   const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{let c=d.content||'';if(d.is_html)c=c.replace('</head>','<style>.fab-btn,#readAloudBtn,#readAloudProgress{display:none!important}</style></head>');setHtmlContent(c);setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
-  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;const _ttsCtx=new (window.AudioContext||window.webkitAudioContext)();const _ttsSrc=_ttsCtx.createMediaElementSource(a);const _ttsAn=_ttsCtx.createAnalyser();_ttsAn.fftSize=256;_ttsSrc.connect(_ttsCtx.destination);try{_ttsSrc.connect(_ttsAn)}catch(_){}const _ttsBuf=new Uint8Array(_ttsAn.frequencyBinCount);const _ttsAmpLoop=()=>{if(!ttsAudio.current){window._fridayHoloAmplitude=0;return}_ttsAn.getByteFrequencyData(_ttsBuf);let s=0;for(let i=0;i<_ttsBuf.length;i++)s+=_ttsBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/_ttsBuf.length)/128);requestAnimationFrame(_ttsAmpLoop)};a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;window._fridayHoloAmplitude=0;try{_ttsCtx.close()}catch(_){}if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().then(()=>_ttsAmpLoop()).catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
+  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const _doc=new DOMParser().parseFromString(htmlContent,'text/html');_doc.querySelectorAll('script,style').forEach(n=>n.remove());const _walk=_doc.createTreeWalker(_doc.documentElement,NodeFilter.SHOW_TEXT);const _parts=[];while(_walk.nextNode())_parts.push(_walk.currentNode.nodeValue);const text=_parts.join(' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;const _ttsCtx=new (window.AudioContext||window.webkitAudioContext)();const _ttsSrc=_ttsCtx.createMediaElementSource(a);const _ttsAn=_ttsCtx.createAnalyser();_ttsAn.fftSize=256;_ttsSrc.connect(_ttsCtx.destination);try{_ttsSrc.connect(_ttsAn)}catch(_){}const _ttsBuf=new Uint8Array(_ttsAn.frequencyBinCount);const _ttsAmpLoop=()=>{if(!ttsAudio.current){window._fridayHoloAmplitude=0;return}_ttsAn.getByteFrequencyData(_ttsBuf);let s=0;for(let i=0;i<_ttsBuf.length;i++)s+=_ttsBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/_ttsBuf.length)/128);requestAnimationFrame(_ttsAmpLoop)};a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;window._fridayHoloAmplitude=0;try{_ttsCtx.close()}catch(_){}if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().then(()=>_ttsAmpLoop()).catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
   const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null;window._fridayHoloAmplitude=0}};
 
   // ── Front Page audio briefing ──
@@ -8076,6 +8121,7 @@ function NewsWS(){
         {(cats.length?cats.map(c=>c.name):Object.keys(prefs.categories_enabled)).map(c=>
           <span key={c} className={'toggle-pill '+(prefs.categories_enabled[c]?'on':'')} onClick={()=>toggleCat(c)}>{c}</span>)}
       </div>
+      <NewsLocalBeatSettings/>
       <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Now and the live feed.</div>
     </div>}
     {panel==='diet'&&<div className="news-side">

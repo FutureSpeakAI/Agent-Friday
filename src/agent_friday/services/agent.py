@@ -98,6 +98,7 @@ from agent_friday.services.wiki_engine import (
     wiki_read_text,
     wiki_write_text,
 )  # noqa: E501
+from agent_friday.user_errors import ExceptionText, UserFacingValueError
 
 
 
@@ -530,9 +531,9 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
     {"name": "query_trust_graph", "description": "Look up a person in the trust graph by name or alias and return their entry (scores, evidence count, last interaction).",
      "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
-    {"name": "annotate_calendar_events", "description": "ADD a location, phone number, or note to EVERY calendar event matching a search term — the tool for 'add the clinic's address and phone to all my chiropractor entries'. Purely additive: existing values are appended to, never replaced, and every prior value is returned so a change can be undone. Handles recurring series (edits the whole series, not one occurrence). Set dry_run to preview which events would change. If the result says the token is read-only, tell the user plainly that Google must be reconnected to grant event editing and offer to start it — do NOT substitute a map, directions, or any other action for the edit they asked for.",
+    {"name": "annotate_calendar_events", "description": "ADD a location, phone number, or note to EVERY calendar event matching a search term — the tool for 'add the clinic's address and phone to all my dentist entries'. Purely additive: existing values are appended to, never replaced, and every prior value is returned so a change can be undone. Handles recurring series (edits the whole series, not one occurrence). Set dry_run to preview which events would change. If the result says the token is read-only, tell the user plainly that Google must be reconnected to grant event editing and offer to start it — do NOT substitute a map, directions, or any other action for the edit they asked for.",
      "input_schema": {"type": "object", "properties": {
-         "query": {"type": "string", "description": "Text to match against event titles/descriptions, e.g. 'chiropractor'."},
+         "query": {"type": "string", "description": "Text to match against event titles/descriptions, e.g. 'dentist'."},
          "location": {"type": "string", "description": "Address to add to the event's location field."},
          "phone": {"type": "string", "description": "Phone number to add to the event's description."},
          "note": {"type": "string", "description": "Any other line to add to the description."},
@@ -755,10 +756,8 @@ def _html_to_text(html):
         text = soup.get_text(separator='\n', strip=True)
         return re.sub(r'\n{3,}', '\n\n', text)
     except ImportError:
-        text = re.sub(r'<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>', ' ', html, flags=re.I | re.S)
-        text = re.sub(r'<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>', ' ', text, flags=re.I | re.S)
-        text = re.sub(r'<[^>]+>', ' ', text)
-        return re.sub(r'\s+', ' ', text).strip()
+        from agent_friday.services.html_text import html_to_text
+        return html_to_text(html)
 
 
 def _tool_search_web(inp):
@@ -936,7 +935,15 @@ def _maybe_auto_open(path) -> None:
     try:
         if not _load_settings().get('auto_open_created_files'):
             return
-        _perform_open(str(path))
+        # Only a document, picture, recording or folder opens on its own. The
+        # owner's decision behind the write that created the file was about
+        # writing it, not running it, so it is not carried into the open.
+        from agent_friday.governance import action_gate as _gate_mod
+        _tok = _gate_mod.DECIDED.set(None)
+        try:
+            _perform_open(str(path))
+        finally:
+            _gate_mod.DECIDED.reset(_tok)
     except Exception as e:
         print(f"  [auto-open] skipped for {path}: {e}")
 
@@ -2341,7 +2348,7 @@ def _open_app(name):
             subprocess.Popen([exe])
             return f"Done — I launched **{name.strip()}** for you."
         except Exception as e:
-            return f"I tried to launch {name.strip()} but hit an error: {e}"
+            return ExceptionText(f"I tried to launch {name.strip()} but hit an error: {e}")
     shell_exe = _OPEN_SHELL_APPS.get(key)
     if shell_exe:
         try:
@@ -2350,7 +2357,7 @@ def _open_app(name):
             subprocess.Popen(['cmd', '/c', 'start', '', shell_exe])
             return f"Done — I launched **{name.strip()}** for you."
         except Exception as e:
-            return f"I tried to launch {name.strip()} but hit an error: {e}"
+            return ExceptionText(f"I tried to launch {name.strip()} but hit an error: {e}")
     return None
 
 
@@ -2362,7 +2369,7 @@ def _resolve_open_target(target):
         return None
     raw = target.strip().strip('"').strip("'")
     low = re.sub(r'\s+', ' ', raw.lower()).strip()
-    low = re.sub(r'\s+(folder|directory|dir|file)$', '', low).strip()
+    low = re.sub(r'(?<!\s)\s+(folder|directory|dir|file)$', '', low).strip()
     repo = Path(__file__).resolve().parents[3]  # agent.py is src/agent_friday/services/ → repo root
     aliases = {
         'downloads': HOME / 'Downloads', 'download': HOME / 'Downloads',
@@ -2468,6 +2475,17 @@ def _perform_open(target, in_browser=False):
     resolved = _resolve_open_target(target)
     if not resolved:
         return None
+    # Only documents, pictures, recordings and folders open without a
+    # decision (services/open_safety.py). The governance checkpoint already
+    # holds anything else for the owner; this is the second check, so a
+    # caller that reaches here without that decision cannot run a program.
+    from agent_friday.governance import action_gate as _gate_mod
+    from agent_friday.services import open_safety as _open_safety
+    _safe, _why = _open_safety.judge(resolved)
+    if not _safe and not _gate_mod.owner_decision():
+        return (f"[NOT OPENED] {Path(resolved).name} was not opened: {_why}. "
+                f"Opening it could run a program, so it needs the owner's "
+                f"approval first. Nothing was run.")
     if in_browser:
         try:
             url = Path(resolved).resolve().as_uri()
@@ -2484,8 +2502,8 @@ def _perform_open(target, in_browser=False):
                     raise RuntimeError("no browser could be launched")
                 where = "your browser"
         except Exception as e:
-            return (f"I tried to open {resolved} in a browser tab but hit an "
-                    f"error: {e}")
+            return (ExceptionText(f"I tried to open {resolved} in a browser tab but hit an "
+                    f"error: {e}"))
         return (f"Done — I opened **{Path(resolved).name}** in {where}."
                 f"\n\n`{url}`")
     try:
@@ -2496,7 +2514,7 @@ def _perform_open(target, in_browser=False):
         else:
             subprocess.Popen(['xdg-open', resolved])
     except Exception as e:
-        return f"I tried to open {resolved} but hit an error: {e}"
+        return ExceptionText(f"I tried to open {resolved} but hit an error: {e}")
     name = Path(resolved).name or resolved
     return f"Done — I opened **{name}** for you.\n\n`{resolved}`"
 
@@ -2516,8 +2534,14 @@ _OPEN_VERB_RE = re.compile(
     r'^\s*(?:can you |could you |would you |will you |please |hey |ok |okay |yo |'
     r'friday[,:\s]+)*'
     r'(open up|open|launch|reveal|show me|show|bring up|pull up|take me to|'
-    r'switch to|switch|go to|jump to|navigate to)\s+'
-    r'(.+?)[\s?.!]*$',
+    r'switch to|switch|go to|jump to|navigate to)\s+(?=\S)'
+    # The target runs to its last character that is not whitespace or ?.!
+    # (or, when it has none, is its first character), and only trailing
+    # whitespace and ?.! may follow. This is the target `(.+?)[\s?.!]*$`
+    # produced, written so no two quantifiers can claim the same characters:
+    # the lazy form retried the trailing class at every position and went
+    # quadratic on long runs of spaces.
+    r'([^\n]*[^\s?.!]|[?.!])[\s?.!]*$',
     re.IGNORECASE,
 )
 
@@ -2539,6 +2563,16 @@ def _maybe_handle_open_intent(message):
     target = re.sub(r'^(the|my|a|an|up|to|that|this)\s+', '', target, flags=re.IGNORECASE).strip()
     if not target or re.match(r'^https?://', target, re.IGNORECASE):
         return None  # URLs are handled by the browser / open_url path
+    _app_key = re.sub(r'\s+', ' ', target.lower().strip())
+    if _app_key not in _OPEN_APPS and _app_key not in _OPEN_SHELL_APPS:
+        resolved = _resolve_open_target(target)
+        if resolved:
+            from agent_friday.services import open_safety as _open_safety
+            if not _open_safety.judge(resolved)[0]:
+                # Not a document, picture, recording or folder: the model
+                # handles it through open_path, where the governance
+                # checkpoint asks the owner before anything runs.
+                return None
     return _perform_open(target)
 
 
@@ -2620,8 +2654,8 @@ def _resolve_workspace(name):
     low = re.sub(r'^(the|my|a|an)\s+', '', low).strip()
     # TRAILING POLITENESS IS AS COMMON AS LEADING POLITENESS, AND USED TO BE FATAL.
     #
-    # _OPEN_VERB_RE eats a leading "please "; its target group is `(.+?)[\s?.!]*$`,
-    # which does not, so "open workflows please" arrives here as
+    # _OPEN_VERB_RE eats a leading "please "; its target group stops only at
+    # trailing whitespace and ?.!, so "open workflows please" arrives here as
     # "workflows please" and resolves to nothing. The request then falls through
     # to the model, which narrates a navigation it never performed ("Navigating
     # you to the Code workspace") while no navigation occurs.
@@ -2629,7 +2663,10 @@ def _resolve_workspace(name):
     # Front-loaded politeness ("Please open settings.") already works; trailing
     # politeness is what needs stripping. Stripped repeatedly so "please now"
     # and "for me thanks" both reduce.
-    _tail = (r'\s+(please|now|thanks|thank you|for me|pls|plz|ok|okay|'
+    # `(?<!\s)` starts the match only at the beginning of a whitespace run
+    # (where the leftmost match starts anyway), so a long run of spaces is
+    # scanned once rather than once per space.
+    _tail = (r'(?<!\s)\s+(please|now|thanks|thank you|for me|pls|plz|ok|okay|'
              r'right now|real quick|if you can|would you|will you)$')
     while True:
         _stripped = re.sub(_tail, '', low).strip()
@@ -2643,7 +2680,7 @@ def _resolve_workspace(name):
     if hit:
         return hit
     # Fall back to stripping a trailing UI-noise word: "news tab" → "news".
-    stripped = re.sub(r'\s+(workspace|tab|panel|page|screen|view|window|section|menu)$', '', low).strip()
+    stripped = re.sub(r'(?<!\s)\s+(workspace|tab|panel|page|screen|view|window|section|menu)$', '', low).strip()
     return _WORKSPACE_ALIASES.get(stripped)
 
 
@@ -2997,10 +3034,8 @@ def _tool_get_briefing(_inp):
     try:
         text = latest.read_text(encoding='utf-8', errors='replace')
         if latest.suffix == '.html':
-            text = re.sub(r'<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>', ' ', text, flags=re.I)
-            text = re.sub(r'<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>', ' ', text, flags=re.I)
-            text = re.sub(r'<[^>]+>', ' ', text)
-            text = re.sub(r'\s+', ' ', text).strip()
+            from agent_friday.services.html_text import html_to_text
+            text = html_to_text(text)
         return f"[{latest.name}]\n{text[:100_000]}"
     except Exception as e:
         return f"Briefing read error: {e}"
@@ -4329,12 +4364,12 @@ def save_workflow_chain(defn):
     name = (defn or {}).get('name') or ''
     steps = (defn or {}).get('steps') or []
     if not name or not isinstance(steps, list) or not steps:
-        raise ValueError("chain requires 'name' and a non-empty 'steps' list")
+        raise UserFacingValueError("chain requires 'name' and a non-empty 'steps' list")
     norm_steps = []
     for i, s in enumerate(steps):
         s = s or {}
         if not (s.get('prompt') or '').strip():
-            raise ValueError(f"step {i} is missing a 'prompt'")
+            raise UserFacingValueError(f"step {i} is missing a 'prompt'")
         norm_steps.append({
             'name': (s.get('name') or f'Step {i + 1}').strip()[:120],
             'prompt': s['prompt'].strip(),
@@ -8194,6 +8229,15 @@ def _confirmation_question(name, tool_input):
         return f"Would you like me to open {tgt} in your browser?"
     if name == "open_path":
         tgt = inp.get("path") or inp.get("target") or "that"
+        try:
+            from agent_friday.services import open_safety as _open_safety
+            from agent_friday.governance.action_gate import OUTWARD as _OUT
+            if _open_safety.classify_open(inp)[0] == _OUT:
+                return (f"{tgt} is not a document, picture or folder, and "
+                        f"opening it could run a program. Do you want me to "
+                        f"open it anyway?")
+        except Exception:
+            pass
         return f"Would you like me to open {tgt} on your computer?"
     if name == "navigate":
         tgt = inp.get("workspace") or "that workspace"
@@ -8395,6 +8439,12 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # Provenance of this call's arguments, for any approval card the
         # handler raises (the email card is created inside draft_email).
         _ttok = _taint_mod.CURRENT.set(ctx.meta.get("taint"))
+        _ktok = _taint_mod.CURRENT_KEY.set(_taint_mod.ledger_key(session_ctx))
+        # The owner's decision behind this call, as the hooks established it
+        # (approved card, grant, or a chat yes to exactly this call). A handler
+        # whose action needs one checks it again before acting.
+        from agent_friday.governance import action_gate as _gate_mod
+        _dtok = _gate_mod.DECIDED.set(ctx.meta.get("owner_decided"))
         _sc = session_ctx or {}
         _owner_tok = _CURRENT_OWNER_TEXT.set(
             "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
@@ -8403,6 +8453,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             result = handler(ctx.input)
         finally:
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
+            _gate_mod.DECIDED.reset(_dtok)
+            _taint_mod.CURRENT_KEY.reset(_ktok)
             _taint_mod.CURRENT.reset(_ttok)
             _CURRENT_CONVERSATION.reset(_tok)
         if not isinstance(result, str):
@@ -8505,6 +8557,9 @@ def _hook_confirmation_gate(ctx):
             # already happened.
             _resolve_escalated_card(_entry.get("approval_id"))
             _clear_pending(_sid, _fp)
+            # The owner answered yes to exactly this call.
+            if isinstance(getattr(ctx, "meta", None), dict):
+                ctx.meta["owner_decided"] = f"chat:{_fp}"
             return _hooks.ALLOW
 
         _state = _record_pending_confirmation(_sid, name, ctx.input, turn=_turn)
@@ -8666,6 +8721,7 @@ def _hook_governance(ctx):
         _ok, _why = _approved_card_allows(_card_id, ctx.tool_name, ctx.input)
         if _ok:
             ctx.meta["approved_card"] = _card_id
+            ctx.meta["owner_decided"] = _card_id
             return _hooks.ALLOW
         return _hooks.DENY(
             f"[NOT RUN] '{ctx.tool_name}' was offered as an approved action but "
@@ -8685,6 +8741,9 @@ def _hook_governance(ctx):
                         tainted=(d.action == "ask"))
     ctx.meta["governance"] = v
     if v.action == "allow":
+        if v.grant:
+            # A scoped, expiring grant the owner created is their decision.
+            ctx.meta["owner_decided"] = v.grant.get("grant_id")
         return _hooks.ALLOW
     if v.action == "deny":
         return _hooks.DENY(
@@ -8706,8 +8765,8 @@ def _gate_policy_class(tool_name, args):
 
     The label on a card used to come from a keyword scan over the card's whole
     text, and that text is "<tool> <arguments>". So the owner's own words went
-    into it: an event whose notes said "order at texasperformingarts.org" or
-    "buy tickets at broadwayinaustin.com" was labelled `spend`, while the same
+    into it: an event whose notes said "order at tickets.example.org" or
+    "buy tickets at theatre.example.com" was labelled `spend`, while the same
     tool with a plain address was labelled `outward`. Five identical calendar
     writes in one batch came out internal/spend/spend/internal/spend, and a
     calendar entry that says "spend" asks the owner to approve the wrong thing.
@@ -8792,6 +8851,7 @@ def _taint_card(ctx, decision, key):
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
             _appr.mark_used(rec["approval_id"], f"tool:{name}")
             ctx.meta["taint_card_approved"] = True
+            ctx.meta["owner_decided"] = rec["approval_id"]
             return _hooks.ALLOW
         if rec and rec.get("status") in ("denied", "blocked"):
             return _hooks.DENY(
@@ -8864,6 +8924,18 @@ def _taint_title(name, inp):
         return f"Open {_short_txt(inp.get('url'))}"
     if name == "write_file":
         return f"Write the file {_short_txt(inp.get('path'))}"
+    if name == "open_path":
+        return f"Open {_short_txt(inp.get('path') or inp.get('target'))} on this computer"
+    if name in ("generate_video", "generate_music"):
+        from agent_friday.services import seed_images as _si
+        seeds = _si.seed_args(name, inp)
+        what = "a video" if name == "generate_video" else "music"
+        if seeds:
+            # The file names; the full paths are in the card's action text.
+            names = [Path(s).name or s for s in seeds]
+            return (f"Upload {_short_txt(names)} to a cloud service to "
+                    f"make {what}")
+        return f"Make {what} with a cloud service"
     if name == "run_command":
         return f"Run a command: {_short_txt(inp.get('command'))}"
     if name in ("learn_skill", "correct_wiki", "propose_wiki_update"):

@@ -183,7 +183,7 @@ def test_layer_four_can_only_escalate(monkeypatch):
     the committed over-redaction guards are the ones that matter.
     """
     monkeypatch.setattr(sc, "_local_llm_tier", lambda t: sc.Tier.PUBLIC)
-    text = "my kid's IEP meeting is Thursday at the school"
+    text = "my nephew's IEP meeting is Thursday at the school"
     without = sc.classify(text, use_llm=False)
     with_llm = sc.classify(text, use_llm=True)
     assert with_llm >= without, "Layer 4 must never lower a tier"

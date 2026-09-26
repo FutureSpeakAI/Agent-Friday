@@ -49,6 +49,7 @@ from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
 from agent_friday.core import CREATIONS_DIR, FRIDAY_DIR
+from agent_friday.user_errors import ExceptionText, exception_text
 
 # Metadata lives OUTSIDE the creations folder so the Studio gallery (which lists
 # every file in CREATIONS_DIR) is not polluted with .json sidecars.
@@ -571,7 +572,7 @@ def _demo_creation(kind: str, prompt: str, model: str, api_model: str,
     except Exception as e:
         _orb_fail(orb)
         return {"status": "unavailable",
-                "message": f"{kind} unavailable; demo mode failed: {e}"}
+                "message": ExceptionText(f"{kind} unavailable; demo mode failed: {e}")}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -663,8 +664,8 @@ def _spend_cap_halt(what: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         if type(e).__name__ != "SpendCapReached":
             return None
-        return {"status": "blocked", "reason": str(e), "spend_cap": True,
-                "files": []}
+        return {"status": "blocked", "reason": getattr(e, "user_message", None) or exception_text(e),
+                "spend_cap": True, "files": []}
     return None
 
 
@@ -860,7 +861,7 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
         _orb_fail(orb)
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"Image generation failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Image generation failed: {e}")}
 
 
 def _extract_and_save_images(response, prompt: str, single: bool = False) -> List[Dict[str, str]]:
@@ -1002,6 +1003,12 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
     # Resolve a seed image (image-to-video) from a path if bytes weren't given.
     seed_bytes, seed_mime = image_bytes, image_mime
     if seed_bytes is None and image_path:
+        from agent_friday.services import seed_images as _si
+        ok, why = _si.check_running_call(image_path)
+        if not ok:
+            return {"status": "needs_approval",
+                    "message": (f"The seed image was not uploaded: {why}. It "
+                                f"needs the owner's approval first.")}
         seed_bytes, seed_mime = _load_seed_image(image_path)
         if seed_bytes is None:
             return {"status": "error",
@@ -1125,7 +1132,7 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
         _orb_fail(orb)
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"Video generation failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Video generation failed: {e}")}
 
 
 def _build_video_config(types, cfg_kwargs: Dict[str, Any]):
@@ -1147,24 +1154,53 @@ def _seed_image_obj(types, data: bytes, mime: Optional[str]):
     return types.Image(image_bytes=data, mime_type=mime or "image/png")
 
 
-def _load_seed_image(image_path: str):
-    """Load a seed image for image-to-video. Accepts an absolute path, a
-    home-relative path, or a bare creation filename in CREATIONS_DIR."""
+def _image_mime(data: bytes) -> Optional[str]:
+    """The image type the bytes themselves declare, or None if they are not a
+    PNG, JPEG, GIF or WebP image."""
+    if data.startswith(b"\x89PNG"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8"):
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def load_local_image(image_path: str):
+    """Read a local image the owner or the model named, for sending to a
+    vision or generation API. Returns (bytes, mime) or (None, None).
+
+    Accepts an absolute path, a home-relative path, or a creation filename in
+    CREATIONS_DIR (services/seed_images.resolve). A file outside Friday's
+    creations is read only when the owner named it in this conversation or
+    approved this call (seed_images.check_running_call); anything else is
+    refused here even if a caller skipped the governance checkpoint. Only
+    bytes that are themselves an image are returned, so a path pointed at a
+    key file, a settings export or any other document never reaches a cloud
+    call dressed as a seed image.
+    """
     try:
-        p = Path(image_path).expanduser()
-        if not p.exists():
-            cand = CREATIONS_DIR / Path(image_path).name
-            if cand.exists():
-                p = cand
-        if not p.exists() or not p.is_file():
+        from agent_friday.services import seed_images as _si
+        p = _si.resolve(image_path)
+        if p is None or not p.is_file():
+            return None, None
+        ok, _why = _si.check_running_call(image_path)
+        if not ok:
             return None, None
         data = p.read_bytes()
-        ext = p.suffix.lower().lstrip(".")
-        mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
-                "png": "image/png", "webp": "image/webp"}.get(ext, "image/png")
+        mime = _image_mime(data)
+        if mime is None:
+            return None, None
         return data, mime
     except Exception:
         return None, None
+
+
+def _load_seed_image(image_path: str):
+    """Load a seed image for image-to-video (see load_local_image)."""
+    return load_local_image(image_path)
 
 
 def _op_done(operation) -> bool:
@@ -1336,7 +1372,7 @@ def _generate_video_omni(prompt, *, api_model, requested_model, aspect_ratio,
         import traceback
         traceback.print_exc()
         return {"status": "error",
-                "message": f"Video generation failed: {e}"}
+                "message": ExceptionText(f"Video generation failed: {e}")}
 
 
 def _omni_video_bytes(interaction):

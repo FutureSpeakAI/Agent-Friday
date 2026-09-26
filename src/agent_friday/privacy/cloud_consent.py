@@ -89,6 +89,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
+from agent_friday.user_errors import UserFacingError
 
 _log = logging.getLogger("friday.privacy.cloud_consent")
 
@@ -356,7 +357,7 @@ def _chain_sentence(name: str, stage: dict) -> str:
     return "in %s, this machine cannot do %s at all" % (turn, part)
 
 
-class ConsentRejected(RuntimeError):
+class ConsentRejected(UserFacingError, RuntimeError):
     """`record_consent()` refused the write — the client asked for a
     private-local choice on hardware `assess_local_capability()` calls
     insufficient. Never silently downgraded to cloud instead."""

@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 # Hosts that never resolve to anything routable but are worth naming, so the
 # refusal reason is legible instead of "DNS failed".
@@ -171,3 +171,80 @@ def assert_safe(url: str) -> None:
     ok, why = check_url(url)
     if not ok:
         raise UnsafeURLError(f"refusing to fetch {url!r}: {why}")
+
+
+def safe_get(url: str, *, timeout: float = 15, headers: dict | None = None):
+    """`requests.get` for a URL that came from untrusted content (a feed, a web
+    page, model output), with `check_url` applied to the URL and to every
+    redirect hop. Returns the final `requests.Response`; raises
+    `UnsafeURLError` for a refused URL or hop and `requests` errors otherwise.
+
+    Redirects are followed here, one at a time, because automatic following
+    would let a public URL 302 to loopback after the front-door check passed.
+    """
+    import requests
+
+    current = (url or "").strip()
+    assert_safe(current)
+    for _hop in range(MAX_REDIRECT_HOPS + 1):
+        resp = requests.get(current, timeout=timeout, headers=headers or {},
+                            allow_redirects=False)
+        if resp.status_code not in (301, 302, 303, 307, 308):
+            return resp
+        loc = resp.headers.get("location") or ""
+        if not loc:
+            return resp
+        nxt = urljoin(current, loc)
+        ok, why = check_url(nxt)
+        if not ok:
+            raise UnsafeURLError(f"redirect to {nxt!r} refused: {why}")
+        current = nxt
+    raise UnsafeURLError(f"too many redirects (>{MAX_REDIRECT_HOPS})")
+
+
+def hostname_matches(host: str, domain: str) -> bool:
+    """True when `host` IS `domain` or a subdomain of it.
+
+    The comparison a substring test (`"google.com" in host`) gets wrong:
+    `google.com.evil.example` and `notgoogle.com` both contain it.
+    """
+    h = (host or "").strip().rstrip(".").lower()
+    d = (domain or "").strip().strip(".").lower()
+    return bool(h and d) and (h == d or h.endswith("." + d))
+
+
+def url_host_matches(url: str, domain: str) -> bool:
+    """`hostname_matches` applied to a URL's host; False for anything unparseable."""
+    raw = (url or "").strip()
+    if raw.startswith("//"):
+        raw = "https:" + raw
+    try:
+        host = urlparse(raw).hostname or ""
+    except Exception:
+        return False
+    return hostname_matches(host, domain)
+
+
+def check_peer_endpoint(url: str) -> tuple[bool, str]:
+    """Decide whether `url` may be used as a federation peer's base endpoint.
+
+    Deliberately NOT `check_url`: a paired peer is routinely on the owner's
+    LAN, so private addresses are allowed. What is refused is anything that is
+    not a plain http(s) base URL (`urllib.request` would otherwise open
+    `file://` and `ftp://` as well) and credentials hidden in the netloc.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return False, "no endpoint was provided"
+    try:
+        p = urlparse(raw)
+    except Exception as e:
+        return False, f"the endpoint could not be parsed ({e})"
+    if p.scheme not in ("http", "https"):
+        return False, (f"a peer endpoint must be http or https "
+                       f"(got {p.scheme or 'no scheme'!r})")
+    if p.username or p.password:
+        return False, "the endpoint carries embedded credentials, which is refused"
+    if not (p.hostname or "").strip():
+        return False, "the endpoint has no host"
+    return True, "ok"

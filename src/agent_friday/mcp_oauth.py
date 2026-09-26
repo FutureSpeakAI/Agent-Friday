@@ -242,8 +242,6 @@ def _read_record(server_name: str) -> dict:
     try:
         from agent_friday.services import credential_store as _cs
         raw = _cs.read_secret(p)
-    except ImportError:  # pragma: no cover — store module missing entirely
-        raw = p.read_bytes()
     except Exception:
         return {}
     try:
@@ -257,11 +255,12 @@ def _write_record(server_name: str, record: dict) -> None:
     p = _record_path(server_name)
     p.parent.mkdir(parents=True, exist_ok=True)
     blob = json.dumps(record).encode("utf-8")
-    try:
-        from agent_friday.services import credential_store as _cs
-        _cs.write_secret(p, blob)
-    except ImportError:  # pragma: no cover
-        p.write_bytes(blob)
+    # The record holds OAuth access and refresh tokens. It is written through
+    # the credential store or not at all: there is no plaintext fallback, so
+    # a store that cannot be imported raises instead of leaving the tokens on
+    # disk in clear text.
+    from agent_friday.services import credential_store as _cs
+    _cs.write_secret(p, blob)
 
 
 def clear_credentials(server_name: str) -> bool:

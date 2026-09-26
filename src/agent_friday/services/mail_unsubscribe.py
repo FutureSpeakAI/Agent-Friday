@@ -23,6 +23,7 @@ import socket
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from agent_friday.services import gmail_api
+from agent_friday.user_errors import ExceptionText
 
 _ENTRY = re.compile(r"<\s*([^>]+?)\s*>")
 
@@ -103,7 +104,7 @@ def unsubscribe(account_id: str, message_id: str) -> dict:
                               headers={"Content-Type": "application/x-www-form-urlencoded",
                                        "User-Agent": "Friday (List-Unsubscribe one-click)"})
         except Exception as e:
-            return {"status": "error", "method": "one_click", "message": "The list did not answer: %s" % e}
+            return {"status": "error", "method": "one_click", "message": ExceptionText("The list did not answer: %s" % e)}
         if 200 <= r.status_code < 400:
             return {"status": "done", "method": "one_click", "host": opt["host"],
                     "message": "Unsubscribed: %s accepted the request." % opt["host"]}
