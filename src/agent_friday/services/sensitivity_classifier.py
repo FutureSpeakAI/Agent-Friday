@@ -295,6 +295,97 @@ def _load_embedder():
     return _EMBEDDER
 
 
+# ── Holds while Layer 3 is starting ────────────────────────────────────────────
+# Failing closed must never be silent (the owner's rule: "never silently
+# withhold"). Every time Layer 3 being down is the ONLY reason cloud-bound
+# text is withheld, the hold is recorded: into the current user turn's
+# collector when there is one (chat and voice set it, and show the user a
+# notice with "send anyway" / "wait"), and as a notification otherwise.
+import contextvars as _cv
+
+_HOLDS = _cv.ContextVar("layer3_holds", default=None)
+_OVERRIDE = _cv.ContextVar("layer3_override", default=False)
+_BG_NOTIFIED_AT = [0.0]
+
+class PrivacyCheckStarting(RuntimeError):
+    """A cloud send held because Layer 3 is installed but not running yet.
+
+    Raised at the one chokepoint every cloud call passes (model_router's
+    _seal_or_block) so nothing leaves; the user turn that caught the hold
+    shows HOLD_NOTICE with "send anyway" and "wait" (routes/chat.py)."""
+
+
+#: What the user is told, in chat and aloud.
+HOLD_NOTICE = ("Friday's full privacy check is still starting, so this message "
+               "was held and nothing was sent to the cloud.")
+VOICE_HOLD_NOTICE = ("Friday's full privacy check is still starting, so personal "
+                     "context is being held back from this voice session. Nothing "
+                     "held was sent.")
+#: What the live voice model is asked to say, once, instead of its greeting.
+VOICE_HOLD_SPOKEN = ("Say this briefly in your own words, then stop and listen: my "
+                     "full privacy check is still starting, so I'm holding back your "
+                     "personal details for a moment. There's a button on screen to go "
+                     "ahead anyway, or we can wait for the check.")
+#: The two choices offered with a hold, in chat and in voice.
+HOLD_OPTIONS = (
+    {"id": "send_anyway", "label": "Send anyway (pattern filters only)",
+     "detail": ("Send now, checked by the pattern filters only (card numbers, "
+                "IDs, keys, sensitive keywords), without the semantic check.")},
+    {"id": "wait", "label": "Wait for full check",
+     "detail": "Go ahead automatically as soon as the full privacy check is ready."},
+)
+
+
+class layer3_hold_scope:
+    """Collect this turn's Layer-3 holds; `override` sends with pattern filters only."""
+
+    def __init__(self, override: bool = False):
+        self.override = bool(override)
+        self.holds = []
+
+    def __enter__(self):
+        self._t1 = _HOLDS.set(self.holds)
+        self._t2 = _OVERRIDE.set(self.override)
+        return self.holds
+
+    def __exit__(self, *exc):
+        _HOLDS.reset(self._t1)
+        _OVERRIDE.reset(self._t2)
+        return False
+
+
+def layer3_hold_count() -> int:
+    lst = _HOLDS.get()
+    return len(lst) if lst is not None else 0
+
+
+def _record_layer3_hold(text: str) -> None:
+    import time as _time
+    lst = _HOLDS.get()
+    if lst is not None:
+        lst.append({"at": _time.time(), "chars": len(text or "")})
+        return
+    # No user turn is watching (a scheduled job, a background task): say so
+    # anyway, at most once a minute, so a hold is never silent.
+    _log.warning("privacy hold outside a user turn: %d chars held from the cloud "
+                 "while Layer 3 starts", len(text or ""))
+    if _time.monotonic() - _BG_NOTIFIED_AT[0] < 60:
+        return
+    _BG_NOTIFIED_AT[0] = _time.monotonic()
+    try:
+        from agent_friday.services.notifications import _notif_engine
+        if _notif_engine:
+            _notif_engine.push(
+                title="Held from the cloud: privacy check starting",
+                body=("Background work tried to send text to a cloud model while "
+                      "Friday's full privacy check was still starting, so it was held "
+                      "and nothing was sent. It will go through once the check is ready."),
+                priority="normal", source="privacy", kind="warning",
+                dedupe_key="layer3-hold")
+    except Exception:
+        pass
+
+
 def layer3_state() -> dict:
     """What Layer 3 is doing right now, for health and privacy_layers."""
     if _EMBEDDER is _UNTRIED:
@@ -780,6 +871,10 @@ def classify(
     layer3_down = emb_tier < 0 and egress and _layer3_expected()
     if emb_tier < 0:
         emb_tier = 0
+    if layer3_down and _OVERRIDE.get():
+        # The user chose "send anyway (pattern filters only)" for this turn.
+        _log.info("Layer 3 not ready: sending with pattern filters only (user's choice)")
+        layer3_down = False
     if emb_tier == Tier.SENSITIVE:
         return Tier.SENSITIVE
 
@@ -793,6 +888,9 @@ def classify(
     # Aggregate: most-sensitive result wins
     candidates = [t for t in [regex, kw, presidio, emb_tier, llm] if t > 0]
     if layer3_down:
+        if max(candidates or [default]) < Tier.PRIVATE:
+            # Only Layer 3's absence stands between this text and the cloud.
+            _record_layer3_hold(content)
         candidates.append(Tier.PRIVATE)
     if candidates:
         return max(candidates)

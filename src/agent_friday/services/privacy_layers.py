@@ -167,11 +167,51 @@ def describe() -> str:
     where = "frozen build" if chk["frozen"] else "source checkout"
     if chk["ok"]:
         return f"Sensitivity classifier: {n}/{total} layers active ({where})."
-    miss = ", ".join(chk["missing"])
+    plain = {l["name"]: l for l in plain_layers()}
+    miss = "; ".join(f"{plain[m]['label']}: {plain[m]['status']}"
+                     for m in chk["missing"] if m in plain)
     return (
         f"Sensitivity classifier: {n}/{total} layers active ({where}). "
-        f"DEGRADED - not running: {miss}."
+        f"Not running - {miss}."
     )
+
+
+#: What each layer is called where a person reads it (Settings, health).
+PLAIN_NAMES = {
+    "regex": "Pattern filters (card numbers, IDs, keys)",
+    "keyword": "Sensitive keyword filters",
+    "presidio": "Name and entity detection",
+    "embedding": "Semantic check",
+    "local_llm": "Local model review",
+}
+
+
+def plain_layers() -> List[dict]:
+    """Every layer with a plain status, for the privacy panel and /api/health.
+
+    "not installed in this build" is a design fact (the packaged .exe leaves
+    the semantic check out); "starting" is a fault being retried, during
+    which cloud-bound text with no other privacy signal is held.
+    """
+    out = []
+    for name, v in probe_layers().items():
+        reason = v["reason"]
+        if v["active"]:
+            status = "on (loads on first use)" if "loads on first use" in reason else "on"
+        elif name in _OPT_IN_LAYERS:
+            status = "off by default"
+        elif "NOT INSTALLED" in reason:
+            status = "not installed in this build"
+        elif "OBSERVE-ONLY" in reason:
+            status = "observe only (changes nothing that is sent)"
+        elif name == "embedding":
+            status = ("starting - cloud-bound text with no other privacy signal "
+                      "is held until it is ready")
+        else:
+            status = "not running"
+        out.append({"name": name, "label": PLAIN_NAMES.get(name, name),
+                    "active": bool(v["active"]), "status": status, "detail": reason})
+    return out
 
 
 def report_at_startup(logger: Optional[logging.Logger] = None) -> dict:

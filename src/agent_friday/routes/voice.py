@@ -491,6 +491,15 @@ def _leg_config(types, per_model_kwargs, handle=None):
     return types.LiveConnectConfig(**kw)
 
 
+def _voice_hold_frame(held: int) -> dict:
+    """The browser frame for a privacy hold in a live voice session."""
+    from agent_friday.services.sensitivity_classifier import (
+        HOLD_OPTIONS, VOICE_HOLD_NOTICE, layer3_state)
+    return {"type": "privacy_hold", "voice": True, "kind": "layer3_hold",
+            "text": VOICE_HOLD_NOTICE, "held": int(held), "layer3": layer3_state(),
+            "options": [dict(o) for o in HOLD_OPTIONS]}
+
+
 def _seam_replay_plan(heard_text, answered, seam_chunks, gap_s):
     """What to carry into a renewed Gemini leg: (unanswered words, mic chunks).
 
@@ -2626,6 +2635,14 @@ if sock is not None:
         # security-boundary.md §19 row 1: the egress gate, not just the
         # (possibly off) vault-assembly gate, stands between the assembled
         # context prompt and Google before it becomes system_instruction=.
+        # Privacy holds for the whole call (services/sensitivity_classifier):
+        # while Layer 3 is installed but still starting, whatever the gates
+        # hold back is shown on screen and said aloud, never silently. The
+        # scope closes in the handler's final `finally`.
+        from agent_friday.services import sensitivity_classifier as _sc_hold
+        _hold_scope = _sc_hold.layer3_hold_scope(
+            override=str(request.args.get('privacy_layer3_override') or '') == '1')
+        _voice_holds = _hold_scope.__enter__()
         sys_text = _gate_voice_system_instruction(sys_text)
         # Hard spending cap (services/spend_guard): a NEW live session is a
         # new paid stream, so it is refused when the cap has tripped. A
@@ -2873,6 +2890,15 @@ if sock is not None:
             _quiet_turn = [False]
             _friday_done_ts = [None]          # when Friday last finished a voiced reply
             _leg_ended_ts = [None]            # when the previous Gemini leg closed (seam replay)
+            _holds_told = [0]                 # privacy holds already shown to the user
+
+            def _tell_hold():
+                """Show new privacy holds in the voice UI. True if there were any."""
+                if len(_voice_holds) <= _holds_told[0]:
+                    return False
+                _holds_told[0] = len(_voice_holds)
+                _safe_send(_voice_hold_frame(len(_voice_holds)))
+                return True
             # The saved persona is repeated to the model after every reconnect
             # and every PERSONA_REPIN_EVERY_TURNS voiced replies (voice_persona).
             _persona_note = persona_reminder(live_style)
@@ -3080,6 +3106,7 @@ if sock is not None:
                             # NeverSendBlocked verdict fall through to the
                             # ungated result).
                             result = _gate_voice_tool_result(result, fname)
+                            _tell_hold()
                             _took = _time.time() - _orb_t0
                             result = _mark_if_stale(result, fname, _orb_t0,
                                                     _user_words_ts[0], _time.time())
@@ -3188,6 +3215,7 @@ if sock is not None:
                                     # replaced (a bare `except: pass` that let
                                     # the ungated typed message through).
                                     _txt = _gate_voice_text(msg['text'])
+                                    _tell_hold()
                                     await sess.send_realtime_input(text=_txt)
                                 elif t == 'barge':
                                     # EXPLICIT interrupt from the client (Escape
@@ -3775,9 +3803,12 @@ if sock is not None:
                             # or a resumed conversation must not re-greet.
                             if not greeted[0]:
                                 greeted[0] = True
+                                # A hold is said aloud, in place of the greeting.
+                                _opening = ("Greet me in one short sentence."
+                                            if not _tell_hold() else _sc_hold.VOICE_HOLD_SPOKEN)
                                 try:
                                     await session_ai.send_client_content(
-                                        turns={"role": "user", "parts": [{"text": "Greet me in one short sentence."}]},
+                                        turns={"role": "user", "parts": [{"text": _opening}]},
                                         turn_complete=True,
                                     )
                                     _vlog('sent initial greeting prompt')
@@ -3925,6 +3956,10 @@ if sock is not None:
             done.set()
             try:
                 loop.close()
+            except Exception:
+                pass
+            try:
+                _hold_scope.__exit__(None, None, None)
             except Exception:
                 pass
             try:

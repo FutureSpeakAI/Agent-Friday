@@ -495,11 +495,16 @@ def friday_health():
     _privacy = {}
     try:
         from agent_friday.services.privacy_layers import describe as _pl_describe
+        from agent_friday.services.privacy_layers import plain_layers as _pl_plain
         from agent_friday.services.sensitivity_classifier import layer3_state
         from agent_friday.services.ml_imports import status as _ml_status
         _l3 = layer3_state()
+        # degraded = installed but not running (a fault, retried, with cloud
+        # sends held meanwhile). Not installed in this build is a design fact,
+        # stated in `layers`, not a fault.
         _privacy = {"summary": _pl_describe(), "layer3": _l3,
-                    "degraded": not _l3["ready"] and _l3["state"] != "not loaded yet",
+                    "layers": _pl_plain(),
+                    "degraded": _l3["state"] == "failed, retrying",
                     "ml_preload": _ml_status()}
     except Exception as _pe:
         _privacy = {"summary": "unknown", "error": str(_pe)[:160], "degraded": True}

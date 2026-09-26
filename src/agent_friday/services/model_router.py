@@ -135,6 +135,11 @@ def _seal_or_block(payload, provider):
     except (ImportError, AttributeError):
         pass
     try:
+        from agent_friday.services import sensitivity_classifier as _sc
+        _holds_before = _sc.layer3_hold_count()
+    except Exception:
+        _sc, _holds_before = None, 0
+    try:
         from agent_friday.services import egress_gate as _eg
         operational = _eg.gate_operational()
         sealed = _eg.seal_outbound(payload, provider) if operational else None
@@ -144,6 +149,13 @@ def _seal_or_block(payload, provider):
             "Egress gate failed; cloud send blocked to avoid leaking unverified "
             f"content: {_eg_err}"
         ) from _eg_err
+    # HELD, NOT REDACTED-AND-SENT. When the only reason content was withheld
+    # is that Layer 3 of the classifier is still starting, the send stops
+    # here: the user is shown what happened and chooses "send anyway (pattern
+    # filters only)" or "wait for the full check" (routes/chat.py). Sending a
+    # redacted version instead would answer a question the user never asked.
+    if _sc is not None and _sc.layer3_hold_count() > _holds_before:
+        raise _sc.PrivacyCheckStarting(_sc.HOLD_NOTICE)
     if not operational:
         _log.error("egress gate failed its startup self-test — BLOCKING cloud send")
         raise RuntimeError(

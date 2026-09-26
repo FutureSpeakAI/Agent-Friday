@@ -664,6 +664,62 @@ function fridayResizeRect(s,dir,cx,cy,lim){
 }
 function fridayResizeCursor(dir){const c=!dir?'':(dir==='n'||dir==='s')?'ns-resize':(dir==='e'||dir==='w')?'ew-resize':(dir==='ne'||dir==='sw')?'nesw-resize':'nwse-resize';document.body.style.cursor=c;document.body.style.userSelect=dir?'none':''}
 // ═══ CHAT SURFACE ═══ the one chat: docked panel and chat windows (see index.html).
+/** A message held because Friday's full privacy check is still starting.
+ *  Never silent: it says what happened and that nothing was sent, and offers
+ *  the two choices. "Wait" watches /api/health and sends the message by itself
+ *  once the check is ready. Enter picks the safe choice (wait); Escape puts
+ *  the message back in the box. Styled as PauseWarning, its sibling. */
+function PrivacyHoldCard({hold,msg,onChoose,onCancel}){
+  const [waiting,setWaiting]=useState(false);
+  useEffect(()=>{
+    const h=e=>{
+      if(e.key==='Escape'){e.preventDefault();onCancel&&onCancel();}
+      if(e.key==='Enter'&&!waiting){e.preventDefault();setWaiting(true);}
+    };
+    document.addEventListener('keydown',h);
+    return()=>document.removeEventListener('keydown',h);
+  },[onCancel,waiting]);
+  useEffect(()=>{
+    if(!waiting)return undefined;
+    let done=false;
+    const tick=()=>apiFetch('/api/health').then(r=>r.json()).then(d=>{
+      const l3=((d||{}).privacy_classifier||{}).layer3||{};
+      if(!done&&(l3.ready||l3.state==='not installed')){done=true;onChoose('ready');}
+    }).catch(()=>{});
+    tick();
+    const t=setInterval(tick,3000);
+    return()=>{done=true;clearInterval(t);};
+  },[waiting]);
+  const opts=(hold&&hold.options)||[];
+  return <div style={{margin:'10px 0',border:'1px solid #f59e0b55',borderRadius:9,padding:12,background:'#111726'}}>
+    <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6}}>
+      <span style={{fontSize:13}}>{'\u{1F6E1}'}</span>
+      <span style={{fontFamily:'Orbitron',fontSize:12,color:'#f59e0b'}}>Held for privacy</span>
+      <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono'}}>full check starting</span>
+    </div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',lineHeight:1.5,marginBottom:4}}>{hold&&hold.text}</div>
+    {msg&&<div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontStyle:'italic',margin:'6px 0'}}>Holding: {'“'}{msg.slice(0,90)}{msg.length>90?'…':''}{'”'}</div>}
+    <div style={{display:'flex',gap:7,flexWrap:'wrap',marginTop:8}}>
+      {opts.map(o=>{
+        const off=waiting&&o.id==='wait';
+        return <button key={o.id} disabled={off} title={o.detail}
+          onClick={()=>o.id==='wait'?setWaiting(true):onChoose(o.id)}
+          style={{flex:'1 1 140px',textAlign:'left',padding:'7px 9px',borderRadius:6,
+            cursor:off?'not-allowed':'pointer',
+            background:off?'rgba(255,255,255,0.02)':'rgba(0,212,255,0.07)',
+            border:'1px solid '+(off?'rgba(255,255,255,0.06)':'rgba(0,212,255,0.25)'),
+            color:off?'rgba(255,255,255,0.28)':'#cfefff'}}>
+          <div style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{o.label}</div>
+          <div style={{fontSize:9,opacity:0.7,marginTop:2,lineHeight:1.35}}>{o.detail}</div>
+        </button>;
+      })}
+    </div>
+    <div style={{fontSize:10,fontFamily:'JetBrains Mono',color:'#f59e0b',marginTop:8}}>
+      {waiting?'⏳ Waiting for the full privacy check — it sends by itself when ready.':'⏸ Nothing has been sent yet.'}
+    </div>
+    <button onClick={onCancel} style={{marginTop:7,background:'none',border:'none',color:'rgba(255,255,255,0.35)',cursor:'pointer',fontSize:10}}>put it back in the box</button>
+  </div>;
+}
 function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
   return(<>
       <div data-chat-head="" style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',rowGap:6,padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
@@ -675,7 +731,11 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
       </div>
       <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:12}}>
         {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
-        {pausePending&&<PauseWarning f={pausePending.forecast} msg={pausePending.message}
+        {pausePending&&pausePending.kind==='privacy_hold'&&<PrivacyHoldCard hold={pausePending.hold} msg={pausePending.message}
+          onChoose={(id)=>pausePending.onVoiceChoice?pausePending.onVoiceChoice(id)
+            :sendChat(pausePending.message,{skipForecast:true,alreadyShown:true,privacyOverride:id==='send_anyway'})}
+          onCancel={()=>{setChatIn(pausePending.message);setPausePending(null);}}/>}
+        {pausePending&&pausePending.kind!=='privacy_hold'&&<PauseWarning f={pausePending.forecast} msg={pausePending.message}
           onChoose={(id)=>{
             const m=pausePending.message;
             if(id==='when_away'){
@@ -14291,6 +14351,34 @@ function KeystoreWrapPanel(){
     {msg&&<div style={{fontSize:11,color:'#cfefff',marginTop:8}}>{msg}</div>}
   </div>;
 }
+/** Which of Friday's privacy layers are running right now, in plain words
+ *  (from /api/health privacy_classifier.layers). A packaged build says "not
+ *  installed in this build" for the semantic check; a check that is still
+ *  starting says so, in amber, because cloud sends are being held meanwhile. */
+function PrivacyCheckLayers(){
+  const [p,setP]=useState(null);
+  useEffect(()=>{
+    let alive=true;
+    const load=()=>apiFetch('/api/health').then(r=>r.json())
+      .then(d=>{if(alive)setP((d||{}).privacy_classifier||{error:true});})
+      .catch(()=>{if(alive)setP({error:true});});
+    load();
+    const t=setInterval(load,15000);
+    return()=>{alive=false;clearInterval(t);};
+  },[]);
+  if(!p)return <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>Reading the privacy check{'…'}</div>;
+  if(p.error||!p.layers)return <div style={{fontSize:11,color:'#f59e0b',fontFamily:'JetBrains Mono'}}>Could not read the privacy check.</div>;
+  return <div style={{fontFamily:'JetBrains Mono',fontSize:11}}>
+    {p.layers.map(l=>{
+      const starting=String(l.status||'').indexOf('starting')===0;
+      return <div key={l.name} title={l.detail} style={{display:'flex',gap:10,alignItems:'baseline',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
+        <span style={{width:10,color:l.active?'#8affc1':(starting?'#f59e0b':'rgba(255,255,255,0.35)')}}>{l.active?'●':'○'}</span>
+        <span style={{flex:'0 0 210px',color:'rgba(255,255,255,0.8)'}}>{l.label}</span>
+        <span style={{flex:1,color:starting?'#f59e0b':'rgba(255,255,255,0.55)'}}>{l.status}</span>
+      </div>;
+    })}
+  </div>;
+}
 function SettingsTabPrivacy({s,save}){
   const[vaultStatus,setVaultStatus]=useState(null);
   const[pass,setPass]=useState('');
@@ -14335,6 +14423,9 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="Cloud mode">
       <StToggle label="Unrestricted Cloud" value={!!(s.model_routing||{}).unrestricted_cloud} onChange={()=>save({model_routing:{...(s.model_routing||{}),unrestricted_cloud:!(s.model_routing||{}).unrestricted_cloud}})} desc="Off (default): cloud sends are still tier-classified, redacted, and PII-scrubbed. On: no privacy safeguard holds anything back from the cloud — full tier content, no redaction, no PII scrub, the never-send list included. Every send is still logged to the egress ledger either way. This is a standing posture, not a one-time consent — leave it off unless you specifically want frontier cloud models to see everything, unfiltered, on every call."/>
+    </StSection>
+    <StSection title="Privacy check" desc="Which of Friday's privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.">
+      <PrivacyCheckLayers/>
     </StSection>
     <StSection title="Fonts">
       <StToggle label="Load fonts from Google Fonts" value={s.web_fonts_from_google!==false} onChange={()=>save({web_fonts_from_google:s.web_fonts_from_google===false})} desc="Only used while Friday's own font files are not installed in static\fonts. On, every page load asks Google for the typefaces, which shows Google this PC's address. Off, Friday uses similar fonts already on this PC. Takes effect when the page reloads."/>
@@ -19707,6 +19798,7 @@ function App(){
     try{
       const body={message:m,voice_mode:voiceOn,cite_sources:!!agentSettings.cite_sources};
       if(opts.routeMode)body.route_mode=opts.routeMode;
+      if(opts.privacyOverride)body.privacy_layer3_override=true;
       if(focusWin)body.workspace=focusWin;
       const frame=cameraOn?cameraFrameRef.current?.primary:null;
       if(frame)body.image=frame;
@@ -19715,6 +19807,9 @@ function App(){
       // B2: seat changes detected this turn render as system lines BEFORE the
       // reply — a routing flip is never silent again.
       if(d.seat_events&&d.seat_events.length)setChatMsgs(p=>[...p,...d.seat_events.map(ev=>({role:'system',kind:'seat_change',text:'⚙ '+ev.text,time:new Date().toLocaleTimeString()}))]);
+      // Held for privacy: never silent. A system line and the card; no empty reply.
+      if(d.privacy_hold){setChatMsgs(p=>[...p,{role:'system',kind:'privacy_hold',text:'\u{1F6E1} '+d.privacy_hold.text,time:new Date().toLocaleTimeString()}]);
+        setPausePending({kind:'privacy_hold',message:m,hold:d.privacy_hold});if(!d.response)return;}
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
       setChatMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],trace_id:d.trace_id||null,reasoning_sources:d.reasoning_sources||[],offer_cloud_switch:!!d.offer_cloud_switch,time:new Date().toLocaleTimeString()}]);

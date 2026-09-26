@@ -504,6 +504,61 @@ def _announce_seat_notice(conversation_id, text):
 _STREAM_KEEPALIVE_S = 10.0
 
 
+def _privacy_hold_payload(message, holds):
+    from agent_friday.services.sensitivity_classifier import (
+        HOLD_NOTICE, HOLD_OPTIONS, layer3_state)
+    return {"kind": "layer3_hold", "text": HOLD_NOTICE, "message": message,
+            "held": len(holds), "layer3": layer3_state(),
+            "options": [dict(o) for o in HOLD_OPTIONS]}
+
+
+def _privacy_hold_turn(fn):
+    """Never silently withhold: a turn whose cloud send was held says so.
+
+    While Layer 3 of the privacy classifier is installed but still starting,
+    text with no other privacy signal is held at the egress chokepoint
+    (model_router._seal_or_block raises PrivacyCheckStarting) instead of
+    being sent. Whatever the turn then did with that (the error reached the
+    top, or a fallback answered locally), this wrapper sees the holds the
+    turn recorded and adds `privacy_hold` to the reply: the notice and the
+    two choices. `privacy_layer3_override` in the request is the user's
+    "send anyway" for this one turn.
+    """
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        from agent_friday.services import sensitivity_classifier as _sc
+        data = request.get_json(silent=True) or {}
+        scope = _sc.layer3_hold_scope(override=bool(data.get("privacy_layer3_override")))
+        with scope as holds:
+            rv = fn(*args, **kwargs)
+        if not holds:
+            return rv
+        resp, extra = (rv[0], rv[1:]) if isinstance(rv, tuple) else (rv, ())
+        try:
+            d = resp.get_json(silent=True)
+        except Exception:
+            d = None
+        if not isinstance(d, dict):
+            d = {}
+        reply = str(d.get("response") or "")
+        failed = (bool(extra) and isinstance(extra[0], int) and extra[0] >= 500) or \
+            getattr(resp, "status_code", 200) >= 500
+        if failed or _sc.HOLD_NOTICE in reply or reply.startswith("[Friday offline]"):
+            # The held send was the turn's end: there is no reply to show, and
+            # a hold is a choice waiting for the user, not a server error.
+            d["response"] = ""
+            d.pop("error", None)
+            if _sc.HOLD_NOTICE in str(d.get("message") or ""):
+                d.pop("message", None)
+            extra = ()
+        d["privacy_hold"] = _privacy_hold_payload(str(data.get("message") or ""), holds)
+        _LOG.warning("chat turn held %d cloud send(s) while the privacy check starts",
+                     len(holds))
+        out = jsonify(d)
+        return (out, *extra) if extra else out
+    return _inner
+
+
 def _traced_turn(fn):
     """Run a chat turn under its own reasoning trace.
 
@@ -688,6 +743,7 @@ def chat_stream():
 
 @chat_bp.route('/api/chat', methods=['POST'])
 @_traced_turn
+@_privacy_hold_turn
 def chat():
     """Text chat — powered by Anthropic Claude.
 
@@ -2250,6 +2306,7 @@ def chat_history():
 
 @chat_bp.route('/api/chat/send', methods=['POST'])
 @_traced_turn
+@_privacy_hold_turn
 def chat_send():
     """Send a message, save to persistent history, return Friday's response.
     Accepts context-aware payload: {message, workspace, workspaceContext, includeVision, screenshot}.

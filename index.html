@@ -8181,7 +8181,26 @@ function ChatSurface(props) {
       marginLeft: 3,
       color: '#f59e0b'
     }
-  }, "\u26A0") : null)))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, /*#__PURE__*/React.createElement(PauseWarning, {
+  }, "\u26A0") : null)))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, pausePending.kind === 'privacy_hold' ? /*#__PURE__*/React.createElement(PrivacyHoldCard, {
+    hold: pausePending.hold,
+    msg: pausePending.message,
+    onChoose: id => {
+      // Voice holds restart the session (see the privacy_hold frame handler).
+      if (pausePending.onVoiceChoice) return pausePending.onVoiceChoice(id);
+      // "send_anyway": this one turn with the pattern filters only.
+      // "ready": the full check came up while waiting; send normally.
+      sendChat(pausePending.message, {
+        skipForecast: true,
+        alreadyShown: true,
+        privacyOverride: id === 'send_anyway'
+      });
+    },
+    onCancel: () => {
+      const m = pausePending.message;
+      setChatIn(m);
+      setPausePending(null);
+    }
+  }) : /*#__PURE__*/React.createElement(PauseWarning, {
     f: pausePending.forecast,
     msg: pausePending.message,
     onChoose: id => {
@@ -9025,6 +9044,7 @@ function ConversationWindow({
       turn_id: 'turn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
     };
     if (opts.routeMode) body.route_mode = opts.routeMode;
+    if (opts.privacyOverride) body.privacy_layer3_override = true;
     setMsgs(p => [...p, { role: 'friday', text: '', streaming: true, time: stamp() }]);
     try {
       let d;
@@ -9048,7 +9068,12 @@ function ConversationWindow({
         const add = [];
         (d.seat_events || []).forEach(ev => add.push({ role: 'system', kind: 'seat_change', text: '⚙ ' + ev.text, time: stamp() }));
         (d.vision_events || []).forEach(ev => add.push({ role: 'system', kind: ev.kind || 'vision_egress', text: ev.text, time: stamp() }));
-        add.push({
+        // Held for privacy: the same notice and card as the main chat.
+        if (d.privacy_hold) {
+          add.push({ role: 'system', kind: 'privacy_hold', text: '\u{1F6E1} ' + d.privacy_hold.text, time: stamp() });
+          setPausePending({ kind: 'privacy_hold', message: m, hold: d.privacy_hold });
+        }
+        if (!(d.privacy_hold && !d.response)) add.push({
           role: 'friday',
           text: d.response || (d.friday_msg || {}).text || '[no response]',
           model: d.model || (d.friday_msg || {}).model,
@@ -41495,6 +41520,151 @@ const CONF_META = {
     word: 'This might pause'
   }
 };
+/** A message held because Friday's full privacy check is still starting.
+ *  Never silent: it says what happened and that nothing was sent, and offers
+ *  the two choices. "Wait" watches /api/health and sends the message by itself
+ *  once the check is ready. Enter picks the safe choice (wait); Escape puts
+ *  the message back in the box. Styled as PauseWarning, its sibling. */
+function PrivacyHoldCard({
+  hold,
+  msg,
+  onChoose,
+  onCancel
+}) {
+  const [waiting, setWaiting] = useState(false);
+  useEffect(() => {
+    const h = e => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel && onCancel();
+      }
+      if (e.key === 'Enter' && !waiting) {
+        e.preventDefault();
+        setWaiting(true);
+      }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onCancel, waiting]);
+  useEffect(() => {
+    if (!waiting) return undefined;
+    let done = false;
+    const tick = () => apiFetch('/api/health').then(r => r.json()).then(d => {
+      const l3 = ((d || {}).privacy_classifier || {}).layer3 || {};
+      if (!done && (l3.ready || l3.state === 'not installed')) {
+        done = true;
+        onChoose('ready');
+      }
+    }).catch(() => {});
+    tick();
+    const t = setInterval(tick, 3000);
+    return () => {
+      done = true;
+      clearInterval(t);
+    };
+  }, [waiting]);
+  const opts = hold && hold.options || [];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      margin: '10px 0',
+      border: '1px solid #f59e0b55',
+      borderRadius: 9,
+      padding: 12,
+      background: '#111726'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: 8,
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13
+    }
+  }, '\u{1F6E1}'), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 12,
+      color: '#f59e0b'
+    }
+  }, "Held for privacy"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      color: 'rgba(255,255,255,0.35)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "full check starting")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.72)',
+      lineHeight: 1.5,
+      marginBottom: 4
+    }
+  }, hold && hold.text), msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.4)',
+      fontStyle: 'italic',
+      margin: '6px 0'
+    }
+  }, "Holding: ", '“', msg.slice(0, 90), msg.length > 90 ? '…' : '', '”'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 7,
+      flexWrap: 'wrap',
+      marginTop: 8
+    }
+  }, opts.map(o => {
+    const off = waiting && o.id === 'wait';
+    return /*#__PURE__*/React.createElement("button", {
+      key: o.id,
+      disabled: off,
+      title: o.detail,
+      onClick: () => o.id === 'wait' ? setWaiting(true) : onChoose(o.id),
+      style: {
+        flex: '1 1 140px',
+        textAlign: 'left',
+        padding: '7px 9px',
+        borderRadius: 6,
+        cursor: off ? 'not-allowed' : 'pointer',
+        background: off ? 'rgba(255,255,255,0.02)' : 'rgba(0,212,255,0.07)',
+        border: '1px solid ' + (off ? 'rgba(255,255,255,0.06)' : 'rgba(0,212,255,0.25)'),
+        color: off ? 'rgba(255,255,255,0.28)' : '#cfefff'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        fontFamily: 'JetBrains Mono'
+      }
+    }, o.label), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        opacity: 0.7,
+        marginTop: 2,
+        lineHeight: 1.35
+      }
+    }, o.detail));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: '#f59e0b',
+      marginTop: 8
+    }
+  }, waiting ? '⏳ Waiting for the full privacy check — it sends by itself when ready.' : '⏸ Nothing has been sent yet.'), /*#__PURE__*/React.createElement("button", {
+    onClick: onCancel,
+    style: {
+      marginTop: 7,
+      background: 'none',
+      border: 'none',
+      color: 'rgba(255,255,255,0.35)',
+      cursor: 'pointer',
+      fontSize: 10
+    }
+  }, "put it back in the box"));
+}
 function PauseWarning({
   f,
   msg,
@@ -44793,6 +44963,79 @@ function SettingsTabVoice({
 
 /** The Privacy tab's view of the consent record: fetched on its own so the
  *  tab does not depend on /api/intelligence. */
+/** Which of Friday's privacy layers are running right now, in plain words
+ *  (from /api/health privacy_classifier.layers). A packaged build says "not
+ *  installed in this build" for the semantic check; a check that is still
+ *  starting says so, in amber, because cloud sends are being held meanwhile. */
+function PrivacyCheckLayers() {
+  const [p, setP] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => apiFetch('/api/health').then(r => r.json()).then(d => {
+      if (alive) setP((d || {}).privacy_classifier || {
+        error: true
+      });
+    }).catch(() => {
+      if (alive) setP({
+        error: true
+      });
+    });
+    load();
+    const t = setInterval(load, 15000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  if (!p) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.4)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "Reading the privacy check", '…');
+  if (p.error || !p.layers) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#f59e0b',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "Could not read the privacy check.");
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'JetBrains Mono',
+      fontSize: 11
+    }
+  }, p.layers.map(l => {
+    const starting = String(l.status || '').indexOf('starting') === 0;
+    return /*#__PURE__*/React.createElement("div", {
+      key: l.name,
+      title: l.detail,
+      style: {
+        display: 'flex',
+        gap: 10,
+        alignItems: 'baseline',
+        padding: '4px 0',
+        borderBottom: '1px solid rgba(255,255,255,0.05)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 10,
+        color: l.active ? '#8affc1' : starting ? '#f59e0b' : 'rgba(255,255,255,0.35)'
+      }
+    }, l.active ? '●' : '○'), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: '0 0 210px',
+        color: 'rgba(255,255,255,0.8)'
+      }
+    }, l.label), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        color: starting ? '#f59e0b' : 'rgba(255,255,255,0.55)'
+      }
+    }, l.status));
+  }));
+}
 function PrivacyCloudConsent() {
   const [st, setSt] = useState(null);
   const load = useCallback(() => {
@@ -45126,6 +45369,9 @@ function SettingsTabPrivacy({
     s: s,
     save: save
   })), /*#__PURE__*/React.createElement(StSection, {
+    title: "Privacy check",
+    desc: "Which of Friday's privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on."
+  }, /*#__PURE__*/React.createElement(PrivacyCheckLayers, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Fonts"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Load fonts from Google Fonts",
@@ -50914,6 +51160,9 @@ function App() {
   const audioDevicePopupRef = useRef(null);
   const refreshAudioDevicesRef = useRef(null);
   const voiceStartRef = useRef(null);
+  // The user chose "send anyway (pattern filters only)" for this voice
+  // session after a privacy hold. Cleared when they stop voice.
+  const voicePrivacyOverrideRef = useRef(false);
   const voiceStopRef = useRef(null);
   // Voice session continuity. `wanted` = the USER wants voice on (set on start,
   // cleared only by an explicit stop / fatal error) — when the socket dies while
@@ -51406,6 +51655,7 @@ function App() {
     const _qs = [];
     if (_ftok) _qs.push('t=' + encodeURIComponent(_ftok));
     if (convIdRef.current) _qs.push('conversation_id=' + encodeURIComponent(convIdRef.current));
+    if (voicePrivacyOverrideRef.current) _qs.push('privacy_layer3_override=1');
     const ws = new WebSocket(proto + '//' + location.host + _wsUrl + (_qs.length ? '?' + _qs.join('&') : ''));
     v.ws = ws;
     let wsOpened = false;
@@ -51701,6 +51951,29 @@ function App() {
         setVoiceContract(m);
       } else if (m.type === 'partial_transcript') {
         setVoicePartial(m.text || '');
+      } else if (m.type === 'privacy_hold') {
+        // Held for privacy in voice (routes/voice._voice_hold_frame): the same
+        // card as chat, plus a transcript line; Friday also says it aloud.
+        // Either choice restarts the session: with the one-session override,
+        // or normally once the full check is ready.
+        setChatMsgs(p => [...p, {
+          role: 'system',
+          kind: 'privacy_hold',
+          text: '\u{1F6E1} ' + m.text,
+          time: new Date().toLocaleTimeString()
+        }]);
+        setPausePending({
+          kind: 'privacy_hold',
+          voice: true,
+          message: '',
+          hold: m,
+          onVoiceChoice: id => {
+            voicePrivacyOverrideRef.current = id === 'send_anyway';
+            setPausePending(null);
+            voiceStopRef.current?.();
+            setTimeout(() => voiceStartRef.current?.(), 400);
+          }
+        });
       } else if (m.type === 'error-nonfatal') {
         setVoiceNotices(p => p.some(n => n.code === m.code) ? p : p.concat([m]));
       } else if (m.type === 'manifest' || m.type === 'turn_receipt') {
@@ -51986,6 +52259,7 @@ function App() {
     setVoiceStatus(_keepStatus || '');
   };
   const toggleVoice = () => {
+    if (voiceOn) voicePrivacyOverrideRef.current = false;
     voiceOn ? voiceStopRef.current?.() : voiceStartRef.current?.();
   };
   useEffect(() => () => {
@@ -53639,6 +53913,7 @@ function App() {
         turn_id: inFlightTurn.current
       };
       if (opts.routeMode) body.route_mode = opts.routeMode;
+      if (opts.privacyOverride) body.privacy_layer3_override = true;
       if (focusWin) body.workspace = focusWin;
       const frame = cameraOn ? cameraFrameRef.current?.primary : null;
       if (frame) body.image = frame;
@@ -53694,6 +53969,19 @@ function App() {
         text: ev.text,
         time: new Date().toLocaleTimeString()
       }))]);
+      // Held for privacy (routes/chat._privacy_hold_turn). Never silent: a
+      // system line records it in the transcript and the card offers "send
+      // anyway" or "wait". A held turn has no reply to show.
+      if (d.privacy_hold) {
+        setChatMsgs(p => [...p, {
+          role: 'system',
+          kind: 'privacy_hold',
+          text: '\u{1F6E1} ' + d.privacy_hold.text,
+          time: new Date().toLocaleTimeString()
+        }]);
+        setPausePending({ kind: 'privacy_hold', message: m, hold: d.privacy_hold });
+        if (!d.response) return;
+      }
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
       setChatMsgs(p => [...p, {
