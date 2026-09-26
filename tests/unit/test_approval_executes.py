@@ -364,3 +364,67 @@ def test_a_full_queue_does_not_break_the_run(monkeypatch):
         assert bus.broadcast({"type": "approval_result"}, kind="chat") == 0
     finally:
         bus.unsubscribe("chatFull", full)
+
+
+# ── cross-tab: the popups feed means any tab can decide ────────────────────
+
+def test_only_the_winning_tab_runs_the_action(store, ran):
+    """46ffddf4 gives every open tab a popup, so several can click Approve at
+    once. `decide_with_outcome` reports a winner, and only the winner's decision
+    fires the hook -- so the action runs once. Asserted against their function,
+    not ours, because that is the one the routes now call.
+    """
+    from agent_friday.services import approval_executor as ex
+    ex.register()
+    rec = _card(store)
+    aid = rec["approval_id"]
+
+    wins, results = [], []
+    start = threading.Barrier(5)
+
+    def click():
+        start.wait()
+        try:
+            out, won = store.decide_with_outcome(aid, "approve",
+                                                 decided_by="owner")
+            results.append(out)
+            if won:
+                wins.append(1)
+        except Exception:
+            pass
+
+    ts = [threading.Thread(target=click) for _ in range(5)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+
+    assert sum(wins) == 1, "%d tabs believed they won the race" % sum(wins)
+    assert len(ran) == 1, "the action ran %d times across 5 tabs" % len(ran)
+    assert store.get_approval(aid).get("consumed") is True
+
+
+def test_a_losing_tab_does_not_re_run_an_already_decided_card(store, ran):
+    """The tab that loses is told 'already decided'. It must not be able to
+    make the action happen a second time by deciding again."""
+    from agent_friday.services import approval_executor as ex
+    ex.register()
+    rec = _card(store)
+    aid = rec["approval_id"]
+    _out, won1 = store.decide_with_outcome(aid, "approve", decided_by="owner")
+    _out2, won2 = store.decide_with_outcome(aid, "approve", decided_by="owner")
+    assert won1 is True and won2 is False, (won1, won2)
+    assert len(ran) == 1, len(ran)
+
+
+def test_the_claim_holds_even_if_the_hook_is_fired_twice(store, ran):
+    """Belt and braces: if anything ever fires the decision hook again for an
+    already-decided card -- a replay, a second registration, a resync -- the
+    store-level claim still allows exactly one execution."""
+    from agent_friday.services import approval_executor as ex
+    ex.register()
+    rec = _card(store)
+    store.decide(rec["approval_id"], "approve", decided_by="owner")
+    ex._on_decision(store.get_approval(rec["approval_id"]))
+    ex._on_decision(store.get_approval(rec["approval_id"]))
+    assert len(ran) == 1, "the claim did not hold: ran %d times" % len(ran)
