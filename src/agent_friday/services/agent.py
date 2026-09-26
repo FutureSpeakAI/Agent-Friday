@@ -2212,6 +2212,14 @@ try:
 except Exception as _e:                                    # pragma: no cover
     _log.warning("approval executor not registered: %s", _e)
 
+# The payload card for sharing local context with the cloud voice model runs
+# through the same single approval path: one decision, executed once.
+try:
+    from agent_friday.services import local_context as _local_context
+    _local_context.register()
+except Exception as _e:                                    # pragma: no cover
+    _log.warning("local-context share executor not registered: %s", _e)
+
 
 def _looks_like_local_path(value):
     """Return a usable local path if `value` names one, else None.
@@ -6163,6 +6171,9 @@ TOOL_RINGS: dict[str, int] = {
     "open_path":            2,
     "spawn_task":           2,
     "delegate_to_friday":   2,   # voice hand-over; spawns a task like spawn_task
+    "ask_local_for_context": 2,  # its payload goes out only on the owner's card
+    "answer_share_request": 2,
+    "revise_share_request": 2,
     "deep_research":        2,   # searches and reads the web (network)
     "run_command":          2,
     "run_sandboxed":        2,   # a contained child process; see code_sandbox

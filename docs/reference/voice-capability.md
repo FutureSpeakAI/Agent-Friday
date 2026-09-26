@@ -46,3 +46,31 @@ current state. The Voice & Tracking settings tab shows it.
   `navigate_workspace`. Governance decides, as it does for a typed request.
 - **The voice-only null context.** Voice calls used to carry no conversation
   id, so voice-started tasks and cards reported to Main.
+
+## Context only this PC has
+
+`ask_local_for_context` lets the cloud voice model ask the local model a
+question that needs private context (notes, calendar, memory, the people in
+the user's life, preferences). See `services/local_context.py`.
+
+- **The local model writes the answer**, marking every person it mentions.
+  Each name is replaced by a relationship placeholder such as
+  `[their partner]`, and identifiers become numbered placeholders such as
+  `[phone number 1]`.
+- **The egress floor applies:** never-send material and hard identifiers stop
+  the share whatever the user decides.
+- **A payload card shows exactly what the cloud model would receive.** It also
+  lists what each placeholder stands for (the category, never the value),
+  which local model wrote it, and which cloud model would get it. The options
+  are Send, Edit, Don't send, and "Allow for this conversation", which uses
+  the scoped, expiring governance grants and expires in 4 hours.
+- **Edits are sent exactly as saved.** If the privacy check would change an
+  edit, both versions are shown and the user chooses.
+- **By voice**, "send it" / "don't send it" decides, and "change X to Y" /
+  "leave out the part about Z" edits on this machine. The cloud model never
+  sees the draft before it is approved. A spoken decision counts only when
+  the user's own latest words say so. In "Several people" room mode it must
+  also name Friday.
+- **One approval path:** the card is decided once and disappears from every
+  tab. The approved text reaches the live call byte for byte. A declined card
+  sends nothing.

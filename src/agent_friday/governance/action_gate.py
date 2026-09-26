@@ -168,6 +168,9 @@ INTERNAL_TOOLS = frozenset({
     # Voice's hand-over to the full agent: a background task like spawn_task,
     # whose own actions come back through this checkpoint one by one.
     "delegate_to_friday",
+    # Sharing local context with the cloud voice model has its own gate: the
+    # payload card (services/local_context), decided once, by the owner.
+    "ask_local_for_context", "answer_share_request", "revise_share_request",
     # Background research reads the web and runs local models; its report
     # lands in the conversation. Nothing it does reaches another person.
     "deep_research",

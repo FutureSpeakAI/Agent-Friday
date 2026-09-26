@@ -323,6 +323,30 @@ _VOICE_LIVE_TOOLS = [
      {"request": ("string", "The user's request, in full, as they would type it in chat."),
       "title": ("string", "A short title for the task list, e.g. 'Draft reply to the school'.")},
      ["request"]),
+    ("ask_local_for_context",
+     "Ask the user's LOCAL model a question that needs his private context (his "
+     "notes, calendar, memory, the people in his life, his preferences), for "
+     "example 'What do they enjoy doing on weekends, and what is on their calendar "
+     "next weekend?'. The local model answers from his own data; names become "
+     "placeholders like [their partner]; and he approves the exact text on a card "
+     "(or by voice) before you receive it. Say one short sentence that you're "
+     "asking his OK to share some context, then carry on. The approved context is "
+     "handed to you when he decides; if he declines, carry on without it.",
+     {"question": ("string", "The question for his local model, in full.")}, ["question"]),
+    ("answer_share_request",
+     "Record the user's spoken decision on a pending share request (the card from "
+     "ask_local_for_context). Call it only right after he says it: 'send it' / "
+     "'yes' approves; 'don't send it' / 'no' declines. It counts only if his own "
+     "words said so.",
+     {"request_id": ("string", "The id from ask_local_for_context."),
+      "decision": ("string", "approve or decline")}, ["request_id", "decision"]),
+    ("revise_share_request",
+     "Change a pending share request's text as the user asks, before he approves "
+     "it: pass his instruction, e.g. 'change Saturday to Sunday' or 'leave out the "
+     "part about the dentist'. The change is made on his machine and shown on the "
+     "card; you do not see the text. Then ask whether to send it.",
+     {"request_id": ("string", "The id from ask_local_for_context."),
+      "instruction": ("string", "His instruction, in his words.")}, ["request_id", "instruction"]),
     ("spawn_task",
      "Start a long-running background task (a 'workflow') that keeps working "
      "while the conversation continues — deep research, multi-step analysis, "
@@ -758,6 +782,88 @@ def voice_restrictions(settings=None) -> list:
     ]
 
 
+def _voice_room_mode() -> bool:
+    try:
+        return str((_load_settings() or {}).get("voice_room_mode") or "one").strip().lower() == "room"
+    except Exception:
+        return True          # cannot tell: require the name, the stricter rule
+
+
+def _tool_ask_local_for_context(inp, session=None):
+    """Ask the local model for private context; share it only as he approves.
+
+    Returns at once: the local answer can take longer than a voice tool may
+    hold the line. The work runs on a thread that raises the payload card (or
+    shares under his conversation grant) and hands the outcome to the call
+    (services/local_context, services/voice_live_channel).
+    """
+    question = str((inp or {}).get("question") or "").strip()
+    if not question:
+        return "ask_local_for_context needs the question itself."
+    if _voice_local_only():
+        return ("NOT DONE: local-only mode is on, so nothing from this machine may be "
+                "shared with a cloud voice session.")
+    cid = session.get("conversation_id") if isinstance(session, dict) else None
+    from agent_friday.services import local_context as _lc
+    from agent_friday.services import voice_live_channel as _vlc
+    rid = [None]
+    done = threading.Event()
+
+    def _work():
+        try:
+            out = _lc.request(question, conversation_id=cid, cloud_model=_get_live_model())
+        except Exception as e:  # noqa: BLE001
+            out = {"status": "unavailable", "reason": f"the local model failed ({type(e).__name__})"}
+        rid[0] = out.get("approval_id")
+        done.set()
+        if out.get("status") == "pending":
+            _vlc.deliver(cid, (f"The share request {out['approval_id']} is on his screen. Tell him "
+                               f"in one short sentence that you're asking his OK to share some "
+                               f"context from his local model. He can say 'send it', 'don't send "
+                               f"it', or ask you to change it."), kind="notice")
+        elif out.get("status") in ("unavailable", "withheld"):
+            _vlc.deliver(cid, "No context came back from his local model: " + str(out.get("reason")),
+                         kind="notice")
+    threading.Thread(target=_work, name="ask-local-context", daemon=True).start()
+    done.wait(3.0)          # a card raised quickly gets its id into this reply
+    tail = (f" The request id is {rid[0]}." if rid[0] else
+            " You will be told the request id when the card is up.")
+    return ("ASKING: his local model is answering, and he will see exactly what would be "
+            "shared on a card before you receive any of it. Say one short sentence that "
+            "you're asking his OK to share some context, then carry on." + tail)
+
+
+def _tool_answer_share_request(inp, session=None):
+    """His spoken decision on a share card; it counts only if his own words say so."""
+    inp = inp or {}
+    rid = str(inp.get("request_id") or "").strip()
+    claimed = {"approve": "approve", "send": "approve", "yes": "approve",
+               "decline": "deny", "deny": "deny", "no": "deny"}.get(
+        str(inp.get("decision") or "").strip().lower())
+    if not rid or not claimed:
+        return "answer_share_request needs the request id and approve or decline."
+    words = session.get("owner_text", "") if isinstance(session, dict) else ""
+    from agent_friday.services import local_context as _lc
+    res = _lc.decide_by_voice(rid, words, _voice_room_mode(), claimed)
+    if not res.get("ok"):
+        return ("NOT RECORDED: " + str(res.get("error"))
+                + ". Ask him directly whether to send it or not.")
+    if res.get("status") == "approved":
+        return "Recorded: he approved it. The context is on its way to you; wait for it."
+    return "Recorded: he declined. Nothing was shared; carry on without it."
+
+
+def _tool_revise_share_request(inp):
+    inp = inp or {}
+    from agent_friday.services import local_context as _lc
+    res = _lc.revise_by_voice(str(inp.get("request_id") or "").strip(),
+                              str(inp.get("instruction") or ""))
+    if res.get("ok"):
+        return ("Updated on his screen. Ask him to check the card and say 'send it' or "
+                "'don't send it'.")
+    return "NOT CHANGED: " + str(res.get("error")) + ". Tell him, and ask how to change it."
+
+
 def _voice_tool_run(name, args, send_client, session=None):
     """Execute one Live tool call, emit any client-side side effect, and return a
     SHORT text/JSON result for the model to speak from. `send_client(obj)` pushes
@@ -864,6 +970,14 @@ def _voice_tool_run(name, args, send_client, session=None):
             return _governed("search_web", _tool_search_web, args)
         if name == "search_wiki":
             return _governed("search_wiki", _tool_search_wiki, args)
+        if name == "ask_local_for_context":
+            return _governed("ask_local_for_context",
+                             lambda a: _tool_ask_local_for_context(a, session), args)
+        if name == "answer_share_request":
+            return _governed("answer_share_request",
+                             lambda a: _tool_answer_share_request(a, session), args)
+        if name == "revise_share_request":
+            return _governed("revise_share_request", _tool_revise_share_request, args)
         if name == "delegate_to_friday":
             res = _governed("delegate_to_friday",
                             lambda a: _tool_delegate_to_friday(a, session), args)

@@ -17821,7 +17821,84 @@ function fridayDecideApproval(id, decision) {
 }
 // One approval card: what it will do, where its details came from, and the
 // two buttons. The System list and the popup render this same body.
+/** The payload card for sharing local context with the cloud voice model
+ *  (services/local_context). It shows the exact text the cloud model would
+ *  receive, what each placeholder stands for (never the value), which local
+ *  model wrote it and which cloud model would get it. Send, Edit, Don't send,
+ *  or allow this kind of request for the rest of the conversation. An edit is
+ *  sent exactly as saved; if the privacy check would change it, both versions
+ *  are shown and he chooses. */
+function LocalContextShareCard({a,busy,onDecide}){
+  const p=a.payload||{};
+  const [editing,setEditing]=useState(false);
+  const [draft,setDraft]=useState(p.text||'');
+  const [check,setCheck]=useState(null);
+  const [err,setErr]=useState('');
+  const [working,setWorking]=useState(false);
+  useEffect(()=>{if(!editing)setDraft(p.text||'');},[p.text,editing]);
+  const act=(body)=>{
+    setWorking(true);setErr('');
+    return apiFetch('/api/local-context/'+a.approval_id+'/act',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(r=>r.json()).catch(()=>({ok:false,error:'Could not reach Friday.'}))
+      .finally(()=>setWorking(false));
+  };
+  const save=(accept)=>act({action:'edit',text:draft,accept}).then(d=>{
+    if(d&&d.needs_confirm){setCheck(d);return;}
+    if(d&&d.ok){setEditing(false);setCheck(null);return;}
+    setErr((d&&d.error)||'Could not save.');
+  });
+  const decide=(action)=>act({action}).then(d=>{
+    if(d&&d.ok){try{fridayApprovalFeed.drop(a.approval_id);}catch(_){}}
+    else setErr((d&&d.error)||'Could not record that.');
+  });
+  const off=!!busy||working;
+  const btn=(label,onClick,color,title)=><button className="btn" title={title} disabled={off}
+    style={{fontSize:11,padding:'3px 10px',color}} onClick={onClick}>{label}</button>;
+  return <div className="card" style={{marginBottom:6,padding:10}} data-testid="approval-card"
+      data-approval-id={a.approval_id} data-kind="local_context_share">
+    <div style={{fontSize:12,color:'#ddd'}}>{'Share context with '}{p.cloud_model||'the cloud model'}{'?'}</div>
+    <div style={{fontSize:10.5,color:'#999',marginTop:3,lineHeight:1.5}}>
+      {'Written by '}<b style={{color:'#cfefff'}}>{p.local_model||'your local model'}</b>{' on this PC. '}
+      <b style={{color:'#cfefff'}}>{p.cloud_model||'The cloud model'}</b>{' receives exactly the text below, nothing else.'}
+      {p.version>1?' (version '+p.version+', edited)':''}
+    </div>
+    {p.question&&<div style={{fontSize:10,color:'rgba(255,255,255,0.45)',marginTop:5,fontStyle:'italic'}}>{'It asked: “'}{p.question}{'”'}</div>}
+    {!editing&&<div data-testid="share-payload" style={{marginTop:6,padding:'8px 10px',borderRadius:6,
+      background:'rgba(0,212,255,0.05)',border:'1px solid rgba(0,212,255,0.2)',fontFamily:'JetBrains Mono',
+      fontSize:11.5,color:'#e6f7ff',whiteSpace:'pre-wrap',maxHeight:220,overflowY:'auto'}}>{p.text}</div>}
+    {editing&&<textarea data-testid="share-edit" value={draft} onChange={e=>{setDraft(e.target.value);setCheck(null);}}
+      style={{marginTop:6,width:'100%',minHeight:110,fontFamily:'JetBrains Mono',fontSize:11.5,
+        background:'#0d1322',color:'#e6f7ff',border:'1px solid rgba(0,212,255,0.35)',borderRadius:6,padding:8}}/>}
+    {(p.placeholders||[]).length>0&&<div style={{marginTop:6,fontSize:10,color:'rgba(255,255,255,0.55)',fontFamily:'JetBrains Mono'}}>
+      {(p.placeholders||[]).map(ph=><div key={ph.placeholder}>{ph.placeholder}{' — '}{ph.category}</div>)}
+    </div>}
+    {p.gate_view&&<div data-testid="share-gate-view" style={{marginTop:6,fontSize:10,color:'#f5c26b'}}>{p.gate_view}</div>}
+    {check&&<div style={{marginTop:8,padding:8,borderRadius:6,border:'1px solid #f59e0b55',background:'#1a1508'}}>
+      <div style={{fontSize:10.5,color:'#f59e0b',marginBottom:4}}>The privacy check would change your text. Which should be sent?</div>
+      <div style={{fontSize:10,color:'rgba(255,255,255,0.5)'}}>Checked version:</div>
+      <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#e6f7ff',whiteSpace:'pre-wrap',margin:'2px 0 6px'}}>{check.checked}</div>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {btn('Use the checked version',()=>{setDraft(check.checked);save('checked');},'#8affc1')}
+        {btn('Keep my words',()=>save('mine'),'#f59e0b','Send exactly what you wrote')}
+        {btn('Keep editing',()=>setCheck(null),'#cfefff')}
+      </div>
+    </div>}
+    {err&&<div style={{fontSize:10.5,color:'#ff6b9a',marginTop:5}}>{err}</div>}
+    <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
+      {!editing&&btn('Send',()=>decide('send'),'#00ff80','Send exactly this text')}
+      {!editing&&btn('Edit',()=>{setDraft(p.text||'');setEditing(true);},'#cfefff','Change the text before it is sent')}
+      {editing&&btn('Save',()=>save(),'#00ff80','Save your version; you still choose Send')}
+      {editing&&btn('Cancel edit',()=>{setEditing(false);setCheck(null);setDraft(p.text||'');},'#999')}
+      {btn("Don't send",()=>decide('decline'),'#ff0080','Nothing is shared; Friday carries on without it')}
+      {!editing&&btn('Allow for this conversation',()=>decide('allow_conversation'),'#8ab4ff',
+        'Send this, and share this kind of context without asking again in this conversation (expires in 4 hours)')}
+    </div>
+  </div>;
+}
 function ApprovalCardBody({ a, busy, onDecide }) {
+  // The share card has its own body: the exact payload, edit, and four choices.
+  if (a && a.kind === 'local_context_share') return <LocalContextShareCard a={a} busy={busy} onDecide={onDecide}/>;
   return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
     {a.action_description && <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}

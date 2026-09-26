@@ -104,7 +104,7 @@ def test_the_bridge_hands_results_to_the_call_between_turns():
     assert "_voice_live_channel.register(_voice_session[\"conversation_id\"], _deliver_to_call)" in src
     assert "_voice_live_channel.unregister(*_live_chan[0])" in src
     assert "await _flush_injections(sess)" in src
-    assert "_gate_voice_tool_result(text, kind)" in src
+    assert "handed = _injection_text(text, kind)" in src
     assert "_taint.note_user_message(\"voice-live\", user_text)" in src
     assert "_retarget_call(_call_cid())" in src
 

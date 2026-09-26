@@ -458,7 +458,26 @@ _INJECT_LEADS = {
     "context": ("[Not from the user: he approved sharing this context from his "
                 "local model. Use it to continue what he asked for:]\n"),
     "result": "[Not from the user: a result that finished in the background:]\n",
+    "declined": "[Not from the user: ",
+    "notice": "[Not from the user: ",
 }
+#: Kinds whose text the user approved exactly as shown on a card. They are
+#: handed over as approved, not re-gated: the gate ran when the card was made,
+#: and his approval covers precisely that text.
+_INJECT_APPROVED_AS_SHOWN = frozenset({"context"})
+
+
+def _injection_text(text: str, kind: str) -> str:
+    """Exactly what the live model is handed for a queued result.
+
+    For approved context it is the fixed lead followed by the approved text,
+    unchanged: what the card showed is what the model receives. Everything
+    else passes the voice egress gate first.
+    """
+    body = text if kind in _INJECT_APPROVED_AS_SHOWN else _gate_voice_tool_result(text, kind)
+    if kind in ("declined", "notice"):
+        body = body + "]"
+    return _INJECT_LEADS.get(kind, _INJECT_LEADS["result"]) + body
 #: A result slower than this is "late": the conversation has likely moved on.
 VOICE_TOOL_STALE_S = 15.0
 
@@ -1536,6 +1555,36 @@ try:
     _vm.get_manifest().after_prove = _warm_seat_prefix
 except Exception:
     pass
+
+
+@voice_bp.route('/api/local-context/<approval_id>/act', methods=['POST'])
+@login_required
+def local_context_act(approval_id):
+    """The payload card's own buttons (services/local_context).
+
+    send / decline decide the card through the one approval path (executed
+    once, gone from every tab); allow_conversation also records his grant for
+    this conversation, then sends; edit saves his text as a new version, or,
+    when the privacy check would change it, returns both versions and asks.
+    """
+    from agent_friday.services import approvals
+    from agent_friday.services import local_context as lc
+    d = request.get_json(silent=True) or {}
+    action = str(d.get("action") or "").strip()
+    rec = approvals.get_approval(approval_id)
+    if not rec or rec.get("kind") != lc.KIND:
+        return jsonify({"ok": False, "error": "no share request with that id"}), 404
+    if action == "edit":
+        return jsonify(lc.edit(approval_id, d.get("text") or "", accept=d.get("accept")))
+    if action == "allow_conversation":
+        if rec.get("status") == "pending":
+            lc.grant_for_conversation((rec.get("payload") or {}).get("conversation_id"))
+        action = "send"
+    if action not in ("send", "decline"):
+        return jsonify({"ok": False, "error": "action must be send, decline, allow_conversation or edit"}), 400
+    out, won = approvals.decide_with_outcome(
+        approval_id, "approve" if action == "send" else "deny", decided_by="owner:ui")
+    return jsonify({"ok": bool(out), "won": won, "approval": out})
 
 
 @voice_bp.route('/api/voice/restrictions')
@@ -2946,13 +2995,12 @@ if sock is not None:
                 if not _inject_q or sess is None or _model_speaking[0]:
                     return
                 text, kind = _inject_q.popleft()
-                gated = _gate_voice_tool_result(text, kind)
-                lead = _INJECT_LEADS.get(kind, _INJECT_LEADS["result"])
+                handed = _injection_text(text, kind)
                 try:
                     await sess.send_client_content(
-                        turns={"role": "user", "parts": [{"text": lead + gated}]},
+                        turns={"role": "user", "parts": [{"text": handed}]},
                         turn_complete=True)
-                    _log.info("voice call: handed a %s to the model (%d chars)", kind, len(gated))
+                    _log.info("voice call: handed a %s to the model (%d chars)", kind, len(handed))
                 except Exception as _ie:
                     _inject_q.appendleft((text, kind))
                     _vlog(f'injection failed: {_ie}')
