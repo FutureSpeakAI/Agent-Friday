@@ -109,3 +109,17 @@ units named in its row with the suffixes "", "x", "!", "\n", "\nx", "@", ".",
 "a!", "\t!" and "?", each with and without a leading "x", at 50,000 and 100,000
 characters. A backtracking pattern shows up as a time that grows about four
 times when the input doubles; every LINEAR row roughly doubles.
+
+## Found by the full scan of main after the fixes landed
+
+The first full analysis of main with every fix in place raised five alerts at
+new locations. Four are earlier alerts whose line moved when the code around
+them changed; one is the fixed ReDoS scan re-flagged.
+
+| n | rule | path:line | state | evidence |
+|---|------|-----------|-------|----------|
+| 795 | clear-text-logging | user_errors.py:169 | SANITISED | `log_text` writes `redact_credentials(text)`: secret_shapes patterns and secret query parameters are replaced before the line is written (as 785). |
+| 794 | path-injection | routes/news.py:664 | FALSE_POSITIVE | the draft id is reduced by `re.sub(r"[^0-9a-zA-Z]", "", draft_id)` before the path is built (as 154, 155). |
+| 793 | path-injection | services/creative_engine.py:1192 | SANITISED | bytes are read only after `seed_images.resolve` (UNC and device paths refused) and `seed_images.check_running_call` (creations folders, the owner's own typed path, or an approved card), then only if they are image bytes (as 752). |
+| 792 | path-injection | routes/control.py:169 | FALSE_POSITIVE | the owner's own login-required, read-only consent-dialog scan of a path they chose (as 63). |
+| 790 | polynomial-redos | governance/behavioral_monitor.py:259 | LINEAR | `extract_remit` on 50,000 and 100,000 repetitions of '-' with the suffixes "", "!" and ".x": 0.003 s and 0.007 s. |
