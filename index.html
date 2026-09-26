@@ -50740,6 +50740,46 @@ function App() {
       .catch(() => setConvSeat(null));
   }, []);
 
+  /* An APPROVED CARD FINISHING has to show up in the DOCKED chat too.
+     services/approval_executor runs an approved action after the turn that
+     raised the card has ended and appends the outcome to the conversation. This
+     window loads a transcript when it opens or switches and never polls, so
+     without this the owner approves something, sees nothing change, and has to
+     reload to learn it worked.
+     ConversationWindow above carries the same handler for the undocked window;
+     this one is the docked chat inside App, which is what is mounted by
+     default -- patching only the other one left the common case unfixed.
+     The event carries no content: it says which conversation moved, and the
+     transcript is re-read, so what renders is what was actually written. */
+  useEffect(() => {
+    if (!convId) return;
+    let es = null, stopped = false;
+    const client = 'chat-' + Math.random().toString(36).slice(2, 10);
+    try {
+      es = new EventSource('/api/desktop/events?client=' + client + '&kind=chat');
+    } catch (e) { return; }
+    es.onmessage = e => {
+      if (stopped) return;
+      let ev = null;
+      try { ev = JSON.parse(e.data); } catch (_) { return; }
+      if (!ev || ev.type !== 'approval_result') return;
+      if (ev.conversation_id && ev.conversation_id !== convId) return;
+      apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
+        .then(r => r.json()).then(d => {
+          setChatMsgs((d.messages || []).map(m => ({
+            role: m.role === 'friday' ? 'friday' : (m.role === 'user' ? 'user' : 'system'),
+            text: m.text || '',
+            time: m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : '',
+            model: (m.meta || {}).model,
+            seat: (m.meta || {}).seat,
+            kind: (m.meta || {}).kind,
+            trace_id: (m.meta || {}).trace_id,
+          })));
+        }).catch(() => {});
+    };
+    return () => { stopped = true; try { es && es.close(); } catch (_) {} };
+  }, [convId]);
+
   const convIdRef = useRef(null);
   useEffect(() => {
     if (convId && convIdRef.current !== convId) {
