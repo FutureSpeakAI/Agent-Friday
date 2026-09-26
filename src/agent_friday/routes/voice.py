@@ -467,6 +467,39 @@ async def _voice_tool_with_limit(fname, fargs, send, session=None, limit=None, r
                 f"Do not guess at what it would have said.")
 
 
+#: A reconnect shorter than this carries the user's words across; a longer
+#: one drops them, since an answer to half-minute-old speech is the "two
+#: parallel conversations" failure the seam drain exists to prevent.
+SEAM_REPLAY_MAX_GAP_S = 10.0
+#: At most this much of the newest buffered mic audio is replayed.
+SEAM_REPLAY_MAX_AUDIO_S = 10.0
+
+
+def _seam_replay_plan(heard_text, answered, seam_chunks, gap_s):
+    """What to carry into a renewed Gemini leg: (unanswered words, mic chunks).
+
+    heard_text: the user's transcribed words since Friday's last turn ended.
+    answered: whether Friday had begun replying to them.
+    seam_chunks: 16 kHz PCM16 mic chunks the browser sent during the reconnect.
+    gap_s: seconds since the previous leg closed; None when unknown.
+    """
+    if gap_s is None or gap_s > SEAM_REPLAY_MAX_GAP_S:
+        return None, []
+    text = (heard_text or "").strip()
+    text = text if (text and not answered) else None
+    budget = int(SEAM_REPLAY_MAX_AUDIO_S * 32000)      # PCM16 @ 16 kHz
+    keep, total = [], 0
+    for c in reversed(seam_chunks or []):
+        if total + len(c) > budget:
+            break
+        keep.append(c)
+        total += len(c)
+    keep.reverse()
+    if not any(_quick_rms(c) >= LIVE_SPEECH_RMS for c in keep):
+        keep = []                                       # silence is not worth replaying
+    return text, keep
+
+
 def _mark_if_stale(result, fname, started_at, user_spoke_at, now):
     """Prefix a result that arrives after the conversation has moved on.
 
@@ -2803,6 +2836,7 @@ if sock is not None:
             _room = _voice_room_mode(live_settings) == "room"
             _quiet_turn = [False]
             _friday_done_ts = [None]          # when Friday last finished a voiced reply
+            _leg_ended_ts = [None]            # when the previous Gemini leg closed (seam replay)
             # The barge window must track CLIENT PLAYBACK, not model streaming:
             # Gemini generates faster than real-time, so the turn often finishes
             # streaming seconds before Friday's voice finishes coming out of the
@@ -3600,6 +3634,7 @@ if sock is not None:
                             # honor any control frames found in the backlog.
                             if leg > 0 or _use_handle:
                                 _stale_audio = 0
+                                _seam_chunks = []
                                 while not done.is_set():
                                     try:
                                         _raw0 = ws.receive(timeout=0)
@@ -3616,6 +3651,10 @@ if sock is not None:
                                     _t0 = _m0.get('type')
                                     if _t0 == 'audio':
                                         _stale_audio += 1
+                                        try:
+                                            _seam_chunks.append(base64.b64decode(_m0.get('data') or ''))
+                                        except Exception:
+                                            pass
                                     elif _t0 in ('bye', 'end'):
                                         _live_resume_clear(gen=_conn_gen)
                                         done.set()
@@ -3624,8 +3663,45 @@ if sock is not None:
                                         _client_playing[0] = bool(_m0.get('on'))
                                     # 'barge'/'text' in a seam backlog are moot —
                                     # they targeted the previous leg.
-                                if _stale_audio:
-                                    _vlog(f'seam drain: dropped {_stale_audio} stale mic chunks buffered during reconnect')
+                                # A short seam carries the user's words over
+                                # instead of dropping them: what they said
+                                # that got no answer before the old leg ended,
+                                # and what they said while it reconnected.
+                                _gap = (None if (leg == 0 or _leg_ended_ts[0] is None)
+                                        else _time.time() - _leg_ended_ts[0])
+                                _pending_txt, _replay = _seam_replay_plan(
+                                    ''.join(in_buf), bool(''.join(out_buf).strip()),
+                                    _seam_chunks, _gap)
+                                if _pending_txt and not done.is_set():
+                                    try:
+                                        await session_ai.send_client_content(
+                                            turns={"role": "user", "parts": [{"text":
+                                                "[The connection was renewed before you "
+                                                "answered. The user had just said: "
+                                                + _gate_voice_text(_pending_txt)
+                                                + " -- answer that now.]"}]},
+                                            turn_complete=not _replay,
+                                        )
+                                    except Exception as _pe:
+                                        _vlog(f'seam replay (text) failed: {_pe}')
+                                for _c in _replay:
+                                    if done.is_set():
+                                        break
+                                    try:
+                                        await session_ai.send_realtime_input(
+                                            audio=types.Blob(data=_c, mime_type='audio/pcm;rate=16000'))
+                                        _audio_bytes_to_gemini += len(_c)
+                                    except Exception as _pe:
+                                        _vlog(f'seam replay (audio) failed: {_pe}')
+                                        break
+                                if _pending_txt or _replay:
+                                    _log.info("voice seam: carried over %s%s across a %.1fs reconnect",
+                                              "unanswered words" if _pending_txt else "",
+                                              (" and " if _pending_txt and _replay else "")
+                                              + (f"{len(_replay)} mic chunks" if _replay else ""),
+                                              _gap or 0.0)
+                                if _stale_audio - len(_replay):
+                                    _vlog(f'seam drain: dropped {_stale_audio - len(_replay)} stale mic chunks buffered during reconnect')
                             if done.is_set():
                                 break
                             _safe_send({"type": "status", "text": "live"})
@@ -3675,6 +3751,7 @@ if sock is not None:
                                 _p.cancel()
                             await asyncio.gather(*_all, return_exceptions=True)
                         finally:
+                            _leg_ended_ts[0] = _time.time()
                             try:
                                 await session_cm.__aexit__(None, None, None)
                             except Exception as _xe:
