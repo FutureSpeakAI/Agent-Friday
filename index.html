@@ -25331,6 +25331,44 @@ fridayDeclareNav('news', {
   keys: ['tab'],
   sections: NEWS_TABS
 });
+// The Local beat is the owner's setting: the place Local news covers and the
+// outlets it reads (news_local_area, news_local_sources). Nothing ships with a
+// city; both empty means no Local section. Listed outlets are trusted like the
+// built-in high-trust sources.
+function NewsLocalBeatSettings() {
+  const h = React.createElement;
+  const [area, setArea] = useState(null);
+  const [sources, setSources] = useState('');
+  const [note, setNote] = useState('');
+  useEffect(() => {
+    apiFetch('/api/settings').then(r => r.json()).then(d => {
+      const s = (d && d.settings) || {};
+      setSources((Array.isArray(s.news_local_sources) ? s.news_local_sources : []).join('\n'));
+      setArea(String(s.news_local_area || ''));
+    }).catch(() => {
+      setArea('');
+      setNote('Could not load the Local beat.');
+    });
+  }, []);
+  const save = patch => apiFetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: patch })
+  }).then(r => r.json().catch(() => ({})).then(b => {
+    if (!r.ok || b.status === 'error') throw new Error(b.message || b.error || 'the server refused it (' + r.status + ')');
+    setNote('Saved.');
+  })).catch(e => setNote('NOT saved: ' + (e.message || e)));
+  const commit = () => save({
+    news_local_area: (area || '').trim(),
+    news_local_sources: sources.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
+  });
+  if (area === null) return null;
+  return h(React.Fragment, null,
+    h('div', { className: 'card-title', style: { marginTop: 14 } }, 'Local beat'),
+    h('input', { className: 'input', 'aria-label': 'City or area for Local news', style: { width: '100%', fontSize: 11 }, value: area, placeholder: 'City or area (empty: no Local news)', onChange: e => setArea(e.target.value), onBlur: commit }),
+    h('textarea', { className: 'input', 'aria-label': 'Local news outlets', rows: 3, style: { width: '100%', fontSize: 11, marginTop: 6, resize: 'vertical' }, value: sources, placeholder: 'Local outlets, one domain per line or comma-separated', onChange: e => setSources(e.target.value), onBlur: commit }),
+    note && h('div', { role: 'status', style: { fontSize: 10, color: '#777', marginTop: 4 } }, note));
+}
 function NewsWS() {
   const [tab, setTab] = useState('frontpage');
   const [feed, setFeed] = useState([]);
@@ -27953,7 +27991,7 @@ function NewsWS() {
     key: c,
     className: 'toggle-pill ' + (prefs.categories_enabled[c] ? 'on' : ''),
     onClick: () => toggleCat(c)
-  }, c))), /*#__PURE__*/React.createElement("div", {
+  }, c))), /*#__PURE__*/React.createElement(NewsLocalBeatSettings, null), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: '#777',

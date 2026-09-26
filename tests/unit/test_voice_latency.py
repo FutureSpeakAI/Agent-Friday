@@ -114,6 +114,10 @@ def test_trust_lookups_parse_the_file_once_until_it_changes(tmp_path, monkeypatc
     g = stg.SourceTrustGraph(friday_dir=tmp_path)
     g.record_article_seen("reuters.com")
     stg._READ_CACHE.clear()
+    # An unknown domain's seed consults the owner's Local beat, which is read
+    # from settings.json; that is a different file with its own cache, so it
+    # is held constant here and only trust-file parses are counted.
+    monkeypatch.setattr(stg, "local_beat_sources", lambda: ())
     parses = []
     real = stg.json.loads
     monkeypatch.setattr(stg.json, "loads",

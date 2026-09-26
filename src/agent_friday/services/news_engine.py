@@ -207,8 +207,9 @@ NEWS_CATEGORIES = {
     },
     "Local": {
         "color": "local",
-        # Built at read time from the `news_local_area` setting (see
-        # category_meta). With no area set there is no Local beat.
+        # Built at read time from the `news_local_area` and
+        # `news_local_sources` settings (see category_meta). With neither
+        # set there is no Local beat.
         "query": "",
         "feeds": [],
     },
@@ -257,7 +258,9 @@ DEFAULT_BRIEFING_PREFS = {
 
 # A small static trust map — well-known domains we can color-rate without a
 # live reputation service. Everything unknown is "neutral" (yellow). The user's
-# own ban/boost decisions always override this.
+# own ban/boost decisions always override this. No city's local press is in
+# this map: the owner's Local beat outlets (`news_local_sources`) get the same
+# treatment at read time, see _trust_rating.
 _TRUSTED_DOMAINS = {
     "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "npr.org",
     "arstechnica.com", "theverge.com", "wired.com", "nature.com",
@@ -268,7 +271,7 @@ _TRUSTED_DOMAINS = {
     "theguardian.com", "politico.com", "theintercept.com", "talkingpointsmemo.com",
     "motherjones.com", "theatlantic.com", "fortune.com", "cnbc.com",
     "marketwatch.com", "businessinsider.com", "texastribune.org",
-    "texasmonthly.com", "austinmonitor.com", "kut.org", "scientificamerican.com",
+    "scientificamerican.com",
     "carbonbrief.org", "niemanlab.org", "cjr.org", "poynter.org",
 }
 _LOW_TRUST_DOMAINS = {
@@ -398,7 +401,7 @@ def _trust_rating(domain, banned=None, boosted=None):
                 get_source_trust_graph(friday_dir=FRIDAY_DIR).score_for(domain))
         except Exception:
             pass
-    if domain in _TRUSTED_DOMAINS:
+    if domain in _TRUSTED_DOMAINS or domain in _local_sources():
         return "green"
     if domain in _LOW_TRUST_DOMAINS:
         return "red"
@@ -612,6 +615,9 @@ def _brave_results(query, limit=8):
     endpoint and the research pipeline's web endpoint — they differ only in
     path, not in auth.
     """
+    if not (query or "").strip():
+        # An empty beat (Local with nothing set) has nothing to search for.
+        return []
     try:
         from agent_friday.services.web_search import brave_key as _bk
         key = _bk()
@@ -1315,19 +1321,36 @@ def _local_area() -> str:
         return ""
 
 
+def _local_sources() -> tuple:
+    """The outlets the owner named for Local news (`news_local_sources`), as
+    bare domains, or () when none are set or settings cannot be read."""
+    try:
+        from agent_friday.source_trust_graph import local_beat_sources
+        return local_beat_sources()
+    except Exception:
+        return ()
+
+
 def category_meta(cat):
-    """A category's feeds and query. Local is built from the owner's area:
-    a Google News search for that place, and nothing at all when no area is
-    set, so no install reads another city's news by default."""
+    """A category's feeds and query. Local is built from the owner's
+    settings: a Google News search for their area plus one feed per outlet
+    they listed, and nothing at all when neither is set, so no install reads
+    another city's news by default."""
     meta = NEWS_CATEGORIES.get(cat)
     if not meta or cat != "Local":
         return meta
     area = _local_area()
-    if not area:
+    sources = _local_sources()
+    if not area and not sources:
         return dict(meta, feeds=[], query="")
     from urllib.parse import quote_plus
-    return dict(meta, query=f"{area} local news today",
-                feeds=[_GOOGLE_NEWS + quote_plus(f"{area} local news") + "+when:24h"])
+    feeds = []
+    if area:
+        feeds.append(_GOOGLE_NEWS + quote_plus(f"{area} local news") + "+when:24h")
+    feeds.extend(_GOOGLE_NEWS + "when:24h+source:" + quote_plus(d) for d in sources)
+    query = (f"{area} local news today" if area
+             else " OR ".join(f"site:{d}" for d in sources))
+    return dict(meta, query=query, feeds=feeds)
 
 
 def _classify_brutalist_headline(title):
