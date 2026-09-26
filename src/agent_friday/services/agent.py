@@ -2361,6 +2361,30 @@ def _open_app(name):
     return None
 
 
+def _drop_trailing(low, phrases, *, once=False):
+    """`low` (single-spaced, stripped) without its trailing `phrases`.
+
+    A phrase is dropped only when a space comes before it, the longest one
+    that fits first, and then again from the new end unless `once`. The end
+    moves left by index rather than by rebuilding the string, so a message
+    of ten thousand trailing "please"s costs one pass, not ten thousand.
+    """
+    end = len(low)
+    by_length = sorted(phrases, key=len, reverse=True)
+    while True:
+        hit = next((p for p in by_length if len(p) < end
+                    and low[end - len(p) - 1] == ' '
+                    and low.startswith(p, end - len(p), end)), None)
+        if hit is None:
+            break
+        end -= len(hit)
+        while end and low[end - 1] == ' ':
+            end -= 1
+        if once:
+            break
+    return low[:end]
+
+
 def _resolve_open_target(target):
     """Resolve a friendly folder name, alias, or path to an existing filesystem
     path string. Returns None if nothing concrete matches (so the caller can fall
@@ -2369,7 +2393,7 @@ def _resolve_open_target(target):
         return None
     raw = target.strip().strip('"').strip("'")
     low = re.sub(r'\s+', ' ', raw.lower()).strip()
-    low = re.sub(r'(?<!\s)\s+(folder|directory|dir|file)$', '', low).strip()
+    low = _drop_trailing(low, ('folder', 'directory', 'dir', 'file'), once=True)
     repo = Path(__file__).resolve().parents[3]  # agent.py is src/agent_friday/services/ → repo root
     aliases = {
         'downloads': HOME / 'Downloads', 'download': HOME / 'Downloads',
@@ -2663,16 +2687,10 @@ def _resolve_workspace(name):
     # Front-loaded politeness ("Please open settings.") already works; trailing
     # politeness is what needs stripping. Stripped repeatedly so "please now"
     # and "for me thanks" both reduce.
-    # `(?<!\s)` starts the match only at the beginning of a whitespace run
-    # (where the leftmost match starts anyway), so a long run of spaces is
-    # scanned once rather than once per space.
-    _tail = (r'(?<!\s)\s+(please|now|thanks|thank you|for me|pls|plz|ok|okay|'
-             r'right now|real quick|if you can|would you|will you)$')
-    while True:
-        _stripped = re.sub(_tail, '', low).strip()
-        if _stripped == low:
-            break
-        low = _stripped
+    low = _drop_trailing(low, ('please', 'now', 'thanks', 'thank you', 'for me',
+                               'pls', 'plz', 'ok', 'okay', 'right now',
+                               'real quick', 'if you can', 'would you',
+                               'will you'))
     # Try the full phrase first so a legitimate multi-word alias ("front page",
     # "people graph", "trust score") isn't destroyed by the trailing-noise
     # stripper below — "page" would otherwise turn "front page" into "front".
@@ -2680,7 +2698,8 @@ def _resolve_workspace(name):
     if hit:
         return hit
     # Fall back to stripping a trailing UI-noise word: "news tab" → "news".
-    stripped = re.sub(r'(?<!\s)\s+(workspace|tab|panel|page|screen|view|window|section|menu)$', '', low).strip()
+    stripped = _drop_trailing(low, ('workspace', 'tab', 'panel', 'page', 'screen',
+                                    'view', 'window', 'section', 'menu'), once=True)
     return _WORKSPACE_ALIASES.get(stripped)
 
 

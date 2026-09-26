@@ -141,6 +141,11 @@ def test_open_and_navigate_intents():
     _fast(agent._maybe_handle_navigate_intent, "open a" + "\t" * N + "\nx")
     _fast(agent._maybe_handle_navigate_intent, "open " + " " * N + "x" + " " * N + "\ny")
     _fast(agent._resolve_workspace, "news" + " " * N + "tab")
+    # One trailing phrase stripped per pass used to rescan the whole string
+    # each time: quadratic in the number of phrases.
+    _fast(agent._resolve_workspace, "news" + " please" * (N // 7))
+    _fast(agent._resolve_workspace, "news" + " right now" * (N // 10) + " tab")
+    _fast(agent._resolve_open_target, "zz-no-such-place" + " dir" * (N // 4) + " folder")
     rx = agent._OPEN_VERB_RE
     assert rx.match("switch to settings!!").group(2) == "settings"
     assert rx.match("Friday, please open the news tab?").group(2) == "the news tab"
