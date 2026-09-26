@@ -309,6 +309,7 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
                     cost_estimate_mψ: int = 0, payload: Optional[dict] = None,
                     requested_by: str = "system",
                     interest_model: Optional[dict] = None,
+                    action_class: Optional[str] = None,
                     force_gate: bool = False) -> Dict[str, Any]:
     """Create (or return the existing) approval card for this exact
     (subject_type, subject_id, kind). Idempotent: a second call with the same
@@ -331,7 +332,18 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
         return existing
 
     action_text = action_description or title
-    policy = classify(action_text)
+    # `action_class` is what the CALLER already knows the action to be. The
+    # keyword scan behind `classify` is a guess from words, and it guessed
+    # wrong on five identical calendar writes in one batch -- three of them
+    # said "spend" because the event's notes happened to mention a ticket
+    # price. A caller that has been told the class by the governance gate
+    # should not have it inferred from prose; one that has not still gets the
+    # scan. An unknown class is ignored rather than trusted, so a bad string
+    # cannot invent a policy or skip a gate.
+    _cls = action_class if action_class in effective_policy_table() else None
+    if action_class and _cls is None:
+        _log.warning("approval: ignoring unknown action_class %r", action_class)
+    policy = classify(action_text, action_class=_cls)
     dissent = _safe_check_dissent(action_text, interest_model)
     law1_blocked = bool(dissent.get("law1_blocked"))
     # Where the action's details came from (services/taint.py), when a tool

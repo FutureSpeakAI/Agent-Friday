@@ -8675,6 +8675,44 @@ def _hook_governance(ctx):
     return _taint_card(ctx, d, key)
 
 
+def _gate_policy_class(tool_name, args):
+    """The approval policy class for this action, judged by what the action IS.
+
+    The label on a card used to come from a keyword scan over the card's whole
+    text, and that text is "<tool> <arguments>". So the owner's own words went
+    into it: an event whose notes said "order at texasperformingarts.org" or
+    "buy tickets at broadwayinaustin.com" was labelled `spend`, while the same
+    tool with a plain address was labelled `outward`. Five identical calendar
+    writes in one batch came out internal/spend/spend/internal/spend, and a
+    calendar entry that says "spend" asks the owner to approve the wrong thing.
+
+    An argument is not a description of the action. So the class is taken from
+    the governance gate's verdict, and where that verdict is `outward` -- which
+    covers a message, an irreversible act and a purchase alike -- it is refined
+    by scanning the TOOL NAME ONLY. `send_email` still reads as an external
+    message and `delete_file` as irreversible, because that is what those tools
+    do, and no wording inside the arguments can move either one.
+
+    None means "cannot say", and the caller then behaves exactly as before.
+    """
+    try:
+        from agent_friday.governance import action_gate as _g
+        from agent_friday.services import approvals as _ap
+        klass, _why = _g.classify(tool_name, args or {})
+    except Exception:
+        return None
+    if klass == _g.INTERNAL:
+        return "internal"
+    if klass != _g.OUTWARD:
+        return None                     # forbidden, or a class we do not map
+    try:
+        # A trailing space so keywords written with one ("buy ", "pay ") can
+        # match a tool whose name ends in that word.
+        return _ap._label_hard_class(str(tool_name or "").replace("_", " ") + " ")
+    except Exception:
+        return None
+
+
 def _approved_card_allows(approval_id, tool_name, args):
     """May this exact call run on the strength of that card? Consumes it if so.
 
@@ -8757,6 +8795,15 @@ def _taint_card(ctx, decision, key):
                     payload={"tool": name, "input": inp,
                              "conversation_id": (ctx.session_ctx or {}).get(
                                  "conversation_id") or ""},
+                    # WHAT THIS ACTION IS, from the gate that just classified
+                    # it, instead of a substring scan over the card's text.
+                    # Five identical create_calendar_event cards came out
+                    # labelled internal/spend/spend/internal/spend because
+                    # three of the events mentioned a ticket price, and "spend"
+                    # on a calendar entry asks the owner to approve the wrong
+                    # thing. Only the gate's own vocabulary is passed;
+                    # create_approval ignores anything it does not recognise.
+                    action_class=_gate_policy_class(name, inp),
                     requested_by="taint_gate")
             finally:
                 _taint_mod.CURRENT.reset(_ptok)

@@ -88,6 +88,23 @@ def _capability(name):
         return ""
 
 
+def _looks_local(model) -> bool:
+    """Is this the name of a model that runs on this machine?
+
+    Conservative: a name we cannot classify is NOT treated as local, so an
+    unrecognised id can never make a local tier resolve to something that turns
+    out to be a cloud call.
+    """
+    name = (model or "").strip()
+    if not name:
+        return False
+    try:
+        from agent_friday.services import local_seats
+        return bool(local_seats._is_local_name(name))
+    except Exception:
+        return False
+
+
 def _serving_locally():
     """Model ids a local seat is actually answering for, right now.
 
@@ -127,11 +144,40 @@ def resolve(tier: str) -> Resolution:
                               "no cloud model is configured for this work")
         return Resolution(tier, model, is_local=False)
 
-    wanted = (_capability("sidekick_fast") if tier == SMALL_LOCAL
-              else _capability("heavy_hitter") or _capability("reasoning"))
-    if not wanted:
+    # A LOCAL TIER CONSIDERS ONLY LOCAL CANDIDATES.
+    #
+    # These seats are bound by the owner and nothing stops a cloud model being
+    # bound to one. When that happened, `heavy_hitter` held claude-opus-5-5, it
+    # won this `or` outright, and the local `reasoning` binding -- bonsai2:27b,
+    # which was serving -- was never looked at. The tier then asked whether a
+    # cloud model was loaded locally and refused with "claude-opus-5-5 is not
+    # loaded right now (serving: bonsai2:27b)", which reads as a contradiction
+    # and cost a delegated job that the machine could have run.
+    #
+    # Filtering to local candidates uses the owner's OWN local binding rather
+    # than substituting something arbitrary, and it cannot cross the local/cloud
+    # line in the direction that matters -- a caller who asked to stay on the
+    # machine never silently gets the cloud.
+    candidates = ([_capability("sidekick_fast")] if tier == SMALL_LOCAL
+                  else [_capability("heavy_hitter"), _capability("reasoning")])
+    candidates = [c for c in candidates if c]
+    if not candidates:
         return Resolution(tier, None,
                           "no model is bound to the %s seat" % tier)
+    local = [c for c in candidates if _looks_local(c)]
+    if not local:
+        # Bound, but to something that cannot be run here. Say that, and say
+        # what IS here, without ever calling a cloud model "not loaded".
+        live_now = _serving_locally()
+        here = ", ".join(sorted(live_now)) if live_now else ""
+        return Resolution(
+            tier, None,
+            "the %s seat is bound to %s, which is a cloud model, so no local "
+            "model is configured for this work%s. Bind a local model to it in "
+            "Settings -> Models."
+            % (tier, " and ".join(candidates),
+               (" (serving locally: %s)" % here) if here else ""))
+    wanted = local[0]
 
     live = _serving_locally()
     if not live:
