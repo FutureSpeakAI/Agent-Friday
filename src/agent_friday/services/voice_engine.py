@@ -1480,15 +1480,8 @@ Trust the user's judgment; push back when you genuinely disagree, but don't lect
 
 
 def _strip_html(raw: str) -> str:
-    raw = re.sub(r'<script\b[^>]*>.*?</script>', ' ', raw, flags=re.S | re.I)
-    raw = re.sub(r'<style\b[^>]*>.*?</style>', ' ', raw, flags=re.S | re.I)
-    raw = re.sub(r'<[^>]+>', ' ', raw)
-    raw = re.sub(r'&nbsp;', ' ', raw)
-    raw = re.sub(r'&amp;', '&', raw)
-    raw = re.sub(r'&lt;', '<', raw)
-    raw = re.sub(r'&gt;', '>', raw)
-    raw = re.sub(r'\s+', ' ', raw)
-    return raw.strip()
+    from agent_friday.services.html_text import html_to_text
+    return html_to_text(raw)
 
 
 # In-process TTL cache for _load_live_context(). It is called on EVERY chat
