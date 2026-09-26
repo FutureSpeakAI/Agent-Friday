@@ -29,6 +29,8 @@ import logging
 import re
 import time
 
+from agent_friday.user_errors import ExceptionText, keep_mark
+
 _log = logging.getLogger("friday.higgsfield_generate")
 
 MCP_SERVER = "higgsfield"
@@ -245,7 +247,7 @@ def _wait(job_ids: list) -> tuple:
                          timeout=60.0)
         except Exception as e:
             _log.warning("higgsfield jobs_wait failed: %s", e)
-            return False, urls, {"error": str(e)[:200]}
+            return False, urls, {"error": ExceptionText(str(e)[:200])}
         _collect_urls(last, urls)
         done = isinstance(last, dict) and last.get("all_terminal")
         if done or urls:
@@ -308,7 +310,7 @@ def generate(kind: str, prompt: str, *, model: str, aspect_ratio=None,
     except Exception as e:
         return {"status": "unavailable", "provider": "higgsfield",
                 "model": model, "prompt": prompt,
-                "reason": f"Higgsfield submit failed: {e}"[:300]}
+                "reason": ExceptionText(f"Higgsfield submit failed: {e}"[:300])}
 
     if isinstance(reply, dict) and reply.get("unlim_choice"):
         # Surfaced rather than silently answered — it is a question about
@@ -346,12 +348,13 @@ def generate(kind: str, prompt: str, *, model: str, aspect_ratio=None,
         try:
             res = creative_store.download_output(url, job=job, dest_dir=dest_dir)
         except Exception as e:
-            failures.append(f"{url}: {e}")
+            failures.append(ExceptionText(f"{url}: {e}"))
             continue
         if res.get("ok"):
             files.append({"path": res.get("path"), "url": url})
         else:
-            failures.append(f"{url}: {res.get('error') or 'download failed'}")
+            failures.append(keep_mark([res.get('error')],
+                                       f"{url}: {res.get('error') or 'download failed'}"))
 
     if not files:
         # Paid for, produced, not saved. Say all three.
@@ -361,7 +364,7 @@ def generate(kind: str, prompt: str, *, model: str, aspect_ratio=None,
                 "reason": "Higgsfield finished but the output could not be "
                           "saved locally. The files are still on Higgsfield "
                           "for at least seven days: " + "; ".join(urls[:3]),
-                "detail": "; ".join(failures)[:300]}
+                "detail": keep_mark(failures, "; ".join(failures)[:300])}
 
     out = {"status": "ok", "provider": "higgsfield", "files": files,
            "model": model, "api_model": model, "prompt": prompt,

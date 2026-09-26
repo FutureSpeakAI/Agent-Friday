@@ -11,6 +11,8 @@ import time
 import urllib.request
 import urllib.error
 
+from agent_friday.user_errors import ExceptionText
+
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
 # The context a request gets when its caller did not decide one. Deliberately
@@ -399,7 +401,7 @@ class OllamaManager:
         try:
             resp = self._post("/api/generate", body, timeout=timeout) or {}
         except Exception as e:
-            return {"ok": False, "error": "%s: %s" % (type(e).__name__, e),
+            return {"ok": False, "error": ExceptionText("%s: %s" % (type(e).__name__, e)),
                     "ms_per_token": None, "load_s": None}
         text = (resp.get("response") or "").strip()
         ec = resp.get("eval_count") or 0

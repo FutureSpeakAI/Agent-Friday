@@ -100,7 +100,7 @@ from agent_friday.services.voice_engine import (
     resolve_live_thinking_level,
     validate_gemini_key,
 )  # noqa: E501
-from agent_friday.routes._errors import api_error, error_text, public_result
+from agent_friday.routes._errors import api_error, error_text, exception_text, public_result
 
 voice_bp = Blueprint('voice', __name__)
 
@@ -1543,7 +1543,7 @@ def voice_session_info():
         m.refresh_selection()
         info["manifest"] = m.snapshot()
     except Exception as e:
-        info["manifest"] = {"error": f"{type(e).__name__}: {e}"}
+        info["manifest"] = {"error": error_text(e, "Couldn't read the voice manifest")}
     return jsonify({"status": "ok", **info})
 
 
@@ -1593,6 +1593,11 @@ def voice_prove():
 _WARM_LOCK = threading.Lock()
 _WARM = {"state": "idle", "progress": "", "started": 0.0, "finished": 0.0,
          "tier": None, "error": "", "engine": None}
+
+
+def _public_warm():
+    """The warm state as the browser sees it: a load error is an error id."""
+    return public_result(_warm_snapshot(), "Couldn't load the local voice")
 
 
 def _warm_snapshot():
@@ -1652,7 +1657,7 @@ def _warm_local_voice_async():
         except Exception as e:
             with _WARM_LOCK:
                 _WARM.update(state="failed", finished=_time.time(),
-                             error=f"{type(e).__name__}: {str(e)[:160]}")
+                             error=exception_text(e, type(e).__name__ + ": %s"))
             _log.warning("voice warm failed: %s", e)
 
     threading.Thread(target=_run, name="voice-warm", daemon=True).start()
@@ -1675,16 +1680,16 @@ def voice_warm():
             return jsonify({"status": "ok", "state": "skipped",
                             "reason": f"{info.get('engine')} voice selected; "
                                       "nothing local to warm",
-                            **{k: v for k, v in _warm_snapshot().items()
+                            **{k: v for k, v in _public_warm().items()
                                if k not in ("state",)}})
         if info.get("models_ready") is False:
             return jsonify({"status": "ok", "state": "skipped",
                             "reason": "local voice models are not ready; the "
                                       "first session downloads them",
-                            **{k: v for k, v in _warm_snapshot().items()
+                            **{k: v for k, v in _public_warm().items()
                                if k not in ("state",)}})
         _warm_local_voice_async()
-    snap = _warm_snapshot()
+    snap = _public_warm()
     return jsonify({"status": "ok", **snap})
 
 
@@ -1836,7 +1841,7 @@ def voice_setup_status():
                 })
         except Exception as _e:
             steps.append({"id": "deps", "label": "Local voice deps",
-                          "status": "unavailable", "detail": str(_e)})
+                          "status": "unavailable", "detail": exception_text(_e)})
         steps.append({"id": "mic", "label": "Microphone",
                       "status": "unknown",
                       "detail": "Click the mic button to test — browser will prompt for permission."})
@@ -1852,8 +1857,11 @@ def voice_setup_status():
             _kstat, _kdetail = "ok", f"key from {_ki.get('source')}"
         elif _ki.get("key"):
             _kstat = "invalid"
+            # Google's own answer is shown only when it is not provider text
+            # (that is logged under an error id instead).
+            _why = public_result(_ki.get('detail'), "Google rejected the Gemini key")
             _kdetail = (f"Key from {_ki.get('source')} was rejected by Google "
-                        f"({_ki.get('detail')}). Paste a fresh key from "
+                        f"({_why}). Paste a fresh key from "
                         f"aistudio.google.com in Settings → Accounts & Keys → Google Gemini.")
         else:
             _kstat, _kdetail = "missing", "Set via Settings → Accounts & Keys → Google Gemini"

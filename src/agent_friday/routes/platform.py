@@ -21,7 +21,8 @@ from flask import Blueprint, jsonify, request
 from agent_friday.services import distributions, extension_security, hints, recipes, subagents
 from agent_friday.services.prompt_manager import SEGMENT_KEYS, PromptManager
 from agent_friday.services.provider_registry import get_provider_registry
-from agent_friday.routes._errors import UserFacingError, api_error, error_text, public_result
+from agent_friday.routes._errors import (UserFacingError, api_error, error_text,
+                                         exception_text, public_result)
 
 platform_bp = Blueprint("platform", __name__)
 
@@ -300,7 +301,7 @@ def api_provider_test(name):
                           models_seen=len(models or []),
                           detail=None if ok else "Ollama daemon not reachable")
         except Exception as e:
-            result["detail"] = str(e)[:200]
+            result["detail"] = exception_text(e)
         return jsonify(public_result(result, "Couldn't test the provider"))
 
     if ptype in ("local-voice", "nemo-local", "higgsfield", "kie"):
@@ -367,7 +368,7 @@ def api_provider_test(name):
     except Exception as e:
         result.update(status="down",
                       latency_ms=int((_t.time() - t0) * 1000),
-                      detail=f"{type(e).__name__}: {e}"[:200])
+                      detail=exception_text(e, type(e).__name__ + ": %s"))
 
     # A REAL ROUND TRIP, NOT A METADATA READ.
     #
@@ -676,7 +677,7 @@ def api_distros_save():
     try:
         path = distributions.save_distro(data)
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return api_error(e, "Couldn't save the distribution", 400, shape="bare")
     return jsonify({"ok": True, "path": path})
 
 
@@ -731,7 +732,7 @@ def api_health_full():
     try:
         out["agent_friday.server"] = {"uptime_seconds": int(_t.time() - getattr(core, "SERVER_START_TS", _t.time()))}
     except Exception as e:
-        out["agent_friday.server"] = {"error": str(e)}
+        out["agent_friday.server"] = {"error": exception_text(e)}
 
     settings = {}
     try:
@@ -744,7 +745,7 @@ def api_health_full():
         from agent_friday.services import provider_health
         out["providers"] = provider_health.check_all(deep=False)
     except Exception as e:
-        out["providers"] = {"error": str(e)}
+        out["providers"] = {"error": exception_text(e)}
 
     # Descriptor files that failed validation/parse this session — surfaced so
     # a typo'd ~/.friday/providers/*.json shows up here instead of vanishing.
@@ -759,13 +760,13 @@ def api_health_full():
         from agent_friday.services import capability_router
         out["capabilities"] = capability_router.route_table(settings)
     except Exception as e:
-        out["capabilities"] = {"error": str(e)}
+        out["capabilities"] = {"error": exception_text(e)}
 
     try:
         from agent_friday.services import demo_mode
         out["demo"] = demo_mode.demo_status(settings)
     except Exception as e:
-        out["demo"] = {"error": str(e)}
+        out["demo"] = {"error": exception_text(e)}
 
     try:
         from agent_friday.routing.ollama_manager import get_manager
@@ -801,15 +802,15 @@ def api_health_full():
             from agent_friday.routes.intelligence import build_starter_set
             out["hardware"]["starter_set"] = build_starter_set(hwp.get())
         except Exception as e:
-            out["hardware"]["starter_set"] = {"error": str(e)}
+            out["hardware"]["starter_set"] = {"error": exception_text(e)}
     except Exception as e:
-        out["hardware"] = {"error": str(e)}
+        out["hardware"] = {"error": exception_text(e)}
 
     try:
         from agent_friday.services import credential_store
         out["vault"] = {"credential_protection": credential_store.protection_method()}
     except Exception as e:
-        out["vault"] = {"error": str(e)}
+        out["vault"] = {"error": exception_text(e)}
 
     # Local voice (Tier-1) readiness: deps installed + models downloaded + the
     # resolved engine the mic button will use. Sourced from agent_friday.services.local_voice.
@@ -823,7 +824,7 @@ def api_health_full():
             pass
         out["local_voice"] = lv
     except Exception as e:
-        out["local_voice"] = {"error": str(e)}
+        out["local_voice"] = {"error": exception_text(e)}
 
     out["dependencies"] = _optional_dep_status()
 

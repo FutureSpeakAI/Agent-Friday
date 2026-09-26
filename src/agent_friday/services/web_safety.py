@@ -238,8 +238,8 @@ def check_peer_endpoint(url: str) -> tuple[bool, str]:
         return False, "no endpoint was provided"
     try:
         p = urlparse(raw)
-    except Exception as e:
-        return False, f"the endpoint could not be parsed ({e})"
+    except Exception:
+        return False, "the endpoint could not be parsed"
     if p.scheme not in ("http", "https"):
         return False, (f"a peer endpoint must be http or https "
                        f"(got {p.scheme or 'no scheme'!r})")

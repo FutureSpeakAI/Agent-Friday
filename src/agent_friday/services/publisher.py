@@ -66,6 +66,7 @@ from typing import Any, Dict, List, Optional
 
 from agent_friday.services import content_pipeline as store
 from agent_friday.services import platforms as platform_registry
+from agent_friday.user_errors import exception_text
 
 _log = logging.getLogger("friday.publisher")
 
@@ -309,7 +310,7 @@ def kick() -> Dict[str, Any]:
                          daemon=True).start()
         return {"kicked": True, "via": "thread"}
     except Exception as e:
-        return {"kicked": False, "reason": str(e)}
+        return {"kicked": False, "reason": exception_text(e)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

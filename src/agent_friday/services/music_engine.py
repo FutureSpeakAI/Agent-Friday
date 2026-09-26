@@ -47,7 +47,7 @@ from agent_friday.services.creative_engine import (
     _orb_start, _orb_update, _orb_fail, _defer, _safe_remove,
     _save_bytes, _file_record, _write_metadata, _notify, _timestamp,
 )
-from agent_friday.user_errors import ExceptionText
+from agent_friday.user_errors import ExceptionText, keep_mark
 
 _log = logging.getLogger("friday.music_engine")
 
@@ -568,9 +568,9 @@ def _demo_music(full_prompt, model, api_model, mode, lyrics,
         _notify(fname)
         return {"status": "demo", "kind": "music", "files": [rec],
                 "model": model, "api_model": api_model, "prompt": full_prompt,
-                "mode": mode, "message": (
+                "mode": mode, "message": keep_mark([why], (
                     f"Cloud music is unavailable ({why}). Wrote a demo preview "
-                    f"describing the track instead.")}
+                    f"describing the track instead."))}
     except Exception as e:
         _orb_fail(orb)
         return {"status": "unavailable",

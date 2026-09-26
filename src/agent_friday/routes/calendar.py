@@ -326,6 +326,6 @@ def calendar_enrich():
         result = _enrich_calendar_event(event_id, research)
         return jsonify({"status": "ok", **result})
     except ValueError as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
+        return api_error(e, "Couldn't enrich the calendar event", 400)
     except Exception as e:
         return api_error(e, "Couldn't enrich the calendar")

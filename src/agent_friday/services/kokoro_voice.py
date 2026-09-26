@@ -51,6 +51,7 @@ import threading
 import time
 
 from agent_friday.services.local_voice import PLAYBACK_RATE, _module_installed
+from agent_friday.user_errors import ExceptionText
 
 log = logging.getLogger("friday.kokoro_voice")
 
@@ -221,7 +222,7 @@ def kokoro_import_status(refresh: bool = False) -> dict:
             res = {"ok": True, "error": "", "missing": ""}
         except BaseException as e:  # noqa: BLE001 - any failure means unusable
             res = {"ok": False,
-                   "error": "%s: %s" % (type(e).__name__, str(e)[:160]),
+                   "error": ExceptionText("%s: %s" % (type(e).__name__, str(e)[:160])),
                    "missing": getattr(e, "name", "") or ""}
             log.warning("kokoro import failed: %s (missing=%s)",
                         res["error"], res["missing"] or "?")
@@ -243,7 +244,7 @@ def kokoro_gpu_status() -> dict:
         from agent_friday.services.nemo_voice import gpu_status
         g = dict(gpu_status())
     except Exception as e:
-        return {"cuda": False, "detail": f"GPU probe failed: {str(e)[:100]}",
+        return {"cuda": False, "detail": ExceptionText(f"GPU probe failed: {str(e)[:100]}"),
                 "sufficient_for_kokoro": False}
     # Kokoro's bar is far lower than NeMo ASR's, so `sufficient` (which is
     # keyed to MIN_VRAM_GB = 4.0) is the wrong question. Ask Kokoro's own.
@@ -343,7 +344,7 @@ def kokoro_health() -> dict:
         }
     except Exception as e:
         return {"engine": "local-kokoro", "status": "error",
-                "detail": str(e)[:160], "available": False, "gpu_ready": False}
+                "detail": ExceptionText(str(e)[:160]), "available": False, "gpu_ready": False}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -395,7 +396,7 @@ def ensure_espeak_fallback() -> dict:
             pass
         out["wired"] = bool(getattr(EspeakWrapper, "_ESPEAK_LIBRARY", None))
     except BaseException as e:  # noqa: BLE001
-        out["detail"] = "%s: %s" % (type(e).__name__, str(e)[:120])
+        out["detail"] = ExceptionText("%s: %s" % (type(e).__name__, str(e)[:120]))
     return out
 
 
@@ -433,7 +434,7 @@ def attach_espeak_fallback(pipeline) -> dict:
         out["repaired"] = True
         log.info("kokoro g2p had no fallback; attached EspeakFallback directly")
     except BaseException as e:  # noqa: BLE001
-        out["detail"] = "%s: %s" % (type(e).__name__, str(e)[:140])
+        out["detail"] = ExceptionText("%s: %s" % (type(e).__name__, str(e)[:140]))
         log.warning("could not attach espeak fallback: %s", out["detail"])
     return out
 

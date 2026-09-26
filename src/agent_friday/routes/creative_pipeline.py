@@ -32,7 +32,7 @@ def pipeline_templates():
 def pipeline_register():
     data = request.get_json(silent=True) or {}
     try:
-        return jsonify(cp.register_pipeline(data))
+        return jsonify(public_result(cp.register_pipeline(data), "Couldn't save the pipeline"))
     except Exception as e:
         return api_error(e, "Couldn't save the pipeline")
 

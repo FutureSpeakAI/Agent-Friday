@@ -58,6 +58,8 @@ import re
 import threading
 from typing import Optional
 
+from agent_friday.user_errors import ExceptionText
+
 _log = logging.getLogger("friday.privacy.classifier")
 
 #: Below this a model is a toy for adjudication. Mirrors local_seats._MIN_USEFUL_GB:
@@ -285,7 +287,7 @@ def _load_embedder():
             _EMBEDDER, _EXEMPLAR_EMBEDS, _EMBEDDER_ERROR = model, embeds, ""
             _log.info("sensitivity classifier Layer 3 (embedding similarity) ready")
         except Exception as exc:
-            _EMBEDDER_ERROR = "%s: %s" % (type(exc).__name__, str(exc)[:200])
+            _EMBEDDER_ERROR = ExceptionText("%s: %s" % (type(exc).__name__, str(exc)[:200]))
             _log.warning(
                 "sensitivity classifier Layer 3 (embedding similarity) UNAVAILABLE: "
                 "%s - %s", _EMBEDDER_ERROR,

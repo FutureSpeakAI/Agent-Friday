@@ -173,5 +173,8 @@ def test_chat_stream_reports_a_failure_instead_of_hanging(client, monkeypatch):
     monkeypatch.setattr(chat_routes, "chat", boom)
     res = client.post("/api/chat/stream", json={"message": "hi"})
     body = res.get_data(as_text=True)
-    assert "provider exploded" in body
+    # The failure is reported as an event, with an error id; the exception's
+    # own text stays in the local log.
+    assert '"error": "The chat turn failed (error ' in body
+    assert "provider exploded" not in body
     assert res.status_code == 200          # the stream itself was fine

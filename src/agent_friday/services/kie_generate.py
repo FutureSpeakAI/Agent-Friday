@@ -46,6 +46,8 @@ import threading
 import time
 from collections import deque
 
+from agent_friday.user_errors import ExceptionText, keep_mark
+
 _log = logging.getLogger("friday.kie_generate")
 
 PROVIDER = "kie"
@@ -154,7 +156,7 @@ def check_credentials(name: str = PROVIDER) -> dict:
         resp = requests.get(CREDIT_URL, headers=_headers(), timeout=15)
     except Exception as e:
         return {"provider": name, "status": "down",
-                "detail": f"{type(e).__name__}: {e}"[:160],
+                "detail": ExceptionText(f"{type(e).__name__}: {e}"[:160]),
                 "config": "ok", "proved_inference": False}
     if resp.status_code == 401:
         # docs.kie.ai's documented shape for this case:
@@ -322,14 +324,14 @@ def generate(kind: str, prompt: str, *, model: str, aspect_ratio=None,
     except Exception as e:
         return {"status": "unavailable", "provider": PROVIDER, "model": model,
                 "prompt": prompt,
-                "reason": f"kie.ai submit failed: {e}"[:300]}
+                "reason": ExceptionText(f"kie.ai submit failed: {e}"[:300])}
 
     try:
         record = _poll(task_id)
     except Exception as e:
         return {"status": "error", "provider": PROVIDER, "model": model,
                 "prompt": prompt, "task_id": task_id,
-                "reason": f"kie.ai poll failed: {e}"[:300]}
+                "reason": ExceptionText(f"kie.ai poll failed: {e}"[:300])}
 
     state = str(record.get("state") or "").lower()
     credits = record.get("creditsConsumed")
@@ -369,12 +371,13 @@ def generate(kind: str, prompt: str, *, model: str, aspect_ratio=None,
         try:
             res = creative_store.download_output(url, job=job, dest_dir=dest_dir)
         except Exception as e:
-            failures.append(f"{url}: {e}")
+            failures.append(ExceptionText(f"{url}: {e}"))
             continue
         if res.get("ok"):
             files.append({"path": res.get("path"), "url": url})
         else:
-            failures.append(f"{url}: {res.get('error') or 'download failed'}")
+            failures.append(keep_mark([res.get('error')],
+                                       f"{url}: {res.get('error') or 'download failed'}"))
 
     if not files:
         return {"status": "error", "provider": PROVIDER, "model": model,
@@ -383,7 +386,7 @@ def generate(kind: str, prompt: str, *, model: str, aspect_ratio=None,
                 "reason": "kie.ai finished but the output could not be "
                           "saved locally. Files are on kie.ai for up to 14 "
                           "days: " + "; ".join(urls[:3]),
-                "detail": "; ".join(failures)[:300]}
+                "detail": keep_mark(failures, "; ".join(failures)[:300])}
 
     out = {"status": "ok", "provider": PROVIDER, "files": files,
            "model": model, "api_model": model, "prompt": prompt,

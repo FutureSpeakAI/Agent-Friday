@@ -20,7 +20,7 @@ import time
 
 from flask import Blueprint, jsonify
 from agent_friday.paths import friday_home
-from agent_friday.routes._errors import error_text, public_result
+from agent_friday.routes._errors import error_text, exception_text, public_result
 
 intelligence_bp = Blueprint("intelligence", __name__)
 
@@ -491,7 +491,7 @@ def _vault_policy_status():
         return vault_policy.status()
     except Exception as exc:
         return {"gated": None, "degraded": None,
-                "summary": "Vault posture could not be resolved: %s" % exc}
+                "summary": exception_text(exc, "Vault posture could not be resolved: %s")}
 
 
 _MODE_SCOPE_NOTE = (

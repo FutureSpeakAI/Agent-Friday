@@ -588,7 +588,8 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
                 return text
             errors.append(f"{_leg}: empty response")
         except Exception as e:
-            errors.append(f"{_leg}: {e}")
+            from agent_friday.user_errors import ExceptionText
+            errors.append(ExceptionText(f"{_leg}: {e}"))
         try:
             from agent_friday.services import attribution
             attribution.note_fallback(errors[-1])

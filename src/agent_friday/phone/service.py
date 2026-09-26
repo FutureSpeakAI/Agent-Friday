@@ -243,9 +243,12 @@ def _send_sms_now(to: str, body: str, *, detail: str) -> dict:
         res = c.send_sms(to=to, from_=cfg["phone_number"], body=body,
                          status_callback=_status_url("/twilio/sms-status"))
     except Exception as e:
+        # The log row is shown in the phone panel: it carries the error id,
+        # and the provider's own text stays in the local log.
+        error_id = log_failure(e, "Twilio send failed")
         spool.ledger_add(channel="sms", direction="out", party=to, status="failed",
-                         detail="%s — %s" % (detail, str(e)[:150]))
-        raise PhoneRefused("Twilio did not take the text (error %s)." % log_failure(e, "Twilio send failed"),
+                         detail="%s — not sent (error %s)" % (detail, error_id))
+        raise PhoneRefused("Twilio did not take the text (error %s)." % error_id,
                            detail="Twilio did not take the text: %s" % str(e)[:200])
     spool.ledger_add(channel="sms", direction="out", party=to, sid=res.get("sid") or "",
                      status=res.get("status") or "queued", detail=detail,
@@ -1006,7 +1009,8 @@ def apply_enabled_state() -> dict:
         try:
             return ingress.start(int(cfg["ingress_port"]))
         except OSError as e:
-            return {"running": False, "error": "port %s: %s" % (cfg["ingress_port"], e)}
+            return {"running": False,
+                    "error": ExceptionText("port %s: %s" % (cfg["ingress_port"], e))}
     ingress.stop()
     return {"running": False}
 

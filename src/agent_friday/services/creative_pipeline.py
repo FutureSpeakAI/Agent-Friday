@@ -37,7 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.paths import contained, safe_name
-from agent_friday.user_errors import ExceptionText, exception_text
+from agent_friday.user_errors import ExceptionText, exception_text, result_text
 
 PIPELINES_DIR = FRIDAY_DIR / "pipelines"
 RUNS_DIR = PIPELINES_DIR / "runs"
@@ -278,7 +278,7 @@ def register_pipeline(definition: Dict[str, Any]) -> Dict[str, Any]:
     try:
         path = _def_path(pid)
     except ValueError as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": result_text(e)}
     definition["id"] = pid
     definition.setdefault("name", pid)
     _write_json(path, definition)

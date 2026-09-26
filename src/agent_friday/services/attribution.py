@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import threading
 
+from agent_friday.user_errors import clip
+
 _tls = threading.local()
 
 
@@ -31,7 +33,7 @@ def note_fallback(step: str):
     if chain is None:
         chain = []
         _tls.chain = chain
-    chain.append(str(step)[:300])
+    chain.append(clip(step, 300))
 
 
 def record_generation(model, provider=None, seat=None):

@@ -98,7 +98,7 @@ from agent_friday.services.wiki_engine import (
     wiki_read_text,
     wiki_write_text,
 )  # noqa: E501
-from agent_friday.user_errors import ExceptionText, UserFacingValueError
+from agent_friday.user_errors import ExceptionText, UserFacingValueError, clip
 
 
 
@@ -421,7 +421,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
                 return text, (trace or [])
             errors.append(f"{_leg}: empty response")
         except Exception as e:
-            errors.append(f"{_leg}: {e}")
+            errors.append(ExceptionText(f"{_leg}: {e}"))
         # Task journal (TV4, point=ladder_fallback): a leg failed; say which
         # and what comes next, from the ladder already in hand.
         try:
@@ -8481,7 +8481,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     except Exception as e:
         traceback.print_exc()
         _receipts.record(name, ok=False, detail=str(e))
-        return f"Tool error ({name}): {e}"
+        return ExceptionText(f"Tool error ({name}): {e}")
 
     # Receipt written only after the handler actually returned. This is the
     # only place one is created, so a receipt cannot exist for a call that did
@@ -10501,7 +10501,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     tool_results.append(img_block)
                     continue
 
-                tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:2000]})
+                tool_trace.append({"name": tu.name, "input": tu.input, "result": clip(result, 2000)})
                 _bmon_log(tu.name, tu.input, result)
                 tool_results.append({
                     "type": "tool_result",
@@ -11159,7 +11159,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                                 "cannot see images, so the document is NOT "
                                 "visually verified \u2014 say so rather than "
                                 "claiming it looks right]")
-            tool_trace.append({"name": tname, "input": targs, "result": result[:2000]})
+            tool_trace.append({"name": tname, "input": targs, "result": clip(result, 2000)})
             convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
 
     # Reached only when a tool loop really did spend its whole budget: a

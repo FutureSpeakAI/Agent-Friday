@@ -42,7 +42,7 @@ import wave
 from pathlib import Path
 
 from agent_friday.paths import friday_home, voice_assets_dir
-from agent_friday.user_errors import ExceptionText
+from agent_friday.user_errors import ExceptionText, keep_mark
 
 # Local voice had no logger at all — its entire diagnostic output was two bare
 # print() calls landing in an unrotated server_stderr.log the repo elsewhere
@@ -825,8 +825,9 @@ class LocalVoiceEngine:
             detail = h.get("detail") or h.get("status") or "GPU tier not ready"
         except Exception:
             detail = "GPU tier not ready"
-        return (f"GPU voice unavailable ({detail}) — using local CPU voice. "
-                f"See Settings → Voice to set up the GPU tier.")
+        return keep_mark([detail],
+                         f"GPU voice unavailable ({detail}) — using local CPU voice. "
+                         f"See Settings → Voice to set up the GPU tier.")
 
     def _swap_tier(self, tier):
         """Drop current backends and arm the engine for ``tier`` (next load builds it)."""

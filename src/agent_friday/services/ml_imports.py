@@ -32,6 +32,8 @@ import sys
 import threading
 import time
 
+from agent_friday.user_errors import ExceptionText
+
 _log = logging.getLogger("friday.ml_imports")
 
 #: Held for the whole of any ML-stack import. Reentrant: an importer may call
@@ -121,7 +123,7 @@ def preload() -> dict:
             if attr:
                 guarded(getattr, m, attr)
         except Exception as e:  # noqa: BLE001
-            err = "%s.%s: %s: %s" % (mod, attr or "", type(e).__name__, str(e)[:160])
+            err = ExceptionText("%s.%s: %s: %s" % (mod, attr or "", type(e).__name__, str(e)[:160]))
             _log.warning("ML preload: %s", err)
             break
     _state.update(preloaded=not err, error=err, at=time.time(),

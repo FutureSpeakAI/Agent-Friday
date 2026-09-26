@@ -34,7 +34,8 @@ from __future__ import annotations
 import os
 import time
 from typing import Any
-from agent_friday.user_errors import ExceptionText
+from agent_friday.user_errors import ExceptionText, clip
+from agent_friday.user_errors import keep_mark as _keep_mark
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -120,14 +121,6 @@ _HEALTH: dict = {"state": UNVERIFIED, "proven_on": None, "detail": "",
                  "checked_at": 0.0}
 _FC_HEALTH: dict = {"state": UNVERIFIED, "proven_on": None, "detail": "",
                     "checked_at": 0.0}
-
-
-def _keep_mark(parts, text: str) -> str:
-    """`text`, still marked as exception text if any of `parts` was, so the
-    HTTP boundary can keep it out of a response (the model reads it as is)."""
-    if any(isinstance(p, ExceptionText) for p in parts):
-        return ExceptionText(text)
-    return text
 
 
 def health_state() -> dict:
@@ -646,7 +639,8 @@ def search(query: str, count: int = 10) -> dict:
     except Exception:
         note = FIRECRAWL_UNCONFIGURED_NOTE if not _firecrawl_ready() else ""
     if note:
-        last["detail"] = (last["detail"] + " " + note).strip()
+        last["detail"] = _keep_mark([last["detail"]],
+                                    (last["detail"] + " " + note).strip())
     if not _firecrawl_ready():
         last["firecrawl"] = {"configured": False, "how": FIRECRAWL_KEY_HOWTO}
     if not brave_key():
@@ -687,14 +681,14 @@ def _note_backend_health(name: str, out: dict) -> None:
                            detail="a live search returned results")
         elif st == SearchStatus.BACKEND_BROKEN:
             _record_health(PRESENT_FAILING, proven_on=None,
-                           detail=str(out.get("detail"))[:160])
+                           detail=clip(out.get("detail"), 160))
     elif name == "firecrawl":
         if st == SearchStatus.OK:
             _record_fc_health(WORKING, proven_on="/v1/search",
                               detail="a live search returned results")
         elif st == SearchStatus.BACKEND_BROKEN:
             _record_fc_health(PRESENT_FAILING, proven_on=None,
-                              detail=str(out.get("detail"))[:160])
+                              detail=clip(out.get("detail"), 160))
 
 
 def canary(force: bool = False) -> dict:

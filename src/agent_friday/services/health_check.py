@@ -90,6 +90,8 @@ import os
 import time as _time
 from typing import Optional, Tuple
 
+from agent_friday.user_errors import ExceptionText
+
 #: Bumped whenever a key is added, removed, or changes meaning. A consumer
 #: (greenboot included) should treat an unrecognized higher version as
 #: "unknown shape, do not trust field absence by default" rather than
@@ -119,7 +121,7 @@ def check_config() -> Tuple[bool, str]:
     try:
         import agent_friday.core as core
     except Exception as e:
-        return False, f"agent_friday.core could not be imported: {type(e).__name__}: {e}"
+        return False, ExceptionText(f"agent_friday.core could not be imported: {type(e).__name__}: {e}")
     path = core.SETTINGS_FILE
     if not path.exists():
         return True, "settings.json not present yet — running on factory defaults (fresh install)"
@@ -135,7 +137,7 @@ def check_config() -> Tuple[bool, str]:
                            f"(got {type(data).__name__})")
         return True, f"settings.json parses ({len(data)} keys)"
     except Exception as e:
-        return False, f"settings.json exists but does not parse: {type(e).__name__}: {e}"
+        return False, ExceptionText(f"settings.json exists but does not parse: {type(e).__name__}: {e}")
 
 
 def check_credential_store() -> Tuple[bool, str]:
@@ -152,7 +154,7 @@ def check_credential_store() -> Tuple[bool, str]:
         import agent_friday.core as core
         from agent_friday.services import credential_store as cs
     except Exception as e:
-        return False, f"credential_store could not be imported: {type(e).__name__}: {e}"
+        return False, ExceptionText(f"credential_store could not be imported: {type(e).__name__}: {e}")
     canary_path = core.FRIDAY_DIR / "security" / ".health_check_canary"
     canary_value = b"friday-health-check-canary"
     try:
@@ -162,7 +164,7 @@ def check_credential_store() -> Tuple[bool, str]:
             return False, "credential store round trip returned different bytes than were written"
         return True, f"write+read round trip OK (protection: {method})"
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        return False, ExceptionText(f"{type(e).__name__}: {e}")
     finally:
         try:
             canary_path.unlink(missing_ok=True)
@@ -175,7 +177,7 @@ def check_memory_db() -> Tuple[bool, str]:
     try:
         from agent_friday.services import memory_dreaming as md
     except Exception as e:
-        return False, f"memory_dreaming could not be imported: {type(e).__name__}: {e}"
+        return False, ExceptionText(f"memory_dreaming could not be imported: {type(e).__name__}: {e}")
     try:
         conn = md._connect()
         try:
@@ -184,7 +186,7 @@ def check_memory_db() -> Tuple[bool, str]:
             conn.close()
         return True, f"{md.DB_PATH.name} opens and answers a query"
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        return False, ExceptionText(f"{type(e).__name__}: {e}")
 
 
 def check_http_serving(served_over_http: bool) -> Tuple[bool, str]:
@@ -221,7 +223,7 @@ def _probe_http(url: str, timeout: float = 3.0) -> Tuple[bool, str]:
                 return True, f"GET {url} -> HTTP {r.status}"
             return False, f"GET {url} -> HTTP {r.status}"
     except Exception as e:
-        return False, f"GET {url} failed: {type(e).__name__}: {e}"
+        return False, ExceptionText(f"GET {url} failed: {type(e).__name__}: {e}")
 
 
 def check_cloud_providers() -> Tuple[bool, str]:
@@ -229,7 +231,7 @@ def check_cloud_providers() -> Tuple[bool, str]:
     try:
         import agent_friday.core as core
     except Exception as e:
-        return False, f"could not check: {type(e).__name__}: {e}"
+        return False, ExceptionText(f"could not check: {type(e).__name__}: {e}")
     try:
         from agent_friday.services.one_key import openrouter_ready
         _openrouter = openrouter_ready()
@@ -249,7 +251,7 @@ def check_model_seats() -> Tuple[bool, str]:
         import agent_friday.core as core
         settings = core._load_settings()
     except Exception as e:
-        return False, f"could not check: {type(e).__name__}: {e}"
+        return False, ExceptionText(f"could not check: {type(e).__name__}: {e}")
     orch = settings.get("orchestrator_model")
     sub = settings.get("subagent_model")
     if orch or sub:
@@ -263,7 +265,7 @@ def check_voice() -> Tuple[bool, str]:
         import agent_friday.core as core
         settings = core._load_settings()
     except Exception as e:
-        return False, f"could not check: {type(e).__name__}: {e}"
+        return False, ExceptionText(f"could not check: {type(e).__name__}: {e}")
     voice = settings.get("voice_model") or settings.get("tts_voice")
     if voice:
         return True, f"voice={voice}"

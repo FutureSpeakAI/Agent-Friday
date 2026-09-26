@@ -91,7 +91,8 @@ chat_bp = Blueprint('chat', __name__)
 # logger writes to ~/.friday/friday.log, so log tracebacks there — stderr from
 # traceback.print_exc() is simply lost in production.
 import logging as _logging
-from agent_friday.routes._errors import api_error, error_text, log_failure, public_result
+from agent_friday.routes._errors import (api_error, error_text, exception_text,
+                                         log_failure, public_result)
 _LOG = _logging.getLogger("friday.chat")
 
 # security-boundary.md §19 row 11: the vision prompt sent alongside a
@@ -677,7 +678,7 @@ def chat_stream():
                               if hasattr(body, "get_json") else None)
         except Exception as e:                     # never strand the client
             traceback.print_exc()
-            box["error"] = str(e)
+            box["error"] = error_text(e, "The chat turn failed")
         finally:
             try:
                 _mr.DELTA_SINK.reset(token)
@@ -937,12 +938,15 @@ def chat():
                                         settings=settings_early)
                 except Exception as _lve:
                     _res = {"ok": False, "text": None,
-                            "reason": f"local vision raised {_lve}"}
+                            "reason": exception_text(_lve, "local vision raised %s")}
                 if _res.get("ok"):
                     vision_description = _res["text"]
                     _record('local:' + str(_res.get('model')), 'allow',
                             'described on-device; nothing left the machine')
                 elif _routing_mode == 'local_only':
+                    # What the owner is shown; the model and the egress
+                    # ledger keep the local seat's own words.
+                    _shown_why = public_result(_res.get("reason"), "The local seat failed")
                     # The promise is kept by REFUSING, and by saying so. This
                     # is the "I say so rather than using the cloud" half of the
                     # mode's own help text, which had no implementation.
@@ -957,7 +961,7 @@ def chat():
                         "kind": "vision_withheld",
                         "text": "🔒 I did not describe that image. Local only "
                                 "is on and the local seat could not do it — %s."
-                                % _res.get("reason"),
+                                % _shown_why,
                         "ts": _time.time(),
                     })
                     screenshot_b64 = None      # nothing may send it later
@@ -1716,7 +1720,7 @@ def chat():
                     _route_info.get('model'), str(_ole)[:800])
                 _fell_back_from_local = {
                     "model": _route_info.get('model'),
-                    "why": str(_ole)[:200],
+                    "why": exception_text(_ole),
                 }
                 _routed_local = False
                 _provider = 'cloud'
@@ -2004,7 +2008,8 @@ def chat():
         try:
             if _attr is not None:
                 _gen = _attr.last_generation()
-                _fallback_chain = _attr.fallback_chain()
+                _fallback_chain = public_result(_attr.fallback_chain(),
+                                                "A model in the fallback chain failed")
         except Exception:
             pass
         if _gen and _gen.get('model'):
@@ -2563,7 +2568,8 @@ def chat_send():
         try:
             if _attr2 is not None:
                 _gen = _attr2.last_generation()
-                _fallback_chain = _attr2.fallback_chain()
+                _fallback_chain = public_result(_attr2.fallback_chain(),
+                                                "A model in the fallback chain failed")
                 if _gen and _gen.get('model'):
                     _seat_model = _gen['model']
                     _seat_class = _gen.get('seat') or _seat_class

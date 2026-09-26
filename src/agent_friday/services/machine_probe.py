@@ -49,6 +49,7 @@ import time
 from typing import Any, Callable
 
 from agent_friday.services import swr_cache
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.machine_probe")
 
@@ -226,7 +227,7 @@ def probe_all(probes: dict[str, Callable[[], Any]], *,
                              "seconds": round(time.time() - started[name], 3)}
             except Exception as e:  # noqa: BLE001 - a failure is a verdict
                 out[name] = {"ok": False, "value": None, "timed_out": False,
-                             "error": "%s: %s" % (type(e).__name__, str(e)[:120]),
+                             "error": ExceptionText("%s: %s" % (type(e).__name__, str(e)[:120])),
                              "seconds": round(time.time() - started[name], 3)}
     finally:
         # Do not join: a probe blocked on a refused connection would otherwise

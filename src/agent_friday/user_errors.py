@@ -132,6 +132,32 @@ def exception_text(exc: BaseException, template: str = "%s") -> ExceptionText:
     return ExceptionText(template % (str(exc),))
 
 
+def result_text(exc: BaseException) -> str:
+    """The text a service result carries for `exc`: the message of a
+    UserFacingError as written, any other exception's text marked with
+    `exception_text` (the model reads it; the HTTP boundary swaps it)."""
+    if isinstance(exc, UserFacingError):
+        return exc.user_message
+    return exception_text(exc)
+
+
+def keep_mark(parts, text: str) -> str:
+    """`text`, marked as exception text when any of `parts` is.
+
+    Formatting, slicing or `str()` of a marked value returns a plain string,
+    so a service that builds a new sentence from one (or shortens it) passes
+    the value it started from here to carry the mark over."""
+    if any(isinstance(p, ExceptionText) for p in parts):
+        return ExceptionText(text)
+    return text
+
+
+def clip(value, limit: int) -> str:
+    """`str(value)[:limit]`, keeping the exception-text mark."""
+    text = value if isinstance(value, str) else str(value)
+    return keep_mark((value,), text[:limit])
+
+
 def log_text(what: str, text: str) -> str:
     """Log an error that arrives as text (no traceback left), under a new id."""
     error_id = new_error_id()

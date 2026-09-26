@@ -36,7 +36,7 @@ from agent_friday.core import (
 from agent_friday.services.model_router import (
     _get_context_compressor,
 )  # noqa: E501
-from agent_friday.routes._errors import api_error, public_result
+from agent_friday.routes._errors import api_error, exception_text, public_result
 
 context_bp = Blueprint('context', __name__)
 
@@ -51,12 +51,12 @@ def context_compression_stats():
     try:
         stats = _get_context_compressor(cfg).get_stats()
     except Exception as e:
-        stats = {"available": False, "error": str(e)}
+        stats = {"available": False, "error": exception_text(e)}
     try:
         from agent_friday.services import compaction as _compaction
         compaction_stats = _compaction.get_stats()
     except Exception as e:
-        compaction_stats = {"error": str(e)}
+        compaction_stats = {"error": exception_text(e)}
     return jsonify(public_result({"status": "ok", "compression": stats,
                     "compaction": compaction_stats}, "Couldn't load the compression stats"))
 

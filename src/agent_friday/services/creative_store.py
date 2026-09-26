@@ -41,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from agent_friday.core import CREATIONS_DIR, FRIDAY_DIR
+from agent_friday.user_errors import exception_text
 
 META_DIR = FRIDAY_DIR / "creations_meta"
 RETENTION_DAYS = 7          # vendor floor; treat as the deadline, not a promise
@@ -152,7 +153,8 @@ def download_output(url, *, job, dest_dir=None, attempt=1):
             data = resp.read()
             declared = resp.headers.get("Content-Length")
     except Exception as e:
-        return _failure(url, job, filename, attempt, "download failed: %s" % e)
+        return _failure(url, job, filename, attempt,
+                        exception_text(e, "download failed: %s"))
 
     if not data:
         return _failure(url, job, filename, attempt, "server returned zero bytes")

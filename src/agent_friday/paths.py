@@ -34,6 +34,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from agent_friday.user_errors import UserFacingValueError
+
 
 def friday_home() -> Path:
     """Root directory for all Friday state.
@@ -165,7 +167,8 @@ def runtime_dir() -> Path:
 def contained(root, rel, *, allow_root: bool = False) -> Path:
     """Join a caller-supplied name or relative path under a Friday-owned root.
 
-    Returns the fully resolved path, or raises ``ValueError`` when the result
+    Returns the fully resolved path, or raises ``ValueError`` (a
+    ``UserFacingValueError``, whose message a route may show) when the result
     is not strictly inside ``root``. Every request-, model- or tool-supplied
     name that is joined under a fixed directory (the wiki, meetings,
     conversations, creations, uploads and the like) goes through here before
@@ -181,16 +184,16 @@ def contained(root, rel, *, allow_root: bool = False) -> Path:
     """
     rel_s = os.fspath(rel) if rel is not None else ""
     if "\x00" in rel_s:
-        raise ValueError("path contains a NUL byte")
+        raise UserFacingValueError("path contains a NUL byte")
     base = os.path.realpath(os.fspath(root))
     full = os.path.realpath(os.path.join(base, rel_s))
     if full == base:
         if allow_root:
             return Path(base)
-        raise ValueError("path resolves to the root itself")
+        raise UserFacingValueError("path resolves to the root itself")
     prefix = base if base.endswith(os.sep) else base + os.sep
     if not full.startswith(prefix):
-        raise ValueError("path escapes its root")
+        raise UserFacingValueError("path escapes its root")
     return Path(full)
 
 
@@ -205,7 +208,7 @@ def safe_name(name, *, what: str = "name") -> str:
     s = "" if name is None else str(name)
     if (not s or s in (".", "..") or "\x00" in s or "/" in s or "\\" in s
             or ":" in s):
-        raise ValueError("invalid %s" % what)
+        raise UserFacingValueError("invalid %s" % what)
     return s
 
 

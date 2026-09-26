@@ -44,6 +44,7 @@ import urllib.request
 from pathlib import Path
 
 from agent_friday.core import CREATIONS_DIR, runtime_dir
+from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.local_image")
 
@@ -1167,7 +1168,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
     except Exception as e:
         _outcome["status"] = "failed"
         return {"status": "error", "provider": PROVIDER,
-                "reason": "%s: %s" % (type(e).__name__, e),
+                "reason": ExceptionText("%s: %s" % (type(e).__name__, e)),
                 "elapsed_s": round(time.time() - t0, 1)}
     finally:
         if _outcome["status"] == "cancelled":
