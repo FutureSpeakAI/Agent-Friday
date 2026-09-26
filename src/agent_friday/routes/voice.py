@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
+from agent_friday.services import voice_live_channel as _voice_live_channel
 from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
@@ -448,6 +449,16 @@ async def _run_calls_concurrently(calls, one):
 #: told plainly that nothing came back; the worker thread finishes on its own
 #: (a deep-dive still lands in its cache for the next ask).
 VOICE_TOOL_HARD_LIMIT_S = 20.0
+
+#: How a result that arrives after its turn is introduced to the live model
+#: (services/voice_live_channel). The text after it has passed the egress gate.
+_INJECT_LEADS = {
+    "task_result": ("[Not from the user: the work you handed to Friday has finished. "
+                    "Tell the user the real outcome now, briefly and plainly:]\n"),
+    "context": ("[Not from the user: he approved sharing this context from his "
+                "local model. Use it to continue what he asked for:]\n"),
+    "result": "[Not from the user: a result that finished in the background:]\n",
+}
 #: A result slower than this is "late": the conversation has likely moved on.
 VOICE_TOOL_STALE_S = 15.0
 
@@ -657,16 +668,18 @@ def _voice_tool_surface_note():
         " tools, and nothing else:\n"
         + "".join("  \u2022 " + n + "\n" for n in names) +
         "\n"
-        "Anything named in that section but NOT in the list above - running "
-        "shell commands, browsing a URL's full text, drafting email, editing "
-        "the wiki, learning skills, the trust graph, briefings, the clipboard, "
-        "or mouse and keyboard control - is NOT callable in voice.\n\n"
-        "THE RULE: never announce an action you cannot actually take. If the user "
-        "asks for something outside the list above, say so in one plain sentence "
-        "(\"I can't draft email from voice mode - want me to start that as a "
-        "background task instead?\") and offer the nearest thing you CAN do. "
-        "Saying 'pulling that up now' or 'checking my records' when no tool ran "
-        "is a fabrication, exactly as bad as inventing the result.\n\n"
+        "EVERYTHING ELSE CHAT CAN DO IS REACHABLE: anything named in that "
+        "section but not in the list above (drafting email, reading a page's "
+        "full text, editing the wiki, research, workflows, anything) is one call "
+        "to delegate_to_friday away. It hands the request to the full Friday "
+        "agent with every tool, in the background, and the real outcome comes "
+        "back to you to tell the user. Never say 'I can't do that in voice' "
+        "when delegate_to_friday is in the list above.\n\n"
+        "THE RULE: never announce an action you did not take. Saying 'pulling "
+        "that up now' or 'checking my records' when no tool ran is a "
+        "fabrication, exactly as bad as inventing the result. For a delegated "
+        "request, say you're on it, and report the outcome only when it comes "
+        "back.\n\n"
         "THE FILE TOOLS ARE REAL AND THEY RUN ON THIS MACHINE. read_file, "
         "write_file and open_path reach the user's actual disk - absolute paths "
         "(C:\\...) or ~/ paths. Writing a briefing to the desktop and then "
@@ -678,11 +691,10 @@ def _voice_tool_surface_note():
         "screenshot needs Computer Control switched on in Settings. If it comes "
         "back denied, say the permission is off and offer to walk the user to the "
         "toggle. Do not say you took one.\n\n"
-        "FOR ANYTHING SUBSTANTIAL, USE spawn_task. Research, analysis, drafting, "
-        "monitoring, or any multi-step job belongs in a background task. Call "
-        "spawn_task with a clear title and a full instruction, then tell the user "
-        "it is running in the Task Tray. Do not narrate the work as though you are "
-        "doing it inline - in voice you are not.\n\n"
+        "FOR ANYTHING SUBSTANTIAL, USE delegate_to_friday (or spawn_task for a "
+        "long-running workflow the user wants to watch in the Task Tray). Do not "
+        "narrate the work as though you are doing it inline - in voice you are "
+        "not.\n\n"
     )
 
 
@@ -1524,6 +1536,14 @@ try:
     _vm.get_manifest().after_prove = _warm_seat_prefix
 except Exception:
     pass
+
+
+@voice_bp.route('/api/voice/restrictions')
+@login_required
+def voice_restrictions_route():
+    """The limits that remain on voice, why, and which apply now (Voice settings)."""
+    from agent_friday.services.voice_engine import voice_restrictions
+    return jsonify({"restrictions": voice_restrictions()})
 
 
 @voice_bp.route('/api/voice/session-info')
@@ -2786,6 +2806,18 @@ if sock is not None:
         # /ws/voice-local. None means "no open thread", which
         # _persist_voice_turn resolves to Main as an explicit fallback.
         _open_cid = [(request.args.get('conversation_id') or '').strip() or None]
+        # The call's live channel (registered in the runner, dropped when the
+        # handler ends) and the Gemini session of the current leg.
+        _live_chan = [None]
+        _cur_sess = [None]
+
+        def _call_cid():
+            """This call's conversation: the one on screen, else Main."""
+            try:
+                from agent_friday.services import conversations as _cv_call
+                return _cv_call.resolve(_open_cid[0])
+            except Exception:
+                return _open_cid[0]
 
         def _safe_send(obj):
             if done.is_set():
@@ -2885,7 +2917,45 @@ if sock is not None:
             # What this call has offered and said, for the voice tools
             # (services/voice_engine.py): the news tools skip stories Friday
             # has already told instead of reading the same five again.
-            _voice_session = {"news_offered": [], "spoken": []}
+            _voice_session = {"news_offered": [], "spoken": [],
+                              "conversation_id": _call_cid(), "owner_text": ""}
+            # Results that finish after the turn that asked for them (a task
+            # delegated to the full agent, context he approved on a card)
+            # arrive here from other threads (services/voice_live_channel) and
+            # are given to the model at the next quiet moment, gated like any
+            # tool result.
+            _inject_q = _deque()
+
+            def _deliver_to_call(text, kind="result"):
+                _inject_q.append((str(text), str(kind or "result")))
+            _live_chan[0] = (_voice_session["conversation_id"], _deliver_to_call)
+            _voice_live_channel.register(_voice_session["conversation_id"], _deliver_to_call)
+
+            def _retarget_call(cid):
+                """He switched threads mid-call: tasks, cards and results follow."""
+                old = _voice_session.get("conversation_id")
+                if cid == old:
+                    return
+                _voice_live_channel.unregister(old, _deliver_to_call)
+                _voice_session["conversation_id"] = cid
+                _live_chan[0] = (cid, _deliver_to_call)
+                _voice_live_channel.register(cid, _deliver_to_call)
+
+            async def _flush_injections(sess):
+                """Hand queued results to the model, one per call, between turns."""
+                if not _inject_q or sess is None or _model_speaking[0]:
+                    return
+                text, kind = _inject_q.popleft()
+                gated = _gate_voice_tool_result(text, kind)
+                lead = _INJECT_LEADS.get(kind, _INJECT_LEADS["result"])
+                try:
+                    await sess.send_client_content(
+                        turns={"role": "user", "parts": [{"text": lead + gated}]},
+                        turn_complete=True)
+                    _log.info("voice call: handed a %s to the model (%d chars)", kind, len(gated))
+                except Exception as _ie:
+                    _inject_q.appendleft((text, kind))
+                    _vlog(f'injection failed: {_ie}')
             # Room mode (Settings: several people talking): a reply to speech
             # that was not said to Friday is kept off the speakers and the
             # transcript. The model still answers everything it hears; this
@@ -2933,6 +3003,15 @@ if sock is not None:
                 if agent_text:
                     _voice_session["spoken"].append(agent_text)
                     del _voice_session["spoken"][:-60]
+                if user_text:
+                    # His spoken words count as his own, as typed words do in
+                    # chat: the taint guard can tell a value he said from one a
+                    # tool read.
+                    try:
+                        from agent_friday.services import taint as _taint
+                        _taint.note_user_message("voice-live", user_text)
+                    except Exception:
+                        pass
                 try:
                     _persist_voice_turn(user_text, agent_text,
                                         conversation_id=_open_cid[0])
@@ -3237,6 +3316,7 @@ if sock is not None:
                                     # live. Voice follows the conversation on
                                     # screen, so retarget from here on.
                                     _open_cid[0] = (msg.get('id') or '').strip() or None
+                                    _retarget_call(_call_cid())
                                 elif t == 'speaking':
                                     # Client playback transition — the precise
                                     # barge window. A closed→open transition is
@@ -3342,6 +3422,7 @@ if sock is not None:
                                             if in_tr and getattr(in_tr, 'text', None):
                                                 _vlog(f'input_transcription: {in_tr.text!r}')
                                                 in_buf.append(in_tr.text)
+                                                _voice_session["owner_text"] = ''.join(in_buf)[-600:]
                                                 _safe_send({"type": "input_transcript", "text": in_tr.text})
                                                 _user_words_ts[0] = _time.time()
                                                 _turn_timed[0] = False
@@ -3427,6 +3508,7 @@ if sock is not None:
                                                 _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
                                                 _flush_turn()
                                                 _safe_send({"type": "turn_end"})
+                                                await _flush_injections(sess)
                                                 if _repin and _persona_note:
                                                     # Between turns, as a note that joins the
                                                     # user's next turn (turn_complete=False),
@@ -3579,6 +3661,11 @@ if sock is not None:
                             if done.is_set() or sdone.is_set():
                                 return
                             _safe_send({"type": "hb", "ts": int(_time.time())})
+                            # A result that finished while the line was quiet
+                            # is not held until he speaks again.
+                            if (_inject_q and not _model_speaking[0]
+                                    and _time.time() - _user_words_ts[0] > 2.0):
+                                await _flush_injections(_cur_sess[0])
 
                     # ── Reconnect loop ──────────────────────────────────────────
                     # A single Gemini Live CONNECTION is capped (~10 min); the
@@ -3686,6 +3773,7 @@ if sock is not None:
                             break
 
                         _leg_started = _time.time()
+                        _cur_sess[0] = session_ai
                         _leg_bytes_at_start = _audio_bytes_to_gemini
                         _record_mic_audio_egress("open")
                         # F6: name the provider receiving the microphone, on
@@ -3964,6 +4052,11 @@ if sock is not None:
                 pass
             try:
                 _hold_scope.__exit__(None, None, None)
+            except Exception:
+                pass
+            try:
+                if _live_chan[0]:
+                    _voice_live_channel.unregister(*_live_chan[0])
             except Exception:
                 pass
             try:

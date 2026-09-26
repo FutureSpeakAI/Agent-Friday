@@ -282,16 +282,14 @@ _VOICE_LIVE_TOOLS = [
      "doesn't cover. Returns ranked snippets with URLs.",
      {"query": ("string", "What to search for.")}, ["query"]),
     ("open_url",
-     "Open a URL in the user's browser. ASK PERMISSION FIRST: say a short spoken "
-     "yes/no question ('Want me to open that in your browser?') and only call this "
-     "tool with confirmed=true AFTER the user agrees. Only ever open a URL that "
-     "came from real data (a news item, a source you looked up) — never a link you "
-     "reconstructed from memory. ALWAYS prefer a URL that ends with a "
+     "Open a URL in the user's browser when they ask for it. Only ever open a URL "
+     "that came from real data (a news item, a source you looked up), never a link "
+     "you reconstructed from memory. ALWAYS prefer a URL that ends with a "
      "#:~:text=<exact%20passage> text fragment so the cited passage is "
-     "highlighted on the page when it opens.",
+     "highlighted on the page when it opens. Friday's governance decides whether "
+     "it needs an approval card, exactly as it does for a typed request.",
      {"url": ("string", "Full https:// URL, ideally with a #:~:text= highlight fragment."),
-      "title": ("string", "Short title of the page (for the chat citation chip)."),
-      "confirmed": ("boolean", "Set true ONLY after the user has verbally agreed to open it.")}, ["url"]),
+      "title": ("string", "Short title of the page (for the chat citation chip).")}, ["url"]),
     ("get_source_trust",
      "Look up Friday's trust profile for a news source. Returns a composite trust "
      "score (0-1), a plain-language label, and dimension scores. Use when the "
@@ -310,13 +308,21 @@ _VOICE_LIVE_TOOLS = [
      {"query": ("string", "Keywords to match in the wiki."),
       "limit": ("integer", "Max hits (1-20, default 5).")}, ["query"]),
     ("navigate_workspace",
-     "Switch the Friday desktop UI to a workspace on-screen for the user. If the "
-     "user JUST asked to go there in their last message ('show me the calendar'), "
-     "call it right away with confirmed=true. If YOU are proposing the move, ask "
-     "first ('I can switch to the News workspace — shall I?') and only call with "
-     "confirmed=true after they agree. Workspaces: {workspace_ids}.",
-     {"workspace": ("string", "Workspace id or spoken name, e.g. 'news', 'settings'."),
-      "confirmed": ("boolean", "True if the user asked for this workspace or has agreed to the switch.")}, ["workspace"]),
+     "Switch the Friday desktop UI to a workspace on-screen for the user. It is "
+     "the user's own screen, so no approval is needed. Workspaces: {workspace_ids}.",
+     {"workspace": ("string", "Workspace id or spoken name, e.g. 'news', 'settings'.")}, ["workspace"]),
+    ("delegate_to_friday",
+     "Hand ANY request to the full Friday agent, with every tool it has in chat "
+     "(email drafting, files, the wiki, browsing, research, workflows, anything the "
+     "fast tools here do not cover), running on the right model for this "
+     "conversation. It runs in the background: say one short sentence that you're "
+     "on it, keep the conversation going, and when it finishes the real outcome is "
+     "handed back to you to tell the user. Outward actions it takes still raise "
+     "approval cards, exactly as in chat. Use it whenever a request needs more "
+     "than the fast tools, instead of saying you can't.",
+     {"request": ("string", "The user's request, in full, as they would type it in chat."),
+      "title": ("string", "A short title for the task list, e.g. 'Draft reply to the school'.")},
+     ["request"]),
     ("spawn_task",
      "Start a long-running background task (a 'workflow') that keeps working "
      "while the conversation continues — deep research, multi-step analysis, "
@@ -639,6 +645,119 @@ def _news_args_for_session(args: dict, session) -> dict:
     return out
 
 
+def _voice_ctx(session=None) -> dict:
+    """The governance context of a voice tool call.
+
+    Authenticated (the live socket is), on the voice surface, and carrying the
+    call's own conversation and the user's latest spoken words, so a task,
+    card or result from a voice request reports to that conversation (not
+    Main) and tools that need the owner's words see them, as in chat.
+    """
+    ctx = {"authenticated": True, "surface": "voice-live", "taint_key": "voice-live"}
+    if isinstance(session, dict):
+        if session.get("conversation_id"):
+            ctx["conversation_id"] = session["conversation_id"]
+        if session.get("owner_text"):
+            ctx["owner_text"] = session["owner_text"]
+    return ctx
+
+
+def _voice_local_only() -> bool:
+    """The user's own restriction: nothing reaches a cloud model."""
+    try:
+        return str((((_load_settings() or {}).get("model_routing") or {}).get("mode")
+                    or "")).strip().lower() == "local_only"
+    except Exception:
+        return True          # cannot tell: behave as restricted
+
+
+def _tool_delegate_to_friday(inp, session=None):
+    """Hand a spoken request to the full agent as a background task.
+
+    Parity with chat: the task runs the full tool registry (tools=None), on the
+    conversation's own seat when it is bound to one, else on the background
+    seat (settings.subagent_model), and reports to this call's conversation;
+    its outward actions raise approval cards exactly as a typed request's do.
+    Refused in local-only mode: this is a cloud voice session, and the result
+    would be handed back to the cloud model.
+    """
+    inp = inp or {}
+    request = str(inp.get("request") or "").strip()
+    if not request:
+        return "delegate_to_friday needs the request itself. Ask the user what they want done."
+    if _voice_local_only():
+        return ("NOT DONE: local-only mode is on, so a cloud voice session cannot hand "
+                "work to Friday. Tell the user; they can ask in chat, or turn local-only off.")
+    cid = session.get("conversation_id") if isinstance(session, dict) else None
+    seat = None
+    if cid:
+        try:
+            from agent_friday.services import conversations as _cv
+            _cs = _cv.effective_seat(cid)
+            seat = ((_cs or {}).get("model") or "").strip() or None
+        except Exception:
+            seat = None
+    from agent_friday.services.agent import _spawn_task
+    title = str(inp.get("title") or "").strip() or request[:60]
+    prompt = ("The user asked for this in a live voice conversation. Do it fully, "
+              "with whatever tools it needs, then report the real outcome in a few "
+              "plain sentences that can be spoken aloud.\n\nRequest: " + request)
+    task_id = _spawn_task(title, prompt, description="Handed over from a voice conversation",
+                          model=seat, tools=None, conversation_id=cid, orb_icon="🎙")
+    return (f"DELEGATED:{task_id} Friday is working on it in the background. Say one "
+            f"short sentence that you're on it and keep talking; the outcome will be "
+            f"handed back to you when it is done. Do not guess the result.")
+
+
+def voice_restrictions(settings=None) -> list:
+    """What voice cannot do, why, and whether it applies right now.
+
+    Voice can do anything chat can (delegate_to_friday hands a request to the
+    full agent). These are the limits that remain: the user's own settings,
+    and the governance and privacy rules that apply to chat as well. The Voice
+    settings tab shows this list; docs/reference/voice-capability.md explains it.
+    """
+    s = settings if isinstance(settings, dict) else (_load_settings() or {})
+    mr = s.get("model_routing") or {}
+    mode = str(mr.get("mode") or "").strip().lower()
+    room = str(s.get("voice_room_mode") or "one").strip().lower() == "room"
+    return [
+        {"id": "local_only", "active": mode == "local_only", "kind": "your setting",
+         "title": "Local-only mode",
+         "why": "Nothing may reach a cloud model, so the cloud voice session does not "
+                "start and cannot hand work on. Local voice still works."},
+        {"id": "vault_local_only", "active": mr.get("vault_local_only", True) is not False,
+         "kind": "your setting",
+         "title": "Vault kept on this PC",
+         "why": "Private vault notes reach the cloud voice model only as an answer "
+                "from your local model, shown to you on a card first."},
+        {"id": "voice_tools", "active": s.get("voice_tools") is False, "kind": "your setting",
+         "title": "Tools off in voice",
+         "why": "Voice talks but calls no tools, not even the hand-over to Friday."},
+        {"id": "computer_control", "active": not bool(s.get("computer_control_enabled", False)),
+         "kind": "your setting",
+         "title": "Computer control off",
+         "why": "Screenshots and mouse and keyboard control are refused, in voice as in chat."},
+        {"id": "approvals", "active": True, "kind": "governance",
+         "title": "Approval cards for outward actions",
+         "why": "Sending, buying, posting or changing anything outside this PC waits "
+                "for your OK on a card, in voice as in chat."},
+        {"id": "never_send", "active": True, "kind": "privacy",
+         "title": "Never-send list",
+         "why": "Anything on your never-send list is withheld from every cloud model."},
+        {"id": "direct_time_limit", "active": True, "kind": "responsiveness",
+         "title": "20-second limit on direct tools",
+         "why": "A quick voice tool that takes longer is stopped so the conversation "
+                "never goes silent; longer work goes to Friday in the background."},
+        {"id": "room_approvals", "active": room, "kind": "known limit",
+         "title": "Spoken approvals in a room of several people",
+         "why": "In 'Several people' mode a spoken yes to a card counts only when it "
+                "names Friday ('Friday, send it'), because another voice could "
+                "otherwise approve. Voices are not told apart until Household "
+                "Identity lands."},
+    ]
+
+
 def _voice_tool_run(name, args, send_client, session=None):
     """Execute one Live tool call, emit any client-side side effect, and return a
     SHORT text/JSON result for the model to speak from. `send_client(obj)` pushes
@@ -650,20 +769,13 @@ def _voice_tool_run(name, args, send_client, session=None):
     name = (name or "").strip()
     args = dict(args or {})
 
-    def _needs_confirm(_what):
-        """The user hasn't agreed yet — tell the model to ask, and do nothing."""
-        return (f"NOT DONE YET — you must get the user's spoken permission first. "
-                f"Ask a short yes/no question about {_what}, then call this tool "
-                f"again with confirmed=true only after they say yes.")
-
     # Every voice tool runs through agent._execute_tool, the one path to a
     # handler, so the governance check, provenance ledger, audit and PII hooks
     # apply to a spoken request exactly as to a typed one.
     from agent_friday.services.agent import _execute_tool
 
     def _governed(tool, fn, a):
-        return _execute_tool(tool, a, handler=fn, session_ctx={
-            "authenticated": True, "surface": "voice-live", "taint_key": "voice-live"})
+        return _execute_tool(tool, a, handler=fn, session_ctx=_voice_ctx(session))
 
     try:
         if name == "ask_friday":
@@ -682,8 +794,6 @@ def _voice_tool_run(name, args, send_client, session=None):
                 except Exception:
                     pass
         if name in ("navigate_workspace", "navigate"):
-            if not args.get("confirmed"):
-                return _needs_confirm(f"switching to the {args.get('workspace') or 'that'} workspace")
             # Pause speech while the action runs; resume + report after.
             try:
                 send_client({"type": "tts_pause"})
@@ -707,8 +817,6 @@ def _voice_tool_run(name, args, send_client, session=None):
             return f"That didn't work: {res}. Tell the user, and offer another approach."
         if name == "open_url":
             url = (args.get("url") or "").strip()
-            if not args.get("confirmed"):
-                return _needs_confirm(f"opening {url or 'that link'} in the browser")
             try:
                 send_client({"type": "tts_pause"})
             except Exception:
@@ -756,6 +864,16 @@ def _voice_tool_run(name, args, send_client, session=None):
             return _governed("search_web", _tool_search_web, args)
         if name == "search_wiki":
             return _governed("search_wiki", _tool_search_wiki, args)
+        if name == "delegate_to_friday":
+            res = _governed("delegate_to_friday",
+                            lambda a: _tool_delegate_to_friday(a, session), args)
+            if isinstance(res, str) and res.startswith("DELEGATED:"):
+                try:
+                    send_client({"type": "task_spawned",
+                                 "name": args.get("title") or "Friday is on it"})
+                except Exception:
+                    pass
+            return res
         if name == "spawn_task":
             # Voice's one durable-work primitive. The Live model is told (in the
             # shared system prompt) to delegate anything longer than a turn; before
@@ -806,16 +924,12 @@ def _voice_tool_run(name, args, send_client, session=None):
         # that result through egress_gate before it is sent back -- so a cloud
         # model can read a PDF in Downloads without the vault ever leaving.
         if name in dict((n, d) for n, d, _sc in _voice_shared_tool_specs()):
-            return _execute_tool(name, args, session_ctx={
-                # The live socket is authenticated before the session opens
-                # (routes/voice.py rejects unauthenticated connects), which is
-                # what ring 2 asks for. Ring 3 still consults the Computer
-                # Control grant independently, so a screenshot with CC off
-                # comes back as an honest deny, not a silent nothing.
-                "authenticated": True,
-                "surface": "voice-live",
-                "taint_key": "voice-live",
-            })
+            # The live socket is authenticated before the session opens
+            # (routes/voice.py rejects unauthenticated connects), which is
+            # what ring 2 asks for. Ring 3 still consults the Computer
+            # Control grant independently, so a screenshot with CC off
+            # comes back as an honest deny, not a silent nothing.
+            return _execute_tool(name, args, session_ctx=_voice_ctx(session))
     except Exception as e:
         _log.error("Voice tool %r raised %s: %s", name, type(e).__name__, e, exc_info=True)
         return (f"I ran into a problem using the {name} tool: {type(e).__name__}. "

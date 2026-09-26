@@ -44755,6 +44755,71 @@ function VoiceModePicker({ s, save, mc }) {
           /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { save({ voice_engine: pending.id }); setPending(null); } }, "Switch to ", pending.label),
           /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: () => setPending(null) }, "Keep ", cur)))));
 }
+/** What voice cannot do, and why (from /api/voice/restrictions). Voice can do
+ *  anything chat can; these are the limits that remain: the user's own
+ *  settings and the governance and privacy rules chat has too. The ones in
+ *  force right now are marked. */
+function VoiceRestrictions() {
+  const [rs, setRs] = useState(null);
+  useEffect(() => {
+    apiFetch('/api/voice/restrictions').then(r => r.json()).then(d => setRs(d && d.restrictions || [])).catch(() => setRs([]));
+  }, []);
+  if (rs === null) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.4)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "Reading the limits", '…');
+  if (!rs.length) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#f59e0b',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "Could not read the limits.");
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'JetBrains Mono',
+      fontSize: 11
+    }
+  }, rs.map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.id,
+    style: {
+      display: 'flex',
+      gap: 10,
+      alignItems: 'baseline',
+      padding: '5px 0',
+      borderBottom: '1px solid rgba(255,255,255,0.05)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 10,
+      color: r.active ? '#f59e0b' : 'rgba(255,255,255,0.3)'
+    }
+  }, r.active ? '●' : '○'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: r.active ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.5)'
+    }
+  }, r.title, /*#__PURE__*/React.createElement("span", {
+    style: {
+      marginLeft: 8,
+      fontSize: 9.5,
+      color: 'rgba(255,255,255,0.35)'
+    }
+  }, r.kind, r.active ? ' · in force' : ' · not in force')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: 'rgba(255,255,255,0.45)',
+      lineHeight: 1.5,
+      marginTop: 2
+    }
+  }, r.why)))));
+}
 function SettingsTabVoice({
   s,
   save
@@ -44902,7 +44967,10 @@ function SettingsTabVoice({
     onSave: v => save({
       voice_silence_ms: Math.round(v)
     })
-  })), gem && /*#__PURE__*/React.createElement(StSection, {
+  })), /*#__PURE__*/React.createElement(StSection, {
+    title: "What voice can't do, and why",
+    desc: "Voice can do anything chat can: what its quick tools do not cover, it hands to Friday in the background. These limits remain, and why."
+  }, /*#__PURE__*/React.createElement(VoiceRestrictions, null)), gem && /*#__PURE__*/React.createElement(StSection, {
     title: "Gemini Live options",
     desc: "These apply only to the Gemini Live session."
   }, /*#__PURE__*/React.createElement(StToggle, {

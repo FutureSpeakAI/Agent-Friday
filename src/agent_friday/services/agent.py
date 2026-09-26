@@ -4165,6 +4165,45 @@ def _report_task_completion(task_id, name, status, result_text):
             _task_log(task_id, f'Completion notice could not be sent: {ne}')
         except Exception:
             pass
+    _post_task_result_to_conversation(task_id, name, status, result_text)
+
+
+def _post_task_result_to_conversation(task_id, name, status, result_text):
+    """Land a finished task's outcome in the conversation that asked for it.
+
+    The notification above reaches whichever chat is open; the result also
+    belongs in the transcript of the conversation the task was spawned from
+    (a voice call's, via delegate_to_friday, included), and a voice call that
+    is still up on that conversation is handed it to say aloud
+    (services/voice_live_channel). Best-effort, never silent: a failure is
+    written to the task's own log.
+    """
+    cid = None
+    try:
+        cid = _task_conversation_id(task_id)
+    except Exception:
+        cid = None
+    if not cid:
+        return
+    body = (result_text or '').strip()
+    ok = status not in ('failed', 'error')
+    text = (f"Background task \"{name}\" {'finished' if ok else 'FAILED'}.\n\n"
+            f"{body or '(no output)'}")
+    try:
+        from agent_friday.services import conversations as _cv
+        _cv.append(_cv.resolve(cid), {"role": "friday", "text": text, "pinned": False,
+                                      "meta": {"kind": "task_result", "task_id": task_id,
+                                               "status": status}})
+    except Exception as ce:
+        try:
+            _task_log(task_id, f'Result could not be posted to its conversation: {ce}')
+        except Exception:
+            pass
+    try:
+        from agent_friday.services import voice_live_channel as _vlc
+        _vlc.deliver(cid, text, kind="task_result")
+    except Exception:
+        pass
 
 
 def _spawn_task(name, prompt, description='', on_complete=None,
@@ -6123,6 +6162,7 @@ TOOL_RINGS: dict[str, int] = {
     "open_url":             2,
     "open_path":            2,
     "spawn_task":           2,
+    "delegate_to_friday":   2,   # voice hand-over; spawns a task like spawn_task
     "deep_research":        2,   # searches and reads the web (network)
     "run_command":          2,
     "run_sandboxed":        2,   # a contained child process; see code_sandbox

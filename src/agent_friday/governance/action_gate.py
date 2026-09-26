@@ -165,6 +165,9 @@ INTERNAL_TOOLS = frozenset({
     # anyone else.
     "navigate_to", "check_situation",
     "get_career_pipeline", "get_briefing", "spawn_task", "propose_wiki_update",
+    # Voice's hand-over to the full agent: a background task like spawn_task,
+    # whose own actions come back through this checkpoint one by one.
+    "delegate_to_friday",
     # Background research reads the web and runs local models; its report
     # lands in the conversation. Nothing it does reaches another person.
     "deep_research",
