@@ -10284,6 +10284,11 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
                         _zt_provider, tu.name, _zt_data,
                         access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                        # The provenance ledger for this turn, so the gate can
+                        # tell a restaurant's published address from the owner's
+                        # own (privacy/public_provenance). Without a key there
+                        # is no exemption and the gate behaves as it always did.
+                        taint_key=_taint_mod.ledger_key(session_ctx),
                     )
                     if not _zt_allowed:
                         _zt_result = f"[VAULT-ZT DENY] {_zt_detail}"
@@ -10912,6 +10917,9 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
                     _zt_provider, tname, json.dumps(targs, default=str),
                     access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                    # See the other call site: the provenance ledger lets the
+                    # gate exempt a business's published contact details.
+                    taint_key=_taint_mod.ledger_key(session_ctx),
                 )
                 if not _zt_allowed:
                     _zt_result = f"[VAULT-ZT DENY] {_zt_detail}"

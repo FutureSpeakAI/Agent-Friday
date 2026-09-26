@@ -271,7 +271,8 @@ class VaultAccessControl:
 
     # ── Continuous Authorization (zero-trust per-action gate) ─────
 
-    def check_action(self, provider, action, data, access_log_path=None):
+    def check_action(self, provider, action, data, access_log_path=None,
+                     *, taint_key=None):
         """Zero-trust per-action authorization check.
 
         Called before every tool call in the agent loop. Classifies the
@@ -293,6 +294,29 @@ class VaultAccessControl:
             else:
                 allowed = False
                 detail = f"cloud_denied_tier_{Tier.NAMES.get(tier, tier)}"
+                # A BUSINESS'S PUBLISHED CONTACT DETAILS ARE NOT THE OWNER'S
+                # PRIVATE DATA. See privacy/public_provenance for the whole
+                # rule and why it is shaped this way; in one line, it is the
+                # LOCAL_SINK_TOOLS argument above ("the provider authored these
+                # arguments, it has already seen them") applied to a single
+                # value instead of to a whole tool, and only when that value is
+                # provably public, is a business-contact type, is not in the
+                # owner's own records, and is the only reason for the tier.
+                #
+                # It runs only when a caller passed a provenance ledger: no
+                # ledger, no exemption. Every use is logged below with its own
+                # detail string, beside every denial.
+                if taint_key:
+                    try:
+                        from agent_friday.privacy import public_provenance as _pbp
+                        _ok, _why = _pbp.exempt(data, action=str(action or ""),
+                                                taint_key=taint_key)
+                    except Exception as _e:
+                        _ok, _why = False, f"provenance check failed ({_e})"
+                    if _ok:
+                        allowed = True
+                        detail = ("public_web_provenance_"
+                                  f"{Tier.NAMES.get(tier, tier)}: {_why}")
 
         entry = {
             "ts": time.time(),
