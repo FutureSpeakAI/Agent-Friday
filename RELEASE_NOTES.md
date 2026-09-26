@@ -1,127 +1,89 @@
-# Agent Friday 5.14.2
+# Agent Friday 5.14.3
 
 *26 September 2026. FutureSpeak.AI*
 
-**Things you approve now actually happen.** In 5.14.0 and 5.14.1, approving an
-approval card recorded your decision but never carried out the action. This
-release fixes that, and fixes a gap in the privacy check that let some text
-reach the cloud with less checking than it should have had. Please read the
-next section. Voice conversations are also much steadier.
+**A security release.** GitHub's code scanner had flagged 706 possible
+weaknesses in Friday's code, and its dependency scanner had flagged 7 in the
+libraries Friday uses. Every one has now been looked at. The real problems are
+fixed. The rest are recorded, with the reason each is safe, in the project's
+security documents. Two approval rules are also stricter: which files Friday
+may open without asking, and which pictures she may send to a cloud service.
 
 Full detail is in the [CHANGELOG](CHANGELOG.md); what is not right yet is in
 [KNOWN_ISSUES](KNOWN_ISSUES.md).
 
 ---
 
-## Two things 5.14.0 and 5.14.1 got wrong
+## What was fixed
 
-**Approved cards never ran.** Friday asks before she does anything outward in
-one of two ways. Sometimes she asks in the chat, and when you say yes she goes
-ahead; that worked. Other times she raises an approval card instead: for
-example when the request came from something she read, such as an email or a
-web page, or from a scheduled job. When you approved one of those cards, your
-approval was recorded and nothing else happened. The event was not added to
-the calendar, and the email or the file was not sent or written. Worse, Friday's
-own record of the attempt said it had succeeded, before you had even decided.
+Most of what the scanners flagged turned out to be safe, but some of it was
+real. The most important:
 
-If you approved cards in 5.14.0 or 5.14.1, check whether what you approved
-actually happened, and ask Friday again if it did not. Nothing was done that
-you did not approve: the failure was that approved things were not done.
+- **Files outside Friday's folders could be deleted or read.** Some requests
+  took a name from the caller and used it as part of a file path without
+  checking it. A crafted name could delete a folder next to Friday's task or
+  project store, or read a file elsewhere in your home folder. Every such name
+  is now checked to stay inside the folder it belongs to. Nothing we know of
+  used this, and reaching it needed access to Friday itself.
+- **Error messages showed internals.** When something failed, some screens
+  showed the raw technical error, which could include file paths or pieces of
+  a program trace. Screens now say plainly what failed, with a short error
+  code; the full details go to Friday's log on your PC under that code. Friday
+  herself still sees the real error, so she can explain what went wrong.
+- **A web page could steer a fetch.** When Friday reads an article for you, a
+  link could redirect her to an address on your own network. Every redirect is
+  now checked.
+- **A few things were written or logged less carefully than they should be.**
+  - Your "never send" list entries could appear in a log file.
+  - Sign-in tokens for one kind of connection had a plain-text fallback.
+  - Errors that quoted a web address could log a key that was part of that
+    address.
 
-Now, when you approve a card, the action runs, exactly once, even if you
-approve it in two tabs at the same moment. For a card raised in a chat, the
-result appears in that chat without reloading the page, and so does one raised
-by a background task you started from a chat. A card that is waiting is recorded
-as waiting, not as a success, and a failed action records why it failed.
+  All three are fixed.
+- **Some text checks could be made very slow.** A specially written message
+  could make certain text checks run for seconds or minutes. They now run in a
+  fraction of a second whatever they are given.
 
-**The privacy check could fall back to pattern filters alone.** Before text
-goes to a cloud model, Friday checks it for personal information in layers.
-The first layers look for patterns: addresses, account numbers, health words
-and so on. A later layer, the semantic check, catches personal information
-that has no such pattern in it. When that semantic check failed to start,
-Friday went on sending cloud-bound text with only the pattern filters checking
-it, and said nothing. This could happen on any install with the memory
-component, which the Windows installer includes by default, when the check
-failed to load at startup.
+## New approval rules
 
-Now, if the semantic check is installed but not running, Friday holds the
-message and tells you, in the chat or out loud in a voice call. You choose:
-send it anyway with the pattern filters only, or wait until the full check is
-ready. A startup problem that could stop the check from loading is also fixed.
-Settings › Privacy & Approvals › Privacy check shows, in plain words, which
-layers are running on your PC.
+- **Opening files.** Friday opens documents, pictures, music, videos, plain
+  text and folders for you straight away. Anything else asks first, with an
+  approval card that says where the request came from, and never runs quietly.
+  That includes programs, scripts, shortcuts, and web pages saved as files.
+  If something Friday read (an email, a web page) tries to get her to open a
+  program, the card makes that visible.
+- **Pictures for video and music.** When Friday makes a video or music from a
+  picture, she uses pictures from her own creations folder, or one you named
+  yourself in the conversation. Any other picture needs your approval first,
+  because it would be uploaded to a cloud generation service.
 
-## What's new
+## Other changes
 
-**Approval cards appear wherever you are.** A card that is waiting for you now
-pops up in every open Friday tab, not only in the System workspace, and
-disappears from all of them as soon as it is decided anywhere: in another tab,
-by voice, or by a reply.
-
-**Friday can open things for you, and check what is going on.** Ask her to
-open a particular email, file, wiki page, calendar day, contact or Settings
-section, and she opens exactly that. She tells you only what the screen
-actually shows. Ask how things are going, and she can tell you which
-workspaces are open, how busy the PC is, which models are loaded, what is
-running, and what you have spent today.
-
-**"Who is talking" for voice.** With the Cloud (Gemini Live) voice engine,
-Settings › Voice & Tracking › Listening lets you tell Friday there are several
-people in the room. She then answers only when she is spoken to by name, or
-when someone is replying to her.
-
-## What changed
-
-- **Voice news moves forward.** A spoken news rundown covers different topics
-  and does not repeat stories Friday has already told you in the same call.
-  When there is nothing new, she says so.
-- **No more long silences.** Every tool Friday uses during a voice call
-  answers within 20 seconds, or she tells you nothing came back.
-- **Friday stays in English.** The voice session's language is fixed (English
-  unless you set another), so a misheard phrase no longer makes her switch
-  languages.
-- **Fewer interruptions.** A cough or a single word no longer cuts her off;
-  speech has to last a moment first.
-- **Nothing lost on reconnect.** A voice call quietly reconnects from time to
-  time. What you said during a reconnect is now passed on, so you get an
-  answer.
-- **Her voice stays hers.** The personality you saved holds for the whole
-  call, instead of drifting towards a generic tone.
-- **Answers sized to the moment.** Short replies for quick back-and-forth,
-  more room for the news, an explanation or a story, and she follows "keep it
-  short" or "tell me more".
-- **Evidence-first news.** When Friday reads the news she gives sources, says
-  what is confirmed and what is only alleged, labels analysis as analysis, and
-  leaves the judgement to you.
-- **Honest about your notes.** In a voice call Friday uses your notes when
-  your vault settings allow it, and says they are private only when they are.
-- **Public business details are not your personal data.** A restaurant's
-  published address, read from its own website, can now go into a calendar
-  event. Your own addresses and records are still protected, and so are ID
-  numbers, card numbers and health details wherever they came from.
-- **Card labels describe the action.** A calendar entry is no longer labelled
-  as spending because its notes mention buying tickets.
-- **Local tasks use your local model.** A job meant for a model on your PC no
-  longer picks a cloud model and then refuses with a confusing message.
-- **Honest about which build you are running.** The health summary called an
-  installed copy a "source checkout", and reported a privacy layer that is
-  switched off on purpose as though something were broken. Both now say what is
-  actually true; a layer that really is down is still reported as such.
-- **Steadier startup.** A race while Friday loads could stop the privacy check
-  or the Kokoro voice from starting. It no longer can.
+- **Local news is yours to set.** Friday no longer ships with one city's local
+  news outlets built in. To keep a Local section in your briefing, open News ›
+  Customize Briefing › Local beat and enter your city and the local outlets you
+  trust.
+- **The GPU voice option installs from Settings.** The optional NVIDIA voice
+  tier is no longer part of Friday's standard dependency list. Settings installs
+  it, pinned to a tested version, when you ask for it. Nothing changes for you
+  unless you use it.
+- **Task results come back to your chat.** When a task you started from a chat
+  needs your approval, the result now appears in that chat once you approve.
+- **An honest health line.** A privacy layer that is off on purpose is no longer
+  reported as broken. One that should be running and is not still is.
 
 ## Security
 
-The open dependency advisories are unchanged. None is reachable in a default
-install; each one is explained in
+Four ChromaDB advisories have no fix yet. Friday uses ChromaDB only inside the
+app and never runs the server they affect, so they cannot be reached; see
 [docs/security/dependency-advisories.md](docs/security/dependency-advisories.md).
 
 ## Upgrade notes
 
 - **Your data and your vault passphrase are preserved.** Run the new installer
   over the old one. [Updating](docs/user-guide/updating-and-uninstalling.md)
-- **Reload any Friday tab that was open during the upgrade**, so it receives
-  approval pop-ups.
+- **If you used the Local news section**, set your city and outlets in News ›
+  Customize Briefing › Local beat after upgrading.
 
 ## Known issues
 

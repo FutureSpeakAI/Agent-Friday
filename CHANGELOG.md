@@ -3,12 +3,87 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current release: **5.14.2**.
+> **Note:** Pre-1.0 releases have been archived. Current release: **5.14.3**.
 >
 > Entries for 5.7.0 and 5.8.1 are not recorded here — those releases were
 > tagged without a changelog entry.
 
 ---
+
+## [5.14.3] - 2026-09-26
+
+A security release. The repository's CodeQL backlog (706 alerts) is resolved,
+the Dependabot alerts are closed or dismissed with a documented reason, and
+two approval rules are tightened. The plain-language summary is in
+[RELEASE_NOTES.md](RELEASE_NOTES.md). The per-alert record is in
+[docs/security/codeql-dismissals.md](docs/security/codeql-dismissals.md) and
+[docs/security/codeql-residual.md](docs/security/codeql-residual.md).
+
+### Security
+
+- **Path traversal.** Every request-, tool- or model-supplied id or name joined
+  under a Friday-owned folder goes through `paths.contained` / `paths.safe_name`.
+  Before this, `DELETE /api/tasks/..%5Cx` and `DELETE /api/creative/projects/..%5Cx`
+  removed a folder next to their store. `GET /api/briefing/..%5C..` read files
+  under the home folder. Draft, event, recipe, distribution, pipeline and wiki
+  writes could land outside their folders.
+- **Errors say what failed, never how.** Routes answer a failure with a plain
+  description and an error id (`routes/_errors.api_error`, `public_result`); the
+  exception, with its traceback, is in the local log under that id. Agent tools
+  still receive the real error text. Two deliberate cases pass only a
+  one-line message with no paths (`user_errors.message_only`): the Grants
+  screen's governance explanation and the Start-My-Day data-source failure.
+- **Reflected HTML.** The Google OAuth callback and the creation viewer escape
+  what they take from the request, including the Host header.
+- **SSRF.** Untrusted article URLs are fetched through `web_safety.safe_get`,
+  which checks every redirect hop. Federation and compute peer endpoints must
+  be plain http(s) with no embedded credentials. The guard has its own tests.
+- **Sensitive data.**
+  - A never-send verdict names its hits by kind, not by their text, so
+    watch-list entries never reach the egress log.
+  - MCP OAuth tokens reach disk only through the credential store.
+  - The Gemini key check cache is indexed by a keyed digest.
+  - Logged error text has credential shapes redacted.
+- **ReDoS.** Every flagged regular expression runs in linear time. Several took
+  3–103 seconds on crafted input. HTML-to-text uses one linear scanner that
+  drops script and style however they are written.
+- **Opening files.** `open_path` and `/api/computer/open` open only an
+  allow-list of document, image, media and plain-text types, and folders,
+  without asking. Anything else, including executables, scripts, shortcuts,
+  HTML and SVG, needs an approval card with provenance and never runs silently.
+- **Seed images.** Video, music and vision-check seed images come from the
+  creations folders or a path the owner typed in the conversation. Any other
+  path needs an approval card, even in chat, because uploading a photo to a
+  cloud generation service is outward. Network (UNC) paths are refused before
+  anything touches them.
+
+### Dependencies
+
+- NVIDIA NeMo is no longer a pip extra and is not in `uv.lock`. It capped
+  Lightning and Hydra below their fixed releases and brought NLTK, which has
+  no fix. The Settings voice installer installs `nemo_toolkit[asr]==3.0.0` as
+  its own pinned step, and NeMo still loads only NVIDIA-published models.
+- The four ChromaDB advisories have no fixed release. Friday uses ChromaDB only
+  as an embedded library, so the vulnerable code is unreachable. They are
+  dismissed with a link to
+  [docs/security/dependency-advisories.md](docs/security/dependency-advisories.md).
+
+### Changed
+
+- **The news Local beat is a setting.** The shipped trusted-source lists no
+  longer name any city's local outlets. `news_local_area` (the place) and the
+  new `news_local_sources` (outlet domains) are set in News › Customize
+  Briefing › Local beat. Both are empty by default, and the outlets listed
+  there are trusted.
+- Example sentences in tests and in the judge's fixed examples are neutral.
+
+### Fixed
+
+- A card raised by a background task you started from a chat reports its result
+  back to that chat.
+- The health summary no longer calls a privacy layer that is intentionally
+  absent or observe-only "degraded"; one that is installed but down still is.
+- A behaviour remit names a Windows path's file on any OS.
 
 ## [5.14.2] - 2026-09-26
 
