@@ -31,6 +31,7 @@ from agent_friday.core import (
     WIKI_DIR,
     _log_context,
 )  # noqa: E501
+from agent_friday.paths import contained
 
 
 
@@ -160,12 +161,7 @@ def _safe_wiki_path(rel):
         return None
     rel = rel.replace('\\', '/').lstrip('/')
     try:
-        p = (WIKI_DIR / rel).resolve()
-        wiki_root = WIKI_DIR.resolve()
-        try:
-            p.relative_to(wiki_root)
-        except ValueError:
-            return None
+        p = contained(WIKI_DIR, rel)
         if p.suffix not in ('.md', '.txt', ''):
             return None
         if not p.suffix:
@@ -175,17 +171,27 @@ def _safe_wiki_path(rel):
         return None
 
 
+def _wiki_rel(path) -> str:
+    """The forward-slash path of a contained wiki file relative to WIKI_DIR."""
+    root = contained(WIKI_DIR, "", allow_root=True)
+    return str(Path(path).relative_to(root)).replace('\\', '/')
+
+
 def _mirror_wiki_file(rel, content):
-    """Write content to WIKI_DIR/rel, and to the opt-in mirror when one is set."""
-    rel = rel.replace('\\', '/').lstrip('/')
-    primary = WIKI_DIR / rel
+    """Write content to WIKI_DIR/rel, and to the opt-in mirror when one is set.
+
+    Raises ValueError when ``rel`` does not stay inside WIKI_DIR; the mirror
+    copy is contained in the mirror root the same way.
+    """
+    primary = contained(WIKI_DIR, rel.replace('\\', '/').lstrip('/'))
+    rel = _wiki_rel(primary)
     primary.parent.mkdir(parents=True, exist_ok=True)
     old_content = wiki_read_text(primary) if primary.exists() else ""
     wiki_write_text(primary, content)
     try:
         mirror_root = _wiki_mirror_dir()
         if mirror_root is not None:
-            mirror = mirror_root / rel
+            mirror = contained(mirror_root, rel)
             mirror.parent.mkdir(parents=True, exist_ok=True)
             # Mirror the on-disk BYTES, not the plaintext — an encrypted
             # section reaches the mirror folder as ciphertext.
@@ -202,9 +208,15 @@ def _mirror_wiki_file(rel, content):
 
 
 def _delete_wiki_file(rel):
-    """Delete primary, and the opt-in mirror's copy when a mirror is set."""
-    rel = rel.replace('\\', '/').lstrip('/')
-    primary = WIKI_DIR / rel
+    """Delete primary, and the opt-in mirror's copy when a mirror is set.
+
+    A ``rel`` that does not stay inside WIKI_DIR deletes nothing.
+    """
+    try:
+        primary = contained(WIKI_DIR, (rel or "").replace('\\', '/').lstrip('/'))
+    except ValueError:
+        return False
+    rel = _wiki_rel(primary)
     deleted = False
     if primary.exists() and primary.is_file():
         primary.unlink()
@@ -212,7 +224,7 @@ def _delete_wiki_file(rel):
     try:
         mirror_root = _wiki_mirror_dir()
         if mirror_root is not None:
-            mirror = mirror_root / rel
+            mirror = contained(mirror_root, rel)
             if mirror.exists() and mirror.is_file():
                 mirror.unlink()
     except Exception as e:
