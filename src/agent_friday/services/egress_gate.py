@@ -223,7 +223,7 @@ def _classify_cloud(text: str) -> int:
     treated as public and allowed through. Fail-closed behaviour is provided by
     the embedding layer: text semantically close to sensitive exemplars (sim >=
     0.50) is conservatively classified as PRIVATE before any keyword/regex match
-    is required. This catches contextual PII ("my son lives with me on weekends")
+    is required. This catches contextual PII ("my brother is staying with me this month")
     that keyword lists miss, while not blocking genuinely neutral conversations.
 
     Calls are paced by _rate_limit() so a load spike queues briefly instead of
@@ -698,7 +698,7 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
         # "scrubbed — identifying spans replaced by placeholders — then
         # re-verified, then sent". The leak this prevents: for
         #
-        #   "My custody hearing is on the 14th and my lawyer says my ex will
+        #   "My court hearing is on the 14th and my advocate says the agency will
         #    contest it."
         #
         # the judge correctly answers USER_SUBSTANCE — and the scrubber

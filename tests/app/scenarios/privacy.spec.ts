@@ -73,7 +73,7 @@ test('Scenario 15b — his own custody matter is treated as private', async ({ r
   const highWater = before.length ? Math.max(...before.map((r: any) => r.ts ?? 0)) : 0;
 
   const turn = await say(request,
-    'Regarding my own custody arrangement for my daughter — help me think through how to ' +
+    'Regarding my own court filing for my family — help me think through how to ' +
     'raise a schedule change with her mother.');
   console.log('      ' + tally(turn));
 
@@ -99,7 +99,7 @@ test('Scenario 15b — his own custody matter is treated as private', async ({ r
 test('Scenario 14 — one message mixing public and private is handled, not refused wholesale', async ({ request }) => {
   const turn = await say(request,
     'Two things: what are the main AI policy bills moving in the Texas legislature this session, ' +
-    'and separately, remind me what I noted about my daughter’s school schedule.');
+    'and separately, remind me what I noted about my niece’s recital schedule.');
   console.log('      ' + tally(turn));
 
   const answeredPublic = await ask(turn.reply,

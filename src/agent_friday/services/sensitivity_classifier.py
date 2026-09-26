@@ -217,8 +217,8 @@ _SENSITIVE_EXEMPLARS = [
     "divorce settlement terms",
     "court filing and legal document",
     # Family / private
-    "my son lives with me on weekends",
-    "my daughter's school schedule",
+    "my brother is staying with me this month",
+    "my niece's recital schedule",
     "home address and phone number",
     "emergency contact details",
     # Credentials

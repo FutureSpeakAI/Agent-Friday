@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agent_friday.services import calendar_write as cw
 from agent_friday.services import egress_gate
 
-TIER3_DESC = "my custody hearing is on the 14th, SSN 123-45-6789"  # pragma: allowlist secret
+TIER3_DESC = "my court hearing is on the 14th, SSN 123-45-6789"  # pragma: allowlist secret
 
 
 class _FakeEvents:

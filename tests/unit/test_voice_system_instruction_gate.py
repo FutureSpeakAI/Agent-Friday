@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agent_friday.routes import voice as v
 from agent_friday.services import egress_gate
 
-TIER2_MARKER = "my custody hearing is on the 14th and my SSN is 123-45-6789"  # pragma: allowlist secret
+TIER2_MARKER = "my court hearing is on the 14th and my SSN is 123-45-6789"  # pragma: allowlist secret
 
 
 class TestSystemInstructionFailsClosed:
