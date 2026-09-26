@@ -171,6 +171,9 @@ INTERNAL_TOOLS = frozenset({
     # Sharing local context with the cloud voice model has its own gate: the
     # payload card (services/local_context), decided once, by the owner.
     "ask_local_for_context", "answer_share_request", "revise_share_request",
+    # Reads the local conversation store; what a cloud call may hear of it is
+    # decided by provenance (services/conversation_recall).
+    "search_past_conversations",
     # Background research reads the web and runs local models; its report
     # lands in the conversation. Nothing it does reaches another person.
     "deep_research",

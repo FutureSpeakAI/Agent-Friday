@@ -343,20 +343,27 @@ def _conv_context(cid, limit=100):
 def _persist_turn(cid, user_msg, friday_msg, meta=None):
     """Write a completed exchange to its conversation (and the legacy mirror)."""
     from agent_friday.services import conversations as _conv
+    from agent_friday.services import conversation_provenance as _prov
+    _settings = _load_settings() or {}
+    # Which provider received this exchange, so a later call knows what it
+    # may recall directly (services/conversation_provenance).
+    _pmeta = _prov.chat_turn_meta(bool(_settings.get('off_record')))
+    if _prov.stops_storage(_settings):
+        return
     try:
         _conv.append(cid, {"id": user_msg.get('id'), "role": "user",
                            "text": user_msg.get('text') or '',
                            "pinned": bool(user_msg.get('pinned')),
-                           "meta": {"kind": "turn"}})
+                           "meta": dict(_pmeta, kind="turn")})
         _conv.append(cid, {"id": friday_msg.get('id'), "role": "friday",
                            "text": friday_msg.get('text') or '',
                            "pinned": bool(friday_msg.get('pinned')),
-                           "meta": dict(meta or {}, kind="turn",
-                                        sources=friday_msg.get('sources') or [],
-                                        # The reply's reasoning trace, so the
-                                        # bubble keeps its Reasoning section
-                                        # when the conversation is reopened.
-                                        trace_id=friday_msg.get('trace_id'))})
+                           "meta": {**_pmeta, **(meta or {}), "kind": "turn",
+                                    "sources": friday_msg.get('sources') or [],
+                                    # The reply's reasoning trace, so the
+                                    # bubble keeps its Reasoning section
+                                    # when the conversation is reopened.
+                                    "trace_id": friday_msg.get('trace_id')}})
         _conv.prune(cid)
     except Exception as _e:
         print(f"  [conversations] could not persist turn to {cid}: {_e}")

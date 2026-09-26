@@ -2193,6 +2193,7 @@ DEFAULT_SETTINGS = {
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
     "user_email": "",                      # the user's own email — passed through unscrubbed
     "off_record": False,                   # quick toggle — when true, chat is not logged either
+    "off_record_stops_storage": False,     # when true, off-record also keeps turns out of the conversation store (receipts and governance logs stay)
     # ── Workspaces / Dock ──
     # When True the dock shows ALL workspaces (Finance, Health, Family, Trust,
     # Studio, Content, FutureSpeak); when False it shows only the

@@ -333,6 +333,16 @@ _VOICE_LIVE_TOOLS = [
      "asking his OK to share some context, then carry on. The approved context is "
      "handed to you when he decides; if he declines, carry on without it.",
      {"question": ("string", "The question for his local model, in full.")}, ["question"]),
+    ("search_past_conversations",
+     "Search earlier conversations with the user, voice and chat, with dates: "
+     "what he said, what you told him, what was decided. Use it whenever he "
+     "refers to something from before ('what did we say about...', 'remember "
+     "when...'). Matches from earlier calls with you come back directly; matches "
+     "from conversations that stayed on his PC are summarised by his local model "
+     "and shown to him on a card before any of it reaches you.",
+     {"query": ("string", "What to look for, in a few words."),
+      "since": ("string", "Only on or after this date, YYYY-MM-DD (optional)."),
+      "until": ("string", "Only on or before this date, YYYY-MM-DD (optional).")}, ["query"]),
     ("answer_share_request",
      "Record the user's spoken decision on a pending share request (the card from "
      "ask_local_for_context). Call it only right after he says it: 'send it' / "
@@ -804,6 +814,20 @@ def _tool_ask_local_for_context(inp, session=None):
         return ("NOT DONE: local-only mode is on, so nothing from this machine may be "
                 "shared with a cloud voice session.")
     cid = session.get("conversation_id") if isinstance(session, dict) else None
+    rid = _start_local_share(question, cid)
+    tail = (f" The request id is {rid}." if rid else
+            " You will be told the request id when the card is up.")
+    return ("ASKING: his local model is answering, and he will see exactly what would be "
+            "shared on a card before you receive any of it. Say one short sentence that "
+            "you're asking his OK to share some context, then carry on." + tail)
+
+
+def _start_local_share(question, cid, answer_fn=None):
+    """Ask the local model on a thread; raise the card or share under a grant.
+
+    Returns the card's id if it was raised within a moment, else None; the
+    outcome is also handed to the call (services/voice_live_channel).
+    """
     from agent_friday.services import local_context as _lc
     from agent_friday.services import voice_live_channel as _vlc
     rid = [None]
@@ -811,7 +835,8 @@ def _tool_ask_local_for_context(inp, session=None):
 
     def _work():
         try:
-            out = _lc.request(question, conversation_id=cid, cloud_model=_get_live_model())
+            out = _lc.request(question, conversation_id=cid, cloud_model=_get_live_model(),
+                              answer_fn=answer_fn)
         except Exception as e:  # noqa: BLE001
             out = {"status": "unavailable", "reason": f"the local model failed ({type(e).__name__})"}
         rid[0] = out.get("approval_id")
@@ -825,12 +850,43 @@ def _tool_ask_local_for_context(inp, session=None):
             _vlc.deliver(cid, "No context came back from his local model: " + str(out.get("reason")),
                          kind="notice")
     threading.Thread(target=_work, name="ask-local-context", daemon=True).start()
-    done.wait(3.0)          # a card raised quickly gets its id into this reply
-    tail = (f" The request id is {rid[0]}." if rid[0] else
-            " You will be told the request id when the card is up.")
-    return ("ASKING: his local model is answering, and he will see exactly what would be "
-            "shared on a card before you receive any of it. Say one short sentence that "
-            "you're asking his OK to share some context, then carry on." + tail)
+    done.wait(3.0)          # a card raised quickly gets its id into the reply
+    return rid[0]
+
+
+def _tool_search_past_conversations(inp, session=None):
+    """Earlier conversations, by provenance: what Gemini already heard comes back
+    directly; the rest only through the local model and the payload card."""
+    inp = inp or {}
+    query = str(inp.get("query") or "").strip()
+    if not query:
+        return "search_past_conversations needs something to look for."
+    from agent_friday.services import conversation_recall as _rc
+    hits = _rc.search(query, since=inp.get("since"), until=inp.get("until"), limit=12)
+    direct, rest = _rc.split_by_provenance(hits)
+    parts = []
+    if direct:
+        parts.append("From earlier calls with you (newest and best first):\n"
+                     + _rc.format_hits(direct[:6]))
+    if rest:
+        if _voice_local_only():
+            parts.append(f"{len(rest)} more match(es) are in conversations that stay on this PC.")
+        else:
+            cid = session.get("conversation_id") if isinstance(session, dict) else None
+            snippets = _rc.format_hits(rest[:8])
+
+            def _answer(question):
+                from agent_friday.services import local_context as _lc
+                return _lc.local_answer(question + "\n\nWhat the earlier conversations say:\n"
+                                        + snippets)
+            rid = _start_local_share(f"From earlier conversations: {query}", cid, _answer)
+            parts.append(f"{len(rest)} more match(es) are in conversations that stayed on his "
+                         f"PC. His local model is summarising them, and he will see exactly what "
+                         f"would be shared on a card first"
+                         + (f" (request id {rid})." if rid else "."))
+    if not parts:
+        return f"Nothing in earlier conversations matches \"{query}\"."
+    return "\n\n".join(parts)
 
 
 def _tool_answer_share_request(inp, session=None):
@@ -973,6 +1029,9 @@ def _voice_tool_run(name, args, send_client, session=None):
         if name == "ask_local_for_context":
             return _governed("ask_local_for_context",
                              lambda a: _tool_ask_local_for_context(a, session), args)
+        if name == "search_past_conversations":
+            return _governed("search_past_conversations",
+                             lambda a: _tool_search_past_conversations(a, session), args)
         if name == "answer_share_request":
             return _governed("answer_share_request",
                              lambda a: _tool_answer_share_request(a, session), args)
@@ -1838,7 +1897,7 @@ def _build_live_context() -> str:
     return "\n\n".join(parts)
 
 
-def _persist_voice_turn(user_text, agent_text, conversation_id=None):
+def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=None):
     """Log a completed voice turn to the context log and chat history.
 
     Voice turns are saved as event types `voice_user` and `voice_agent` so
@@ -1848,6 +1907,16 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None):
     """
     settings = _load_settings()
     off_record = bool(settings.get('off_record'))
+    # Which provider heard this exchange (the Gemini Live bridge passes
+    # google-gemini, local voice passes local), so a later call knows what it
+    # may recall directly (services/conversation_provenance).
+    from agent_friday.services import conversation_provenance as _prov
+    _turn_meta = _prov.turn_meta(provider, off_record)
+    if _prov.stops_storage(settings):
+        # He chose that off-record also means not stored. Signed action
+        # receipts and governance logs are kept regardless; this is the
+        # conversation transcript only.
+        return
     if not off_record:
         if user_text:
             _log_context("voice_user", {"text": user_text})
@@ -1904,7 +1973,7 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None):
             try:
                 _conv.append(_cid, {"id": _m['id'], "role": _m['role'],
                                     "text": _m['text'], "pinned": False,
-                                    "meta": {"kind": "turn", "via": "voice"}})
+                                    "meta": dict(_turn_meta, kind="turn", via="voice")})
             except Exception as _ce:
                 print(f'  [voice] could not persist turn to {_cid}: {_ce}')
         try:
@@ -1935,6 +2004,16 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None):
 
 
 def _spawn_voice_distill(turn_log):
+    """Off-record calls are never distilled: see _spawn_voice_distill_unchecked."""
+    try:
+        if bool((_load_settings() or {}).get('off_record')):
+            return None
+    except Exception:
+        return None
+    return _spawn_voice_distill_unchecked(turn_log)
+
+
+def _spawn_voice_distill_unchecked(turn_log):
     """Ask Claude to review a voice session and propose any wiki updates.
 
     Fire-and-forget — runs as a background task so the WS handler can return

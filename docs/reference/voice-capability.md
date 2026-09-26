@@ -74,3 +74,28 @@ the user's life, preferences). See `services/local_context.py`.
 - **One approval path:** the card is decided once and disappears from every
   tab. The approved text reaches the live call byte for byte. A declined card
   sends nothing.
+
+## Remembering earlier conversations
+
+- **Every turn records who heard it.** Voice and chat turns store
+  `meta.provider`, `meta.sent_to` and `meta.off_record`
+  (`services/conversation_provenance.py`).
+- **Older turns** count as heard by Gemini only where the evidence is solid: a
+  voice turn stored while a Gemini Live session was open, according to the
+  egress audit log's "live voice session opened/closed" entries. Everything
+  else counts as local-only.
+- **`search_past_conversations`** searches voice and chat history with dates
+  (`services/conversation_recall.py`).
+  - Matches the same cloud provider already heard come back directly, through
+    the normal egress gate.
+  - Other matches are summarised by the local model and shown on the payload
+    card first.
+  - Off-record turns are never returned.
+- **A Gemini Live call starts with a short pin** of recent voice calls, built
+  only from turns Gemini already heard. The locally written daily summary
+  covers every conversation, so it reaches a cloud call only through the
+  search and the card.
+- **Off-record calls are never distilled into the wiki.**
+  `off_record_stops_storage` (default off) also keeps off-record turns out of
+  the conversation store. Signed action receipts and governance logs are kept
+  either way.

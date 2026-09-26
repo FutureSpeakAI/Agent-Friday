@@ -2285,7 +2285,8 @@ if sock is not None:
                 return None
 
         hooks = {
-            "persist": lambda u, a, cid: _persist_voice_turn(u, a, conversation_id=cid),
+            "persist": lambda u, a, cid: _persist_voice_turn(u, a, conversation_id=cid,
+                                                             provider="local"),
             "distill": _spawn_voice_distill,
             "actions": _voice_actions_for,
             "receipt": _receipt,
@@ -2501,13 +2502,15 @@ if sock is not None:
         except Exception as e:
             personality = ''
             full_ctx = f"(context load failed: {e})"
-        # Cross-session continuity + tone adaptation. Per-turn semantic recall
-        # isn't practical in a streaming session, but the most-recent end-of-day
-        # summary and the accumulated emotional arc are session-level and apply
-        # for the whole conversation — inject them so the native voice path picks
-        # up open threads and adapts tone just like the text chat does.
+        # Cross-session continuity for a CLOUD call, by provenance
+        # (services/conversation_recall): what earlier Gemini calls were about
+        # is pinned, because Gemini already heard it. The locally written
+        # daily summary covers every conversation, local ones included, so it
+        # reaches this call only when needed, through search_past_conversations
+        # and the payload card. The emotional arc is session-level tone only.
         try:
-            full_ctx += _build_session_continuity_block()
+            from agent_friday.services.conversation_recall import recent_voice_pin
+            full_ctx += "\n" + recent_voice_pin()
             full_ctx += _build_emotional_tone_block()
         except Exception as _mc_err:
             _vlog(f'voice memory/tone context skipped: {_mc_err}')
@@ -3062,7 +3065,8 @@ if sock is not None:
                         pass
                 try:
                     _persist_voice_turn(user_text, agent_text,
-                                        conversation_id=_open_cid[0])
+                                        conversation_id=_open_cid[0],
+                                        provider="google-gemini")
                 except Exception as e:
                     print(f'[live] persist_voice_turn error: {e}')
                 _safe_send({
