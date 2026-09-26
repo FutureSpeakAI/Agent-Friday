@@ -8706,8 +8706,8 @@ def _gate_policy_class(tool_name, args):
 
     The label on a card used to come from a keyword scan over the card's whole
     text, and that text is "<tool> <arguments>". So the owner's own words went
-    into it: an event whose notes said "order at texasperformingarts.org" or
-    "buy tickets at broadwayinaustin.com" was labelled `spend`, while the same
+    into it: an event whose notes said "order at tickets.example.org" or
+    "buy tickets at theatre.example.com" was labelled `spend`, while the same
     tool with a plain address was labelled `outward`. Five identical calendar
     writes in one batch came out internal/spend/spend/internal/spend, and a
     calendar entry that says "spend" asks the owner to approve the wrong thing.
