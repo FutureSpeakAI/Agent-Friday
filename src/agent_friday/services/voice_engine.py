@@ -596,10 +596,9 @@ _TOLD_STOPWORDS = {"that", "this", "with", "from", "have", "says", "said", "will
                    "when", "were", "been", "more", "than", "report", "reports"}
 
 
-def _voice_briefing(_inp=None):
-    """The newest daily briefing, trimmed to what one spoken rundown can use."""
-    from agent_friday.services.agent import _tool_get_briefing
-    text = _tool_get_briefing(_inp or {})
+def _trim_briefing(text):
+    """A briefing trimmed to what one spoken rundown can use."""
+    text = str(text or "")
     if len(text) > VOICE_BRIEFING_CHARS:
         text = text[:VOICE_BRIEFING_CHARS] + " [... the briefing continues; ask for more]"
     return text
@@ -729,7 +728,8 @@ def _voice_tool_run(name, args, send_client, session=None):
             return (f"I did not open it because the link looks invalid. {res} "
                     f"Tell the user the link appears broken and offer to find the right source.")
         if name == "get_briefing":
-            return _governed("get_briefing", _voice_briefing, args)
+            from agent_friday.services.agent import _tool_get_briefing
+            return _trim_briefing(_governed("get_briefing", _tool_get_briefing, args))
         if name == "search_news":
             res = _governed("search_news", _tool_search_news,
                             _news_args_for_session(args, session))
