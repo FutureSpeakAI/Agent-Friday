@@ -96,22 +96,44 @@ def html_error(exc: BaseException, what: str, status: int = 500):
     return "<h2>%s</h2><p>%s</p>" % (html.escape(what), html.escape(detail)), status
 
 
+def _marked(value, path, found):
+    if isinstance(value, ExceptionText):
+        found.append((path, str(value)))
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _marked(v, "%s.%s" % (path, k) if path else str(k), found)
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            _marked(v, "%s[%d]" % (path, i), found)
+
+
+def _swap(value, text):
+    if isinstance(value, ExceptionText):
+        return text
+    if isinstance(value, dict):
+        return {k: _swap(v, text) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_swap(v, text) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_swap(v, text) for v in value)
+    return value
+
+
 def public_result(result, what: str):
     """The browser-safe form of a service result.
 
-    Top-level values marked with `exception_text` become "<what> (error <id>)"
-    and are logged under that id, and "error_id" is added. A result with no
-    marked value, or one that is not a dict, is returned unchanged. The
-    service's own dict is never mutated: the model path keeps the real text.
+    Every value marked with `exception_text`, at any depth in dicts, lists and
+    tuples, becomes "<what> (error <id>)"; the originals are logged under that
+    one id, and a top-level dict gains "error_id". A result with no marked
+    value is returned as is (the same object). The service's own result is
+    never mutated: the model path keeps the real text.
     """
-    if not isinstance(result, dict):
+    found = []
+    _marked(result, "", found)
+    if not found:
         return result
-    marked = [k for k, v in result.items() if isinstance(v, ExceptionText)]
-    if not marked:
-        return result
-    error_id = log_text(what, "; ".join("%s=%s" % (k, result[k]) for k in marked))
-    safe = {k: v for k, v in result.items() if k not in marked}
-    for k in marked:
-        safe[k] = "%s (error %s)" % (what, error_id)
-    safe["error_id"] = error_id
+    error_id = log_text(what, "; ".join("%s=%s" % (p or "value", t) for p, t in found))
+    safe = _swap(result, "%s (error %s)" % (what, error_id))
+    if isinstance(safe, dict):
+        safe["error_id"] = error_id
     return safe

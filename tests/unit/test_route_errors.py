@@ -171,6 +171,23 @@ def test_public_result_swaps_marked_text_and_keeps_the_rest(app, caplog):
     assert res["error"] == INTERNAL  # the service's dict, which tools read, is untouched
 
 
+def test_public_result_reaches_nested_values_under_one_id(app, caplog):
+    from agent_friday.routes._errors import public_result
+    from agent_friday.user_errors import exception_text
+    exc = _raise(OSError(INTERNAL))
+    res = {"ok": True, "result": {"failed": {"t1": exception_text(exc)}},
+           "errors": [exception_text(exc, "Gmail refused the message: %s"), "kept"]}
+    with app.test_request_context("/x"):
+        with caplog.at_level(logging.ERROR, logger="friday.routes.errors"):
+            out = public_result(res, "Couldn't change the mail")
+    eid = out["error_id"]
+    assert out["result"]["failed"]["t1"] == "Couldn't change the mail (error %s)" % eid
+    assert out["errors"] == ["Couldn't change the mail (error %s)" % eid, "kept"]
+    assert INTERNAL not in str(out)
+    assert "Gmail refused the message: " + INTERNAL in caplog.text
+    assert res["errors"][0] == "Gmail refused the message: " + INTERNAL
+
+
 def test_public_result_passes_literal_messages_and_success_through(app):
     from agent_friday.routes._errors import public_result
     with app.test_request_context("/x"):
