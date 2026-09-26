@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -191,8 +192,8 @@ class TestByoWalkthrough:
             assert len(s["do"]) > 10, s
 
     def test_the_console_is_linked_not_described(self):
-        joined = " ".join((s.get("url") or "") for s in goc.byo_steps())
-        assert "console.cloud.google.com" in joined
+        hosts = {urlparse(s.get("url") or "").hostname for s in goc.byo_steps()}
+        assert "console.cloud.google.com" in hosts
 
     def test_the_scopes_are_listed_for_copying(self):
         """Step: 'add these scopes'. Without the list the user guesses, and a

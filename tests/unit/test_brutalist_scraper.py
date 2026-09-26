@@ -74,7 +74,7 @@ def test_links_are_extracted_with_their_source_domain(page):
     # the domain is what ban/boost and trust scoring key on, so it must be the
     # ARTICLE's host, never the aggregator's
     assert all("brutalist" not in (l["source"] or "") for l in links)
-    assert any("example-tech.com" in (l["source"] or "") for l in links)
+    assert any(l["source"] == "example-tech.com" for l in links)
 
 
 def test_the_limit_is_honoured(page):
