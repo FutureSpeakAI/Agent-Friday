@@ -17,6 +17,7 @@ unscored list (recommending take 1) when no evaluator/key is available.
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
+from agent_friday.user_errors import ExceptionText, exception_text
 
 
 def _clamp_n(n: Any, lo: int = 2, hi: int = 4, default: int = 3) -> int:
@@ -60,7 +61,7 @@ def compare_images(prompt: str, *, n: int = 3, model: Optional[str] = None,
         from agent_friday.services import creative_engine as ce
         from agent_friday.services import qa_gates
     except Exception as e:
-        return {"status": "error", "message": f"take comparison unavailable: {e}"}
+        return {"status": "error", "message": ExceptionText(f"take comparison unavailable: {e}")}
 
     if not ce.is_available():
         return {"status": "unavailable",
@@ -113,7 +114,7 @@ def compare_text(intent: str, generate_fn: Callable[[int], str], *,
     try:
         from agent_friday.services import qa_gates
     except Exception as e:
-        return {"status": "error", "message": f"take comparison unavailable: {e}"}
+        return {"status": "error", "message": ExceptionText(f"take comparison unavailable: {e}")}
 
     takes: List[Dict[str, Any]] = []
     for i in range(n):
@@ -121,7 +122,7 @@ def compare_text(intent: str, generate_fn: Callable[[int], str], *,
             content = (generate_fn(i) or "").strip()
         except Exception as e:
             takes.append({"take": i + 1, "status": "error",
-                          "message": str(e), "score": None})
+                          "message": exception_text(e), "score": None})
             continue
         if not content:
             takes.append({"take": i + 1, "status": "error",

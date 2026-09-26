@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.services import content_pipeline as _store
+from agent_friday.user_errors import exception_text
 
 # ── Storage (§5.6) ───────────────────────────────────────────────────────────
 VOICE_CARDS_DIR = FRIDAY_DIR / "content" / "voice_cards"
@@ -615,7 +616,7 @@ def get_voice_card(platform: str) -> Dict[str, Any]:
                 "text": path.read_text(encoding="utf-8"),
                 "path": str(path), "seeded": seeded}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def set_voice_card(platform: str, text: str) -> Dict[str, Any]:
@@ -638,7 +639,7 @@ def set_voice_card(platform: str, text: str) -> Dict[str, Any]:
         path.write_text(clamped, encoding="utf-8")
         return {"ok": True, "platform": platform, "path": str(path)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def _voice_card_text(platform: str) -> str:
@@ -947,7 +948,7 @@ def adapt(post: dict, platforms: Optional[List[str]] = None, *,
             _store.add_targets(post_id, new_targets)   # no-op for bare dicts
         return {"ok": True, "targets": out, "warnings": warnings}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def preview(body: str, assets: list, platform: str, format: str) -> Dict[str, Any]:
@@ -980,7 +981,7 @@ def preview(body: str, assets: list, platform: str, format: str) -> Dict[str, An
                 "asset_plan": fields["adapted_assets"],
                 "warnings": warnings}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 # ── §5.4 conversion matrix ───────────────────────────────────────────────────
@@ -1084,4 +1085,4 @@ def convert_format(post: dict, conversion: str) -> Dict[str, Any]:
         return {"ok": True, "conversion": name, "targets": [target],
                 "warnings": warnings}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}

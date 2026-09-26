@@ -28,6 +28,7 @@ import re
 from typing import Any, Callable, Dict, Optional
 
 from agent_friday.core import _load_settings
+from agent_friday.user_errors import ExceptionText
 
 # Mirrors DEFAULT_SETTINGS["qa_gates"]; used when the key is absent/partial.
 _QA_DEFAULTS = {
@@ -161,7 +162,7 @@ def evaluate_text(content: str, intent: str, *,
                              temperature=0.2, workspace=workspace or "review")
     except Exception as e:
         return {"status": "skipped", "passed": True, "score": None,
-                "critique": f"evaluator unavailable: {e}", "suggestions": ""}
+                "critique": ExceptionText(f"evaluator unavailable: {e}"), "suggestions": ""}
 
     verdict = _parse_score(raw)
     score = verdict["score"]
@@ -226,7 +227,7 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
         raw = getattr(resp, "text", "") or ""
     except Exception as e:
         return {"status": "skipped", "passed": True, "score": None,
-                "critique": f"vision evaluator unavailable: {e}", "suggestions": ""}
+                "critique": ExceptionText(f"vision evaluator unavailable: {e}"), "suggestions": ""}
 
     verdict = _parse_score(raw)
     score = verdict["score"]

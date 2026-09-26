@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from agent_friday.services.platforms.base import PlatformAdapter  # noqa: F401
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import ExceptionText, exception_text
 
 # Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
 # module along with everything else (see agent_friday/paths.py).
@@ -93,7 +94,7 @@ def save_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             os.replace(tmp, CONFIG_PATH)
             return {"ok": True}
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": exception_text(e)}
 
 
 def _sanitize_opts(opts: Any, depth: int = 0) -> Dict[str, Any]:
@@ -135,7 +136,7 @@ def configure_platform(name: str, opts: Dict[str, Any], *,
             credential_store.set_provider_key(f"platform_{mod}", secret_value)
             credential_store.audit_event("platform", "secret_stored", platform=mod)
         except Exception as e:
-            return {"ok": False, "error": f"secret store failed: {e}"}
+            return {"ok": False, "error": ExceptionText(f"secret store failed: {e}")}
     # push options to a live adapter if one exists
     a = _ADAPTERS.get(mod)
     if a is not None:
@@ -167,7 +168,7 @@ def _make_adapter(mod: str):
     try:
         module = importlib.import_module(f"agent_friday.services.platforms.{mod}")
     except Exception as e:
-        _IMPORT_ERRORS[mod] = f"import failed: {e}"
+        _IMPORT_ERRORS[mod] = ExceptionText(f"import failed: {e}")
         return None
     try:
         cls = _find_adapter_class(module)
@@ -176,7 +177,7 @@ def _make_adapter(mod: str):
             return None
         return cls()
     except Exception as e:
-        _IMPORT_ERRORS[mod] = f"construction failed: {e}"
+        _IMPORT_ERRORS[mod] = ExceptionText(f"construction failed: {e}")
         return None
 
 
@@ -233,7 +234,7 @@ def status() -> Dict[str, Any]:
             st = a.status()
             st = st if isinstance(st, dict) else {"name": mod}
         except Exception as e:
-            st = {"name": mod, "connected": False, "last_error": str(e)}
+            st = {"name": mod, "connected": False, "last_error": exception_text(e)}
         st["available"] = True
         st["platform"] = platform_id
         out["platforms"][mod] = st

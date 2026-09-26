@@ -44,6 +44,7 @@ from agent_friday.services.creations import (
     _sync_daily_creation_files,
     generate_daily_creation,
 )  # noqa: E501
+from agent_friday.routes._errors import api_error, error_text, public_result
 
 creations_bp = Blueprint('creations', __name__)
 
@@ -172,7 +173,7 @@ def serve_creation_framed(filename):
         try:
             md_raw = fpath.read_text(encoding='utf-8', errors='replace')
         except Exception as e:
-            md_raw = f"Could not read creation: {e}"
+            md_raw = error_text(e, "Could not read this creation")
         # Render client-side with marked (already a project dependency); fall back
         # to escaped <pre> if the CDN is unreachable (offline-safe).
         # '<' becomes a JSON escape, so '</script>' in the document cannot
@@ -263,7 +264,7 @@ def daily_creation_latest():
     try:
         return jsonify({"status": "ok", "creation": json.loads(path.read_text(encoding="utf-8"))})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load the daily creation")
 
 
 @creations_bp.route('/api/creations/daily')
@@ -298,7 +299,7 @@ def daily_creation_by_date(date):
     try:
         return jsonify({"status": "ok", "creation": json.loads(path.read_text(encoding="utf-8"))})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return api_error(e, "Couldn't load that day's creation")
 
 
 @creations_bp.route('/api/computer/open', methods=['POST'])
@@ -360,8 +361,8 @@ def api_computer_open():
     finally:
         _gate.DECIDED.reset(token)
     if result is None:
-        return jsonify({"status": "error", "message": f"Could not resolve {path!r}"}), 404
-    return jsonify({"status": "ok", "message": result})
+        return jsonify(public_result({"status": "error", "message": f"Could not resolve {path!r}"}, "Couldn't open that")), 404
+    return jsonify(public_result({"status": "ok", "message": result}, "Couldn't open that"))
 
 
 def _flatten_first_file(result):
@@ -405,7 +406,7 @@ def create_image():
     )
     # The body carries status ('ok'|'blocked'|'unavailable'|'error'); these create
     # routes return HTTP 200 by convention (clients branch on the body's status).
-    return jsonify(_flatten_first_file(result))
+    return jsonify(public_result(_flatten_first_file(result), "Couldn't make the image"))
 
 
 @creations_bp.route('/api/create/music', methods=['POST'])
@@ -430,7 +431,7 @@ def create_music():
         project_id=data.get('project_id'),
         license=data.get('license'),
     )
-    return jsonify(_flatten_first_file(result))
+    return jsonify(public_result(_flatten_first_file(result), "Couldn't make the music"))
 
 
 @creations_bp.route('/api/create/music/available', methods=['GET'])
@@ -440,7 +441,7 @@ def music_available():
     current google-genai SDK lacks the batch generate_music surface."""
     from agent_friday.services import music_engine
     ok, reason = music_engine.cloud_music_available()
-    return jsonify({"available": ok, "reason": reason or None})
+    return jsonify(public_result({"available": ok, "reason": reason or None}, "Couldn't check music generation"))
 
 
 @creations_bp.route('/api/create/availability')
@@ -458,13 +459,13 @@ def create_availability():
     try:
         music_ok, music_reason = music_engine.cloud_music_available()
     except Exception as e:
-        music_ok, music_reason = False, str(e)
+        music_ok, music_reason = False, error_text(e, "Music generation is unavailable")
     try:
         from agent_friday.services.demo_mode import is_demo
         text_ok = not is_demo()
     except Exception:
         text_ok = True
-    return jsonify({"status": "ok", "types": {
+    return jsonify(public_result({"status": "ok", "types": {
         "image": {"available": gem, "reason": None if gem else key_msg},
         "video": {"available": gem, "reason": None if gem else key_msg},
         "music": {"available": bool(music_ok),
@@ -478,7 +479,7 @@ def create_availability():
                      "OpenAI-compatible endpoint, or Ollama in "
                      "Settings → Accounts & Keys.")},
         "code-art": {"available": gem, "reason": None if gem else key_msg},
-    }})
+    }}, "Couldn't check what can be created"))
 
 
 @creations_bp.route('/api/create/text', methods=['POST'])
@@ -527,7 +528,7 @@ def create_text():
                         "files": [{"filename": filename, "url": url}]})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)})
+        return api_error(e, "Couldn't write that", 200)
 
 
 @creations_bp.route('/api/create/timeline', methods=['POST'])
@@ -562,7 +563,7 @@ def create_timeline():
                     "exports": data.get('exports') or ["mp4-1080p"]}
     result = timeline_engine.compose(timeline, project_id=data.get('project_id'),
                                      license=data.get('license'))
-    return jsonify(_flatten_first_file(result))
+    return jsonify(public_result(_flatten_first_file(result), "Couldn't make the timeline"))
 
 
 @creations_bp.route('/api/timeline/formats')
@@ -670,7 +671,7 @@ def create_code_art():
         return jsonify({"status": "ok", "filename": filename, "url": f"/api/creations/{filename}"})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)})
+        return api_error(e, "Couldn't make the code art", 200)
 
 
 @creations_bp.route('/api/create/poem', methods=['POST'])
@@ -698,7 +699,7 @@ def create_poem():
         return jsonify({"status": "ok", "text": text, "filename": filename})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)})
+        return api_error(e, "Couldn't write the poem", 200)
 
 
 @creations_bp.route('/api/create/presentation', methods=['POST'])
@@ -715,7 +716,7 @@ def create_presentation():
         style=data.get('style'),
         workspace=data.get('workspace'),
     )
-    return jsonify(result)
+    return jsonify(public_result(result, "Couldn't make the presentation"))
 
 
 @creations_bp.route('/api/create/website', methods=['POST'])
@@ -729,7 +730,7 @@ def create_website():
         style=data.get('style'),
         workspace=data.get('workspace'),
     )
-    return jsonify(result)
+    return jsonify(public_result(result, "Couldn't make the website"))
 
 
 @creations_bp.route('/api/create/video', methods=['POST'])
@@ -748,4 +749,4 @@ def create_video():
         image_path=data.get('image_path'),
         license=data.get('license'),
     )
-    return jsonify(_flatten_first_file(result))
+    return jsonify(public_result(_flatten_first_file(result), "Couldn't make the video"))

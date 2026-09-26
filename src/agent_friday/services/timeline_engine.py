@@ -43,6 +43,7 @@ from agent_friday.services.creative_engine import (
     _orb_start, _orb_update, _orb_fail, _defer, _safe_remove,
     _write_metadata, _notify, _timestamp,
 )
+from agent_friday.user_errors import ExceptionText
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -480,7 +481,7 @@ def compose(timeline: Dict[str, Any], *, project_id: Optional[str] = None,
         _orb_fail(orb)
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"Timeline composition failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Timeline composition failed: {e}")}
 
 
 def _demo_compose(timeline, timeline_id, profiles, project_id, license=None) -> Dict[str, Any]:
@@ -526,7 +527,7 @@ def _demo_compose(timeline, timeline_id, profiles, project_id, license=None) -> 
                     "description instead of a rendered video. Install "
                     "agent-friday[compose] to render.")}
     except Exception as e:
-        return {"status": "error", "message": f"Timeline demo failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Timeline demo failed: {e}")}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

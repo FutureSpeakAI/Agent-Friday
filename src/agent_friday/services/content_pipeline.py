@@ -47,6 +47,7 @@ from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.user_errors import exception_text
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 DB_PATH = FRIDAY_DIR / "content_pipeline.db"
@@ -558,7 +559,7 @@ def create_post(title: str = "", body: str = "", assets: Optional[list] = None,
             stored = _get_post_locked(con, post["id"])
         return {"ok": True, "post": stored, "warnings": warnings}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def get_post(post_id: str) -> Dict[str, Any]:
@@ -569,7 +570,7 @@ def get_post(post_id: str) -> Dict[str, Any]:
             return {"ok": False, "error": "post not found"}
         return {"ok": True, "post": post}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def list_posts(status: Optional[str] = None, platform: Optional[str] = None,
@@ -601,7 +602,7 @@ def list_posts(status: Optional[str] = None, platform: Optional[str] = None,
                      if (p.get("source") or {}).get("kind") == source_kind]
         return {"ok": True, "posts": posts, "count": len(posts)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 _POST_EDIT_KEYS = ("title", "body", "assets", "variants", "tags", "source",
@@ -664,7 +665,7 @@ def update_post(post_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
             post = _get_post_locked(con, post_id)
         return {"ok": True, "post": post}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def delete_post(post_id: str) -> Dict[str, Any]:
@@ -699,7 +700,7 @@ def delete_post(post_id: str) -> Dict[str, Any]:
             post = _get_post_locked(con, post_id)
         return {"ok": True, "post": post, "erased": True}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def graduate_idea(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -731,7 +732,7 @@ def graduate_idea(item: Dict[str, Any]) -> Dict[str, Any]:
                 f"no platform mapping for legacy channel '{channel}'")
         return res
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -768,7 +769,7 @@ def schedule_post(post_id: str, schedule: Optional[Dict[str, Any]] = None) -> Di
             post = _get_post_locked(con, post_id)
         return {"ok": True, "post": post}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def publish_now(post_id: str) -> Dict[str, Any]:
@@ -793,7 +794,7 @@ def publish_now(post_id: str) -> Dict[str, Any]:
             post = _get_post_locked(con, post_id)
         return {"ok": True, "post": post}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def cancel_post(post_id: str, target_id: Optional[str] = None) -> Dict[str, Any]:
@@ -832,7 +833,7 @@ def cancel_post(post_id: str, target_id: Optional[str] = None) -> Dict[str, Any]
             post = _get_post_locked(con, post_id)
         return {"ok": True, "post": post}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def rearm_post(post_id: str, publish_at=None) -> Dict[str, Any]:
@@ -870,7 +871,7 @@ def rearm_post(post_id: str, publish_at=None) -> Dict[str, Any]:
             post = _get_post_locked(con, post_id)
         return {"ok": True, "post": post, "reopened": reopened}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def release_held(post_id: str, target_id: Optional[str] = None) -> Dict[str, Any]:
@@ -920,7 +921,7 @@ def release_held(post_id: str, target_id: Optional[str] = None) -> Dict[str, Any
             post = _get_post_locked(con, post_id)
         return {"ok": True, "post": post}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def expire_stale_holds(now=None) -> Dict[str, Any]:
@@ -943,7 +944,7 @@ def expire_stale_holds(now=None) -> Dict[str, Any]:
                 expired.append(r["id"])
         return {"ok": True, "expired": expired, "count": len(expired)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -972,7 +973,7 @@ def add_targets(post_id: str, targets: List[Any]) -> Dict[str, Any]:
             post = _get_post_locked(con, post_id)
         return {"ok": True, "post": post, "added": added}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def get_target(target_id: str) -> Dict[str, Any]:
@@ -984,7 +985,7 @@ def get_target(target_id: str) -> Dict[str, Any]:
             return {"ok": False, "error": "target not found"}
         return {"ok": True, "target": _hydrate_target(row)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def update_target(target_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -1021,7 +1022,7 @@ def update_target(target_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
             row = con.execute("SELECT * FROM targets WHERE id=?", (target_id,)).fetchone()
         return {"ok": True, "target": _hydrate_target(row)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def set_target_status(target_id: str, status: str, *,
@@ -1067,7 +1068,7 @@ def set_target_status(target_id: str, status: str, *,
         return {"ok": True, "target": _hydrate_target(t_row),
                 "post_status": post_status}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def claim_due_targets(now=None, limit: int = 50) -> Dict[str, Any]:
@@ -1122,7 +1123,7 @@ def claim_due_targets(now=None, limit: int = 50) -> Dict[str, Any]:
                     out.append(_hydrate_target(t_row))
         return {"ok": True, "targets": out, "count": len(out)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def find_recurrence_clone(parent_id: str, publish_at: str) -> Dict[str, Any]:
@@ -1149,7 +1150,7 @@ def find_recurrence_clone(parent_id: str, publish_at: str) -> Dict[str, Any]:
                 return {"ok": True, "found": True, "post_id": r["id"]}
         return {"ok": True, "found": False}
     except Exception as e:
-        return {"ok": False, "error": str(e), "found": False}
+        return {"ok": False, "error": exception_text(e), "found": False}
 
 
 def defer_target(target_id: str, not_before: float) -> Dict[str, Any]:
@@ -1172,7 +1173,7 @@ def defer_target(target_id: str, not_before: float) -> Dict[str, Any]:
                                 (target_id,)).fetchone()
         return {"ok": True, "target": _hydrate_target(t_row)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 STALE_CLAIM_S = 15 * 60               # a PREPARING claim older than this with
@@ -1211,7 +1212,7 @@ def recover_stale_claims(now=None, stale_after_s: float = STALE_CLAIM_S,
                     recovered.append(r["id"])
         return {"ok": True, "recovered": recovered, "count": len(recovered)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def list_stale_sent_targets(now=None, stale_after_s: float = STALE_CLAIM_S,
@@ -1235,7 +1236,7 @@ def list_stale_sent_targets(now=None, stale_after_s: float = STALE_CLAIM_S,
         targets = [_hydrate_target(r) for r in rows if r["id"] not in excl]
         return {"ok": True, "targets": targets, "count": len(targets)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1296,7 +1297,7 @@ def insert_engagement_snapshot(target_id: str, metrics: Dict[str, Any],
             analytics = _refresh_analytics_locked(con, row["post_id"])
         return {"ok": True, "snapshot_id": snap_id, "analytics": analytics}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def get_snapshots(target_id: Optional[str] = None, post_id: Optional[str] = None,
@@ -1321,7 +1322,7 @@ def get_snapshots(target_id: Optional[str] = None, post_id: Optional[str] = None
             snaps.append(d)
         return {"ok": True, "snapshots": snaps, "count": len(snaps)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def _refresh_analytics_locked(con, post_id: str) -> Dict[str, Any]:
@@ -1375,7 +1376,7 @@ def refresh_post_analytics(post_id: str) -> Dict[str, Any]:
             analytics = _refresh_analytics_locked(con, post_id)
         return {"ok": True, "analytics": analytics}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1400,7 +1401,7 @@ def upsert_best_time(platform: str, weekday: int, hour: int,
                  _now_iso()))
         return {"ok": True}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def get_best_times(platform: Optional[str] = None,
@@ -1418,7 +1419,7 @@ def get_best_times(platform: Optional[str] = None,
                 params).fetchall()
         return {"ok": True, "best_times": [dict(r) for r in rows]}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1439,7 +1440,7 @@ def award_psi(target_id: str, metric: str, threshold: int,
             awarded = bool(cur.rowcount)
         return {"ok": True, "awarded": awarded, "key": award_key}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def list_psi_awards(target_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1454,7 +1455,7 @@ def list_psi_awards(target_id: Optional[str] = None) -> Dict[str, Any]:
                     "SELECT * FROM psi_awards ORDER BY awarded_at").fetchall()
         return {"ok": True, "awards": [dict(r) for r in rows]}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1478,7 +1479,7 @@ def append_publish_log(entry: Dict[str, Any]) -> Dict[str, Any]:
                     encoding="utf-8")
         return {"ok": True}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}
 
 
 def read_publish_log(limit: int = 50, target_id: Optional[str] = None,
@@ -1504,4 +1505,4 @@ def read_publish_log(limit: int = 50, target_id: Optional[str] = None,
                 break
         return {"ok": True, "entries": out}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": exception_text(e)}

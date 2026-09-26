@@ -37,6 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.paths import contained, safe_name
+from agent_friday.user_errors import ExceptionText, exception_text
 
 PIPELINES_DIR = FRIDAY_DIR / "pipelines"
 RUNS_DIR = PIPELINES_DIR / "runs"
@@ -709,8 +710,8 @@ def advance(run_id: str,
             _run_one_stage(run, idx, progress)
         except Exception as e:
             run["state"] = FAILED
-            run["error"] = str(e)
-            run["milestones"].append(f"✗ Stage {idx + 1} failed: {e}")
+            run["error"] = exception_text(e)
+            run["milestones"].append(ExceptionText(f"✗ Stage {idx + 1} failed: {e}"))
             return _save_run(run)
 
         run["stage_index"] = idx + 1

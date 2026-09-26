@@ -49,6 +49,7 @@ from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
 from agent_friday.core import CREATIONS_DIR, FRIDAY_DIR
+from agent_friday.user_errors import ExceptionText, exception_text
 
 # Metadata lives OUTSIDE the creations folder so the Studio gallery (which lists
 # every file in CREATIONS_DIR) is not polluted with .json sidecars.
@@ -571,7 +572,7 @@ def _demo_creation(kind: str, prompt: str, model: str, api_model: str,
     except Exception as e:
         _orb_fail(orb)
         return {"status": "unavailable",
-                "message": f"{kind} unavailable; demo mode failed: {e}"}
+                "message": ExceptionText(f"{kind} unavailable; demo mode failed: {e}")}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -663,8 +664,8 @@ def _spend_cap_halt(what: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         if type(e).__name__ != "SpendCapReached":
             return None
-        return {"status": "blocked", "reason": str(e), "spend_cap": True,
-                "files": []}
+        return {"status": "blocked", "reason": getattr(e, "user_message", None) or exception_text(e),
+                "spend_cap": True, "files": []}
     return None
 
 
@@ -860,7 +861,7 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
         _orb_fail(orb)
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"Image generation failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Image generation failed: {e}")}
 
 
 def _extract_and_save_images(response, prompt: str, single: bool = False) -> List[Dict[str, str]]:
@@ -1131,7 +1132,7 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
         _orb_fail(orb)
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"Video generation failed: {e}"}
+        return {"status": "error", "message": ExceptionText(f"Video generation failed: {e}")}
 
 
 def _build_video_config(types, cfg_kwargs: Dict[str, Any]):
@@ -1371,7 +1372,7 @@ def _generate_video_omni(prompt, *, api_model, requested_model, aspect_ratio,
         import traceback
         traceback.print_exc()
         return {"status": "error",
-                "message": f"Video generation failed: {e}"}
+                "message": ExceptionText(f"Video generation failed: {e}")}
 
 
 def _omni_video_bytes(interaction):

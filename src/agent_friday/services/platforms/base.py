@@ -36,6 +36,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import ExceptionText, exception_text
 
 # Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
 # module along with everything else (see agent_friday/paths.py).
@@ -167,8 +168,8 @@ class PlatformAdapter:
             self._audit("credentials_stored", protection=method)
             return {"ok": True, "protection": method}
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e)}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e)}
 
     def load_credentials(self) -> Optional[Dict[str, Any]]:
         """Decrypt the stored auth blob; None when absent/unreadable."""
@@ -180,7 +181,7 @@ class PlatformAdapter:
             data = json.loads(credential_store.read_secret(path).decode("utf-8"))
             return data if isinstance(data, dict) else None
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
             return None
 
     def clear_credentials(self) -> Dict[str, Any]:
@@ -192,7 +193,7 @@ class PlatformAdapter:
                 path.unlink()
                 removed = True
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
         try:
             from agent_friday.services import credential_store
             if credential_store.delete_provider_key(f"platform_{self.name}"):
@@ -217,8 +218,8 @@ class PlatformAdapter:
             self._audit("secret_stored", protection=method)
             return {"ok": True, "protection": method}
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e)}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e)}
 
     def has_credentials(self) -> bool:
         return self.load_credentials() is not None or bool(self.simple_secret())
@@ -286,8 +287,8 @@ class PlatformAdapter:
                 out["expires_at"] = creds.get("expires_at")
             health = self._health_from(creds, simple)
         except Exception as e:
-            out["last_error"] = str(e)
-            health = _ch.unknown(detail="%s: %s" % (type(e).__name__, e),
+            out["last_error"] = exception_text(e)
+            health = _ch.unknown(detail=ExceptionText("%s: %s" % (type(e).__name__, e)),
                                  source="platforms")
         out["connected"] = health.healthy
         out["health"] = health.as_dict()
@@ -402,8 +403,8 @@ class PlatformAdapter:
             }
             return {"ok": True, "prepared": prepared, "warnings": warnings}
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e), "warnings": []}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e), "warnings": []}
 
     def publish(self, prepared: Dict[str, Any]) -> Dict[str, Any]:
         """→ {ok, post_url, platform_post_id, raw}. The base cannot publish."""
@@ -450,7 +451,7 @@ class PlatformAdapter:
                         "limit": limit,
                         "reset_at": entry.get("reset_at")}
         except Exception as e:
-            self._last_error = str(e)
+            self._last_error = exception_text(e)
             return {"window": "day", "used": 0, "limit": limit, "reset_at": None}
 
     def budget_would_exceed(self, n: int = 1) -> bool:
@@ -482,8 +483,8 @@ class PlatformAdapter:
                     "used": entry["used"], "limit": self._budget_limit(),
                     "reset_at": entry.get("reset_at")}
         except Exception as e:
-            self._last_error = str(e)
-            return {"ok": False, "error": str(e)}
+            self._last_error = exception_text(e)
+            return {"ok": False, "error": exception_text(e)}
 
     # ── §4.14 degradation ladder ──────────────────────────────────────────────
     def degradation_options(self) -> List[str]:

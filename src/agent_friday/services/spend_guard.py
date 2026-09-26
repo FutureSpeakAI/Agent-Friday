@@ -57,6 +57,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from agent_friday.core import FRIDAY_DIR
+from agent_friday.user_errors import UserFacingError
 
 _log = logging.getLogger("friday.spend_guard")
 
@@ -67,11 +68,12 @@ _NOTIFIED: Dict[str, str] = {}      # dedupe key -> stamp
 PERIODS = ("daily", "monthly")
 
 
-class SpendCapReached(RuntimeError):
+class SpendCapReached(UserFacingError, RuntimeError):
     """Raised at a cloud choke point when the hard stop has tripped.
 
     A RuntimeError on purpose: model_router's callers already convert a
-    raising gate into a blocked send, so this rides the same rail.
+    raising gate into a blocked send, so this rides the same rail. Its message
+    is written for the user, so routes show it as is (UserFacingError).
     """
 
     def __init__(self, period: str, spend: float, limit: float, what: str):

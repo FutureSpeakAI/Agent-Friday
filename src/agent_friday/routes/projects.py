@@ -13,17 +13,12 @@ By convention here, mutation endpoints return HTTP 200 with the status in the
 body (matching the creative-generation routes) so the UI gets a uniform
 envelope; genuine server faults still surface as 500.
 """
-import traceback
 from flask import Blueprint, jsonify, request
 
+from agent_friday.routes._errors import api_error
 from agent_friday.services import creative_memory as cm
 
 projects_bp = Blueprint('projects', __name__)
-
-
-def _err(e, code=500):
-    traceback.print_exc()
-    return jsonify({"status": "error", "message": str(e)}), code
 
 
 # ═══ PROJECTS ════════════════════════════════════════════════════
@@ -33,7 +28,7 @@ def projects_list():
         return jsonify({"status": "ok", "projects": cm.list_projects(),
                         "types": list(cm.PROJECT_TYPES)})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't list the projects")
 
 
 @projects_bp.route('/api/creative/projects', methods=['POST'])
@@ -49,7 +44,7 @@ def projects_create():
             make_active=data.get('make_active', True))
         return jsonify({"status": "ok", "project": bible})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't create the project")
 
 
 @projects_bp.route('/api/creative/projects/active', methods=['GET'])
@@ -58,7 +53,7 @@ def projects_active():
         return jsonify({"status": "ok", "project": cm.get_active_project(),
                         "active_id": cm.get_active_project_id()})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't load the active project")
 
 
 @projects_bp.route('/api/creative/projects/<pid>', methods=['GET'])
@@ -69,7 +64,7 @@ def projects_get(pid):
             return jsonify({"status": "error", "message": "not found"}), 404
         return jsonify({"status": "ok", "project": bible})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't load the project")
 
 
 @projects_bp.route('/api/creative/projects/<pid>', methods=['PATCH', 'POST'])
@@ -81,7 +76,7 @@ def projects_update(pid):
             return jsonify({"status": "error", "message": "not found"}), 404
         return jsonify({"status": "ok", "project": bible})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't save the project")
 
 
 @projects_bp.route('/api/creative/projects/<pid>', methods=['DELETE'])
@@ -89,7 +84,7 @@ def projects_delete(pid):
     try:
         return jsonify({"status": "ok", "deleted": cm.delete_project(pid)})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't delete the project")
 
 
 @projects_bp.route('/api/creative/projects/<pid>/activate', methods=['POST'])
@@ -100,7 +95,7 @@ def projects_activate(pid):
         cm.set_active_project(pid)
         return jsonify({"status": "ok", "active_id": pid})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't switch to the project")
 
 
 # ═══ CHARACTERS ══════════════════════════════════════════════════
@@ -118,7 +113,7 @@ def character_add(pid):
                             "message": "project not found or name missing"}), 200
         return jsonify({"status": "ok", "character": rec})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't add the character")
 
 
 @projects_bp.route('/api/creative/projects/<pid>/characters/<name>', methods=['DELETE'])
@@ -126,7 +121,7 @@ def character_remove(pid, name):
     try:
         return jsonify({"status": "ok", "removed": cm.remove_character(pid, name)})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't remove the character")
 
 
 # ═══ LOCATIONS ═══════════════════════════════════════════════════
@@ -142,7 +137,7 @@ def location_add(pid):
                             "message": "project not found or name missing"}), 200
         return jsonify({"status": "ok", "location": rec})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't add the location")
 
 
 @projects_bp.route('/api/creative/projects/<pid>/locations/<name>', methods=['DELETE'])
@@ -150,7 +145,7 @@ def location_remove(pid, name):
     try:
         return jsonify({"status": "ok", "removed": cm.remove_location(pid, name)})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't remove the location")
 
 
 # ═══ CONTINUITY ══════════════════════════════════════════════════
@@ -165,7 +160,7 @@ def continuity_add(pid):
                             "message": "project not found or note missing"}), 200
         return jsonify({"status": "ok", "entry": entry})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't add the continuity note")
 
 
 @projects_bp.route('/api/creative/projects/<pid>/continuity', methods=['GET'])
@@ -173,7 +168,7 @@ def continuity_list(pid):
     try:
         return jsonify({"status": "ok", "continuity": cm.list_continuity(pid)})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't load the continuity notes")
 
 
 # ═══ STYLE GUIDE + ASSETS ════════════════════════════════════════
@@ -187,7 +182,7 @@ def style_set(pid):
             return jsonify({"status": "error", "message": "not found"}), 404
         return jsonify({"status": "ok", "style_guide": sg})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't save the style")
 
 
 @projects_bp.route('/api/creative/projects/<pid>/assets', methods=['GET'])
@@ -195,4 +190,4 @@ def assets_list(pid):
     try:
         return jsonify({"status": "ok", "assets": cm.list_assets(pid)})
     except Exception as e:
-        return _err(e)
+        return api_error(e, "Couldn't list the assets")

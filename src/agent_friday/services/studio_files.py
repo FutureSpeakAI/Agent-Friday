@@ -34,6 +34,8 @@ import uuid
 from collections import deque
 from pathlib import Path
 
+from agent_friday.user_errors import UserFacingError
+
 _log = logging.getLogger(__name__)
 
 # Mirrors code_engine._SKIP_DIRS (the Code workspace's file tree), plus the
@@ -95,7 +97,7 @@ THUMB_CACHE_MAX_FILES = 20000
 APPROVAL_KIND = 'studio_file_change'
 
 
-class Denied(Exception):
+class Denied(UserFacingError):
     """A path request outside what the browser may expose. The message is
     safe to show: it names the rule, never the filesystem beyond the root."""
 
