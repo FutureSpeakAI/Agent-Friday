@@ -269,6 +269,28 @@ def friday_capabilities():
         return api_error(e, "Couldn't check the capabilities", shape="bare")
 
 
+def _laya_calibration() -> dict:
+    """The calibration guard's verdict, small enough for the health payload.
+
+    Never raises and never imports the ML stack: `laya_backend` answers from the
+    loaded agent if there is one and says `known: False` if there is not.
+    """
+    try:
+        from agent_friday.services import laya_backend as _laya
+        c = _laya.calibration_report()
+        return {"bucket": c["bucket"], "ok": c["ok"], "known": c["known"],
+                "temperature": c["temperature"], "in_range": c["in_range"],
+                "clamped_buckets": sorted(c["clamped"]),
+                "detail": c["detail"]}
+    except Exception as e:
+        # Marked as exception text so the HTTP boundary swaps it for an id
+        # (routes/_errors, user_errors.exception_text). A health payload is
+        # served to a browser, and 5.14.3 closed exactly this class of leak.
+        from agent_friday.user_errors import exception_text
+        return {"ok": True, "known": False,
+                "detail": exception_text(e, "calibration unavailable: %s")}
+
+
 @core_bp.route('/api/decisions/gate_status')
 def decisions_gate_status():
     """What is actually deciding which actions need the owner's sign-off.
@@ -566,6 +588,11 @@ def friday_health():
             "tool_counts_by_ring": {
                 f"ring_{k}": v for k, v in sorted(ring_counts.items())
             },
+            # Can the confidence behind the second-opinion gate be believed?
+            # laya clamps a checkpoint temperature fitted outside [0.5, 5.0]
+            # and says so through `warnings`, which reaches nobody. This is
+            # that fact, where a person and a boot check can see it.
+            "laya_calibration": _laya_calibration(),
         },
     }, "Couldn't check Friday's health"))
 

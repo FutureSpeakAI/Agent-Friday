@@ -139,6 +139,139 @@ def is_ready() -> bool:
     return _agent is not None
 
 
+# ---------------------------------------------------------------------------
+#  CALIBRATION GUARD
+# ---------------------------------------------------------------------------
+#
+# laya 0.3.5 clamps fitted temperatures to [0.5, 5.0], because the shipped
+# `choice:11+` bucket is 0.1006: it sharpens logits about tenfold and publishes
+# a coin flip as near-certainty. Verified against every cached snapshot of this
+# checkpoint -- all four carry 0.1006, and 0.3.5 applies 0.5 instead.
+#
+# Friday is not exposed to that bucket. Its only question is a two-option
+# choice, so it lands in `choice:2` at 1.906: inside the range, and softening
+# rather than sharpening. Nothing here gates on the confidence number either,
+# and temperature is monotonic, so it could not move the answer even if it were
+# wrong.
+#
+# This is therefore a guard on a position that is currently comfortable, against
+# the two ways it could stop being so without anyone noticing: a future
+# checkpoint distorting the bucket Friday DOES use, or this question growing
+# past ten options into the bucket that is distorted today. In both cases the
+# clamp would keep working correctly and nobody would hear about it, because
+# laya reports through `warnings` and nothing in Friday was listening.
+
+#: What laya 0.3.5 considers a usable temperature. Mirrored rather than imported
+#: so this module can describe the range without importing the ML stack (see the
+#: module docstring: importing laya is expensive and deliberately lazy).
+TEMP_MIN, TEMP_MAX = 0.5, 5.0
+
+_calibration_warnings = []
+
+
+def reset_calibration_warnings():
+    _calibration_warnings.clear()
+
+
+def calibration_warnings():
+    """Warnings laya raised while loading the checkpoint, as plain strings."""
+    return list(_calibration_warnings)
+
+
+def capture_load_warnings(load):
+    """Run `load()` and keep any calibration warning it raises.
+
+    laya warns through `warnings.warn(..., RuntimeWarning)` when it clamps a
+    shipped temperature. That reaches stderr at best and is swallowed entirely
+    under a warning filter, so the one moment the checkpoint tells us its
+    calibration is off was the one moment nothing was listening. A load failure
+    still propagates: this captures warnings, it does not handle errors.
+    """
+    import warnings
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        agent = load()
+    for w in caught:
+        text = str(w.message)
+        if "temperature" in text.lower() or "clamp" in text.lower():
+            _calibration_warnings.append(text)
+            _log.warning("laya calibration: %s", text)
+    return agent
+
+
+def question_bucket():
+    """The calibration bucket Friday's own question falls into.
+
+    Derived from SEVERITY_QUESTION rather than written down, so a question that
+    grows an option changes this answer instead of quietly invalidating a
+    hardcoded string -- which is precisely how this gate would wander into
+    `choice:11+` without anybody editing this file.
+    """
+    q = (SEVERITY_QUESTION or {}).get("severity") or {}
+    qtype = str(q.get("type") or "choice")
+    k = len(q.get("criteria") or {})
+    size = "2" if k <= 2 else "3-5" if k <= 5 else "6-10" if k <= 10 else "11+"
+    return "%s:%s" % (qtype, size)
+
+
+def calibration_report(agent=None):
+    """Is the calibration behind THIS gate's confidence trustworthy?
+
+    `ok` is False only when the bucket Friday actually uses was shipped outside
+    the usable range. Other buckets being clamped is reported and is not a
+    fault: `choice:11+` is clamped on every build of this checkpoint and Friday
+    never asks an eleven-option question.
+
+    Never raises. An agent that does not expose the attributes reports
+    `known: False` rather than an alarm -- not being able to tell is not the
+    same as being wrong, and this must never be why a gate stops working.
+    """
+    bucket = question_bucket()
+    out = {"bucket": bucket, "known": False, "ok": True, "in_range": True,
+           "temperature": None, "shipped": None, "clamped": {},
+           "range": [TEMP_MIN, TEMP_MAX], "warnings": calibration_warnings(),
+           "detail": "calibration not reported by this build of laya"}
+    a = agent if agent is not None else _agent
+    if a is None:
+        out["detail"] = "laya not loaded"
+        return out
+    raw = getattr(a, "temperature_by_options_raw", None)
+    applied = getattr(a, "temperature_by_options", None)
+    if not isinstance(raw, dict) or not isinstance(applied, dict):
+        return out
+    out["known"] = True
+    for key, val in sorted(raw.items()):
+        try:
+            shipped, used = float(val), float(applied.get(key, val))
+        except (TypeError, ValueError):
+            continue
+        if shipped != used:
+            out["clamped"][key] = {"shipped": shipped, "applied": used}
+    if bucket in raw:
+        try:
+            out["shipped"] = float(raw[bucket])
+            out["temperature"] = float(applied.get(bucket, raw[bucket]))
+        except (TypeError, ValueError):
+            return out
+        out["in_range"] = TEMP_MIN <= out["shipped"] <= TEMP_MAX
+        out["ok"] = out["in_range"]
+        if out["ok"]:
+            out["detail"] = ("%s temperature %.4g, within [%g, %g]"
+                             % (bucket, out["temperature"], TEMP_MIN, TEMP_MAX))
+        else:
+            out["detail"] = (
+                "%s was fitted at %.4g, outside [%g, %g]; laya is applying "
+                "%.4g instead. Confidence from this gate is UNCALIBRATED. The "
+                "hard/soft answer is unaffected -- temperature cannot change "
+                "which option wins, and the union only ever adds a card."
+                % (bucket, out["shipped"], TEMP_MIN, TEMP_MAX,
+                   out["temperature"]))
+    else:
+        out["detail"] = ("%s is not calibrated separately; the default "
+                         "temperature applies" % bucket)
+    return out
+
+
 def status() -> dict:
     """Honest state, for the settings UI and for `friday doctor`.
 
@@ -157,6 +290,10 @@ def status() -> dict:
         "slow_answers": int(_slow_answers),
         "last_slow_ts": _last_slow_ts,
         "score_timeout_s": _SCORE_TIMEOUT_S,
+        # Whether the confidence this gate reports can be believed,
+        # and whether the checkpoint shipped a temperature that had
+        # to be clamped.
+        "calibration": calibration_report(),
     }
 
 
@@ -203,11 +340,26 @@ def _load_now():
             from transformers import AutoTokenizer  # noqa: F401,PLC0415
             import laya  # noqa: PLC0415 - lazy; see module docstring
         t0 = time.time()
-        agent = laya.load(MODEL_ID, device="cpu")
+        reset_calibration_warnings()
+        agent = capture_load_warnings(
+            lambda: laya.load(MODEL_ID, device="cpu"))
         with _agent_lock:
             _agent = agent
             _load_error = None
         _log.info("laya ready in %.1fs (cpu)", time.time() - t0)
+        # Say it in the log at the level it deserves: the bucket this
+        # gate depends on being distorted is a warning; another bucket
+        # clamped is worth one line and no alarm.
+        _cal = calibration_report(agent)
+        if not _cal["ok"]:
+            _log.warning("laya calibration: %s", _cal["detail"])
+        elif _cal["clamped"]:
+            _log.info(
+                "laya calibration: %s; clamped elsewhere: %s",
+                _cal["detail"],
+                ", ".join(
+                    "%s %.4g->%.4g" % (k, v["shipped"], v["applied"])
+                    for k, v in sorted(_cal["clamped"].items())))
         return agent
     except Exception as e:
         with _agent_lock:
