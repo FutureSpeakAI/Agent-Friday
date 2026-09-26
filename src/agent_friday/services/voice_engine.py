@@ -1154,6 +1154,9 @@ LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
 
 _KEY_CHECK_CACHE = {}
 _KEY_CHECK_TTL = 600.0  # seconds; per-key verdicts are cached
+# The cache is indexed by a keyed digest of the API key under a per-process
+# random secret, so an entry id is not a stable fingerprint of the key.
+_KEY_CHECK_SALT = secrets.token_bytes(32)
 
 
 def validate_gemini_key(key, timeout=5.0, force=False):
@@ -1171,7 +1174,8 @@ def validate_gemini_key(key, timeout=5.0, force=False):
         return False, "no key"
     if os.environ.get("FRIDAY_TESTING"):
         return True, "testing mode — not validated"
-    cache_id = _hashlib.sha256(key.encode()).hexdigest()[:16]
+    cache_id = _hmac.new(_KEY_CHECK_SALT, key.encode(),
+                         _hashlib.sha256).hexdigest()[:16]
     now = _time.time()
     if not force:
         hit = _KEY_CHECK_CACHE.get(cache_id)
