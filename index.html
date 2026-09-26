@@ -25867,7 +25867,12 @@ function NewsWS() {
     if (!window._fridayMoodSignals) window._fridayMoodSignals = {};
     window._fridayMoodSignals.ttsActive = true;
     try {
-      const text = htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 8000);
+      const _doc = new DOMParser().parseFromString(htmlContent, 'text/html');
+      _doc.querySelectorAll('script,style').forEach(n => n.remove());
+      const _walk = _doc.createTreeWalker(_doc.documentElement, NodeFilter.SHOW_TEXT);
+      const _parts = [];
+      while (_walk.nextNode()) _parts.push(_walk.currentNode.nodeValue);
+      const text = _parts.join(' ').replace(/\s+/g, ' ').trim().substring(0, 8000);
       const r = await fetch('/api/voice/tts', {
         method: 'POST',
         headers: {
