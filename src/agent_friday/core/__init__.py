@@ -1507,6 +1507,14 @@ def _context_logging_enabled():
         return True
 
 
+def _off_record_now():
+    try:
+        from agent_friday.services import off_record as _off
+        return _off.active()
+    except Exception:
+        return False
+
+
 def _log_context(event_type, data):
     """Append an event to today's full context log. Silently no-ops if disabled
     or off the record (services/off_record)."""
@@ -1871,6 +1879,9 @@ def process_register(pid, *, name="Task", label=None, category="default",
             "steps": steps or [],
             "log": [],
             "task_id": task_id,
+            # Made off the record: shown live, never copied to disk by anything
+            # that snapshots the registry (ops/forensics-snapshot.py).
+            "off_record": _off_record_now(),
             # How long this is expected to take, from measurements we already
             # hold. The tray renders "42s left of ~93s" instead of a bar with
             # no scale, and says "longer than usual" rather than parking at

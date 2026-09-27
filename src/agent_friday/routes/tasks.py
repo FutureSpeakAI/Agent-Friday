@@ -108,6 +108,7 @@ def list_tasks():
                 'created': started,
                 'started': started,
                 'elapsed': int((ended or now) - started),
+                'off_record': bool(p.get('off_record')),
                 'process': True,
                 # THE "— waiting for activity —" BUG.
                 #
@@ -245,6 +246,7 @@ def get_task(task_id):
         "model": proc.get("model"),
         "category": proc.get("category"),
         "elapsed": int((ended or now) - started),
+        "off_record": bool(proc.get("off_record")),
         "process": True,
     }, task_id, "detail", events=1))
 

@@ -3256,6 +3256,14 @@ def _task_set(task_id, **fields):
             t.update(fields)
 
 
+def _off_record_active():
+    try:
+        from agent_friday.services import off_record as _off
+        return _off.active()
+    except Exception:
+        return False
+
+
 def _task_snapshot(task_id=None):
     with TASKS_LOCK:
         if task_id is not None:
@@ -4295,6 +4303,9 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             # an interruption notice goes; None means Main, which is where
             # explanations go to be unread.
             'conversation_id': conversation_id,
+            # Started off the record: shown live, never copied to disk
+            # (services/off_record, ops/forensics-snapshot.py).
+            'off_record': _off_record_active(),
             # The governance grant scope of a scheduled run (see docstring).
             'schedule_id': str(schedule_id) if schedule_id else None,
             # The spawning thread's cloud pin, re-entered by _task_worker.

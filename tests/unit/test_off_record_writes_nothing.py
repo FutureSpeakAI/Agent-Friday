@@ -280,3 +280,29 @@ def test_notifications_keep_a_stub_without_the_words(off_record):
                 kind="approval_pending", proactive_chat=True)
     assert m not in ne.NOTIF_FILE.read_text(encoding="utf-8")
     assert [x for x in ne.list_notifications() if x["id"] == n["id"]][0]["body"] == m
+
+
+def test_forensics_snapshot_never_copies_what_was_made_off_the_record(off_record, tmp_path, monkeypatch):
+    """The scheduled forensics snapshot copies the live orb and task registries
+    to disk; an orb made off the record stays in memory after it ends, so the
+    mark travels with the record and the snapshot drops it."""
+    import importlib.util
+    m = _marker()
+    pid = "orb-" + uuid.uuid4().hex[:8]
+    core.process_register(pid, name="Chat turn", label="ask " + m)
+    try:
+        assert core.PROCESSES[pid]["off_record"] is True
+    finally:
+        with core.PROCESSES_LOCK:
+            row = dict(core.PROCESSES.pop(pid, {}))
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("forensics_snapshot",
+                                                  root / "ops" / "forensics-snapshot.py")
+    fs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fs)
+    monkeypatch.setattr(fs, "OUT", tmp_path)
+    kept = {"id": "orb-kept", "label": "on the record"}
+    monkeypatch.setattr(fs, "get_json", lambda ep: {"processes": [row, kept]})
+    assert fs.capture_registry({}, "/api/processes", "orbs", "id") == 1
+    text = (tmp_path / "orbs.jsonl").read_text(encoding="utf-8")
+    assert m not in text and "orb-kept" in text

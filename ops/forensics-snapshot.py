@@ -266,6 +266,8 @@ def capture_registry(st: dict, ep: str, name: str, idkey: str) -> int:
     written = 0
     lines = []
     for r in rows_of(payload, name, "processes", "tasks"):
+        if isinstance(r, dict) and r.get("off_record"):
+            continue                        # made off the record: never copied
         rid = str(r.get(idkey) or r.get("id") or "")
         blob = json.dumps(r, sort_keys=True, default=str)
         h = hashlib.sha1(blob.encode("utf-8")).hexdigest()

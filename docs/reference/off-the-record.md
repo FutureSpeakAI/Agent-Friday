@@ -38,6 +38,7 @@ deliberately.
 | Notifications (`notifications.json`) | The file keeps a stub titled "Off the record"; the words live in memory. |
 | Web page cache (`research/sources`) | Fetched pages are not cached. |
 | Boot-guard known-good snapshot | Deferred; the previous snapshot stays in place. |
+| Forensics snapshot (`forensics/orbs.jsonl`, `tasks.jsonl`, from `ops/forensics-snapshot.py`) | Orbs and tasks made off the record carry `off_record: true` for their whole life and are never copied. |
 
 ## What is still written
 
