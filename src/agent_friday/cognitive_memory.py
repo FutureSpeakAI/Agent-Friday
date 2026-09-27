@@ -60,7 +60,17 @@ class CognitiveMemory:
 
     def write_memory(self, key: str, content: str, source_id: str = "system",
                      metadata: dict | None = None) -> dict:
-        """Write (or overwrite) a memory entry.  Returns the ledger record."""
+        """Write (or overwrite) a memory entry.  Returns the ledger record.
+
+        Off the record nothing is written, not even the ledger line: its key
+        and content hash would still describe the conversation.
+        """
+        try:
+            from agent_friday.services import off_record
+            if off_record.skip("cognitive_memory"):
+                return {"op": "write", "key": None, "written": False, "off_record": True}
+        except Exception:
+            pass
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         ts = time.time()
 

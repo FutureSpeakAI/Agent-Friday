@@ -578,8 +578,22 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
 
 # ── 4. Receipts ─────────────────────────────────────────────────────────────
 
+#: What a receipt keeps while off the record: the tool, its class, the decision,
+#: the time and the ids that link it to a card, grant or task. No reason text,
+#: target, or hash of the arguments (a hash of a short message can be guessed).
+_OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
+                            "grant", "task_id", "tainted")
+
+
 def _receipt(entry: dict) -> None:
     """Sign and append. Raises on failure, so the caller can hold the action."""
+    try:
+        from agent_friday.services import off_record as _off
+        if _off.active():
+            entry = {k: entry.get(k) for k in _OFF_RECORD_RECEIPT_KEYS if k in entry}
+            entry["off_record"] = True
+    except ImportError:
+        pass
     entry = dict(entry, timestamp=datetime.utcnow().isoformat() + "Z")
     canonical = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
     entry["hmac"] = _hmac.new(_governance_key(), canonical, hashlib.sha256).hexdigest()

@@ -359,7 +359,19 @@ def snapshot_known_good(paths=None) -> dict:
     Measured on the reference machine: 309 files, 7.4 MB, 0.31 s for
     a full copy and 0.05 s when unchanged. (`du` reports the package tree at
     25 MB; the difference is `__pycache__`, which `_SNAPSHOT_IGNORE` drops.)
+
+    Off the record no snapshot is taken: the studio workspace can hold what
+    the conversation made. The previous known-good stays in place and the
+    next proven boot after off-record ends takes the snapshot.
     """
+    try:
+        from agent_friday.services import off_record
+        if off_record.skip("boot_guard_snapshot"):
+            prior = _read_manifest()
+            return {"ok": True, "deferred": "off_record", "at": prior.get("at"),
+                    "saved": []}
+    except Exception:
+        pass
     src_paths = [Path(p) for p in (paths or _self_editable_paths())]
     live = {}
     for p in src_paths:

@@ -50,6 +50,9 @@ _LOCK = threading.RLock()
 _SEQ: Dict[str, int] = {}          # task_id -> last seq written this process
 _UNRECORDED_NOTIFIED: set = set()  # task_ids already announced as unrecorded
 _DELETED: set = set()              # user-deleted this process: late writes are dropped
+#: Tasks started off the record: nothing about them is written, for their whole
+#: life, even if off-record ends while they run (services/off_record).
+_OFF_RECORD: set = set()
 
 # Tests may point the journal somewhere else without touching FRIDAY_HOME.
 BASE_DIR_OVERRIDE: Optional[Path] = None
@@ -201,6 +204,22 @@ def _write_atomic(path: Path, data: bytes) -> None:
 
 # ── the journal ──────────────────────────────────────────────────────────────
 
+def _unwritten(task_id: str) -> bool:
+    """True when this task must leave nothing on disk (it began off the record)."""
+    if task_id in _OFF_RECORD:
+        return True
+    if task_id in _SEQ:
+        return False                  # already recorded before off-record began
+    try:
+        from agent_friday.services import off_record
+        if off_record.skip("task_journal"):
+            _OFF_RECORD.add(task_id)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _next_seq(task_id: str) -> int:
     if task_id not in _SEQ:
         last = 0
@@ -217,6 +236,9 @@ def append(task_id: str, kind: str, **fields) -> Optional[int]:
     with _LOCK:
         if task_id in _DELETED:
             return None
+        if _unwritten(task_id):
+            _SEQ[f"off:{task_id}"] = _SEQ.get(f"off:{task_id}", 0) + 1
+            return _SEQ[f"off:{task_id}"]
         try:
             seq = _next_seq(task_id)
             ev = {"seq": seq, "ts": time.time(), "task_id": task_id, "kind": kind}
@@ -276,6 +298,8 @@ def write_state(task_id: str, state: Dict[str, Any]) -> bool:
     with _LOCK:
         if task_id in _DELETED:
             return False
+        if _unwritten(task_id):
+            return True
         try:
             raw = json.dumps(clean, default=str, ensure_ascii=False).encode("utf-8")
             _write_atomic(task_dir(task_id) / "state.json", _protect(raw))
@@ -310,6 +334,8 @@ def write_blob(task_id: str, name: str, obj: Any) -> bool:
     with _LOCK:
         if task_id in _DELETED:
             return False
+        if _unwritten(task_id):
+            return True
         try:
             raw = json.dumps(obj, default=str, ensure_ascii=False).encode("utf-8")
             _write_atomic(task_dir(task_id) / name, _protect(raw))
@@ -366,6 +392,8 @@ def delete_blob(task_id: str, name: str) -> bool:
 def index_put(task_id: str, name: str, status: str, created: Optional[float],
               ended: Optional[float] = None) -> None:
     with _LOCK:
+        if _unwritten(task_id):
+            return
         try:
             p = _index_path()
             p.parent.mkdir(parents=True, exist_ok=True)

@@ -419,6 +419,15 @@ def record_dissent_event(action_description: str, result: Dict[str, Any]) -> Dic
         "reaffirmed": bool(result.get("reaffirmed")),
         "statement": _scrub_and_truncate(result.get("statement") or "", max_len=1000),
     }
+    try:
+        from agent_friday.services import off_record as _off
+        if _off.active():
+            # Off the record the signed event keeps its verdict, not its words.
+            for k in ("action_summary", "conflict_source", "statement"):
+                entry[k] = None
+            entry["off_record"] = True
+    except Exception:
+        pass
     signed = _sign_event(entry)
     _append_event(signed)
     return signed

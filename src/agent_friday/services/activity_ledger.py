@@ -54,6 +54,9 @@ _ALLOWED_FIELDS = {
     },
 }
 
+#: Fields that can carry the user's words; dropped while off the record.
+_FREE_TEXT_FIELDS = {"description", "workspace", "reason"}
+
 # Free-text fields still get a hard length cap so a caller can't smuggle a
 # prompt through e.g. `description`.
 _TEXT_CAP = 200
@@ -85,8 +88,19 @@ def record(kind, **fields):
         if allowed is None:
             return False
         rec = {"kind": kind, "ts": time.time()}
+        # Off the record the ledger keeps its receipt shape and loses any
+        # free text (a subagent's description is the user's request).
+        try:
+            from agent_friday.services import off_record as _off
+            _unsaved = _off.active()
+        except Exception:
+            _unsaved = False
+        if _unsaved:
+            rec["off_record"] = True
         for key, val in fields.items():
             if key not in allowed or val is None:
+                continue
+            if _unsaved and key in _FREE_TEXT_FIELDS:
                 continue
             if isinstance(val, str) and len(val) > _TEXT_CAP:
                 val = val[:_TEXT_CAP]

@@ -647,12 +647,35 @@ function fridayIsComposing(e){const n=(e&&e.nativeEvent)||e||{};return !!(e&&(e.
 function fridayEnterSends(e,send){if(!e||e.key!=='Enter'||e.shiftKey||fridayIsComposing(e))return false;e.preventDefault();send();return true}
 window.fridayEnterSends=fridayEnterSends;
 // A chat text box that grows with what is typed.
+// Off the record (services/off_record): one state every chat box reads, so
+// each one says that nothing is being saved while it lasts.
+const FRIDAY_OFF_RECORD_TEXT = 'Off the record: nothing is being saved';
+function fridayOffRecordFrom(s) {
+  return !!(s && s.off_record) && s.off_record_stops_storage !== false;
+}
+function fridaySetOffRecord(on) {
+  on = !!on;
+  if (window.__fridayOffRecord === on) return;
+  window.__fridayOffRecord = on;
+  try { window.dispatchEvent(new CustomEvent('friday:off-record', { detail: { on } })); } catch (e) {}
+}
+function useFridayOffRecord() {
+  const [on, setOn] = useState(!!window.__fridayOffRecord);
+  useEffect(() => {
+    const h = e => setOn(!!(e.detail && e.detail.on));
+    window.addEventListener('friday:off-record', h);
+    setOn(!!window.__fridayOffRecord);
+    return () => window.removeEventListener('friday:off-record', h);
+  }, []);
+  return on;
+}
 function FridayChatInput({value,onChange,onSend,placeholder,disabled,inputRef,className,style,maxHeight,autoFocus}){
+  const offRecord=useFridayOffRecord();if(offRecord)placeholder=FRIDAY_OFF_RECORD_TEXT;
   const own=useRef(null);const ref=inputRef||own;
   React.useLayoutEffect(()=>{const el=ref.current;if(!el)return;el.style.height='auto';el.style.height=Math.min(el.scrollHeight+2,maxHeight||160)+'px'},[value]);
-  return <textarea ref={ref} rows={1} className={className} value={value} disabled={disabled} autoFocus={autoFocus} placeholder={placeholder} aria-label={placeholder} data-chat-input=""
+  return <textarea ref={ref} rows={1} className={className} value={value} disabled={disabled} autoFocus={autoFocus} placeholder={placeholder} aria-label={placeholder} title={offRecord?FRIDAY_OFF_RECORD_TEXT:undefined} data-chat-input="" data-off-record={offRecord?"true":undefined}
     onChange={e=>onChange(e.target.value)} onKeyDown={e=>fridayEnterSends(e,onSend)}
-    style={{resize:'none',overflowY:'auto',boxSizing:'border-box',lineHeight:1.45,fontFamily:'Inter, sans-serif',display:'block',...(style||{})}}/>;
+    style={{resize:'none',overflowY:'auto',boxSizing:'border-box',lineHeight:1.45,fontFamily:'Inter, sans-serif',display:'block',...(style||{}),...(offRecord?{borderColor:'#ff0080',boxShadow:'0 0 0 1px rgba(255,0,128,0.45)'}:{})}}/>;
 }
 // ═══ WINDOW EDGES ═══ four edges and four corners resize a floating window.
 const FRIDAY_EDGES=['n','s','e','w','ne','nw','se','sw'];
@@ -6779,7 +6802,7 @@ function SystemWS(){
 
     {/* ─── Context Log ─── */}
     <div className="card-title" style={{marginTop:14,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-      <span>Context Log {ctxStats?.off_record&&<span style={{color:'#ff0080',fontSize:11,marginLeft:6}}>(OFF RECORD)</span>}</span>
+      <span>Context Log {ctxStats?.off_record&&<span style={{color:'#ff0080',fontSize:11,marginLeft:6}}>(off the record: nothing is being saved)</span>}</span>
       <span style={{display:'flex',gap:4,alignItems:'center'}}>
         <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={toggleLogging}>{ctxStats?.enabled?'⏸ Pause Logging':'▶ Resume Logging'}</button>
         <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={exportLog}>⤓ Export</button>
@@ -13369,7 +13392,7 @@ function useSettings(){
   const[msg,setMsg]=useState('');
   // GET /api/settings returns {status, settings, personality, default_personality};
   // the controls read flat keys, so unwrap `settings` (personality is top-level).
-  const load=()=>{apiFetch('/api/settings').then(r=>r.json()).then(d=>{if(d&&d.status!=='error')setS({...(d.settings||{}),personality:d.personality})}).catch(()=>{})};
+  const load=()=>{apiFetch('/api/settings').then(r=>r.json()).then(d=>{if(d&&d.status!=='error')fridaySetOffRecord(fridayOffRecordFrom(d.settings));if(d&&d.status!=='error')setS({...(d.settings||{}),personality:d.personality})}).catch(()=>{})};
   useEffect(load,[]);
   const save=async(patch)=>{
     try{
@@ -13382,6 +13405,7 @@ function useSettings(){
       const d=await r.json();
       if(d.status==='ok'){
         setS(prev=>({...prev,...patch}));setMsg('Saved ✓');setTimeout(()=>setMsg(''),2000);
+        if('off_record' in patch||'off_record_stops_storage' in patch)fridaySetOffRecord(fridayOffRecordFrom({...s,...patch}));
         // Model-selection saves must reach the App-level agentSettings too
         // (pill / Quick Switch current-model highlight) — useSettings and
         // agentSettings are parallel stores over the same POST endpoint, so
@@ -14517,7 +14541,7 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="Conversation logging">
       <StToggle label="Log conversations and tool use" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="An append-only record of chats, tool calls and file reads, kept on this machine."/>
-      <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Pause the log until you turn this back off."/>
+      <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."/>
       <StRow label="Keep the log for" desc="Older entries are deleted automatically.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
       </StRow>
@@ -18141,6 +18165,7 @@ function App(){
     // show_all_workspaces governs. See dockArrangement() near DOCK_GROUPS.
     dock_custom:{order:[],hidden:[]}};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
+  useEffect(()=>{fridaySetOffRecord(fridayOffRecordFrom(agentSettings))},[agentSettings.off_record,agentSettings.off_record_stops_storage]);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
@@ -20899,7 +20924,7 @@ function App(){
               <div className={`settings-toggle-switch ${showAllWorkspaces?'on':''}`}/>
             </div>}
         <div className="settings-toggle" onClick={()=>saveAgentSettings({off_record:!agentSettings.off_record})}>
-          <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>Go off the record</span>
+          <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>{agentSettings.off_record&&agentSettings.off_record_stops_storage!==false?FRIDAY_OFF_RECORD_TEXT:'Go off the record'}</span>
           <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
         </div>
         <div className="settings-toggle" onClick={()=>saveAgentSettings({context_logging_enabled:!agentSettings.context_logging_enabled})}>

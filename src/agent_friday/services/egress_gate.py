@@ -541,6 +541,14 @@ def _redact_placeholder(tier: int) -> str:
 
 def _log(provider: str, field: str, tier: int, action: str, reason: str,
          log_path: Path | None = None):
+    try:
+        from agent_friday.services import off_record as _off
+        if _off.active():
+            # Off the record the audit keeps who, what field, the tier and the
+            # verdict; the reason can quote the judgment model on the text.
+            reason = "off the record"
+    except Exception:
+        pass
     entry = {
         "ts": time.time(),
         "provider": provider,

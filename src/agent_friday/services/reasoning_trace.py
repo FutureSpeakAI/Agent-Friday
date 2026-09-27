@@ -136,6 +136,14 @@ def settings() -> Dict[str, Any]:
         return {"capture": True, "retention_days": 0}
 
 
+def _off_record() -> bool:
+    try:
+        from agent_friday.services import off_record
+        return off_record.skip("reasoning_traces")
+    except Exception:
+        return False
+
+
 def _capture_enabled() -> bool:
     return bool(settings().get("capture", True))
 
@@ -193,7 +201,7 @@ def start(kind: str, label: str = "", *, model: str = None, seat: str = None,
                 "events": [], "sources": [],
                 "tokens": {"in": 0, "out": 0, "reasoning": 0},
                 "reasoning_chars": 0, "tool_calls": 0, "truncated": False,
-                "archived": None,
+                "archived": None, "off_record": _off_record(),
             }
             if model:
                 tr["models"].append(model)
@@ -596,6 +604,9 @@ def finish(trace_id: str = None, status: str = "complete", *, reply: str = None)
             _emit_locked(tr["trace_id"], {"type": "end", "trace": _header(tr)})
             _gc_locked()
             empty = not tr["events"] and not _has_children_locked(tr["trace_id"])
+        if tr.get("off_record") or _off_record():
+            # Off the record: the trace is shown live and never archived.
+            return None
         if empty:
             # Nothing ran a model or a tool (a cleanup job, a refused empty
             # message): there is no reasoning to keep, and an archive full of
@@ -845,7 +856,10 @@ def _write_line_locked(core: Dict[str, Any]) -> Dict[str, Any]:
 
 def archive(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Append one finished trace. On a locked keystore the record waits in
-    memory and is written with the next successful archive call."""
+    memory and is written with the next successful archive call. An
+    off-record trace is never written."""
+    if (record or {}).get("off_record") or _off_record():
+        return None
     with _ARCHIVE_LOCK:
         _PENDING.append(record)
         receipt = None

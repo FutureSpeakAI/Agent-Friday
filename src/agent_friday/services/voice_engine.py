@@ -1936,11 +1936,10 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
     # may recall directly (services/conversation_provenance).
     from agent_friday.services import conversation_provenance as _prov
     _turn_meta = _prov.turn_meta(provider, off_record)
-    if _prov.stops_storage(settings):
-        # He chose that off-record also means not stored. Signed action
-        # receipts and governance logs are kept regardless; this is the
-        # conversation transcript only.
-        return
+    # Off the record, the turn lives in this session's memory only: the
+    # conversation store keeps it in memory (services/off_record) and the
+    # chat-history rows are marked so they are never written.
+    _unsaved = _prov.stops_storage(settings)
     if not off_record:
         if user_text:
             _log_context("voice_user", {"text": user_text})
@@ -1978,6 +1977,8 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
             'via': 'voice',
             'conversation_id': _cid,
         }
+        if _unsaved:
+            user_msg['off_record'] = True
         CHAT_HISTORY.append(user_msg)
     if agent_text:
         friday_msg = {
@@ -1989,6 +1990,8 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
             'via': 'voice',
             'conversation_id': _cid,
         }
+        if _unsaved:
+            friday_msg['off_record'] = True
         CHAT_HISTORY.append(friday_msg)
     if _conv is not None and _cid:
         for _m in (user_msg, friday_msg):

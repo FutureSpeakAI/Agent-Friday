@@ -321,6 +321,15 @@ def _fresh_swr_cache():
 
 
 @pytest.fixture(autouse=True)
+def _fresh_off_record_memory():
+    """What one test kept off the record is gone before the next one runs."""
+    yield
+    off = sys.modules.get("agent_friday.services.off_record")
+    if off is not None:
+        off.end()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_warm_cache():
     """A warm value (the model catalog above all) is built from the inputs of
     whichever test built it first; each test gets one built from its own."""

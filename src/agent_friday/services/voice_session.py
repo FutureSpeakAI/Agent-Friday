@@ -503,7 +503,15 @@ class VoiceSession:
             self.send({"type": "turn_end"})
             self.send({"type": "voice_turn_done", "user_text": user_text,
                        "agent_text": reply})
-            self.turn_log.append((user_text, reply))
+            # A turn spoken off the record never reaches the call's summary,
+            # even if off-record ends before the call does.
+            try:
+                from agent_friday.services import off_record as _off
+                _unsaved = _off.active()
+            except Exception:
+                _unsaved = False
+            if not _unsaved:
+                self.turn_log.append((user_text, reply))
             try:
                 p = self.hooks.get("persist")
                 if p:

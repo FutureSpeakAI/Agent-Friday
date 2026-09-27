@@ -85,6 +85,13 @@ def _success_score(reply, error):
 
 
 def _append_jsonl(rec):
+    # Off the record no trajectory is kept (services/off_record).
+    try:
+        from agent_friday.services import off_record
+        if off_record.skip("trajectories"):
+            return
+    except Exception:
+        pass
     with _LOCK:
         try:
             FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
@@ -105,7 +112,15 @@ def capture(message, reply, tool_trace=None, duration_ms=None, error=None, works
     session and the model that served the turn. Included in the record only
     when set, so existing callers (routes/chat.py's daemon thread) are
     unchanged until they opt in.
+
+    Off the record nothing is captured (services/off_record).
     """
+    try:
+        from agent_friday.services import off_record
+        if off_record.skip("trajectories"):
+            return
+    except Exception:
+        pass
     try:
         score = _success_score(reply, error)
         tools = []

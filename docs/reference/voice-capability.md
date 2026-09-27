@@ -95,10 +95,10 @@ the user's life, preferences). See `services/local_context.py`.
   only from turns Gemini already heard. The locally written daily summary
   covers every conversation, so it reaches a cloud call only through the
   search and the card.
-- **Off-record calls are never distilled into the wiki.**
-  `off_record_stops_storage` (default off) also keeps off-record turns out of
-  the conversation store. Signed action receipts and governance logs are kept
-  either way.
+- **Off the record, nothing about the call is written to disk.** Turns live
+  in memory for the session and are dropped when off-record ends; a call is
+  never distilled from turns spoken off the record. See
+  [off-the-record.md](off-the-record.md).
 
 ## How much to say
 

@@ -133,6 +133,6 @@ def is_off_record(msg: dict) -> bool:
 
 
 def stops_storage(settings: dict) -> bool:
-    """Off-record also keeps turns out of the conversation store (opt-in setting)."""
-    s = settings or {}
-    return bool(s.get("off_record")) and bool(s.get("off_record_stops_storage"))
+    """Off-record writes nothing about the conversation (services/off_record)."""
+    from agent_friday.services import off_record as _off
+    return _off.stops_storage(settings)

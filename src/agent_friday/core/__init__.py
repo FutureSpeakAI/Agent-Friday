@@ -1508,9 +1508,13 @@ def _context_logging_enabled():
 
 
 def _log_context(event_type, data):
-    """Append an event to today's full context log. Silently no-ops if disabled."""
+    """Append an event to today's full context log. Silently no-ops if disabled
+    or off the record (services/off_record)."""
     try:
         if not _context_logging_enabled():
+            return
+        from agent_friday.services import off_record as _off
+        if _off.skip("context_log"):
             return
         CONTEXT_LOG_DIR.mkdir(parents=True, exist_ok=True)
         today = date.today().isoformat()
@@ -2193,7 +2197,7 @@ DEFAULT_SETTINGS = {
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
     "user_email": "",                      # the user's own email — passed through unscrubbed
     "off_record": False,                   # quick toggle — when true, chat is not logged either
-    "off_record_stops_storage": False,     # when true, off-record also keeps turns out of the conversation store (receipts and governance logs stay)
+    "off_record_stops_storage": True,      # off-record writes nothing about the conversation to disk (receipts and governance logs keep only tool, class, decision and time)
     # ── Workspaces / Dock ──
     # When True the dock shows ALL workspaces (Finance, Health, Family, Trust,
     # Studio, Content, FutureSpeak); when False it shows only the
@@ -3147,6 +3151,12 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
     # The write is complete and on disk; clear again so nothing keeps a
     # snapshot taken mid-write.
     _invalidate_settings_cache()
+    # Switching off the record off drops what the session kept in memory.
+    try:
+        from agent_friday.services import off_record as _off
+        _off.on_settings_change({**DEFAULT_SETTINGS, **existing}, merged)
+    except Exception:
+        pass
     return merged
 
 
@@ -3621,7 +3631,11 @@ def _load_chat_history():
     return []
 
 def _save_chat_history(messages):
-    """Persist chat history to disk atomically under a lock (crash- and race-safe)."""
+    """Persist chat history to disk atomically under a lock (crash- and race-safe).
+
+    Rows marked off_record stay in memory and are never written.
+    """
+    messages = [m for m in (messages or []) if not (isinstance(m, dict) and m.get('off_record'))]
     with _CHAT_HISTORY_LOCK:
         CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
         _tmp = CHAT_HISTORY_FILE.with_suffix('.json.tmp')

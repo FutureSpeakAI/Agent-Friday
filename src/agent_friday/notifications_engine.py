@@ -44,15 +44,35 @@ def _now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
+#: Notifications raised off the record, in full, by id. The file keeps only a
+#: content-free stub of each (services/off_record); the words live in memory.
+_OFF_RECORD_ITEMS: Dict[str, Dict[str, Any]] = {}
+_STUB_KEYS = ("id", "priority", "source", "kind", "actions", "target", "read",
+              "dismissed", "created_at", "dedupe_key", "chat_injected", "off_record")
+
+
+def _disk_view(n: Dict[str, Any]) -> Dict[str, Any]:
+    if not n.get("off_record"):
+        return n
+    _OFF_RECORD_ITEMS[n["id"]] = n
+    stub = {k: n.get(k) for k in _STUB_KEYS if k in n}
+    stub.update(title="Off the record", body="", proactive_chat=False,
+                chat_message=None, meta={})
+    return stub
+
+
 def _load() -> List[Dict[str, Any]]:
     if not NOTIF_FILE.exists():
         return []
     try:
         data = json.loads(NOTIF_FILE.read_text(encoding="utf-8"))
-        if isinstance(data, list):
-            return data
         if isinstance(data, dict) and isinstance(data.get("items"), list):
-            return data["items"]
+            data = data["items"]
+        if isinstance(data, list):
+            return [dict(_OFF_RECORD_ITEMS[n["id"]], read=n.get("read"),
+                         dismissed=n.get("dismissed"), chat_injected=n.get("chat_injected"))
+                    if isinstance(n, dict) and n.get("off_record") and n.get("id") in _OFF_RECORD_ITEMS
+                    else n for n in data]
     except Exception:
         pass
     return []
@@ -61,6 +81,7 @@ def _load() -> List[Dict[str, Any]]:
 def _save(items: List[Dict[str, Any]]) -> None:
     if len(items) > _MAX_QUEUE:
         items = items[-_MAX_QUEUE:]
+    items = [_disk_view(n) if isinstance(n, dict) else n for n in items]
     try:
         NOTIF_FILE.write_text(json.dumps(items, indent=2), encoding="utf-8")
     except Exception as e:
@@ -140,6 +161,12 @@ def push(
             "dedupe_key": dedupe_key,
             "meta": meta or {},
         }
+        try:
+            from agent_friday.services import off_record as _off
+            if _off.skip("notifications"):
+                entry["off_record"] = True
+        except Exception:
+            pass
         items.append(entry)
         _save(items)
         return entry
@@ -201,6 +228,12 @@ def upsert_status(
             "dedupe_key": key,
             "meta": meta or {},
         }
+        try:
+            from agent_friday.services import off_record as _off
+            if _off.skip("notifications"):
+                entry["off_record"] = True
+        except Exception:
+            pass
         items.append(entry)
         _save(items)
         return entry

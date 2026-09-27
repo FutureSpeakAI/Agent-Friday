@@ -468,6 +468,14 @@ _INJECT_LEADS = {
 _INJECT_APPROVED_AS_SHOWN = frozenset({"context"})
 
 
+def _off_record_now() -> bool:
+    try:
+        from agent_friday.services import off_record
+        return off_record.active()
+    except Exception:
+        return False
+
+
 def _injection_text(text: str, kind: str) -> str:
     """Exactly what the live model is handed for a queued result.
 
@@ -3084,7 +3092,10 @@ if sock is not None:
                     "user_text": user_text,
                     "agent_text": agent_text,
                 })
-                turn_log.append((user_text, agent_text))
+                # A turn spoken off the record never reaches the call's
+                # summary, even if off-record ends before the call does.
+                if not _off_record_now():
+                    turn_log.append((user_text, agent_text))
                 # Voice is an agent too: run the same deterministic
                 # open/navigate intent detection the text chat uses. UI
                 # navigation is sent to the browser to execute via the

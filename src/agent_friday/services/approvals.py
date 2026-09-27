@@ -195,20 +195,47 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
 #  STORE — ~/.friday/approvals.json (mirrors scheduler.py's schedules.json)
 # ═══════════════════════════════════════════════════════════════════════════
 
+#: Cards raised off the record, in full, by id. Only their receipt fields reach
+#: approvals.json (services/off_record); the card itself lives in memory, so
+#: after a restart a pending one can no longer run and reads as expired.
+_OFF_RECORD_CARDS: Dict[str, dict] = {}
+_RECEIPT_KEYS = ("approval_id", "kind", "subject_type", "policy_class", "gated",
+                 "status", "consumed", "created_at", "expires_at", "decided_at",
+                 "decided_by", "used_at", "off_record")
+
+
+def _disk_view(record: dict) -> dict:
+    if not record.get("off_record"):
+        return record
+    _OFF_RECORD_CARDS[record["approval_id"]] = record
+    return {k: record.get(k) for k in _RECEIPT_KEYS if k in record}
+
+
 def _read_store() -> List[dict]:
     try:
         data = json.loads(APPROVALS_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             data = data.get("approvals", [])
-        return data if isinstance(data, list) else []
+        data = data if isinstance(data, list) else []
     except Exception:
         return []
+    out = []
+    for r in data:
+        if isinstance(r, dict) and r.get("off_record"):
+            full = _OFF_RECORD_CARDS.get(r.get("approval_id"))
+            if full is not None:
+                r = dict(full)
+            elif r.get("status") == "pending":
+                r = dict(r, status="expired")
+        out.append(r)
+    return out
 
 
 def _write_store(records: List[dict]) -> None:
     try:
         FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
         tmp = APPROVALS_FILE.with_suffix(".json.tmp")
+        records = [_disk_view(r) if isinstance(r, dict) else r for r in records]
         tmp.write_text(json.dumps(records, indent=2, default=str), encoding="utf-8")
         tmp.replace(APPROVALS_FILE)
     except Exception as e:
@@ -382,6 +409,12 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
         "decided_by": None,
         "decision_note": "",
     }
+    try:
+        from agent_friday.services import off_record as _off
+        if _off.skip("approvals"):
+            record["off_record"] = True
+    except Exception:
+        pass
     _upsert(record)
     if record["status"] == "pending":
         _notify_pending(record)

@@ -164,7 +164,16 @@ def _record(row: dict) -> None:
     Bookkeeping that can break the thing it observes is worse than no
     bookkeeping: this sits in the path of the approval gate, so a full disk or
     a locked file must cost a log line and nothing else.
+
+    Off the record nothing is written: a row holds the scrubbed state the
+    verdict was made on, which is conversation content.
     """
+    try:
+        from agent_friday.services import off_record
+        if off_record.skip("decisions"):
+            return
+    except Exception:
+        pass
     try:
         p = log_path()
         p.parent.mkdir(parents=True, exist_ok=True)

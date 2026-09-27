@@ -50,6 +50,16 @@ def _store_root() -> Path:
     return Path(FRIDAY_DIR) / "research" / "sources"
 
 
+def _off_record() -> bool:
+    """Off the record the fetched page is not cached: which pages a
+    conversation read says what it was about (services/off_record)."""
+    try:
+        from agent_friday.services import off_record
+        return off_record.skip("web_fetch_cache")
+    except Exception:
+        return False
+
+
 def _url_key(url: str) -> str:
     return hashlib.blake2b(url.strip().encode("utf-8"), digest_size=12).hexdigest()
 
@@ -144,10 +154,11 @@ def _fetch_via_firecrawl(url, key, root, meta_path, text_path,
     spans = _spans(text)
     rec["spans"] = spans
     try:
-        root.mkdir(parents=True, exist_ok=True)
-        text_path.write_text(text, encoding="utf-8")
-        meta_path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-        rec["extracted_path"] = str(text_path)
+        if not _off_record():
+            root.mkdir(parents=True, exist_ok=True)
+            text_path.write_text(text, encoding="utf-8")
+            meta_path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+            rec["extracted_path"] = str(text_path)
     except Exception as e:
         rec["cache_error"] = str(e)
     if register_provenance:
@@ -273,10 +284,11 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
     rec["spans"] = spans
 
     try:
-        root.mkdir(parents=True, exist_ok=True)
-        text_path.write_text(text, encoding="utf-8")
-        meta_path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-        rec["extracted_path"] = str(text_path)
+        if not _off_record():
+            root.mkdir(parents=True, exist_ok=True)
+            text_path.write_text(text, encoding="utf-8")
+            meta_path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+            rec["extracted_path"] = str(text_path)
     except Exception as e:
         rec["cache_error"] = str(e)
 

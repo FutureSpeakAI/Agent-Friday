@@ -37,6 +37,8 @@ def store(monkeypatch, tmp_path):
     monkeypatch.setattr(ve, "_log_context", lambda *a, **k: None)
     settings = {"off_record": False}
     monkeypatch.setattr(ve, "_load_settings", lambda: settings)
+    from agent_friday.services import off_record
+    monkeypatch.setattr(off_record, "_settings", lambda: settings)
     return {"log": log, "settings": settings}
 
 
@@ -110,11 +112,13 @@ def test_off_record_turns_are_never_recalled(store, monkeypatch):
     assert "north marina" not in rc.recent_voice_pin()
 
 
-def test_off_record_can_also_stop_storage(store):
-    store["settings"].update(off_record=True, off_record_stops_storage=True)
+def test_off_record_keeps_the_turn_in_memory_only(store, tmp_path):
+    store["settings"].update(off_record=True)
     cid = _new_conv("Private")
     ve._persist_voice_turn("the boat trip", FACT, conversation_id=cid, provider="google-gemini")
-    assert cv.messages(cid) == []
+    assert [m["text"] for m in cv.messages(cid)][-1] == FACT
+    assert "north marina" not in "".join(
+        p.read_text(encoding="utf-8") for p in (tmp_path / "conversations").rglob("*") if p.is_file())
 
 
 def test_an_off_record_call_is_never_distilled(store, monkeypatch):

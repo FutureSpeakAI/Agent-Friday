@@ -7698,7 +7698,31 @@ window.fridayEnterSends = fridayEnterSends;
 
 // A chat text box: one line to start, grows with what is typed (up to
 // maxHeight, then scrolls), Enter sends and Shift+Enter is a new line.
+// Off the record (services/off_record): one state every chat box reads, so
+// each one says that nothing is being saved while it lasts.
+const FRIDAY_OFF_RECORD_TEXT = 'Off the record: nothing is being saved';
+function fridayOffRecordFrom(s) {
+  return !!(s && s.off_record) && s.off_record_stops_storage !== false;
+}
+function fridaySetOffRecord(on) {
+  on = !!on;
+  if (window.__fridayOffRecord === on) return;
+  window.__fridayOffRecord = on;
+  try { window.dispatchEvent(new CustomEvent('friday:off-record', { detail: { on } })); } catch (e) {}
+}
+function useFridayOffRecord() {
+  const [on, setOn] = useState(!!window.__fridayOffRecord);
+  useEffect(() => {
+    const h = e => setOn(!!(e.detail && e.detail.on));
+    window.addEventListener('friday:off-record', h);
+    setOn(!!window.__fridayOffRecord);
+    return () => window.removeEventListener('friday:off-record', h);
+  }, []);
+  return on;
+}
 function FridayChatInput({ value, onChange, onSend, placeholder, disabled, inputRef, className, style, maxHeight, autoFocus }) {
+  const offRecord = useFridayOffRecord();
+  if (offRecord) placeholder = FRIDAY_OFF_RECORD_TEXT;
   const own = useRef(null);
   const ref = inputRef || own;
   React.useLayoutEffect(() => {
@@ -7716,7 +7740,9 @@ function FridayChatInput({ value, onChange, onSend, placeholder, disabled, input
     autoFocus: autoFocus,
     placeholder: placeholder,
     "aria-label": placeholder,
+    title: offRecord ? FRIDAY_OFF_RECORD_TEXT : undefined,
     "data-chat-input": "",
+    "data-off-record": offRecord ? "true" : undefined,
     onChange: e => onChange(e.target.value),
     onKeyDown: e => fridayEnterSends(e, onSend),
     style: {
@@ -7726,7 +7752,8 @@ function FridayChatInput({ value, onChange, onSend, placeholder, disabled, input
       lineHeight: 1.45,
       fontFamily: 'Inter, sans-serif',
       display: 'block',
-      ...(style || {})
+      ...(style || {}),
+      ...(offRecord ? { borderColor: '#ff0080', boxShadow: '0 0 0 1px rgba(255,0,128,0.45)' } : {})
     }
   });
 }
@@ -23336,7 +23363,7 @@ function SystemWS() {
       fontSize: 11,
       marginLeft: 6
     }
-  }, "(OFF RECORD)")), /*#__PURE__*/React.createElement("span", {
+  }, "(off the record: nothing is being saved)")), /*#__PURE__*/React.createElement("span", {
     style: {
       display: 'flex',
       gap: 4,
@@ -40436,6 +40463,7 @@ function useSettings() {
   // the controls read flat keys, so unwrap `settings` (personality is top-level).
   const load = () => {
     apiFetch('/api/settings').then(r => r.json()).then(d => {
+      if (d && d.status !== 'error') fridaySetOffRecord(fridayOffRecordFrom(d.settings));
       if (d && d.status !== 'error') setS({
         ...(d.settings || {}),
         personality: d.personality
@@ -40470,6 +40498,9 @@ function useSettings() {
         }));
         setMsg('Saved ✓');
         setTimeout(() => setMsg(''), 2000);
+        if ('off_record' in patch || 'off_record_stops_storage' in patch) {
+          fridaySetOffRecord(fridayOffRecordFrom({ ...s, ...patch }));
+        }
         // Model-selection saves must reach the App-level agentSettings too
         // (pill / Quick Switch current-model highlight) — useSettings and
         // agentSettings are parallel stores over the same POST endpoint, so
@@ -45526,7 +45557,7 @@ function SettingsTabPrivacy({
     onChange: () => save({
       off_record: !s.off_record
     }),
-    desc: "Pause the log until you turn this back off."
+    desc: "Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."
   }), /*#__PURE__*/React.createElement(StRow, {
     label: "Keep the log for",
     desc: "Older entries are deleted automatically."
@@ -51496,6 +51527,8 @@ function App() {
     dock_custom: { order: [], hidden: [] }
   };
   const [agentSettings, setAgentSettings] = useState(DEFAULT_AGENT_SETTINGS);
+  useEffect(() => { fridaySetOffRecord(fridayOffRecordFrom(agentSettings)); },
+    [agentSettings.off_record, agentSettings.off_record_stops_storage]);
   // Mic / Speaker test state (used by the Audio & Voice section).
   const [micTestActive, setMicTestActive] = useState(false);
   const [micTestLevel, setMicTestLevel] = useState(0);
@@ -56649,7 +56682,7 @@ function App() {
     style: {
       color: agentSettings.off_record ? '#ff0080' : undefined
     }
-  }, "Go off the record"), /*#__PURE__*/React.createElement("div", {
+  }, agentSettings.off_record && agentSettings.off_record_stops_storage !== false ? FRIDAY_OFF_RECORD_TEXT : "Go off the record"), /*#__PURE__*/React.createElement("div", {
     className: `settings-toggle-switch ${agentSettings.off_record ? 'on' : ''}`
   })), /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",

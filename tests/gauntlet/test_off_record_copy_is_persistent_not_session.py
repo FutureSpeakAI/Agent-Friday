@@ -51,22 +51,21 @@ class TestOffRecordCopyIsPersistentNotSession:
 
     def test_index_html_go_off_record_copy_now_states_persistence(self):
         text = _INDEX_HTML.read_text(encoding="utf-8")
-        assert 'label: "Go Off Record"' in text
-        idx = text.index('label: "Go Off Record"')
+        assert 'label: "Go off the record"' in text
+        idx = text.index('label: "Go off the record"')
         window = text[idx:idx + 400]
         assert "desc:" in window
-        assert "until you turn this back on" in window or \
-            "stays off until" in window.lower(), (
+        assert "until you turn this back off" in window, (
                 "the corrected Go Off Record description should say the "
                 "suppression persists until manually reversed"
             )
 
     def test_app_html_go_off_record_copy_now_states_persistence(self):
         text = _APP_HTML.read_text(encoding="utf-8")
-        assert 'label="Go Off Record"' in text
-        idx = text.index('label="Go Off Record"')
+        assert 'label="Go off the record"' in text
+        idx = text.index('label="Go off the record"')
         window = text[idx:idx + 400]
-        assert "until you turn this back on" in window, (
+        assert "until you turn this back off" in window, (
             "the corrected Go Off Record description should say the "
             "suppression persists until manually reversed"
         )

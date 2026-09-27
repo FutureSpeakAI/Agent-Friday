@@ -261,7 +261,14 @@ def append(cid: str, message: dict) -> dict:
 
     Auto-titles from the first user message: a list of conversations all called
     "New chat" is a list you cannot navigate.
+
+    Off the record, the message is kept in this session's memory only: no
+    messages.jsonl line, no title taken from it, no conversation file touched.
     """
+    from agent_friday.services import off_record as _off
+    if _off.skip("conversations"):
+        message.setdefault("id", secrets.token_hex(8))
+        return _off.remember(cid, message)
     with _LOCK:
         conv = load(cid)
         if conv is None:
@@ -284,6 +291,13 @@ def append(cid: str, message: dict) -> dict:
 
 
 def messages(cid: str, limit: int | None = None) -> list[dict]:
+    """Stored messages, then this session's off-record ones (memory only)."""
+    from agent_friday.services import off_record as _off
+    out = _stored_messages(cid) + _off.recalled(cid)
+    return out[-limit:] if limit else out
+
+
+def _stored_messages(cid: str) -> list[dict]:
     try:
         p = _dir(cid) / "messages.jsonl"
     except ValueError:
@@ -303,7 +317,7 @@ def messages(cid: str, limit: int | None = None) -> list[dict]:
                     continue          # one bad line never costs the thread
     except Exception:
         return []
-    return out[-limit:] if limit else out
+    return out
 
 
 def clear(cid: str, include_pinned: bool = False) -> int:

@@ -348,8 +348,9 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     # Which provider received this exchange, so a later call knows what it
     # may recall directly (services/conversation_provenance).
     _pmeta = _prov.chat_turn_meta(bool(_settings.get('off_record')))
-    if _prov.stops_storage(_settings):
-        return
+    # Off the record the conversation store keeps these in memory only
+    # (services/off_record), and the mirror rows are marked never to be written.
+    _unsaved = _prov.stops_storage(_settings)
     try:
         _conv.append(cid, {"id": user_msg.get('id'), "role": "user",
                            "text": user_msg.get('text') or '',
@@ -373,6 +374,8 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     for _m in (user_msg, friday_msg):
         try:
             _m.setdefault('conversation_id', cid)
+            if _unsaved:
+                _m['off_record'] = True
         except Exception:
             pass
     CHAT_HISTORY.append(user_msg)

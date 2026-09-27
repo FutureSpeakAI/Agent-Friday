@@ -2124,8 +2124,15 @@ def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id
     """Best-effort: persist a user/assistant exchange into ChromaDB memory and
     fold the user's message into the cross-session emotional arc.
 
-    Called from a daemon thread off the chat hot path. Never raises.
+    Called from a daemon thread off the chat hot path. Never raises. Off the
+    record nothing is indexed (services/off_record).
     """
+    try:
+        from agent_friday.services import off_record
+        if off_record.skip("conversation_index"):
+            return
+    except Exception:
+        pass
     try:
         mem = _get_conversation_memory()
         mem.index_exchange(

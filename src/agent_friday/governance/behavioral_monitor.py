@@ -296,11 +296,14 @@ class BehavioralMonitor:
         """Open a monitoring session and extract its remit. Returns a session id."""
         sid = f"bmon-{uuid.uuid4().hex[:12]}"
         remit = self.extract_remit(user_message)
+        meta = dict(meta or {})
+        if _off_record():
+            meta["off_record"] = True
         sess = _Session(
             session_id=sid,
             remit=remit,
             started_at=_now_iso(),
-            meta=meta or {},
+            meta=meta,
         )
         with self._lock:
             self._sessions[sid] = sess
@@ -579,6 +582,15 @@ class BehavioralMonitor:
             "findings": findings,
         }
 
+        if sess.meta.get("off_record"):
+            # Off the record the session is still scored and can still alert,
+            # but what is kept holds no request text, arguments or targets:
+            # the tools, their rings, the outcome classes, the scores, the time.
+            trace = _receipt_trace(trace)
+            report = {**trace, "scores": report["scores"], "risk_level": report["risk_level"],
+                      "findings": {k: ([k.replace("_", " ") + " signal"] if v else [])
+                                   for k, v in findings.items()}}
+
         # Persist and respond.
         self._append_trace(trace)
         self._write_latest(report)
@@ -779,6 +791,31 @@ class BehavioralMonitor:
 
 
 # ── Module-level helpers ─────────────────────────────────────────────────
+
+def _off_record() -> bool:
+    try:
+        from agent_friday.services import off_record
+        return off_record.skip("behavioral_monitor")
+    except Exception:
+        return False
+
+
+def _receipt_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
+    """An off-record session as a receipt: no remit, arguments or targets."""
+    return {
+        "session_id": trace.get("session_id"),
+        "timestamp": trace.get("timestamp"),
+        "remit": {},
+        "action_count": trace.get("action_count"),
+        "actions": [{"tool_name": a.get("tool_name"), "ring_level": a.get("ring_level"),
+                     "result_type": a.get("result_type"), "timestamp": a.get("timestamp")}
+                    for a in trace.get("actions") or []],
+        "max_ring": trace.get("max_ring"),
+        "sensitive_targets": [],
+        "scores": trace.get("scores"),
+        "meta": {"off_record": True},
+    }
+
 
 def _now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
