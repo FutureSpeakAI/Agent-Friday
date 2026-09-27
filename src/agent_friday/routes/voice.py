@@ -26,6 +26,7 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
 from agent_friday.services import voice_live_channel as _voice_live_channel
+from agent_friday.services import voice_conversation_state as _vcs
 from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
@@ -2970,7 +2971,11 @@ if sock is not None:
             # (services/voice_engine.py): the news tools skip stories Friday
             # has already told instead of reading the same five again.
             _voice_session = {"news_offered": [], "spoken": [],
-                              "conversation_id": _call_cid(), "owner_text": ""}
+                              "conversation_id": _call_cid(), "owner_text": "",
+                              # What he cares about now, how much to say, what is
+                              # open (services/voice_conversation_state).
+                              "conv_state": _vcs.new_state()}
+            _state_sig = [None]
             # Results that finish after the turn that asked for them (a task
             # delegated to the full agent, context he approved on a card)
             # arrive here from other threads (services/voice_live_channel) and
@@ -3054,6 +3059,11 @@ if sock is not None:
                 if agent_text:
                     _voice_session["spoken"].append(agent_text)
                     del _voice_session["spoken"][:-60]
+                try:
+                    _voice_session["conv_state"] = _vcs.update(
+                        _voice_session.get("conv_state"), user_text, agent_text)
+                except Exception:
+                    pass
                 if user_text:
                     # His spoken words count as his own, as typed words do in
                     # chat: the taint guard can tell a value he said from one a
@@ -3560,6 +3570,18 @@ if sock is not None:
                                                 _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
                                                 _flush_turn()
                                                 _safe_send({"type": "turn_end"})
+                                                # The conversation so far, when it
+                                                # changed: joins his next turn and
+                                                # asks for no reply of its own.
+                                                _sig = _vcs.signature(_voice_session["conv_state"])
+                                                if _sig != _state_sig[0]:
+                                                    _state_sig[0] = _sig
+                                                    try:
+                                                        await sess.send_client_content(
+                                                            turns={"role": "user", "parts": [{"text": _vcs.render(_voice_session["conv_state"])}]},
+                                                            turn_complete=False)
+                                                    except Exception as _sne:
+                                                        _vlog(f'state note failed: {_sne}')
                                                 await _flush_injections(sess)
                                                 if _repin and _persona_note:
                                                     # Between turns, as a note that joins the

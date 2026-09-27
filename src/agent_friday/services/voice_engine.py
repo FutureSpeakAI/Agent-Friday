@@ -333,6 +333,13 @@ _VOICE_LIVE_TOOLS = [
      "asking his OK to share some context, then carry on. The approved context is "
      "handed to you when he decides; if he declines, carry on without it.",
      {"question": ("string", "The question for his local model, in full.")}, ["question"]),
+    ("note_conversation_state",
+     "Update your running picture of this conversation when you notice it shift: "
+     "what the user cares about right now, how much detail he wants, and what is "
+     "still open. It shapes the 'conversation so far' note you are shown.",
+     {"priorities": ("string", "The topics he cares about now, most important first, comma-separated."),
+      "depth": ("string", "brief, normal or deep."),
+      "open_threads": ("string", "Questions or tasks still open, separated by | (optional).")}, []),
     ("search_past_conversations",
      "Search earlier conversations with the user, voice and chat, with dates: "
      "what he said, what you told him, what was decided. Use it whenever he "
@@ -854,6 +861,20 @@ def _start_local_share(question, cid, answer_fn=None):
     return rid[0]
 
 
+def _tool_note_conversation_state(inp, session=None):
+    """The model's own read of the conversation, merged into the bridge's."""
+    from agent_friday.services import voice_conversation_state as _vcs
+    if not isinstance(session, dict):
+        return "Noted."
+    inp = inp or {}
+    note = {"depth": inp.get("depth"),
+            "priorities": [p.strip() for p in str(inp.get("priorities") or "").split(",") if p.strip()]}
+    if inp.get("open_threads") is not None:
+        note["open_threads"] = [t.strip() for t in str(inp.get("open_threads") or "").split("|") if t.strip()]
+    session["conv_state"] = _vcs.merge_model_note(session.get("conv_state") or _vcs.new_state(), note)
+    return "Noted. Keep talking."
+
+
 def _tool_search_past_conversations(inp, session=None):
     """Earlier conversations, by provenance: what Gemini already heard comes back
     directly; the rest only through the local model and the payload card."""
@@ -1029,6 +1050,9 @@ def _voice_tool_run(name, args, send_client, session=None):
         if name == "ask_local_for_context":
             return _governed("ask_local_for_context",
                              lambda a: _tool_ask_local_for_context(a, session), args)
+        if name == "note_conversation_state":
+            return _governed("note_conversation_state",
+                             lambda a: _tool_note_conversation_state(a, session), args)
         if name == "search_past_conversations":
             return _governed("search_past_conversations",
                              lambda a: _tool_search_past_conversations(a, session), args)

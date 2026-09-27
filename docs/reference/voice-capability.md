@@ -99,3 +99,24 @@ the user's life, preferences). See `services/local_context.py`.
   `off_record_stops_storage` (default off) also keeps off-record turns out of
   the conversation store. Signed action receipts and governance logs are kept
   either way.
+
+## How much to say
+
+The bridge keeps a small running picture of the conversation
+(`services/voice_conversation_state.py`):
+- **What the user cares about right now:** topic weights decay each turn, so
+  priorities shift as the conversation moves.
+- **How much detail he wants:** depth rises with explicit asks, why and how
+  questions, follow-ups, and a topic he keeps returning to. Brevity cues win
+  until he asks for more.
+- **What is still open:** questions no reply has covered yet.
+
+When the picture changes, the bridge shows it to the model as a note joined
+to his next turn. The model can refine it with `note_conversation_state`.
+`voice_persona.VOICE_LENGTH_RULE` forbids the reflexive "one, two or three
+things" list: when depth is wanted the answer is connected paragraphs, and a
+list comes only when he asks for options or steps.
+
+`tools/voice_bench/depth_bench.py` measures this against Gemini Live on
+scripted general-knowledge exchanges, comparing the previous rule with the
+current rule plus the per-turn note.

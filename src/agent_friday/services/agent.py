@@ -6175,6 +6175,7 @@ TOOL_RINGS: dict[str, int] = {
     "answer_share_request": 2,
     "revise_share_request": 2,
     "search_past_conversations": 2,
+    "note_conversation_state": 0,
     "deep_research":        2,   # searches and reads the web (network)
     "run_command":          2,
     "run_sandboxed":        2,   # a contained child process; see code_sandbox

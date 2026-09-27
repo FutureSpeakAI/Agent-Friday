@@ -174,6 +174,8 @@ INTERNAL_TOOLS = frozenset({
     # Reads the local conversation store; what a cloud call may hear of it is
     # decided by provenance (services/conversation_recall).
     "search_past_conversations",
+    # The voice model's note on the conversation: state in memory, nothing more.
+    "note_conversation_state",
     # Background research reads the web and runs local models; its report
     # lands in the conversation. Nothing it does reaches another person.
     "deep_research",

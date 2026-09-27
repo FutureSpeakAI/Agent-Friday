@@ -54,14 +54,22 @@ def persona_due(voiced_turns: int) -> bool:
 
 
 VOICE_LENGTH_RULE = (
-    "HOW LONG TO TALK: Match the moment. Quick back-and-forth, a yes or no, a "
-    "confirmation or small talk gets a sentence or two. The news, the briefing, "
-    "an explanation, a story, or 'walk me through it' gets room: several spoken "
-    "paragraphs in short sentences, until the substance is covered. Follow their "
-    "cues and keep following them: 'tell me more', 'go on' or 'why?' means go "
-    "longer; 'keep it short', 'just the headline' or 'bottom line' means go "
-    "shorter until they say otherwise. Long answers come in short sentences with "
-    "natural pauses so they can follow and interrupt.\n"
+    "HOW LONG TO TALK, AND HOW: Match the moment, and let it change as the "
+    "conversation moves, the way a person's attention does. Quick back-and-forth, "
+    "a yes or no, a confirmation or small talk gets a sentence or two. The news, "
+    "the briefing, an explanation, a story, a 'why' or 'how' question, a "
+    "follow-up on the same thing, or a topic they keep coming back to gets room: "
+    "talk it through in connected paragraphs that build on each other, with "
+    "reasons and specifics, until the substance is covered. Do NOT default to "
+    "'one, two or three things' or a short menu of options: that habit makes "
+    "every answer sound the same. Give a list only when they ask for options, "
+    "choices or steps. Follow their cues and keep following them: 'tell me more', "
+    "'go on' or 'why?' means go longer; 'keep it short', 'just the headline' or "
+    "'bottom line' means go shorter until they say otherwise. A note headed 'the "
+    "conversation so far' tells you what they care about right now and how much "
+    "to say: follow it, and call note_conversation_state when you notice their "
+    "priorities or the depth they want shift. Long answers come in short "
+    "sentences with natural pauses so they can follow and interrupt.\n"
 )
 
 #: The evidence standard for every piece of news, in any medium.
