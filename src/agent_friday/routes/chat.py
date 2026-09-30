@@ -381,6 +381,20 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     # Off the record the conversation store keeps these in memory only
     # (services/off_record), and the mirror rows are marked never to be written.
     _unsaved = _prov.stops_storage(_settings)
+    # A fenced ```friday-artifact block in the reply (services/artifacts) is
+    # stored as an artifact and replaced with a pointer BEFORE the reply is
+    # written anywhere, so the transcript never carries a second copy.
+    try:
+        from agent_friday.services import artifacts as _art
+        _clean, _art_recs = _art.absorb_fenced(
+            cid, friday_msg.get('text') or '', settings=_settings)
+        if _art_recs:
+            friday_msg['text'] = _clean
+            friday_msg['artifact_events'] = [
+                {"artifact_id": r["id"], "version": r["version"],
+                 "kind": r["kind"], "title": r["title"]} for r in _art_recs]
+    except Exception as _e:
+        print(f"  [artifacts] fenced block not absorbed: {_e}")
     try:
         _conv.append(cid, {"id": user_msg.get('id'), "role": "user",
                            "text": user_msg.get('text') or '',
@@ -1530,6 +1544,13 @@ def chat():
                 sp = sp + pinned_block(_conversation_id)
             except Exception:
                 pass
+            # The panel's artifacts in this conversation, and any hand edit the
+            # model has not yet seen (services/artifacts.context_block).
+            try:
+                from agent_friday.services import artifacts as _art
+                sp = sp + _art.context_block(_conversation_id)
+            except Exception:
+                pass
             if voice_mode:
                 sp = (
                     "=== VOICE MODE ACTIVE ===\n"
@@ -2288,7 +2309,11 @@ def chat():
             pass
 
         return jsonify(public_result({
-            "response": reply,
+            # The persisted text: a fenced artifact block has been replaced by
+            # its pointer there (see _persist_turn), and the page shows that.
+            "response": friday_msg.get('text') if friday_msg.get('text') is not None else reply,
+            # Which artifacts this turn put in the panel, so the page opens it.
+            "artifact_events": friday_msg.get('artifact_events') or [],
             # WHO ACTUALLY ANSWERED. Every refusal path here already reports
             # the model (seat_missing, cloud_only_no_key, local_only_refused) —
             # the SUCCESS path did not, which left the only way to find out
@@ -2602,6 +2627,11 @@ def chat_send():
             try:
                 from agent_friday.services.situation import pinned_block
                 prompt = prompt + pinned_block(_conversation_id)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import artifacts as _art
+                prompt = prompt + _art.context_block(_conversation_id)
             except Exception:
                 pass
             # Assembled here, not by `_get_friday_system_prompt`: the policy

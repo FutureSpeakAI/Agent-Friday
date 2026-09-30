@@ -8088,6 +8088,82 @@ TOOL_RINGS.update({
     "save_google_contact": 2,     # writes to Google; outward in action_gate
 })
 
+
+# ══════════════════════════════════════════════════════════════
+#  THE ARTIFACT PANEL — one tool, `artifact_put`
+#  (docs/design/active/vibe-coding-salon.md §4.2; services/artifacts)
+# ══════════════════════════════════════════════════════════════
+#
+# Anything a model makes that is better seen than read goes in the panel
+# beside the chat: a table, a chart, a draft to edit, a small `html` app, a
+# diff, an image. Every call is a new version of the artifact, never an
+# overwrite. INTERNAL for the gate: it writes only to Friday's own artifact
+# store, and off the record it writes nothing at all.
+CLAUDE_TOOLS.append({
+    "name": "artifact_put",
+    "description": (
+        "Put something in the panel beside this chat, where the user can see, "
+        "edit and keep it: use it whenever the result is better SEEN than read "
+        "- a table of results, a chart, a draft or letter they may want to "
+        "edit, a small working web app or mockup (kind html: one complete "
+        "HTML document with inline CSS/JS; packages only from https://esm.sh "
+        "pinned to exact versions), a diff, or an image/svg. Do not paste the "
+        "same content into your reply as well - say in one line what is in "
+        "the panel. To CHANGE an artifact, pass its artifact_id (listed for "
+        "you under 'ARTIFACTS' in your context) instead of making a new one; "
+        "every call is a new version and the user can go back. If the "
+        "context says the user edited it by hand, keep their changes. "
+        "Content shapes: markdown -> text; table -> {columns:[..], rows:[[..]]}; "
+        "chart -> {type: bar|line|area|pie|donut|scatter, columns:[..], "
+        "rows:[[..]], x?: column, y?: [columns], title?}; html/svg/diff -> "
+        "text; image -> a data: URL."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string",
+                     "enum": ["markdown", "table", "chart", "html", "diff", "image", "svg"],
+                     "description": "What it is; decides how the panel renders it."},
+            "title": {"type": "string", "description": "A short human title, e.g. 'FOIA tracker' or 'Rent by month'."},
+            "content": {"description": "The content, in the shape for its kind (text, or an object for table/chart)."},
+            "artifact_id": {"type": "string", "description": "Update THIS artifact (a new version) instead of creating one."},
+            "conversation_id": {"type": "string", "description": "Only when acting for another conversation; normally omitted."},
+            "meta": {"type": "object", "description": "Optional: {sensitivity, source_refs: [..], task_id, goal_id}."},
+        },
+        "required": ["kind", "title", "content"],
+    },
+})
+
+
+def _tool_artifact_put(inp):
+    """One version into the artifact store, for the conversation that asked."""
+    from agent_friday.services import artifacts as _art
+    inp = inp or {}
+    cid = (inp.get("conversation_id") or _CURRENT_CONVERSATION.get() or "").strip()
+    if not cid:
+        return ("artifact_put needs a conversation to put the artifact in, and "
+                "none is current. Nothing was stored.")
+    try:
+        rec = _art.put(cid, str(inp.get("kind") or ""), str(inp.get("title") or ""),
+                       inp.get("content"),
+                       meta=inp.get("meta") if isinstance(inp.get("meta"), dict) else None,
+                       artifact_id=(inp.get("artifact_id") or None), author="friday")
+    except ValueError as e:
+        return f"artifact_put refused: {e}. Nothing was stored."
+    return {
+        "status": "ok",
+        "artifact_id": rec["id"],
+        "version": rec["version"],
+        "kind": rec["kind"],
+        "title": rec["title"],
+        "off_record": rec["off_record"],
+        "note": ("In the panel now" + (" (v%d)" % rec["version"] if rec["version"] > 1 else "")
+                 + ". Tell the user in one line; do not repeat the content."),
+    }
+
+
+CLAUDE_TOOL_HANDLERS.update({"artifact_put": _tool_artifact_put})
+TOOL_RINGS.update({"artifact_put": 1})   # writes Friday's own artifact store; INTERNAL in action_gate
+
 # ══════════════════════════════════════════════════════════════
 #  CAPABILITY PREFLIGHT — a tool whose dependency is missing is REMOVED
 # ══════════════════════════════════════════════════════════════

@@ -1783,9 +1783,18 @@ function PrivacyHoldCard({hold,msg,onChoose,onCancel}){
     <button onClick={onCancel} style={{marginTop:7,background:'none',border:'none',color:'rgba(255,255,255,0.35)',cursor:'pointer',fontSize:10}}>put it back in the box</button>
   </div>;
 }
-function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
+// The artifact panel beside a chat (static/friday_artifacts.js, spec
+// docs/design/active/vibe-coding-salon.md §4.2). ChatSurface renders through
+// this shell so the panel is one column added next to the chat, never a
+// change inside it. When the script is absent the shell is a Fragment.
+function FridayChatShell(props){
+  const Host=window.FridayArtifactHost;
+  if(Host) return <Host convId={props.convId} mode={props.mode}>{props.children}</Host>;
+  return <React.Fragment>{props.children}</React.Fragment>;
+}
+function ChatSurface({mode,convId,traySide,trayFrac,onTrayPlace,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
   const trayMenu=useSnapMenuOpener();
-  return(<>
+  return(<FridayChatShell convId={convId} mode={mode}>
       <div data-chat-head="" style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',rowGap:6,padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
@@ -1944,7 +1953,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
           <button className="btn" style={{flexShrink:0}} onClick={()=>sendChat()}>Send</button>
         </div>
       </div>
-  </>);
+  </FridayChatShell>);
 }
 
 // Workspaces that need more room than the default 660x460 window, with a
@@ -16351,6 +16360,7 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Conversation logging">
       <StToggle label="Log conversations and tool use" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="An append-only record of chats, tool calls and file reads, kept on this machine."/>
       <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."/>
+      <StToggle label="Artifact panel beside the chat" value={s.artifact_panel_enabled!==false} onChange={()=>save({artifact_panel_enabled:s.artifact_panel_enabled===false})} desc="When Friday makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."/>
       <StRow label="Keep the log for" desc="Older entries are deleted automatically.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
       </StRow>

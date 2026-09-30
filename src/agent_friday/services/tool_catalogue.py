@@ -52,6 +52,25 @@ LOADER_NAME = "load_tools"
 ALWAYS_RESIDENT = ("search_web", "read_file", "search_files",
                    "search_wiki", "read_wiki", "knowledge_query")
 
+#: Resident only while the artifact panel is on (`artifact_panel_enabled`):
+#: a model that has a panel to put things in should not need a discovery
+#: round to learn how, and a model without one should not pay the rent.
+PANEL_RESIDENT = ("artifact_put",)
+
+
+def always_resident(settings: dict | None = None) -> tuple:
+    """The resident tool names for these settings (the live settings when
+    None)."""
+    if settings is None:
+        try:
+            from agent_friday.core import _load_settings
+            settings = _load_settings() or {}
+        except Exception:
+            settings = {}
+    if (settings or {}).get("artifact_panel_enabled", True) is not False:
+        return ALWAYS_RESIDENT + PANEL_RESIDENT
+    return ALWAYS_RESIDENT
+
 
 #: ON by default, because the risk is understood rather than assumed.
 #:
@@ -134,9 +153,9 @@ def loader_spec(tools: list) -> dict:
     }
 
 
-def resident(tools: list) -> list:
+def resident(tools: list, settings: dict | None = None) -> list:
     """The tools sent in full from the start."""
-    keep = set(ALWAYS_RESIDENT)
+    keep = set(always_resident(settings))
     return [t for t in (tools or []) if _name_of(t) in keep]
 
 

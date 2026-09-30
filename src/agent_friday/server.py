@@ -118,6 +118,8 @@ from flask import Blueprint as _Blueprint
 # drifts from the actual routes/ directory, so it can't silently go stale.
 ROUTE_MODULES = [
     'actions', 'activity', 'arbiter', 'avatar',
+    'actions', 'activity', 'arbiter',
+    'activity', 'arbiter', 'artifacts',
     'ambient', 'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code',
     'compute', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations',
     'control', 'core_routes', 'desktop',

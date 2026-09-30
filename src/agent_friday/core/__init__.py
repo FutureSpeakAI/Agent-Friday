@@ -2310,6 +2310,8 @@ DEFAULT_SETTINGS = {
     "user_email": "",                      # the user's own email — passed through unscrubbed
     "off_record": False,                   # quick toggle — when true, chat is not logged either
     "off_record_stops_storage": True,      # off-record writes nothing about the conversation to disk (receipts and governance logs keep only tool, class, decision and time)
+    # ── Artifact panel (docs/design/active/vibe-coding-salon.md §4.2) ──
+    "artifact_panel_enabled": True,        # the panel beside every chat; also keeps artifact_put resident in the tool set
     # ── Workspaces / Dock ──
     # When True the dock shows ALL workspaces (Finance, Health, Family, Trust,
     # Studio, Content, FutureSpeak); when False it shows only the

@@ -199,6 +199,10 @@ INTERNAL_TOOLS = frozenset({
     # Background research reads the web and runs local models; its report
     # lands in the conversation. Nothing it does reaches another person.
     "deep_research",
+    # The artifact panel's one tool writes only to Friday's own artifact store
+    # under the Friday home, versioned and never sent anywhere
+    # (services/artifacts). Off the record it writes nothing at all.
+    "artifact_put",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it

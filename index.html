@@ -3675,6 +3675,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday3d_records.js"></script>
     <!-- Messages: the Gmail-grade inbox (defines window.FridayMailPanel). -->
     <script src="/static/friday_mail.js"></script>
+    <!-- The artifact panel beside every chat (defines window.FridayArtifactHost). -->
+    <script src="/static/friday_artifacts.js"></script>
 
     <script>
         // --- UI INTERACTION LOGIC ---
@@ -11516,6 +11518,15 @@ function fridayResizeCursor(dir) {
 // passes its own conversation (transcript, input, seat, send) plus the
 // shared services (settings, voice, audio devices). `mode` is 'panel' or
 // 'window'.
+// The artifact panel beside a chat (static/friday_artifacts.js, spec
+// docs/design/active/vibe-coding-salon.md §4.2). ChatSurface renders through
+// this shell so the panel is one column added next to the chat, never a
+// change inside it. When the script is absent the shell is a Fragment.
+function FridayChatShell(props) {
+  const Host = window.FridayArtifactHost;
+  if (Host) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode }, props.children);
+  return /*#__PURE__*/React.createElement(React.Fragment, null, props.children);
+}
 function ChatSurface(props) {
   const {
     mode,
@@ -11578,7 +11589,7 @@ function ChatSurface(props) {
     voiceStatus
   } = props;
   const trayMenu = useSnapMenuOpener();
-  return /*#__PURE__*/React.createElement(React.Fragment, null, React.createElement("div", {
+  return /*#__PURE__*/React.createElement(FridayChatShell, { convId: convId, mode: mode }, React.createElement("div", {
     "data-chat-head": "",
     style: {
       display: 'flex',
@@ -50387,6 +50398,13 @@ function SettingsTabPrivacy({
       off_record: !s.off_record
     }),
     desc: "Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Artifact panel beside the chat",
+    value: s.artifact_panel_enabled !== false,
+    onChange: () => save({
+      artifact_panel_enabled: s.artifact_panel_enabled === false
+    }),
+    desc: "When Friday makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."
   }), /*#__PURE__*/React.createElement(StRow, {
     label: "Keep the log for",
     desc: "Older entries are deleted automatically."
