@@ -259,7 +259,7 @@ const FRIDAY_PANEL_CACHE_RULES = [
   [/^\/api\/news\/clusters$/, 600],
   [/^\/api\/memory\/stats$/, 60],
   [/^\/api\/wiki\/structure$/, 30],
-  [/^\/api\/(countdowns|trust|personality|epistemic|contacts)$/, 60]
+  [/^\/api\/(trust|personality|epistemic|contacts)$/, 60]
 ];
 const FRIDAY_PANEL_CACHE_MAX_AGE = 30 * 60;
 const FRIDAY_PANEL_CACHE_LINKED = {
@@ -688,6 +688,54 @@ function fridayTM(text) {
     : maker(part.replace(FRIDAY_TM_WORDS, (m, pre, name) => pre + name + '\u2122'))).join('');
 }
 /* fridayTM:end */
+// ═══ THE OWNER'S COUNTDOWNS ═══
+// What is coming up in the owner's world (services/countdowns.py): their
+// calendar, their commitments and their wiki, each item with when and why.
+/* fridayCountdownWhen:begin */
+const FRIDAY_COUNTDOWNS_EVERY_MS = 5 * 60 * 1000;
+// When a countdown falls, in the server's words (countdowns.short_when): "now",
+// "in 25 min", "in 3 h", "today", "tomorrow", "in 12 days". A timed item
+// carries `at` (epoch seconds); an all-day item only its `date`.
+function fridayCountdownWhen(c, now) {
+  now = now == null ? Date.now() : now;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  let days;
+  if (c && c.at) {
+    const mins = Math.floor((c.at * 1000 - now) / 60000);
+    if (mins < 1) return 'now';
+    if (mins < 60) return 'in ' + mins + ' min';
+    const day = new Date(c.at * 1000);
+    day.setHours(0, 0, 0, 0);
+    days = Math.round((day - today) / 86400000);
+    if (days === 0) return 'in ' + Math.floor(mins / 60) + ' h';
+  } else {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(c && c.date || '');
+    if (!m) return '';
+    days = Math.round((new Date(+m[1], +m[2] - 1, +m[3]) - today) / 86400000);
+  }
+  if (days <= 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return 'in ' + days + ' days';
+}
+/* fridayCountdownWhen:end */
+// The start screen's countdowns: each one's label, when, and why it is there.
+// The words for when move on each minute; the list comes every five.
+function FridayCountdowns({items}){
+  const[now,setNow]=useState(()=>Date.now());
+  useEffect(()=>{const t=setInterval(()=>setNow(Date.now()),60000);return()=>clearInterval(t)},[]);
+  const shown=(items||[]).filter(c=>!c.at||c.at*1000>now-60000);
+  if(!shown.length)return null;
+  return(<div className="greeting-ticker" data-testid="countdowns" style={{marginBottom:16,position:'relative',zIndex:1}}>
+    {shown.map((c,i)=><React.Fragment key={c.id||i}>
+      {i>0&&<span className="greeting-ticker-sep"/>}
+      <span className="greeting-ticker-item">
+        <span className="cd-what"><span>{c.emoji||''} {c.label||c.name}</span>{c.why&&<span className="cd-why">{c.why}</span>}</span>
+        <span className="days">{fridayCountdownWhen(c,now)||(c.days??'?')+'d'}</span>
+      </span>
+    </React.Fragment>)}
+  </div>);
+}
 window.fridayTM = fridayTM;
 // The wordmark, AGENT FRIDAY™ by FutureSpeak.AI: one definition for the top
 // bar, the start screen and the About card. `size` is the cap size in px; the
@@ -5723,13 +5771,13 @@ function FuturespeakWS(){
 }
 function FamilyWS(){
   const[cd,setCd]=useState(null);
-  useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>{})},[]);
+  useEffect(()=>{fetch('/api/countdowns?kind=personal&limit=8').then(r=>r.json()).then(setCd).catch(()=>{})},[]);
   const familyCountdown=cd?.countdowns?.[0];
   const hasEvents=cd?.countdowns?.length>0;
   const quickAsk=(q)=>{if(window.fridayQuickChat)window.fridayQuickChat(q);};
   return(<div>
-    <FridaySays text={familyCountdown?(()=>{const d=familyCountdown.days??familyCountdown.days_until;return d==null?'Next family event coming up.':d===0?'A family event is today.':`Next family event in ${d} day${d===1?'':'s'}.`})():'Your family dashboard. Ask me to help set it up.'}/>
-    {hasEvents&&<div style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.label||c.name}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif',fontSize:11}}>{(c.days??c.days_until)===0?'Today':`${c.days??c.days_until}d`}</span></div>)}</div>}
+    <FridaySays text={familyCountdown?`${familyCountdown.label} is ${fridayCountdownWhen(familyCountdown)||'coming up'}.`:'Your family dashboard. Ask me to help set it up.'}/>
+    {hasEvents&&<div style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.emoji||''} {c.label||c.name}{c.why&&<span className="cd-why"> · {c.why}</span>}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif',fontSize:11}}>{fridayCountdownWhen(c)||`${c.days}d`}</span></div>)}</div>}
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
       <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me add my family members to the wiki.')}>
         <div className="card-title">Family Members</div><div style={{fontSize:11,color:'#888'}}>Click to set up with Friday</div>
@@ -20873,7 +20921,7 @@ function App(){
     const st=d.state||{};window._fridayAmbientState=st;window._fridayAmbientMood=st.scene_mood||'IDLE';
   }).catch(()=>{});pull();const iv=setInterval(pull,60000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
-  useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{setCountdowns(d.countdowns||[])}).catch(()=>{})},[]);
+  useEffect(()=>{let alive=true;const load=()=>fetch('/api/countdowns').then(r=>r.json()).then(d=>{if(alive)setCountdowns(d.countdowns||[])}).catch(()=>{});load();const t=setInterval(load,FRIDAY_COUNTDOWNS_EVERY_MS);return()=>{alive=false;clearInterval(t)}},[]);
   useEffect(()=>{fetch('/api/evolution').then(r=>r.json()).then(d=>{if(typeof d.structure_index==='number')setTimeout(()=>window.fridayVibe?.setStructure(d.structure_index),600)}).catch(()=>{})},[]);
   useEffect(()=>{if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.chatLoad=chatLoad||qdLoading;},[chatLoad,qdLoading]);
 
@@ -22199,15 +22247,7 @@ function App(){
       <div style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
       <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron, sans-serif',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
       <div style={{position:'relative',zIndex:1,marginBottom:10}}><FridayLockup size={11}/></div>
-      {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:16,position:'relative',zIndex:1}}>
-        {countdowns.map((c,i)=><React.Fragment key={i}>
-          {i>0&&<span className="greeting-ticker-sep"/>}
-          <span className="greeting-ticker-item">
-            <span>{c.emoji||''} {c.label||c.name}</span>
-            <span className="days">{c.days??c.days_until??'?'}d</span>
-          </span>
-        </React.Fragment>)}
-      </div>}
+      <FridayCountdowns items={countdowns}/>
       {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:16,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
       <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <FridayChatInput value={promptText} onChange={setPromptText} onSend={sendPrompt} maxHeight={120}

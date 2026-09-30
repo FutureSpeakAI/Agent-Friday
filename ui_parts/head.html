@@ -565,9 +565,12 @@ window.addEventListener('DOMContentLoaded',function(){
             text-shadow: 0 1px 3px rgba(0,0,0,0.85), 0 0 12px rgba(0,0,0,0.7);
         }
         .greeting-ticker-item .days {
-            font-family: 'Orbitron', sans-serif; font-size: 18px; color: #00d4ff;
+            font-family: 'Orbitron', sans-serif; font-size: var(--fr-text-lg); color: #00d4ff;
+            letter-spacing: 0.04em; white-space: nowrap;
             text-shadow: 0 0 12px rgba(0,212,255,0.45), 0 1px 4px rgba(0,0,0,0.9);
         }
+        .greeting-ticker-item .cd-what { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+        .cd-why { font-size: var(--fr-text-xs); color: var(--fr-label); letter-spacing: 0.02em; }
         .greeting-ticker-sep {
             width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.45);
         }

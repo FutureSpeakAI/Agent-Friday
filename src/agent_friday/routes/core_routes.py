@@ -1049,31 +1049,15 @@ def system_offline_queue_flush():
 
 @core_bp.route('/api/countdowns')
 def get_countdowns():
-    """Compute countdowns to upcoming recurring events.
-
-    Events are defined by (month, day) and roll to their NEXT future occurrence,
-    so an event that is today or already past this year is shown for next year
-    rather than lingering at 0/negative days or silently vanishing from a
-    hardcoded one-shot list. `days` is always >= 1 (strictly upcoming).
-    """
-    today = date.today()
-    # (label, month, day, emoji) — recurring annual markers.
-    events = [
-        {"label": "Summer Solstice", "month": 6, "day": 21, "emoji": "☀️"},
-        {"label": "Independence Day", "month": 7, "day": 4, "emoji": "🎆"},
-        {"label": "New Year", "month": 1, "day": 1, "emoji": "🎉"},
-    ]
-    countdowns = []
-    for ev in events:
-        # This year's date; if it's today or already past, use next year's.
-        occ = date(today.year, ev["month"], ev["day"])
-        if (occ - today).days < 1:
-            occ = date(today.year + 1, ev["month"], ev["day"])
-        countdowns.append({
-            "label": ev["label"], "date": occ.isoformat(),
-            "emoji": ev["emoji"], "days": (occ - today).days,
-        })
-    return jsonify({"status": "ok", "countdowns": sorted(countdowns, key=lambda x: x["days"])})
+    """The owner's countdowns (services/countdowns.py): from their calendar,
+    their commitments and their wiki, the top few in time order, each with
+    when and why. ``?kind=personal`` narrows to birthdays and the like (the
+    Family workspace); ``?limit=`` asks for more than the start screen's four.
+    ``failed`` names any source that could not be read."""
+    from agent_friday.services import countdowns as cds
+    kind = (request.args.get("kind") or "").strip().lower() or None
+    out = cds.countdowns(kind=kind, limit=request.args.get("limit") or cds.TOP)
+    return jsonify({"status": "ok", **out})
 
 
 # ═══════════════════════════════════════════════════════════════

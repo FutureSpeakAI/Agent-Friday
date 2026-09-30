@@ -84,10 +84,10 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   out.error_calls = calls.filter(c => c[1] === '/api/memory/stats').length;
   reply = (url) => ({status: 200, body: JSON.stringify({url, n: calls.length})});
   // 7. past the max age the cache is not painted; the caller waits for the network
-  await f('/api/countdowns');
+  await f('/api/epistemic');
   now += 31 * 60 * 1000;
-  await f('/api/countdowns');
-  out.max_age_calls = calls.filter(c => c[1] === '/api/countdowns').length;
+  await f('/api/epistemic');
+  out.max_age_calls = calls.filter(c => c[1] === '/api/epistemic').length;
   // 8. an action mid-refresh: the pre-action answer is not written back
   reply = (url) => ({status: 200, body: JSON.stringify({url, n: 'pre-action'})});
   await f('/api/trust');

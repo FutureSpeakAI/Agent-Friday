@@ -930,9 +930,12 @@ window.addEventListener('DOMContentLoaded',function(){
             text-shadow: 0 1px 3px rgba(0,0,0,0.85), 0 0 12px rgba(0,0,0,0.7);
         }
         .greeting-ticker-item .days {
-            font-family: 'Orbitron', sans-serif; font-size: 18px; color: #00d4ff;
+            font-family: 'Orbitron', sans-serif; font-size: var(--fr-text-lg); color: #00d4ff;
+            letter-spacing: 0.04em; white-space: nowrap;
             text-shadow: 0 0 12px rgba(0,212,255,0.45), 0 1px 4px rgba(0,0,0,0.9);
         }
+        .greeting-ticker-item .cd-what { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+        .cd-why { font-size: var(--fr-text-xs); color: var(--fr-label); letter-spacing: 0.02em; }
         .greeting-ticker-sep {
             width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.45);
         }
@@ -7543,7 +7546,7 @@ const FRIDAY_PANEL_CACHE_RULES = [
   [/^\/api\/news\/clusters$/, 600],
   [/^\/api\/memory\/stats$/, 60],
   [/^\/api\/wiki\/structure$/, 30],
-  [/^\/api\/(countdowns|trust|personality|epistemic|contacts)$/, 60]
+  [/^\/api\/(trust|personality|epistemic|contacts)$/, 60]
 ];
 const FRIDAY_PANEL_CACHE_MAX_AGE = 30 * 60;
 const FRIDAY_PANEL_CACHE_LINKED = {
@@ -8133,6 +8136,71 @@ function fridayTM(text) {
 }
 /* fridayTM:end */
 window.fridayTM = fridayTM;
+// ═══ THE OWNER'S COUNTDOWNS ═══
+// What is coming up in the owner's world (services/countdowns.py): their
+// calendar, their commitments and their wiki, each item with when and why.
+/* fridayCountdownWhen:begin */
+const FRIDAY_COUNTDOWNS_EVERY_MS = 5 * 60 * 1000;
+// When a countdown falls, in the server's words (countdowns.short_when): "now",
+// "in 25 min", "in 3 h", "today", "tomorrow", "in 12 days". A timed item
+// carries `at` (epoch seconds); an all-day item only its `date`.
+function fridayCountdownWhen(c, now) {
+  now = now == null ? Date.now() : now;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  let days;
+  if (c && c.at) {
+    const mins = Math.floor((c.at * 1000 - now) / 60000);
+    if (mins < 1) return 'now';
+    if (mins < 60) return 'in ' + mins + ' min';
+    const day = new Date(c.at * 1000);
+    day.setHours(0, 0, 0, 0);
+    days = Math.round((day - today) / 86400000);
+    if (days === 0) return 'in ' + Math.floor(mins / 60) + ' h';
+  } else {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(c && c.date || '');
+    if (!m) return '';
+    days = Math.round((new Date(+m[1], +m[2] - 1, +m[3]) - today) / 86400000);
+  }
+  if (days <= 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return 'in ' + days + ' days';
+}
+/* fridayCountdownWhen:end */
+// The start screen's countdowns: each one's label, when, and why it is there.
+// The words for when move on each minute; the list comes every five.
+function FridayCountdowns({
+  items
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, []);
+  const shown = (items || []).filter(c => !c.at || c.at * 1000 > now - 60000);
+  if (!shown.length) return null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "greeting-ticker",
+    "data-testid": "countdowns",
+    style: {
+      marginBottom: 16,
+      position: 'relative',
+      zIndex: 1
+    }
+  }, shown.map((c, i) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: c.id || i
+  }, i > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "greeting-ticker-sep"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "greeting-ticker-item"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "cd-what"
+  }, /*#__PURE__*/React.createElement("span", null, c.emoji || '', " ", c.label || c.name), c.why && /*#__PURE__*/React.createElement("span", {
+    className: "cd-why"
+  }, c.why)), /*#__PURE__*/React.createElement("span", {
+    className: "days"
+  }, fridayCountdownWhen(c, now) || (c.days ?? '?') + 'd')))));
+}
 // The wordmark, AGENT FRIDAY™ by FutureSpeak.AI: one definition for the top
 // bar, the start screen and the About card. `size` is the cap size in px; the
 // name opens `href`, or runs `onClick`.
@@ -18751,7 +18819,7 @@ function FuturespeakWS() {
 function FamilyWS() {
   const [cd, setCd] = useState(null);
   useEffect(() => {
-    fetch('/api/countdowns').then(r => r.json()).then(setCd).catch(() => {});
+    fetch('/api/countdowns?kind=personal&limit=8').then(r => r.json()).then(setCd).catch(() => {});
   }, []);
   const familyCountdown = cd?.countdowns?.[0];
   const hasEvents = cd?.countdowns?.length > 0;
@@ -18759,10 +18827,7 @@ function FamilyWS() {
     if (window.fridayQuickChat) window.fridayQuickChat(q);
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
-    text: familyCountdown ? (() => {
-      const d = familyCountdown.days ?? familyCountdown.days_until;
-      return d == null ? 'Next family event coming up.' : d === 0 ? 'A family event is today.' : `Next family event in ${d} day${d === 1 ? '' : 's'}.`;
-    })() : 'Your family dashboard. Ask me to help set it up.'
+    text: familyCountdown ? `${familyCountdown.label} is ${fridayCountdownWhen(familyCountdown) || 'coming up'}.` : 'Your family dashboard. Ask me to help set it up.'
   }), hasEvents && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 12
@@ -18781,13 +18846,15 @@ function FamilyWS() {
     style: {
       fontSize: 12
     }
-  }, c.label || c.name), /*#__PURE__*/React.createElement("span", {
+  }, c.emoji || '', " ", c.label || c.name, c.why && /*#__PURE__*/React.createElement("span", {
+    className: "cd-why"
+  }, " \xB7 ", c.why)), /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#00d4ff',
       fontFamily: 'Orbitron, sans-serif',
       fontSize: 11
     }
-  }, (c.days ?? c.days_until) === 0 ? 'Today' : `${c.days ?? c.days_until}d`)))), /*#__PURE__*/React.createElement("div", {
+  }, fridayCountdownWhen(c) || `${c.days}d`)))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',
@@ -56951,9 +57018,16 @@ function App() {
     });
   }, [chatMsgs]);
   useEffect(() => {
-    fetch('/api/countdowns').then(r => r.json()).then(d => {
-      setCountdowns(d.countdowns || []);
+    let alive = true;
+    const load = () => fetch('/api/countdowns').then(r => r.json()).then(d => {
+      if (alive) setCountdowns(d.countdowns || []);
     }).catch(() => {});
+    load();
+    const t = setInterval(load, FRIDAY_COUNTDOWNS_EVERY_MS);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
   }, []);
   useEffect(() => {
     fetch('/api/evolution').then(r => r.json()).then(d => {
@@ -59929,22 +60003,9 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement(FridayLockup, {
     size: 11
-  })), countdowns.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "greeting-ticker",
-    style: {
-      marginBottom: 16,
-      position: 'relative',
-      zIndex: 1
-    }
-  }, countdowns.map((c, i) => /*#__PURE__*/React.createElement(React.Fragment, {
-    key: i
-  }, i > 0 && /*#__PURE__*/React.createElement("span", {
-    className: "greeting-ticker-sep"
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "greeting-ticker-item"
-  }, /*#__PURE__*/React.createElement("span", null, c.emoji || '', " ", c.label || c.name), /*#__PURE__*/React.createElement("span", {
-    className: "days"
-  }, c.days ?? c.days_until ?? '?', "d"))))), countdowns.length === 0 && /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement(FridayCountdowns, {
+    items: countdowns
+  }), countdowns.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
       zIndex: 1,
