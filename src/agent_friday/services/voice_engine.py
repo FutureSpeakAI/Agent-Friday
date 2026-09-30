@@ -325,6 +325,20 @@ _VOICE_LIVE_TOOLS = [
      "wait for their yes, no, or change it. Never say the workspace is swapped before the "
      "card is approved. If the result is refused, say why in one line.",
      {}, []),
+    ("codebase_seat",
+     "Change which model the current codebase chat uses: 'use Opus for this one' means which='heavy' "
+     "and model='Opus 5.5'; 'use the local model for small edits' means which='small', model='local'. "
+     "Speak the result's say line as is; it is the user's choice and needs no approval.",
+     {"which": ("string", "'small' or 'heavy'."), "model": ("string", "The model as the user said it, or 'local'.")},
+     ["which", "model"]),
+    ("codebase_key",
+     "Change whose key pays for the current codebase chat: 'use Alex's key' means profile='Alex'; "
+     "'use my key' means profile='mine'. Speak the result's say line as is; if refused, say the key "
+     "is not on this codebase and can be added under Settings, Salon.",
+     {"profile": ("string", "'mine' or a guest key's label.")}, ["profile"]),
+    ("codebase_costs",
+     "Answer 'how much has this cost?' for the current codebase chat from the meter. Speak the result's "
+     "say line as is; never estimate.", {}, []),
     ("delegate_to_friday",
      "Hand ANY request to the full Friday agent, with every tool it has in chat "
      "(email drafting, files, the wiki, browsing, research, workflows, anything the "
@@ -1349,6 +1363,16 @@ def _voice_tool_run(name, args, send_client, session=None):
             # conversation that asked, which this call's session names.
             from agent_friday.services import agent as _ag
             _fn = getattr(_ag, "_tool_" + name)
+            _cid = session.get("conversation_id") if isinstance(session, dict) else None
+            _tok = _ag._CURRENT_CONVERSATION.set(_cid)
+            try:
+                return _governed(name, _fn, args)
+            finally:
+                _ag._CURRENT_CONVERSATION.reset(_tok)
+        if name in ("codebase_seat", "codebase_key", "codebase_costs"):
+            from agent_friday.services import agent as _ag
+            _fn = {"codebase_seat": _ag._tool_codebase_seat, "codebase_key": _ag._tool_codebase_key,
+                   "codebase_costs": _ag._tool_codebase_costs}[name]
             _cid = session.get("conversation_id") if isinstance(session, dict) else None
             _tok = _ag._CURRENT_CONVERSATION.set(_cid)
             try:

@@ -1262,6 +1262,16 @@ def chat():
                 _conv_seat = _convs.effective_seat(_conversation_id)
             except Exception:
                 pass
+            # A codebase chat's own routing record (salon spec §4.7): the heavy
+            # seat takes big edits, and everything when no local model is
+            # resident. None means "follow the default", which is the brain.
+            try:
+                from agent_friday.services import codebases as _cbs_seat
+                _cb_seat = _cbs_seat.seat_for_conversation(_conversation_id, message)
+                if _cb_seat:
+                    _conv_seat = _cb_seat
+            except Exception:
+                pass
             # A conversation bound to a model that is GONE.
             #
             # A binding to a missing model 404s and falls through to the cloud.
@@ -1601,6 +1611,16 @@ def chat():
             # later -- possibly from the System workspace with no turn running.
             "conversation_id": _conv_id_from(data) or "",
         }
+        # Every metered call in a codebase chat is that codebase's spend, under
+        # whose key it runs (salon spec §4.7): the meter reads both from here.
+        try:
+            from agent_friday.services import codebases as _sess_ctx_cb
+            _cb_rec = _sess_ctx_cb.for_conversation(_conversation_id)
+            if _cb_rec:
+                _sess_ctx['codebase'] = _cb_rec['id']
+                _sess_ctx['key_profile'] = _cb_rec.get('key_profile') or 'mine'
+        except Exception:
+            pass
         # Wire this turn into the ask-first action flow: stamps the session id so
         # the confirmation gate is live, and grants a pending action when this
         # message is the user's "yes" to a question Friday asked last turn.
@@ -2687,6 +2707,15 @@ def chat_send():
                 _conv_seat_model = (_cs.get('model') or '').strip()
         except Exception as _cse:
             print(f"  [chat/send] could not read the conversation seat: {_cse}")
+        # The codebase's routing record wins over the conversation's binding
+        # for this turn (salon spec §4.7): big edits to the heavy seat.
+        try:
+            from agent_friday.services import codebases as _cbs_seat
+            _cb_seat = _cbs_seat.seat_for_conversation(_conversation_id, message)
+            if _cb_seat and _cb_seat.get('model'):
+                _conv_seat_model = str(_cb_seat['model']).strip()
+        except Exception:
+            pass
 
         _send_provider = _predict_route_provider(
             keywords=message, workspace=workspace, has_tools=True)
@@ -2719,6 +2748,16 @@ def chat_send():
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "conversation_id": _conversation_id,
         }
+        # Every metered call in a codebase chat is that codebase's spend, under
+        # whose key it runs (salon spec §4.7): the meter reads both from here.
+        try:
+            from agent_friday.services import codebases as _sess_ctx_cb
+            _cb_rec = _sess_ctx_cb.for_conversation(_conversation_id)
+            if _cb_rec:
+                _sess_ctx['codebase'] = _cb_rec['id']
+                _sess_ctx['key_profile'] = _cb_rec.get('key_profile') or 'mine'
+        except Exception:
+            pass
         # Same ask-first action flow as /api/chat: enforce confirmation and honor
         # a "yes" reply to a question Friday asked on the previous turn.
         _sess_ctx = prepare_confirmation_ctx(_session_id, message, _sess_ctx)

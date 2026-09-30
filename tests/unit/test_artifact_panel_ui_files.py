@@ -166,3 +166,9 @@ def test_the_svg_frame_has_no_scripts(js):
     m = re.search(r"SVG_SANDBOX\s*=\s*['\"]([^'\"]*)['\"]", js)
     assert m, "svg is framed with its own sandbox constant"
     assert "allow-scripts" not in m.group(1)
+
+
+def test_the_codebase_panel_shows_the_header_line_and_follows_seat_changes(js):
+    """Salon spec §4.7: one line, seats · key · cost, re-read after every step and change."""
+    assert "data-codebase-header" in js and "/header'" in js
+    assert "m.type === 'codebase_header'" in js

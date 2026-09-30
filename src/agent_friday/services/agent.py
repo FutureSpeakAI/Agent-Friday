@@ -27,6 +27,11 @@ _CURRENT_OWNER_TEXT: ContextVar = ContextVar("friday_tool_owner_text", default="
 #: its result goes to the cloud voice model, which is never handed raw private
 #: data (docs/reference/voice-tool-contract.md §5).
 _CURRENT_SURFACE: ContextVar = ContextVar("friday_tool_surface", default="")
+#: The model answering the turn, set by the agent loops before a tool runs,
+#: so a codebase step can name the seat that made it (salon spec §4.7).
+_CURRENT_MODEL: ContextVar = ContextVar("friday_tool_model", default="")
+#: Whose key the turn runs on ("mine" or a guest key's label).
+_CURRENT_KEY_PROFILE: ContextVar = ContextVar("friday_tool_key_profile", default="")
 import subprocess
 import shutil
 import base64
@@ -8300,7 +8305,8 @@ def _tool_codebase_edit(inp):
         return "codebase_edit refused: 'files' must be a non-empty object of {path: content}. Nothing was changed."
     try:
         st = _cb.step(rec["id"], files, str(inp.get("summary") or "Change"),
-                      model=str((inp.get("_model") or "")), key_profile="mine")
+                      model=str(inp.get("_model") or _CURRENT_MODEL.get() or ""),
+                      key_profile=str(_CURRENT_KEY_PROFILE.get() or rec.get("key_profile") or "mine"))
     except ValueError as e:
         return f"codebase_edit refused: {e}. Nothing was changed."
     except RuntimeError as e:
@@ -8454,6 +8460,112 @@ def _tool_workspace_swap(inp):
 
 CLAUDE_TOOL_HANDLERS.update({"improve_workspace": _tool_improve_workspace, "workspace_swap": _tool_workspace_swap})
 TOOL_RINGS.update({"improve_workspace": 1, "workspace_swap": 1})
+
+
+# ── Seats, keys and costs per codebase (services/codebases; spec §4.7) ───────
+CLAUDE_TOOLS.append({
+    "name": "codebase_seat",
+    "description": (
+        "Change which model this chat's codebase uses: which='small' for small edits (a model, or 'local' "
+        "for the resident local brain) or which='heavy' for big ones ('use Opus for this one'). The header "
+        "line changes at once and the chat gets a system line. Speak the result's `say` as is; if refused, "
+        "say the model name was not recognised and offer the catalogue names."),
+    "input_schema": {"type": "object", "properties": {
+        "which": {"type": "string", "enum": ["small", "heavy"]},
+        "model": {"type": "string", "description": "A model as people say it ('Opus 5.5') or its id; 'local' for the resident brain; empty to clear the heavy seat."},
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}},
+        "required": ["which", "model"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_key",
+    "description": (
+        "Change whose key pays for this chat's codebase: 'mine' (the user's own key) or the label of a "
+        "guest key added under Settings \u2192 Salon ('use Alex's key'). A guest key is used only by this "
+        "codebase; nothing falls back to the user's key if it fails. Speak the result's `say` as is."),
+    "input_schema": {"type": "object", "properties": {
+        "profile": {"type": "string", "description": "'mine' or a guest key's label."},
+        "codebase_id": {"type": "string"}}, "required": ["profile"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_costs",
+    "description": ("What this chat's codebase has cost so far, split by whose key paid ('how much has this cost?'). "
+                    "Speak the result's `say` as is; do not add up or estimate anything yourself."),
+    "input_schema": {"type": "object", "properties": {"codebase_id": {"type": "string"}}},
+})
+
+
+def _tool_codebase_seat(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase, so there is no seat to change."}
+    which = str(inp.get("which") or "").strip().lower()
+    words = str(inp.get("model") or "").strip()
+    model = "local" if words.lower() in ("local", "this pc", "the local model") else (model_from_words(words) if words else "")
+    if words and not model:
+        return {"status": "refused", "say": "I don't know a model called \"%s\". The ones I can name are %s." % (words, _cb_catalogue_names())}
+    try:
+        out = _cb.set_seat(rec["id"], which, model or "", by="you")
+    except (ValueError, KeyError) as e:
+        return {"status": "refused", "say": str(e)}
+    hd = _cb.header(rec["id"])
+    name = "the local model on this PC" if model == "local" else (_cb.model_short(model) if model else "none")
+    key = "your key" if hd["key"] == "mine" else "%s's key" % hd["key"]
+    return {"status": "ok", "seats": out["seats"], "header": hd["text"],
+            "say": "Switching %s to %s on %s." % ("small edits" if which == "small" else "big edits", name, key)}
+
+
+def model_from_words(words):
+    from agent_friday.services import codebases as _cb
+    return _cb.model_from_words(words)
+
+
+def _cb_catalogue_names():
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        names = []
+        for prov in get_provider_registry().list_providers():
+            for meta in (prov.get("model_meta") or {}).values():
+                if meta.get("short"):
+                    names.append(meta["short"])
+        return ", ".join(sorted(set(names))[:12]) or "the models in Settings"
+    except Exception:
+        return "the models in Settings"
+
+
+def _tool_codebase_key(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase, so there is no key to change."}
+    profile = str(inp.get("profile") or "").strip()
+    if profile.lower() in ("mine", "my key", "your key", "own"):
+        profile = "mine"
+    try:
+        out = _cb.set_key_profile(rec["id"], profile, by="you")
+    except (ValueError, KeyError) as e:
+        return {"status": "refused", "say": str(e)}
+    hd = _cb.header(rec["id"])
+    key = "your key" if out["key_profile"] == "mine" else "%s's key" % out["key_profile"]
+    return {"status": "ok", "key_profile": out["key_profile"], "header": hd["text"],
+            "say": "This codebase now runs on %s." % key}
+
+
+def _tool_codebase_costs(inp):
+    from agent_friday.services import codebases as _cb, cost_meter as _cm
+    rec = _codebase_in_scope(inp or {})
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase to add up."}
+    c = _cm.codebase_costs(rec["id"])
+    parts = ["%s $%.2f" % ("your key" if k == "mine" else "%s's key" % k, v) for k, v in sorted(c.get("by_key_profile", {}).items())]
+    say = ('"%s" has cost $%.2f so far' % (rec["title"], c["total_usd"])) + ((": " + ", ".join(parts)) if len(parts) > 1 else (" on %s" % parts[0].rsplit(" $", 1)[0] if parts else "")) + "."
+    return {"status": "ok", "total_usd": c["total_usd"], "by_key_profile": c.get("by_key_profile", {}), "calls": c.get("calls", 0), "say": say}
+
+
+CLAUDE_TOOL_HANDLERS.update({"codebase_seat": _tool_codebase_seat, "codebase_key": _tool_codebase_key, "codebase_costs": _tool_codebase_costs})
+TOOL_RINGS.update({"codebase_seat": 1, "codebase_key": 1, "codebase_costs": 0})
 
 
 # ── Plan-first for big asks (services/plans; spec §4.11 item 4) ──────────────
@@ -11748,7 +11860,11 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 # The "about to do this" narration is announced inside
                 # _execute_tool, once the governance check has let the call
                 # through: a held action is not work that is happening.
-                result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                _mtok = _CURRENT_MODEL.set(str(kwargs.get("model") or model or ""))
+                try:
+                    result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                finally:
+                    _CURRENT_MODEL.reset(_mtok)
                 # Cleared on the SUCCESS path only, deliberately not in a
                 # `finally`. If _execute_tool raised, the tool's side effect is
                 # exactly as unknown as it is after a process death, and a
@@ -12435,8 +12551,12 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 return _tb.limit_message("loop", detail=_loop_hit,
                                          used=_round,
                                          model=str(model or "")), tool_trace
-            result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
-                                   session_ctx=session_ctx)
+            _mtok = _CURRENT_MODEL.set(str(_meter_model or model or ""))
+            try:
+                result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
+                                       session_ctx=session_ctx)
+            finally:
+                _CURRENT_MODEL.reset(_mtok)
             _tool_ms = int((_time.time() - _t_tool) * 1000)
             _orb_tool_trace(orb_id, tname, targs, result, _tool_ms)
             _ledger_tool_call(tname, result, _tool_ms, orb_id, session_ctx)

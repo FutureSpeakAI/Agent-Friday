@@ -79,7 +79,7 @@ def _dir(cid: str) -> Path:
     return _root() / safe_name(cid, what="codebase id")
 
 
-def load(cid: str) -> Optional[dict]:
+def _load_raw(cid: str) -> Optional[dict]:
     p = _dir(cid) / "codebase.json"
     if not p.is_file():
         return None
@@ -87,6 +87,10 @@ def load(cid: str) -> Optional[dict]:
         return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def load(cid: str) -> Optional[dict]:
+    return _with_defaults(_load_raw(cid))
 
 
 def _save(rec: dict) -> dict:
@@ -255,7 +259,8 @@ def create(title: str, template: str = "static", *, conversation_id: Optional[st
         _git(folder, "checkout", "-q", "-B", branch)
         rec = {"id": cid, "title": title, "slug": slug, "template": None, "tier": "B0",
                "repo": str(folder), "branch": branch, "existing": True,
-               "conversation_id": conversation_id, "created_at": now}
+               "conversation_id": conversation_id, "created_at": now,
+               "seats": dict(DEFAULT_SEATS), "key_profile": "mine"}
     else:
         if template not in TEMPLATES:
             raise ValueError("unknown template %r; one of %s" % (template, ", ".join(TEMPLATES)))
@@ -272,7 +277,8 @@ def create(title: str, template: str = "static", *, conversation_id: Optional[st
         _git(repo, "commit", "-q", "-m", "Start: %s" % title)
         rec = {"id": cid, "title": title, "slug": slug, "template": template, "tier": "B0",
                "repo": str(repo), "branch": "main", "existing": False,
-               "conversation_id": conversation_id, "created_at": now}
+               "conversation_id": conversation_id, "created_at": now,
+               "seats": dict(DEFAULT_SEATS), "key_profile": "mine"}
     (Path(rec["repo"]) / ".friday" / "receipts").mkdir(parents=True, exist_ok=True)
     _save(rec)
     if conversation_id:
@@ -597,6 +603,263 @@ def preview(cid: str) -> str:
     return html
 
 
+# ── seats, keys and the header line (§4.7, Phase 3) ─────────────────────────
+# A codebase carries a small routing record: which seat takes small edits,
+# which takes big ones, and whose key pays. The header is one line built from
+# it, the resident brain and the meter; it changes the instant any of those
+# changes, and every change is a system line in the chat (seat_transparency's
+# rule, per codebase).
+
+DEFAULT_SEATS = {"small_edit_seat": "local", "heavy_seat": None, "engine": "friday"}
+SEAT_WHICH = {"small": "small_edit_seat", "heavy": "heavy_seat"}
+_HEAVY_WORDS = ("feature", "new page", "rewrite", "refactor", "several files", "whole app", "redesign",
+                "from scratch", "migrate", "add a screen", "new screen", "build a", "big change")
+_HEAVY_CHARS = 400
+_HEAVY_FILES = 3
+_HEAVY_LINES = 200
+
+
+def _with_defaults(rec: Optional[dict]) -> Optional[dict]:
+    """An older record reads the same defaults a new one is written with."""
+    if rec is None:
+        return None
+    seats = dict(DEFAULT_SEATS)
+    seats.update({k: v for k, v in (rec.get("seats") or {}).items() if k in DEFAULT_SEATS})
+    rec["seats"] = seats
+    rec.setdefault("key_profile", "mine")
+    return rec
+
+
+def _resident_brain() -> Optional[tuple]:
+    """(model_id, label) of the local model resident right now, or None on a
+    cloud-only machine. Read from the seats that are actually serving."""
+    try:
+        from agent_friday.services import local_seats as _ls
+        serving = _ls.serving() or {}
+        if not serving:
+            return None
+        try:
+            mid = _ls.resolve("brain") or next(iter(serving))
+        except Exception:
+            mid = next(iter(serving))
+        if mid not in serving:
+            mid = next(iter(serving))
+        return mid, model_short(mid)
+    except Exception:
+        return None
+
+
+def model_short(model_id: str) -> str:
+    """The name people say: the catalogue's short label ("Opus 5.5"), else a
+    local id's family ("bonsai2:27b" -> "Bonsai2"), else the id itself."""
+    mid = str(model_id or "")
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        for prov in get_provider_registry().list_providers():
+            meta = (prov.get("model_meta") or {}).get(mid)
+            if meta and (meta.get("short") or meta.get("label")):
+                return str(meta.get("short") or meta.get("label"))
+    except Exception:
+        pass
+    if ":" in mid:
+        fam = mid.split(":", 1)[0]
+        return fam[:1].upper() + fam[1:]
+    return mid
+
+
+def model_from_words(words: str) -> Optional[str]:
+    """A model id from an exact id or a catalogue label, case-insensitive; None
+    when nothing matches. Never a guess: the header will name the result."""
+    w = " ".join(str(words or "").split()).lower()
+    if not w:
+        return None
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        for prov in get_provider_registry().list_providers():
+            for mid, meta in (prov.get("model_meta") or {}).items():
+                names = {mid.lower(), str(meta.get("label") or "").lower(), str(meta.get("short") or "").lower()}
+                names.discard("")
+                if w in names:
+                    return mid
+    except Exception:
+        pass
+    if re.fullmatch(r"[a-z0-9][a-z0-9._:-]{2,}", w) and ("-" in w or ":" in w):
+        return w
+    return None
+
+
+def guest_keys(cid: str) -> list:
+    """The guest keys this codebase knows (label, provider, added_at, cap_usd); none yet by default."""
+    p = repo_path(cid) / ".friday" / "keys.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return [k for k in (data.get("keys") or []) if isinstance(k, dict) and k.get("label")]
+    except Exception:
+        return []
+
+
+def _system_line(rec: dict, text: str, kind: str = "seat_change") -> None:
+    """A seat_transparency-style line in the codebase's chat, and the header event on the bus."""
+    conv_id = rec.get("conversation_id")
+    if conv_id:
+        try:
+            from agent_friday.services import conversations as _convs
+            _convs.append(conv_id, {"role": "system", "kind": kind, "text": "\u2699 " + text, "ts": time.time()})
+        except Exception as e:
+            _log.warning("could not write the seat line into %s: %s", conv_id, e)
+    try:
+        from agent_friday.services import desktop_bus
+        desktop_bus.broadcast({"type": "codebase_header", "codebase_id": rec["id"], "conversation_id": conv_id,
+                               "text": text}, kind="chat")
+    except Exception:
+        pass
+
+
+def set_seat(cid: str, which: str, model: str, *, by: str = "you") -> dict:
+    """Change the small-edit or heavy seat. "local" means the resident brain;
+    an empty model clears the heavy seat. Announced in the chat."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    field = SEAT_WHICH.get(str(which or "").strip().lower())
+    if not field:
+        raise ValueError("which must be 'small' or 'heavy'")
+    model = " ".join(str(model or "").split())
+    if field == "small_edit_seat" and not model:
+        raise ValueError("the small-edit seat needs a model, or 'local' for the resident brain")
+    if field == "heavy_seat" and not model:
+        model = None
+    old = rec["seats"].get(field)
+    rec["seats"][field] = model
+    _save(rec)
+    label = "small edits" if field == "small_edit_seat" else "big edits"
+    def name(m):
+        return "the local model (this PC)" if m == "local" else (model_short(m) if m else "none")
+    _system_line(rec, "Seat change: %s %s \u2192 %s (%s)." % (label, name(old), name(model), by))
+    return rec
+
+
+def set_key_profile(cid: str, profile: str, *, by: str = "you") -> dict:
+    """Whose key pays for this codebase: "mine", or the label of a guest key it knows."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    profile = " ".join(str(profile or "").split())
+    known = [k["label"] for k in guest_keys(cid)]
+    if profile != "mine" and profile not in known:
+        raise ValueError("no guest key called %r on this codebase; add one under Settings \u2192 Salon first" % profile)
+    old = rec.get("key_profile") or "mine"
+    rec["key_profile"] = profile
+    _save(rec)
+    def name(p):
+        return "your key" if p == "mine" else "%s's key" % p
+    _system_line(rec, "Key change: %s \u2192 %s (%s)." % (name(old), name(profile), by))
+    return rec
+
+
+def is_heavy(cid: str, message: str, last_step: Optional[dict] = None) -> bool:
+    """Small or big, by a rule Friday can explain: length, the words that name a
+    feature or a rewrite, an approved plan under way, or a last step that touched
+    many files or lines."""
+    text = str(message or "")
+    low = text.lower()
+    if len(text) > _HEAVY_CHARS:
+        return True
+    if any(w in low for w in _HEAVY_WORDS):
+        return True
+    rec = load(cid)
+    if rec and rec.get("conversation_id"):
+        try:
+            from agent_friday.services import plans as _plans
+            plan = _plans.current(rec["conversation_id"])
+            meta = ((plan or {}).get("meta") or {}).get("plan") or {}
+            if meta.get("approved") and any(m.get("status") in ("todo", "doing") for m in meta.get("milestones") or []):
+                return True
+        except Exception:
+            pass
+    st = last_step
+    if st is None and rec:
+        try:
+            st = (steps(cid, limit=1) or [None])[0]
+        except Exception:
+            st = None
+    if st:
+        r = st.get("receipt") or {}
+        files_n = len(r.get("files") or []) + len(r.get("deleted") or [])
+        lines_n = int(r.get("lines_changed") or 0)
+        if files_n > _HEAVY_FILES or lines_n > _HEAVY_LINES:
+            return True
+    return False
+
+
+def seat_for(cid: str, message: str) -> Optional[dict]:
+    """The seat this turn should run on, as the router takes it ({"model": id}),
+    or None to follow Friday's default (which is the resident brain). The heavy
+    seat takes big edits, and everything when no local model is resident."""
+    rec = load(cid)
+    if rec is None:
+        return None
+    heavy = (rec.get("seats") or {}).get("heavy_seat")
+    if not heavy:
+        return None
+    if _resident_brain() is None or is_heavy(cid, message):
+        return {"model": heavy}
+    small = (rec.get("seats") or {}).get("small_edit_seat") or "local"
+    return None if small == "local" else {"model": small}
+
+
+def seat_for_conversation(conversation_id: Optional[str], message: str) -> Optional[dict]:
+    rec = for_conversation(conversation_id)
+    return seat_for(rec["id"], message) if rec else None
+
+
+def header(cid: str) -> dict:
+    """The one line above the panel, and its spoken form."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    seats = rec.get("seats") or DEFAULT_SEATS
+    resident = _resident_brain()
+    heavy = seats.get("heavy_seat")
+    small = seats.get("small_edit_seat") or "local"
+    key = rec.get("key_profile") or "mine"
+    try:
+        from agent_friday.services import cost_meter as _cm
+        cost = float(_cm.codebase_total(cid) or 0.0)
+    except Exception:
+        cost = 0.0
+    key_text = "your key" if key == "mine" else "%s's key" % key
+    heavy_name = model_short(heavy) if heavy else None
+    if small == "local":
+        if resident is not None:
+            parts = ["%s (this PC) for small edits" % resident[1],
+                     ("%s for big ones" % heavy_name) if heavy_name else "no heavy seat yet"]
+            local_resident = True
+        else:
+            parts = [("no local model resident: %s for everything" % heavy_name) if heavy_name
+                     else "no local model resident and no heavy seat: pick one for this codebase"]
+            local_resident = False
+    else:
+        parts = ["%s for small edits" % model_short(small), ("%s for big ones" % heavy_name) if heavy_name else "no heavy seat yet"]
+        local_resident = resident is not None
+    text = " \u00b7 ".join([rec["title"]] + parts + [key_text, "this codebase: $%.2f" % cost])
+    spoken = ("%s: %s; %s; so far %s." % (rec["title"], "; ".join(parts), key_text,
+              _spoken_money(cost))).replace(" (this PC)", " on this PC")
+    return {"text": text, "spoken": spoken, "small": small, "heavy": heavy, "key": key, "cost_usd": round(cost, 2),
+            "local_resident": local_resident, "resident_model": resident[0] if resident else None,
+            "red": bool(rec.get("key_rejected")), "note": rec.get("key_rejected") or ""}
+
+
+def _spoken_money(usd: float) -> str:
+    cents = int(round(usd * 100))
+    if cents == 0:
+        return "nothing"
+    if cents < 100:
+        return "%d cents" % cents
+    d, c = divmod(cents, 100)
+    return "%d dollar%s" % (d, "" if d == 1 else "s") + (" %d" % c if c else "")
+
+
 # ── point-and-say: the pick, and a non-model patcher for simple edits ───────
 # (§4.11 item 2). The user selects an element in the preview; the pick is told
 # to the model next turn so "make this bigger" has a referent. Simple property
@@ -762,6 +1025,13 @@ def context_block_for(cid: str) -> str:
              "Do not say a change is done until the tool result names the step. "
              "For a BIG ask (a new feature, several files), call plan_first with a short plan and 3-7 milestones and stop; "
              "build only after the user approves it."]
+    try:
+        hd = header(cid)
+        lines.append("Seats: %s. Say the route on each step (\"edited by %s\"). The user changes seats with codebase_seat "
+                     "(\"use Opus for this one\") and the key with codebase_key; codebase_costs answers \"how much has this cost\"."
+                     % (hd["text"], model_short(hd["resident_model"]) if hd.get("resident_model") else (model_short(hd["heavy"]) if hd.get("heavy") else "the seat")))
+    except Exception:
+        pass
     if rec.get("workspace_id"):
         ws_label = rec["workspace_id"]
         try:

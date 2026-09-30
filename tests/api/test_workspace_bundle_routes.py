@@ -71,4 +71,5 @@ def test_bad_ids_and_brand_failures_are_refused(client):
     client.post(f"/api/codebases/{rec['id']}/file", json={"path": "index.html", "content": html})
     r = client.post("/api/workspaces/swap", json={"codebase_id": rec["id"]})
     assert r.status_code == 409 and "#00ff80" in r.get_json()["error"]
-    assert client.get("/api/approvals?status=pending").get_json().get("approvals", []) == []
+    pending = client.get("/api/approvals?status=pending").get_json().get("approvals", [])
+    assert not [a for a in pending if a.get("kind") == "workspace_swap" and (a.get("payload") or {}).get("codebase_id") == rec["id"]]

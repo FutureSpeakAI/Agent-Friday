@@ -126,7 +126,7 @@
       if (bus.es) {
         bus.es.onmessage = e => {
           let m = null; try { m = JSON.parse(e.data); } catch (_) { return; }
-          if (m && (m.type === 'artifact_put' || m.type === 'codebase_step' || m.type === 'workspace_bundle_changed' || m.type === 'open_conversation')) bus.subs.forEach(f => { try { f(m); } catch (_) {} });
+          if (m && (m.type === 'artifact_put' || m.type === 'codebase_step' || m.type === 'workspace_bundle_changed' || m.type === 'open_conversation' || m.type === 'codebase_header')) bus.subs.forEach(f => { try { f(m); } catch (_) {} });
         };
         // The stream reconnects by itself; while it is down, a slow poll keeps
         // the panel honest.
@@ -547,6 +547,15 @@
     // the live version beside the improved one; Swap in raises the ONE card.
     const wsId = codebase.workspace_id || null;
     const isBundle = codebase.template === 'bundle';
+    // The header line (spec §4.7): seats · key · this codebase's cost. It is
+    // computed on the server and re-read after every step and every change.
+    const [hdr, setHdr] = useState(null);
+    const loadHeader = useCallback(() => getJ(base + '/header').then(h => setHdr(h)).catch(() => {}), [base]);
+    useEffect(() => { loadHeader(); }, [loadHeader, refreshKey]);
+    useEffect(() => {
+      if (!window.fridayBusSubscribe) return undefined;
+      return window.fridayBusSubscribe(m => { if (m && (m.type === 'codebase_header' || m.type === 'codebase_step') && m.codebase_id === codebase.id) loadHeader(); });
+    }, [codebase.id, loadHeader]);
     const [compare, setCompare] = useState(false);
     const [liveDoc, setLiveDoc] = useState(null);
     useEffect(() => {
@@ -633,6 +642,9 @@
           h('span', { className: 'fa-title', title: codebase.title }, codebase.title),
           chipEl(codebase.template || 'folder', 'rgba(255,255,255,0.6)'),
           chipEl((codebase.tier || 'B0') + ' · ' + (TIER_LABEL[codebase.tier || 'B0'] || ''), ACCENT, 'Where the code runs: B0 is the browser frame, no process, no install')),
+        hdr ? h('div', { className: 'fa-header-line', 'data-codebase-header': hdr.red ? 'red' : 'ok', title: hdr.spoken || '',
+          style: { fontFamily: MONO, fontSize: 10, lineHeight: 1.5, color: hdr.red ? '#ff6b9d' : 'rgba(255,255,255,0.72)', margin: '4px 0 0', wordBreak: 'break-word' } },
+          hdr.text.replace(/^[^·]*·\s*/, ''), hdr.red && hdr.note ? h('span', { style: { display: 'block', color: '#ff6b9d' } }, hdr.note) : null) : null,
         h('div', { className: 'fa-tools', role: 'tablist' },
           tabBtn('preview', 'Preview'), tabBtn('files', 'Files'), tabBtn('changes', 'Changes' + (steps.length > 1 ? ' · ' + (steps.length - 1) : '')),
           artifactsTab ? tabBtn('artifacts', 'Artifacts') : null,

@@ -85,3 +85,5 @@ def test_the_swap_tool_raises_one_card_and_is_self_gated(monkeypatch):
     assert len(approvals.list_approvals(status="pending")) == 1
     # The same head asked twice is the same card.
     assert ag.CLAUDE_TOOL_HANDLERS["workspace_swap"]({"codebase_id": rec["id"]})["approval_id"] == out["approval_id"]
+    # Leave no pending card behind: the approvals store is shared across tests.
+    approvals.decide(out["approval_id"], "deny")

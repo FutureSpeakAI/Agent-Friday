@@ -159,6 +159,43 @@ def codebase_quick_style(cid):
     return jsonify({"status": "ok", "step": st})
 
 
+@codebases_bp.route("/api/codebases/<cid>/header", methods=["GET"])
+@login_required
+def codebase_header(cid):
+    """The one line above the panel: seats, key, cost; with its spoken form."""
+    return jsonify({"status": "ok", **cb.header(cid)})
+
+
+@codebases_bp.route("/api/codebases/<cid>/seats", methods=["GET", "POST"])
+@login_required
+def codebase_seats(cid):
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        rec = cb.set_seat(cid, str(body.get("which") or ""), str(body.get("model") or ""), by="you")
+    else:
+        rec = cb.load(cid)
+        if rec is None:
+            return _bad("no such codebase", 404)
+    return jsonify({"status": "ok", "seats": rec["seats"], "key_profile": rec.get("key_profile", "mine"), "header": cb.header(cid)})
+
+
+@codebases_bp.route("/api/codebases/<cid>/key", methods=["POST"])
+@login_required
+def codebase_key(cid):
+    body = request.get_json(silent=True) or {}
+    rec = cb.set_key_profile(cid, str(body.get("profile") or ""), by="you")
+    return jsonify({"status": "ok", "key_profile": rec["key_profile"], "header": cb.header(cid)})
+
+
+@codebases_bp.route("/api/codebases/<cid>/costs", methods=["GET"])
+@login_required
+def codebase_costs(cid):
+    if cb.load(cid) is None:
+        return _bad("no such codebase", 404)
+    from agent_friday.services import cost_meter as _cm
+    return jsonify({"status": "ok", **_cm.codebase_costs(cid, request.args.get("range") or "all")})
+
+
 @codebases_bp.route("/api/codebases/<cid>/export", methods=["GET"])
 @login_required
 def codebase_export(cid):

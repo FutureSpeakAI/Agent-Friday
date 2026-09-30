@@ -215,6 +215,9 @@ INTERNAL_TOOLS = frozenset({
     # Improving a bundle workspace opens a codebase chat; the swap raises ONE
     # card and installs only on approval (services/workspace_bundles).
     "improve_workspace", "workspace_swap",
+    # A codebase's own seats, key profile and cost total: the user's choice,
+    # disclosed in the header line (services/codebases, spec §4.7).
+    "codebase_seat", "codebase_key", "codebase_costs",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it
