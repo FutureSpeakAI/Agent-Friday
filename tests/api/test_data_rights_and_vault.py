@@ -25,6 +25,23 @@ def route_home(tmp_path, monkeypatch):
 
 
 class TestVaultPassphrase:
+    @pytest.fixture(autouse=True)
+    def isolated_credentials(self, monkeypatch, tmp_path):
+        # Redirecting HOME does not isolate the operating system keychain.
+        # Exercise the real save route with a process-local credential store.
+        import sys
+        import types
+        from agent_friday.services import vault_passphrase as vp
+        values = {}
+        fake = types.SimpleNamespace(
+            set_password=lambda service, account, value: values.__setitem__((service, account), value),
+            get_password=lambda service, account: values.get((service, account)))
+        monkeypatch.setitem(sys.modules, "keyring", fake)
+        monkeypatch.setattr(vp, "file_homes", lambda: [tmp_path / "vault-credential"])
+        vp.reset_cache()
+        yield
+        vp.reset_cache()
+
     def test_arm_passphrase_ok(self, client):
         r = client.post("/api/vault/passphrase", json={"passphrase": "correct horse battery"})
         assert r.status_code == 200
