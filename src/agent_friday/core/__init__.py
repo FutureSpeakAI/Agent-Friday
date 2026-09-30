@@ -3606,6 +3606,22 @@ def _origin_gate_reason():
     return _og.refusal_or_closed(request.method, request.headers, **kw)
 
 
+def _host_gate_reason():
+    """Why the current request is refused because its Host header does not name
+    Friday, or None. Runs before loopback trust and covers reads: a DNS-rebound
+    page looks same-origin to the browser and would otherwise read everything
+    loopback is trusted with, the session token included. Fails closed."""
+    try:
+        from agent_friday.services import origin_gate as _og
+        from agent_friday.services.local_address import own_origins as _oo, local_hosts as _lh
+        return _og.host_refusal(
+            request.host, is_local=_is_local_request(), own_origins=_oo(),
+            extra_hosts=set(_LOCAL_FORWARDED_HOSTS) | set(_lh()))
+    except Exception:
+        return ("I couldn't check where that request came from, so I refused it. "
+                "Reload Friday's page and try again.")
+
+
 def _frame_gate_reason():
     """Why the current request is refused because a sandboxed or foreign
     document sent it to a sensitive route, or None. A session token proves who
@@ -3654,7 +3670,7 @@ def check_auth():
         pass
     # Session-token and cross-site gate comes BEFORE loopback trust: trust says
     # who the machine is, not which page in the browser is speaking for it.
-    _og_reason = _origin_gate_reason() or _frame_gate_reason()
+    _og_reason = _host_gate_reason() or _origin_gate_reason() or _frame_gate_reason()
     if _og_reason:
         from agent_friday.services.origin_gate import reason_code as _reason_code
         return jsonify({"error": _og_reason, "code": _reason_code(_og_reason)}), 403
@@ -3805,9 +3821,10 @@ def _apply_isolation_headers(resp):
 def session_token():
     """The current session token, for a page that stayed open past a rotation.
 
-    Only Friday's own page can read it: the frame gate in check_auth refuses
-    a sandboxed or foreign document before this runs, and a cross-origin
-    response is unreadable to script regardless."""
+    Only Friday's own page can read it: the host gate in check_auth refuses a
+    request that does not name Friday (a DNS-rebound page), the frame gate
+    refuses a sandboxed or foreign document, and a cross-origin response is
+    unreadable to script regardless."""
     resp = jsonify({"token": _current_api_token()})
     resp.headers["Cache-Control"] = "no-store"
     return resp

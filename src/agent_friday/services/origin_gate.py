@@ -38,7 +38,12 @@ port the request arrived on, and the local address (agent.<name>, agent.friday)
 on the ports its proxy is configured to listen on. `http://agent.friday:5173`
 is a dev server, not Friday.
 
-Reads (GET/HEAD/OPTIONS) are untouched. The gate fails closed: a caller that
+Every request from this machine must also name Friday in its Host header
+(`host_refusal`), reads included: that is what stops a DNS-rebound page, whose
+browser metadata looks same-origin, from reading loopback-trusted routes or the
+session token.
+
+Reads (GET/HEAD/OPTIONS) are untouched by the token requirement. The gate fails closed: a caller that
 cannot evaluate it must refuse (see `refusal_or_closed`).
 """
 from __future__ import annotations
@@ -60,6 +65,10 @@ FRAME_REASON = (
     "That request came from a page running inside a sandbox or another site, "
     "and this part of Friday is only open to Friday's own page, so I refused it."
 )
+HOST_REASON = (
+    "That request named an address that isn't Friday's, so I refused it. "
+    "Open Friday at localhost or 127.0.0.1."
+)
 GATE_ERROR_REASON = (
     "I couldn't check where that request came from, so I refused it. "
     "Reload Friday's page and try again."
@@ -76,6 +85,35 @@ def _split_host(value):
         return (parts.hostname or ""), parts.port
     except ValueError:
         return "", None
+
+
+def host_refusal(host, *, is_local, own_origins=(), extra_hosts=()):
+    """HOST_REASON when a request from this machine names a host that is not
+    Friday's, else None.
+
+    DNS rebinding points an attacker's name at loopback: the page is then
+    same-origin with its own name, sends `Sec-Fetch-Site: same-origin` and no
+    foreign `Origin`, and would read every loopback-trusted route, the session
+    token included. It cannot change the Host header. So a local request must
+    address Friday by a loopback name or one of Friday's own names. A request
+    that did not come from this machine is the remote-key gate's, and a missing
+    Host (HTTP/1.0, a raw client) names nothing to rebind."""
+    if not is_local:
+        return None
+    name, _port = _split_host(host)
+    if not (host or "").strip():
+        return None
+    if not name:
+        return HOST_REASON
+    if name in _LOOPBACK_NAMES:
+        return None
+    for own in own_origins or ():
+        norm = _normal_origin(str(own))
+        if norm is not None and norm[1] == name:
+            return None
+    if name in {str(h).lower() for h in (extra_hosts or ())}:
+        return None
+    return HOST_REASON
 
 
 def _is_upgrade(headers) -> bool:
@@ -228,6 +266,7 @@ _CODES = {
     REFUSAL_REASON: "cross_site",
     TOKEN_REASON: "session_token_required",
     FRAME_REASON: "sandboxed_or_foreign_frame",
+    HOST_REASON: "foreign_host",
     GATE_ERROR_REASON: "gate_error",
 }
 

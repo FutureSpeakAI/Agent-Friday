@@ -11,13 +11,15 @@ enforced on its own, so one failing does not open the rest.
 
 | Layer | Where | What it refuses |
 |---|---|---|
+| Host gate | `origin_gate.host_refusal`, `core.check_auth` | Any request from this machine, read or write, whose `Host` header is not a loopback name or one of Friday's own names (`code: foreign_host`). A DNS-rebound page looks same-origin to the browser and sends no foreign `Origin`; its Host is the one thing it cannot change. This runs before loopback trust and covers `/`, which embeds the token, and `/api/session/token`. |
 | Session token on browser state changes and socket upgrades | `services/origin_gate.py`, `core.check_auth` | A browser `POST/PUT/PATCH/DELETE` or WebSocket upgrade with no token, or from another site. Fails closed. |
 | Frame gate | `origin_gate.frame_refusal` | Under `/api/` and `/ws/`, any request whose metadata says another document sent it (`Sec-Fetch-Site: cross-site` or `same-site`, `Origin: null` from a sandbox, an `Origin` that is not Friday's), for every method, **even with a valid token**. Exceptions that script cannot read: a top-level navigation, and passive media loads. `/api/health` stays public. |
 | Sandboxed markup | `core._isolation_headers` | Every route that returns HTML, XHTML, SVG or XML, except the pages named in `core.OWN_PAGE_ENDPOINTS`, carries `Content-Security-Policy: sandbox ...` with no `allow-same-origin` and no top-navigation token. An existing `sandbox` directive is only ever narrowed. A new route is sandboxed by default. |
 | Friday's own pages | `core.OWN_PAGE_CSP` | `frame-ancestors 'self'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, scripts from this origin (and the one pinned CDN hand tracking uses), `no-store`. |
 
 The session token also rotates (24 h by default). A tab that outlives a rotation
-asks `/api/session/token`, which only Friday's own page can read, and retries a
+asks `/api/session/token`, which is reachable only by a request that names
+Friday in its Host header and passes the frame gate, and retries a
 refused request once; the refusal carries `"code": "session_token_required"`
 for exactly that case.
 

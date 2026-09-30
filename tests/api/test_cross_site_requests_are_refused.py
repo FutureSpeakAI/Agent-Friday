@@ -87,7 +87,8 @@ def test_rebinding_page_addressing_friday_by_its_own_name_is_refused(client):
     r = client.open(POST_PATH, method="POST", base_url="http://evil.example:3000",
                     json={}, headers={"Origin": "http://evil.example:3000"},
                     environ_base={"REMOTE_ADDR": "127.0.0.1"})
-    assert _refused(r, origin_gate.REFUSAL_REASON)
+    # The host gate names the address first; the origin gate would also refuse.
+    assert _refused(r, origin_gate.HOST_REASON)
 
 
 def test_websocket_upgrade_from_a_foreign_origin_is_refused(client):
