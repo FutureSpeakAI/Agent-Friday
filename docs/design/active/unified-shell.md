@@ -1,10 +1,11 @@
 # One shell: the product name, one top bar everywhere, and fullscreen with chat
 
-> **Status:** pieces 1 to 4 built on branch `feat/unified-shell`, not yet on main: piece 1
+> **Status:** pieces 1 to 7 built on branch `feat/unified-shell`, not yet on main: piece 1
 > (the name and ™) `a64cad50`, piece 2 (one top bar) `24c27eb8`, piece 3 (fullscreen with
 > chat) `0015567e`, piece 4 (the audit and its fixes, recorded in
-> [`docs/brand/fidelity-audit.md`](../../brand/fidelity-audit.md)) `713c07ea`. §9 and §10
-> (owner additions, 2026-09-30) are accepted for build as pieces 5 to 7.
+> [`docs/brand/fidelity-audit.md`](../../brand/fidelity-audit.md)) `713c07ea`, piece 5
+> (both marks, §9) `db51175f`, piece 6 (the countdowns, §10.1) `68b6c6fd`, piece 7 (the
+> judge, the fade, the setting and the keys, §10.2 to §10.5) `f64bd5fa`.
 > **Last verified:** 2026-09-30 against main `e27ba160` plus `piece/P-BRAND-0` (brand
 > source of truth: `src/agent_friday/brand.py`, `docs/brand/BRAND.md`,
 > `scripts/check_brand_tokens.py`), rebased as branch `feat/unified-shell`.
