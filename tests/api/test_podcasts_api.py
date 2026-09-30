@@ -51,7 +51,7 @@ def test_create_list_get_and_serve(client, monkeypatch):
     done = _produce_fake(eid, monkeypatch)
     assert done["status"] == "ready", done.get("error")
     ep = client.get("/api/podcasts/" + eid).get_json()["episode"]
-    assert "refs" not in ep and ep["lines"][0]["cites"] == ["S1"]
+    assert "refs" not in ep and [ln for ln in ep["lines"] if not ln.get("signature")][0]["cites"] == ["S1"]
     audio = client.get("/api/podcasts/%s/audio" % eid)
     assert audio.status_code == 200 and audio.mimetype == "audio/wav"
     assert audio.data[:4] == b"RIFF"

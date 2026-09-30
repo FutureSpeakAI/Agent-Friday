@@ -210,3 +210,17 @@ def test_the_names_entry_is_never_a_source_or_a_stored_fact(tmp_path, monkeypatc
     docs = pe._gather(ep)
     assert all(d["sid"].startswith("F") for d in docs)
     assert any(f.get("names_only") for f in ep["_facts"])
+
+
+def test_charts_draw_in_the_brand_palette_when_the_brand_module_is_present(tmp_path, monkeypatch):
+    """Colours come from agent_friday.brand (docs/brand/BRAND.md), not a copy."""
+    import sys
+    import types
+    fake = types.SimpleNamespace(SURFACE="#0a0e1a", CYAN="#00d4ff", TEXT="rgba(255,255,255,0.86)",
+                                 TEXT_DIM="rgba(255,255,255,0.46)", GLASS_EDGE="rgba(255,255,255,0.06)")
+    monkeypatch.setitem(sys.modules, "agent_friday.brand", fake)
+    import agent_friday
+    monkeypatch.setattr(agent_friday, "brand", fake, raising=False)
+    c = pdm._bar_chart(tmp_path, 1, "T", [("a", 2.0), ("b", 1.0)], ["F1"])
+    svg = (tmp_path / c["file"]).read_text(encoding="utf-8")
+    assert 'fill="#0a0e1a"' in svg and 'fill="#00d4ff"' in svg and "#2f6feb" not in svg

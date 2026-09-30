@@ -220,6 +220,54 @@ def release_speaker():
         _SPEAKER = None
 
 
+# ── audio identity ──────────────────────────────────────────────────────────
+#
+# docs/brand/BRAND.md "Audio identity" defines the intro and outro slots: under
+# two seconds, the two sharing a motif. Until a designed sound fills a slot,
+# the episode uses this generated motif; a WAV at AUDIO_SLOT_DIR/podcast_<kind>.wav
+# (24 kHz mono) replaces it with no change here.
+
+#: D5, A5, E6: an open fifth stacked on a fifth, rising for the intro and the
+#: same notes falling for the outro.
+MOTIF_HZ = (587.33, 880.0, 1318.51)
+AUDIO_SLOT_DIR = Path(__file__).resolve().parents[3] / "assets" / "audio"
+GAP_STING_S = 0.35
+_NOTE_STEP_S = 0.2
+_NOTE_LEN_S = 0.75
+_STING_PEAK = 0.22
+
+
+def motif(kind: str) -> list[float]:
+    return list(MOTIF_HZ) if kind == "intro" else list(reversed(MOTIF_HZ))
+
+
+def sting(kind: str):
+    """The episode's intro or outro sound as float32 samples at 24 kHz."""
+    import numpy as np
+    slot = AUDIO_SLOT_DIR / ("podcast_%s.wav" % kind)
+    if slot.is_file():
+        try:
+            with wave.open(str(slot), "rb") as w:
+                if w.getframerate() == RATE and w.getnchannels() == 1 and w.getsampwidth() == 2:
+                    raw = w.readframes(w.getnframes())
+                    return np.frombuffer(raw, dtype="<i2").astype("float32") / 32767.0
+            log.warning("podcast %s slot is not 24 kHz mono 16-bit; using the motif", kind)
+        except Exception as e:  # noqa: BLE001
+            log.warning("podcast %s slot unreadable (%s); using the motif", kind, e)
+    notes = motif(kind)
+    n = int(_NOTE_LEN_S * RATE)
+    out = np.zeros(int((len(notes) - 1) * _NOTE_STEP_S * RATE) + n, dtype="float32")
+    t = np.arange(n) / RATE
+    # A bell-like tone: fast attack, exponential decay, a quiet octave above.
+    env = np.minimum(1.0, t / 0.012) * np.exp(-t * 4.5)
+    for i, hz in enumerate(notes):
+        tone = np.sin(2 * np.pi * hz * t) + 0.22 * np.sin(2 * np.pi * 2 * hz * t)
+        start = int(i * _NOTE_STEP_S * RATE)
+        out[start:start + n] += (tone * env).astype("float32")
+    peak = float(np.max(np.abs(out))) or 1.0
+    return (out / peak * _STING_PEAK).astype("float32")
+
+
 # ── assembling the episode ──────────────────────────────────────────────────
 
 def _to_pcm16(samples) -> bytes:
@@ -233,7 +281,7 @@ def _silence(seconds: float) -> bytes:
 
 
 def render_lines(lines: list[dict], voices: dict, speak=None, progress=None,
-                 should_stop=None) -> tuple[bytes, list[dict]]:
+                 should_stop=None, intro=None, outro=None) -> tuple[bytes, list[dict]]:
     """Speak every line and lay them end to end.
 
     `lines`: [{speaker: 'a'|'b', text, chapter: int}, ...]
@@ -241,11 +289,16 @@ def render_lines(lines: list[dict], voices: dict, speak=None, progress=None,
     `speak` callable for a cloud voice is passed in).
     `speak(text, voice) -> float32 samples` defaults to the CPU Kokoro.
 
+    `intro` / `outro`: samples played before the first line and after the
+    last (the show's stings), each separated from the speech by GAP_STING_S.
+
     Returns (pcm16 bytes at 24 kHz, [{start, end}] per line in seconds), times
     computed from sample counts so captions and chapters are exact.
     """
     speak = speak or speaker().speak
     out = bytearray()
+    if intro is not None and len(intro):
+        out += _to_pcm16(intro) + _silence(GAP_STING_S)
     timings = []
     prev = None
     for i, ln in enumerate(lines):
@@ -264,6 +317,8 @@ def render_lines(lines: list[dict], voices: dict, speak=None, progress=None,
         prev = ln
         if progress:
             progress(i + 1, len(lines))
+    if outro is not None and len(outro):
+        out += _silence(GAP_STING_S) + _to_pcm16(outro)
     out += _silence(0.5)
     return bytes(out), timings
 

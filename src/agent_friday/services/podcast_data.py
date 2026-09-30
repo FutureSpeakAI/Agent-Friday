@@ -479,13 +479,28 @@ def _names(df, path: Path) -> set:
 _W, _H = 640, 360
 
 
-def _svg(title: str, desc: str, body: str) -> str:
+def _palette() -> dict:
+    """Chart colours from the brand (agent_friday.brand, docs/brand/BRAND.md).
+
+    Until the brand module is present the charts are drawn in plain dark
+    neutrals; nothing here keeps its own copy of a brand colour.
+    """
+    try:
+        from agent_friday import brand
+        return {"bg": brand.SURFACE, "bar": brand.CYAN, "text": brand.TEXT,
+                "dim": brand.TEXT_DIM, "rule": brand.GLASS_EDGE}
+    except Exception:
+        return {"bg": "#111318", "bar": "#9aa4b2", "text": "#f2f2f2",
+                "dim": "#a0a0a8", "rule": "#2a2d35"}
+
+
+def _svg(title: str, desc: str, body: str, pal: dict) -> str:
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" role="img" '
-            'aria-labelledby="t d" font-family="system-ui, sans-serif" font-size="13">'
+            'aria-labelledby="t d" font-family="Inter, system-ui, sans-serif" font-size="13">'
             '<title id="t">%s</title><desc id="d">%s</desc>'
-            '<rect width="100%%" height="100%%" fill="#ffffff"/>'
-            '<text x="16" y="26" font-size="16" font-weight="600" fill="#1f2328">%s</text>%s</svg>'
-            % (_W, _H, escape(title), escape(desc), escape(title), body))
+            '<rect width="100%%" height="100%%" rx="8" fill="%s"/>'
+            '<text x="16" y="26" font-size="15" font-weight="600" fill="%s">%s</text>%s</svg>'
+            % (_W, _H, escape(title), escape(desc), pal["bg"], pal["text"], escape(title), body))
 
 
 def _save_chart(chart_dir, n, svg, title, fact_ids):
@@ -501,25 +516,27 @@ def _save_chart(chart_dir, n, svg, title, fact_ids):
 def _bar_chart(chart_dir, n, title, items, fact_ids):
     if not items:
         return None
+    pal = _palette()
     top = max(abs(v) for _k, v in items) or 1.0
     left, right, y0, bh = 170, 90, 50, min(44, (_H - 70) // len(items))
     body = []
     for i, (k, v) in enumerate(items):
         y = y0 + i * bh
         w = (_W - left - right) * abs(v) / top
-        body.append('<text x="%d" y="%d" text-anchor="end" fill="#1f2328">%s</text>'
-                    % (left - 8, y + bh * 0.62, escape(k[:24])))
-        body.append('<rect x="%d" y="%d" width="%.1f" height="%d" rx="3" fill="#2f6feb"/>'
-                    % (left, y + 4, w, bh - 10))
-        body.append('<text x="%.1f" y="%d" fill="#1f2328">%s</text>'
-                    % (left + w + 6, y + bh * 0.62, escape(fmt(v))))
+        body.append('<text x="%d" y="%d" text-anchor="end" fill="%s">%s</text>'
+                    % (left - 8, y + bh * 0.62, pal["text"], escape(k[:24])))
+        body.append('<rect x="%d" y="%d" width="%.1f" height="%d" rx="3" fill="%s"/>'
+                    % (left, y + 4, w, bh - 10, pal["bar"]))
+        body.append('<text x="%.1f" y="%d" fill="%s">%s</text>'
+                    % (left + w + 6, y + bh * 0.62, pal["text"], escape(fmt(v))))
     desc = "; ".join("%s: %s" % (k, fmt(v)) for k, v in items)
-    return _save_chart(chart_dir, n, _svg(title, desc, "".join(body)), title, fact_ids)
+    return _save_chart(chart_dir, n, _svg(title, desc, "".join(body), pal), title, fact_ids)
 
 
 def _line_chart(chart_dir, n, title, points, fact_ids):
     if len(points) < 2:
         return None
+    pal = _palette()
     vals = [v for _k, v in points]
     lo, hi = min(vals + [0.0]), max(vals)
     span = (hi - lo) or 1.0
@@ -530,16 +547,16 @@ def _line_chart(chart_dir, n, title, points, fact_ids):
         return (left + pw * i / (len(points) - 1), top + ph * (1 - (v - lo) / span))
     path = " ".join(("M" if i == 0 else "L") + "%.1f,%.1f" % xy(i, v)
                     for i, (_k, v) in enumerate(points))
-    body = ['<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#d0d7de"/>'
-            % (left, top + ph, left + pw, top + ph),
-            '<path d="%s" fill="none" stroke="#2f6feb" stroke-width="2.5"/>' % path,
-            '<text x="%d" y="%d" text-anchor="end" fill="#57606a">%s</text>'
-            % (left - 6, top + 4, escape(fmt(hi))),
-            '<text x="%d" y="%d" text-anchor="end" fill="#57606a">%s</text>'
-            % (left - 6, top + ph + 4, escape(fmt(lo))),
-            '<text x="%d" y="%d" fill="#57606a">%s</text>'
-            % (left, _H - 18, escape(points[0][0])),
-            '<text x="%d" y="%d" text-anchor="end" fill="#57606a">%s</text>'
-            % (left + pw, _H - 18, escape(points[-1][0]))]
+    body = ['<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s"/>'
+            % (left, top + ph, left + pw, top + ph, pal["rule"]),
+            '<path d="%s" fill="none" stroke="%s" stroke-width="2.5"/>' % (path, pal["bar"]),
+            '<text x="%d" y="%d" text-anchor="end" fill="%s">%s</text>'
+            % (left - 6, top + 4, pal["dim"], escape(fmt(hi))),
+            '<text x="%d" y="%d" text-anchor="end" fill="%s">%s</text>'
+            % (left - 6, top + ph + 4, pal["dim"], escape(fmt(lo))),
+            '<text x="%d" y="%d" fill="%s">%s</text>'
+            % (left, _H - 18, pal["dim"], escape(points[0][0])),
+            '<text x="%d" y="%d" text-anchor="end" fill="%s">%s</text>'
+            % (left + pw, _H - 18, pal["dim"], escape(points[-1][0]))]
     desc = "; ".join("%s: %s" % (k, fmt(v)) for k, v in points[:60])
-    return _save_chart(chart_dir, n, _svg(title, desc, "".join(body)), title, fact_ids)
+    return _save_chart(chart_dir, n, _svg(title, desc, "".join(body), pal), title, fact_ids)

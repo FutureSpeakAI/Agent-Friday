@@ -315,6 +315,32 @@ and 4,500 (~30 min) for long.
 - If no local model is serving, the routine says so rather than going to the
   cloud.
 
+### 3.10 Sounding and looking like Friday
+
+- **Audio identity.** Every episode opens with a short rising motif (D5, A5,
+  E6; about 1.2 s) and closes with the same notes falling, per the intro and
+  outro slots in `docs/brand/BRAND.md` (under two seconds, sharing a motif). A
+  designed sound placed at `assets/audio/podcast_intro.wav` or
+  `podcast_outro.wav` (24 kHz mono) replaces the generated one with no code
+  change.
+- **Signature lines.** Fixed, not model-written: "This is <show>. I'm Friday."
+  / "And I'm Emma." and "That's <show>. <where the sources are>. I'm Friday."
+  The writer is told they are added and must not greet or sign off.
+- **Friday's character.** The writing brief follows the brand's Voice
+  section: answer first, then the evidence and how sure she is, what she did
+  not check, her opinion labelled as her read, the listener addressed as
+  "you". News carries `VOICE_ANCHOR_RULES`, the anchor register as traits;
+  no real journalist or broadcaster is named, in prompts or copy. Generic
+  two-host habits ("deep dive", "buckle up", gasps, echoing) are ruled out.
+- **Steady voices.** Each host keeps one installed Kokoro voice across every
+  episode (settings `podcasts.hosts`).
+- **The look.** The player, the Studio view and the News chip take every
+  colour, face and size from the `--fr-*` tokens, with each token's own value
+  as its fallback until the token block is on the page. Amber is never used
+  (it means "needs you"); "Private" is violet-soft. Charts read their colours
+  from `agent_friday.brand` when it is present. `tests/unit/test_podcast_ui_brand.py`
+  holds this.
+
 ---
 
 ## 4. Not built, deliberately

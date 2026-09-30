@@ -333,20 +333,26 @@ def _llm_json(system: str, user: str, *, max_tokens: int = 3000) -> tuple[dict, 
 
 
 def _host_brief(hosts: dict) -> str:
+    """Friday's own character (docs/brand/BRAND.md "Voice"), and a co-host who
+    keeps her honest. Not a generic two-host show."""
     a, b = hosts["a"]["name"], hosts["b"]["name"]
     return (
-        f"Two hosts. Speaker \"a\" is {a}: she leads, explains and has a point of "
-        f"view of her own. She is warm, direct and dry, says what she thinks, and "
-        f"labels it as her read. Speaker \"b\" is {b}: she asks the questions a "
-        f"sharp listener would, pushes back, and names what is missing or "
-        f"contested. Neither host ever praises the other's question or agrees "
-        f"just to agree.\n")
+        f"Two hosts. Speaker \"a\" is {a}. She is calm and perceptive, with a dry "
+        f"warmth, and has a point of view of her own. Answer first, then the "
+        f"evidence: what the sources say, how sure she is, and what she did not "
+        f"check. She labels her opinion as her read and says plainly when the "
+        f"evidence is thin. Speaker \"b\" is {b}: she asks what a sharp listener "
+        f"would ask, pushes back on {a}'s read, and names what is missing or "
+        f"contested. Neither host praises the other or agrees just to agree.\n")
 
 
 WRITING_RULES = (
     "Write for the ear. Use short sentences and contractions. Do not read lists "
     "aloud. No markdown, no stage directions, no sound effects, no bracketed "
-    "text, and no host names in front of lines.\n"
+    "text, and no host names in front of lines. Speak to the listener as \"you\".\n"
+    "This is not a generic podcast. No \"deep dive\", \"buckle up\", \"let's "
+    "unpack\", \"mind-blowing\", \"fascinating\" or \"wow\"; no gasps of surprise; "
+    "no repeating back what the other host just said.\n"
     "Every line that states a fact lists, in \"cites\", the ids of the sources "
     "it comes from. Never state anything that is not in the sources. Keep "
     "numbers, names and dates exactly as the sources give them. When the "
@@ -420,10 +426,12 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
         use = {s for s in (ch.get("sources") or []) if s in valid} or valid
         tail = "\n".join("%s: %s" % (ep["hosts"][ln["speaker"]]["name"], ln["text"])
                          for ln in lines[-6:])
-        where = ("This is the opening: greet the listener and name the show."
+        where = ("This is the opening. The show's fixed opening, naming the show "
+                 "and both hosts, plays just before it: do not greet or introduce "
+                 "anyone. Start with the single most important thing."
                  if i == 0 else
-                 "This is the close: sum up in two lines and say the sources are "
-                 "listed with the episode." if i == len(chapters) - 1 else
+                 "This is the close: sum up in two lines. The show's fixed sign-off "
+                 "follows it: do not sign off." if i == len(chapters) - 1 else
                  "Carry on naturally from the conversation so far.")
         raw, _m = _llm_json(system, (
             "SOURCES FOR THIS CHAPTER:\n\n%s\n\n"
@@ -444,12 +452,42 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
         rejected += bad
         if progress:
             progress(i + 1, len(chapters))
-    lines = merge_turns(lines)
+    lines = with_signature(merge_turns(lines), ep, len(chapters))
     return {"title": title,
             "chapters": [{"title": str(c.get("title") or "Chapter %d" % (i + 1))[:120],
                           "sources": [s for s in (c.get("sources") or []) if s in valid]}
                          for i, c in enumerate(chapters)],
             "lines": lines, "rejected": rejected, "model": model}
+
+
+def signature_lines(ep: dict) -> tuple[list[dict], list[dict]]:
+    """The same opening and sign-off on every episode, spoken by the hosts.
+
+    Fixed text, not written by the model: it is what makes an episode
+    recognisably Friday's from its first seconds, whatever the sources.
+    """
+    show = ep.get("show") or "Friday Podcast"
+    a, b = ep["hosts"]["a"]["name"], ep["hosts"]["b"]["name"]
+    if ep.get("mode") == "data":
+        where = ("Every number you heard was computed from your data, and the "
+                 "working is in the transcript.")
+    elif (ep.get("attached") or {}).get("routine"):
+        where = "Every story you heard is linked in the transcript."
+    else:
+        where = "Every claim you heard has its source in the transcript."
+    opening = [{"speaker": "a", "text": "This is %s. I'm %s." % (show, a), "cites": [],
+                "signature": True},
+               {"speaker": "b", "text": "And I'm %s." % b, "cites": [], "signature": True}]
+    closing = [{"speaker": "a", "text": "That's %s. %s I'm %s." % (show, where, a),
+                "cites": [], "signature": True}]
+    return opening, closing
+
+
+def with_signature(lines: list[dict], ep: dict, n_chapters: int) -> list[dict]:
+    opening, closing = signature_lines(ep)
+    last = max(0, n_chapters - 1)
+    return ([dict(x, chapter=0) for x in opening] + lines
+            + [dict(x, chapter=last) for x in closing])
 
 
 # ── validation ──────────────────────────────────────────────────────────────
@@ -621,7 +659,7 @@ def produce(eid: str, *, should_stop=None) -> dict:
                 _orb(orb, "progress", ep, (i / n) * 0.4)))
             if stop():
                 return load(eid)
-            if len(script["lines"]) < 2:
+            if sum(1 for ln in script["lines"] if not ln.get("signature")) < 2:
                 raise render.RenderError(
                     "script_empty", "The local model's script did not survive the "
                     "source check (%d lines cut)." % len(script["rejected"]))
@@ -643,6 +681,7 @@ def produce(eid: str, *, should_stop=None) -> dict:
             speak = _cloud_speak()
         pcm, timings = render.render_lines(
             ep["lines"], _voices(ep), speak=speak, should_stop=stop,
+            intro=render.sting("intro"), outro=render.sting("outro"),
             progress=lambda i, n: (
                 _update(eid, progress={"stage": "speaking", "done": i, "of": n})
                 if i % 5 == 0 or i == n else None,
@@ -656,6 +695,8 @@ def produce(eid: str, *, should_stop=None) -> dict:
             first = next((ln for ln in lines if ln["chapter"] == ci), None)
             if first:
                 chapters.append(dict(ch, start=first["start"]))
+        if chapters:
+            chapters[0]["start"] = 0.0          # the first chapter includes the intro
         names = {k: ep["hosts"][k]["name"] for k in ("a", "b")}
         (d / "captions.vtt").write_text(render.captions_vtt(lines, names), encoding="utf-8")
         audio = "audio.mp3" if render.encode_mp3(wav, d / "audio.mp3", ep.get("title", "")) \
@@ -729,7 +770,8 @@ def _about(ep: dict) -> dict:
     gets `about_public`: the local model's PII-free summary, the only
     description of it a cloud voice session is ever given.
     """
-    opening = " ".join(ln["text"] for ln in (ep.get("lines") or [])[:3])[:600]
+    said = [ln for ln in ep.get("lines") or [] if not ln.get("signature")]
+    opening = " ".join(ln["text"] for ln in said[:3])[:600]
     if ep.get("privacy") != "private":
         return {"about": opening}
     from agent_friday.services import podcast_tools

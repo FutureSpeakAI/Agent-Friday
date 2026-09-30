@@ -482,3 +482,58 @@ def test_the_wav_master_is_removed_once_the_mp3_is_checked_and_signed(monkeypatc
     d = _podcast_home / "podcasts" / done["id"]
     assert done["status"] == "ready" and done["audio"] == "audio.mp3"
     assert (d / "audio.mp3").is_file() and not (d / "audio.wav").exists()
+
+
+# ── audio identity ──────────────────────────────────────────────────────────
+
+def test_the_intro_and_outro_share_one_short_motif():
+    import numpy as np
+    intro, outro = render.sting("intro"), render.sting("outro")
+    for s in (intro, outro):
+        assert 0.5 < len(s) / render.RATE < 2.0            # under two seconds
+        assert 0.02 < float(np.max(np.abs(s))) <= 0.3      # audible, never loud
+    assert render.motif("outro") == list(reversed(render.motif("intro")))
+
+
+def test_a_sound_in_the_brand_slot_replaces_the_generated_motif(tmp_path, monkeypatch):
+    import numpy as np
+    slot = tmp_path / "podcast_intro.wav"
+    render.write_wav((np.ones(4800, dtype="<i2") * 1000).tobytes(), slot)
+    monkeypatch.setattr(render, "AUDIO_SLOT_DIR", tmp_path)
+    got = render.sting("intro")
+    assert len(got) == 4800 and abs(float(got[0]) - 1000 / 32767.0) < 1e-3
+
+
+def test_the_stings_frame_the_episode_and_the_lines_are_timed_after_them(monkeypatch):
+    import numpy as np
+
+    class S:
+        def speak(self, text, voice):
+            return np.full(2400, 0.1, dtype="float32")
+    pcm, timings = render.render_lines(
+        [{"speaker": "a", "text": "x", "chapter": 0}], {"a": "af_heart"}, speak=S().speak,
+        intro=np.zeros(12000, dtype="float32"), outro=np.zeros(6000, dtype="float32"))
+    assert timings[0]["start"] == round((12000 + render.GAP_STING_S * render.RATE) / render.RATE, 3)
+    assert len(pcm) / 2 >= 12000 + 2400 + 6000
+
+
+def test_every_episode_opens_and_signs_off_the_same_way(monkeypatch):
+    monkeypatch.setattr(pe, "_llm_json", _fake_writer())
+    _fake_speaker(monkeypatch)
+    real = render.listen_back
+    monkeypatch.setattr(render, "listen_back", lambda wav, s, transcribe=None: real(wav, s, transcribe=lambda p: s))
+    done = pe.produce(_text_ep(show="Friday's Front Page")["id"])
+    first, second, last = done["lines"][0], done["lines"][1], done["lines"][-1]
+    assert first["signature"] and first["speaker"] == "a"
+    assert first["text"] == "This is Friday's Front Page. I'm Friday."
+    assert second["signature"] and second["text"] == "And I'm Emma."
+    assert last["signature"] and last["text"].startswith("That's Friday's Front Page.")
+    assert last["text"].endswith("I'm Friday.")
+    # The writer is told not to greet or sign off itself.
+    assert first["start"] > 0.5                              # after the intro sting
+
+
+def test_friday_sounds_like_friday_not_a_generic_two_host_show():
+    prompt = pe._system_prompt({"show": "S", "hosts": pe.DEFAULTS["hosts"]})
+    for rule in ("Answer first", "what she did not check", "\"deep dive\"", "Speak to the listener as \"you\""):
+        assert rule in prompt
