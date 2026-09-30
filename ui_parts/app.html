@@ -19746,23 +19746,6 @@ function App(){
     const cur=agentSettings.model_routing||{};
     saveAgentSettings({model_routing:{...cur,mode}});
   };
-  // ── Seat-gate status: DIAGNOSTIC ONLY. Nothing here gates a binding.
-  // The gate is removed. Any installed model can be assigned to
-  // any seat and will actually serve. The chip reports whether the structural
-  // tool-call check has been run and what it said — it never blocks a choice,
-  // and a red/ungated model is fully selectable.
-  const[seatGate,setSeatGate]=useState({});
-  const refreshSeatGate=()=>fetch('/api/seat-gate/statuses').then(r=>r.json()).then(d=>setSeatGate(d.statuses||{})).catch(()=>{});
-  useEffect(()=>{refreshSeatGate();const iv=setInterval(refreshSeatGate,15000);return()=>clearInterval(iv)},[]);
-  const runSeatGate=(name)=>{setSeatGate(s=>({...s,[name]:{...(s[name]||{}),running:true}}));
-    fetch('/api/seat-gate/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:name})}).then(()=>setTimeout(refreshSeatGate,3000)).catch(()=>{})};
-  const gateChip=(name)=>{const g=seatGate[name]||{};
-    if(g.running)return <span title="Gate axes running — progress shows as an orb" style={{fontSize:8,fontFamily:'JetBrains Mono',color:'#00d4ff',border:'1px solid rgba(0,212,255,0.35)',borderRadius:3,padding:'0 4px',marginRight:4}}>⏳ gating</span>;
-    const st=(g.structural==='green')?'green':((g.structural==='red')?'red':'ungated');
-    const cfg={green:{c:'#00ff80',b:'rgba(0,255,128,0.35)',t:'✓',ti:'Structural tool-call check: PASSED. Informational only — every model is selectable regardless.'},
-      red:{c:'#f59e0b',b:'rgba(245,158,11,0.35)',t:'!',ti:'Structural tool-call check: did not pass. This does NOT block anything — you can still assign this model to any seat. A model that will not emit tool calls is usually a prompting/template issue.'},
-      ungated:{c:'#8b93a7',b:'rgba(255,255,255,0.2)',t:'—',ti:'Not checked. Nothing is gated — assign this model freely. Click ▶ check to run the structural diagnostic.'}}[st];
-    return <span title={cfg.ti} style={{fontSize:8,fontFamily:'JetBrains Mono',color:cfg.c,border:'1px solid '+cfg.b,borderRadius:3,padding:'0 4px',marginRight:4}}>{cfg.t}</span>};
   // ── A1: in-UI model pull with disk-space preflight; progress = pull orb.
   const[pullName,setPullName]=useState('');
   const[pullMsg,setPullMsg]=useState('');
