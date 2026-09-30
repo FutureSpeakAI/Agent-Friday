@@ -14,7 +14,7 @@
 """
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from agent_friday.core import login_required
 from agent_friday.services import codebases as cb
@@ -117,6 +117,18 @@ def codebase_undo(cid):
 @login_required
 def codebase_diff(cid, sha):
     return jsonify({"status": "ok", "sha": sha, "diff": cb.diff(cid, sha)})
+
+
+@codebases_bp.route("/api/codebases/<cid>/export", methods=["GET"])
+@login_required
+def codebase_export(cid):
+    """One click, one zip: the plain project, nothing of Friday's inside."""
+    name, data = cb.export_zip(cid)
+    resp = Response(data, content_type="application/zip")
+    resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % name
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @codebases_bp.route("/api/codebases/<cid>/preview", methods=["GET"])

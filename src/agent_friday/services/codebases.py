@@ -26,6 +26,7 @@ contract: a codebase is a repo plus a box, and this module owns the repo.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
@@ -34,6 +35,7 @@ import secrets
 import subprocess
 import threading
 import time
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -534,6 +536,43 @@ def preview(cid: str) -> str:
     html = _LINK_RE.sub(link, html)
     html = _SCRIPT_RE.sub(script, html)
     return html
+
+
+# ── export: a plain project, no lock-in ─────────────────────────────────────
+
+_EXPORT_NOTE = "Exported from Friday's salon as a plain project: no lock-in, nothing of Friday's inside."
+
+
+def export_zip(cid: str) -> tuple:
+    """(filename, bytes): the working tree under one folder named by the slug,
+    with a plain README and nothing of Friday's (§4.11 item 10). Reads only;
+    the codebase is untouched."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    repo = Path(rec["repo"])
+    slug = rec["slug"]
+    readme = None
+    entries = []
+    for f in files(cid):
+        p = repo / f["path"]
+        if not p.is_file():
+            continue
+        data = p.read_bytes()
+        if f["path"] == "README.md":
+            readme = data.decode("utf-8", "replace")
+            continue
+        entries.append((f["path"], data))
+    if readme is None:
+        readme = "# %s\n\n" % rec["title"]
+    if _EXPORT_NOTE not in readme:
+        readme = readme.rstrip("\n") + "\n\n---\n\n" + _EXPORT_NOTE + " Open index.html in a browser, or serve the folder with any static server.\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(slug + "/README.md", readme.encode("utf-8"))
+        for rel, data in entries:
+            z.writestr(slug + "/" + rel, data)
+    return slug + ".zip", buf.getvalue()
 
 
 # ── what the model is told ───────────────────────────────────────────────────

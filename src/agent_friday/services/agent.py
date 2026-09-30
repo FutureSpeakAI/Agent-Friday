@@ -8334,9 +8334,27 @@ def _tool_codebase_read(inp):
     return {"status": "ok", "path": inp.get("path"), "content": content[:60000]}
 
 
+CLAUDE_TOOLS.append({
+    "name": "codebase_export",
+    "description": ("Give the user this chat's codebase as a plain project: a zip of the working tree with a README, "
+                    "nothing of Friday's inside (no lock-in). Returns the download path to tell the user; "
+                    "the panel's Export button does the same."),
+    "input_schema": {"type": "object", "properties": {
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
+})
+
+
+def _tool_codebase_export(inp):
+    rec = _codebase_in_scope(inp or {})
+    if rec is None:
+        return "codebase_export: this chat has no codebase."
+    return {"status": "ok", "download": "/api/codebases/%s/export" % rec["id"], "filename": rec["slug"] + ".zip",
+            "note": "Tell the user the export is ready at that path (the panel's Export button downloads it)."}
+
+
 CLAUDE_TOOL_HANDLERS.update({"codebase_edit": _tool_codebase_edit, "codebase_undo": _tool_codebase_undo,
-                             "codebase_read": _tool_codebase_read})
-TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0})
+                             "codebase_read": _tool_codebase_read, "codebase_export": _tool_codebase_export})
+TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0, "codebase_export": 0})
 
 
 # ── Plan-first for big asks (services/plans; spec §4.11 item 4) ──────────────

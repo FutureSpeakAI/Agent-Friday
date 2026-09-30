@@ -548,6 +548,7 @@
           h('span', { className: 'fa-brand' }, 'FRIDAY ', h('b', null, '· CODEBASE')),
           h('span', { style: { display: 'flex', gap: 2 } },
             view === 'preview' ? h('button', { className: 'fa-icon', title: 'Reload the preview', 'aria-label': 'Reload', onClick: () => { setReload(k => k + 1); loadPreview(); } }, '↻') : null,
+            h('button', { className: 'fa-icon', title: 'Export as a plain project (zip, nothing of Friday\'s inside)', 'aria-label': 'Export', onClick: () => exportZip(base, codebase.slug) }, '⤓'),
             h('button', { className: 'fa-icon', title: tab ? 'Back to the chat' : 'Collapse the panel', 'aria-label': 'Collapse', onClick: onCollapse }, tab ? '✕' : '⟩'))),
         h('div', { className: 'fa-title-row' },
           h('span', { className: 'fa-title', title: codebase.title }, codebase.title),
@@ -586,6 +587,16 @@
       h('div', { className: 'fa-foot' },
         h('span', null, codebase.existing ? 'your folder · branch ' + codebase.branch : 'Friday\'s codebase · ' + (codebase.template || '')),
         h('span', null, (steps.length ? steps.length - 1 : 0) + ' step' + (steps.length === 2 ? '' : 's'))));
+  }
+  // The export download goes through the same authenticated fetch as every
+  // other request, then hands the browser a blob to save.
+  function exportZip(base, slug) {
+    api(base + '/export').then(r => r.ok ? r.blob() : Promise.reject(new Error('HTTP ' + r.status))).then(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = (slug || 'codebase') + '.zip';
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    }).catch(() => {});
   }
   function chipEl(text, color, title) {
     return h('span', { className: 'fa-kind', title, style: { color, borderColor: color + '55', background: color + '14' } }, text);

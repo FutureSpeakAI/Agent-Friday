@@ -210,6 +210,8 @@ INTERNAL_TOOLS = frozenset({
     # A plan is an artifact in that same store; approving one is the user's
     # decision, which the model only reports (services/plans).
     "plan_first", "plan_approve", "plan_milestone",
+    # A plain-project zip of a codebase, handed to the user; reads only.
+    "codebase_export",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it
