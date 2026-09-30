@@ -10637,16 +10637,16 @@ function OutreachPanel() {
 // Vanilla Three.js r128 (vendored globals). Instanced star nodes, merged edge
 // filaments, community nebulae, UnrealBloom. Entrance: camera fly-in while
 // communities ignite one by one. Server precomputes x/y/z — no client sim.
-const KG_PALETTE = ['#00d4ff', '#ff00aa', '#00ff80', '#8a2be2', '#ff6600', '#5fa8ff', '#ff8bcb', '#4ecdc4', '#feca57', '#ff6b6b', '#7de1ff', '#b0ffc8'];
+const KG_PALETTE = ['#39d5ff', '#b286ff', '#3eebb0', '#668bff', '#ffbb55', '#ff65a8', '#8ce35b', '#ff7a66', '#60e0dc', '#d476ff', '#f0d764', '#6faaff'];
 const KG_LOD_THRESHOLD = 2500; // above this, render community super-nodes first
-const KG_EDGE_OPACITY = 0.32; // additive: dense clusters wash out above this
+const KG_EDGE_OPACITY = 0.16; // quiet context; selected relationships receive emphasis
 const KG_ASSET_DIR = '/static/galaxy/'; // generated art, see CREDITS.md
-const KG_ARRANGE_SECS = 1.7; // one node's flight between arrangements
-const KG_ARRANGE_STAGGER = 0.55; // launch spread across nodes, seconds
+const KG_ARRANGE_SECS = 0.85; // one node's flight between arrangements
+const KG_ARRANGE_STAGGER = 0.15; // launch spread across nodes, seconds
 const KG_ARRANGEMENTS = [{
   id: 'galaxy',
   label: 'Galaxy',
-  tip: 'The linked layout: pages sit near the pages they link to'
+  tip: 'A stable community overview; connections retain the underlying graph relationships'
 }, {
   id: 'cluster',
   label: 'Clusters',
@@ -10658,7 +10658,7 @@ const KG_ARRANGEMENTS = [{
 }, {
   id: 'section',
   label: 'Sections',
-  tip: 'One tower per wiki folder'
+  tip: 'A bounded group for each wiki folder'
 }, {
   id: 'timeline',
   label: 'Timeline',
@@ -10666,7 +10666,7 @@ const KG_ARRANGEMENTS = [{
 }, {
   id: 'rings',
   label: 'Rings',
-  tip: "Saturn: Friday's identity is the planet, each wiki section a ring, orbiting at Kepler speeds"
+  tip: "Each wiki section forms a ring; animation is available in the tour"
 }, {
   id: 'sphere',
   label: 'Sphere',
@@ -10719,9 +10719,9 @@ const kgNodeMaterial = () => new THREE.ShaderMaterial({
     void main(){
       float ndv = clamp(dot(normalize(vN), normalize(vV)), 0.0, 1.0);
       float rim = pow(1.0 - ndv, 2.4);
-      vec3 col = vColor * (0.28 + 0.26 * ndv) + vColor * rim * 0.95;
-      col *= mix(0.12, 1.0, smoothstep(0.0, 0.16, ndv));
-      col *= mix(0.25, 1.0, 1.0 - smoothstep(uNear, uFar, vDepth));
+      vec3 col = vColor * (0.58 + 0.32 * ndv) + vColor * rim * 0.18;
+      col *= mix(0.5, 1.0, smoothstep(0.0, 0.16, ndv));
+      col *= mix(0.65, 1.0, 1.0 - smoothstep(uNear, uFar, vDepth));
       gl_FragColor = vec4(col, 1.0);
     }`
 });
@@ -10730,6 +10730,150 @@ const kgNodeMaterial = () => new THREE.ShaderMaterial({
 // pane and the bottom bar belong to KnowledgeWS, which drives the graph
 // through the state object handed to onReady/onGraphLoaded (focusPath,
 // focusSection, linksForPath, clearFocus, reload).
+// Fit a bounding sphere using the narrower field of view, including Split panes.
+// A stable community overview avoids spring-collapse and isolated outliers.
+// These are display coordinates only; saved graph records remain unchanged.
+function kgOverviewPositions(entities) {
+  const groups = new Map();
+  entities.forEach(e => {
+    const key = String(e.community || '0');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(e);
+  });
+  const ordered = [...groups].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  const result = new Map(),
+    golden = Math.PI * (3 - Math.sqrt(5));
+  ordered.forEach(([key, members], group) => {
+    const count = members.length,
+      radius = Math.max(12, Math.min(group === 0 ? 104 : 42, 6 * Math.cbrt(count)));
+    const angle = (group - 1) * golden,
+      y = group === 0 ? 0 : 0.55 * Math.sin(angle * 0.6);
+    const center = group === 0 ? [0, 0, 0] : [164 * Math.cos(angle), 85 * y, 164 * Math.sin(angle)];
+    members.slice().sort((a, b) => (b.degree || 0) - (a.degree || 0) || a.id.localeCompare(b.id)).forEach((e, i) => {
+      const t = (i + 0.5) / count,
+        z = 1 - 2 * t,
+        ring = Math.sqrt(Math.max(0, 1 - z * z)),
+        r = radius * Math.cbrt(t),
+        theta = i * golden;
+      result.set(e.id, [center[0] + r * ring * Math.cos(theta), center[1] + r * z, center[2] + r * ring * Math.sin(theta)]);
+    });
+  });
+  return result;
+}
+function kgSceneFrame(points, aspect, fov = 58) {
+  const valid = points.filter(p => p.length === 3 && p.every(Number.isFinite));
+  if (!valid.length) return {
+    center: [0, 0, 0],
+    radius: 20,
+    distance: 90
+  };
+  const lo = [Infinity, Infinity, Infinity],
+    hi = [-Infinity, -Infinity, -Infinity];
+  valid.forEach(p => p.forEach((v, i) => {
+    lo[i] = Math.min(lo[i], v);
+    hi[i] = Math.max(hi[i], v);
+  }));
+  const center = lo.map((v, i) => (v + hi[i]) / 2);
+  const radius = Math.max(12, ...valid.map(p => Math.hypot(...p.map((v, i) => v - center[i])))) + 8;
+  const halfV = fov * Math.PI / 360,
+    halfH = Math.atan(Math.tan(halfV) * Math.max(0.15, aspect || 1));
+  return {
+    center,
+    radius,
+    distance: radius / Math.sin(Math.min(halfV, halfH)) * 1.12
+  };
+}
+function kgSectionPoint(index, count, group, groups) {
+  const cols = Math.ceil(Math.sqrt(groups)),
+    rows = Math.ceil(groups / cols);
+  const center = [(group % cols - (cols - 1) / 2) * 145, ((rows - 1) / 2 - Math.floor(group / cols)) * 145, 0];
+  if (count <= 1) return center;
+  const t = (index + 0.5) / count,
+    z = 1 - 2 * t,
+    ring = Math.sqrt(Math.max(0, 1 - z * z));
+  const radius = Math.min(49, 10 + 3 * Math.cbrt(count)),
+    r = radius * Math.cbrt(t),
+    theta = index * Math.PI * (3 - Math.sqrt(5));
+  return [center[0] + r * ring * Math.cos(theta), center[1] + r * z, 0.65 * r * ring * Math.sin(theta)];
+}
+
+// A spanning forest preserves every connected component; additional links add detail.
+// Focus and All connections retain every eligible relationship in the loaded graph.
+function kgVisibleEdgePairs(pairs, focus, eligible, budget = 4500, mode = 'balanced') {
+  const candidates = eligible.filter(k => focus == null || pairs[k] === focus || pairs[k + 1] === focus);
+  if (focus != null || mode === 'all') return candidates.flatMap(k => [k, k + 1]);
+  const parent = new Map(),
+    chosen = new Set(),
+    degree = new Map();
+  const find = n => {
+    if (!parent.has(n)) parent.set(n, n);
+    let r = n;
+    while (parent.get(r) !== r) r = parent.get(r);
+    while (parent.get(n) !== n) {
+      const p = parent.get(n);
+      parent.set(n, r);
+      n = p;
+    }
+    return r;
+  };
+  const add = k => {
+    if (chosen.has(k)) return;
+    chosen.add(k);
+    for (const n of [pairs[k], pairs[k + 1]]) degree.set(n, (degree.get(n) || 0) + 1);
+  };
+  for (const k of candidates) {
+    const a = find(pairs[k]),
+      b = find(pairs[k + 1]);
+    if (a !== b) {
+      parent.set(a, b);
+      add(k);
+    }
+  }
+  for (const k of candidates) if ((degree.get(pairs[k]) || 0) < 2 || (degree.get(pairs[k + 1]) || 0) < 2) add(k);
+  const remaining = candidates.filter(k => !chosen.has(k)),
+    room = Math.max(0, Math.min(remaining.length, budget - chosen.size));
+  for (let i = 0; i < room; i++) add(remaining[Math.floor(i * remaining.length / room)]);
+  return candidates.filter(k => chosen.has(k)).flatMap(k => [k, k + 1]);
+}
+function kgNodeHue(entity, communityIndex = 0) {
+  const kind = String(entity.id || '').split('/').pop().split('-')[0];
+  const hues = {
+    person: .12,
+    org: .43,
+    organization: .43,
+    publication: .66,
+    publication_series: .66,
+    series: .66,
+    book: .66,
+    social: .9,
+    account: .9,
+    online_account: .9,
+    project: .055,
+    application: .055,
+    service: .055,
+    photograph: .78,
+    manuscript: .78,
+    collection: .78,
+    place: .32,
+    property: .32,
+    pet: .32,
+    topic: .52
+  };
+  const sectionHues = {
+    people: .12,
+    organizations: .43,
+    journalism: .66,
+    projects: .055,
+    professional: .055
+  };
+  const base = hues[entity.type] ?? hues[kind] ?? sectionHues[entity.section] ?? (communityIndex * .618 + 0.53) % 1;
+  let hash = 2166136261;
+  for (const c of String(entity.id || '')) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619) >>> 0;
+  return (base + (hash % 101 / 100 - .5) * .12 + 1) % 1;
+}
+function kgEdgeOpacity(count, focused, mode) {
+  return focused ? Math.max(.07, .24 * Math.sqrt(180 / Math.max(180, count))) : Math.max(.015, .16 * Math.pow(4500 / Math.max(4500, count), .85));
+}
 function KnowledgeGraphWS(props) {
   const P = props || {};
   const embedded = !!P.embedded;
@@ -10752,16 +10896,19 @@ function KnowledgeGraphWS(props) {
   const [lodMode, setLodMode] = useState(false);
   const [arrangement, setArrangement] = useState('galaxy');
   const [hasDates, setHasDates] = useState(false);
+  const [connectionMode, setConnectionMode] = useState('balanced');
+  const [visibleLinks, setVisibleLinks] = useState(0);
   const [touring, setTouring] = useState(false);
-  // What its own tab (↗) opens on: the keys useNavTarget below reads.
-  // Inside the Knowledge workspace, KnowledgeWS answers for both.
-  useTabState(embedded ? '__kg_embedded__' : 'knowledge', () => ({ query: searchQ }));
+  useTabState(embedded ? '__kg_embedded__' : 'knowledge', () => ({
+    query: searchQ
+  })); // what its own tab opens on; inside Knowledge, KnowledgeWS answers
   useNavTarget(embedded ? '__kg_embedded__' : 'knowledge', t => {
     if (t.query) {
       setSearchQ(t.query);
       runSearch(t.query);
     }
   });
+
   // A node's page opens beside the graph (Knowledge's Split view).
   const openWikiPage = ent => {
     const path = kwPathOf(ent);
@@ -10819,7 +10966,7 @@ function KnowledgeGraphWS(props) {
     // ── renderer / scene / camera ────────────────────────────
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x000308, 0.0016);
-    const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 4000);
+    const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 12000);
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       powerPreference: 'high-performance'
@@ -10834,9 +10981,8 @@ function KnowledgeGraphWS(props) {
     const buildComposer = (w, h) => {
       composer = new THREE.EffectComposer(renderer);
       composer.addPass(new THREE.RenderPass(scene, camera));
-      // Bloom only the bright node rims and labels (threshold 0.3), not the
-      // node bodies: a low threshold fused a dense cluster into one glow.
-      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.45, 0.3);
+      // Restrained bloom preserves bright focus cues without washing out dense links.
+      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 0.14, 0.22, 0.85);
       composer.addPass(bloomPass);
     };
     const grp = new THREE.Group();
@@ -10844,7 +10990,7 @@ function KnowledgeGraphWS(props) {
 
     // Distant starfield backdrop (ported GalaxyBackground design).
     (() => {
-      const N = 2600,
+      const N = 600,
         pos = new Float32Array(N * 3),
         col = new Float32Array(N * 3);
       let sd = 987654321;
@@ -10871,9 +11017,9 @@ function KnowledgeGraphWS(props) {
         size: 2.2,
         vertexColors: true,
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.16,
         depthWrite: false,
-        blending: THREE.AdditiveBlending,
+        blending: THREE.NormalBlending,
         sizeAttenuation: true
       });
       const pts = new THREE.Points(g, m);
@@ -10898,6 +11044,32 @@ function KnowledgeGraphWS(props) {
       camera.position.set(cam.target.x + cam.r * Math.sin(cam.phi) * Math.cos(cam.theta), cam.target.y + cam.r * Math.cos(cam.phi), cam.target.z + cam.r * Math.sin(cam.phi) * Math.sin(cam.theta));
       camera.lookAt(cam.target);
     };
+    const fitView = (positions, immediate = false) => {
+      const points = positions ? Array.from({
+        length: positions.length / 3
+      }, (_, i) => Array.from(positions.slice(i * 3, i * 3 + 3))) : (S.entities || []).map(e => [e.x, e.y, e.z]);
+      if (!points.length) return;
+      const frame = kgSceneFrame(points, camera.aspect);
+      camGoal.target.fromArray(frame.center);
+      camGoal.r = frame.distance;
+      S.viewScale = Math.min(3, Math.max(1, frame.distance * Math.tan(camera.fov * Math.PI / 360) / (mount.clientHeight || 500) * 1.8));
+      if (S.mesh && S.baseScale) {
+        S.entities.forEach((e, i) => writeNode(i, e, S.curScale && S.curScale[i] || 1));
+        S.mesh.instanceMatrix.needsUpdate = true;
+        if (S.outline) S.outline.instanceMatrix.needsUpdate = true;
+      }
+      if (immediate) {
+        cam.target.copy(camGoal.target);
+        cam.r = camGoal.r;
+        applyCam();
+      }
+      idleSpin = false;
+      userTouched = false;
+    };
+    S.fitView = () => {
+      stopTour();
+      fitView(undefined, true);
+    };
 
     // ── graph content (rebuilt per load) ─────────────────────
     let content = new THREE.Group();
@@ -10905,7 +11077,7 @@ function KnowledgeGraphWS(props) {
     const clock = new THREE.Clock();
     let entranceT0 = -1; // seconds at load-complete
     let igniteOrder = []; // [{comm, start}]
-    let idleSpin = true,
+    let idleSpin = false,
       userTouched = false;
     let pulses = []; // [{idx,t0}]
     const raycaster = new THREE.Raycaster();
@@ -10914,6 +11086,7 @@ function KnowledgeGraphWS(props) {
     const pointer = new THREE.Vector2(9, 9);
     const hexToColor = h => new THREE.Color(h);
     const commColor = ci => hexToColor(KG_PALETTE[ci % KG_PALETTE.length]);
+    const nodeColor = (e, ci) => e.type === 'soul' ? new THREE.Color('#fff2ce') : new THREE.Color().setHSL(kgNodeHue(e, ci), .84, .61);
     const disposeContent = () => {
       content.traverse(o => {
         if (o.geometry) o.geometry.dispose();
@@ -10949,6 +11122,7 @@ function KnowledgeGraphWS(props) {
       t.minFilter = THREE.LinearFilter;
       return t;
     })();
+
     // ── generated art (static/galaxy; provenance in CREDITS.md) ──
     // Every piece is optional: a texture that fails to load leaves its
     // decoration hidden and the graph exactly as it was. None of these
@@ -11097,15 +11271,14 @@ function KnowledgeGraphWS(props) {
       const c = document.createElement('canvas');
       const px = 64;
       const ctx = c.getContext('2d');
-      ctx.font = '700 ' + px + 'px Orbitron, sans-serif';
+      ctx.font = '500 ' + px + 'px Inter, sans-serif';
       const w = Math.min(1400, ctx.measureText(text).width + 40);
       c.width = w;
       c.height = px + 28;
       const ctx2 = c.getContext('2d');
-      ctx2.font = '700 ' + px + 'px Orbitron, sans-serif';
-      ctx2.fillStyle = color;
-      ctx2.shadowColor = color;
-      ctx2.shadowBlur = 26;
+      ctx2.font = '500 ' + px + 'px Inter, sans-serif';
+      ctx2.fillStyle = '#c7d2e2';
+      ctx2.shadowBlur = 0;
       ctx2.textBaseline = 'middle';
       ctx2.fillText(text, 20, c.height / 2);
       const tex = new THREE.CanvasTexture(c);
@@ -11114,20 +11287,30 @@ function KnowledgeGraphWS(props) {
         map: tex,
         transparent: true,
         opacity: 0,
-        depthWrite: false
+        depthWrite: false,
+        depthTest: false,
+        fog: false
       });
       const spr = new THREE.Sprite(mat);
+      spr.renderOrder = 10;
       const s = scale || 0.14;
       spr.scale.set(c.width * s, c.height * s, 1);
+      spr.userData.labelAspect = c.width / c.height;
       return spr;
     };
 
     // Build the full scene from API data.
     const buildScene = (data, opts) => {
       disposeContent();
-      const entities = data.entities || [],
+      const entities = (data.entities || []).map(e => ({
+          ...e
+        })),
         rels = data.relationships || [],
         comms = data.communities || [];
+      const overview = kgOverviewPositions(entities);
+      entities.forEach(e => {
+        [e.x, e.y, e.z] = overview.get(e.id);
+      });
       S.entities = entities;
       S.relationships = rels;
       S.communities = comms;
@@ -11154,13 +11337,13 @@ function KnowledgeGraphWS(props) {
       const dark = new THREE.Color(0x061018);
       for (let i = 0; i < n; i++) {
         const e = entities[i];
-        const s = e.type === 'soul' ? 3.4 : 1.5 + Math.min(e.degree || 0, 22) * 0.11;
+        const s = e.type === 'soul' ? 2.5 : 0.9 + Math.min(1.5, Math.log1p(Math.max(0, e.degree || 0)) * 0.22);
         baseScale[i] = s;
         dummy.position.set(e.x || 0, e.y || 0, e.z || 0);
         dummy.scale.setScalar(s);
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
-        const c = e.type === 'soul' ? new THREE.Color('#eafcff') : commColor(ciOf(e));
+        const c = nodeColor(e, ciOf(e));
         baseColor[i * 3] = c.r;
         baseColor[i * 3 + 1] = c.g;
         baseColor[i * 3 + 2] = c.b;
@@ -11213,15 +11396,16 @@ function KnowledgeGraphWS(props) {
           col = new Float32Array(rels.length * 6);
         let k = 0;
         const pairs = [];
+        // strongest first: the star map draws links in in this order
         rels.slice().sort((p, q) => (q.weight || 0.5) - (p.weight || 0.5)).forEach(r => {
           const a = S.entById[r.source],
             b = S.entById[r.target];
           if (!a || !b) return;
           pairs.push(a.__idx, b.__idx);
-          const ca = a.type === 'soul' ? new THREE.Color('#9adfff') : commColor(a.__ci);
-          const cb = b.type === 'soul' ? new THREE.Color('#9adfff') : commColor(b.__ci);
+          const ca = nodeColor(a, a.__ci);
+          const cb = nodeColor(b, b.__ci);
           const w = r.weight || 0.5,
-            f = 0.16 + w * 0.34;
+            f = 0.72 + Math.min(w, 1) * 0.28;
           pos[k] = a.x;
           pos[k + 1] = a.y;
           pos[k + 2] = a.z;
@@ -11239,12 +11423,14 @@ function KnowledgeGraphWS(props) {
         const eg = new THREE.BufferGeometry();
         eg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         eg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        eg.setIndex(new THREE.BufferAttribute(new Uint32Array(pairs.length), 1));
         const em = new THREE.LineBasicMaterial({
           vertexColors: true,
           transparent: true,
           opacity: opts && opts.instant ? KG_EDGE_OPACITY : 0,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
+          blending: THREE.NormalBlending,
+          depthWrite: false,
+          fog: false
         });
         const lines = new THREE.LineSegments(eg, em);
         lines.frustumCulled = false; // endpoints move during arrangements
@@ -11266,6 +11452,7 @@ function KnowledgeGraphWS(props) {
       // — community nebulae + labels —
       S.nebulae = [];
       S.labels = [];
+      S.labelSprites = [];
       const centers = {};
       comms.forEach((c, ci) => {
         const members = entities.filter(e => e.__ci === ci);
@@ -11308,8 +11495,10 @@ function KnowledgeGraphWS(props) {
         S.nebulae[ci] = pm;
         const lbl = makeLabel((c.title || 'cluster ' + ci).toUpperCase(), KG_PALETTE[ci % KG_PALETTE.length], 0.105);
         lbl.position.set(cx, cy + spread + 11, cz);
+        lbl.userData.priority = members.length;
         content.add(lbl);
         S.labels[ci] = lbl.material;
+        S.labelSprites.push(lbl);
       });
       S.centers = centers;
 
@@ -11317,10 +11506,10 @@ function KnowledgeGraphWS(props) {
       if (opts && opts.instant) {
         entranceT0 = -2;
         S.nebulae.forEach(m => {
-          if (m) m.opacity = 0.1;
+          if (m) m.opacity = 0.005;
         });
         S.labels.forEach(m => {
-          if (m) m.opacity = 0.8;
+          if (m) m.opacity = 0.95;
         });
       } else {
         entranceT0 = clock.getElapsedTime();
@@ -11333,11 +11522,11 @@ function KnowledgeGraphWS(props) {
         cam.theta = 0.6;
         cam.phi = 1.15;
         cam.target.set(0, 0, 0);
-        camGoal.r = Math.max(190, (data.layout && data.layout.radius || 150) * 1.45);
+        camGoal.r = kgSceneFrame(entities.map(e => [e.x, e.y, e.z]), camera.aspect).distance;
         camGoal.theta = 1.5;
         camGoal.phi = 1.05;
-        camGoal.target.set(0, 0, 0);
-        idleSpin = true;
+        camGoal.target.fromArray(kgSceneFrame(entities.map(e => [e.x, e.y, e.z]), camera.aspect).center);
+        idleSpin = false;
         userTouched = false;
       }
       S.highlight = null;
@@ -11351,6 +11540,7 @@ function KnowledgeGraphWS(props) {
       S.decor = null;
       S.layout = 'galaxy';
       setArrangement('galaxy');
+      if (opts && opts.instant) fitView(undefined, true);
       setHasDates(entities.some(e => e.updated));
       applyCam();
     };
@@ -11367,9 +11557,9 @@ function KnowledgeGraphWS(props) {
       for (let i = 0; i < S.entities.length; i++) {
         c.setRGB(S.baseColor[i * 3], S.baseColor[i * 3 + 1], S.baseColor[i * 3 + 2]);
         if (hl && hl.size) {
-          if (hl.has(S.entities[i].id)) c.multiplyScalar(1.5);else c.multiplyScalar(0.16);
+          if (hl.has(S.entities[i].id)) c.multiplyScalar(1.15);else c.multiplyScalar(0.36);
         }
-        if (hov && hov.has(i)) c.multiplyScalar(1.6);
+        if (hov && hov.has(i)) c.multiplyScalar(1.12);
         mesh.setColorAt(i, c);
         if (S.outline) {
           // Silhouette rim: dimmed node color normally; the HOVERED node's rim
@@ -11391,7 +11581,7 @@ function KnowledgeGraphWS(props) {
         const e = S.entities[i];
         if (!e) return;
         od.position.set(e.x || 0, e.y || 0, e.z || 0);
-        od.scale.setScalar(S.baseScale[i] * mult);
+        od.scale.setScalar(S.baseScale[i] * (S.viewScale || 1) * mult);
         od.updateMatrix();
         S.outline.setMatrixAt(i, od.matrix);
       };
@@ -11425,7 +11615,7 @@ function KnowledgeGraphWS(props) {
     // ── data load ────────────────────────────────────────────
     const loadGraph = (community, opts) => {
       setStatus('loading');
-      const url = '/api/knowledge-graph/graph' + (community != null ? '?community=' + encodeURIComponent(community) : '');
+      const url = '/api/knowledge-graph/graph?view=compact' + (community != null ? '&community=' + encodeURIComponent(community) : '');
       apiFetch(url).then(r => r.json()).then(d => {
         if (disposed) return;
         if (d.status !== 'ok') {
@@ -11442,11 +11632,15 @@ function KnowledgeGraphWS(props) {
           setStatus('ready');
         } else {
           setLodMode(false);
-          buildScene(d, opts);
+          buildScene(d, {
+            ...(opts || {}),
+            instant: true
+          });
           setStatus('ready');
           S.edgeFocusIdx = null;
           S.focusSet = null;
           S.starOn = false;
+          recolorEdges();
           // A live reload (a page saved) keeps the arrangement on screen.
           if (opts && opts.keepLayout && opts.keepLayout !== 'galaxy' && S.arrange) S.arrange(opts.keepLayout);
           if (S.refreshHighlight) S.refreshHighlight();
@@ -11488,7 +11682,7 @@ function KnowledgeGraphWS(props) {
         mesh.setColorAt(i, commColor(i));
         const lbl = makeLabel((c.title || '').toUpperCase() + ' · ' + (c.size || 0), KG_PALETTE[i % KG_PALETTE.length], 0.16);
         lbl.position.set(p[0], p[1] + 16, p[2]);
-        lbl.material.opacity = 0.85;
+        lbl.material.opacity = 0.725;
         content.add(lbl);
       });
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -11567,7 +11761,7 @@ function KnowledgeGraphWS(props) {
     const onWheel = e => {
       e.preventDefault();
       stopTour();
-      camGoal.r = Math.max(40, Math.min(1200, camGoal.r * (1 + e.deltaY * 0.0011)));
+      camGoal.r = Math.max(40, Math.min(6000, camGoal.r * (1 + e.deltaY * 0.0011)));
       idleSpin = false;
       userTouched = true;
     };
@@ -11635,7 +11829,7 @@ function KnowledgeGraphWS(props) {
           });
           const c = S.communities[k];
           if (mem.length > 1) labels.push({
-            text: ((c && c.title) || 'cluster ' + k).toUpperCase() + ' \xB7 ' + mem.length,
+            text: (c && c.title || 'cluster ' + k).toUpperCase() + ' \xB7 ' + mem.length,
             color: KG_PALETTE[k % KG_PALETTE.length],
             pos: [cx, cy + rad[gi] + 9, cz]
           });
@@ -11660,31 +11854,21 @@ function KnowledgeGraphWS(props) {
           pos: [0, -170, 0]
         });
       } else if (mode === 'section') {
-        // A skyline: one tower per wiki folder, tallest first, the
-        // most-connected pages at the top of each tower.
+        // A readable grid of bounded section clouds, largest sections first.
         const groups = {};
         E.forEach(e => {
           const k = e.type === 'soul' ? 'soul' : e.section || 'core';
           (groups[k] = groups[k] || []).push(e);
         });
         const keys = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
-        const cols = Math.ceil(Math.sqrt(keys.length)),
-          gap = 72;
         keys.forEach((k, gi) => {
-          const gx = (gi % cols - (cols - 1) / 2) * gap,
-            gz = (Math.floor(gi / cols) - (Math.ceil(keys.length / cols) - 1) / 2) * gap;
-          const mem = groups[k].slice().sort(byDegree).reverse();
-          const per = Math.max(4, Math.min(12, Math.ceil(Math.sqrt(mem.length) * 1.6)));
-          const ringR = 3 + per * 1.25;
-          mem.forEach((e, j) => {
-            const lvl = Math.floor(j / per),
-              th = (j % per) / per * 2 * Math.PI + lvl * 0.45;
-            put(e, gx + ringR * Math.cos(th), -60 + lvl * 5.5, gz + ringR * Math.sin(th));
-          });
+          const mem = groups[k].slice().sort(byDegree);
+          mem.forEach((e, j) => put(e, ...kgSectionPoint(j, mem.length, gi, keys.length)));
+          const center = kgSectionPoint(0, 1, gi, keys.length);
           labels.push({
-            text: k.toUpperCase() + ' \xB7 ' + mem.length,
+            text: k + ' · ' + mem.length,
             color: KG_PALETTE[gi % KG_PALETTE.length],
-            pos: [gx, -60 + Math.ceil(mem.length / per) * 5.5 + 9, gz]
+            pos: [center[0], center[1] + 60, center[2]]
           });
         });
       } else if (mode === 'timeline') {
@@ -11942,7 +12126,7 @@ function KnowledgeGraphWS(props) {
           target: [0, 0, 0]
         };
         depth = [150, 520, 200];
-        edge = 0.6;
+        edge = 0.09;
       } else {
         E.forEach(e => put(e, e.__gx, e.__gy, e.__gz));
       }
@@ -11973,11 +12157,11 @@ function KnowledgeGraphWS(props) {
     const nodeDummy = new THREE.Object3D();
     const writeNode = (i, e, mult) => {
       nodeDummy.position.set(e.x, e.y, e.z);
-      nodeDummy.scale.setScalar(S.baseScale[i] * mult);
+      nodeDummy.scale.setScalar(S.baseScale[i] * mult * (S.viewScale || 1));
       nodeDummy.updateMatrix();
       S.mesh.setMatrixAt(i, nodeDummy.matrix);
       if (S.outline) {
-        nodeDummy.scale.setScalar(S.baseScale[i] * mult * (S.emphIdx === i ? 1.42 : 1.12));
+        nodeDummy.scale.setScalar(S.baseScale[i] * mult * (S.viewScale || 1) * (S.emphIdx === i ? 1.42 : 1.12));
         nodeDummy.updateMatrix();
         S.outline.setMatrixAt(i, nodeDummy.matrix);
       }
@@ -12021,26 +12205,45 @@ function KnowledgeGraphWS(props) {
         near = Math.cos(0.8),
         to = S.starTo,
         fi = S.edgeFocusIdx;
+      const eligible = [];
       for (let k = 0; k < pr.length; k += 2) {
         let f = 1;
         if (S.starOn && to) {
           const a = pr[k] * 3,
             b = pr[k + 1] * 3;
           const dot = (to[a] * to[b] + to[a + 1] * to[b + 1] + to[a + 2] * to[b + 2]) / (Math.hypot(to[a], to[a + 1], to[a + 2]) * Math.hypot(to[b], to[b + 1], to[b + 2]) || 1);
-          f = dot > near ? 2.2 : 0;
+          f = dot > near ? 1.2 : 0;
         }
-        if (fi != null) f *= pr[k] === fi || pr[k + 1] === fi ? 3.4 : 0.2;
+        if (f > 0) eligible.push(k);
+        if (fi != null) f *= pr[k] === fi || pr[k + 1] === fi ? 2.2 : 0;
         for (let j = 0; j < 6; j++) C[k * 3 + j] = Math.min(1, B[k * 3 + j] * f);
       }
       S.edgeCol.needsUpdate = true;
+      const visible = kgVisibleEdgePairs(pr, fi, eligible, 4500, S.connectionMode || 'balanced');
+      S.edgeGeo.index.array.set(visible);
+      S.edgeGeo.index.needsUpdate = true;
+      S.edgeVisibleVertices = visible.length;
+      setVisibleLinks(visible.length / 2);
+      const opacity = kgEdgeOpacity(visible.length / 2, fi != null, S.connectionMode || 'balanced');
+      if (S.edgeMat) S.edgeMat.opacity = opacity;
+      if (S.decor) S.decor.edge = opacity;
+      S.edgeGeo.setDrawRange(0, visible.length);
+      if (S.drawIn) S.drawIn.total = visible.length;
     };
     const setStarEdges = (on, to) => {
       S.starOn = !!on;
       S.starTo = on ? to : null;
       recolorEdges();
     };
+    S.setConnections = mode => {
+      S.connectionMode = mode;
+      recolorEdges();
+    };
     S.setEdgeFocus = idx => {
       S.edgeFocusIdx = idx == null ? null : idx;
+      const opacity = idx == null ? KG_EDGE_OPACITY : 0.28;
+      if (S.edgeMat) S.edgeMat.opacity = opacity;
+      if (S.decor) S.decor.edge = opacity;
       recolorEdges();
     };
     // Presentation tour: each step arranges, holds while the camera sweeps,
@@ -12128,7 +12331,7 @@ function KnowledgeGraphWS(props) {
       const settle = () => {
         S.bangHold = false;
         S.curScale = L.scale;
-        S.motion = L.spin ? {
+        S.motion = L.spin && opts.keepTour ? {
           rates: L.spin,
           base: L.base || to,
           tilt: L.tilt,
@@ -12136,7 +12339,7 @@ function KnowledgeGraphWS(props) {
         } : null;
         if (L.star && S.edgePairs) S.drawIn = {
           t0: clock.getElapsedTime(),
-          total: S.edgePairs.length
+          total: S.edgeVisibleVertices || 0
         };
         applyColors();
       };
@@ -12217,8 +12420,8 @@ function KnowledgeGraphWS(props) {
           onDone: settle
         };
       }
-      if (S.edgeGeo) S.edgeGeo.setDrawRange(0, L.star ? 0 : Infinity);
       setStarEdges(!!L.star, to);
+      if (S.edgeGeo && L.star) S.edgeGeo.setDrawRange(0, 0);
       clearLayoutLabels();
       L.labels.forEach(l => {
         const spr = makeLabel(l.text, l.color, l.size || 0.1);
@@ -12239,15 +12442,15 @@ function KnowledgeGraphWS(props) {
       // them so hub edges do not pile into a haze (the star map is the
       // exception, since its links are the constellations).
       S.decor = mode === 'galaxy' ? {
-        neb: 0.1,
-        lbl: 0.8,
+        neb: 0.005,
+        lbl: 0.95,
         lay: 0,
-        edge: KG_EDGE_OPACITY
+        edge: S.edgeMat ? S.edgeMat.opacity : KG_EDGE_OPACITY
       } : {
         neb: 0,
         lbl: 0,
-        lay: 0.85,
-        edge: L.edge != null ? L.edge : 0.12
+        lay: 0.95,
+        edge: S.edgeMat ? S.edgeMat.opacity : KG_EDGE_OPACITY
       };
       S.depth = L.depth;
       S.decoTilt = L.art && L.art.ring ? L.art.tilt : 0;
@@ -12256,41 +12459,22 @@ function KnowledgeGraphWS(props) {
       if (L.star) ensureHalo();
       S.layout = mode;
       setArrangement(mode);
-      if (L.cam) {
-        camGoal.target.set(L.cam.target[0], L.cam.target[1], L.cam.target[2]);
-        camGoal.r = L.cam.r;
-        camGoal.phi = L.cam.phi;
-        return;
-      }
-      // Frame the arrangement: orbit its centre at a distance that fits its
-      // bounding sphere in the 58-degree view.
-      const lo = [1e9, 1e9, 1e9],
-        hi = [-1e9, -1e9, -1e9];
-      for (let i = 0; i < n * 3; i++) {
-        lo[i % 3] = Math.min(lo[i % 3], to[i]);
-        hi[i % 3] = Math.max(hi[i % 3], to[i]);
-      }
-      const cx = (lo[0] + hi[0]) / 2,
-        cy = (lo[1] + hi[1]) / 2,
-        cz = (lo[2] + hi[2]) / 2;
-      let R = 0;
-      for (let i = 0; i < n; i++) R = Math.max(R, Math.hypot(to[i * 3] - cx, to[i * 3 + 1] - cy, to[i * 3 + 2] - cz));
-      camGoal.target.set(cx, cy, cz);
-      camGoal.r = Math.max(120, Math.min(1100, R * L.frame));
+      fitView(to);
       camGoal.theta += 0.6;
       // Towers, spire and tunnel read side-on; the cluster ring and the
       // spiral's disc from above; Saturn from just above its ring plane.
       camGoal.phi = {
         cluster: 0.95,
         importance: 1.45,
-        section: 1.32,
+        section: Math.PI / 2,
         timeline: 1.4,
         rings: 1.2,
         sphere: 1.2,
         spiral: 0.75
       }[mode] || 1.05;
       // Sphere: lift the view a little so the label stack above it fits.
-      if (mode === 'sphere') camGoal.target.y += 16;
+      // The fit target already includes all node positions.
+      if (mode === 'section') camGoal.theta = Math.PI / 2;
       if (mode === 'rings') {
         // Face the ring plane (it tilts toward +z about the X axis) instead of
         // catching it edge-on; take the nearest such angle so the camera does
@@ -12523,6 +12707,7 @@ function KnowledgeGraphWS(props) {
       camera.updateProjectionMatrix();
       renderer.setSize(w, h, false);
       if (composer) composer.setSize(w, h);else buildComposer(w, h);
+      if (S.entities && S.entities.length && !userTouched && !flight) fitView();
     };
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
@@ -12623,8 +12808,8 @@ function KnowledgeGraphWS(props) {
               mesh.setColorAt(i, c);
               dirty = true;
             }
-            if (S.nebulae[ci]) S.nebulae[ci].opacity = 0.1 * pe;
-            if (S.labels[ci]) S.labels[ci].opacity = 0.85 * pe;
+            if (S.nebulae[ci]) S.nebulae[ci].opacity = 0.005 * pe;
+            if (S.labels[ci]) S.labels[ci].opacity = 0.95 * pe;
           });
           if (dirty && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         }
@@ -12860,9 +13045,36 @@ function KnowledgeGraphWS(props) {
         }
       }
       applyCam();
+      const labelRects = [];
+      const labelWidth = mount.clientWidth || 1,
+        labelHeight = mount.clientHeight || 1;
+      [...(S.labelSprites || []), ...(S.layoutLabels || [])].sort((a, b) => (b.userData.priority || 0) - (a.userData.priority || 0)).forEach(spr => {
+        if (spr.material.opacity < 0.1) {
+          spr.visible = false;
+          return;
+        }
+        const world = spr.getWorldPosition(new THREE.Vector3()),
+          projected = world.clone().project(camera);
+        const depth = world.distanceTo(camera.position),
+          ratio = spr.userData.labelAspect || 4;
+        const h = 13,
+          w = Math.min(165, h * ratio),
+          unit = 2 * depth * Math.tan(camera.fov * Math.PI / 360) / labelHeight;
+        spr.scale.set(w * unit, h * unit, 1);
+        const x = (projected.x + 1) * labelWidth / 2,
+          y = (1 - projected.y) * labelHeight / 2;
+        const r = {
+          l: x - w / 2 - 5,
+          r: x + w / 2 + 5,
+          t: y - h / 2 - 4,
+          b: y + h / 2 + 4
+        };
+        spr.visible = projected.z > -1 && projected.z < 1 && r.l > 3 && r.r < labelWidth - 3 && r.t > 3 && r.b < labelHeight - 3 && !labelRects.some(q => r.l < q.r && r.r > q.l && r.t < q.b && r.b > q.t);
+        if (spr.visible) labelRects.push(r);
+      });
+      // Depth cue follows the zoom: full brightness in front of the orbit
+      // target, fading behind it.
       if (S.nodeMat) {
-        // Depth cue follows the zoom: full brightness in front of the orbit
-        // target, fading behind it.
         const dOv = S.depth && cam.r < S.depth[2] ? S.depth : null;
         S.nodeMat.uniforms.uNear.value = dOv ? dOv[0] : cam.r * 0.85;
         S.nodeMat.uniforms.uFar.value = dOv ? dOv[1] : cam.r * 1.9;
@@ -13005,7 +13217,7 @@ function KnowledgeGraphWS(props) {
       borderRadius: 6,
       padding: 2
     }
-  }, tb === 'compact' ? /*#__PURE__*/React.createElement("select", {
+  }, /*#__PURE__*/React.createElement("select", {
     value: arrangement,
     "aria-label": "Arrangement",
     title: (KG_ARRANGEMENTS.find(a => a.id === arrangement) || {}).tip,
@@ -13029,31 +13241,7 @@ function KnowledgeGraphWS(props) {
     key: a.id,
     value: a.id,
     disabled: a.id === 'timeline' && !hasDates
-  }, a.label))) : KG_ARRANGEMENTS.map(a => {
-    const off = a.id === 'timeline' && !hasDates;
-    return /*#__PURE__*/React.createElement("button", {
-      key: a.id,
-      disabled: off,
-      title: off ? 'Needs page dates \u2014 rebuild the graph (\u21BB) to add them' : a.tip,
-      onClick: () => {
-        const S = kgRef.current;
-        if (S.arrange) {
-          S.arrange(a.id);
-          setArrangement(a.id);
-        }
-      },
-      style: {
-        fontSize: 11,
-        padding: '3px 8px',
-        border: 'none',
-        borderRadius: 4,
-        cursor: off ? 'default' : 'pointer',
-        opacity: off ? 0.35 : 1,
-        background: arrangement === a.id ? 'rgba(0,212,255,0.18)' : 'transparent',
-        color: arrangement === a.id ? '#bff3ff' : '#8fa8c8'
-      }
-    }, a.label);
-  }), /*#__PURE__*/React.createElement("span", {
+  }, a.label))), /*#__PURE__*/React.createElement("span", {
     style: {
       width: 1,
       alignSelf: 'stretch',
@@ -13078,7 +13266,7 @@ function KnowledgeGraphWS(props) {
       background: 'transparent',
       color: '#ffd28a'
     }
-  }, tb === 'compact' ? "\u2726" : "\u2726 Big Bang"), /*#__PURE__*/React.createElement("button", {
+  }, tb === 'compact' ? '✦' : '✦ Big Bang'), /*#__PURE__*/React.createElement("button", {
     "aria-label": touring ? 'Stop the tour' : 'Presentation tour',
     title: touring ? 'Stop the tour' : 'Presentation tour, full screen: cycles through the arrangements with camera moves; any click or scroll in the graph stops it, Esc leaves full screen',
     onClick: () => {
@@ -13100,7 +13288,46 @@ function KnowledgeGraphWS(props) {
       background: touring ? 'rgba(255,80,120,0.15)' : 'transparent',
       color: touring ? '#ff9db0' : '#9dffc8'
     }
-  }, tb === 'compact' ? touring ? "\u25A0" : "\u25B6" : touring ? "\u25A0 Stop tour" : "\u25B6 Tour")), /*#__PURE__*/React.createElement("button", {
+  }, tb === 'compact' ? touring ? '■' : '▶' : touring ? '■ Stop tour' : '▶ Tour')), /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Connections",
+    value: connectionMode,
+    title: "Balanced preserves a connected network. All shows every connection between loaded nodes. Selecting a node always shows all of its loaded connections.",
+    onChange: e => {
+      setConnectionMode(e.target.value);
+      const S = kgRef.current;
+      S.setConnections && S.setConnections(e.target.value);
+    },
+    style: {
+      fontSize: 11,
+      padding: '4px',
+      borderRadius: 4,
+      background: '#16253b',
+      color: '#cde7ff',
+      border: '1px solid #354867'
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "balanced"
+  }, "Connections: balanced"), /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "Connections: all")), stats && /*#__PURE__*/React.createElement("span", {
+    title: "Lines currently drawn; the full relationship data remains available",
+    style: {
+      fontSize: 10,
+      color: '#aabbd1'
+    }
+  }, visibleLinks.toLocaleString(), " links"), /*#__PURE__*/React.createElement("button", {
+    "aria-label": "Fit graph to view",
+    title: "Fit every visible node inside this pane",
+    className: "btn",
+    style: {
+      fontSize: 11,
+      padding: '4px 9px'
+    },
+    onClick: () => {
+      const S = kgRef.current;
+      S.fitView && S.fitView();
+    }
+  }, "Fit view"), /*#__PURE__*/React.createElement("button", {
     "aria-label": "Rebuild the graph from the wiki",
     className: "btn",
     title: "Rebuild the graph from the wiki",
@@ -13109,14 +13336,30 @@ function KnowledgeGraphWS(props) {
       padding: '4px 9px'
     },
     onClick: reindex
-  }, tb === 'compact' ? "\u21BB" : "\u21BB Rebuild"), stats && tb === 'full' && /*#__PURE__*/React.createElement("span", {
+  }, tb === 'compact' ? '↻' : '↻ Rebuild'), stats && tb === 'full' && /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: '#8fa8c8',
       fontFamily: 'JetBrains Mono',
       whiteSpace: 'nowrap'
     }
-  }, "\u2605 ", stats.nodes, " \xB7 \u2500 ", stats.edges, " \xB7 \u2601 ", stats.comms, " \xB7 ", fps, " fps")), !embedded && searchHits.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "\u2605 ", stats.nodes, " \xB7 \u2500 ", stats.edges, " \xB7 \u2601 ", stats.comms, " \xB7 ", fps, " fps")), /*#__PURE__*/React.createElement("div", {
+    "aria-label": "Graph color key",
+    style: {
+      display: 'flex',
+      gap: 12,
+      flexWrap: 'wrap',
+      fontSize: 10,
+      color: '#b5c4dc',
+      padding: '1px 5px 4px'
+    }
+  }, [['#ffd553', 'People'], ['#48edb4', 'Organizations'], ['#8675ff', 'Published work'], ['#ff63c6', 'Social'], ['#ffab55', 'Projects'], ['#c778ff', 'Creative work']].map(([color, label]) => /*#__PURE__*/React.createElement("span", {
+    key: label
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color
+    }
+  }, "\u25CF"), " ", label))), !embedded && searchHits.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       maxHeight: 110,
       overflowY: 'auto',
@@ -13281,7 +13524,9 @@ function KnowledgeGraphWS(props) {
       whiteSpace: 'nowrap'
     },
     onClick: () => openWikiPage(selected)
-  }, "\uD83D\uDCD6 Open page"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Clear the selection', title: 'Clear the selection', 
+  }, "\uD83D\uDCD6 Open page"), /*#__PURE__*/React.createElement("button", {
+    "aria-label": 'Clear the selection',
+    title: 'Clear the selection',
     className: "btn",
     style: {
       fontSize: 11,
@@ -13294,6 +13539,7 @@ function KnowledgeGraphWS(props) {
     }
   }, "\u2715")));
 }
+
 // ═══ KNOWLEDGE — the wiki's pages and its graph, one workspace ═══════════
 // The graph is built from the wiki, so the two are views of the same thing:
 // a node is a page, an edge is a link between pages. Graph / Split / Pages
@@ -57311,4 +57557,3 @@ function App() {
 
 </body>
 </html>
-
