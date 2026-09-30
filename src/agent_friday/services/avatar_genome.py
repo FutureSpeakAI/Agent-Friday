@@ -718,9 +718,11 @@ def verify_step(step) -> str:
 
 
 def commit_step(genome, *, parent, kind, target, reason, author, input_digest,
-                name=None, diff=None, activate=True, now=None) -> dict:
+                name=None, diff=None, activate=True, now=None, sent=None) -> dict:
     """Sign and store one step; make it active unless `activate` is False
-    (a pending step in ask-first mode)."""
+    (a pending step in ask-first mode). `sent` is the exact payload a cloud
+    author was sent (numbers and enums only), for the history's "What was
+    sent"; None when nothing left the machine."""
     with _LOCK:
         par = load_step(parent) if parent else None
         number = (par or {}).get("step", 0) + 1
@@ -739,6 +741,7 @@ def commit_step(genome, *, parent, kind, target, reason, author, input_digest,
             "reason": str(reason or "")[:280],
             "author": author,
             "input_digest": input_digest,
+            "sent": sent,
             "generator": _generator(),
         }
         body["content_hash"] = "sha256:" + hashlib.sha256(_deterministic(body)).hexdigest()

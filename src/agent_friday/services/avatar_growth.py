@@ -639,7 +639,8 @@ def run_step(*, manual=False, now=None, author=None) -> dict:
         step = g.commit_step(child, parent=(parent or {}).get("content_hash"), kind=kind,
                              target=target, reason=prop.get("rationale") or "",
                              author=credit, input_digest=digest, name=prop.get("name"),
-                             activate=not ask)
+                             activate=not ask,
+                             sent=payload if credit.get("path") == "cloud" else None)
         for f in files:
             try:
                 f.unlink()
@@ -735,6 +736,13 @@ def status() -> dict:
     }
 
 
+def nightly() -> None:
+    """The nightly job: count yesterday, and purge looks the user deleted
+    more than 30 days ago (the only code that removes history)."""
+    nightly_signals()
+    g.purge()
+
+
 def register_jobs() -> None:
     """The hourly step check and the nightly signal count."""
     from agent_friday.services import scheduler
@@ -742,5 +750,5 @@ def register_jobs() -> None:
         "avatar_growth_check", lambda: tick(), label="Avatar: weekly look check",
         default_trigger="interval", default_spec={"every_minutes": 60}, notify="silent")
     scheduler.register_builtin_task(
-        "avatar_signals_nightly", lambda: nightly_signals(), label="Avatar: count the day",
+        "avatar_signals_nightly", lambda: nightly(), label="Avatar: count the day",
         default_trigger="daily", default_spec={"hour": 3, "minute": 40}, notify="silent")

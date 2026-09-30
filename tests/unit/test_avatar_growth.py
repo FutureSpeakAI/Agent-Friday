@@ -291,3 +291,27 @@ def test_a_step_consumes_the_signal_rows_it_used(home):
     gr.settings(now=0.0)
     gr.tick(now=WEEK + 1)
     assert list(sig.glob("*.json")) == []
+
+
+# ── what was sent, and the trash purge ───────────────────────────────────────
+
+def test_a_cloud_step_keeps_exactly_what_was_sent(home, cloud):
+    gr.settings(now=0.0)
+    gr.tick(now=WEEK + 1)
+    step = g.active_step()
+    assert step["sent"] == json.loads(cloud[0]["user"])
+    assert gr.payload_problems(step["sent"]) == []
+
+
+def test_a_local_or_seeded_step_sent_nothing(home):
+    gr.set_settings(author="seeded", now=0.0)
+    gr.tick(now=WEEK + 1)
+    assert g.active_step()["sent"] is None
+
+
+def test_the_nightly_job_purges_only_expired_user_deletions(home, monkeypatch):
+    monkeypatch.setattr(gr, "_ledger_rows", lambda since, until: [])
+    calls = []
+    monkeypatch.setattr(g, "purge", lambda **k: calls.append(k) or 0)
+    gr.nightly()
+    assert calls == [{}]
