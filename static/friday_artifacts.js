@@ -93,13 +93,14 @@
   // outlines; a click is swallowed, the element is outlined solid, and one
   // message crosses to the parent: a selector that resolves to that element
   // alone, the tag, its text and a short snippet. Nothing else crosses.
-  const PICKER_JS = "(function(){var hov=null,sel=null;var S=document.createElement('style');S.textContent='[data-fp-hover]{outline:2px dashed #00d4ff!important;outline-offset:2px!important;cursor:crosshair!important}[data-fp-sel]{outline:2px solid #00d4ff!important;outline-offset:2px!important}';document.documentElement.appendChild(S);" +
+  const PICKER_JS = "(function(){var hov=null,sel=null;var S=document.createElement('style');S.textContent='[data-fp-hover]{outline:2px dashed #00d4ff!important;outline-offset:-2px!important;cursor:crosshair!important}[data-fp-sel]{outline:2px solid #00d4ff!important;outline-offset:2px!important}';document.documentElement.appendChild(S);" +
     "function selector(el){if(el.id&&/^[A-Za-z][\\w-]*$/.test(el.id)&&document.querySelectorAll('#'+el.id).length===1)return '#'+el.id;var parts=[],cur=el,depth=0;while(cur&&cur.nodeType===1&&cur!==document.documentElement&&depth<6){var part=cur.tagName.toLowerCase();var cls=(cur.getAttribute('class')||'').trim().split(/\\s+/)[0];if(cls&&/^[A-Za-z_][\\w-]*$/.test(cls))part+='.'+cls;var sib=cur.parentElement?Array.prototype.filter.call(cur.parentElement.children,function(c){return c.tagName===cur.tagName}):[];if(sib.length>1)part+=':nth-of-type('+(sib.indexOf(cur)+1)+')';parts.unshift(part);var cand=parts.join(' > ');try{if(document.querySelectorAll(cand).length===1)return cand;}catch(e){}cur=cur.parentElement;depth++;}return parts.join(' > ');}" +
     "document.addEventListener('mouseover',function(e){var t=e.target;if(!(t instanceof Element)||t===document.documentElement||t===document.body)return;if(hov&&hov!==t)hov.removeAttribute('data-fp-hover');hov=t;t.setAttribute('data-fp-hover','');},true);" +
     "document.addEventListener('mouseout',function(e){if(e.target instanceof Element)e.target.removeAttribute('data-fp-hover');},true);" +
-    "document.addEventListener('click',function(e){var t=e.target;if(!(t instanceof Element))return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();if(sel)sel.removeAttribute('data-fp-sel');sel=t;t.removeAttribute('data-fp-hover');t.setAttribute('data-fp-sel','');var r=t.getBoundingClientRect();var html=t.outerHTML.replace(/ data-fp-(hover|sel)=\"\"/g,'');var fs=parseFloat(getComputedStyle(t).fontSize)||null;" +
+    "document.addEventListener('click',function(e){var t=e.target;if(!(t instanceof Element))return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();if(sel)sel.removeAttribute('data-fp-sel');sel=t;if(hov){hov.removeAttribute('data-fp-hover');hov=null;}t.removeAttribute('data-fp-hover');t.setAttribute('data-fp-sel','');var r=t.getBoundingClientRect();var html=t.outerHTML.replace(/ data-fp-(hover|sel)=\"\"/g,'');var fs=parseFloat(getComputedStyle(t).fontSize)||null;" +
     "parent.postMessage({__friday:'pick',selector:selector(t),tag:t.tagName.toLowerCase(),text:(t.textContent||'').trim().replace(/\\s+/g,' ').slice(0,200),snippet:html.slice(0,400),rect:{x:r.x,y:r.y,w:r.width,h:r.height},font_px:fs},'*');},true);" +
-    "document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(sel)sel.removeAttribute('data-fp-sel');sel=null;}},true);})();";
+    "document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(sel)sel.removeAttribute('data-fp-sel');sel=null;}},true);" +
+    "document.documentElement.addEventListener('mouseleave',function(){if(hov){hov.removeAttribute('data-fp-hover');hov=null;}});})();";
   window.fridayPickerDoc = html => {
     const s = String(html == null ? '' : html);
     const tag = '<script>' + PICKER_JS + '</script>';
@@ -612,7 +613,10 @@
             (pick.text ? '\u201c' + pick.text.slice(0, 60) + '\u201d' : pick.selector) + ' \u2014 say what to change, here or by voice, or:'),
           ['bigger', 'smaller', 'bolder', 'center', 'hide'].map(a => h('button', { key: a, className: 'fa-btn fa-amber', onClick: () => quick(a), disabled: busy }, a)),
           h('button', { className: 'fa-btn fa-quiet', onClick: clearPick, title: 'Forget the selection' }, 'clear'))
-          : h('span', null, 'Point mode: click anything in the preview to select it.')) : null,
+          : h(React.Fragment, null,
+            h('span', { style: { flexBasis: '100%' } }, 'Point mode: click anything in the preview to select it, then say what to change, here or by voice, or:'),
+            ['bigger', 'smaller', 'bolder', 'center', 'hide'].map(a => h('button', { key: a, className: 'fa-btn fa-amber', disabled: true }, a)),
+            h('button', { className: 'fa-btn fa-quiet', onClick: () => setPointing(false), title: 'Leave point mode' }, 'done'))) : null,
       view === 'preview' ? h('div', { className: 'fa-body fa-flush', style: { display: 'flex', justifyContent: 'center', background: frameW ? 'rgba(0,0,0,0.35)' : undefined } },
         doc == null ? h('div', { className: 'fa-empty' }, 'Loading the preview…')
           : h('iframe', { key: reload + ':' + codebase.id + ':' + (pointing ? 'p' : 'v'), ref: frameRef, className: 'fa-frame', sandbox: SANDBOX, srcDoc: doc, referrerPolicy: 'no-referrer', title: 'Preview (sandboxed)', style: frameW ? { width: frameW, maxWidth: '100%', borderLeft: '1px solid rgba(0,212,255,0.15)', borderRight: '1px solid rgba(0,212,255,0.15)' } : undefined })) : null,
