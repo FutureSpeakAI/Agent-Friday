@@ -100,6 +100,22 @@ def test_other_seats_are_not_restricted(client):
     assert r.status_code == 200, r.get_json()
 
 
+def test_saving_a_custom_local_descriptor_on_memory_keeper_is_allowed(client, monkeypatch):
+    from agent_friday.services.provider_registry import get_provider_registry
+
+    descriptor = {"name": "bonsai2-local", "type": "openai-compatible",
+                  "classification": "local", "base_url": "http://127.0.0.1:8090/v1",
+                  "models": ["bonsai2:27b"], "enabled": True}
+    registry = get_provider_registry()
+    monkeypatch.setitem(registry._providers, "bonsai2-local", descriptor)
+    r = client.post("/api/settings", json={"settings": {
+        "capability_routing": {
+            "memory_manager": {"model": "bonsai2:27b", "provider": "bonsai2-local"},
+        },
+    }})
+    assert r.status_code == 200, r.get_json()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # The runtime half: refuse, and SAY so.
 # ─────────────────────────────────────────────────────────────────────────────

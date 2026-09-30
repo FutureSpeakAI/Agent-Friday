@@ -85,6 +85,7 @@ _MIN_CACHEABLE = {
     "claude-opus-5-5": 512,
     "claude-opus-5": 512,
     "claude-sonnet-5": 1024,
+    "claude-sonnet-5-5": 512,
     "claude-sonnet-4-6": 1024,
     # Same dated-key trap as the pricing table: keyed only on the alias, the
     # canonical id fell to the 1024 default and we would mark a 2K prefix that

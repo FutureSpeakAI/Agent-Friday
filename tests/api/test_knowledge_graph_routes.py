@@ -24,6 +24,10 @@ def seeded_wiki():
         "# Galaxy View\n\nFriday's 3D knowledge explorer.\n", encoding="utf-8")
     from agent_friday.services.knowledge_graph import mark_wiki_dirty
     mark_wiki_dirty("test-seed")
+    from agent_friday.services.knowledge_graph.wiki_graph import rebuild_tier_a
+    from agent_friday.services.knowledge_graph import consume_wiki_dirty
+    rebuild_tier_a()
+    consume_wiki_dirty()
     return wiki
 
 
@@ -95,7 +99,7 @@ def test_reindex_tier_a_and_wiki_edit_marks_dirty(client, seeded_wiki):
     assert r.get_json()["entities"] >= 2
 
     # Editing a page through the wiki API must dirty the graph, and the next
-    # graph read must pick up the new page.
+    # graph read schedules a refresh without blocking on the new page.
     r = client.put("/api/wiki/edit", json={
         "file": "research/new-idea.md",
         "content": "# New Idea\n\nLinks to [[GraphRAG]].\n"})
@@ -103,6 +107,10 @@ def test_reindex_tier_a_and_wiki_edit_marks_dirty(client, seeded_wiki):
     from agent_friday.services.knowledge_graph import peek_wiki_dirty
     assert peek_wiki_dirty() is True
 
+    client.get("/api/knowledge-graph/graph")
+    from agent_friday.routes.knowledge_graph import _rebuild_lock
+    with _rebuild_lock:
+        pass
     r = client.get("/api/knowledge-graph/graph")
     ids = {e["id"] for e in r.get_json()["entities"]}
     assert "page:research/new-idea" in ids
@@ -113,3 +121,58 @@ def test_reindex_tier_a_and_wiki_edit_marks_dirty(client, seeded_wiki):
     assert r.status_code in (200, 409)
     if r.status_code == 200:
         assert r.get_json()["status"] == "started"
+
+
+def test_duplicate_tier_a_reindex_returns_busy(client):
+    from agent_friday.routes.knowledge_graph import _rebuild_lock
+    with _rebuild_lock:
+        response = client.post("/api/knowledge-graph/reindex", json={"tier": "A"})
+    assert response.status_code == 409
+    assert response.get_json()["status"] == "busy"
+
+
+def test_wiki_structure_avoids_per_page_path_stats(client, tmp_path, monkeypatch):
+    from pathlib import Path
+    from agent_friday.routes import wiki
+    folder = tmp_path / "wiki" / "reference"
+    folder.mkdir(parents=True)
+    for number in range(200):
+        (folder / f"page-{number}.md").write_text("# Page", encoding="utf-8")
+    monkeypatch.setattr(wiki, "WIKI_DIR", folder.parent)
+    monkeypatch.setattr(wiki, "_load_pending_wiki", lambda: [])
+    original = Path.stat
+    calls = []
+
+    def counted(path, *args, **kwargs):
+        if path.suffix == ".md" and path.parent == folder:
+            calls.append(path)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", counted)
+    data = client.get("/api/wiki/structure").get_json()
+    assert len(data["structure"]["reference"]) == 200
+    assert len(data["recent"]) == 5
+    assert not calls, "Use directory-entry metadata rather than stat every page"
+
+
+def test_graph_preview_keeps_detail_out_of_initial_payload(client, monkeypatch, tmp_path):
+    from agent_friday.routes import knowledge_graph as route
+    from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
+    store = KnowledgeGraphStore(base_dir=tmp_path / "graph")
+    node = {"id": "demo", "title": "Demo", "description": "a" * 2000,
+            "provenance": {"sensitivity": 1, "wiki_pages": ["research/demo.md"],
+                           "source_refs": ["long evidence record" * 1000]}}
+    store.save("entities", [node])
+    store.save("relationships", [])
+    store.save("communities", [{"id": "c", "community": "c", "size": 1,
+                                "entity_ids": ["demo"], "relationship_ids": []}])
+    monkeypatch.setattr(route, "_ensure_fresh", lambda: store)
+    preview = client.get("/api/knowledge-graph/graph?view=compact").get_json()
+    shown = preview["entities"][0]
+    assert "source_refs" not in shown["provenance"]
+    assert shown["provenance"]["wiki_pages"] == ["research/demo.md"]
+    assert len(shown["description"]) <= 480
+    assert "entity_ids" not in preview["communities"][0]
+    full = client.get("/api/knowledge-graph/node/demo").get_json()["node"]
+    assert full == node
+    assert client.get("/api/knowledge-graph/graph").get_json()["entities"][0] == node

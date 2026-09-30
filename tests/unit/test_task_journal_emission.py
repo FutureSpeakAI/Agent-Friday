@@ -74,7 +74,8 @@ def _fake_anthropic(n_tool_rounds, thinking=False):
             i = calls["n"]
             blocks = []
             if thinking:
-                blocks.append(_Block(type="thinking", thinking=f"private thought {i}"))
+                blocks.append(_Block(type="thinking", thinking=f"private thought {i}",
+                                     signature=f"provider-signature-{i}"))
             blocks.append(_Block(type="text", text=f"I will now do step {i}"))
             if i <= n_tool_rounds:
                 blocks.append(_Block(type="tool_use", id=f"tu{i}", name="search_web",

@@ -9,6 +9,117 @@
      backed by src/agent_friday/routes/intelligence.py -->
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback,useContext}=React;
+function useIntelligence(pollMs, view, enabled = true) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [stalled, setStalled] = useState(false);
+  const flight = useRef(null);
+  const unreadSince = useRef(null);
+  const load = React.useCallback(() => {
+    if (!enabled) return Promise.resolve();
+    if (flight.current) return flight.current.promise;
+    const run = { ctrl: new AbortController(), promise: null };
+    flight.current = run;
+    const current = () => flight.current === run;
+    run.timer = setTimeout(() => run.ctrl.abort(), 30000);
+    run.stallTimer = setTimeout(() => { if (current()) setStalled(true); }, 10000);
+    const url = '/api/intelligence' + (view === 'picker' ? '?view=picker' : '');
+    run.promise = apiFetch(url, { signal: run.ctrl.signal }).then(async r => {
+      if (!r.ok) {
+        const error = new Error('Model information answered HTTP ' + r.status + '.');
+        error.status = r.status;
+        throw error;
+      }
+      return r.json();
+    }).then(j => {
+      if (!current()) return;
+      if (!j || j.status !== 'ok' || j.catalog_error) {
+        throw new Error((j && (j.catalog_error || j.message || j.error)) || 'No usable model information was returned.');
+      }
+      setD(j);
+      if (view === 'picker' && j.catalog_reading === 'unknown') {
+        if (unreadSince.current === null) unreadSince.current = Date.now();
+        if (Date.now() - unreadSince.current >= 10000) {
+          setErr({ kind: 'discovery', what: 'Model discovery is still busy.',
+            fix: 'The list will update when discovery finishes. You can retry or close this menu and keep chatting.' });
+          return;
+        }
+      } else unreadSince.current = null;
+      setErr(null);
+    }).catch(e => {
+      if (!current()) return;
+      const stale = e.status === 401 || e.status === 403;
+      setErr({ kind: stale ? 'stale-tab' : e.name === 'AbortError' ? 'timeout' : 'unreachable',
+        what: stale ? 'This page can no longer authenticate with the server.'
+          : e.name === 'AbortError' ? 'Model information did not answer within 30 seconds.' : e.message,
+        fix: stale ? 'Reload the page (Ctrl+Shift+R).' : 'Retry, or check that Friday is still running.' });
+    }).finally(() => {
+      clearTimeout(run.timer); clearTimeout(run.stallTimer);
+      if (current()) { flight.current = null; setStalled(false); }
+    });
+    return run.promise;
+  }, [view, enabled]);
+  useEffect(() => {
+    load();
+    const timer = enabled && pollMs ? setInterval(load, pollMs) : null;
+    return () => {
+      clearInterval(timer);
+      const run = flight.current;
+      flight.current = null;
+      if (run) { clearTimeout(run.timer); clearTimeout(run.stallTimer); run.ctrl.abort(); }
+    };
+  }, [load, pollMs, enabled]);
+  return { d, err, reload: load, stalled };
+}
+
+const fridaySeatSaves = new Map();
+async function fridaySaveConversationSeat(cid, seat, onSaved, onError, onPending) {
+  const run = {};
+  fridaySeatSaves.set(cid, run);
+  const current = () => fridaySeatSaves.get(cid) === run;
+  let timer = null;
+  const deadline = Date.now() + 45000;
+  let notified = false;
+  let changeId = null;
+  try {
+    let data;
+    while (current()) {
+      const ctrl = new AbortController();
+      timer = setTimeout(() => ctrl.abort(), 10000);
+      const r = await apiFetch('/api/conversations/' + encodeURIComponent(cid), {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seat, ...(changeId ? { seat_change_id: changeId } : {}) }), signal: ctrl.signal,
+      });
+      data = await r.json();
+      clearTimeout(timer); timer = null;
+      if (!current()) return;
+      if (!r.ok || !data || data.status === 'error') {
+        throw new Error((data && (data.note || data.detail || data.error)) || 'Could not save the model choice (HTTP ' + r.status + ').');
+      }
+      if (data.superseded) throw new Error('A newer model choice was saved in another window. Reopen this chat to see its saved model.');
+      if (!data.seat_pending) break;
+      changeId = data.seat_change_id;
+      if (Date.now() >= deadline) throw new Error('The local model check is still busy. Your choice has not changed. Try again shortly.');
+      if (!notified && onPending) onPending('Checking the local model before changing this chat.');
+      notified = true;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    if (!current()) return;
+    const saved = (data.conversation || {}).seat || null;
+    if (!data.conversation || (saved && saved.model || null) !== (seat && seat.model || null)) {
+      throw new Error(data.note || 'The server did not accept this model choice.');
+    }
+    onSaved(saved);
+  } catch (error) {
+    if (current()) onError(error.name === 'AbortError'
+      ? new Error('Could not confirm the model change in time. Reopen this chat to check its saved model, or choose again.') : error);
+  } finally {
+    clearTimeout(timer);
+    if (current()) fridaySeatSaves.delete(cid);
+  }
+}
+// End conversation seat saves
+
 // Per-workspace live customizations Friday applies through the Workspace Studio
 // chat (the 💬 button on every window). map: wsId -> customization patch.
 // setCust(wsId, patch) hot-reloads one workspace's look with no rebuild/restart.
@@ -1409,16 +1520,16 @@ function OutreachPanel(){
 // Vanilla Three.js r128 (vendored globals). Instanced star nodes, merged edge
 // filaments, community nebulae, UnrealBloom. Entrance: camera fly-in while
 // communities ignite one by one. Server precomputes x/y/z — no client sim.
-const KG_PALETTE=['#00d4ff','#ff00aa','#00ff80','#8a2be2','#ff6600','#5fa8ff','#ff8bcb','#4ecdc4','#feca57','#ff6b6b','#7de1ff','#b0ffc8'];
+const KG_PALETTE=['#39d5ff','#b286ff','#3eebb0','#668bff','#ffbb55','#ff65a8','#8ce35b','#ff7a66','#60e0dc','#d476ff','#f0d764','#6faaff'];
 const KG_LOD_THRESHOLD=2500; // above this, render community super-nodes first
-const KG_EDGE_OPACITY = 0.32; // additive: dense clusters wash out above this
+const KG_EDGE_OPACITY = 0.16; // quiet context; selected relationships receive emphasis
 const KG_ASSET_DIR = '/static/galaxy/'; // generated art, see CREDITS.md
-const KG_ARRANGE_SECS = 1.7; // one node's flight between arrangements
-const KG_ARRANGE_STAGGER = 0.55; // launch spread across nodes, seconds
+const KG_ARRANGE_SECS = 0.85; // one node's flight between arrangements
+const KG_ARRANGE_STAGGER = 0.15; // launch spread across nodes, seconds
 const KG_ARRANGEMENTS = [{
   id: 'galaxy',
   label: 'Galaxy',
-  tip: 'The linked layout: pages sit near the pages they link to'
+  tip: 'A stable community overview; connections retain the underlying graph relationships'
 }, {
   id: 'cluster',
   label: 'Clusters',
@@ -1430,7 +1541,7 @@ const KG_ARRANGEMENTS = [{
 }, {
   id: 'section',
   label: 'Sections',
-  tip: 'One tower per wiki folder'
+  tip: 'A bounded group for each wiki folder'
 }, {
   id: 'timeline',
   label: 'Timeline',
@@ -1438,7 +1549,7 @@ const KG_ARRANGEMENTS = [{
 }, {
   id: 'rings',
   label: 'Rings',
-  tip: "Saturn: Friday's identity is the planet, each wiki section a ring, orbiting at Kepler speeds"
+  tip: "Each wiki section forms a ring; animation is available in the tour"
 }, {
   id: 'sphere',
   label: 'Sphere',
@@ -1491,9 +1602,9 @@ const kgNodeMaterial = () => new THREE.ShaderMaterial({
     void main(){
       float ndv = clamp(dot(normalize(vN), normalize(vV)), 0.0, 1.0);
       float rim = pow(1.0 - ndv, 2.4);
-      vec3 col = vColor * (0.28 + 0.26 * ndv) + vColor * rim * 0.95;
-      col *= mix(0.12, 1.0, smoothstep(0.0, 0.16, ndv));
-      col *= mix(0.25, 1.0, 1.0 - smoothstep(uNear, uFar, vDepth));
+      vec3 col = vColor * (0.58 + 0.32 * ndv) + vColor * rim * 0.18;
+      col *= mix(0.5, 1.0, smoothstep(0.0, 0.16, ndv));
+      col *= mix(0.65, 1.0, 1.0 - smoothstep(uNear, uFar, vDepth));
       gl_FragColor = vec4(col, 1.0);
     }`
 });
@@ -1502,6 +1613,74 @@ const kgNodeMaterial = () => new THREE.ShaderMaterial({
 // pane and the bottom bar belong to KnowledgeWS, which drives the graph
 // through the state object handed to onReady/onGraphLoaded (focusPath,
 // focusSection, linksForPath, clearFocus, reload).
+// Fit a bounding sphere using the narrower field of view, including Split panes.
+// A stable community overview avoids spring-collapse and isolated outliers.
+// These are display coordinates only; saved graph records remain unchanged.
+function kgOverviewPositions(entities) {
+  const groups=new Map();
+  entities.forEach(e=>{const key=String(e.community||'0');if(!groups.has(key))groups.set(key,[]);groups.get(key).push(e)});
+  const ordered=[...groups].sort((a,b)=>b[1].length-a[1].length||a[0].localeCompare(b[0]));
+  const result=new Map(),golden=Math.PI*(3-Math.sqrt(5));
+  ordered.forEach(([key,members],group)=>{
+    const count=members.length, radius=Math.max(12,Math.min(group===0?104:42,6*Math.cbrt(count)));
+    const angle=(group-1)*golden, y=group===0?0:0.55*Math.sin(angle*0.6);
+    const center=group===0?[0,0,0]:[164*Math.cos(angle),85*y,164*Math.sin(angle)];
+    members.slice().sort((a,b)=>(b.degree||0)-(a.degree||0)||a.id.localeCompare(b.id)).forEach((e,i)=>{
+      const t=(i+0.5)/count, z=1-2*t, ring=Math.sqrt(Math.max(0,1-z*z)),r=radius*Math.cbrt(t),theta=i*golden;
+      result.set(e.id,[center[0]+r*ring*Math.cos(theta),center[1]+r*z,center[2]+r*ring*Math.sin(theta)]);
+    });
+  });
+  return result;
+}
+
+function kgSceneFrame(points, aspect, fov = 58) {
+  const valid = points.filter(p => p.length === 3 && p.every(Number.isFinite));
+  if (!valid.length) return {center:[0,0,0], radius:20, distance:90};
+  const lo=[Infinity,Infinity,Infinity], hi=[-Infinity,-Infinity,-Infinity];
+  valid.forEach(p=>p.forEach((v,i)=>{lo[i]=Math.min(lo[i],v);hi[i]=Math.max(hi[i],v)}));
+  const center=lo.map((v,i)=>(v+hi[i])/2);
+  const radius=Math.max(12,...valid.map(p=>Math.hypot(...p.map((v,i)=>v-center[i]))))+8;
+  const halfV=fov*Math.PI/360, halfH=Math.atan(Math.tan(halfV)*Math.max(0.15,aspect||1));
+  return {center,radius,distance:radius/Math.sin(Math.min(halfV,halfH))*1.12};
+}
+function kgSectionPoint(index, count, group, groups) {
+  const cols=Math.ceil(Math.sqrt(groups)), rows=Math.ceil(groups/cols);
+  const center=[(group%cols-(cols-1)/2)*145,((rows-1)/2-Math.floor(group/cols))*145,0];
+  if(count<=1)return center;
+  const t=(index+0.5)/count, z=1-2*t, ring=Math.sqrt(Math.max(0,1-z*z));
+  const radius=Math.min(49,10+3*Math.cbrt(count)), r=radius*Math.cbrt(t), theta=index*Math.PI*(3-Math.sqrt(5));
+  return [center[0]+r*ring*Math.cos(theta),center[1]+r*z,0.65*r*ring*Math.sin(theta)];
+}
+
+// A spanning forest preserves every connected component; additional links add detail.
+// Focus and All connections retain every eligible relationship in the loaded graph.
+function kgVisibleEdgePairs(pairs, focus, eligible, budget=4500, mode='balanced') {
+  const candidates=eligible.filter(k=>focus==null||pairs[k]===focus||pairs[k+1]===focus);
+  if(focus!=null||mode==='all')return candidates.flatMap(k=>[k,k+1]);
+  const parent=new Map(),chosen=new Set(),degree=new Map();
+  const find=n=>{if(!parent.has(n))parent.set(n,n);let r=n;while(parent.get(r)!==r)r=parent.get(r);while(parent.get(n)!==n){const p=parent.get(n);parent.set(n,r);n=p}return r};
+  const add=k=>{if(chosen.has(k))return;chosen.add(k);for(const n of [pairs[k],pairs[k+1]])degree.set(n,(degree.get(n)||0)+1)};
+  for(const k of candidates){const a=find(pairs[k]),b=find(pairs[k+1]);if(a!==b){parent.set(a,b);add(k)}}
+  for(const k of candidates)if((degree.get(pairs[k])||0)<2||(degree.get(pairs[k+1])||0)<2)add(k);
+  const remaining=candidates.filter(k=>!chosen.has(k)),room=Math.max(0,Math.min(remaining.length,budget-chosen.size));
+  for(let i=0;i<room;i++)add(remaining[Math.floor(i*remaining.length/room)]);
+  return candidates.filter(k=>chosen.has(k)).flatMap(k=>[k,k+1]);
+}
+function kgNodeHue(entity, communityIndex=0) {
+  const kind=String(entity.id||'').split('/').pop().split('-')[0];
+  const hues={person:.12,org:.43,organization:.43,publication:.66,publication_series:.66,series:.66,book:.66,
+    social:.9,account:.9,online_account:.9,project:.055,application:.055,service:.055,
+    photograph:.78,manuscript:.78,collection:.78,place:.32,property:.32,pet:.32,topic:.52};
+  const sectionHues={people:.12,organizations:.43,journalism:.66,projects:.055,professional:.055};
+  const base=hues[entity.type]??hues[kind]??sectionHues[entity.section]??((communityIndex*.618+0.53)%1);
+  let hash=2166136261;for(const c of String(entity.id||''))hash=Math.imul(hash^c.charCodeAt(0),16777619)>>>0;
+  return (base+((hash%101)/100-.5)*.12+1)%1;
+}
+function kgEdgeOpacity(count, focused, mode) {
+  return focused?Math.max(.07,.24*Math.sqrt(180/Math.max(180,count))):
+    Math.max(.015,.16*Math.pow(4500/Math.max(4500,count),.85));
+}
+
 function KnowledgeGraphWS(props){
   const P=props||{};
   const embedded=!!P.embedded;
@@ -1523,6 +1702,8 @@ function KnowledgeGraphWS(props){
   const [lodMode,setLodMode]=useState(false);
   const [arrangement,setArrangement]=useState('galaxy');
   const [hasDates,setHasDates]=useState(false);
+  const [connectionMode,setConnectionMode]=useState('balanced');
+  const [visibleLinks,setVisibleLinks]=useState(0);
   const [touring,setTouring]=useState(false);
 
   useTabState(embedded?'__kg_embedded__':'knowledge',()=>({query:searchQ})); // what its own tab opens on; inside Knowledge, KnowledgeWS answers
@@ -1567,7 +1748,7 @@ function KnowledgeGraphWS(props){
     // ── renderer / scene / camera ────────────────────────────
     const scene=new THREE.Scene();
     scene.fog=new THREE.FogExp2(0x000308,0.0016);
-    const camera=new THREE.PerspectiveCamera(58,1,0.1,4000);
+    const camera=new THREE.PerspectiveCamera(58,1,0.1,12000);
     const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
     renderer.setClearColor(0x000208,1);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
@@ -1578,9 +1759,8 @@ function KnowledgeGraphWS(props){
     const buildComposer=(w,h)=>{
       composer=new THREE.EffectComposer(renderer);
       composer.addPass(new THREE.RenderPass(scene,camera));
-      // Bloom only the bright node rims and labels (threshold 0.3), not the
-      // node bodies: a low threshold fused a dense cluster into one glow.
-      bloomPass=new THREE.UnrealBloomPass(new THREE.Vector2(w,h),0.55,0.45,0.3);
+      // Restrained bloom preserves bright focus cues without washing out dense links.
+      bloomPass=new THREE.UnrealBloomPass(new THREE.Vector2(w,h),0.14,0.22,0.85);
       composer.addPass(bloomPass);
     };
 
@@ -1588,7 +1768,7 @@ function KnowledgeGraphWS(props){
 
     // Distant starfield backdrop (ported GalaxyBackground design).
     (()=>{
-      const N=2600,pos=new Float32Array(N*3),col=new Float32Array(N*3);
+      const N=600,pos=new Float32Array(N*3),col=new Float32Array(N*3);
       let sd=987654321;const rnd=()=>{sd=(sd*1103515245+12345)&0x7fffffff;return sd/0x7fffffff};
       for(let i=0;i<N;i++){
         const r=1100+rnd()*700,th=rnd()*Math.PI*2,ph=Math.acos(2*rnd()-1);
@@ -1598,7 +1778,7 @@ function KnowledgeGraphWS(props){
       const g=new THREE.BufferGeometry();
       g.setAttribute('position',new THREE.BufferAttribute(pos,3));
       g.setAttribute('color',new THREE.BufferAttribute(col,3));
-      const m=new THREE.PointsMaterial({size:2.2,vertexColors:true,transparent:true,opacity:0.5,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true});
+      const m=new THREE.PointsMaterial({size:2.2,vertexColors:true,transparent:true,opacity:0.16,depthWrite:false,blending:THREE.NormalBlending,sizeAttenuation:true});
       const pts=new THREE.Points(g,m);S.starfield=pts;scene.add(pts);
     })();
 
@@ -1613,12 +1793,28 @@ function KnowledgeGraphWS(props){
       camera.lookAt(cam.target);
     };
 
+    const fitView=(positions,immediate=false)=>{
+      const points=positions?Array.from({length:positions.length/3},(_,i)=>Array.from(positions.slice(i*3,i*3+3))):(S.entities||[]).map(e=>[e.x,e.y,e.z]);
+      if(!points.length)return;
+      const frame=kgSceneFrame(points,camera.aspect);
+      camGoal.target.fromArray(frame.center);camGoal.r=frame.distance;
+      S.viewScale=Math.min(3,Math.max(1,frame.distance*Math.tan(camera.fov*Math.PI/360)/(mount.clientHeight||500)*1.8));
+      if(S.mesh&&S.baseScale){
+        S.entities.forEach((e,i)=>writeNode(i,e,S.curScale&&S.curScale[i]||1));
+        S.mesh.instanceMatrix.needsUpdate=true;
+        if(S.outline)S.outline.instanceMatrix.needsUpdate=true;
+      }
+      if(immediate){cam.target.copy(camGoal.target);cam.r=camGoal.r;applyCam()}
+      idleSpin=false;userTouched=false;
+    };
+    S.fitView=()=>{stopTour();fitView(undefined,true)};
+
     // ── graph content (rebuilt per load) ─────────────────────
     let content=new THREE.Group();grp.add(content);
     const clock=new THREE.Clock();
     let entranceT0=-1;                 // seconds at load-complete
     let igniteOrder=[];                // [{comm, start}]
-    let idleSpin=true,userTouched=false;
+    let idleSpin=false,userTouched=false;
     let pulses=[];                     // [{idx,t0}]
     const raycaster=new THREE.Raycaster();
     // Off-canvas until the pointer first moves: the hover test runs every
@@ -1627,6 +1823,7 @@ function KnowledgeGraphWS(props){
 
     const hexToColor=(h)=>new THREE.Color(h);
     const commColor=(ci)=>hexToColor(KG_PALETTE[ci%KG_PALETTE.length]);
+    const nodeColor=(e,ci)=>e.type==='soul'?new THREE.Color('#fff2ce'):new THREE.Color().setHSL(kgNodeHue(e,ci),.84,.61);
 
     const disposeContent=()=>{
       content.traverse(o=>{
@@ -1796,24 +1993,25 @@ function KnowledgeGraphWS(props){
     };
     const makeLabel=(text,color,scale)=>{
       const c=document.createElement('canvas');const px=64;
-      const ctx=c.getContext('2d');ctx.font='700 '+px+'px Orbitron, sans-serif';
+      const ctx=c.getContext('2d');ctx.font='500 '+px+'px Inter, sans-serif';
       const w=Math.min(1400,ctx.measureText(text).width+40);
       c.width=w;c.height=px+28;
       const ctx2=c.getContext('2d');
-      ctx2.font='700 '+px+'px Orbitron, sans-serif';
-      ctx2.fillStyle=color;ctx2.shadowColor=color;ctx2.shadowBlur=26;
+      ctx2.font='500 '+px+'px Inter, sans-serif';
+      ctx2.fillStyle='#c7d2e2';ctx2.shadowBlur=0;
       ctx2.textBaseline='middle';ctx2.fillText(text,20,c.height/2);
       const tex=new THREE.CanvasTexture(c);tex.minFilter=THREE.LinearFilter;
-      const mat=new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0,depthWrite:false});
-      const spr=new THREE.Sprite(mat);
-      const s=scale||0.14;spr.scale.set(c.width*s,c.height*s,1);
+      const mat=new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0,depthWrite:false,depthTest:false,fog:false});
+      const spr=new THREE.Sprite(mat);spr.renderOrder=10;
+      const s=scale||0.14;spr.scale.set(c.width*s,c.height*s,1);spr.userData.labelAspect=c.width/c.height;
       return spr;
     };
 
     // Build the full scene from API data.
     const buildScene=(data,opts)=>{
       disposeContent();
-      const entities=data.entities||[],rels=data.relationships||[],comms=data.communities||[];
+      const entities=(data.entities||[]).map(e=>({...e})),rels=data.relationships||[],comms=data.communities||[];
+      const overview=kgOverviewPositions(entities);entities.forEach(e=>{[e.x,e.y,e.z]=overview.get(e.id)});
       S.entities=entities;S.relationships=rels;S.communities=comms;
       S.entById={};entities.forEach(e=>{S.entById[e.id]=e});
       const commIdx={};comms.forEach((c,i)=>{commIdx[String(c.community)]=i});
@@ -1831,12 +2029,12 @@ function KnowledgeGraphWS(props){
       const dark=new THREE.Color(0x061018);
       for(let i=0;i<n;i++){
         const e=entities[i];
-        const s=(e.type==='soul'?3.4:1.5+Math.min(e.degree||0,22)*0.11);
+        const s=(e.type==='soul'?2.5:0.9+Math.min(1.5,Math.log1p(Math.max(0,e.degree||0))*0.22));
         baseScale[i]=s;
         dummy.position.set(e.x||0,e.y||0,e.z||0);
         dummy.scale.setScalar(s);dummy.updateMatrix();
         mesh.setMatrixAt(i,dummy.matrix);
-        const c=e.type==='soul'?new THREE.Color('#eafcff'):commColor(ciOf(e));
+        const c=nodeColor(e,ciOf(e));
         baseColor[i*3]=c.r;baseColor[i*3+1]=c.g;baseColor[i*3+2]=c.b;
         mesh.setColorAt(i,opts&&opts.instant?c:dark);
         e.__idx=i;e.__ci=ciOf(e);e.__gx=e.x||0;e.__gy=e.y||0;e.__gz=e.z||0;
@@ -1881,9 +2079,9 @@ function KnowledgeGraphWS(props){
           const a=S.entById[r.source],b=S.entById[r.target];
           if(!a||!b)return;
           pairs.push(a.__idx,b.__idx);
-          const ca=a.type==='soul'?new THREE.Color('#9adfff'):commColor(a.__ci);
-          const cb=b.type==='soul'?new THREE.Color('#9adfff'):commColor(b.__ci);
-          const w=r.weight||0.5,f=0.16+w*0.34;
+          const ca=nodeColor(a,a.__ci);
+          const cb=nodeColor(b,b.__ci);
+          const w=r.weight||0.5,f=0.72+Math.min(w,1)*0.28;
           pos[k]=a.x;pos[k+1]=a.y;pos[k+2]=a.z;pos[k+3]=b.x;pos[k+4]=b.y;pos[k+5]=b.z;
           col[k]=ca.r*f;col[k+1]=ca.g*f;col[k+2]=ca.b*f;col[k+3]=cb.r*f;col[k+4]=cb.g*f;col[k+5]=cb.b*f;
           k+=6;
@@ -1891,7 +2089,8 @@ function KnowledgeGraphWS(props){
         const eg=new THREE.BufferGeometry();
         eg.setAttribute('position',new THREE.BufferAttribute(pos,3));
         eg.setAttribute('color',new THREE.BufferAttribute(col,3));
-        const em=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:opts&&opts.instant?KG_EDGE_OPACITY:0,blending:THREE.AdditiveBlending,depthWrite:false});
+        eg.setIndex(new THREE.BufferAttribute(new Uint32Array(pairs.length),1));
+        const em=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:opts&&opts.instant?KG_EDGE_OPACITY:0,blending:THREE.NormalBlending,depthWrite:false,fog:false});
         const lines=new THREE.LineSegments(eg,em);
         lines.frustumCulled=false;  // endpoints move during arrangements
         content.add(lines);S.edgeMat=em;S.edgePos=eg.attributes.position;S.edgePairs=pairs;
@@ -1899,7 +2098,7 @@ function KnowledgeGraphWS(props){
       } else {S.edgeMat=null;S.edgePos=null;S.edgePairs=null;S.edgeGeo=null;S.edgeCol=null}
 
       // — community nebulae + labels —
-      S.nebulae=[];S.labels=[];
+      S.nebulae=[];S.labels=[];S.labelSprites=[];
       const centers={};
       comms.forEach((c,ci)=>{
         const members=entities.filter(e=>e.__ci===ci);
@@ -1926,25 +2125,26 @@ function KnowledgeGraphWS(props){
         content.add(neb);S.nebulae[ci]=pm;
         const lbl=makeLabel((c.title||('cluster '+ci)).toUpperCase(),KG_PALETTE[ci%KG_PALETTE.length],0.105);
         lbl.position.set(cx,cy+spread+11,cz);
-        content.add(lbl);S.labels[ci]=lbl.material;
+        lbl.userData.priority=members.length;content.add(lbl);S.labels[ci]=lbl.material;S.labelSprites.push(lbl);
       });
       S.centers=centers;
 
       // — entrance schedule —
-      if(opts&&opts.instant){entranceT0=-2;S.nebulae.forEach(m=>{if(m)m.opacity=0.1});S.labels.forEach(m=>{if(m)m.opacity=0.8})}
+      if(opts&&opts.instant){entranceT0=-2;S.nebulae.forEach(m=>{if(m)m.opacity=0.005});S.labels.forEach(m=>{if(m)m.opacity=0.95})}
       else{
         entranceT0=clock.getElapsedTime();
         const order=comms.map((c,ci)=>ci).filter(ci=>centers[ci])
           .sort((a,b)=>(comms[b].size||0)-(comms[a].size||0));
         igniteOrder=order.map((ci,i)=>({ci,start:2.0+i*0.22}));
         cam.r=760;cam.theta=0.6;cam.phi=1.15;cam.target.set(0,0,0);
-        camGoal.r=Math.max(190,(data.layout&&data.layout.radius||150)*1.45);
-        camGoal.theta=1.5;camGoal.phi=1.05;camGoal.target.set(0,0,0);
-        idleSpin=true;userTouched=false;
+        camGoal.r=kgSceneFrame(entities.map(e=>[e.x,e.y,e.z]),camera.aspect).distance;
+        camGoal.theta=1.5;camGoal.phi=1.05;camGoal.target.fromArray(kgSceneFrame(entities.map(e=>[e.x,e.y,e.z]),camera.aspect).center);
+        idleSpin=false;userTouched=false;
       }
       S.highlight=null;S.applyColors=applyColors;
       flight=null;S.motion=null;S.drawIn=null;S.curScale=null;S.depth=null;stopTour();
       S.decor=null;S.layout='galaxy';setArrangement('galaxy');
+      if(opts&&opts.instant)fitView(undefined,true);
       setHasDates(entities.some(e=>e.updated));
       applyCam();
     };
@@ -1957,10 +2157,10 @@ function KnowledgeGraphWS(props){
       for(let i=0;i<S.entities.length;i++){
         c.setRGB(S.baseColor[i*3],S.baseColor[i*3+1],S.baseColor[i*3+2]);
         if(hl&&hl.size){
-          if(hl.has(S.entities[i].id))c.multiplyScalar(1.5);
-          else c.multiplyScalar(0.16);
+          if(hl.has(S.entities[i].id))c.multiplyScalar(1.15);
+          else c.multiplyScalar(0.36);
         }
-        if(hov&&hov.has(i))c.multiplyScalar(1.6);
+        if(hov&&hov.has(i))c.multiplyScalar(1.12);
         mesh.setColorAt(i,c);
         if(S.outline){
           // Silhouette rim: dimmed node color normally; the HOVERED node's rim
@@ -1983,7 +2183,7 @@ function KnowledgeGraphWS(props){
       const apply=(i,mult)=>{
         const e=S.entities[i];if(!e)return;
         od.position.set(e.x||0,e.y||0,e.z||0);
-        od.scale.setScalar(S.baseScale[i]*mult);od.updateMatrix();
+        od.scale.setScalar(S.baseScale[i]*(S.viewScale||1)*mult);od.updateMatrix();
         S.outline.setMatrixAt(i,od.matrix);
       };
       if(S.emphIdx!==undefined&&S.emphIdx!==idx)apply(S.emphIdx,1.12);
@@ -2008,7 +2208,7 @@ function KnowledgeGraphWS(props){
     // ── data load ────────────────────────────────────────────
     const loadGraph=(community,opts)=>{
       setStatus('loading');
-      const url='/api/knowledge-graph/graph'+(community!=null?('?community='+encodeURIComponent(community)):'');
+      const url='/api/knowledge-graph/graph?view=compact'+(community!=null?('&community='+encodeURIComponent(community)):'');
       apiFetch(url).then(r=>r.json()).then(d=>{
         if(disposed)return;
         if(d.status!=='ok'){setStatus('error');return}
@@ -2016,8 +2216,8 @@ function KnowledgeGraphWS(props){
         if(community==null&&d.entities.length>KG_LOD_THRESHOLD){
           setLodMode(true);buildSuperNodes(d);setStatus('ready');
         } else {
-          setLodMode(false);buildScene(d,opts);setStatus('ready');
-          S.edgeFocusIdx=null;S.focusSet=null;S.starOn=false;
+          setLodMode(false);buildScene(d,{...(opts||{}),instant:true});setStatus('ready');
+          S.edgeFocusIdx=null;S.focusSet=null;S.starOn=false;recolorEdges();
           // A live reload (a page saved) keeps the arrangement on screen.
           if(opts&&opts.keepLayout&&opts.keepLayout!=='galaxy'&&S.arrange)S.arrange(opts.keepLayout);
           if(S.refreshHighlight)S.refreshHighlight();
@@ -2047,7 +2247,7 @@ function KnowledgeGraphWS(props){
         dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
         mesh.setColorAt(i,commColor(i));
         const lbl=makeLabel((c.title||'').toUpperCase()+' · '+(c.size||0),KG_PALETTE[i%KG_PALETTE.length],0.16);
-        lbl.position.set(p[0],p[1]+16,p[2]);lbl.material.opacity=0.85;
+        lbl.position.set(p[0],p[1]+16,p[2]);lbl.material.opacity=0.725;
         content.add(lbl);
       });
       if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
@@ -2095,7 +2295,7 @@ function KnowledgeGraphWS(props){
       const ent=hits.length?S.entities[hits[0].instanceId]:S.lastHoverEnt;
       if(ent)openWikiPage(ent);
     };
-    const onWheel=(e)=>{e.preventDefault();stopTour();camGoal.r=Math.max(40,Math.min(1200,camGoal.r*(1+e.deltaY*0.0011)));idleSpin=false;userTouched=true};
+    const onWheel=(e)=>{e.preventDefault();stopTour();camGoal.r=Math.max(40,Math.min(6000,camGoal.r*(1+e.deltaY*0.0011)));idleSpin=false;userTouched=true};
     const flyTo=(ent)=>{
       camGoal.target.set(ent.x,ent.y,ent.z);
       camGoal.r=Math.max(60,cam.r*0.45);
@@ -2185,32 +2385,19 @@ function KnowledgeGraphWS(props){
           pos: [0, -170, 0]
         });
       } else if (mode === 'section') {
-        // A skyline: one tower per wiki folder, tallest first, the
-        // most-connected pages at the top of each tower.
+        // A readable grid of bounded section clouds, largest sections first.
         const groups = {};
         E.forEach(e => {
           const k = e.type === 'soul' ? 'soul' : e.section || 'core';
           (groups[k] = groups[k] || []).push(e);
         });
         const keys = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
-        const cols = Math.ceil(Math.sqrt(keys.length)),
-          gap = 72;
         keys.forEach((k, gi) => {
-          const gx = (gi % cols - (cols - 1) / 2) * gap,
-            gz = (Math.floor(gi / cols) - (Math.ceil(keys.length / cols) - 1) / 2) * gap;
-          const mem = groups[k].slice().sort(byDegree).reverse();
-          const per = Math.max(4, Math.min(12, Math.ceil(Math.sqrt(mem.length) * 1.6)));
-          const ringR = 3 + per * 1.25;
-          mem.forEach((e, j) => {
-            const lvl = Math.floor(j / per),
-              th = (j % per) / per * 2 * Math.PI + lvl * 0.45;
-            put(e, gx + ringR * Math.cos(th), -60 + lvl * 5.5, gz + ringR * Math.sin(th));
-          });
-          labels.push({
-            text: k.toUpperCase() + ' \xB7 ' + mem.length,
-            color: KG_PALETTE[gi % KG_PALETTE.length],
-            pos: [gx, -60 + Math.ceil(mem.length / per) * 5.5 + 9, gz]
-          });
+          const mem=groups[k].slice().sort(byDegree);
+          mem.forEach((e,j)=>put(e,...kgSectionPoint(j,mem.length,gi,keys.length)));
+          const center=kgSectionPoint(0,1,gi,keys.length);
+          labels.push({text:k+' · '+mem.length,color:KG_PALETTE[gi%KG_PALETTE.length],
+                       pos:[center[0],center[1]+60,center[2]]});
         });
       } else if (mode === 'timeline') {
         // A tunnel through time: oldest edit on the left, newest on the right.
@@ -2467,7 +2654,7 @@ function KnowledgeGraphWS(props){
           target: [0, 0, 0]
         };
         depth = [150, 520, 200];
-        edge = 0.6;
+        edge = 0.09;
       } else {
         E.forEach(e => put(e, e.__gx, e.__gy, e.__gz));
       }
@@ -2498,11 +2685,11 @@ function KnowledgeGraphWS(props){
     const nodeDummy = new THREE.Object3D();
     const writeNode = (i, e, mult) => {
       nodeDummy.position.set(e.x, e.y, e.z);
-      nodeDummy.scale.setScalar(S.baseScale[i] * mult);
+      nodeDummy.scale.setScalar(S.baseScale[i] * mult * (S.viewScale||1));
       nodeDummy.updateMatrix();
       S.mesh.setMatrixAt(i, nodeDummy.matrix);
       if (S.outline) {
-        nodeDummy.scale.setScalar(S.baseScale[i] * mult * (S.emphIdx === i ? 1.42 : 1.12));
+        nodeDummy.scale.setScalar(S.baseScale[i] * mult * (S.viewScale||1) * (S.emphIdx === i ? 1.42 : 1.12));
         nodeDummy.updateMatrix();
         S.outline.setMatrixAt(i, nodeDummy.matrix);
       }
@@ -2546,26 +2733,41 @@ function KnowledgeGraphWS(props){
         near = Math.cos(0.8),
         to = S.starTo,
         fi = S.edgeFocusIdx;
+      const eligible=[];
       for (let k = 0; k < pr.length; k += 2) {
         let f = 1;
         if (S.starOn && to) {
           const a = pr[k] * 3,
             b = pr[k + 1] * 3;
           const dot = (to[a] * to[b] + to[a + 1] * to[b + 1] + to[a + 2] * to[b + 2]) / (Math.hypot(to[a], to[a + 1], to[a + 2]) * Math.hypot(to[b], to[b + 1], to[b + 2]) || 1);
-          f = dot > near ? 2.2 : 0;
+          f = dot > near ? 1.2 : 0;
         }
-        if (fi != null) f *= pr[k] === fi || pr[k + 1] === fi ? 3.4 : 0.2;
+        if(f>0)eligible.push(k);
+        if (fi != null) f *= pr[k] === fi || pr[k + 1] === fi ? 2.2 : 0;
         for (let j = 0; j < 6; j++) C[k * 3 + j] = Math.min(1, B[k * 3 + j] * f);
       }
       S.edgeCol.needsUpdate = true;
+      const visible=kgVisibleEdgePairs(pr,fi,eligible,4500,S.connectionMode||'balanced');
+      S.edgeGeo.index.array.set(visible);S.edgeGeo.index.needsUpdate=true;
+      S.edgeVisibleVertices=visible.length;
+      setVisibleLinks(visible.length/2);
+      const opacity=kgEdgeOpacity(visible.length/2,fi!=null,S.connectionMode||'balanced');
+      if(S.edgeMat)S.edgeMat.opacity=opacity;
+      if(S.decor)S.decor.edge=opacity;
+      S.edgeGeo.setDrawRange(0,visible.length);
+      if(S.drawIn)S.drawIn.total=visible.length;
     };
     const setStarEdges = (on, to) => {
       S.starOn = !!on;
       S.starTo = on ? to : null;
       recolorEdges();
     };
+    S.setConnections=mode=>{S.connectionMode=mode;recolorEdges()};
     S.setEdgeFocus = idx => {
       S.edgeFocusIdx = idx == null ? null : idx;
+      const opacity=idx==null?KG_EDGE_OPACITY:0.28;
+      if(S.edgeMat)S.edgeMat.opacity=opacity;
+      if(S.decor)S.decor.edge=opacity;
       recolorEdges();
     };
     // Presentation tour: each step arranges, holds while the camera sweeps,
@@ -2653,7 +2855,7 @@ function KnowledgeGraphWS(props){
       const settle = () => {
         S.bangHold = false;
         S.curScale = L.scale;
-        S.motion = L.spin ? {
+        S.motion = L.spin && opts.keepTour ? {
           rates: L.spin,
           base: L.base || to,
           tilt: L.tilt,
@@ -2661,7 +2863,7 @@ function KnowledgeGraphWS(props){
         } : null;
         if (L.star && S.edgePairs) S.drawIn = {
           t0: clock.getElapsedTime(),
-          total: S.edgePairs.length
+          total: S.edgeVisibleVertices||0
         };
         applyColors();
       };
@@ -2742,8 +2944,8 @@ function KnowledgeGraphWS(props){
           onDone: settle
         };
       }
-      if (S.edgeGeo) S.edgeGeo.setDrawRange(0, L.star ? 0 : Infinity);
       setStarEdges(!!L.star, to);
+      if(S.edgeGeo&&L.star)S.edgeGeo.setDrawRange(0,0);
       clearLayoutLabels();
       L.labels.forEach(l => {
         const spr = makeLabel(l.text, l.color, l.size || 0.1);
@@ -2764,15 +2966,15 @@ function KnowledgeGraphWS(props){
       // them so hub edges do not pile into a haze (the star map is the
       // exception, since its links are the constellations).
       S.decor = mode === 'galaxy' ? {
-        neb: 0.1,
-        lbl: 0.8,
+        neb: 0.005,
+        lbl: 0.95,
         lay: 0,
-        edge: KG_EDGE_OPACITY
+        edge: S.edgeMat?S.edgeMat.opacity:KG_EDGE_OPACITY
       } : {
         neb: 0,
         lbl: 0,
-        lay: 0.85,
-        edge: L.edge != null ? L.edge : 0.12
+        lay: 0.95,
+        edge: S.edgeMat?S.edgeMat.opacity:KG_EDGE_OPACITY
       };
       S.depth = L.depth;
       S.decoTilt = L.art && L.art.ring ? L.art.tilt : 0;
@@ -2781,41 +2983,22 @@ function KnowledgeGraphWS(props){
       if (L.star) ensureHalo();
       S.layout = mode;
       setArrangement(mode);
-      if (L.cam) {
-        camGoal.target.set(L.cam.target[0], L.cam.target[1], L.cam.target[2]);
-        camGoal.r = L.cam.r;
-        camGoal.phi = L.cam.phi;
-        return;
-      }
-      // Frame the arrangement: orbit its centre at a distance that fits its
-      // bounding sphere in the 58-degree view.
-      const lo = [1e9, 1e9, 1e9],
-        hi = [-1e9, -1e9, -1e9];
-      for (let i = 0; i < n * 3; i++) {
-        lo[i % 3] = Math.min(lo[i % 3], to[i]);
-        hi[i % 3] = Math.max(hi[i % 3], to[i]);
-      }
-      const cx = (lo[0] + hi[0]) / 2,
-        cy = (lo[1] + hi[1]) / 2,
-        cz = (lo[2] + hi[2]) / 2;
-      let R = 0;
-      for (let i = 0; i < n; i++) R = Math.max(R, Math.hypot(to[i * 3] - cx, to[i * 3 + 1] - cy, to[i * 3 + 2] - cz));
-      camGoal.target.set(cx, cy, cz);
-      camGoal.r = Math.max(120, Math.min(1100, R * L.frame));
+      fitView(to);
       camGoal.theta += 0.6;
       // Towers, spire and tunnel read side-on; the cluster ring and the
       // spiral's disc from above; Saturn from just above its ring plane.
       camGoal.phi = {
         cluster: 0.95,
         importance: 1.45,
-        section: 1.32,
+        section: Math.PI/2,
         timeline: 1.4,
         rings: 1.2,
         sphere: 1.2,
         spiral: 0.75
       }[mode] || 1.05;
       // Sphere: lift the view a little so the label stack above it fits.
-      if (mode === 'sphere') camGoal.target.y += 16;
+      // The fit target already includes all node positions.
+      if(mode==='section')camGoal.theta=Math.PI/2;
       if (mode === 'rings') {
         // Face the ring plane (it tilts toward +z about the X axis) instead of
         // catching it edge-on; take the nearest such angle so the camera does
@@ -3035,6 +3218,7 @@ function KnowledgeGraphWS(props){
       camera.aspect=w/h;camera.updateProjectionMatrix();
       renderer.setSize(w,h,false);
       if(composer)composer.setSize(w,h);else buildComposer(w,h);
+      if(S.entities&&S.entities.length&&!userTouched&&!flight)fitView();
     };
     const ro=new ResizeObserver(resize);ro.observe(mount);resize();
 
@@ -3105,8 +3289,8 @@ function KnowledgeGraphWS(props){
               c.lerpColors(dark,c,pe).multiplyScalar(flash);
               mesh.setColorAt(i,c);dirty=true;
             }
-            if(S.nebulae[ci])S.nebulae[ci].opacity=0.1*pe;
-            if(S.labels[ci])S.labels[ci].opacity=0.85*pe;
+            if(S.nebulae[ci])S.nebulae[ci].opacity=0.005*pe;
+            if(S.labels[ci])S.labels[ci].opacity=0.95*pe;
           });
           if(dirty&&mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
         }
@@ -3319,6 +3503,19 @@ function KnowledgeGraphWS(props){
       }
 
       applyCam();
+      const labelRects=[];
+      const labelWidth=mount.clientWidth||1,labelHeight=mount.clientHeight||1;
+      [...(S.labelSprites||[]),...(S.layoutLabels||[])].sort((a,b)=>(b.userData.priority||0)-(a.userData.priority||0)).forEach(spr=>{
+        if(spr.material.opacity<0.1){spr.visible=false;return}
+        const world=spr.getWorldPosition(new THREE.Vector3()), projected=world.clone().project(camera);
+        const depth=world.distanceTo(camera.position), ratio=spr.userData.labelAspect||4;
+        const h=13,w=Math.min(165,h*ratio),unit=2*depth*Math.tan(camera.fov*Math.PI/360)/labelHeight;
+        spr.scale.set(w*unit,h*unit,1);
+        const x=(projected.x+1)*labelWidth/2,y=(1-projected.y)*labelHeight/2;
+        const r={l:x-w/2-5,r:x+w/2+5,t:y-h/2-4,b:y+h/2+4};
+        spr.visible=projected.z>-1&&projected.z<1&&r.l>3&&r.r<labelWidth-3&&r.t>3&&r.b<labelHeight-3&&!labelRects.some(q=>r.l<q.r&&r.r>q.l&&r.t<q.b&&r.b>q.t);
+        if(spr.visible)labelRects.push(r);
+      });
       // Depth cue follows the zoom: full brightness in front of the orbit
       // target, fading behind it.
       if(S.nodeMat){const dOv=S.depth&&cam.r<S.depth[2]?S.depth:null;S.nodeMat.uniforms.uNear.value=dOv?dOv[0]:cam.r*0.85;S.nodeMat.uniforms.uFar.value=dOv?dOv[1]:cam.r*1.9}
@@ -3380,15 +3577,10 @@ function KnowledgeGraphWS(props){
       {focusComm!=null&&<button className="btn" style={{fontSize:11,padding:'4px 9px'}}
         onClick={()=>{setFocusComm(null);const S=kgRef.current;S.focus=null;S.loadGraph(null,{instant:true})}}>← all constellations</button>}
       {!lodMode&&stats&&<div style={{display:'flex',flexWrap:embedded?'nowrap':'wrap',flexShrink:embedded?0:undefined,gap:2,border:'1px solid rgba(170,120,255,0.25)',borderRadius:6,padding:2}}>
-        {tb==='compact'?<select value={arrangement} aria-label="Arrangement" title={(KG_ARRANGEMENTS.find(a=>a.id===arrangement)||{}).tip}
+        <select value={arrangement} aria-label="Arrangement" title={(KG_ARRANGEMENTS.find(a=>a.id===arrangement)||{}).tip}
           onChange={e=>{const S=kgRef.current;if(S.arrange){S.arrange(e.target.value);setArrangement(e.target.value)}}}
           style={{fontSize:11,padding:'2px 4px',border:'none',borderRadius:4,background:'rgba(0,212,255,0.12)',color:'#bff3ff',fontFamily:'inherit'}}>
           {KG_ARRANGEMENTS.map(a=><option key={a.id} value={a.id} disabled={a.id==='timeline'&&!hasDates}>{a.label}</option>)}</select>
-        :KG_ARRANGEMENTS.map(a=>{const off=a.id==='timeline'&&!hasDates;return(
-          <button key={a.id} disabled={off} title={off?'Needs page dates — rebuild the graph (↻) to add them':a.tip}
-            onClick={()=>{const S=kgRef.current;if(S.arrange){S.arrange(a.id);setArrangement(a.id)}}}
-            style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:off?'default':'pointer',opacity:off?0.35:1,
-              background:arrangement===a.id?'rgba(0,212,255,0.18)':'transparent',color:arrangement===a.id?'#bff3ff':'#8fa8c8'}}>{a.label}</button>)})}
         <span style={{width:1,alignSelf:'stretch',background:'rgba(170,120,255,0.25)',margin:'0 3px'}}/>
         <button aria-label="Big Bang: collapse everything to a point and explode into this arrangement" title="Collapse everything to a point and explode into this arrangement; pages arrive in the order they were written"
           onClick={()=>{const S=kgRef.current;if(S.arrange)S.arrange(S.layout||'galaxy',{bang:true})}}
@@ -3402,9 +3594,20 @@ function KnowledgeGraphWS(props){
             S.startTour&&S.startTour()}}}
           style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:'pointer',background:touring?'rgba(255,80,120,0.15)':'transparent',color:touring?'#ff9db0':'#9dffc8'}}>{tb==='compact'?(touring?'■':'▶'):(touring?'■ Stop tour':'▶ Tour')}</button>
       </div>}
+      <select aria-label="Connections" value={connectionMode} title="Balanced preserves a connected network. All shows every connection between loaded nodes. Selecting a node always shows all of its loaded connections."
+        onChange={e=>{setConnectionMode(e.target.value);const S=kgRef.current;S.setConnections&&S.setConnections(e.target.value)}}
+        style={{fontSize:11,padding:'4px',borderRadius:4,background:'#16253b',color:'#cde7ff',border:'1px solid #354867'}}>
+        <option value="balanced">Connections: balanced</option><option value="all">Connections: all</option>
+      </select>
+      {stats&&<span title="Lines currently drawn; the full relationship data remains available" style={{fontSize:10,color:'#aabbd1'}}>{visibleLinks.toLocaleString()} links</span>}
+      <button aria-label="Fit graph to view" title="Fit every visible node inside this pane" className="btn" style={{fontSize:11,padding:'4px 9px'}} onClick={()=>{const S=kgRef.current;S.fitView&&S.fitView()}}>Fit view</button>
       <button aria-label="Rebuild the graph from the wiki" className="btn" title="Rebuild the graph from the wiki" style={{fontSize:11,padding:'4px 9px'}} onClick={reindex}>{tb==='compact'?'↻':'↻ Rebuild'}</button>
       {stats&&tb==='full'&&<span style={{fontSize:11,color:'#8fa8c8',fontFamily:'JetBrains Mono',whiteSpace:'nowrap'}}>
         ★ {stats.nodes} · ─ {stats.edges} · ☁ {stats.comms} · {fps} fps</span>}
+    </div>
+
+    <div aria-label="Graph color key" style={{display:'flex',gap:12,flexWrap:'wrap',fontSize:10,color:'#b5c4dc',padding:'1px 5px 4px'}}>
+      {[['#ffd553','People'],['#48edb4','Organizations'],['#8675ff','Published work'],['#ff63c6','Social'],['#ffab55','Projects'],['#c778ff','Creative work']].map(([color,label])=><span key={label}><span style={{color}}>●</span> {label}</span>)}
     </div>
 
     {/* search hits */}
@@ -8695,6 +8898,7 @@ const DRAFT_MODES=[
 // keep them small and correct; the live catalog adds local + OpenAI + Gemini
 // with availability. Nothing here is the source of truth.
 const ORCHESTRATOR_MODELS=[
+  {id:'claude-sonnet-5-5',label:'Claude Sonnet 5.5',short:'Sonnet 5.5'},
   {id:'claude-sonnet-5',label:'Claude Sonnet 5',short:'Sonnet 5'},
   {id:'claude-opus-5-5',label:'Claude Opus 5.5',short:'Opus 5.5'},
   {id:'claude-opus-5',label:'Claude Opus 5',short:'Opus 5'},
@@ -14468,6 +14672,84 @@ function PrivacyCheckLayers(){
     })}
   </div>;
 }
+function CloudConsentRow({ consent, onChanged, compact }) {
+  const E = React.createElement;
+  const [assess, setAssess] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const c = consent || {};
+  const reask = () => {
+    setBusy(true); setMsg('');
+    apiFetch('/api/privacy/cloud-consent?assess=1').then(r => r.json()).then(j => {
+      if (j && j.status === 'ok') setAssess(j); else setMsg((j && j.message) || 'Could not assess the machine.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const answer = (choice) => {
+    setBusy(true); setMsg('');
+    apiFetch('/api/privacy/cloud-consent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ choice: choice }),
+    }).then(r => r.json()).then(j => {
+      if (j && j.status === 'ok') { setAssess(null); setMsg('Recorded.'); onChanged && onChanged(); }
+      else setMsg((j && j.message) || 'Not recorded.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const when = c.at ? new Date(c.at) : null;
+  const whenTxt = when && !isNaN(when) ? when.toLocaleDateString() : (c.source === 'legacy_unrestricted_cloud_flag' ? 'legacy flag' : 'never');
+  const choiceTxt = c.answered === false || !c.choice ? 'not answered (gated)'
+    : c.choice === 'cloud_unrestricted' ? 'unrestricted'
+    : c.choice === 'cloud_guarded' ? 'cloud, safeguards on' : 'local, private';
+  const cap = assess && assess.capability;
+  return E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11 } },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+      E('span', { style: { color: 'rgba(255,255,255,0.9)' } }, 'Cloud consent: ' + choiceTxt),
+      E('span', { style: { color: 'rgba(255,255,255,0.45)' } }, 'answered ' + whenTxt),
+      c.snapshot_capable === false && E('span', { style: { color: '#f59e0b' } },
+        'the machine said local was not capable' + (c.snapshot_why ? ': ' + c.snapshot_why : '')),
+      E('button', {
+        className: 'settings-btn', disabled: busy, onClick: reask,
+        style: { fontSize: 10, padding: '3px 9px' },
+      }, busy ? 'checking…' : 'Re-answer')),
+    !compact && E('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.5 } },
+      'Local preferred chooses where work runs; cloud consent controls what a cloud model receives. Unrestricted sends content without privacy redaction. Re-answer changes the recorded choice shown here.'),
+    assess && E('div', {
+      style: { marginTop: 8, padding: 10, border: '1px solid rgba(0,212,255,0.25)', borderRadius: 8, background: 'rgba(0,212,255,0.05)' },
+    },
+      E('div', { style: { color: cap && cap.capable ? '#00ff80' : '#f59e0b', marginBottom: 6 } },
+        cap && cap.capable ? 'This machine can run private-local today.'
+          : 'This machine still cannot run the full private-local set: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'no reason given') + '.'),
+      E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        cap && cap.capable && E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('local_private') },
+          'Keep it local and private'),
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('cloud_guarded') },
+          'Cloud with safeguards on'),
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('cloud_unrestricted') },
+          'Allow unrestricted cloud'),
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => setAssess(null),
+          style: { opacity: 0.7 } }, 'Cancel'))),
+    msg && E('div', { style: { fontSize: 10, color: msg === 'Recorded.' ? '#00ff80' : '#f59e0b', marginTop: 4 } }, msg));
+}
+
+function PrivacyCloudConsent() {
+  const E = React.createElement;
+  const [st, setSt] = useState(null);
+  const load = useCallback(() => {
+    apiFetch('/api/privacy/cloud-consent').then(r => r.json()).then(setSt).catch(() => setSt({ error: true }));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  if (!st) return E('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono' } }, 'Reading the consent record…');
+  if (st.error) return E('div', { style: { fontSize: 11, color: '#f59e0b', fontFamily: 'JetBrains Mono' } }, 'Could not read the consent record.');
+  const snap = st.capability_snapshot || {};
+  return E(CloudConsentRow, {
+    consent: {
+      answered: st.answered, choice: st.choice, at: st.at, source: st.source,
+      snapshot_capable: snap.capable,
+      snapshot_why: snap.why || (snap.roles && snap.roles.text && snap.roles.text.why) || snap.chain_why,
+    },
+    onChanged: load,
+  });
+}
+
 function SettingsTabPrivacy({s,save}){
   const[vaultStatus,setVaultStatus]=useState(null);
   const[pass,setPass]=useState('');
@@ -14511,7 +14793,7 @@ function SettingsTabPrivacy({s,save}){
       <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{...(s.model_routing||{}),vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
     </StSection>
     <StSection title="Cloud mode">
-      <StToggle label="Unrestricted Cloud" value={!!(s.model_routing||{}).unrestricted_cloud} onChange={()=>save({model_routing:{...(s.model_routing||{}),unrestricted_cloud:!(s.model_routing||{}).unrestricted_cloud}})} desc="Off (default): cloud sends are still tier-classified, redacted, and PII-scrubbed. On: no privacy safeguard holds anything back from the cloud — full tier content, no redaction, no PII scrub, the never-send list included. Every send is still logged to the egress ledger either way. This is a standing posture, not a one-time consent — leave it off unless you specifically want frontier cloud models to see everything, unfiltered, on every call."/>
+      <PrivacyCloudConsent/>
     </StSection>
     <StSection title="Privacy check" desc="Which of Friday's privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.">
       <PrivacyCheckLayers/>

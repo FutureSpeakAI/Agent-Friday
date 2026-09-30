@@ -47,7 +47,10 @@ LOADER_NAME = "load_tools"
 #: on a local 27B is measured in tens of seconds. The handful of tools that
 #: almost every turn reaches for should not pay it. Kept deliberately short -
 #: every name here is ~200 tokens of permanent rent.
-ALWAYS_RESIDENT = ("search_web", "read_file", "search_files")
+# Local knowledge is as fundamental as public retrieval. Keep its read tools
+# callable without requiring a discovery round before a wiki or graph request.
+ALWAYS_RESIDENT = ("search_web", "read_file", "search_files",
+                   "search_wiki", "read_wiki", "knowledge_query")
 
 
 #: ON by default, because the risk is understood rather than assumed.

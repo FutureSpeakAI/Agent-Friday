@@ -361,6 +361,19 @@ def _discovered_models(provider: dict):
         return [], False
 
 
+def _provider_availability(provider: dict, registry) -> tuple[bool, bool]:
+    """Availability and unread flag, shared by rows and provider summaries."""
+    pname = provider.get("name", "")
+    if provider.get("type") in ("ollama",) + VOICE_ENGINE_PROVIDER_TYPES:
+        from agent_friday.services import machine_probe
+        value, _at, _state = machine_probe.snapshot(
+            "models:provider_available:" + pname,
+            lambda: bool(registry.is_provider_available(pname)),
+            fresh_for=60.0, budget=0.0, default=None)
+        return bool(value), value is None
+    return bool(registry.is_provider_available(pname)), False
+
+
 def _model_entries_for(provider: dict, registry) -> list:
     """Expand one provider into per-model catalog entries."""
     pname = provider.get("name", "")
@@ -374,22 +387,7 @@ def _model_entries_for(provider: dict, registry) -> list:
     # nvidia-nemo 2.69s (imports torch/NeMo), ollama-local 4.05s. Only those
     # are snapshotted, so a cloud row still resolves synchronously and the
     # picker opens with every shipped and discovered model present.
-    if ptype in ("ollama",) + VOICE_ENGINE_PROVIDER_TYPES:
-        from agent_friday.services import machine_probe as _mp
-        available, _av_at, _av_state = _mp.snapshot(
-            "models:provider_available:" + pname,
-            lambda: bool(registry.is_provider_available(pname)),
-            fresh_for=60.0, budget=0.0, default=None)
-        if available is None:
-            # Not read yet. Offered-but-dimmed with a reason that says so,
-            # rather than claimed ready or silently dropped.
-            available = False
-            _unread_provider = True
-        else:
-            _unread_provider = False
-    else:
-        available = registry.is_provider_available(pname)
-        _unread_provider = False
+    available, _unread_provider = _provider_availability(provider, registry)
     needs_key = _needs_key(provider)
     # Ask the single authority rather than matching on type strings. A
     # hardcoded list is what made local openai-compatible providers render as
@@ -1059,7 +1057,7 @@ def _friday_store_entries_uncached(exclude: set | None = None) -> list:
     return out
 
 
-def build_catalog() -> dict:
+def build_catalog(*, include_engines: bool = True) -> dict:
     """Return the full model catalog grouped by UI role.
 
     Shape:
@@ -1177,7 +1175,7 @@ def build_catalog() -> dict:
             "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
             "modalities": ["text"],
             "local": bool(prov and prov.get("type") == "ollama"),
-            "available": bool(prov and registry.is_provider_available(pname)),
+            "available": bool(prov and _provider_availability(prov, registry)[0]),
             "needs_key": _needs_key(prov or {}),
             "hint": None if prov else
                     f"Unknown provider '{pname}' — enable it in Settings → Accounts & Keys",
@@ -1210,14 +1208,16 @@ def build_catalog() -> dict:
     for e in flat:
         e.pop("_ord", None)
 
-    providers = [{
-        "name": p.get("name"),
-        "label": p.get("label") or p.get("name"),
-        "type": p.get("type"),
-        "available": registry.is_provider_available(p.get("name", "")),
-        "needs_key": _needs_key(p),
-    } for p in registry.get_enabled_providers()]
+    providers = []
+    for p in registry.get_enabled_providers():
+        available, unread = _provider_availability(p, registry)
+        providers.append({
+            "name": p.get("name"), "label": p.get("label") or p.get("name"),
+            "type": p.get("type"), "available": available,
+            "needs_key": _needs_key(p),
+            "availability_reading": "unknown" if unread else "read",
+        })
 
     return {"roles": roles, "models": flat, "providers": providers,
-            "voice_engines": _voice_engines(registry),
-            "tts_engines": _tts_engines()}
+            "voice_engines": _voice_engines(registry) if include_engines else [],
+            "tts_engines": _tts_engines() if include_engines else []}

@@ -15,6 +15,8 @@ from agent_friday.services import conversations as convs
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
+    from agent_friday.services import swr_cache
+    swr_cache.invalidate("conversations:live-seats")
     monkeypatch.setattr(convs, "_root", lambda: tmp_path / "conversations")
     from flask import Flask
     from agent_friday.routes.conversations import conversations_bp

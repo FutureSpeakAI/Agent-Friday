@@ -87,6 +87,7 @@ CLOUD_COST_PER_1K = {
     "claude-opus-5-5": 0.012,
     "claude-opus-5": 0.015,
     "claude-sonnet-5": 0.006,
+    "claude-sonnet-5-5": 0.006,
     "claude-haiku-4-5": 0.003,
     "claude-haiku-4-5-20251001": 0.003,
 }

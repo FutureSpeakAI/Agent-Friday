@@ -102,28 +102,37 @@ def wiki_structure():
     """Return full wiki directory structure, with modified times and recent list."""
     structure = {}
     all_files = []
+    # On Windows scandir includes the size and modified time in the directory
+    # enumeration. Path.stat() twice per page adds thousands of filesystem
+    # round trips before the workspace can show even its section counts.
     if WIKI_DIR.exists():
-        for section_dir in sorted(WIKI_DIR.iterdir()):
-            if section_dir.is_dir() and not section_dir.name.startswith('.'):
-                files = []
-                for f in sorted(section_dir.iterdir()):
-                    if f.suffix in ('.md', '.txt'):
-                        try:
-                            mtime = f.stat().st_mtime
-                            size = f.stat().st_size
-                        except Exception:
-                            mtime, size = 0, 0
-                        entry = {
-                            "name": f.stem,
-                            "filename": f.name,
-                            "size": size,
-                            "modified": mtime,
-                            "modified_iso": datetime.fromtimestamp(mtime).isoformat() if mtime else None,
-                        }
-                        files.append(entry)
-                        all_files.append({**entry, "section": section_dir.name, "path": f"{section_dir.name}/{f.name}"})
-                if files:
-                    structure[section_dir.name] = files
+        with os.scandir(WIKI_DIR) as entries:
+            sections = sorted(entries, key=lambda entry: entry.name)
+        for section in sections:
+            if not section.is_dir(follow_symlinks=False) or section.name.startswith('.'):
+                continue
+            files = []
+            with os.scandir(section.path) as entries:
+                page_entries = sorted(entries, key=lambda entry: entry.name)
+            for entry in page_entries:
+                f = Path(entry.name)
+                if f.suffix not in ('.md', '.txt') or not entry.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    metadata = entry.stat(follow_symlinks=False)
+                    mtime, size = metadata.st_mtime, metadata.st_size
+                except OSError:
+                    mtime, size = 0, 0
+                item = {
+                    "name": f.stem, "filename": f.name, "size": size,
+                    "modified": mtime,
+                    "modified_iso": datetime.fromtimestamp(mtime).isoformat() if mtime else None,
+                }
+                files.append(item)
+                all_files.append({**item, "section": section.name,
+                                  "path": f"{section.name}/{f.name}"})
+            if files:
+                structure[section.name] = files
     all_files.sort(key=lambda x: x.get("modified") or 0, reverse=True)
     recent = all_files[:5]
     pending_count = len([p for p in _load_pending_wiki() if p.get("status") == "pending"])

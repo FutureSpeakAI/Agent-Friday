@@ -15,13 +15,11 @@ is caught instead of narrated. That is what this module provides:
   - after execution, never before, so a receipt cannot exist for a call that
   did not happen.
 * ``unbacked_claims(text)`` reads the assistant's finished reply and reports
-  any tool it *names* that has no receipt this turn.
+  explicit execution claims about tools with no receipt this turn.
 
-Deliberately conservative. It flags only what it can prove: a tool named in
-the reply with no matching receipt. It does not guess at paraphrase ("I made
-you a picture"), because a false accusation of lying is its own failure and a
-noisy checker gets switched off. Catching the provable case closes the
-hole; widening it is a later decision with evidence behind it.
+Mentioning a tool, offering to use it, or explaining a failure to call it
+does not assert execution. The named-tool check requires an affirmative
+execution or result statement; other checks below cover unnamed actions.
 
 Receipts are per-thread and per-turn: Flask handles each request on its own
 thread, so one conversation's receipts can never satisfy another's claims.
@@ -38,6 +36,49 @@ _local = threading.local()
 #: How a tool name can appear in prose. Matches the registered form
 #: (mcp_higgsfield_balance) and the bare MCP form (higgsfield.balance).
 _NAME_RE = re.compile(r"\b((?:mcp_)?[a-z0-9]+(?:[_.][a-z0-9]+){1,4})\b", re.I)
+
+_CLAUSE_BREAK = re.compile(r"[;\n]|[.!?](?=\s|$)")
+_NONASSERTION = re.compile(
+    r"\b(?:if|unless|could|would|might|should|can|cannot|can't|will|"
+    r"didn't|did not|haven't|have not|never|not|earlier|previously|yesterday)\b"
+    r"|\b(?:previous|last)\s+(?:turn|message|reply|session)\b"
+    r"|\b(?:for example|example|suppose)\b"
+    r"|\b(?:you|they|he|she)\s+(?:said|wrote|reported|asked|claimed)\b", re.I)
+_EXECUTION_PREFIX = re.compile(
+    r"\b(?:i|we)(?:'ve| have)?\s+(?:(?:just|already|successfully|actually)\s+)*"
+    r"(?:called|ran|used|executed|invoked|queried|checked|searched)"
+    r"(?:\s+(?:with|using|via|the tool))*\s+[`*_]*$", re.I)
+_EXECUTION_SUFFIX = re.compile(
+    r"^[`*_]*\s+(?:(?:has|have|had|was|were|just|already|successfully)\s+)*"
+    r"(?:returned|reported|confirmed|found|completed|succeeded|failed|ran|executed)\b",
+    re.I)
+_OUTPUT_PREFIX = re.compile(r"\b(?:output|result|response)\s+(?:from|of)\s+[`*_]*$", re.I)
+_OUTPUT_SUFFIX = re.compile(r"^[`*_]*\s*(?:was\b|is\b|:|=)", re.I)
+_HISTORICAL_CLAIM = re.compile(
+    r"\b(?:previous|last)\s+(?:turn|message|reply|session)\b"
+    r"|\b(?:earlier|previously|yesterday)\b", re.I)
+
+
+def _asserts_named_execution(text, match):
+    """Require an affirmative claim in the clause containing this mention."""
+    start = 0
+    end = len(text)
+    terminator = ""
+    for boundary in _CLAUSE_BREAK.finditer(text):
+        if boundary.end() <= match.start():
+            start = boundary.end()
+        elif boundary.start() >= match.end():
+            end, terminator = boundary.start(), boundary.group()
+            break
+    before, after = text[start:match.start()], text[match.end():end]
+    # Negated/conditional framing precedes the predicate. A result such as
+    # "returned 'not found'" still asserts an execution and needs a receipt.
+    if (terminator == "?" or _NONASSERTION.search(before)
+            or _HISTORICAL_CLAIM.search(before + " TOOL " + after)):
+        return False
+    return bool(_EXECUTION_PREFIX.search(before)
+                or _EXECUTION_SUFFIX.search(after)
+                or (_OUTPUT_PREFIX.search(before) and _OUTPUT_SUFFIX.search(after)))
 
 
 def begin_turn():
@@ -74,7 +115,7 @@ def _known_tools():
 
 
 def unbacked_claims(text):
-    """Tool names the reply mentions that have no receipt this turn.
+    """Explicit named-tool execution claims with no receipt this turn.
 
     Returns a list of dicts: {tool, reason}. Empty means nothing provably
     unbacked was said. A tool that ran and FAILED is still backed - the model
@@ -85,9 +126,11 @@ def unbacked_claims(text):
     known = _known_tools()
     if not known:
         return []
+    # Fenced examples are code, not statements that the tool was executed.
+    prose = re.sub(r"(?ms)^\s*(`{3,}|~{3,})[^\n]*\n.*?^\s*\1\s*$", "", str(text))
     ran = {r["tool"] for r in receipts()}
     seen, out = set(), []
-    for m in _NAME_RE.finditer(str(text)):
+    for m in _NAME_RE.finditer(prose):
         cand = m.group(1).replace(".", "_")
         if cand in seen:
             continue
@@ -95,11 +138,11 @@ def unbacked_claims(text):
         hit = (cand if cand in known
                else next((k for k in known if k.endswith("_" + cand)
                           or k == "mcp_" + cand), None))
-        if not hit or hit in ran:
+        if not hit or hit in ran or not _asserts_named_execution(prose, m):
             continue
         seen.add(cand)
         out.append({"tool": hit,
-                    "reason": "named in the reply but never executed this turn"})
+                    "reason": "execution claimed in the reply but never observed this turn"})
     return out
 
 
@@ -399,21 +442,15 @@ def action_correction_note(claims):
 
 
 def correction_note(claims):
-    """The line appended to a reply that talked about tools it never ran.
-
-    Written to be read by the user, not swallowed by the model: it names the
-    tool, states plainly that nothing ran, and refuses to stand behind the
-    numbers or outcomes in the message above it.
-    """
+    """Name the unsupported execution claim without discrediting other content."""
     if not claims:
         return ""
     names = ", ".join(sorted({c["tool"] for c in claims}))
     return (
         "\n\n---\n"
-        "**Check failed — do not rely on the answer above.** It refers to "
-        f"`{names}`, which did not run during this turn. No result came back, "
-        "so any output, number, or confirmation quoted above was not observed "
-        "and may be invented. Ask again, or have the tool called directly."
+        "**Tool execution could not be verified.** The reply claims execution "
+        f"or a result from `{names}`, but no matching execution was recorded "
+        "during this turn. Treat that specific claim as unverified."
     )
 
 

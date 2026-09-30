@@ -172,6 +172,13 @@ def patch_conversation(cid):
         return jsonify({"status": "ok", "conversation": _summary(conv)})
 
     note = None
+    # A polling retry keeps its original reservation. It must never gain
+    # new authority over a selection made by another window in the meantime.
+    seat_change = None
+    if "seat" in fields:
+        retry = data.get("seat_change_id")
+        seat_change = (retry if isinstance(retry, str) and retry else
+                       _conv.begin_seat_change(cid))
     if "seat" in fields:
         seat = fields["seat"]
         note = _why_this_seat_cannot_be_bound(seat)
@@ -201,11 +208,21 @@ def patch_conversation(cid):
                                else None if v in (False, None, "")
                                else v)
 
-    conv = _conv.patch(cid, **fields) if fields else _conv.load(cid)
+    superseded = False
+    if seat_change:
+        conv, superseded = _conv.finish_seat_change(
+            cid, seat_change, pending=isinstance(note, _SeatSurveyPending), **fields)
+    else:
+        conv = _conv.patch(cid, **fields) if fields else _conv.load(cid)
     if conv is None:
         return jsonify({"status": "error",
                         "error": "no such conversation: %s" % cid}), 404
     out = {"status": "ok", "conversation": _summary(conv, _project_seats())}
+    if superseded:
+        out["superseded"] = True
+    if isinstance(note, _SeatSurveyPending) and not superseded:
+        out["seat_pending"] = True
+        out["seat_change_id"] = seat_change
     if note:
         out["note"] = note
     return jsonify(out)
@@ -313,6 +330,10 @@ def conversation_messages(cid):
     return jsonify({"status": "ok", "messages": _conv.messages(cid, limit)})
 
 
+class _SeatSurveyPending(str):
+    """A local binding can be retried when its occupancy survey finishes."""
+
+
 def _why_this_seat_cannot_be_bound(seat) -> str | None:
     """A reason this seat cannot be given to a conversation, or None.
 
@@ -343,7 +364,27 @@ def _why_this_seat_cannot_be_bound(seat) -> str | None:
         return None
     try:
         from agent_friday.services.residency_arbiter import survey_live_seats
-        live = survey_live_seats() or {}
+        from agent_friday.services.machine_probe import snapshot
+
+        def survey():
+            try:
+                return {"live": survey_live_seats() or {}, "failed": False}
+            except Exception:
+                return {"live": {}, "failed": True}
+
+        result, _at, reading = snapshot(
+            "conversations:live-seats", survey,
+            fresh_for=5.0, budget=0.1, default=None, allow_blocking=False)
+        # A check still running is not a failed check. Keep the previous
+        # selection until the pending survey answers, without holding this
+        # request open. An actual failed survey retains the fail-open policy.
+        if result is None or reading != "fresh":
+            return _SeatSurveyPending(
+                "Friday is still checking which local model is serving. "
+                "Your model choice has not changed; try again in a moment.")
+        if result["failed"]:
+            return None
+        live = result["live"]
     except Exception:
         return None
     others = [m for m in live if m and m != model]

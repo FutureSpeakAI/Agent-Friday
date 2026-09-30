@@ -107,6 +107,17 @@ class TestAntiSpoofing:
 
 
 class TestRecordConsent:
+    @pytest.mark.parametrize("choice", cc.VALID_CHOICES)
+    def test_explicit_choice_synchronizes_legacy_flag(self, monkeypatch, choice):
+        monkeypatch.setattr(cc, "assess_local_capability",
+                            lambda profile=None: {"capable": True})
+        saved = {}
+        monkeypatch.setattr("agent_friday.core._save_settings",
+                            lambda data, **kw: saved.update(data))
+        cc.record_consent(choice)
+        assert saved["model_routing"].get("unrestricted_cloud") is (
+            choice == cc.CHOICE_CLOUD)
+
     def test_rejects_local_private_on_insufficient_hardware(self, monkeypatch):
         monkeypatch.setattr(cc, "assess_local_capability",
                             lambda profile=None: {"capable": False, "roles": {},

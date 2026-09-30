@@ -40,7 +40,7 @@ _TAGS_LIST_RE = re.compile(r"^tags:\s*\n((?:\s+-\s+\S+\n)+)", re.MULTILINE)
 _SUMMARY_RE = re.compile(r"^summary:\s*(.+?)$", re.MULTILINE)
 _H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 _WIKILINK_RE = re.compile(r"\[\[([^\]|#]+?)(?:[|#][^\]]*?)?\]\]")
-_MD_LINK_RE = re.compile(r"\[.*?\]\(([^)]+\.md[^)]*)\)")
+_MD_LINK_RE = re.compile(r"\[[^\]\n]*\]\(([^)\n]+\.md[^)\n]*)\)")
 
 SKIP_DIRS = frozenset({"_raw", "_archived", "_staging", "_archives",
                        ".obsidian", ".git"})
@@ -277,38 +277,75 @@ def _extract_links(pages: dict[str, dict], bodies: dict[str, str]) -> None:
 
 
 def _extract_mentions(pages: dict[str, dict], bodies: dict[str, str]) -> None:
-    """Implicit edges: page A's title appearing in page B's body.
+    """Find title mentions with a failure-linked trie, in text + hit time.
 
-    LLM-free densifier for vaults without authored wikilinks. Titles shorter
-    than 4 characters are skipped to avoid noise; existing explicit edges are
-    never duplicated.
-
-    One combined alternation regex scans each body once (alt text → target
-    keys via dict), so the pass is O(total_body_bytes), not O(pages²) — at
-    2k pages the per-page-pattern version needs 4M regex scans.
+    A single regex alternation still retries thousands of titles at each
+    word boundary. Aho-Corasick shares those prefixes and runs in Python,
+    allowing other server threads to respond even for multi-megabyte pages.
+    Select earliest, longest, non-overlapping matches like the old regex.
     """
-    alt_targets: dict[str, list[str]] = defaultdict(list)
+    from collections import deque
+
+    alt_targets: dict[str, set[str]] = defaultdict(set)
     for slug, entry in pages.items():
-        candidates = {entry["title"], entry["title"].split(" — ")[0],
-                      entry["stem"].replace("-", " ")}
-        for c in candidates:
-            c = c.strip()
-            if len(c) >= 4:
-                alt_targets[c.lower()].append(slug)
+        for candidate in {entry["title"], entry["title"].split(" — ")[0],
+                          entry["stem"].replace("-", " ")}:
+            candidate = candidate.strip().lower()
+            if len(candidate) >= 4:
+                alt_targets[candidate].add(slug)
     if not alt_targets:
         return
-    alts = sorted(alt_targets, key=len, reverse=True)
-    combined = re.compile(
-        r"(?<![\w-])(?:" + "|".join(re.escape(a) for a in alts) + r")(?![\w-])",
-        re.IGNORECASE)
+    transitions = [{}]
+    failure = [0]
+    outputs = [[]]
+    for word in sorted(alt_targets):
+        state = 0
+        for char in word:
+            if char not in transitions[state]:
+                transitions[state][char] = len(transitions)
+                transitions.append({})
+                failure.append(0)
+                outputs.append([])
+            state = transitions[state][char]
+        outputs[state].append(word)
+    queue = deque(transitions[0].values())
+    while queue:
+        state = queue.popleft()
+        for char, child in transitions[state].items():
+            queue.append(child)
+            fallback = failure[state]
+            while fallback and char not in transitions[fallback]:
+                fallback = failure[fallback]
+            failure[child] = transitions[fallback].get(char, 0)
+            outputs[child].extend(outputs[failure[child]])
+
+    def word_char(char):
+        return char.isalnum() or char in "_-"
 
     for slug, body in bodies.items():
-        if not body:
-            continue
-        explicit = {t for t, _k in pages[slug]["out_links"]}
+        text = body.lower()
+        state = 0
+        matches = {}
+        for pos, char in enumerate(text):
+            while state and char not in transitions[state]:
+                state = failure[state]
+            state = transitions[state].get(char, 0)
+            for word in outputs[state]:
+                start = pos + 1 - len(word)
+                if start and word_char(text[start - 1]):
+                    continue
+                if pos + 1 < len(text) and word_char(text[pos + 1]):
+                    continue
+                if len(word) > len(matches.get(start, "")):
+                    matches[start] = word
+        explicit = {target for target, _kind in pages[slug]["out_links"]}
         hits_by_target: dict[str, int] = defaultdict(int)
-        for m in combined.finditer(body):
-            for target in alt_targets.get(m.group(0).lower(), ()):
+        end = 0
+        for start, word in sorted(matches.items()):
+            if start < end:
+                continue
+            end = start + len(word)
+            for target in alt_targets[word]:
                 if target != slug and target not in explicit:
                     hits_by_target[target] += 1
         for target, hits in sorted(hits_by_target.items()):
@@ -511,7 +548,7 @@ def rebuild_tier_a(store: Optional[KnowledgeGraphStore] = None,
                    wiki_dir: Optional[Path] = None) -> dict[str, Any]:
     """Full Tier A rebuild: parse → records → layout → persist → manifest.
 
-    Incremental in effect (the whole pass is milliseconds at wiki scale), but
+    The pass runs off-request because large archives take time, but
     the manifest still records per-source fingerprints so ``delta()`` can
     answer "what changed" for Tier B and for no-op detection.
     """

@@ -36,7 +36,8 @@ def _tool(name, desc="Do the thing. Then explain how to do the thing at "
 
 @pytest.fixture()
 def tools():
-    return ([_tool("search_web"), _tool("read_file"), _tool("search_files")]
+    return ([_tool(name) for name in ("search_web", "read_file", "search_files",
+                                     "search_wiki", "read_wiki", "knowledge_query")]
             + [_tool("tool_%02d" % i) for i in range(40)])
 
 
@@ -145,9 +146,20 @@ def test_the_resident_tools_skip_the_round_trip(tools):
         assert r in names
 
 
+def test_local_knowledge_reads_are_callable_from_the_opening_round():
+    knowledge = ["search_wiki", "read_wiki", "knowledge_query"]
+    registry = [_tool(n) for n in ["search_web", "read_file", "search_files"]
+                + knowledge]
+    opening = {t["name"]: t for t in TC.opening_set(registry)}
+    for name in knowledge:
+        assert name in opening, "local knowledge must not require discovery"
+        assert opening[name]["input_schema"] == registry[
+            [t["name"] for t in registry].index(name)]["input_schema"]
+
+
 def test_the_resident_list_stays_short():
     """Every resident name is permanent rent on the context window."""
-    assert len(TC.ALWAYS_RESIDENT) <= 5
+    assert len(TC.ALWAYS_RESIDENT) <= 6
 
 
 def test_an_empty_registry_does_not_explode():

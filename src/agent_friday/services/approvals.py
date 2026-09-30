@@ -477,6 +477,34 @@ def claim_for_execution(approval_id: str) -> bool:
     return False
 
 
+def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bool:
+    """Approve and spend one matching confirmation card in the current call.
+
+    Chat already has an execution in progress through the normal tool gates.
+    Resolve the card atomically without firing a second executor. A concurrent
+    card click wins or loses the same store claim, so it cannot duplicate work.
+    """
+    with _LOCK:
+        recs = _read_store()
+        rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
+        if (not rec or rec.get("kind") != "tool_confirm"
+                or rec.get("status") not in {"pending", "approved"}
+                or rec.get("consumed") or rec.get("executing_at")):
+            return False
+        payload = rec.get("payload") or {}
+        if (payload.get("tool") != tool or json.dumps(payload.get("input"), sort_keys=True)
+                != json.dumps(tool_input, sort_keys=True)):
+            return False
+        now = time.time()
+        rec.update(status="approved", consumed=True, executing_at=now,
+                   used_at=now, used_by="chat_confirmation", decided_at=now,
+                   decided_by="owner", decision_note="answered in chat")
+        _write_store(recs)
+        out = dict(rec)
+    _feed("card_resolved", out)
+    return True
+
+
 def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
     """Mark a freshly-approved card as consumed. Returns (record, was_first)
     — was_first is True only the FIRST time this is observed."""

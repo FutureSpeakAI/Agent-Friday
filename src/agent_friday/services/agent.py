@@ -8124,6 +8124,14 @@ _AFFIRM_RE = re.compile(r"^\s*" + _FILLER + r"(?:" + _AFFIRM_WORDS + r")\b",
 _AFFIRM_TAIL_RE = re.compile(r"\b(?:" + _AFFIRM_WORDS + r")\s*[.!]*\s*$",
                              re.IGNORECASE)
 
+# A grant needs a whole approval reply, not an affirmative word embedded in
+# another request or followed by a changed target, condition, or cancellation.
+_AFFIRM_WHOLE_RE = re.compile(
+    r"^\s*" + _FILLER + r"(?:" + _AFFIRM_WORDS
+    + r"|i (?:just |already )?authorized that(?:,? so yes)?)"
+    + r"(?:[\s,.!;]+(?:" + _AFFIRM_WORDS + r"|thanks|thank you))*[\s,.!]*$",
+    re.IGNORECASE)
+
 _NEGATIVE_RE = re.compile(
     r"^\s*" + _FILLER + r"(?:no|nope|nah|don'?t|do not|stop|cancel|"
     r"never ?mind|not now|skip|leave it|hold off|wait|forget it)\b",
@@ -8134,10 +8142,8 @@ _NEGATIVE_RE = re.compile(
 def _is_affirmative(message: str) -> bool:
     """True if `message` reads as the user approving a pending action.
 
-    Matches an affirmative at the START (after filler) or at the END. The tail
-    case is not a nicety: a user who answers "I just authorized that, so yes."
-    would otherwise be asked the same question again, because nothing in a
-    start-anchored pattern can see a yes in final position.
+    The whole reply must express approval. An affirmative prefix followed by
+    a new request or a condition does not authorize the stored action.
 
     An AMBIGUOUS message - one that reads as both yes and no - is neither, and
     `_is_ambiguous` is what the gate consults instead of guessing. See there.
@@ -8145,7 +8151,11 @@ def _is_affirmative(message: str) -> bool:
     m = message or ""
     if _is_ambiguous(m):
         return False
-    return bool(_AFFIRM_RE.match(m) or _AFFIRM_TAIL_RE.search(m))
+    # Reporting that the card is absent does not qualify an explicit approval.
+    m = re.sub(r"[.!;,]\s*i (?:don'?t|do not|can'?t|cannot) see "
+               r"(?:the |an? )?(?:approval )?card(?: though)?[.!]*\s*$", "", m,
+               flags=re.IGNORECASE)
+    return bool(_AFFIRM_WHOLE_RE.fullmatch(m))
 
 
 def _is_negative(message: str) -> bool:
@@ -8235,6 +8245,8 @@ def _record_pending_confirmation(session_id, name, tool_input, *, turn=None):
     """
     if not session_id:
         return None
+    from copy import deepcopy
+    tool_input = deepcopy(tool_input)
     fp = _action_fingerprint(name, tool_input)
     with _PENDING_LOCK:
         bucket = _PENDING_CONFIRMATIONS.setdefault(session_id, {})
@@ -8242,12 +8254,14 @@ def _record_pending_confirmation(session_id, name, tool_input, *, turn=None):
         if entry is None:
             entry = {"tool": name, "input": tool_input, "ts": _time.time(),
                      "seq": next(_PENDING_SEQ),
-                     "asks": 1, "turn": turn, "granted": False}
+                     "asks": 1, "turn": turn, "granted": False,
+                     "awaiting_reply": True, "request_id": uuid.uuid4().hex[:12]}
             bucket[fp] = entry
         else:
             entry["input"] = tool_input
             entry["ts"] = _time.time()
             entry["seq"] = next(_PENDING_SEQ)
+            entry["awaiting_reply"] = True
             if turn is None or entry.get("turn") != turn:
                 entry["asks"] = int(entry.get("asks") or 0) + 1
                 entry["turn"] = turn
@@ -8285,12 +8299,16 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     """
     ctx = dict(base_ctx or {})
     ctx["session_id"] = session_id
+    conversation_id = ctx.get("conversation_id")
+    ctx["confirmation_key"] = (f"conversation:{conversation_id}"
+                               if conversation_id else session_id)
     # The owner's own words for this turn. A tool that may contact someone
     # other than the owner (services: phone) acts only on a number that
     # appears here, never on one the model found in something it read.
     ctx["owner_text"] = str(message or "")[:4000]
     if not session_id:
         return ctx
+    session_id = ctx["confirmation_key"]
     # What the user typed is the trusted side of the provenance ledger: a
     # recipient or link found here is theirs, one found only in a tool result
     # is not (services/taint.py).
@@ -8318,7 +8336,11 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
         # It is not a session-wide permission slip: the gate below re-derives
         # the fingerprint of whatever the model actually tries next and will
         # refuse to spend this grant on a different action.
-        newest = max(bucket.items(), key=lambda kv: kv[1].get("seq") or 0)
+        eligible = [(fp, entry) for fp, entry in bucket.items()
+                    if entry.get("awaiting_reply")]
+        if not eligible:
+            return ctx
+        newest = max(eligible, key=lambda kv: kv[1].get("seq") or 0)
         fp, entry = newest
         with _PENDING_LOCK:
             live = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fp)
@@ -8327,7 +8349,61 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
         ctx["confirm_granted"] = True          # back-compat for older callers
         ctx["confirm_granted_fp"] = fp
         ctx["confirm_granted_tool"] = entry.get("tool")
+    else:
+        # A later yes must not answer an old question after the conversation
+        # moved on. A new gate question rearms only the action it asks about.
+        with _PENDING_LOCK:
+            for entry in (_PENDING_CONFIRMATIONS.get(session_id) or {}).values():
+                entry["awaiting_reply"] = False
+                entry["granted"] = False
     return ctx
+
+
+def resume_confirmed_action(session_ctx):
+    """Run the exact stored action once, without asking a model to recreate it.
+
+    The replay enters the usual tool dispatcher: governance, privacy, sandbox,
+    and result processing still apply. Claiming the pending entry under its
+    lock prevents simultaneous chat replies from spending the same approval.
+    """
+    from copy import deepcopy
+    ctx = dict(session_ctx or {})
+    sid = ctx.get("confirmation_key") or ctx.get("session_id")
+    fp = ctx.get("confirm_granted_fp")
+    if not sid or not fp:
+        return None
+    claim = uuid.uuid4().hex
+    with _PENDING_LOCK:
+        entry = (_PENDING_CONFIRMATIONS.get(sid) or {}).get(fp)
+        if not entry or not entry.get("granted") or entry.get("replay_claim"):
+            return None
+        entry["replay_claim"] = claim
+        name, inp = entry["tool"], deepcopy(entry["input"])
+    ctx["confirmation_replay"] = {"fingerprint": fp, "claim": claim}
+    try:
+        result = _execute_tool(name, inp, session_ctx=ctx)
+        return {"name": name, "input": inp, "result": result}
+    finally:
+        # A gate before confirmation can refuse the action. The attempted
+        # replay still spends its grant; a later turn cannot run it silently.
+        with _PENDING_LOCK:
+            bucket = _PENDING_CONFIRMATIONS.get(sid) or {}
+            live = bucket.get(fp)
+            if live and live.get("replay_claim") == claim:
+                bucket.pop(fp, None)
+                if not bucket:
+                    _PENDING_CONFIRMATIONS.pop(sid, None)
+
+
+def clear_confirmation_card(approval_id):
+    """Remove only pending entries answered by this particular card."""
+    with _PENDING_LOCK:
+        for sid, bucket in list(_PENDING_CONFIRMATIONS.items()):
+            for fp, entry in list(bucket.items()):
+                if entry.get("approval_id") == approval_id:
+                    bucket.pop(fp, None)
+            if not bucket:
+                _PENDING_CONFIRMATIONS.pop(sid, None)
 
 
 def _confirmation_question(name, tool_input):
@@ -8640,7 +8716,8 @@ def _hook_confirmation_gate(ctx):
     """Ask-first permission gate (interactive chat only). Pre, priority 10."""
     name = ctx.tool_name
     session_ctx = ctx.session_ctx
-    _sid = (session_ctx or {}).get("session_id")
+    _sid = ((session_ctx or {}).get("confirmation_key")
+            or (session_ctx or {}).get("session_id"))
     if (getattr(ctx, "meta", None) or {}).get("taint_card_approved"):
         # The user already decided this exact call on a card that showed
         # where its details came from. Asking again in chat adds nothing.
@@ -8659,18 +8736,31 @@ def _hook_confirmation_gate(ctx):
         # was shown. A bare session-wide boolean would let a yes for one file
         # authorise a write to any other.
         with _PENDING_LOCK:
-            _entry = (_PENDING_CONFIRMATIONS.get(_sid) or {}).get(_fp)
-        if _entry is not None and _entry.get("granted"):
-            # If this question had already been escalated to a card, the card
-            # is now answered - by the same human, in the same breath. Resolve
-            # it so the queue does not accumulate cards for things that
-            # already happened.
-            _resolve_escalated_card(_entry.get("approval_id"))
-            _clear_pending(_sid, _fp)
+            _bucket = _PENDING_CONFIRMATIONS.get(_sid) or {}
+            _entry = _bucket.get(_fp)
+            _replay = (session_ctx or {}).get("confirmation_replay") or {}
+            _claimed = (_entry or {}).get("replay_claim")
+            _granted = bool(_entry and _entry.get("granted")
+                            and (not _claimed or _claimed == _replay.get("claim")))
+            if _granted:
+                _bucket.pop(_fp, None)
+                if not _bucket:
+                    _PENDING_CONFIRMATIONS.pop(_sid, None)
+        if _granted:
+            if not _resolve_escalated_card(_entry.get("approval_id"), name, ctx.input):
+                return _hooks.DENY(
+                    f"[CONFIRMATION ALREADY DECIDED] '{name}' was not run by "
+                    "this call. Its approval card has already been handled; "
+                    "do not retry it.")
             # The owner answered yes to exactly this call.
             if isinstance(getattr(ctx, "meta", None), dict):
                 ctx.meta["owner_decided"] = f"chat:{_fp}"
             return _hooks.ALLOW
+
+        if _replay.get("fingerprint") == _fp or _claimed:
+            return _hooks.DENY(
+                f"[CONFIRMATION ALREADY DECIDED] '{name}' was not run by "
+                "this call. This approval is already being handled.")
 
         _state = _record_pending_confirmation(_sid, name, ctx.input, turn=_turn)
         _asks = int((_state or {}).get("asks") or 1)
@@ -8693,28 +8783,25 @@ def _hook_confirmation_gate(ctx):
         # So the second ask changes mechanism instead of repeating itself: a
         # durable approval card, decided in the UI, where the answer is a
         # button and cannot be misparsed. There is no third ask.
-        return _hooks.DENY(_escalate_confirmation(_sid, name, ctx.input, _fp, _q))
+        return _hooks.DENY(_escalate_confirmation(
+            _sid, name, ctx.input, _fp, _q, session_ctx=session_ctx))
     return _hooks.ALLOW
 
 
-def _resolve_escalated_card(approval_id):
-    """Close the card an escalation opened, once the user has answered in chat.
-
-    Best-effort and silent: a dangling pending card is untidy, not dangerous,
-    so nothing here is allowed to interfere with an action the user has just
-    approved.
-    """
+def _resolve_escalated_card(approval_id, name, tool_input):
+    """Claim an escalated card for this chat execution, never a second one."""
     if not approval_id:
-        return
+        return True
     try:
         from agent_friday.services import approvals as _appr
-        _appr.decide(approval_id, "approve", decided_by="owner",
-                     note="answered in chat before the card was opened")
+        return _appr.claim_chat_confirmation(approval_id, name, tool_input)
     except Exception as e:
-        _log.debug("could not close escalated approval %s: %s", approval_id, e)
+        _log.warning("could not claim escalated approval %s: %s", approval_id, e)
+        return False
 
 
-def _escalate_confirmation(session_id, name, tool_input, fingerprint, question):
+def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
+                          *, session_ctx=None):
     """Hand a twice-asked question to the durable approval queue.
 
     Returns the text the model is given INSTEAD of asking again. Never raises
@@ -8723,23 +8810,29 @@ def _escalate_confirmation(session_id, name, tool_input, fingerprint, question):
     """
     try:
         from agent_friday.services import approvals as _appr
-        res = _appr.gate_action(
-            kind="tool_confirm", subject_type="tool_action",
-            subject_id=f"{session_id}:{fingerprint}",
-            title=question,
-            action_description=f"{name} {tool_input!r}",
-            description=("Raised because the chat confirmation for this exact "
-                         "action was asked and not resolved. Decide it here."),
-            force_gate=True, payload={"tool": name, "input": tool_input},
-            requested_by="confirmation_gate",
-        )
-        status = res.get("status")
-        # Remember which card covers this question, so a later chat "yes" can
-        # close it instead of leaving it pending forever.
+        # Publish and link the card as one handoff. Otherwise a chat approval
+        # can consume the entry before its card id is attached, leaving two
+        # independent ways to execute the same action.
         with _PENDING_LOCK:
             _e = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
-            if _e is not None:
-                _e["approval_id"] = (res.get("approval") or {}).get("approval_id")
+            if _e is None or _e.get("replay_claim"):
+                return (f"[CONFIRMATION ALREADY DECIDED] '{name}' is already "
+                        "being handled. Do not retry it.")
+            request_id = _e.setdefault("request_id", uuid.uuid4().hex[:12])
+            rec = _appr.create_approval(
+                kind="tool_confirm", subject_type="tool_action",
+                subject_id=f"{session_id}:{fingerprint}:{request_id}",
+                title=question,
+                action_description=f"{name} {tool_input!r}",
+                description=("Raised because the chat confirmation for this exact "
+                             "action was asked and not resolved. Decide it here."),
+                force_gate=True, payload={"tool": name, "input": tool_input,
+                                         "conversation_id": (session_ctx or {}).get(
+                                             "conversation_id") or ""},
+                requested_by="confirmation_gate",
+            )
+            _e["approval_id"] = rec.get("approval_id")
+        status = rec.get("status")
     except Exception as e:
         _log.warning("confirmation escalation unavailable: %s", e)
         return (f"[CONFIRMATION UNRESOLVED] '{name}' was NOT executed. You have "
@@ -8749,28 +8842,18 @@ def _escalate_confirmation(session_id, name, tool_input, fingerprint, question):
                 f"you were trying to do, and ask them to reply with a single "
                 f"word: yes or no.")
 
-    # ONLY "approved", NEVER "auto_approved". `gate_action` returns "approved"
-    # the FIRST time a decided card is consumed and "auto_approved" every time
-    # after - and this card is created with force_gate=True, so there is no
-    # other route to auto_approved. Honouring both would turn one decision
-    # into a standing permission for that fingerprint: the card would keep
-    # re-granting the same write on every later attempt, which is the
-    # session-wide boolean all over again, just durable. One decision, one
-    # action - the rule gmail_send already lives by.
     if status == "approved":
-        # Decided in the UI between the ask and now.
-        with _PENDING_LOCK:
-            entry = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
-            if entry is not None:
-                entry["granted"] = True
-        return (f"[CONFIRMATION GRANTED] The user approved this action in the "
-                f"approvals queue. Call '{name}' once more with exactly the same "
-                f"arguments and it will run.")
-    if status == "denied":
+        clear_confirmation_card(rec.get("approval_id"))
+        return (f"[CONFIRMATION ALREADY DECIDED] The approval card for '{name}' "
+                "has already been approved and is handled by the card executor. "
+                "Do not retry the tool or claim an outcome without its result.")
+    if status in {"denied", "expired", "blocked"}:
         _clear_pending(session_id, fingerprint)
-        return (f"[CONFIRMATION DENIED] The user declined this action in the "
-                f"approvals queue, so '{name}' was NOT executed and must not be "
-                f"retried. Tell them it was not done.")
+        why = {"denied": "The user declined the action",
+               "expired": "The approval expired",
+               "blocked": "Policy blocked the approval"}[status]
+        return (f"[CONFIRMATION DENIED] {why}, so '{name}' was NOT executed "
+                "and must not be retried. Tell them it was not done.")
     return (f"[CONFIRMATION ESCALATED] '{name}' was NOT executed. You already "
             f"asked this question once, so it has been raised as an approval "
             f"card instead of being asked again. Do NOT ask it again and do NOT "
@@ -9160,13 +9243,17 @@ def _hook_audit_log(ctx, result):
 
 
 def _hook_pii_scrub(ctx, result):
-    """Scrub PII from tool results. Post, priority 95.
+    """Scrub PII from tool results under guarded consent. Post, priority 95.
 
     Screenshots pass through untouched (a regex pass over base64 would be slow
-    and could corrupt the image). Otherwise: scrub into pii_lookup for later
-    rehydration when one is supplied, else destructively redact.
+    and could corrupt the image). Recorded unrestricted cloud consent also
+    passes results unchanged, matching the outbound gate. Otherwise: scrub
+    into pii_lookup for later rehydration when supplied, else redact.
     """
     if ctx.tool_name == 'screenshot':
+        return result
+    from agent_friday.services.egress_gate import is_unrestricted_cloud
+    if is_unrestricted_cloud():
         return result
     if isinstance(ctx.pii_lookup, dict):
         scrubbed, sub = _scrub_pii(result)
@@ -10089,8 +10176,9 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             "Settings → Accounts & Keys (one is enough)."
         )
 
-    if pii_lookup is None:
-        # Legacy path — destructively redact on the way out.
+    from agent_friday.services.egress_gate import is_unrestricted_cloud
+    if pii_lookup is None and not is_unrestricted_cloud():
+        # Legacy guarded path — destructively redact on the way out.
         safe_messages = []
         for m in messages:
             content = m.get('content')
@@ -10100,7 +10188,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 safe_messages.append(m)
         safe_system = _pii_redact(system) if isinstance(system, str) else system
     else:
-        # Caller already scrubbed — trust the inputs.
+        # Caller already prepared inputs, or recorded consent permits them raw.
         safe_messages = list(messages)
         safe_system = system
 
@@ -10489,12 +10577,19 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             except Exception:
                 pass
 
-            # Echo assistant turn (text + tool_use blocks) into the convo
+            # Preserve signed thinking blocks exactly for the next tool round.
+            # The provider's opaque signature/data belong in its wire history,
+            # never in the displayed reasoning trace or tool result.
             assistant_content = []
             for b in resp.content:
                 btype = getattr(b, 'type', None)
                 if btype == 'text':
                     assistant_content.append({"type": "text", "text": b.text})
+                elif btype == 'thinking':
+                    assistant_content.append({"type": "thinking", "thinking": b.thinking,
+                                              "signature": b.signature})
+                elif btype == 'redacted_thinking':
+                    assistant_content.append({"type": "redacted_thinking", "data": b.data})
                 elif btype == 'tool_use':
                     assistant_content.append({
                         "type": "tool_use",

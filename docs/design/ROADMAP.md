@@ -29,6 +29,75 @@ one instruction — **verify, do not repeat**.
 
 ---
 
+## Re-verified 2026-09-29 (against main 780e31fa)
+
+Seven read-only surveys re-checked every doc in `active/` and
+`connector-ecosystem.md` against the code. Where this section and the older
+sections below disagree, this one wins. The decisions taken under the owner's
+"build all pending specs" commission are in
+[`docs/decisions/2026-09-29-program-delegated-decisions.md`](../decisions/2026-09-29-program-delegated-decisions.md).
+
+**Still open from §3 "Now"**: all four.
+1. The cloud mouth is not wired. Worse than recorded: the picker's ElevenLabs
+   choice is rejected by the settings enum (`routes/core_routes.py`
+   `_VOICE_ENUMS`) with a 400, so the setting never saves.
+2. The unattended paths are still unscoped: `services/agent.py`
+   `run_workflow_chain`, `_retry_chain_step`, chain advance, on-complete and
+   `_tool_spawn_task`, plus `services/scheduler.py`. There is no
+   `workflow-step` scope.
+3. Startup receipts are not built.
+4. The two core-tool lists still disagree.
+
+**Corrections to the sections below**:
+- `hostname-onboarding.md` is built for Windows, wired and tested, and is not
+  the Caddy design criticised in §2.4. Archive it; do not delete it.
+- Calendar writes are account-explicit (ea3055ec). The only gap left is the
+  Quick Add route in `routes/calendar.py`.
+- Deep research is reachable as a chat tool (37a9ce85).
+- `approvals.py` has about 22 callers. `approval_executor.py` runs approved
+  cards exactly once.
+- The resident seat is `bonsai2:27b`, planned at 65,536 context and served at
+  49,152. `DEFAULT_SETTINGS` still names `gemma4:e2b` for `local_model` and
+  the judgment gate.
+- `connector-ecosystem.md` phases 1–4 are built. Phases 5–6 are not.
+- `task-visibility.md`, `tasks-tray-honesty.md`, `midstream-durability.md` and
+  `voice-mode-diagnosis-and-repair.md` are built. Archive them.
+
+**Live defects found by the re-verification** (each becomes a program item):
+- **Receipts:** `completion_receipts.FAILURE_SENTINELS` omits
+  `[APPROVAL CARD RAISED]`, `[GOVERNANCE HOLD]`, `[BLOCKED`, `[DECLINED]`,
+  `[NOT RUN]` and `TOOL CALL FAILED`. A write that only raised a card
+  therefore satisfies "I saved X".
+- **Marketplace:** a purchase reports success while the transfer fails,
+  because `spend`/`earn` are called without `reason`.
+- **Federation:** `federation._verify_peer_card` accepts a card whose check
+  failed.
+- **Workspaces:**
+  - Workspace undo flips between two states instead of stepping back.
+  - `workspace_chat_turn` skips the blast-radius check.
+  - `routes/workspace_studio.py` has no `@login_required`.
+- **Skills:** a model-authored skill is active at once. There is no draft
+  status.
+- **Learning loop:** it is on by default, and promotions emit no receipts.
+- **Google sign-in:** the legacy `/api/google/auth` route writes a plaintext
+  token that is never migrated. `calendar_write` also points users at that
+  route.
+- **Local retry:** the integrity redispatch drops the tool catalogue.
+  `load_tools` then answers "No such tool".
+- **Tasks:** `GET /api/tasks/<id>` turns unknown progress into 0%.
+- **Settings:** `cloud_spill_ask` and `cloud_spill_min_wait_s` are missing from
+  `DEFAULT_SETTINGS`.
+
+**Unspecced items in the queue**:
+- Laya as Friday's reflexes, to be written from the Laya consolidation's
+  latency numbers.
+- CLM research.
+- FridayWeaver-2 on Bonsai2.
+
+The Vibe Coding Salon spec and local podcasts are on their own branches.
+
+---
+
 ## 0. The finding that matters most
 
 **Status headers in this repo are unreliable in both directions** (**VERIFIED**).
@@ -170,6 +239,56 @@ building, and several resolve to "nothing to build."
 8. **The test suite.** Over an hour to run, which is why several of today's
    defects survived. Not a feature; it is the thing that makes the rest
    cheaper.
+
+**Added 2026-09-29: the avatar visual genome**
+(`active/avatar-visual-genome.md`). The spec converges the 2026-09-22 design
+with the uncommitted `evolve-genome.md` draft into one weekly, reversible,
+signed evolution that every structure expresses. Nothing is built.
+
+The owner decided three questions on 2026-09-29:
+- evolution is on by default;
+- a frontier model authors each look by default, credited to the model
+  that made it; the user may switch the author to any model they have, and
+  Friday never switches it on her own;
+- all 13 structures share one palette, which may drift at most ±30° from
+  cyan over Friday's lifetime.
+
+Its §11 gives the phases and where they sit in the queue:
+- **A0 goes first.** It is one day of fixes to the live scene: honouring
+  reduced motion, capping the flash on structure changes, and a bounds check
+  on `/api/evolution`.
+- **A1-A4 wait until tonight's `index.html` work lands.** A4 is the voice
+  control.
+
+**Added 2026-09-29: the vibe coding salon**
+(`active/vibe-coding-salon.md`). It joins Chat and Code in one room:
+- an artifact panel in every chat;
+- "+ Codebase" chats with Preview, Files and Changes;
+- code that runs in a box and can't reach the vault, with keys injected at a
+  proxy.
+
+It also covers voice-first use, including private data summarized locally
+before any cloud model sees it, and Friday editing a copy of herself.
+
+It converges `workspace-ecosystem.md` (it is that spec's Forge) and
+`grow-button.md` Lane B2, and adds no parallel design. From the two links
+the owner raised:
+- **LocalStack:** the pattern is taken (local stand-ins for cloud services);
+  the product is not bundled.
+- **OpenShell:** the policy model is copied now; the runtime is adopted only
+  past a gate (§2.2).
+
+Nothing is built. Its §10.1 gives the order:
+- **Spikes S1–S3 and Phase 1 (the artifact panel, about 1.5 weeks) can start
+  now.** They need no GPU.
+- **Phase 2 waits on goals-and-receipts Phase 0.**
+- **Phase 4 waits on owner-rules Phase 1** and on a fix that makes Friday's
+  API refuse cross-site requests.
+- **Phase 6 (voice) waits on the voice contract and private-summary handoff
+  reaching main.**
+- **Phase 7 (self-edit) comes after receipts and owner rules.**
+
+Phases 1–8 total about 12 agent-weeks.
 
 **Investigate before committing**
 

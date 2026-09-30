@@ -47,6 +47,7 @@ from agent_friday.paths import contained, safe_name
 MAIN_ID = "conv-main"
 
 _LOCK = threading.RLock()
+_SEAT_CHANGES: dict[str, str] = {}
 _PRUNE_KEEP = 500          # per conversation, matching the old global prune
 
 
@@ -171,6 +172,26 @@ def list_all(include_archived: bool = True) -> list[dict]:
             out.append(conv)
     out.sort(key=lambda c: c.get("last_active_at") or 0, reverse=True)
     return out
+
+
+def begin_seat_change(cid: str) -> str:
+    """Reserve this selection before validation can yield to a newer request."""
+    with _LOCK:
+        token = secrets.token_hex(16)
+        _SEAT_CHANGES[cid] = token
+        return token
+
+
+def finish_seat_change(cid: str, token: str, *, pending: bool = False,
+                       **fields) -> tuple[dict | None, bool]:
+    """Only the newest pending selection may write the seat."""
+    with _LOCK:
+        superseded = _SEAT_CHANGES.get(cid) != token
+        if superseded:
+            fields.pop("seat", None)
+        elif not pending:
+            _SEAT_CHANGES.pop(cid, None)
+        return (patch(cid, **fields) if fields else load(cid)), superseded
 
 
 def patch(cid: str, **fields) -> dict | None:

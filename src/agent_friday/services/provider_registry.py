@@ -68,7 +68,7 @@ DEFAULT_PROVIDERS = [
         # what the product actually uses (a launch script pinning
         # ANTHROPIC_MODEL to a retired id overrides the configured model on
         # every launch).
-        "models": ["claude-sonnet-5", "claude-opus-5-5", "claude-opus-5",
+        "models": ["claude-sonnet-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-5",
                    "claude-fable-5-1", "claude-fable-5",
                    "claude-haiku-4-5-20251001"],
         "capabilities": ["tools", "vision"],
@@ -83,6 +83,7 @@ DEFAULT_PROVIDERS = [
             "claude-opus-5-5": 0.012,
             "claude-opus-5": 0.015,
             "claude-sonnet-5": 0.006,
+            "claude-sonnet-5-5": 0.006,
             "claude-haiku-4-5": 0.003,
             # The picker OFFERS these -- it discovers them from the live
             # /v1/models list -- so it must be able to price them. Without
@@ -99,6 +100,11 @@ DEFAULT_PROVIDERS = [
             "claude-haiku-4-5-20251001": 0.003,
         },
         "model_meta": {
+            # https://platform.claude.com/docs/en/models/sonnet-5-5/overview
+            "claude-sonnet-5-5": {"label": "Claude Sonnet 5.5", "short": "Sonnet 5.5",
+                                  "context_window": 1_000_000,
+                                  "max_output": 128_000,
+                                  "modalities": ["text", "vision", "tools"]},
             # Declared windows matter: model_catalog.context_window_for returns
             # None without them and the context layer falls back to a documented
             # constant -- which for the DEFAULT model meant the 1M window was

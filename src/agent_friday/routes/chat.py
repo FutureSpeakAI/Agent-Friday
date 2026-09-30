@@ -48,6 +48,7 @@ from agent_friday.services.action_policy import seal_system_prompt
 from agent_friday.services.agent import (
     ACTION_PERMISSION_POLICY,
     prepare_confirmation_ctx,
+    resume_confirmed_action,
     CLAUDE_TOOLS,
     _CC_PERMISSION,
     _call_claude_agent,
@@ -323,6 +324,34 @@ def _conv_id_from(data):
     """
     from agent_friday.services import conversations as _conv
     return _conv.resolve(((data or {}).get('conversation_id') or '').strip() or None)
+
+
+def _confirmed_action_response(message, session_ctx):
+    """Return the observed result of a stored approval before model dispatch."""
+    entry = resume_confirmed_action(session_ctx)
+    if entry is None:
+        return None
+    result = str(entry.get("result") or "The tool returned no output.")
+    # Tool output is data. A fence keeps shell output or source HTML from
+    # becoming active markup in the chat renderer.
+    fence = "`" * max(3, max((len(s) for s in re.findall(r"`+", result)), default=0) + 1)
+    reply = f"Result of the action you approved:\n\n{fence}\n{result}\n{fence}"
+    user_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                'role': 'user', 'text': message, 'pinned': False, 'sources': []}
+    friday_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                  'role': 'friday', 'text': reply, 'pinned': False, 'sources': []}
+    _persist_turn(session_ctx.get("conversation_id"), user_msg, friday_msg)
+    _save_chat_history(CHAT_HISTORY)
+    actions = []
+    if entry.get("name") == "navigate":
+        match = re.match(r"^NAV_OK:([^\s]+)", result)
+        workspace = _resolve_workspace(match.group(1)) if match else None
+        if workspace:
+            actions.append({"type": "navigate", "workspace": workspace})
+    return jsonify(public_result({"status": "ok", "response": reply,
+                                  "user_msg": user_msg, "friday_msg": friday_msg,
+                                  "sources": [], "tool_trace": [entry], "actions": actions},
+                                 "Couldn't resume the approved action"))
 
 
 def _conv_context(cid, limit=100):
@@ -1455,10 +1484,11 @@ def chat():
                     "=========================\n\n"
                 ) + sp
             lookup = {}
-            # Scrub only when the turn is cloud-bound. Scrubbing every message
+            # Scrub guarded cloud turns. Scrubbing every message
             # (not just the new one) means a cached LOCAL reply retrieved by the
             # pruner is scrubbed at retrieval time before it can reach the cloud.
-            if provider != 'local':
+            from agent_friday.services.egress_gate import is_unrestricted_cloud
+            if provider != 'local' and not is_unrestricted_cloud():
                 if sp:
                     sp, sub = _scrub_pii(sp)
                     lookup.update(sub)
@@ -1486,6 +1516,9 @@ def chat():
         # the confirmation gate is live, and grants a pending action when this
         # message is the user's "yes" to a question Friday asked last turn.
         _sess_ctx = prepare_confirmation_ctx(session_id, message, _sess_ctx)
+        _confirmed_response = _confirmed_action_response(message, _sess_ctx)
+        if _confirmed_response is not None:
+            return _confirmed_response
 
         # ── Safety net: local-first, no Anthropic key. ──
         # The router classifies every tool-enabled chat as TOOL_USE → cloud (and
@@ -1823,6 +1856,7 @@ def chat():
                     _retry_messages, system=system_prompt, model=_route_info['model'],
                     temperature=settings.get('temperature'),
                     orb_label=f"🏠 {_orb_label}", orb_icon='🏠',
+                    catalogue_all=_catalogue_all,
                     tools=_local_tools, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                 )
             if _provider == 'openai':
@@ -2564,10 +2598,14 @@ def chat_send():
         _sess_ctx = {
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
+            "conversation_id": _conversation_id,
         }
         # Same ask-first action flow as /api/chat: enforce confirmation and honor
         # a "yes" reply to a question Friday asked on the previous turn.
         _sess_ctx = prepare_confirmation_ctx(_session_id, message, _sess_ctx)
+        _confirmed_response = _confirmed_action_response(message, _sess_ctx)
+        if _confirmed_response is not None:
+            return _confirmed_response
         # Route through the provider-agnostic agent dispatcher rather than the
         # bare Anthropic loop, so this endpoint works on a local/OpenAI setup
         # instead of hard-failing with "ANTHROPIC_API_KEY is not set".

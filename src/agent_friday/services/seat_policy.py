@@ -32,26 +32,49 @@ from __future__ import annotations
 #: anyone should get by accident from a dropdown.
 LOCAL_ONLY_SEATS = frozenset({"memory_manager"})
 
-#: Provider names that mean "on this machine". Mirrors
-#: `ModelRouter._LOCAL_PROVIDERS` and `memory_proposals._is_local`, and is read
-#: in preference to either so there is one answer to the question.
+#: Internal local aliases used when no registered descriptor names the seat.
+#: An actual descriptor takes precedence: a familiar name cannot make a public
+#: endpoint local, and a custom name cannot make an on-device endpoint cloud.
 LOCAL_PROVIDER_NAMES = frozenset({
     "ollama-local", "arbiter-local", "llama-cpp-local", "local",
     "local-comfyui", "local-voice", "local-voice-lite", "nemo-local",
 })
 
 
+def is_local_descriptor(descriptor) -> bool:
+    """Use transport locality without overriding an explicit cloud declaration."""
+    if not isinstance(descriptor, dict):
+        return False
+    claimed = str(descriptor.get("classification") or
+                  descriptor.get("egress_classification") or "").strip().lower()
+    if claimed == "cloud":
+        return False
+    try:
+        from agent_friday.routing.provider_descriptors import classification_of
+        return classification_of(descriptor) == "local"
+    except Exception:
+        return False
+
+
 def is_local_provider_name(provider) -> bool:
     """True when `provider` names something that runs on this machine.
 
-    Name-based on purpose: this is asked about a SEAT ASSIGNMENT in settings,
-    before anything is dialled, so there is no host to re-resolve. The
-    network-level question -- "is the thing I am about to talk to actually
-    loopback" -- is `egress_gate.is_local_provider()`, which re-verifies the host
-    at call time. Both exist; they answer different questions.
+    Registered descriptors use the same adapter-and-address classification as
+    the catalogue and transport. Legacy internal aliases remain valid when
+    they have no descriptor; an unreadable registry does not verify locality.
+    The outbound transport still checks the actual destination at call time.
     """
-    p = str(provider or "").strip().lower()
+    name = str(provider or "").strip()
+    p = name.lower()
     if not p:
+        return False
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        registry = get_provider_registry()
+        descriptor = registry.get_provider(name) or registry.get_provider(p)
+        if descriptor is not None:
+            return is_local_descriptor(descriptor)
+    except Exception:
         return False
     if p in LOCAL_PROVIDER_NAMES:
         return True
@@ -60,6 +83,12 @@ def is_local_provider_name(provider) -> bool:
         return p in {str(x).lower() for x in ModelRouter._LOCAL_PROVIDERS}
     except Exception:
         return False
+
+
+def is_local_seat(provider, model="") -> bool:
+    """A local transport with a model that is not relayed to a cloud service."""
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    return not is_cloud_model_tag(model) and is_local_provider_name(provider)
 
 
 def local_only_violations(capability_routing) -> list[dict]:
@@ -78,7 +107,7 @@ def local_only_violations(capability_routing) -> list[dict]:
         provider = (entry.get("provider") or "").strip()
         if not model and not provider:
             continue          # unset is not a violation; it is just unassigned
-        if is_local_provider_name(provider):
+        if is_local_seat(provider, model):
             continue
         out.append({
             "seat": key,
@@ -86,9 +115,9 @@ def local_only_violations(capability_routing) -> list[dict]:
             "provider": provider,
             "why": (
                 "The %s seat is local-only: it reads a body of your private "
-                "text and that text never leaves this machine. %s is a cloud "
-                "provider, so this seat would refuse to run and the feature "
-                "would be silently off. Pick a local model instead."
-                % (key, provider or "that provider")),
+                "text and that text never leaves this machine. %s cannot be "
+                "verified as a local model and provider, so this seat would "
+                "refuse to run. Pick a local model instead."
+                % (key, "/".join(s for s in (provider, model) if s) or "That selection")),
         })
     return out
