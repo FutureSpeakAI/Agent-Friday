@@ -174,13 +174,21 @@ building, and several resolve to "nothing to build."
 **Added 2026-09-29: the avatar visual genome**
 (`active/avatar-visual-genome.md`). The spec converges the 2026-09-22 design
 with the uncommitted `evolve-genome.md` draft into one weekly, reversible,
-signed evolution that every structure expresses. Nothing is built. Its §11
-gives the phases and where they sit in the queue:
-- **A0 goes first, as filler.** It is one day of fixes to the live scene:
-  honouring reduced motion, capping the flash on structure changes, and a
-  bounds check on `/api/evolution`.
-- **A1-A3 run alongside the FridayWeaver-2 training.**
-- **A4 (the model authors) comes after that seat lands.**
+signed evolution that every structure expresses. Nothing is built.
+
+The owner decided three questions on 2026-09-29:
+- evolution is on by default;
+- only frontier models author a look, and each look is credited to the
+  model that made it;
+- all 13 structures share one palette, which may drift at most ±30° from
+  cyan over Friday's lifetime.
+
+Its §11 gives the phases and where they sit in the queue:
+- **A0 goes first.** It is one day of fixes to the live scene: honouring
+  reduced motion, capping the flash on structure changes, and a bounds check
+  on `/api/evolution`.
+- **A1-A4 wait until tonight's `index.html` work lands.** A4 is the voice
+  control.
 
 **Investigate before committing**
 

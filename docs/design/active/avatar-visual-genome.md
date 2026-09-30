@@ -1,6 +1,8 @@
 # Avatar visual genome: Friday's look evolves weekly, on every structure, reversibly
 
-> **Status:** proposed (spec only; nothing in this document is built). This is
+> **Status:** proposed (spec only; nothing in this document is built). The
+> owner decided all three open questions on 2026-09-29 (§12): on by default,
+> frontier models only, one shared palette within ±30° of cyan. This is
 > the converged design. It replaces the 2026-09-22 version of this file and the
 > uncommitted `docs/design/evolve-genome.md` (2026-09-28). That draft is
 > preserved verbatim in Appendix B so it is in git.
@@ -14,7 +16,9 @@
 > - `services/provenance.py` (`_deterministic`, `sign_manifest`)
 > - `governance/proof_of_integrity.py` (`IntegrityEngine.sign_payload`)
 > - `services/egress_gate.py` (`seal_outbound`)
-> - `services/local_call.py`
+> - `privacy/cloud_consent.py` (`resolve`)
+> - `services/agent.py` (`CLAUDE_TOOLS`) and `services/voice_engine.py`
+>   (`_VOICE_SHARED_TOOLS`)
 > - `services/off_record.py`
 > - `services/residency_arbiter.py` (`exclusive_lease`)
 > - `services/model_router.py` (`_call_claude`, `_call_openai`)
@@ -65,24 +69,26 @@ authoritative.
    - **The history** lets you go back to any earlier look.
    - Nothing is ever deleted unless you delete it.
 4. **You can see what changed and why.** Every change says, in plain words,
-   what moved, why, and who made it. That can be "Friday (on this computer)",
-   the local model by name, or a named cloud model.
+   what moved, why, and which frontier model made it. Friday picks the model
+   each week and credits it by name.
+5. **Her colours are the same on every structure.** All 13 share one palette,
+   so switching from the lattice to the Möbius strip never changes her colours.
+   Over her lifetime she drifts at most 30° either way from today's cyan (teal
+   to azure). She never turns green, amber or pink, because those mean status.
+6. **All of it works by voice.** "Friday, evolve now." "Undo that look." "Go
+   back to last month's look." "Turn evolution off." "What changed?" (§8.4)
 
 **What it costs.**
 
-| | Local path (default) | Cloud path (your choice) |
-|---|---|---|
-| **Privacy** | Nothing leaves the computer. Nothing is reported anywhere, ever. | About 40 numbers a week, shown to you in full, go to the model you allow. No words, names or titles are ever sent. |
-| **Money** | Nothing. | A few cents a week (INFERRED; §9). It shows in Costs like any other cloud call. |
-| **Speed** | The scene is capped at today's drawing cost. Friday measures it on your machine and undoes any change that slows her down. | Same. |
-| **Effort** | None. You can ignore it entirely. | None after one consent screen. |
+| | |
+|---|---|
+| **Privacy** | About 40 numbers a week go to the frontier model Friday picks, and you can see all of them. No words, names or titles are ever sent. Nothing is reported to anyone else, ever. |
+| **Money** | A few cents a week (INFERRED; §9). It shows in Costs like any other cloud call. |
+| **Speed** | The scene is capped at today's drawing cost. Friday measures it on your machine and undoes any change that slows her down. |
+| **Effort** | None. Evolution is on from the start. If no cloud model is connected, Friday says "evolution is waiting for a cloud model" and offers one click to connect one. |
 
-**Three decisions for you** (§12, with recommendations):
-
-1. Is it on by default for new installs, or off until someone turns it on?
-2. When it's on, who makes the changes by default: Friday on your computer, or
-   a cloud model?
-3. How far may she drift from today's cyan over a lifetime?
+**Decided 2026-09-29** (§12): on by default; frontier models only; one shared
+palette within ±30° of cyan.
 
 ---
 
@@ -323,8 +329,10 @@ question.
 > **Q.** Is a weekly cloud call telemetry?
 > **A.** Not if it is (a) the user's choice, (b) to the user's own key, (c) an
 > allowlisted numeric payload shown in full, (d) never sent to a Friday
-> server. There is no Friday server. The *local* path sends nothing, and there
-> is no metrics endpoint, now or later. A test pins that the step module
+> server. There is no Friday server, and there is no metrics endpoint, now or
+> later. (The owner chose frontier-only authorship on 2026-09-29, so the weekly
+> call is the one thing that leaves the machine. A user who wants nothing to
+> leave turns evolution off, or runs local-only mode, and it waits.) A test pins that the step module
 > imports no network client except through the cloud author's single call
 > site.
 >
@@ -357,9 +365,11 @@ question.
 > **Q.** Why a model at all?
 > **A.** A seeded mutation engine is enough to produce divergence, and it
 > costs nothing. A model adds *authorship*: a rationale, taste, and the fun
-> credit the 2026-09-22 design wanted. So the seeded engine is the floor, and
-> a model is an optional author on top. The owner now requires both a local
-> and a cloud author. Every author works inside the same bounds.
+> credit the 2026-09-22 design wanted. The owner decided (2026-09-29) that
+> authorship is the point: **frontier models only**. The seed still makes
+> installs differ (it seeds the builders and the sigil), but it never authors
+> a step. A seeded engine exists only as a test stub for the simulated year
+> (§10.2).
 >
 > **Q.** Thirteen expression functions is a lot of surface.
 > **A.** Thirteen small ones. Each maps shared genes onto literals that
@@ -378,7 +388,7 @@ question.
 | Status colours | State moods keep their hue; reserved-hue distance; never touch orbs or DOM | §6.2 |
 | GPU | Element caps v1+10%; no new passes; in-page frame check; measured against tok/s | §6.4, §10.3 |
 | Off the record | Excluded from signals | §5.1 |
-| Both authors | Seeded (floor), local model, cloud frontier; all credited | §5.3 |
+| Who authors | Frontier models only, picked by Friday and credited; no local or seeded fallback | §5.3 |
 
 ---
 
@@ -406,7 +416,7 @@ or time-lapse.
 | Gene | Kind | Range | Max per step | Notes |
 |---|---|---|---|---|
 | `palette.anchor_hue` | fixed | 180° | never | v1 cyan; brand anchor (decision 3) |
-| `palette.base_offset` | continuous | −30° … +30° from the anchor, lifetime | 4° | applies to *identity moods* only (§6.2) |
+| `palette.base_offset` | continuous | −30° … +30° from the anchor, lifetime (decided) | 4° | applies to *identity moods* only (§6.2); never reaches green, amber or pink |
 | `palette.scheme` | discrete | analogous / split-complementary / triadic | change ≤ once per 8 steps | the accents derive from the base |
 | `palette.accent_share` | continuous | 0.20 … 0.35 | 0.03 | the share of elements drawn in the accent |
 | `palette.saturation` | multiplier | 0.85 … 1.10 | 0.03 | the floor keeps net-offline desaturation visible |
@@ -426,6 +436,19 @@ shimmer. Each of those is motion outside speaking, which the owner's standing
 rule forbids (§1.4). They are **refused**, not deferred. If any comes back, it
 comes back as a colour/state shift, or not at all.
 
+**One palette, every structure (decided 2026-09-29).** The palette section is
+the only source of colour for all 13 structures and the background. No
+structure section may carry a hue, an accent bias or an accent share of its
+own; the §3.3 genes are form only. So switching structures never changes her
+colours. Two v1 exceptions are resolved in the genome's favour:
+
+- QUANTUM's free rainbow (`index.html:5430-5446`) becomes a sweep between the
+  shared base and accent.
+- MANDELBROT's base→accent gradient already uses the shared pair.
+
+EDEN's white player figure stays white, because it stands for the user, not
+Friday. With an empty genome (v1), both exceptions draw as they do today.
+
 The 2026-09-22 `structure` gene (an index into `EVOLUTION_PATH`) is
 **dropped**. Which structure is shown is the user's choice, and "whichever the
 user is running" is what evolves.
@@ -443,7 +466,7 @@ exist today. A structure with no section draws exactly as v1.
 | DOME | `pillars` 8 → `symmetry`-linked 6…10; `crystals` 6 → 4…7 |
 | ASTROLABE | `rings` 8 → 6…9; `tilt_spread` random → seeded, scaled by coherence |
 | TESSERACT | `w_ratio` 0.5/0.3 → 0.3…0.7 (speaking only) |
-| QUANTUM | `hue_band` full rainbow → ±60°…±180° around the base (v1 is ±180°) |
+| QUANTUM | `wave` 10 → 8…12 (colour comes from the shared palette, never its own band) |
 | MANDELBROT | `max_iter` 40 → 32…40 (down only); `step` 0.012 → 0.012…0.015 |
 | MOBIUS | `twists` 1 → 1…3 (odd); `width` 1.5 → 1.2…1.8 |
 | GRID | `wave_scale` → 0.8…1.2 |
@@ -494,12 +517,23 @@ days (§1.1). Instead:
   - The *visual transition* waits until she is not speaking and no voice
     session is open, up to 10 minutes, then crossfades. Her face never
     changes mid-sentence.
-- **Author gates.**
-  - The seeded author has no gate: it is arithmetic.
-  - The local-model author uses `idle_work_blocked_reason`. If the gate stays
-    shut for 24 hours past due, that week falls back to the seeded author and
-    says so.
-  - The cloud author goes through the spend guard and the egress gate (§5.3).
+- **The author gate: a frontier model or nothing.** A step is due only when a
+  frontier model is available. That means a working key for at least one
+  frontier provider, and a cloud-consent answer that allows cloud calls
+  (`privacy/cloud_consent.resolve`). A user who chose local-only mode is not
+  offered a cloud call.
+  - If none is available when a step falls due, **no step runs and nothing
+    falls back** to a seeded or local author. `last_step_at` does not move.
+    Friday shows one plain notice: *"Evolution is waiting for a cloud model."*
+    It has one button, **Connect a model**, which opens Settings → Accounts &
+    Keys (or the consent question if that is what is missing).
+  - The notice repeats at most once a week. The waiting state shows in the
+    scene menu (§8.1) and in voice ("what changed?" answers "nothing yet:
+    I'm waiting for a cloud model").
+  - When a model becomes available, the next hourly check runs **one** step.
+    That is the same catch-up rule as a machine that was switched off.
+  - The call itself then goes through the spend guard and the egress gate
+    (§5.3).
 
 ### 4.2 The step pipeline
 
@@ -534,7 +568,7 @@ days (§1.1). Instead:
 
 ---
 
-## 5. Signals, dream-rsi, and the three authors
+## 5. Signals, dream-rsi, and the author
 
 ### 5.1 Signals: counted nightly, numbers only
 
@@ -581,13 +615,32 @@ Suggested weightings, which a model author may depart from within bounds:
 
 Low calibration scores never make her look worse. There is no worse.
 
-### 5.3 The three authors: the user picks, every step is credited
+### 5.3 The author: a frontier model, picked by Friday and credited (decided)
 
-| Author | Credit shown | What runs | What leaves the machine |
-|---|---|---|---|
-| **Seeded** (the floor, always available) | "Friday, on this computer (no model)" | A deterministic mutation from `seed ⊕ step_number` and the weighted signals. The reason line is templated ("tighter lattice: a focused week"). | Nothing |
-| **Local model** | "<seat id>, on this computer" (for example, the resident FridayWeaver seat) | One call through `local_call` under `local_only`, with the §5.3 payload. It returns `proposed_genome`, `rationale` (≤ 280 chars) and `name`. One reformat retry, then the seeded author with a note. | Nothing |
-| **Cloud frontier** | "<model the provider reported>" plus Friday's one-line reason for picking it | The 2026-09-22 design, unchanged: Friday picks among frontier models with a working key, favouring variety, and calls the pinned provider directly (`_call_claude` / `_call_openai` with `fallback_models=None`, never `_generate_text`). Credit comes from the reported model; a mismatch shows both, with a warning. | The allowlisted payload below, through spend guard → `seal_outbound` (fail-closed) → `cost_meter` (`avatar_evolution`) → `attribution.record_generation` |
+The owner decided on 2026-09-29: **frontier models only**. This restores the
+2026-09-22 rule, and reverses this spec's earlier local-default
+recommendation.
+
+| | |
+|---|---|
+| **Who** | Friday picks among frontier models with a working key, favouring one that hasn't made any of the last few steps. She records a one-line reason ("Chose <model>: it hasn't shaped Friday since W31"). |
+| **How** | A direct, pinned call: `_call_claude(..., model=...)` or `_call_openai(..., provider=..., model=..., fallback_models=None)`. Never `_generate_text`, which falls through to local providers. |
+| **Credit** | The model the provider *reports* it used. If it differs from the one requested (a router substituting silently), both are shown, with a warning. |
+| **Returns** | `proposed_genome`, `rationale` (≤ 280 characters, shown as the model's own words), `name` |
+| **What leaves the machine** | The allowlisted payload below (about 40 numbers), through spend guard → `seal_outbound` (fail-closed) → `cost_meter` (`avatar_evolution`, so it appears in Costs) → `attribution.record_generation` |
+| **Never** | A local model or a seeded engine standing in. When no frontier model is available, the step waits (§4.1). |
+
+**The first time.**
+
+- **New installs:** the announcement is part of first-run setup.
+- **Existing installs (the owner's included):** a one-time notice at the first
+  launch after this ships.
+
+Either way, the announcement shows three things: the exact example payload,
+the list of fields that are never sent, and a note that the cost shows in
+Costs. It has one-click **Turn off**. `last_step_at` starts at the moment of
+the announcement, so the first step comes a week later, and there is a week to
+decide.
 
 The payload is built by one function against an allowlist schema: numbers,
 booleans and fixed enums only. A test pins the schema.
@@ -618,7 +671,8 @@ record.
   one same-model retry) writes a `skipped` history entry naming the model and
   the reason, and the look stays.
 - **Try again** lets Friday pick again.
-- **"Use the local path this week"** is offered alongside it.
+- **Connect a different model** is offered alongside it when the failure is
+  the key or the consent.
 - Friday never hops providers on her own. That was the 2026-09-22 rule, and it
   is kept.
 
@@ -733,11 +787,9 @@ simply never grows, and everything else works.
   - reverts the *expression* to the parent (history is untouched);
   - marks the step `held: frame budget`;
   - requires the next step to be a simplifying one.
-- **Local brain residency.** The step never loads a model.
-  - The local author uses whatever seat is resident, through the arbiter's
-    normal path.
-  - The scene's cost is independent of the author, because authoring is a
-    server call.
+- **Local brain residency.** The step never loads a model and never touches
+  the GPU. Authoring is a cloud call. Only the *scene's* cost competes with
+  the resident brain.
   - §10.3 measures tokens per second with the scene at the maximum genome.
 
 ---
@@ -757,7 +809,7 @@ Each step is one JSON document:
   "genome": { "...full clamped genome, sigil included..." },
   "diff": [ {"gene": "palette.base_offset", "from": 6, "to": 10} ],
   "reason": "Warmer by 4°: a creative week.",
-  "author": { "path": "seeded | local | cloud",
+  "author": { "path": "cloud",
               "model": "<reported model or null>", "requested": "<picked model or null>",
               "why_this_model": "…", "rationale": "…", "raw_proposal_digest": "sha256:…" },
   "input_digest": "sha256:<digest of the signal sums>",
@@ -805,7 +857,8 @@ Each step is one JSON document:
 - "Evolve now";
 - "Undo last change";
 - "History…";
-- the author choice: *On this computer* / *Local model* / *Cloud model*.
+- the author line: "Made by <model>, picked by Friday", or, when no frontier
+  model is available, *"Waiting for a cloud model"* with **Connect a model**.
 
 The existing "Reset to auto (evolution)" item is relabelled **"Rotate
 structures automatically"**, so the two ideas stop sharing a word. Code uses
@@ -842,11 +895,39 @@ A timeline of steps with:
 - the name;
 - the author credit;
 - the reason;
-- a "What was sent" disclosure (for cloud steps, the exact payload; for local
-  and seeded steps, "nothing left this computer").
+- a "What was sent" disclosure with the exact payload.
 
-It can filter by author or model, and each step offers Restore, Hide and
-Delete. Recently deleted steps are listed separately.
+It can filter by model, and each step offers Restore, Hide and Delete.
+Recently deleted steps are listed separately.
+
+### 8.4 Voice: everything works by voice, with no voice-only limits
+
+The owner's standing rule is that every feature works fully by voice. There is
+one tool, `avatar_evolution`. It is registered once in `CLAUDE_TOOLS`
+(`services/agent.py`) and named in `_VOICE_SHARED_TOOLS`
+(`services/voice_engine.py:469-481`), exactly as `navigate_to` is, so text
+and voice share one implementation and cannot drift. The action gate lists it
+beside `navigate_to` (`governance/action_gate.py:164-166`): it changes only
+the owner's own desktop.
+
+| The user says | Action | Friday does and says |
+|---|---|---|
+| "Friday, evolve now." | `evolve_now` | Runs a step at once (§4.1). While the call runs she says "Asking <model> for this week's look." Then she describes the change (below). If no frontier model is available, she says so and offers to open Accounts & Keys. |
+| "Undo that look." | `undo` | Rolls back to the parent: "Done. I'm back to *<name>*." |
+| "Go back to last month's look." | `rollback` with `when: "last month"` | Resolves the phrase to the step that was active on that date (a named step, "the one Claude made", or "the week of the 7th" also resolve). She switches, and says which look it was and who made it. A second "undo that" returns to where she was. Rollback is reversible, so she doesn't ask for confirmation. Where a phrase matches more than one look, she names the two closest and asks which. |
+| "Turn evolution off." / "on" | `set_enabled` | Flips the switch: "Evolution is off. I'll keep this look." Turning it on while the cloud-consent question is unanswered makes her read the disclosure (about 40 numbers, never words, names or titles; the cost goes in Costs) and ask yes or no. The same card appears on screen. That is how the voice payload card already works. |
+| "What changed?" / "Who made this look?" | `describe` | A spoken description of the active step, written for the ear. For example: "This week I got a little warmer, about four degrees, and my lattice pulled in tighter. There's a new ring for the fix I shipped on Tuesday. Claude Opus made it. I picked it because it hadn't shaped me since August." It names the model the provider reported. When she is waiting, she says what she's waiting for. |
+
+- **Every spoken answer comes from the same record the notice shows**: the
+  step's `diff`, `reason`, `author`. So voice can't say something the screen
+  doesn't. The descriptions use words ("a little warmer", "about four
+  degrees") rather than raw gene names, because Gemini speaks numbers as words.
+- **A step started by voice** changes the scene only after she finishes
+  speaking (§4.1), so her face never changes mid-sentence.
+- **Tests:** each row has a text-path test and a voice-path test (the voice
+  tool list declares `avatar_evolution`; its handler returns the same payload).
+  "Last month" resolves correctly across a month boundary, and across a
+  rolled-back tree.
 
 ---
 
@@ -856,16 +937,14 @@ Delete. Recently deleted steps are listed separately.
 |---|---|---|
 | Cloud call size | ~1.5K tokens in, ~0.3K out, once a week | INFERRED from the payload shape |
 | Cloud money | about 1-5 cents a week at current frontier prices; about $0.50-$2.50 a year | INFERRED; shown per step in Costs |
-| Local model call | one short call on the resident seat, seconds | UNMEASURED |
-| Seeded step | milliseconds | INFERRED |
 | Scene cost | at most v1 +10% elements; no new passes | bounded by schema; measured in §10.3 |
 | Disk | ~3 KB per step plus a ~40 KB thumbnail; ~2.2 MB a year | INFERRED |
 
 | Failure | What the user sees |
 |---|---|
 | The machine was off for weeks | One step on return; the notice says "caught up after 5 weeks away" |
-| Cloud path fails | A `skipped` entry, Try again, and "use the local path this week" |
-| Local seat busy all week | The seeded author steps and says so |
+| No frontier model (no key, no consent, or local-only mode) | No step runs and nothing falls back. One notice, "Evolution is waiting for a cloud model", with **Connect a model**, repeated at most weekly |
+| The cloud call fails | A `skipped` entry naming the model and the reason, plus Try again |
 | The frame budget is exceeded | The look reverts by itself; "held: this change was too heavy for this machine" |
 | A signature fails | The nearest verified ancestor is shown; the history row says "could not verify" |
 | The genome file is corrupt | v1 is drawn; the history still lists the steps; the notice offers restore |
@@ -891,6 +970,14 @@ change and pass after it, run in both directions (AGENTS.md).
 - **Catch-up.** With `last_step_at` 5 weeks ago, one tick produces **one**
   step, with ordinary bounds, and `next_due = now + 7d`. "Evolve now" resets
   the clock.
+- **Frontier only.** With no frontier key, or with consent unanswered or
+  local-only: a due step does not run, `last_step_at` does not move, no local
+  or seeded author is called (asserted by spies), and exactly one waiting
+  notice is raised per week. When a key appears, exactly one step runs.
+- **One palette.** For a random genome, the colours `express(id)` returns are
+  identical for all 13 structures. No structure section passes schema
+  validation if it carries a colour field. The lifetime hue stays within
+  ±30°, and never enters the green, amber or pink bands.
 - **The payload allowlist** rejects any string field outside the enums. The
   seed and sigil are never in the payload. The cloud author's call site is the
   only network path in the module (import-graph check).
@@ -908,8 +995,9 @@ change and pass after it, run in both directions (AGENTS.md).
 
 ### 10.2 The simulated year (numbers and pictures)
 
-A headless script runs 1,000 seeds × 52 steps with synthetic signal weeks. It
-reports:
+A headless script runs 1,000 seeds × 52 steps with synthetic signal weeks. The
+author is a test stub that proposes random in-bounds changes; no model is
+called. It reports:
 
 - the pairwise genome distance at weeks 4, 26 and 52. **Distinctness gate:**
   at week 26, fewer than 1% of seed pairs are within the "looks the same"
@@ -967,8 +1055,12 @@ After the owner's restart:
 3. Undo twice.
 4. Roll back to step 1.
 5. Switch structures and confirm the palette and sigil persist.
-6. Confirm the egress log shows **no** line for local and seeded steps, and
-   exactly one line for a cloud step.
+6. Confirm the egress log shows exactly one line per step, naming the model,
+   and that its payload matches "What was sent".
+7. By voice: "evolve now", "what changed?", "undo that look", "go back to last
+   month's look", "turn evolution off". Each spoken answer matches the notice.
+8. With the frontier key removed in a scratch home: "evolve now" says it is
+   waiting for a cloud model, and nothing runs.
 
 ---
 
@@ -980,14 +1072,14 @@ Effort is in focused agent-days, with review. Each phase is shippable alone.
 |---|---|---|---|
 | **A0** | Scene safety, useful with or without evolution: the scene honours `prefers-reduced-motion`; `metamorphosisFlash` is capped to stay under the WCAG 2.3.1 threshold (none under reduced motion); time-lapse is off under reduced motion; `/api/evolution` bounds-checks `preferred_scene_index`; the freeze hook for screenshots | 1 | nothing |
 | **A1** | Genome schema, seed, the 13 expression sections, the loader, seeded PRNG in the builders, the "empty = v1" screenshot and pipeline gates, the signed step store, the tree, `GET /api/avatar/genome`, and rollback | 4 | A0 (freeze hook) |
-| **A2** | Seeded author, nightly signal rows (off-record excluded), the catch-up job, "Evolve now", the reserved-hue / contrast / colour-blind / static-budget validators, the in-page frame check, and the simulated year with its contact sheet | 3-4 | A1 |
-| **A3** | UI: the Evolve section in the scene menu and Settings, the change notice with Undo, history (restore, hide, delete, trash), ask-first mode, and the pending dot. `index.html` and `ui_parts/` both | 3 | A2 |
-| **A4** | Model authors: the local-model path through `local_call`, and the cloud path (Friday's pick, pinned call, credit, consent screen, "What was sent", costs) | 3 | A2; ideally after FridayWeaver-2 is the resident seat |
+| **A2** | The frontier author (Friday's pick, pinned call, credit, "What was sent", costs, the waiting state and notice), nightly signal rows (off-record excluded), the catch-up job, "Evolve now", the reserved-hue / contrast / colour-blind / static-budget validators, the in-page frame check, and the simulated year with its contact sheet | 3-4 | A1 |
+| **A3** | UI: the Evolve section in the scene menu and Settings, the first-run and existing-install announcement, the change notice with Undo, history (restore, hide, delete, trash), ask-first mode, and the pending dot. `index.html` and `ui_parts/` both | 3 | A2 |
+| **A4** | Voice: the `avatar_evolution` tool in both registries, the spoken descriptions, relative-date rollback, and the voice-path tests (§8.4) | 2 | A2 (tool), A3 (for parity with the notice) |
 | **A5** | Card export and import, and the share hook stopping before the market | 2 | A1 |
 | — | Dream-rsi nightly scheduling (§5.4), a separate item | 4-5 (its own spec) | nothing here |
 | — | Market plumbing and ratings (Appendix A) | after federation un-defers | — |
 
-**Total for A0-A4: about 14-15 agent-days**, about three calendar weeks with
+**Total for A0-A4: about 13-14 agent-days**, about three calendar weeks with
 review and the owner's screenshot sessions.
 
 ### 11.1 Where it slots in the queue
@@ -1011,16 +1103,15 @@ Recommended order:
    day and touches nothing else.
 2. **Owner rules, then goals and receipts, keep their places.** Both are
    governance on outward actions, which outranks appearance.
-3. **A1-A3 run alongside FridayWeaver-2.** Training is GPU-bound and long; A1-A3
-   are UI and bookkeeping work that needs the GPU only for the §10.3
-   measurement. That measurement should wait until training is not holding the
-   card.
-4. **A4 after FridayWeaver-2 lands on Bonsai2,** so the local author is the new
-   resident seat and the tokens-per-second gate measures the brain users will
-   actually run.
-5. **CLM research and the Salon are independent of this.** Nothing here blocks
+3. **A1-A4 wait for tonight's `index.html` work to land.** That is the
+   Codex, workspace and podcast sessions. After it lands, A1-A4 can run
+   alongside FridayWeaver-2. Training is GPU-bound and long; this is UI,
+   bookkeeping and one cloud call. The §10.3 tokens-per-second gate should be
+   measured once FridayWeaver-2 is the resident seat on Bonsai2, so it
+   measures the brain users will actually run.
+4. **CLM research and the Salon are independent of this.** Nothing here blocks
    them or is blocked by them. If they are commitments with dates, they go
-   ahead of A4.
+   first.
 
 A useful coupling: once delivery receipts exist, each weekly step can emit a
 receipt, so "Friday changed her look" appears in the same place as her other
@@ -1051,33 +1142,35 @@ unattended work.
 - the ratings model (Appendix A);
 - the nightly dream-rsi design (§5.4).
 
-**Replaced by the owner's 2026-09-29 request:**
+**Replaced or confirmed by the owner on 2026-09-29:**
 
-- "A frontier model makes each change, never a local one." It is now **both
-  paths**, with the user picking the author (§5.3).
+- "A frontier model makes each change, never a local one": **confirmed**. The
+  author is frontier-only. There is no local or seeded fallback, and the step
+  waits visibly when no frontier model is available (§4.1, §5.3).
+- "Off by default": **replaced by on by default** (below).
 - "Nightly or weekly": **weekly**, as recommended.
 - "Moving backwards": **dissolved**. There is no worse look (§2.2).
 - "Clock and pin": **resolved**. The four-day structure clock is untouched and
   separate (§3.1).
 
-**For the owner (at most three):**
+**Decided by the owner, 2026-09-29.** Verbatim: *"Evolutions on by default:
+Yes, but only frontier models, and try to keep the color scheme consistent
+across all the different 3D avatars please. You pick though."* Where the owner said
+"you pick", the calls were made as follows.
 
-1. **On or off by default for new installs?**
-   *Recommended: on, using the on-this-computer path, with the first change
-   announced and one-click off.*
-   - Off by default (the 2026-09-22 answer) means most Fridays never diverge,
-     which defeats "everyone's Friday ends up looking visually distinct".
-   - On costs nothing in privacy or money on the local path.
-   - Existing installs, including yours, get a one-time question instead of a
-     silent switch.
-2. **Default author when it's on?**
-   *Recommended: Friday on this computer (seeded, or the local model when one
-   is resident).* The cloud author is one click away and credited when chosen.
-   Starting local keeps the no-egress promise for anyone who never opens the
-   menu.
-3. **How far from cyan may she drift over her lifetime?**
-   *Recommended: ±30° hue (teal to azure; never green, amber or pink, because
-   those mean status).* Wider means more distinct Fridays and a looser brand.
+1. **On by default,** for new installs and for existing ones, the owner's
+   included. Existing installs get the one-time announcement with one-click
+   off, and the first step comes a week after it (§5.3).
+2. **Frontier models only.** Friday picks the model and credits each look.
+   With no frontier model available (no key, no consent, or local-only mode),
+   nothing runs and nothing falls back. A plain notice says evolution is
+   waiting, and offers one click to connect a model (§4.1).
+3. **One shared palette across all 13 structures,** so switching never changes
+   her colours. Lifetime drift is ±30° from cyan (teal to azure), and never
+   green, amber or pink, because those mean status (§3.2).
+
+**Also required (2026-09-29):** every feature works fully by voice with no
+voice-only limits (§8.4).
 
 **Still open, not blocking:**
 
