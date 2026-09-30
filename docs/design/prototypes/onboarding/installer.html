@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installer · Agent Friday onboarding prototype</title>
+<link rel="stylesheet" href="friday.css">
+<style>
+  .win { max-width: 720px; margin: 28px auto; border: 1px solid var(--line); border-radius: 14px; background: #04070b; box-shadow: 0 30px 80px rgba(0,0,0,.7); overflow: hidden; }
+  .win-title { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+  .win-title .dot { width: 10px; height: 10px; border-radius: 5px; background: rgba(255,255,255,.15); }
+  .pane { display: none; padding: 26px 28px 22px; min-height: 420px; }
+  .pane.active { display: block; }
+  .pane-foot { display: flex; gap: 10px; align-items: center; padding: 14px 28px; border-top: 1px solid var(--line); background: rgba(255,255,255,.02); }
+  .sig { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--dim); }
+  .sig b { color: var(--ok); }
+  .check { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .check:first-child { border-top: 0; }
+  .check .ic { font-size: 14px; text-align: center; }
+  .check .r { color: var(--dim); font-size: 12px; text-align: right; white-space: nowrap; }
+  .step-line { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; color: var(--label); }
+  .step-line.done { color: var(--dim); }
+  .step-line.now { color: var(--accent); }
+  .buckets { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 12px; }
+  .bucket { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .bucket h4 { margin: 0 0 4px; font-family: var(--display); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
+  .bucket ul { margin: 0; padding-left: 16px; color: var(--label); }
+  .variant { font-size: 12px; color: var(--dim); }
+  .variant a { margin-left: 8px; }
+</style>
+</head>
+<body>
+<main id="main">
+<div class="win" role="dialog" aria-labelledby="wtitle">
+  <div class="win-title"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span id="wtitle" style="margin-left:8px">Agent Friday Setup 6.0.0</span><span class="spacer"></span><span class="sig">Publisher: <b>FutureSpeak.AI, Inc.</b> · signature verified</span></div>
+
+  <!-- Pane 1: welcome -->
+  <section class="pane active" data-pane="1" aria-labelledby="p1h">
+    <div class="row" style="gap:18px;align-items:flex-start">
+      <div><div class="holo lg" data-state=""></div><div class="holo-state">Not born yet</div></div>
+      <div style="flex:1">
+        <div class="eyebrow">One file. Yours only.</div>
+        <h1 id="p1h">Install Agent Friday</h1>
+        <p class="lede">Friday installs for you, on this PC, in your own folder. No administrator password. No account to create. Nothing about you is sent anywhere by this installer, ever.</p>
+        <dl class="kv" style="margin-top:14px">
+          <dt>Download</dt><dd><span class="mono">AgentFriday-Setup-6.0.0.exe</span> · 146 MB, signed</dd>
+          <dt>Installs to</dt><dd><span class="mono">%LOCALAPPDATA%\Programs\Agent Friday</span> <button class="btn ghost sm">Change</button></dd>
+          <dt>Your data lives in</dt><dd><span class="mono">%USERPROFILE%\.friday</span> · never inside the app folder, never touched by updates</dd>
+          <dt>Runtime</dt><dd>Embedded. Friday brings her own Python. Nothing on your system is changed.</dd>
+          <dt>Models</dt><dd>None yet. Friday runs today on rules and, if you choose, a cloud model. Local models download in the background after first run, and only if you say so.</dd>
+        </dl>
+        <div style="margin-top:14px" class="row">
+          <label class="toggle"><input type="checkbox" checked><span class="track"></span><span>Start Friday when I sign in</span></label>
+          <label class="toggle"><input type="checkbox" checked><span class="track"></span><span>Desktop shortcut</span></label>
+        </div>
+        <p class="note" style="margin-top:14px">Windows may show a blue SmartScreen box the first time a new version is downloaded. The publisher line above is the thing to check. If it says anything other than FutureSpeak.AI, Inc., stop.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pane 2: preflight (model-free Doctor) -->
+  <section class="pane" data-pane="2" aria-labelledby="p2h">
+    <div class="eyebrow">Preflight · no model, no network, 4 seconds</div>
+    <h1 id="p2h">What this PC can do</h1>
+    <p class="lede">Friday checked the machine before installing anything. Nothing here is a guess and nothing was sent anywhere. This report is saved with the install receipt.</p>
+    <div style="margin-top:12px">
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Windows 11 Pro 24H2, per-user install allowed</span><span class="r">ready</span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Disk: 412 GB free on C:</span><span class="r">needs 0.6 GB now, up to 16 GB with local models</span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Memory: 32 GB</span><span class="r">ready</span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>GPU: NVIDIA, 12 GB</span><span class="r">Bonsai2 tier: 27B PTQ1_0 (from the tier table); speed measured after download</span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Microphone and speaker found</span><span class="r">voice ready</span></div>
+      <div class="check"><span class="ic" style="color:var(--warn)">!</span><span>Camera: none</span><span class="r">head tracking unavailable</span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Windows Hello: fingerprint enrolled</span><span class="r">can unlock Friday's vault</span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Credential Manager reachable</span><span class="r">keys stay in the OS store</span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>No previous install found</span><span class="r">fresh</span></div>
+      <div class="check"><span class="ic" style="color:var(--warn)">!</span><span>Port 443 on 127.0.0.1 is free; hosts file needs one admin step for <span class="addr">agent.friday</span></span><span class="r">asked during setup, optional</span></div>
+    </div>
+    <div class="buckets">
+      <div class="bucket"><h4 style="color:var(--ok)">Ready now</h4><ul><li>Chat, voice, vault, imports, rules-based setup</li><li>Cloud reasoning once you add a key</li></ul></div>
+      <div class="bucket"><h4 style="color:var(--accent)">Available after download</h4><ul><li>Bonsai2 27B, this PC's tier (size from the tier table)</li><li>Local voice, local scanner (Laya)</li></ul></div>
+      <div class="bucket"><h4 style="color:var(--violet)">Cloud available</h4><ul><li>Frontier reasoning, cloud voice, image generation</li><li>Each needs your own key and your yes</li></ul></div>
+      <div class="bucket"><h4 style="color:var(--danger)">Unavailable on this device</h4><ul><li>Head tracking (no camera)</li><li>Bonsai2 tiers above this card's VRAM</li></ul></div>
+    </div>
+  </section>
+
+  <!-- Pane 3: installing -->
+  <section class="pane" data-pane="3" aria-labelledby="p3h">
+    <div class="eyebrow">Installing</div>
+    <h1 id="p3h">Putting Friday in place</h1>
+    <p class="lede">Every step below is real. The bar moves only when a step finishes. Signatures are verified before anything runs.</p>
+    <div class="progress" style="margin:16px 0 10px" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="pbar"><span style="width:0%"></span></div>
+    <div id="steps">
+      <div class="step-line"><span>Verify installer signature and manifest</span><span>signed manifest, 1,204 files</span></div>
+      <div class="step-line"><span>Unpack embedded runtime</span><span>41 MB</span></div>
+      <div class="step-line"><span>Unpack Friday</span><span>88 MB</span></div>
+      <div class="step-line"><span>Verify every file against the manifest</span><span>SHA-256</span></div>
+      <div class="step-line"><span>Create shortcuts, autostart, uninstall entry</span><span>per-user registry only</span></div>
+      <div class="step-line"><span>Write install receipt</span><span>install-receipt.json</span></div>
+      <div class="step-line"><span>Start Friday</span><span></span></div>
+    </div>
+    <p class="note" id="eta">Usually under two minutes. No model downloads happen here.</p>
+  </section>
+
+  <!-- Pane 3b: upgrade variant -->
+  <section class="pane" data-pane="4" aria-labelledby="p4h">
+    <div class="eyebrow">Upgrade found</div>
+    <h1 id="p4h">Friday 5.14.3 is already here</h1>
+    <p class="lede">This will update her to 6.0.0. Your data folder is not touched. Your vault passphrase stays exactly where it is. If anything fails, the previous version comes back on its own.</p>
+    <div style="margin-top:12px">
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Delta package: 18 MB of 146 MB (only changed files)</span><span class="r">signed</span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Vault passphrase present in Credential Manager and DPAPI file; verified against real ciphertext before and after</span><span class="r">protected</span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Migration preview: 2 settings renamed, 0 removed, wiki index rebuild (~40 s)</span><span class="r"><a href="#">show</a></span></div>
+      <div class="check"><span class="ic" style="color:var(--ok)">✓</span><span>Rollback package kept: 5.14.3 stays until the new version passes its own health check</span><span class="r">automatic</span></div>
+      <div class="check"><span class="ic" style="color:var(--warn)">!</span><span>This release changes one permission rule (mail triage grants expire after 30 days instead of never)</span><span class="r"><a href="#">read the diff</a></span></div>
+    </div>
+    <p class="note">Changes to permissions, governance or migrations are never installed without this summary. Updates never install on their own unless you switch that on later.</p>
+  </section>
+
+  <!-- Pane 5: done -->
+  <section class="pane" data-pane="5" aria-labelledby="p5h">
+    <div class="row" style="gap:18px;align-items:flex-start">
+      <div><div class="holo lg" data-state="busy"></div><div class="holo-state">Waking</div></div>
+      <div style="flex:1">
+        <div class="eyebrow">Installed · 1 min 48 s</div>
+        <h1 id="p5h">Friday is on this PC</h1>
+        <p class="lede">She has not met you yet. The next screen is where she is born, and it is a conversation, so put on headphones or turn the sound up if you like. Everything also works with the keyboard and a screen reader.</p>
+        <dl class="kv" style="margin-top:12px">
+          <dt>Receipt</dt><dd><span class="mono">%USERPROFILE%\.friday\receipts\install-2026-09-29.json</span></dd>
+          <dt>Repair</dt><dd>Run this file again at any time. It fixes what is broken and touches nothing else.</dd>
+          <dt>Uninstall</dt><dd>Windows Settings → Apps, or Friday's own control room. Export first, then revoke, then clean, then verify.</dd>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <div class="pane-foot">
+    <span class="variant">Prototype variants: <a href="#" data-goto="1">fresh</a><a href="#" data-goto="4">upgrade</a></span>
+    <span class="spacer"></span>
+    <button class="btn secondary" id="back">Back</button>
+    <button class="btn" id="next">Install</button>
+  </div>
+</div>
+<p class="muted small" style="text-align:center;max-width:720px;margin:0 auto">Pane order: welcome → preflight (model-free) → install (or upgrade) → done. Keyboard: Tab, Enter. The publisher line and the preflight report are the two things a cautious person reads.</p>
+</main>
+<script src="friday.js"></script>
+<script>
+  protoNav('installer.html');
+  let pane = 1;
+  const labels = {1: 'Continue', 2: 'Install', 3: 'Installing…', 4: 'Update', 5: 'Meet Friday'};
+  function show(n) {
+    pane = n;
+    document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', +p.dataset.pane === n));
+    document.getElementById('next').textContent = labels[n];
+    document.getElementById('back').disabled = (n === 1 || n === 3);
+    document.getElementById('next').disabled = (n === 3);
+    document.querySelector('.pane.active h1').setAttribute('tabindex', '-1');
+    document.querySelector('.pane.active h1').focus();
+    if (n === 3) runInstall();
+  }
+  function runInstall() {
+    const rows = document.querySelectorAll('#steps .step-line');
+    const bar = document.getElementById('pbar');
+    let i = 0;
+    function tick() {
+      if (i > 0) rows[i-1].classList.replace('now', 'done');
+      if (i >= rows.length) { setTimeout(() => show(5), 400); return; }
+      rows[i].classList.add('now');
+      const pct = Math.round((i / rows.length) * 100);
+      bar.querySelector('span').style.width = pct + '%';
+      bar.setAttribute('aria-valuenow', pct);
+      i++;
+      setTimeout(tick, 550 + Math.random() * 500);
+    }
+    tick();
+  }
+  document.getElementById('next').addEventListener('click', () => {
+    if (pane === 1) show(2);
+    else if (pane === 2) show(3);
+    else if (pane === 4) show(3);
+    else if (pane === 5) location.href = 'birth.html';
+  });
+  document.getElementById('back').addEventListener('click', () => { if (pane > 1) show(pane === 4 ? 1 : pane - 1); });
+  document.querySelectorAll('[data-goto]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); show(+a.dataset.goto); }));
+  show(1);
+</script>
+</body>
+</html>

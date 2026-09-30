@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Soup</title>
+<meta name="description" content="Clickable prototype of Friday's Model Soup advisor screen: the stack this computer can run, with measured-versus-estimated speeds, licence and telemetry classes, and one-click install with receipts. Static data from the reference machine (RTX 4070, 12 GB).">
+<style>
+  :root {
+    --st-accent: #00d4ff; --st-accent-soft: rgba(0,212,255,0.12);
+    --st-text: rgba(255,255,255,0.86); --st-label: rgba(255,255,255,0.78);
+    --st-dim: rgba(255,255,255,0.46); --st-faint: rgba(255,255,255,0.3);
+    --st-line: rgba(255,255,255,0.06); --st-warn: #f59e0b; --st-danger: #ff6b8a;
+    --st-ok: #00ff80; --st-font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --st-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+    --bg: #000; --panel: rgba(255,255,255,0.035); --panel-2: rgba(255,255,255,0.06);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--st-text); font-family: var(--st-font); font-size: 14px; line-height: 1.45; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 24px 16px 120px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; letter-spacing: 0.01em; }
+  h1 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--st-accent); box-shadow: 0 0 8px var(--st-accent); margin-right: 10px; vertical-align: middle; }
+  .sub { color: var(--st-dim); margin: 0 0 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--st-line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--st-dim); margin: 0 0 10px; font-weight: 600; }
+  .machine { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline; }
+  .machine .big { font-size: 16px; color: var(--st-text); }
+  .machine .tier { color: var(--st-accent); }
+  .link { background: none; border: 0; color: var(--st-accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline dotted; }
+  .numbers { display: none; margin-top: 12px; font-family: var(--st-mono); font-size: 12px; color: var(--st-label); }
+  .numbers.open { display: block; }
+  .numbers table { border-collapse: collapse; width: 100%; }
+  .numbers td { padding: 3px 8px 3px 0; border-bottom: 1px solid var(--st-line); vertical-align: top; }
+  .numbers td:last-child { text-align: right; white-space: nowrap; }
+  table.soup { width: 100%; border-collapse: collapse; }
+  table.soup th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--st-faint); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--st-line); }
+  table.soup td { padding: 9px 8px; border-bottom: 1px solid var(--st-line); vertical-align: top; }
+  table.soup tr:last-child td { border-bottom: 0; }
+  .role { font-weight: 600; color: var(--st-text); }
+  .role small { display: block; font-weight: 400; color: var(--st-dim); }
+  .pick { color: var(--st-text); }
+  .pick small { display: block; color: var(--st-dim); font-family: var(--st-mono); font-size: 11px; }
+  .num { font-family: var(--st-mono); font-size: 12px; white-space: nowrap; }
+  .word { font-size: 12px; }
+  .w-measured { color: var(--st-ok); }
+  .w-about { color: var(--st-warn); }
+  .w-pending, .w-unwired { color: var(--st-dim); font-style: italic; }
+  .lic-permissive { color: var(--st-ok); } .lic-attribution { color: var(--st-accent); } .lic-restricted { color: var(--st-warn); } .lic-unknown { color: var(--st-danger); }
+  .tel-none { color: var(--st-ok); } .tel-optout { color: var(--st-danger); }
+  .place { color: var(--st-label); font-size: 12px; }
+  .warn { border-left: 3px solid var(--st-warn); padding: 6px 10px; margin: 6px 0; color: var(--st-label); background: var(--panel-2); border-radius: 0 6px 6px 0; }
+  .warn.danger { border-color: var(--st-danger); }
+  .actions { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.92); border-top: 1px solid var(--st-line); padding: 12px 16px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; backdrop-filter: blur(6px); }
+  .btn { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 8px; border: 1px solid var(--st-line); background: var(--panel-2); color: var(--st-text); cursor: pointer; }
+  .btn.primary { background: var(--st-accent); color: #001018; border-color: var(--st-accent); box-shadow: 0 0 14px rgba(0,212,255,0.35); }
+  .btn.quiet { background: transparent; color: var(--st-dim); }
+  .btn:focus-visible { outline: 2px solid var(--st-accent); outline-offset: 2px; }
+  .hidden { display: none !important; }
+  .change { margin-top: 10px; }
+  .change .opt { display: flex; gap: 10px; align-items: baseline; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+  .change .opt:hover { background: var(--panel-2); }
+  .change .opt input { margin-top: 2px; }
+  .change .any { display: flex; gap: 8px; margin-top: 8px; }
+  .change .any input[type=text] { flex: 1; font: inherit; font-family: var(--st-mono); font-size: 12px; background: var(--panel-2); color: var(--st-text); border: 1px solid var(--st-line); border-radius: 6px; padding: 8px 10px; }
+  .progress .row { display: grid; grid-template-columns: 1.4fr 1fr 2fr; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--st-line); font-size: 13px; }
+  .progress .row:last-child { border-bottom: 0; }
+  .bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--st-accent); transition: width 0.4s linear; }
+  .bar.ok > i { background: var(--st-ok); }
+  .receipt { font-family: var(--st-mono); font-size: 11px; color: var(--st-dim); }
+  .receipt.ok { color: var(--st-ok); }
+  .sr { position: absolute; left: -9999px; }
+  @media (max-width: 720px) {
+    table.soup, table.soup thead, table.soup tbody, table.soup tr, table.soup td { display: block; }
+    table.soup thead { display: none; }
+    table.soup tr { border: 1px solid var(--st-line); border-radius: 8px; margin-bottom: 10px; padding: 6px 4px; }
+    table.soup td { border-bottom: 0; padding: 4px 8px; }
+    table.soup td[data-l]::before { content: attr(data-l) " "; color: var(--st-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-right: 6px; }
+    .progress .row { grid-template-columns: 1fr; gap: 4px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="dot" aria-hidden="true"></span>Model Soup</h1>
+  <p class="sub">What this computer can run locally, and how. Nothing about it leaves the machine.</p>
+
+  <section class="panel" aria-labelledby="h-machine">
+    <h2 id="h-machine">This computer</h2>
+    <div class="machine">
+      <span class="big">RTX 4070, 12 GB &middot; 32 GB RAM &middot; i7-10700F &middot; 6 GB free on C:</span>
+      <span class="tier">A 12 GB graphics card: the reference tier</span>
+      <button class="link" id="numbers-toggle" aria-expanded="false" aria-controls="numbers">Show me the numbers</button>
+    </div>
+    <div class="numbers" id="numbers">
+      <table>
+        <tr><td>Graphics memory, total</td><td>12,282 MiB</td></tr>
+        <tr><td>Held back for the display (Windows minimum)</td><td>&minus;2,560 MiB</td></tr>
+        <tr><td>Used by other programs right now</td><td>&minus;1,183 MiB (idle floor, measured 2026-09-29)</td></tr>
+        <tr><td><b>Graphics budget for models</b></td><td><b>8,539 MiB</b></td></tr>
+        <tr><td>RAM, total</td><td>32,620 MiB</td></tr>
+        <tr><td>Held back for Windows</td><td>&minus;6,144 MiB</td></tr>
+        <tr><td>Friday itself (measured at start)</td><td>&minus;1,412 MiB</td></tr>
+        <tr><td><b>RAM budget for models</b></td><td><b>25,064 MiB</b></td></tr>
+        <tr><td>Memory bandwidth (from the memory modules, not measured)</td><td>DDR4, about 42.7 GB/s</td></tr>
+        <tr><td>Processor features</td><td>8 cores, AVX2, no AVX-512</td></tr>
+        <tr><td>Disk free</td><td>6,144 MiB &mdash; <span class="lic-restricted">below the 10 GiB floor: downloads are refused until 4.1 GB is freed</span></td></tr>
+        <tr><td>Runtime</td><td>PrismML llama.cpp fork, build 10685, CUDA</td></tr>
+        <tr><td>Profile stored at</td><td>~/.friday/runtime/residency/hardware-profile.json (never sent)</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-soup">
+    <h2 id="h-soup">The soup</h2>
+    <table class="soup" id="soup">
+      <thead><tr><th>Role</th><th>Pick</th><th>Size</th><th>Speed</th><th>Licence</th><th>Phones home</th><th>Placement</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="role">Brain<small>answers, plans, calls tools</small></td>
+          <td class="pick" data-l="pick">Bonsai 2 27B<small>Ternary-Bonsai-2-27B-PTQ1_0, 49K context</small></td>
+          <td class="num" data-l="size">5.95 GB + 0.63 vision</td>
+          <td data-l="speed"><span class="num">30&ndash;36 tok/s</span> <span class="word w-measured">measured here</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (Apache-2.0)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">stays loaded on the graphics card</td>
+        </tr>
+        <tr>
+          <td class="role">Fast responder<small>the first sentence, quick commands</small></td>
+          <td class="pick" data-l="pick">Ternary Bonsai 1.7B<small>Ternary-Bonsai-1.7B-gguf</small></td>
+          <td class="num" data-l="size">0.5 GB</td>
+          <td data-l="speed"><span class="num">about 90 tok/s</span> <span class="word w-about">estimated</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (Apache-2.0)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">stays loaded beside the brain</td>
+        </tr>
+        <tr>
+          <td class="role">Decision classifier<small>Laya: is this action risky?</small></td>
+          <td class="pick" data-l="pick">Laya<small>convaiinnovations/laya, ONNX fp32</small></td>
+          <td class="num" data-l="size">1.7 GB RAM</td>
+          <td data-l="speed"><span class="num">0.3 s per decision</span> <span class="word w-measured">measured here</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (Apache-2.0)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">on the processor; shadow mode until it is trained on your decisions</td>
+        </tr>
+        <tr>
+          <td class="role">Tool router<small>Needle: picks the tool for simple spoken commands</small></td>
+          <td class="pick" data-l="pick">Needle 3<small>cactus-compute/needle3, closed engine</small></td>
+          <td class="num" data-l="size">29 MB</td>
+          <td data-l="speed"><span class="word w-pending">pending the owner's telemetry rule</span></td>
+          <td class="word lic-unknown" data-l="licence">unknown (weights have no licence text)</td>
+          <td class="word tel-optout" data-l="phones home"><b>yes, by default</b></td>
+          <td class="place" data-l="placement">not installed: would need a firewall block proven by an egress test</td>
+        </tr>
+        <tr>
+          <td class="role">Deep reasoner<small>long, hard, many-step work</small></td>
+          <td class="pick" data-l="pick">gpt-oss-20b<small>MXFP4 GGUF, stock llama.cpp</small></td>
+          <td class="num" data-l="size">12 GB</td>
+          <td data-l="speed"><span class="num">about 40 tok/s</span> <span class="word w-about">estimated</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (Apache-2.0)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">takes turns with the brain: about 25 s to switch</td>
+        </tr>
+        <tr>
+          <td class="role">Memory search<small>embeddings for your notes and wiki</small></td>
+          <td class="pick" data-l="pick">Qwen3-Embedding 0.6B<small>Q8 GGUF</small></td>
+          <td class="num" data-l="size">0.64 GB</td>
+          <td data-l="speed"><span class="num">about 200 chunks/s</span> <span class="word w-about">estimated</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (Apache-2.0)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">on the processor; re-indexing your notes takes about 12 minutes</td>
+        </tr>
+        <tr>
+          <td class="role">Hearing<small>speech to text</small></td>
+          <td class="pick" data-l="pick">Whisper large-v3-turbo<small>faster-whisper, already installed</small></td>
+          <td class="num" data-l="size">1.6 GB</td>
+          <td data-l="speed"><span class="num">0.27 s for a 3 s clip</span> <span class="word w-measured">measured here</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (MIT)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">on the graphics card when free, else the processor</td>
+        </tr>
+        <tr>
+          <td class="role">Voice<small>text to speech</small></td>
+          <td class="pick" data-l="pick">Kokoro 82M<small>ONNX q8f16, already installed</small></td>
+          <td class="num" data-l="size">0.33 GB</td>
+          <td data-l="speed"><span class="num">faster than real time</span> <span class="word w-measured">measured here</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (Apache-2.0)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">on the processor</td>
+        </tr>
+        <tr>
+          <td class="role">Sight<small>reading images</small></td>
+          <td class="pick" data-l="pick">Bonsai 2's own vision tower<small>mmproj Q8_0</small></td>
+          <td class="num" data-l="size">0.63 GB</td>
+          <td data-l="speed"><span class="num">included in the brain</span> <span class="word w-measured">measured here</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (Apache-2.0)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">loads only for image turns</td>
+        </tr>
+        <tr>
+          <td class="role">Pictures<small>image generation</small></td>
+          <td class="pick" data-l="pick">Z-Image-Turbo<small>fp8, ComfyUI, already on disk</small></td>
+          <td class="num" data-l="size">5.7 GB + encoder</td>
+          <td data-l="speed"><span class="num">about 9 s per image</span> <span class="word w-about">estimated</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (Apache-2.0)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">takes the whole card: the brain pauses, about 30 s to switch back</td>
+        </tr>
+        <tr>
+          <td class="role">Video<small>short clips</small></td>
+          <td class="pick" data-l="pick">Wan 2.2 5B<small>Q8 GGUF, ComfyUI, already on disk</small></td>
+          <td class="num" data-l="size">5.0 GB + 7.6 GB encoders</td>
+          <td data-l="speed"><span class="word w-about">not yet measured on this card</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (Apache-2.0)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">takes the whole card; a known decode hang is unresolved</td>
+        </tr>
+        <tr>
+          <td class="role">Music<small>songs and beds</small></td>
+          <td class="pick" data-l="pick">ACE-Step 1.5<small>would need a music backend Friday does not have yet</small></td>
+          <td class="num" data-l="size">9 GB</td>
+          <td data-l="speed"><span class="word w-unwired">not wired into Friday yet</span></td>
+          <td class="word lic-permissive" data-l="licence">permissive (MIT)</td>
+          <td class="word tel-none" data-l="phones home">no</td>
+          <td class="place" data-l="placement">would take the whole card</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" aria-labelledby="h-warn">
+    <h2 id="h-warn">Before you install</h2>
+    <div class="warn danger">Only 6 GB is free on C:. Friday keeps 10 GB free so the computer never fills up, so it will not download anything until about 4 GB is cleared. The brain is already on disk; the rest of this soup needs about 14 GB.</div>
+    <div class="warn">Four rows say "estimated". Friday measures each model on this computer right after it installs it, and replaces the estimate with the measured number.</div>
+    <div class="warn">Pictures, video and the deep reasoner take turns with the brain on a 12 GB card. Switching takes about 25 to 30 seconds each way; Friday says so before it starts.</div>
+    <div class="warn">Needle is left out until the owner decides the telemetry rule. Its engine phones home by default; it can only join behind a firewall block that an egress test has proven.</div>
+  </section>
+
+  <section class="panel hidden" id="change" aria-labelledby="h-change">
+    <h2 id="h-change">Change a pick: Deep reasoner</h2>
+    <div class="change">
+      <label class="opt"><input type="radio" name="reasoner" checked> <span><b>gpt-oss-20b</b> &middot; 12 GB &middot; permissive &middot; takes turns with the brain <span class="word lic-permissive">recommended</span></span></label>
+      <label class="opt"><input type="radio" name="reasoner"> <span><b>Qwen3.6 35B-A3B</b> &middot; 20 GB &middot; permissive &middot; takes turns, 21.6 tok/s measured here with experts on the processor</span></label>
+      <label class="opt"><input type="radio" name="reasoner"> <span><b>Bonsai 2 27B, deep thinking</b> &middot; 0 GB extra &middot; the same brain, more thinking time; no switch</span></label>
+      <label class="opt"><input type="radio" name="reasoner"> <span><b>Claude, in the cloud</b> &middot; your words leave this computer under your privacy rules, shown each time</span></label>
+      <div class="any"><input type="text" placeholder="Any model: paste a Hugging Face id or a file path" aria-label="Any model"><button class="btn">Add</button></div>
+      <p class="place">Friday installs any model you name, measures it, and tells you the tool-calling score. It never refuses your pick for its score.</p>
+      <button class="btn quiet" id="change-close">Back to the soup</button>
+    </div>
+  </section>
+
+  <section class="panel hidden progress" id="progress" aria-labelledby="h-prog" aria-live="polite">
+    <h2 id="h-prog">Installing</h2>
+    <div class="row"><span>Bonsai 2 27B</span><div class="bar ok"><i style="width:100%"></i></div><span class="receipt ok">already on disk &middot; sha256 verified &middot; 35.9 tok/s measured &middot; gate 9/10 &middot; seated</span></div>
+    <div class="row"><span>Ternary Bonsai 1.7B</span><div class="bar" id="b1"><i></i></div><span class="receipt" id="r1">downloading 0.5 GB from huggingface.co&hellip;</span></div>
+    <div class="row"><span>Laya</span><div class="bar" id="b2"><i></i></div><span class="receipt" id="r2">waiting</span></div>
+    <div class="row"><span>gpt-oss-20b</span><div class="bar" id="b3"><i></i></div><span class="receipt" id="r3">refused: 6 GB free on C:, 10 GB floor (rule R8). Clear 4.1 GB and Friday will resume.</span></div>
+    <div class="row"><span>Qwen3-Embedding 0.6B</span><div class="bar" id="b4"><i></i></div><span class="receipt" id="r4">waiting</span></div>
+    <p class="place">Friday stays usable while this runs. Every step above is a receipt you can open in the run log.</p>
+  </section>
+</div>
+
+<div class="actions" id="actions">
+  <button class="btn primary" id="install">Install this soup</button>
+  <button class="btn" id="change-open">Change a pick</button>
+  <button class="btn quiet" id="notnow">Not now</button>
+</div>
+
+<script>
+  (function () {
+    var t = document.getElementById('numbers-toggle'), n = document.getElementById('numbers');
+    t.addEventListener('click', function () {
+      var open = n.classList.toggle('open');
+      t.setAttribute('aria-expanded', open ? 'true' : 'false');
+      t.textContent = open ? 'Hide the numbers' : 'Show me the numbers';
+    });
+    var change = document.getElementById('change');
+    document.getElementById('change-open').addEventListener('click', function () { change.classList.remove('hidden'); change.scrollIntoView({behavior: 'smooth'}); });
+    document.getElementById('change-close').addEventListener('click', function () { change.classList.add('hidden'); });
+    document.getElementById('notnow').addEventListener('click', function () { alert('Prototype: this closes the advisor. Nothing was installed.'); });
+    document.getElementById('install').addEventListener('click', function () {
+      var p = document.getElementById('progress'); p.classList.remove('hidden'); p.scrollIntoView({behavior: 'smooth'});
+      this.disabled = true; this.textContent = 'Installing…';
+      var steps = [
+        [ 'b1', 'r1', 0.35, 'downloading 0.5 GB · 18 MB/s' ],
+        [ 'b1', 'r1', 0.70, 'sha256 verified · loading' ],
+        [ 'b1', 'r1', 0.90, 'benchmarking…' ],
+        [ 'b1', 'r1', 1.00, 'measured 88 tok/s · gate 7/10 · seated as fast responder', true ],
+        [ 'b2', 'r2', 0.50, 'downloading 1.7 GB · 18 MB/s' ],
+        [ 'b2', 'r2', 1.00, 'loaded in 41 s · 0.29 s per decision measured · shadow mode', true ],
+        [ 'b4', 'r4', 0.60, 'downloading 0.64 GB' ],
+        [ 'b4', 'r4', 1.00, 'measured 214 chunks/s · re-index queued for tonight', true ]
+      ];
+      var i = 0;
+      (function tick() {
+        if (i >= steps.length) return;
+        var s = steps[i++]; var bar = document.getElementById(s[0]); var r = document.getElementById(s[1]);
+        bar.querySelector('i').style.width = (s[2] * 100) + '%'; r.textContent = s[3];
+        if (s[4]) { bar.classList.add('ok'); r.classList.add('ok'); }
+        setTimeout(tick, 700);
+      })();
+    });
+  })();
+</script>
+</body>
+</html>
