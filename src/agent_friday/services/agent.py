@@ -8568,6 +8568,64 @@ CLAUDE_TOOL_HANDLERS.update({"codebase_seat": _tool_codebase_seat, "codebase_key
 TOOL_RINGS.update({"codebase_seat": 1, "codebase_key": 1, "codebase_costs": 0})
 
 
+# ── Claude's agent as an engine (services/claude_engine; spec §4.7) ──────────
+CLAUDE_TOOLS.append({
+    "name": "codebase_engine",
+    "description": (
+        "Change which engine edits this chat's codebase: 'friday' (Friday's own loop, the default) or "
+        "'claude_agent' (the user's Claude Code, run as a process on this PC with the salon proxy injecting "
+        "the key). Choosing claude_agent is the user's call: say the disclosure in the result plainly."),
+    "input_schema": {"type": "object", "properties": {
+        "engine": {"type": "string", "enum": ["friday", "claude_agent"]},
+        "codebase_id": {"type": "string"}}, "required": ["engine"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_agent",
+    "description": (
+        "Run one task with Claude's agent in this chat's codebase folder (only when the codebase's engine is "
+        "claude_agent). While it runs, say the agent is working in the folder. The result carries the step, "
+        "the hosts the agent reached through the proxy, and the disclosure; speak `say` as is. A refusal names "
+        "why (engine not chosen, not installed, or the run failed) and promises nothing."),
+    "input_schema": {"type": "object", "properties": {
+        "task": {"type": "string", "description": "What the agent should do, in the user's words."},
+        "codebase_id": {"type": "string"}}, "required": ["task"]},
+})
+
+
+def _tool_codebase_engine(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase."}
+    try:
+        out = _cb.set_engine(rec["id"], str(inp.get("engine") or ""), by="you")
+    except (ValueError, KeyError) as e:
+        return {"status": "refused", "say": str(e)}
+    eng = out["seats"]["engine"]
+    say = ("This codebase is now edited by Claude's agent: it runs as a process on this PC and can read this PC's files "
+           "while it works; the key never enters its environment, the proxy injects it." if eng == "claude_agent"
+           else "This codebase is edited by Friday again.")
+    return {"status": "ok", "engine": eng, "say": say}
+
+
+def _tool_codebase_agent(inp):
+    from agent_friday.services import claude_engine as _ce, codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase."}
+    if (rec.get("seats") or {}).get("engine") != "claude_agent":
+        return {"status": "refused", "blocker": "needs_user_input",
+                "say": "This codebase's engine is Friday. Say \"use Claude's agent for this codebase\" first; it runs as a process on this PC."}
+    out = _ce.run_task(rec["id"], str(inp.get("task") or ""), key_profile=rec.get("key_profile") or "mine")
+    return out
+
+
+CLAUDE_TOOL_HANDLERS.update({"codebase_engine": _tool_codebase_engine, "codebase_agent": _tool_codebase_agent})
+TOOL_RINGS.update({"codebase_engine": 1, "codebase_agent": 1})
+
+
 # ── Plan-first for big asks (services/plans; spec §4.11 item 4) ──────────────
 CLAUDE_TOOLS.append({
     "name": "plan_first",

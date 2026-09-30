@@ -179,6 +179,14 @@ def codebase_seats(cid):
     return jsonify({"status": "ok", "seats": rec["seats"], "key_profile": rec.get("key_profile", "mine"), "header": cb.header(cid)})
 
 
+@codebases_bp.route("/api/codebases/<cid>/engine", methods=["POST"])
+@login_required
+def codebase_engine(cid):
+    body = request.get_json(silent=True) or {}
+    rec = cb.set_engine(cid, str(body.get("engine") or ""), by="you")
+    return jsonify({"status": "ok", "engine": rec["seats"]["engine"], "header": cb.header(cid)})
+
+
 @codebases_bp.route("/api/codebases/<cid>/key", methods=["POST"])
 @login_required
 def codebase_key(cid):

@@ -339,6 +339,15 @@ _VOICE_LIVE_TOOLS = [
     ("codebase_costs",
      "Answer 'how much has this cost?' for the current codebase chat from the meter. Speak the result's "
      "say line as is; never estimate.", {}, []),
+    ("codebase_engine",
+     "Change which engine edits the current codebase: 'use Claude's agent for this codebase' means "
+     "engine='claude_agent'; 'let Friday edit it' means engine='friday'. Speak the result's say line as is, "
+     "including the disclosure that Claude's agent runs as a process on this PC.",
+     {"engine": ("string", "'friday' or 'claude_agent'.")}, ["engine"]),
+    ("codebase_agent",
+     "Run one task with Claude's agent in the current codebase when its engine is claude_agent ('have the "
+     "agent add a search box'). Say the agent is working while it runs; then speak the result's say line as is.",
+     {"task": ("string", "What the agent should do.")}, ["task"]),
     ("delegate_to_friday",
      "Hand ANY request to the full Friday agent, with every tool it has in chat "
      "(email drafting, files, the wiki, browsing, research, workflows, anything the "
@@ -1369,10 +1378,11 @@ def _voice_tool_run(name, args, send_client, session=None):
                 return _governed(name, _fn, args)
             finally:
                 _ag._CURRENT_CONVERSATION.reset(_tok)
-        if name in ("codebase_seat", "codebase_key", "codebase_costs"):
+        if name in ("codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent"):
             from agent_friday.services import agent as _ag
             _fn = {"codebase_seat": _ag._tool_codebase_seat, "codebase_key": _ag._tool_codebase_key,
-                   "codebase_costs": _ag._tool_codebase_costs}[name]
+                   "codebase_costs": _ag._tool_codebase_costs, "codebase_engine": _ag._tool_codebase_engine,
+                   "codebase_agent": _ag._tool_codebase_agent}[name]
             _cid = session.get("conversation_id") if isinstance(session, dict) else None
             _tok = _ag._CURRENT_CONVERSATION.set(_cid)
             try:

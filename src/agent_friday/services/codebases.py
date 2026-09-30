@@ -470,6 +470,69 @@ def step(cid: str, changes: dict, summary: str, *, author: str = "friday", model
         return out
 
 
+def commit_working_tree(cid: str, summary: str, *, author: str = "friday", model: str = "", key_profile: str = "mine",
+                        extra: Optional[dict] = None) -> Optional[dict]:
+    """Everything changed in the folder by someone other than Friday's own
+    edits (an engine that ran in it) becomes ONE step with a receipt, or None
+    when nothing changed. `extra` rides on the receipt (engine, hosts, tier)."""
+    with _LOCK:
+        repo = repo_path(cid)
+        _git(repo, "add", "-A")
+        if _git(repo, "diff", "--cached", "--quiet", check=False).returncode == 0:
+            return None
+        written, deleted = [], []
+        for line in _git(repo, "diff", "--cached", "--name-status").stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            status, rel = parts[0][:1], parts[-1]
+            if rel.startswith(".friday/"):
+                continue
+            (deleted if status == "D" else written).append(rel)
+        who = "you" if author == "you" else ("%s via %s" % (model or author or "Friday", key_profile or "mine"))
+        summary = " ".join(str(summary or "Change").split())[:200]
+        _git(repo, "commit", "-q", "-m", summary, "--author", "%s <salon@local>" % who)
+        sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        files = []
+        for rel in written:
+            p = repo / rel
+            if p.is_file():
+                files.append({"path": rel, "bytes": p.stat().st_size, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()})
+        rec = {
+            "commit": sha, "kind": "step", "summary": summary, "author": author, "who": who,
+            "model": model, "key_profile": key_profile, "cost_usd": None,
+            "files": files, "deleted": deleted, "tests": None, "preview_hash": None, "network_events": [],
+            "ts": time.time(), "at": datetime.now().isoformat(timespec="seconds"),
+        }
+        rec.update({k: v for k, v in (extra or {}).items() if k not in rec or rec[k] in (None, [], "")})
+        _write_receipt(repo, rec)
+        out = {"sha": sha, "kind": "step", "summary": summary, "author": author, "who": who, "receipt": rec}
+        _announce(cid, out)
+        return out
+
+
+ENGINES = ("friday", "claude_agent")
+
+
+def set_engine(cid: str, engine: str, *, by: str = "you") -> dict:
+    """Which engine edits this codebase: Friday's own loop, or Claude's agent
+    on this PC (B1, with the disclosure). Announced in the chat."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    engine = str(engine or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if engine in ("claude", "claude_code", "claudes_agent", "claude_s_agent"):
+        engine = "claude_agent"
+    if engine not in ENGINES:
+        raise ValueError("engine must be 'friday' or 'claude_agent'")
+    old = rec["seats"].get("engine") or "friday"
+    rec["seats"]["engine"] = engine
+    _save(rec)
+    name = {"friday": "Friday", "claude_agent": "Claude's agent (a process on this PC; it can read this PC's files)"}
+    _system_line(rec, "Engine change: %s \u2192 %s (%s)." % (name[old], name[engine], by))
+    return rec
+
+
 def write(cid: str, rel: str, content: str) -> Optional[dict]:
     """A hand edit in the Files tab: a step authored by "you"."""
     return step(cid, {rel: content}, "You edited %s" % rel, author="you", model="", key_profile="")
