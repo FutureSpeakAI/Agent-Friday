@@ -4,6 +4,7 @@
 > **Last verified:** 2026-09-30, against main at `02035ba6`
 > **Implementation:** none of the new surfaces. The grounding sections cite what exists today.
 > **Prototypes:** [`docs/design/prototypes/onboarding/`](../prototypes/onboarding/index.html), seven screens in Friday's brand, keyboard-complete, no server.
+> **Binding owner rule:** Bonsai2 is the only local model suggested at first setup (§3.6); its lowest viable tier is the published minimum. Tier numbers come from `bonsai2-floor.md` and `bonsai2-tiers.json` (session local_6f0b72ec, branch `docs/model-soup`), not from this document.
 > **Supersedes / superseded by:** extends [`vault-first-onboarding.md`](../implemented/vault-first-onboarding.md) (implemented) and [`hostname-onboarding.md`](hostname-onboarding.md); consumes Phase 0 of [`self-patching-installer.md`](self-patching-installer.md); replaces the installer described in [`docs/getting-started/installation.md`](../../getting-started/installation.md); depends on [`avatar-visual-genome.md`](avatar-visual-genome.md) §3 (seed, sigil) and §13 (processing states); implements north-star §8, §9 and the onboarding rows of §13, §15, §23, §25, §26, §27, §28, §33 and §34
 > **Written:** 2026-09-30
 > **Method:** STORM with a simulated expert panel (appendix A); every claim about today's code carries a `file:line` citation, every design claim maps to a north-star requirement ID from [`GAP-MATRIX.md`](../north-star/GAP-MATRIX.md)
@@ -87,7 +88,17 @@ These outrank every choice below. They are the owner's rules from `docs/decision
 
 **What goes inside the signed file:** the embeddable CPython (11 MB), the app payload (about 90 MB uncompressed today), the core wheel set pinned by hash, the signed `release-manifest.json` (Phase 0 of the self-patching spec, `self-patching-installer.md:100-107`), the signed SBOM (NS-8.1-3), and the brand assets. Nothing else. `get-pip.py` is not needed when wheels are unpacked directly. Ollama is not bundled: the app offers it, or the in-process llama.cpp runtime the seat scheduler already understands, after first run.
 
-**What is downloaded after first run, inside the app, only on a yes:** the recommended local model (7.6 GB for the 12B tier on a 12 GB card; the ladder in `install.ps1:360-365` becomes the app's), the memory tier (about 2.3 GB, torch included), the judgment tier (Laya, about 0.8 GB), local voice, OfficeCLI. Each has a checksum, a size, a pause, a resume, and a "not now". The interface is usable throughout (NS-8.7-2).
+**What is downloaded after first run, inside the app, only on a yes:** Bonsai2 at this machine's tier (§3.6; the Gemma ladder in `install.ps1:360-365` is retired), the memory tier (about 2.3 GB, torch included), the judgment tier (Laya, about 0.8 GB), local voice, OfficeCLI. Each has a checksum, a size, a pause, a resume, and a "not now". The interface is usable throughout (NS-8.7-2).
+
+### 3.6 The local model: Bonsai2 only
+
+A binding rule from the owner: **Bonsai2 is the standard. Not Gemma, not Qwen. Only Bonsai2.** The installer and the birth conversation suggest no other local model. Any model stays supported afterwards by the person's own choice in the control room; first setup does not mention one.
+
+- **Detection and tier.** The preflight reads the machine (VRAM, RAM, disk, CPU features) and looks up the best Bonsai2 size and quantization it supports in the tier table, `docs/design/active/bonsai2-tiers.json`, which the "Bonsai2 floor and Model Soup" session (`docs/design/active/bonsai2-floor.md`) is measuring. Two members of the Ternary Bonsai family are on the reference machine today, 27B PTQ1_0 and 4B PQ2_0; the tier table, not this document, states each tier's VRAM, RAM, disk, context and measured tokens per second. Nothing here invents a number; the preflight prints the table's row for this machine and marks speed "measured" only after the first load.
+- **The floor is the published minimum.** The lowest viable Bonsai2 configuration in that table is Friday's **application floor**, and it becomes the published minimum system requirements on the download page and in the preflight's "Unavailable on this device" bucket. A machine below the floor is told so before installing, with the cloud-only path offered plainly (rule 2, both paths), never with a smaller non-Bonsai model as a substitute.
+- **Download after first run, never inside the installer.** The tier's weights download in the app with size, checksum, pause and resume (§3.1). The four-bucket report says "Available after download: Bonsai2 <tier>" and nothing else under local reasoning.
+- **Routing copy uses the tier.** §4.4's profiles say "Bonsai2 27B on this PC" rather than a generic size, with the table's figures.
+- **The Model Soup, at the end of onboarding and any time after.** Once birth is done, Friday offers the **Model Soup** advisor from `docs/design/active/model-soup.md` (as revised by the same session): a full hardware-tailored stack, a system-one responder, Laya, Needle, a deep reasoner, and image, video and music models, solved locally from a public catalog. The hardware profile never leaves the machine; the catalog is public data fetched like an update manifest. The offer is one card in Home's "what's waiting", re-runnable from Models and seats in the control room, and voice-callable ("make me a model soup", appendix C). Accepting it installs only what the person ticks, each with size, checksum and pause.
 
 ### 3.2 Preflight: the model-free Doctor
 
@@ -147,7 +158,7 @@ The order is the implemented one (`vault-first-onboarding.md`), extended with th
 
 ### 4.4 Where thinking happens
 
-Five profiles, nothing preselected, each stating what leaves, what does not, speed and quality, cost, what is unavailable, and how to change later (NS-8.6-1..3): **On this device only / Local preferred / Ask each time / Cloud preferred / Custom**. The preflight's measurement feeds the copy ("your GPU can run a 12B model well; 7.6 GB, about 25 minutes on your connection"). Cloud keys go into a secure field and straight into Credential Manager; key-shaped text in chat is refused, as today (`setup_chat.py:314-321`). The scheduled-cloud question ("about $9 a month", `setup-chat.md:166-168`) stays, asked only when it applies.
+Five profiles, nothing preselected, each stating what leaves, what does not, speed and quality, cost, what is unavailable, and how to change later (NS-8.6-1..3): **On this device only / Local preferred / Ask each time / Cloud preferred / Custom**. The preflight's tier lookup feeds the copy ("this PC runs Bonsai2 27B; size and time from the tier table, speed measured after download", §3.6). No other local model is named. Cloud keys go into a secure field and straight into Credential Manager; key-shaped text in chat is refused, as today (`setup_chat.py:314-321`). The scheduled-cloud question ("about $9 a month", `setup-chat.md:166-168`) stays, asked only when it applies.
 
 ### 4.5 Persona, then proactivity and quiet hours
 
@@ -183,6 +194,8 @@ The consent screens that exist today (collects, vault, routing, cloud acknowledg
 ### 5.3 Setup summary and the setup receipt
 
 The last card of birth is the north star's summary page (NS-8.15-1): principal, reasoning mode, models installed and pending, sources and scopes, storage and vault state, autonomy, notifications, backup status, what Friday knows so far, what is unconfigured, and "export setup receipt". The receipt is JSON in `~/.friday/receipts/`, signed with the governance key, and the same file the control room's Health section shows.
+
+After the summary, one more card: the **Model Soup** offer (§3.6). "Not now" is remembered; the card lives on in Models and seats.
 ## 6. Connect your life
 
 ### 6.1 The card contract
@@ -339,7 +352,18 @@ Onboarding is complete, in the north star's sense (NS-9.6-1), when one synthesis
 - **Modes:** work, travel, off the record, each a named bundle of settings shown as a diff before it is applied (§9.5).
 - **The thirty-day review:** what she knows (counts and a sample), what she did (receipts), what left the machine (the ledger's month), what she would drop if the person wants less, and a re-run link for every setup step. The pilot metrics the north star asks for (NS-34.18) are computed here, from local data, and shown to the person; they go nowhere.
 
-### 8.5 Pacing rules
+### 8.5 Own your tools (weeks two to four, re-runnable any time)
+
+The owner's brief, verbatim: "we're also going to need to try to figure out what tools the user makes use of most on their computer and find open source alternatives that they can own, then gently suggest implementing or building or trying new stuff within the Friday ecosystem. and when we build new stuff, these can go on the federation to earn positrons. we're not building the federation piece or the currency piece yet, but keep it in mind."
+
+- **Opt-in, all local.** Offered once the knowledge graph is established (day 10 or later), as one card: "Want me to look at which tools you lean on, and see what you could own instead?" With consent, Friday reads signals that never leave the machine: installed applications (the per-user and machine uninstall registry, Start Menu entries), Windows usage and jump-list data, browser history domains (counts by domain only, read from the local profile, never the URLs themselves), file types by count under the folders already connected, and, if finance data is connected, recurring subscriptions. The result is a ranked list of the person's top tools, stored locally with the same fields as any memory item (source, observed date, confidence), and shown before anything else happens.
+- **A public catalog, solved locally.** The list is matched against a public catalog of open-source and self-hostable alternatives (awesome-selfhosted, the open-source-alternatives lists and similar open data), fetched like an update manifest and solved on the machine the way the Model Soup solves its stack (§3.6). Nothing about the person's tools is sent anywhere. The catalog entry carries licence and telemetry facts; **only software without phone-home can be recommended**, per rule 1, and an alternative whose telemetry cannot be turned off or is undocumented is shown as "not recommended: sends usage data", never hidden.
+- **Three paths per tool.** (1) Try an open alternative from the catalog. (2) Use or extend a Friday workspace that already covers it (notes, tasks, briefings, the wiki, the salon). (3) Build your own in the Vibe Coding Salon from a template seeded by what you use (the features you actually touch, from the usage signals). Every suggestion states **what you gain** (ownership, privacy, cost per year), **what you lose** (features, sync, the people who share the tool with you), **migration effort** (an estimate in hours, labelled as such, with the import path for the person's data named: export format in, Friday importer out), and a "why this one" that opens the evidence.
+- **No pestering.** Suggestions surface only in the weekly review or in Home's "worth a look", one at a time. Each can be dismissed forever per application; "not now" waits a month. Never a pop-up, never a notification, never a sound.
+- **The seam for later.** Anything built through path 3 is recorded with a manifest (what it replaces, what it imports, its licence) so that it can later be published to the federation to earn positrons. **The federation piece and the currency piece are not built here**; they are parked with the federation sprint, and this section only keeps the manifest shape compatible with `vibe-coding-salon.md`.
+- **Re-runnable.** From the control room's Getting to know you, by voice ("what tools could I own?"), or from the thirty-day review. Re-running re-reads the signals with the same consent card.
+
+### 8.6 Pacing rules
 
 - One offer per precondition, once. "Not now" waits a week; "never" is final until the person reopens it.
 - Home's "what's waiting" is the only place offers accumulate. It has a count, not a badge that pulses.
@@ -392,7 +416,8 @@ Maya is a journalist. She is not technical. She has a laptop with a 12 GB GPU an
 - **Minute 3.** The bar moves only as steps finish: signature, runtime, files, hashes, shortcuts, receipt, start. "Installed, 1 min 48 s. She has not met you yet."
 - **Minute 3.5.** Friday speaks, captions on. Her mark forms beside her name. "What should I call you?" Maya says her name. She keeps "Friday". The address preview reads `https://agent.friday`; she takes the one Windows prompt, which names what it changes.
 - **Minute 6.** The vault. She picks Windows Hello. Twenty-four words appear once; she prints the kit with the sigil on it. Friday locks the vault and asks her to open it and to say words 7 and 19. "Protected, recovery verified."
-- **Minute 8.** Where thinking happens. Nothing preselected. She picks Local preferred; the 12B model starts downloading in the background, 7.6 GB, "about 25 minutes, measured after the first 100 MB".
+- **Minute 8.** Where thinking happens. Nothing preselected. She picks Local preferred; Bonsai2 27B, this PC's tier, starts downloading in the background with its size from the tier table, "time measured after the first 100 MB". No other model is mentioned.
+- **Minute 11.5.** The setup summary, the setup receipt, and one card: the Model Soup. She says not now; it waits in Models and seats.
 - **Minute 10.** Sliders, a preview sentence, a local voice sample. Proactivity: Quiet. Autonomy: Ask before every action. Quiet hours read from Windows.
 - **Minute 12.** Connect your life. The Gmail card tells her the truth and recommends a Takeout import today; she already has one from last year, drops it in. She adds IMAP with an app password in three minutes for live mail. Two sources. "That's enough."
 - **Minute 14.** The scan reports 41,208 messages, 2019 to now, 6 h 20 min of idle extraction on the local model, "or about 40 minutes and about $6 in the cloud; I won't unless you say so." She leaves it local. The galaxy starts to grow.
@@ -403,6 +428,7 @@ Maya is a journalist. She is not technical. She has a laptop with a 12 GB GPU an
 - **Day 6.** The first grant: file newsletters and receipts, 30 days, 400 uses. The card shows the two rules.
 - **Day 7.** The weekly review, ten minutes. The Doctor report is on the PC; Friday asks once whether Maya wants to email it herself. "Never ask again" is remembered.
 - **Day 10.** A Friday Bundle to her external drive, then a restore rehearsal that passes in 41 s. Backups now read "tested Tuesday", not "protected".
+- **Day 12.** "Want me to look at which tools you lean on?" She says yes. The ranked list appears first. In the next weekly review, one card: her note-taking app, an open alternative with no telemetry, what she gains, what she loses, about two hours to migrate, her notes importable. She dismisses a second suggestion forever.
 - **Day 16.** Her phone, through her own Tailscale account. Approval cards work from the couch.
 - **Day 19.** Her partner gets a principal with a lock screen. The kids get minor mode, with the guardian rules read aloud to both of them.
 - **Day 21.** Friday's first weekly look change is announced, with undo. The sigil is unchanged.
@@ -413,11 +439,12 @@ Maya is a journalist. She is not technical. She has a laptop with a 12 GB GPU an
 | Phase | Scope | Effort | Depends on |
 |---|---|---|---|
 | P0 Doctor and manifests | signed `release-manifest.json`, install ledger, preflight with the four buckets and vendor-neutral GPU read, `install-receipt.json` | 6 to 8 days | self-patching-installer Phase 0 |
-| P1 Installer 6.0 | single signed bootstrapper, embedded runtime and content-addressed wheels, version directories, delta, rollback with health check, repair, uninstall with export and revocation, Sandbox and VM matrix, winget listing | 15 to 20 days plus certificate lead time | P0, decision D1 |
+| P1 Installer 6.0 | single signed bootstrapper, embedded runtime and content-addressed wheels, version directories, delta, rollback with health check, repair, uninstall with export and revocation, Sandbox and VM matrix, winget listing, Bonsai2 tier lookup and the published floor | 15 to 20 days plus certificate lead time | P0, decision D1, `bonsai2-tiers.json` |
 | P2 Birth | voice-first setup on today's `setup_chat`, naming with the address card at setup, seed and sigil at birth, Windows Hello wrap, recovery kit, restore drill, five routing profiles, four extra persona axes, quiet hours and autonomy profiles, setup receipt | 15 to 20 days | avatar genome §3 |
 | P3 Connect | card contract and single Health verdict, outcome groups, read and write split, Takeout / mbox / PST / bookmarks / chat importers with scan and staging, IMAP app-password connector, BYO Google walkthrough, expiry countdown | 20 to 25 days | connector-ecosystem phases 1 and 2 |
 | P4 First major task | staging store, Laya pre-classification, local extraction with commitment and role types, entity resolution with evidence, timeline store, sensitive zoning, cited page drafting, idle scheduler with measured estimates, growth events and processing states, review queue with voice tools, first synthesis | 30 to 40 days | P3, processing states PS1 to PS5 |
 | P5 Apprenticeship | Home progress strip, first governed action flow, first goal UI on `goals.py`, pattern-based routine offers, per-workflow grants UI, weekly review with the Doctor ask, Friday Bundle backups and restore rehearsal, device pairing, principals and minor mode | 20 to 25 days | P4; multi-user is v6 P9 |
+| P5b Own your tools | consent card, local usage signals, public-catalog fetch and local solver with licence and telemetry facts, three-path suggestion cards with gain, loss, migration and import path, per-app dismissal, salon template seeding, the federation manifest seam (not the federation) | 12 to 15 days | P4, model-soup solver, salon templates |
 | P6 Control room and privacy map | sections, four lines per setting, voice-to-diff, modes, "why did you do that", memory browser, privacy map and ledger UI over the existing routes | 20 to 25 days | P2 |
 | P7 Mac and Friday Linux | notarised DMG, keychain, Touch ID, first-boot flow on the image | later | P1 |
 
@@ -452,7 +479,7 @@ NS-8.1-1, -3, -8, -12, -13, -14; NS-8.2-1, -2; NS-8.3-1, -2; NS-8.4-2, -3, -4; N
 
 ## Appendix C. Voice tools this spec introduces
 
-Each follows the five steps of the voice contract: `setup_step(step)`, `review_answer(kind, item, answer)`, `review_why(item)`, `control_room_change(sentence)` (returns the diff; applying is a second, spoken yes), `set_mode(mode)`, `pause_learning()`, `resume_learning()`, `what_left_today()`. None reaches outside the machine; all are ring-1 candidates with a comment saying so. `control_room_change` never applies without the second yes.
+Each follows the five steps of the voice contract: `setup_step(step)`, `review_answer(kind, item, answer)`, `review_why(item)`, `control_room_change(sentence)` (returns the diff; applying is a second, spoken yes), `set_mode(mode)`, `pause_learning()`, `resume_learning()`, `what_left_today()`, `model_soup()` (returns the recommended stack; installing is a card per item), `own_your_tools()` (returns the ranked tools and the next suggestion; nothing is installed or built without its own card). None reaches outside the machine; all are ring-1 candidates with a comment saying so. `control_room_change` never applies without the second yes.
 
 ## Appendix D. Prototype index
 

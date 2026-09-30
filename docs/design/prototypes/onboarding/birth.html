@@ -162,8 +162,8 @@
     <div class="panel" data-panel="4">
       <div class="card">
         <h3>Where should Friday think? <span class="pill dim">nothing is preselected</span></h3>
-        <p class="small">Each choice says what leaves this PC. Your GPU can run a 12B local model well, measured after download. Change this any time; Friday never switches on her own.</p>
-        <label class="choice"><input type="radio" name="route"><b>On this device only</b><span class="why">Nothing ever leaves. Slower and less capable until the local model downloads (7.6 GB, about 25 min on your connection). Cloud voice, image generation and frontier reasoning are unavailable, and Friday says so where they would appear.</span></label>
+        <p class="small">Each choice says what leaves this PC. This PC's Bonsai2 tier is 27B (PTQ1_0), read from the public tier table on this machine; speed is measured after download. Change this any time; Friday never switches on her own.</p>
+        <label class="choice"><input type="radio" name="route"><b>On this device only</b><span class="why">Nothing ever leaves. Slower and less capable until Bonsai2 downloads (size and time from the tier table, shown here once measured). Cloud voice, image generation and frontier reasoning are unavailable, and Friday says so where they would appear.</span></label>
         <label class="choice"><input type="radio" name="route"><b>Local preferred</b><span class="why">Local when it can, cloud only when you say yes for a job. Cloud sees a PII-scrubbed version by default; you see the exact text before it goes.</span></label>
         <label class="choice"><input type="radio" name="route"><b>Ask each time</b><span class="why">Every cloud call is an approval card. Slow by design. Good for the first week if you want to watch.</span></label>
         <label class="choice"><input type="radio" name="route"><b>Cloud preferred</b><span class="why">Fastest and most capable. Your own API key, your own bill. Typical: 3 to 12 dollars a month for briefings, triage and research. The egress gate still runs and records every call.</span></label>

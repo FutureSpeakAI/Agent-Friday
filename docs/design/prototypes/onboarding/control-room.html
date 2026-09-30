@@ -61,7 +61,7 @@
   <div class="layout">
     <nav class="nav" aria-label="Control room sections">
       <a href="#" data-s="home" aria-current="page">Getting to know you <span class="n">day 3</span></a>
-      <a href="#" data-s="models">Models and seats <span class="n">local 12B · cloud</span></a>
+      <a href="#" data-s="models">Models and seats <span class="n">Bonsai2 27B · cloud</span></a>
       <a href="#" data-s="rules">Permissions and rules <span class="n">3 grants</span></a>
       <a href="#" data-s="conn">Connections <span class="n">4</span></a>
       <a href="#" data-s="routines">Routines <span class="n">2 on</span></a>
@@ -89,6 +89,7 @@
             <li><b>A first goal.</b> One outcome for the next week or month. Friday writes the wording with you and creates it only when you approve it.</li>
             <li><b>Backups.</b> A Friday Bundle to a folder you choose, then a real restore rehearsal. 5 minutes.</li>
             <li><b>Morning briefing.</b> Friday noticed you read mail at 07:40 most days. She can have a two-minute briefing ready then. Opt in.</li>
+            <li><b>Own your tools.</b> Opt in, and Friday looks at which apps and services you lean on (on this PC only) and, one at a time in the weekly review, suggests an open alternative you can own, a Friday workspace that already covers it, or a build of your own in the salon. Each says what you gain, what you lose, and the migration effort.</li>
             <li><b>Re-run any setup step:</b> <a href="birth.html">name</a> · <a href="birth.html">vault</a> · <a href="birth.html">routing</a> · <a href="birth.html">how she talks</a> · <a href="connect.html">connections</a></li>
           </ul>
         </div>
@@ -97,8 +98,9 @@
       <div class="sect" data-s="models">
         <h2>Models and seats</h2>
         <div class="card">
-          <div class="setting"><div><div class="name">Where Friday thinks</div><div class="meaning">Local preferred. The 12B model on this PC does most work; cloud only for jobs you have allowed.</div><div class="cons">Changing to cloud preferred: faster, about $6 to $12 a month on your key, and the egress ledger will show more rows.</div><div class="who">Changed by you, 27 Sep, during setup <a href="#">History</a> <a href="#">Undo</a></div></div><div><button class="btn sm secondary">Change</button></div></div>
-          <div class="setting"><div><div class="name">Local seat</div><div class="meaning">gemma4:12b, 7.6 GB, measured at 38 tokens/s. Loaded when needed, unloaded after 20 minutes idle.</div><div class="cons">Unloading sooner frees the GPU for games; the first reply after that takes about 9 seconds longer.</div><div class="who">Default <a href="#">History</a></div></div><div><button class="btn sm secondary">Change</button></div></div>
+          <div class="setting"><div><div class="name">Where Friday thinks</div><div class="meaning">Local preferred. Bonsai2 27B on this PC does most work; cloud only for jobs you have allowed.</div><div class="cons">Changing to cloud preferred: faster, about $6 to $12 a month on your key, and the egress ledger will show more rows.</div><div class="who">Changed by you, 27 Sep, during setup <a href="#">History</a> <a href="#">Undo</a></div></div><div><button class="btn sm secondary">Change</button></div></div>
+          <div class="setting"><div><div class="name">Local seat</div><div class="meaning">Bonsai2 27B PTQ1_0, the tier this PC supports; speed measured on first load and shown here. Loaded when needed, unloaded after 20 minutes idle.</div><div class="cons">Unloading sooner frees the GPU for games; the first reply after that takes about 9 seconds longer.</div><div class="who">Default <a href="#">History</a></div></div><div><button class="btn sm secondary">Change</button></div></div>
+          <div class="setting"><div><div class="name">Model Soup</div><div class="meaning">A full stack tailored to this PC: a system-one responder, Laya, Needle, a deep reasoner, image, video and music models, solved locally from a public catalog. Your hardware profile never leaves this machine.</div><div class="cons">Accepting installs only what you tick; each download has a size, a checksum and a pause. Say "make me a model soup" any time.</div><div class="who">Offered at the end of setup; re-run any time</div></div><div><button class="btn sm secondary" onclick="toast('Solving locally from the catalog. Nothing sent.')">Recommend a stack</button></div></div>
           <div class="setting"><div><div class="name">Cloud providers</div><div class="meaning">Anthropic (your key, checked today). OpenRouter: none.</div><div class="cons">Removing the key stops cloud reasoning immediately; nothing else changes.</div><div class="who">Added by you, 27 Sep</div></div><div><button class="btn sm secondary">Manage keys</button></div></div>
         </div>
       </div>
