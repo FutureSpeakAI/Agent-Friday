@@ -1677,12 +1677,12 @@ cloud, ever proposes a change to it.
 | Stage | Form | What is on screen |
 |---|---|---|
 | 0 | **Sealed** | The whole ball. This is v1, what every install starts with |
-| 1 | **Cracked** | About 15% of the tiles blasted away in patches. A faint core glow shows through |
+| 1 | **Cracked** | About 15% of the tiles blasted away in patches across the middle of the ball. A faint core glow shows through |
 | 2 | **Lock-on** | About 30% gone. A white octagonal lock-on frame sits round the core |
-| 3 | **Unveiled** | Half gone. The X-shaped robot shows: four glassy blades round a faceted core |
-| 4 | **Arms** | The blasted tiles come back as four spiral arms swirling round the robot |
+| 3 | **Unveiled** | Half gone. The middle section is open (at least 80% of it), so the X-shaped robot shows whichever way the sections have turned: a wide X of four glassy blades round a four-point star in a lock-on frame. The top dome and bottom bowl stay nearly whole |
+| 4 | **Arms** | The blasted tiles come back as four wide spiral arms of big, spaced tiles swirling round the robot |
 | 5 | **Rings** | Two tilted rings orbit, each carrying six tiles it can throw |
-| 6 | **Final form** | Only about 10% of the ball is left. The robot opens into an eight-point star, with the arms and rings round it |
+| 6 | **Final form** | The ball is gone. Its last tiles plate the robot's four blades (five to a blade, tapering to the tip), and the robot opens into an eight-point star with the arms and rings round it |
 
 The track only ever takes tiles away. A tile blasted at one form stays
 blasted, or swirls in an arm, at every later form.
@@ -1731,11 +1731,21 @@ blasted, or swirls in an arm, at every later form.
   structure. It follows moods and drifts with the genome.
 - **Amber is only ever an approval.** The old boss sphere was orange
   (`0xff6600`), close to the reserved approval amber. It is gone.
-- **Every install cracks differently.** The patches that open first are
-  seeded from the install's sigil (`FridayGenome.rand('EDEN')`). Every
-  install follows the same track but breaks open in its own way.
+- **Every install cracks differently.** The ball opens across the middle
+  first, as in the game, so the robot is never hidden by how the sections
+  have turned. Which patches go first is seeded from the install's sigil
+  (`FridayGenome.rand('EDEN')`): impacts near the equator. Every install
+  follows the same track but breaks open in its own way.
 - **Kept from before:** the tunnel, the vertical rails (the "spines", now a
   fixed 15), the white player figure (reserved as "you"), and the debris.
+  The rails now carry static halos above and below the boss, as round the
+  game's rail of light, in the accent colour.
+- **The player weaves in front of the boss, facing it,** as in the game, and
+  never passes behind it. A bright figure seen through the gaps between
+  turning tiles flickered from frame to frame. Debris is recycled before it
+  reaches the camera, because a streak passing close fills the screen for a
+  frame. Together they took the resting scene's largest frame-to-frame
+  brightness step from 1.22× to 1.15×.
 - **Drawing:**
   - the tiles are one instanced mesh (one draw call);
   - the lights sit inside Giga Earth's group, so they are gathered only
@@ -1750,13 +1760,13 @@ moves:
 
 | Event (§13.3) | On Giga Earth |
 |---|---|
-| **Speaking** (§1.4) | The ball swells slightly with the voice. The sections, arms and rings turn faster |
+| **Speaking** (§1.4) | The sections pulse in turn from the top, like the trance the game is played to. The beat runs only while there is a voice, and the voice sets its size. The sections, arms and rings turn faster |
 | **Listening** | Tiles on the side facing the user ripple with the voice |
 | **Reasoning, one round** | One section of the ball lifts and glows. From the Arms form on, the rounds also roll through the arms, one arm per layer |
 | **Tool call** | A 2×2 block of tiles flips 90°, like the robot turning tiles over, and flips back when the tool returns. On an arm, it is four neighbouring tiles along that arm |
 | **Cloud send** | The top of the ball opens and the thread rises. From the Rings form on, a ring also throws one tile out along the thread |
 | **Waiting for approval** | The tile nearest the middle of the front steps forward in the approval amber, inside an amber octagonal lock-on frame, the Rez lock-on. The frame follows its tile as the ball turns and fades when the approval is decided |
-| **Verifying** | The scan plane sweeps across the boss |
+| **Verifying** | The scan plane sweeps across the ball. Giga Earth's gestures are sized to the ball, not to its arms, so on the later forms the plane stays ball-sized |
 
 At rest, the sections turn against each other, the arms swirl and the rings
 spin at the structure's idle rate. That is the same rate the old sphere
@@ -1764,8 +1774,8 @@ turned at, so the rest motion is the baseline (§1.4), not busy motion. It
 goes faster only while Friday speaks. A tile is thrown only on a real cloud
 send; nothing is thrown on a timer.
 
-Under reduced motion nothing turns. The gestures are brightness only (§13.7),
-and no tile is thrown.
+Under reduced motion nothing turns and nothing pulses. The gestures are
+brightness only (§13.7), and no tile is thrown.
 
 ### 15.6 Verification
 
@@ -1779,10 +1789,24 @@ and no tile is thrown.
     - the pattern is per install;
     - the robot appears from Unveiled and the rings from Rings;
     - a block never straddles two sections or an arm;
-    - nothing turns under reduced motion.
-  - Four deliberate breaks of the boss (tiles returning, the robot on the
-    sealed ball, turning under reduced motion, a block across two sections)
-    each turn a test red.
+    - nothing turns under reduced motion;
+    - the ball opens across the middle first (at Unveiled, at least 80% of
+      the middle section, at most 20% of the top and bottom);
+    - the final form's last 20 tiles plate the blades, along the blade
+      lines;
+    - the sections pulse in turn only while Friday speaks, never when
+      silent or under reduced motion.
+  - Ten deliberate breaks of the boss each turn a test red:
+    - tiles returning;
+    - the robot on the sealed ball;
+    - turning under reduced motion;
+    - a block across two sections;
+    - blasts anywhere, not the middle first;
+    - tiles left on the ball at the final form;
+    - a pulse with no voice;
+    - a pulse under reduced motion;
+    - all sections pulsing together;
+    - blasted tiles returning (checked again after this change).
 - **Captures:** headless Chrome with `--use-gl=angle` (§10.3):
   - every form captured and looked at;
   - every gesture captured and looked at on the Unveiled and Final forms.
@@ -1790,8 +1814,12 @@ and no tile is thrown.
 
   | Form | Largest step up | Largest step down | Steps over 20% | p95 frame |
   |---|---|---|---|---|
-  | Unveiled | 1.10× | 0.88× | none | 20.8 ms |
-  | Final form | 1.12× | 0.91× | none | 19.0 ms |
+  | Unveiled | 1.22× (once, before any event: the load transition) | 0.89× | one, with no gesture running | 19.7 ms |
+  | Final form | 1.07× | 0.95× | none | 19.3 ms |
+
+  These were measured in the calm blue mood, the darkest, where the whole
+  frame's mean luminance is about 0.005. At rest with no event, the scene
+  moves by at most 1.15×.
 
 - **Not built:** the §13.3 states that are not built anywhere yet
   (subagents, background work, errors, blocked, saving to memory, private

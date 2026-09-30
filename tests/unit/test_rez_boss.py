@@ -1,6 +1,8 @@
 """Giga Earth's boss on the page (avatar-visual-genome.md §15), run under node
 with the vendored three.js from both scene files: every form of the set track
-builds and draws finite geometry, a tile blasted at one form stays blasted at
+builds and draws finite geometry, the ball opens across the middle first,
+the final form's last tiles plate the robot's blades, the sections pulse in
+turn only while Friday speaks, a tile blasted at one form stays blasted at
 every later one, the pattern is the same for one install and different for
 another, the robot is only seen from the Unveiled form, the rings only from
 the Rings form, a 2x2 block never straddles two counter-rotating sections,
@@ -64,6 +66,24 @@ const ballAt = s => { seed = SEED; const g = new THREE.Group(); FridayRez.build(
 out.onBall = []; for (let s = 0; s < FridayRez.FORMS.length; s++) out.onBall.push(ballAt(s));
 out.monotone = out.onBall.every((on, s) => s === 0 || on.every(i => out.onBall[s - 1].includes(i)));
 out.pattern = out.onBall[3].join(',');
+// the middle goes first: the share of each section blasted at Unveiled
+out.unveiledGone = [0, 1, 2, 3, 4].map(s => { const on = out.onBall[3].filter(i => (Math.floor(i / 20) >> 1) === s).length; return 1 - on / 40; });
+// the final form: the tiles left plate the blades, along the blade lines
+seed = SEED; { const g = new THREE.Group(); FridayRez.build(g, 6); FridayRez.animate(1 / 60, 0, 0, base, accent, true);
+  const tiles = g.children[0].children.find(c => c.isInstancedMesh), m = new THREE.Matrix4(), p = new THREE.Vector3();
+  out.plated = 0; out.platedOnBlades = true;
+  for (let i = 0; i < FridayRez.N; i++) { tiles.getMatrixAt(i, m); p.setFromMatrixPosition(m);
+    if (Math.abs(p.z - 0.22 * 1.3) > 1e-3 || p.length() > 7) continue;
+    out.plated++;
+    const deg = ((Math.atan2(p.y, p.x) * 180 / Math.PI) % 180 + 180) % 180;
+    if (Math.min(Math.abs(deg - 35), Math.abs(deg - 145)) > 12 || p.length() < 1.5) out.platedOnBlades = false; } }
+// speaking: the sections pulse in turn; silent or reduced, they do not
+const radii = (voice, reduced) => { seed = SEED; const g = new THREE.Group(); FridayRez.build(g, 0);
+  for (let f = 0; f < 20; f++) FridayRez.animate(1 / 60, 0, voice, base, accent, reduced);
+  const tiles = g.children[0].children.find(c => c.isInstancedMesh), m = new THREE.Matrix4(), p = new THREE.Vector3(), r = [];
+  for (let s = 0; s < 5; s++) { tiles.getMatrixAt(s * 40, m); p.setFromMatrixPosition(m); r.push(+p.length().toFixed(4)); }
+  return r; };
+out.silent = radii(0, false); out.speaking = radii(0.6, false); out.speakingReduced = radii(0.6, true);
 // reduced motion: nothing turns
 seed = SEED; { const g = new THREE.Group(); FridayRez.build(g, 5);
   const tiles = g.children[0].children.find(c => c.isInstancedMesh);
@@ -95,18 +115,43 @@ def test_every_form_builds_and_the_track_only_takes_tiles_away(path):
     for f in o["forms"]:
         assert f["finite"] and f["blocksOk"] and f["layersOk"] and f["blocks"] > 0
         assert f["points"] == f["units"] == 200 - f["hidden"]
-    # the ball's five sections; from the Arms form, each arm is a layer too
-    assert [f["layers"] for f in o["forms"][:4]] == [5, 5, 5, 5]
-    assert all(f["layers"] > 5 for f in o["forms"][4:])
+    # the ball's sections that still have tiles (the middle one can be fully
+    # open by Unveiled); from the Arms form, each arm is a layer too
+    assert [f["layers"] for f in o["forms"][:3]] == [5, 5, 5] and o["forms"][3]["layers"] in (4, 5)
+    assert all(f["layers"] > 5 for f in o["forms"][4:6])
+    assert o["forms"][6]["layers"] == 4        # the final form: four arms, each with its blade
     hidden = [f["hidden"] for f in o["forms"]]
     assert hidden[0] == 0 and hidden[1] > 0 and hidden[1] < hidden[2] < hidden[3]
     assert hidden[4:] == [0, 0, 0]                    # from the Arms form, blasted tiles swirl
     on = [len(x) for x in o["onBall"]]
-    assert on == sorted(on, reverse=True) and on[0] == 200 and on[-1] <= 25
+    assert on == sorted(on, reverse=True) and on[0] == 200 and on[-1] == 0
     assert o["monotone"] is True
     assert [f["robotSeen"] for f in o["forms"]] == [False, False, False, True, True, True, True]
     assert [f["ringsSeen"] for f in o["forms"]] == [False] * 5 + [True, True]
     assert o["reducedStill"] is True and o["movesOtherwise"] is True
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_the_ball_opens_across_the_middle_so_the_robot_shows_at_any_turn(path):
+    gone = _run(path, 7)["unveiledGone"]
+    assert gone[2] >= 0.8                      # the middle section, at Unveiled
+    assert gone[0] <= 0.2 and gone[4] <= 0.2   # the top and bottom stay
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_the_final_form_plates_the_blades_with_the_last_tiles(path):
+    o = _run(path, 7)
+    assert o["plated"] == 20 and o["platedOnBlades"] is True
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_the_sections_pulse_in_turn_only_while_friday_speaks(path):
+    o = _run(path, 7)
+    assert o["silent"] == [7.0] * 5 and o["speakingReduced"] == [7.0] * 5
+    assert len(set(o["speaking"])) > 1 and all(r > 7.0 for r in o["speaking"])
 
 
 @pytest.mark.skipif(not node, reason="node is not installed")

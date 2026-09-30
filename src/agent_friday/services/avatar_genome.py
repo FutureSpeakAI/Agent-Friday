@@ -396,9 +396,10 @@ def _struct_verts(sid, e):
     if sid == "NONE":
         return e["lines"] * 2
     if sid == "EDEN":
-        # Tunnel, 240 tiles, the robot, two rings and their shards: the same
-        # parts at every form (a form shows or places them), so the same count.
-        return 40 * 40 * 2 + 240 * 24 + 400 + 15 * 20 + 60 * 2
+        # Tunnel, 200 tiles, the robot, two rings and their shards, the rail
+        # halos: the same parts at every form (a form shows or places them),
+        # so the same count.
+        return 40 * 40 * 2 + 200 * 24 + 400 + 12 * 96 + 15 * 20 + 60 * 2
     return 0
 
 
