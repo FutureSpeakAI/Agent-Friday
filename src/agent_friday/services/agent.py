@@ -1002,7 +1002,8 @@ def _tool_read_file(inp):
     out = text[:limit] + (f"\n...[truncated — {len(text)} total chars]" if len(text) > limit else "")
     if result.truncated:
         out += "\n...[extraction truncated to the first pages of this document]"
-    return out
+    # Key material pasted inside an otherwise ordinary file never reaches the model.
+    return _cred.redact_secrets(out)
 
 
 def _tool_search_files(inp):
@@ -2144,6 +2145,9 @@ def _tool_run_command(inp):
             creationflags=_POPEN_FLAGS,
         )
         out = (proc.stdout or '') + (("\n[stderr]\n" + proc.stderr) if proc.stderr else '')
+        # Whatever the command printed, key blocks and vendor tokens are
+        # withheld: the path scan above is best-effort, this is the backstop.
+        out = _cred.redact_secrets(out)
         return out[:100_000] if out else f"(exit {proc.returncode}, no output)"
     except subprocess.TimeoutExpired:
         return "Command timed out after 300s."
@@ -2613,6 +2617,11 @@ def _perform_open(target, in_browser=False):
     resolved = _resolve_open_target(target)
     if not resolved:
         return None
+    # The target may have been a bare name or alias that only now resolved to a
+    # path; key material is refused whatever name found it (services/credential_paths).
+    from agent_friday.services import credential_paths as _cred
+    if _cred.check(Path(resolved)):
+        return _cred.refusal(Path(resolved))
     # Only documents, pictures, recordings and folders open without a
     # decision (services/open_safety.py). The governance checkpoint already
     # holds anything else for the owner; this is the second check, so a

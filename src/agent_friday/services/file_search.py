@@ -234,7 +234,7 @@ def _search_content(roots, query, content_query, newest_first, limit, deadline, 
         if idx == -1:
             continue
         start = max(0, idx - 80)
-        snippet = text[start:idx + len(content_query) + 80].strip()
+        snippet = _cred.redact_secrets(text[start:idx + len(content_query) + 80].strip())
         candidates.append((path, snippet))
     candidates.sort(key=lambda t: -t[0].stat().st_mtime if newest_first else 0)
     rows = [_row(p, snippet=s) for p, s in candidates[:limit]]

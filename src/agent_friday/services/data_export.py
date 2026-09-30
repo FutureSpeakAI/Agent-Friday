@@ -51,7 +51,7 @@ def skip_reason(rel: PurePath, full: bool = False) -> str | None:
         return "transient"
     if parts and parts[0] in DOWNLOAD_TOPS:
         return "download"
-    if parts and parts[0] in BACKUP_TOPS:
+    if parts and parts[0].lower() in BACKUP_TOPS:
         return "backup"
     if full:
         return None
