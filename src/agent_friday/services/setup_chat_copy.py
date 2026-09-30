@@ -20,8 +20,8 @@ from __future__ import annotations
 # can be the thing that makes a model available to read the answers.
 STAGES = ("welcome", "agent_name", "basics", "connect", "reader",
           "research_ask", "research_seeds", "questions", "style",
-          "research_review", "scheduled_cloud", "room_voice", "finish",
-          "done")
+          "research_review", "scheduled_cloud", "room_voice", "brain_warm",
+          "finish", "done")
 
 #: What the progress rail shows. Several internal stages share a label.
 STAGE_GROUPS = (
@@ -30,7 +30,8 @@ STAGE_GROUPS = (
     ("research", "Research", ("reader", "research_ask", "research_seeds")),
     ("about", "About you", ("questions",)),
     ("style", "Your Friday", ("style", "research_review")),
-    ("finish", "Finish", ("scheduled_cloud", "room_voice", "finish", "done")),
+    ("finish", "Finish", ("scheduled_cloud", "room_voice", "brain_warm",
+                          "finish", "done")),
 )
 
 SET_UP_LATER = "Set up later"
@@ -372,6 +373,42 @@ ROOM_VOICE_ANYONE = (
 ROOM_VOICE_SKIPPED = (
     "Left as it is: in a room, a spoken approval says my name. It is in "
     "Settings > Voice whenever you want it.")
+
+# ── The local brain between sessions ─────────────────────────────────────────
+#
+# His to set, so he is asked. Handing it back is the default: the machine is
+# his again the moment he has closed Friday, and a seat holding most of the
+# graphics card starves whatever he opens next. A planned restart keeps the
+# seat either way, so this is only about quitting.
+
+BRAIN_WARM_ASK = (
+    "One last thing, and it is about your computer rather than about me. To "
+    "think privately I load a large model, and it stays in memory the whole "
+    "time I am open: about 14 GB of memory and most of your graphics card.\n\n"
+    "When you quit me, should I hand that back?\n\n"
+    "Handing it back keeps the rest of your computer fast, and costs me about "
+    "a minute to load again next time. Keeping it warm means I can think "
+    "privately the instant you return, and that memory stays with me while I "
+    "am closed. Either way I keep it through a restart. Ask me to change it "
+    "whenever you like, or run this setup again.")
+
+BRAIN_WARM_CHIPS = (("release", "Hand it back when I quit"),
+                    ("keep", "Keep it warm for me"),
+                    ("skip", SKIP))
+
+BRAIN_WARM_RELEASE = (
+    "Set: quitting me takes the model out of memory and gives it back to your "
+    "computer. I will take about a minute to think privately the next time "
+    "you open me.")
+
+BRAIN_WARM_KEEP = (
+    "Set: I keep the model loaded after you quit, so I am ready straight "
+    "away. If something else ever needs that memory, this is the setting to "
+    "change.")
+
+BRAIN_WARM_SKIPPED = (
+    "Left as it is: quitting me hands the memory back to your computer. Ask "
+    "me to keep it warm whenever you want that instead.")
 
 SCHEDULED_CLOUD_CHIPS = (("yes", "Yes, use the cloud"),
                          ("no", "No, keep them paused"),

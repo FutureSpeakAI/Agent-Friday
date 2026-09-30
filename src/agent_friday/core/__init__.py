@@ -2195,6 +2195,14 @@ DEFAULT_SETTINGS = {
     # authenticated session, and a room with several people offers no
     # equivalent. Turning it off means anyone within earshot can approve.
     "voice_room_approvals_require_name": True,
+    # Leave the local brain loaded after a quit. OFF: the 27B seat holds around
+    # 14 GB of RAM and most of a 12 GB card, and those are the machine's, not
+    # Friday's, the moment the owner has closed her. A planned restart (the
+    # deploy lane, tray Restart) keeps the seat regardless, because reloading
+    # it costs the better part of a minute and nobody asked for the memory
+    # back; only a quit releases it (services/residency_arbiter.
+    # release_for_quit).
+    "keep_brain_warm_between_sessions": False,
     # ── Voice engine selection ──
     # LOCAL is the default; cloud (Gemini Live) is the opt-in. The mic button
     # resolves this via GET /api/voice/session-info → /ws/voice-local (local) or

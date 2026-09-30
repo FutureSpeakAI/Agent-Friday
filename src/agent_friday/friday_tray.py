@@ -7,6 +7,7 @@ viewing the voice debug log, and quitting cleanly.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -456,7 +457,32 @@ class FridayTray:
         else:
             os.startfile(str(VOICE_LOG.parent))  # type: ignore[attr-defined]
 
+    def _release_seats(self, reason: str) -> None:
+        """Ask the server to evict its model seats before we stop it.
+
+        It has to be asked, and asked FIRST. The seats are separate
+        llama-server processes, so none of them dies with the server; and
+        `stop_server` terminates it, which on Windows runs no atexit handler,
+        so the server cannot do this on its own way out. Best-effort and
+        short: a quit is not allowed to hang on a seat that will not go.
+        """
+        try:
+            req = urllib.request.Request(
+                self.server_url + "/api/residency/release-for-quit",
+                data=json.dumps({"reason": reason}).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=75) as r:
+                r.read()
+        except Exception as e:
+            # Nothing to do about it here, and it must not stop the quit; the
+            # server's own log carries the detail.
+            log.warning("could not release the model seats on quit: %s: %s",
+                        type(e).__name__, e)
+
     def _quit(self, _icon, _item) -> None:
+        # A quit gives the machine its memory back. A restart does not: see
+        # `restart_server`, which is a planned restart and keeps the seats.
+        self._release_seats("tray_quit")
         self.stop_server()
         if self.icon:
             self.icon.stop()
@@ -757,7 +783,15 @@ def main() -> None:
     if not _acquire_single_instance():
         return
 
+    tray = FridayTray()
+
     def _on_signal(_sig, _frm):
+        # Being told to stop is a quit, not a restart: hand the memory back.
+        try:
+            tray._release_seats("tray_signal")
+            tray.stop_server()
+        except Exception:
+            pass
         sys.exit(0)
 
     try:
@@ -766,7 +800,7 @@ def main() -> None:
     except Exception:
         pass
 
-    FridayTray().run()
+    tray.run()
 
 
 if __name__ == "__main__":

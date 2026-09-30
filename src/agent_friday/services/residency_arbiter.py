@@ -2982,3 +2982,76 @@ class Arbiter:
             self.comfy.stop()
             self.llama.evict_all()
             self.state = STATE_DEFAULT
+
+    def resident_seats(self) -> list:
+        """The seat names this process is holding, for a receipt to name."""
+        try:
+            with self._lock:
+                return sorted(self.llama.resident())
+        except Exception:
+            return []
+
+
+#: Setting: leave the local brain loaded when Friday is quit. Off, because a
+#: 27B seat holds around 14 GB of RAM and most of a 12 GB card, and a quit
+#: that keeps them starves whatever the owner opens next -- the incident this
+#: exists to prevent was a video call dying minutes after Friday was quit.
+KEEP_WARM_SETTING = "keep_brain_warm_between_sessions"
+
+
+def release_for_quit(reason: str = "user_quit", *, planned: bool = False) -> dict:
+    """Evict every seat because the owner is quitting, and receipt it.
+
+    `planned=True` is the deploy lane and the tray's own Restart (P-BRAIN-SEAT:
+    seats survive a planned restart, and reloading a 27B costs the better part
+    of a minute). Only a user quit releases them.
+
+    Returns the receipt body. Never raises: a quit that cannot write a receipt
+    still has to release the memory, so the receipt failure is recorded in the
+    log and the eviction goes ahead.
+    """
+    from agent_friday.core import _load_settings
+    log = __import__("logging").getLogger("friday.residency")
+    try:
+        keep_warm = bool((_load_settings() or {}).get(KEEP_WARM_SETTING, False))
+    except Exception:
+        keep_warm = False
+
+    arb = None
+    try:
+        arb = get_arbiter()
+    except Exception as e:  # noqa: BLE001
+        log.warning("release_for_quit: no arbiter to ask (%s)", e)
+
+    held = arb.resident_seats() if arb is not None else []
+    released: list = []
+    if planned:
+        outcome = "kept_planned_restart"
+    elif keep_warm:
+        outcome = "kept_by_setting"
+    elif arb is None:
+        outcome = "no_arbiter"
+    else:
+        try:
+            arb.shutdown()
+            released = held
+            outcome = "released"
+        except Exception as e:  # noqa: BLE001
+            log.error("release_for_quit: eviction failed (%s: %s)",
+                      type(e).__name__, e)
+            outcome = "failed"
+
+    body = {"tool": "residency.release_for_quit", "class": "resource",
+            "decision": outcome, "surface": "quit", "reason": reason,
+            "seats_held": held, "seats_released": released,
+            "keep_warm_setting": keep_warm, "planned": bool(planned)}
+    try:
+        from agent_friday.governance import action_gate as _ag
+        _ag._receipt(dict(body))
+    except Exception as e:  # noqa: BLE001
+        log.warning("release_for_quit: receipt not written (%s: %s)",
+                    type(e).__name__, e)
+        body["receipt"] = "unwritten"
+    log.info("release_for_quit: %s (held=%s released=%s)",
+             outcome, held, released)
+    return body

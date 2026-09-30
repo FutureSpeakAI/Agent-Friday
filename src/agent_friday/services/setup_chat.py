@@ -179,6 +179,8 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
         _say(transcript, _scheduled_cloud_question(), stage)
     elif stage == "room_voice":
         _say(transcript, copy.ROOM_VOICE_ASK, stage)
+    elif stage == "brain_warm":
+        _say(transcript, copy.BRAIN_WARM_ASK, stage)
     elif stage == "finish":
         _say(transcript, copy.FINISH, stage)
 
@@ -236,6 +238,8 @@ def _prompt(st: dict) -> dict:
         p.update(chips=_chips(copy.SCHEDULED_CLOUD_CHIPS))
     elif stage == "room_voice":
         p.update(chips=_chips(copy.ROOM_VOICE_CHIPS))
+    elif stage == "brain_warm":
+        p.update(chips=_chips(copy.BRAIN_WARM_CHIPS))
     elif stage == "finish":
         p.update(card="finish")
     return p
@@ -700,7 +704,7 @@ def _on_room_voice(st, transcript, value, text):
         _heard(transcript, labels["name"] if want else labels["anyone"], "room_voice")
         _say(transcript, copy.ROOM_VOICE_NAME if want else copy.ROOM_VOICE_ANYONE,
              "room_voice")
-    _enter(st, transcript, "finish")
+    _enter(st, transcript, "brain_warm")
 
 
 def _set_room_approvals_require_name(require: bool) -> None:
@@ -719,6 +723,46 @@ def _set_room_approvals_require_name(require: bool) -> None:
                      type(e).__name__, e)
 
 
+# ── The local brain between sessions ─────────────────────────────────
+#
+# His to set (NS-8.15-2: revisable later, in Settings > Models). Skip leaves
+# the default, which hands the memory back: the machine is his again the
+# moment he has closed Friday. A planned restart keeps the seat either way,
+# so this decides only what a QUIT does.
+
+
+def _on_brain_warm(st, transcript, value, text):
+    choice = str(value or _guard_text(text) or "").strip().lower()
+    labels = dict(copy.BRAIN_WARM_CHIPS)
+    want = None
+    if choice in ("keep", "warm", labels["keep"].lower()):
+        want = True
+    elif choice in ("release", "hand it back", labels["release"].lower()):
+        want = False
+    if want is None:
+        _heard(transcript, copy.SKIP, "brain_warm")
+        _say(transcript, copy.BRAIN_WARM_SKIPPED, "brain_warm")
+    else:
+        _set_keep_brain_warm(want)
+        _heard(transcript, labels["keep"] if want else labels["release"],
+               "brain_warm")
+        _say(transcript, copy.BRAIN_WARM_KEEP if want
+             else copy.BRAIN_WARM_RELEASE, "brain_warm")
+    _enter(st, transcript, "finish")
+
+
+def _set_keep_brain_warm(keep: bool) -> None:
+    """Write the one key. A failure leaves the default and setup finishable."""
+    try:
+        from agent_friday.core import _load_settings, _save_settings
+        from agent_friday.services.residency_arbiter import KEEP_WARM_SETTING
+        s = dict(_load_settings() or {})
+        s[KEEP_WARM_SETTING] = bool(keep)
+        _save_settings(s)
+    except Exception as e:  # noqa: BLE001
+        _log.warning("setup could not save the brain-warm choice: %s: %s",
+                     type(e).__name__, e)
+
 def _on_finish(st, transcript, value, text):
     _heard(transcript, copy.FINISH_BUTTON, "finish")
     _complete(st)
@@ -730,7 +774,8 @@ _HANDLERS = {
     "research_seeds": _on_research_seeds, "questions": _on_questions,
     "style": _on_style, "research_review": _on_research_review,
     "scheduled_cloud": _on_scheduled_cloud,
-    "room_voice": _on_room_voice, "finish": _on_finish,
+    "room_voice": _on_room_voice, "brain_warm": _on_brain_warm,
+    "finish": _on_finish,
 }
 
 
