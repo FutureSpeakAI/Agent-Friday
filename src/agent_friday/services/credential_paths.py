@@ -179,6 +179,38 @@ def _expand_path_text(path) -> str:
     return os.path.expandvars(os.path.expanduser(t))
 
 
+_EXTENDED_DRIVE = re.compile(r"^\\\\[?.]\\[A-Za-z]:(?:\\|$)")
+_EXTENDED_UNC = re.compile(r"^\\\\[?.]\\UNC\\", re.I)
+_ADMIN_SHARE = re.compile(r"^\\\\[^\\]+\\([A-Za-z])\$(?:\\|$)")
+
+
+def _canonical_windows_spelling(text: str) -> tuple[str, bool]:
+    r"""`text` with the extended-length and admin-share spellings of a local
+    drive path rewritten to the plain `X:\...` form the deny rules are written
+    in, and whether it is a device path that names no ordinary file.
+
+    `\\?\C:\x`, `\\.\C:\x`, `\\?\UNC\host\C$\x` and `\\host\C$\x` all reach
+    the same file as `C:\x`; a comparison that does not fold them together
+    lets a directory rule be walked around by spelling alone. Any other
+    `\\?\` or `\\.\` target (a volume GUID, GLOBALROOT, a device) is refused:
+    Friday never needs one, and none can be judged by name.
+    """
+    t = text.replace("/", "\\")
+    if not t.startswith("\\\\"):
+        return text, False
+    if _EXTENDED_DRIVE.match(t):
+        return t[4:], False
+    unc = _EXTENDED_UNC.match(t)
+    if unc:
+        t = "\\\\" + t[unc.end():]
+    elif t[2:3] in ("?", "."):
+        return text, True
+    share = _ADMIN_SHARE.match(t)
+    if share:
+        return share.group(1) + ":\\" + t[share.end():], False
+    return text, False
+
+
 def check(path, *, sniff: bool = True) -> str | None:
     """A short reason `path` is off-limits to Friday's tools, or None.
 
@@ -192,7 +224,10 @@ def check(path, *, sniff: bool = True) -> str | None:
     then opens is checked where it is read.
     """
     try:
-        p = Path(_expand_path_text(path))
+        text, device = _canonical_windows_spelling(_expand_path_text(path))
+        if device:
+            return "a device path"
+        p = Path(text)
     except Exception:
         return None
     try:

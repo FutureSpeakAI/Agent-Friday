@@ -61,6 +61,9 @@ KEY_RES: tuple[re.Pattern, ...] = (
     re.compile(r"-----BEGIN" + _WS + r"(?:[A-Z0-9]+" + _WS + r")*PRIVATE" + _WS
                + r"KEY(?:" + _WS + r"BLOCK)?-----", re.I),
     re.compile(r"openssh-key-v1"),
+    # PuTTY .ppk: the format header and the private-lines marker.
+    re.compile(r"PuTTY-User-Key-File-\d+\s*:", re.I),
+    re.compile(r"(?<![A-Za-z0-9-])Private-Lines\s*:\s*\d", re.I),
 ) + tuple(re.compile(_BODY_LEAD + start) for start in _KEY_BODY_STARTS)
 
 #: The armor header once every separator a caller might chunk it with is gone.
@@ -164,22 +167,39 @@ def _line_prefixes(run: str):
         yield cut, run[:cut]
 
 
-def _encoded_runs(text: str):
-    """Yield (span, raw_bytes) for each base64, hex or base32 run that decodes."""
+#: Encoded characters one classification decodes in total, across every
+#: variant and nesting layer. Runs are taken smallest first, so the runs a
+#: credential fits in are always decoded and a large attachment body is what
+#: goes unread once the budget is spent.
+_DECODE_BUDGET_CHARS = 200_000
+
+
+def _encoded_runs(text: str, budget: list[int] | None = None):
+    """Yield (span, raw_bytes) for each base64, hex or base32 run that decodes.
+
+    With `budget` (a one-element list of characters left) runs are taken
+    smallest first and a run larger than what is left is skipped.
+    """
     n = 0
-    for rx, decode in _DECODERS:
-        for m in rx.finditer(text):
-            if n >= _MAX_RUNS:
-                return
-            run = m.group(0)
-            if len(run) > _MAX_RUN_CHARS:
+    found = [(rx, decode, m) for rx, decode in _DECODERS for m in rx.finditer(text)]
+    if budget is not None:
+        found.sort(key=lambda f: f[2].end() - f[2].start())
+    for rx, decode, m in found:
+        if n >= _MAX_RUNS:
+            return
+        run = m.group(0)
+        if len(run) > _MAX_RUN_CHARS:
+            continue
+        if budget is not None:
+            if len(run) > budget[0]:
                 continue
-            for used, part in _line_prefixes(run):
-                raw = decode(part)
-                if raw:
-                    n += 1
-                    yield (m.start(), m.start() + used), raw
-                    break
+            budget[0] -= len(run)
+        for used, part in _line_prefixes(run):
+            raw = decode(part)
+            if raw:
+                n += 1
+                yield (m.start(), m.start() + used), raw
+                break
 
 
 def _views(raw: bytes):
@@ -197,14 +217,14 @@ def _views(raw: bytes):
             yield from _views(inflated)
 
 
-def _decoded(text: str, depth: int = _MAX_DEPTH):
+def _decoded(text: str, depth: int = _MAX_DEPTH, budget: list[int] | None = None):
     """Texts hidden inside `text` by nested base64 / base32 / hex / gzip layers."""
     if depth <= 0:
         return
-    for _span, raw in _encoded_runs(text):
+    for _span, raw in _encoded_runs(text, budget):
         for view in _views(raw):
             yield view
-            yield from _decoded(view, depth - 1)
+            yield from _decoded(view, depth - 1, budget)
 
 
 def _variants(text: str):
@@ -229,10 +249,11 @@ _SQUASHED = ((_SQUASHED_HEADER,),)
 
 
 def _scan(text: str, groups) -> bool:
+    budget = [_DECODE_BUDGET_CHARS]
     for v in _variants(text):
         if _direct(v, groups) or _direct(v, _SQUASHED):
             return True
-        for dec in _decoded(v):
+        for dec in _decoded(v, _MAX_DEPTH, budget):
             if _direct(dec, groups) or _direct(dec, _SQUASHED):
                 return True
     return False

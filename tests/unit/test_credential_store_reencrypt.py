@@ -45,7 +45,9 @@ def isolated_home(tmp_path, monkeypatch):
     # needs USERPROFILE redirected for its own os.path.expanduser("~").
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("HOME", str(home))
-    for var in ("FRIDAY_PASSWORD", "FRIDAY_VAULT_PASSPHRASE"):
+    # An exported FRIDAY_HOME would send the child to a different home than
+    # USERPROFILE names, so the child resolves its home from USERPROFILE only.
+    for var in ("FRIDAY_HOME", "FRIDAY_PASSWORD", "FRIDAY_VAULT_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setitem(sys.modules, "keyring", None)  # no real OS keychain touched
     vp.reset_cache()
