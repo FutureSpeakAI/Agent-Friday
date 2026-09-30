@@ -398,7 +398,9 @@ def step(cid: str, changes: dict, summary: str, *, author: str = "friday", model
             "ts": time.time(), "at": datetime.now().isoformat(timespec="seconds"),
         }
         _write_receipt(repo, rec)
-        return {"sha": sha, "kind": "step", "summary": summary, "author": author, "who": who, "receipt": rec}
+        out = {"sha": sha, "kind": "step", "summary": summary, "author": author, "who": who, "receipt": rec}
+        _announce(cid, out)
+        return out
 
 
 def write(cid: str, rel: str, content: str) -> Optional[dict]:
@@ -463,7 +465,23 @@ def undo(cid: str) -> dict:
                "network_events": [], "model": "", "key_profile": "", "cost_usd": None,
                "ts": time.time(), "at": datetime.now().isoformat(timespec="seconds")}
         _write_receipt(repo, rec)
-        return {"sha": sha, "kind": "undo", "summary": summary, "author": "you", "undoes": target["sha"], "receipt": rec}
+        out = {"sha": sha, "kind": "undo", "summary": summary, "author": "you", "undoes": target["sha"], "receipt": rec}
+        _announce(cid, out)
+        return out
+
+
+def _announce(cid: str, st: dict) -> None:
+    """Tell every open chat page a step landed. No content rides along; the
+    panel re-reads the codebase."""
+    try:
+        from agent_friday.services import desktop_bus
+        rec = load(cid) or {}
+        desktop_bus.broadcast({"type": "codebase_step", "codebase_id": cid,
+                               "conversation_id": rec.get("conversation_id"),
+                               "sha": st["sha"], "kind": st["kind"], "summary": st["summary"],
+                               "author": st.get("author")}, kind="chat")
+    except Exception:
+        pass
 
 
 def diff(cid: str, sha: str) -> str:

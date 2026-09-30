@@ -47631,6 +47631,30 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
       body: JSON.stringify({ name: name }),
     }).then(() => onRefresh()).catch(() => {});
   };
+  // "+ Codebase" (docs/design/active/vibe-coding-salon.md §0, §1.1): a third
+  // button in this row. It creates a conversation that carries a codebase id,
+  // the same way a project chat carries a project, and the chat's panel then
+  // shows Preview, Files and Changes (static/friday_artifacts.js).
+  const [cbMenu, setCbMenu] = useState(false);
+  const newCodebase = (template) => {
+    setCbMenu(false);
+    const name = prompt(template === 'existing' ? 'Name this codebase' : 'Name this codebase (e.g. Rent tracker)');
+    if (!name) return;
+    const body = { title: name };
+    if (template === 'existing') {
+      const path = prompt('Folder on this PC to open (Friday works on a salon branch, never on yours)');
+      if (!path) return;
+      body.path = path;
+    } else body.template = template;
+    api('/api/codebases', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json()).then(d => {
+      if (d && d.conversation) onOpenConversation(d.conversation.id);
+      else if (d && d.error) note(d);
+      onRefresh();
+    }).catch(() => {});
+  };
 
   const onAct = (c, what, arg) => {
     const patch = body => api(
@@ -47695,7 +47719,23 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
           padding: '7px 9px', color: 'rgba(255,255,255,0.65)',
           fontFamily: 'JetBrains Mono', fontSize: 11,
         },
-      }, '+ Project')),
+      }, '+ Project'),
+      E('button', {
+        onClick: () => setCbMenu(v => !v), title: 'New codebase: a chat whose panel runs the thing you are building',
+        'aria-label': 'New codebase', 'aria-expanded': cbMenu,
+        style: {
+          cursor: 'pointer', background: cbMenu ? 'rgba(0,212,255,0.10)' : 'transparent',
+          border: '1px solid rgba(255,255,255,0.14)', borderRadius: 8,
+          padding: '7px 9px', color: 'rgba(255,255,255,0.65)',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, '+ Codebase')),
+    cbMenu ? E('div', { 'data-codebase-menu': '', style: { margin: '0 10px 8px', padding: 6, border: '1px solid rgba(0,212,255,0.25)', borderRadius: 8, background: 'rgba(10,14,26,0.96)' } },
+      E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 9.5, letterSpacing: '.08em', color: 'rgba(255,255,255,0.45)', padding: '2px 8px 6px' } }, 'START FROM'),
+      E(MenuItem, { onClick: () => newCodebase('static') }, 'A page or small app (HTML, CSS, JS)'),
+      E(MenuItem, { onClick: () => newCodebase('react') }, 'A React app, built in the browser'),
+      E(MenuItem, { onClick: () => newCodebase('bundle') }, 'A workspace bundle for Friday'),
+      E(MenuItem, { onClick: () => newCodebase('existing') }, 'A folder already on this PC')) : null,
 
     E('input', {
       value: q, onChange: e => setQ(e.target.value),

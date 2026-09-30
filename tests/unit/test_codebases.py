@@ -205,6 +205,18 @@ def test_context_block_names_the_files_and_last_steps_and_is_bounded():
     assert len(block) < 60_000
 
 
+def test_every_step_and_undo_is_announced_to_the_page(monkeypatch):
+    from agent_friday.services import desktop_bus
+    seen = []
+    monkeypatch.setattr(desktop_bus, "broadcast", lambda ev, kind="chat": seen.append((ev, kind)) or 1)
+    rec = cb.create("Tracker")
+    cb.step(rec["id"], {"index.html": "<h1>x</h1>"}, "X")
+    cb.undo(rec["id"])
+    assert [e["kind"] for e, _ in seen] == ["step", "undo"]
+    assert all(k == "chat" and e["type"] == "codebase_step" and e["codebase_id"] == rec["id"] for e, k in seen)
+    assert "content" not in seen[0][0] and "<h1>" not in json.dumps(seen[0][0])
+
+
 def test_for_conversation_finds_the_bound_codebase(monkeypatch):
     bound = {}
     from agent_friday.services import conversations as convs

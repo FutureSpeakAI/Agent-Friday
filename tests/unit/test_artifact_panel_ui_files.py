@@ -135,6 +135,18 @@ def test_publish_to_web_has_its_card_and_settings_in_both_files():
         assert s.index('/static/friday_artifacts.js') < s.index('/static/friday_publish.js'), p.name
 
 
+def test_the_codebase_panel_has_its_three_tabs_and_listens_for_steps(js):
+    """+ Codebase opens a chat whose panel has Preview, Files and Changes
+    (spec §0, §5); every step the server announces reloads it."""
+    assert "window.FridayCodebasePanel" in js
+    for label in ("'preview', 'Preview'", "'files', 'Files'", "'changes', 'Changes'"):
+        assert label in js, label
+    assert "codebase_step" in js
+    assert "'/undo'" in js and "/preview'" in js and "/diff/'" in js
+    s = _read(INDEX)
+    assert "+ Codebase" in s, "the sidebar has the third button"
+
+
 def test_the_svg_frame_has_no_scripts(js):
     m = re.search(r"SVG_SANDBOX\s*=\s*['\"]([^'\"]*)['\"]", js)
     assert m, "svg is framed with its own sandbox constant"

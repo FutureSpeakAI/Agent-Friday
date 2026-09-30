@@ -106,7 +106,7 @@
       if (bus.es) {
         bus.es.onmessage = e => {
           let m = null; try { m = JSON.parse(e.data); } catch (_) { return; }
-          if (m && m.type === 'artifact_put') bus.subs.forEach(f => { try { f(m); } catch (_) {} });
+          if (m && (m.type === 'artifact_put' || m.type === 'codebase_step')) bus.subs.forEach(f => { try { f(m); } catch (_) {} });
         };
         // The stream reconnects by itself; while it is down, a slow poll keeps
         // the panel honest.
@@ -122,6 +122,7 @@
   // ── Look ──────────────────────────────────────────────────────────────
   const ACCENT = '#00d4ff';
   const AMBER = '#f59e0b';
+  const MONO = "'JetBrains Mono', monospace";
   const PALETTE = ['#00d4ff', '#b794f6', '#00ff80', '#f59e0b', '#ff6dd9', '#4f8cff', '#ffd166', '#9be7ff'];
   const KIND_LABEL = { markdown: 'Draft', table: 'Table', chart: 'Chart', html: 'App', diff: 'Changes', image: 'Image', svg: 'Drawing' };
   const KIND_GLYPH = { markdown: '¶', table: '▦', chart: '◔', html: '▣', diff: '±', image: '▧', svg: '◇' };
@@ -458,6 +459,110 @@
   }
   window.FridayArtifactPanel = FridayArtifactPanel;
 
+  // ── The codebase panel: Preview, Files, Changes ────────────────────────
+  // A chat bound to a codebase (services/codebases) gets these three tabs.
+  // Preview runs the one-document preview in the same sandboxed frame an
+  // html artifact uses; Files lists and edits (a hand edit is a step by
+  // "you"); Changes is the step list with undo and a diff per step.
+  const TIER_LABEL = { B0: 'frame', B1: 'this PC', B2: 'box' };
+  const WIDTHS = [['phone', 390], ['tablet', 768], ['desktop', 0]];
+
+  function CodebasePanel({ convId, codebase, artifactsTab, onCollapse, tab, width, refreshKey }) {
+    const [view, setView] = useState('preview');
+    const [html, setHtml] = useState(null);
+    const [files, setFiles] = useState([]);
+    const [file, setFile] = useState(null);           // {path, content}
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState('');
+    const [steps, setSteps] = useState([]);
+    const [diff, setDiff] = useState(null);           // {sha, text}
+    const [frameW, setFrameW] = useState(0);
+    const [busy, setBusy] = useState(false);
+    const [note, setNote] = useState(null);
+    const [reload, setReload] = useState(0);
+    const base = '/api/codebases/' + encodeURIComponent(codebase.id);
+
+    const loadPreview = useCallback(() => getJ(base + '/preview').then(d => setHtml(d.html || '')).catch(() => setHtml('')), [base]);
+    const loadFiles = useCallback(() => getJ(base + '/files').then(d => setFiles(d.files || [])).catch(() => {}), [base]);
+    const loadSteps = useCallback(() => getJ(base + '/steps').then(d => setSteps(d.steps || [])).catch(() => {}), [base]);
+    useEffect(() => { loadPreview(); loadFiles(); loadSteps(); setDiff(null); }, [refreshKey, loadPreview, loadFiles, loadSteps]);
+    useEffect(() => { if (file && !editing) getJ(base + '/file?path=' + encodeURIComponent(file.path)).then(d => d.content != null && setFile({ path: file.path, content: d.content })).catch(() => {}); }, [refreshKey]);  // eslint-disable-line
+
+    const openFile = f => { setEditing(false); getJ(base + '/file?path=' + encodeURIComponent(f.path)).then(d => setFile({ path: f.path, content: d.content || '' })).catch(() => setNote({ text: 'Could not read ' + f.path })); };
+    const save = () => {
+      if (!file || busy) return;
+      setBusy(true);
+      postJ(base + '/file', { path: file.path, content: draft }).then(({ ok, j }) => {
+        if (!ok) { setNote({ text: 'Not saved: ' + ((j && j.error) || 'unknown error') }); return; }
+        setEditing(false); setFile({ path: file.path, content: draft });
+        setNote({ text: j.step ? 'Saved as a step: ' + j.step.summary : 'Nothing changed.', ok: true });
+        loadSteps(); loadPreview();
+      }).catch(e => setNote({ text: 'Not saved: ' + e })).then(() => setBusy(false));
+    };
+    const undo = () => {
+      if (busy) return;
+      setBusy(true);
+      postJ(base + '/undo', {}).then(({ ok, j }) => {
+        if (!ok) { setNote({ text: (j && j.error) || 'Nothing to undo.' }); return; }
+        setNote({ text: j.step.summary, ok: true });
+        loadSteps(); loadPreview(); loadFiles();
+      }).catch(e => setNote({ text: 'Undo failed: ' + e })).then(() => setBusy(false));
+    };
+    const showDiff = st => { if (diff && diff.sha === st.sha) { setDiff(null); return; } getJ(base + '/diff/' + st.sha).then(d => setDiff({ sha: st.sha, text: d.diff || '' })).catch(() => {}); };
+    const kindChip = k => chipEl(k === 'undo' ? 'UNDO' : k === 'start' ? 'START' : 'STEP', k === 'undo' ? AMBER : k === 'start' ? 'rgba(255,255,255,0.5)' : ACCENT);
+    const tabBtn = (id, label) => h('button', { className: 'fa-btn' + (view === id ? ' fa-primary' : ' fa-quiet'), onClick: () => setView(id), role: 'tab', 'aria-selected': view === id }, label);
+    const doc = useMemo(() => html == null ? null : window.fridayArtifactFrameDoc(html), [html, reload]);
+
+    return h('div', { className: 'fa-panel' + (tab ? ' fa-tab' : ''), style: tab ? undefined : { width, flexShrink: 0 }, 'data-codebase-panel': codebase.id, 'data-codebase-view': view, role: 'complementary', 'aria-label': 'Codebase panel' },
+      h('div', { className: 'fa-head' },
+        h('div', { className: 'fa-eyebrow' },
+          h('span', { className: 'fa-brand' }, 'FRIDAY ', h('b', null, '· CODEBASE')),
+          h('span', { style: { display: 'flex', gap: 2 } },
+            view === 'preview' ? h('button', { className: 'fa-icon', title: 'Reload the preview', 'aria-label': 'Reload', onClick: () => { setReload(k => k + 1); loadPreview(); } }, '↻') : null,
+            h('button', { className: 'fa-icon', title: tab ? 'Back to the chat' : 'Collapse the panel', 'aria-label': 'Collapse', onClick: onCollapse }, tab ? '✕' : '⟩'))),
+        h('div', { className: 'fa-title-row' },
+          h('span', { className: 'fa-title', title: codebase.title }, codebase.title),
+          chipEl(codebase.template || 'folder', 'rgba(255,255,255,0.6)'),
+          chipEl((codebase.tier || 'B0') + ' · ' + (TIER_LABEL[codebase.tier || 'B0'] || ''), ACCENT, 'Where the code runs: B0 is the browser frame, no process, no install')),
+        h('div', { className: 'fa-tools', role: 'tablist' },
+          tabBtn('preview', 'Preview'), tabBtn('files', 'Files'), tabBtn('changes', 'Changes' + (steps.length > 1 ? ' · ' + (steps.length - 1) : '')),
+          artifactsTab ? tabBtn('artifacts', 'Artifacts') : null,
+          view === 'preview' ? h('span', { style: { marginLeft: 'auto', display: 'flex', gap: 4 } }, WIDTHS.map(([name, w]) => h('button', { key: name, className: 'fa-btn fa-quiet', style: frameW === w ? { color: ACCENT, borderColor: ACCENT } : undefined, onClick: () => setFrameW(w), title: name }, name))) : null,
+          view === 'changes' ? h('button', { className: 'fa-btn fa-amber', style: { marginLeft: 'auto' }, onClick: undo, disabled: busy || steps.filter(s => s.kind === 'step').length === 0 }, 'Undo last step') : null)),
+      note ? h('div', { className: 'fa-note' + (note.ok ? ' fa-ok' : ''), role: 'status' }, note.text) : null,
+      view === 'preview' ? h('div', { className: 'fa-body fa-flush', style: { display: 'flex', justifyContent: 'center', background: frameW ? 'rgba(0,0,0,0.35)' : undefined } },
+        doc == null ? h('div', { className: 'fa-empty' }, 'Loading the preview…')
+          : h('iframe', { key: reload + ':' + codebase.id, className: 'fa-frame', sandbox: SANDBOX, srcDoc: doc, referrerPolicy: 'no-referrer', title: 'Preview (sandboxed)', style: frameW ? { width: frameW, maxWidth: '100%', borderLeft: '1px solid rgba(0,212,255,0.15)', borderRight: '1px solid rgba(0,212,255,0.15)' } : undefined })) : null,
+      view === 'files' ? h('div', { className: 'fa-body', style: { display: 'flex', gap: 10, padding: 0 } },
+        h('div', { style: { width: 180, flexShrink: 0, borderRight: '1px solid rgba(0,212,255,0.10)', overflow: 'auto', padding: '8px 6px', fontFamily: MONO, fontSize: 11 } },
+          files.map(f => h('div', { key: f.path, onClick: () => openFile(f), title: f.bytes + ' bytes', style: { padding: '3px 6px', cursor: 'pointer', borderRadius: 4, color: file && file.path === f.path ? ACCENT : '#dfe7f2', background: file && file.path === f.path ? 'rgba(0,212,255,0.08)' : undefined, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, f.path))),
+        h('div', { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', padding: 8 } },
+          file ? h(React.Fragment, null,
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } },
+              h('span', { style: { fontFamily: MONO, fontSize: 11, color: ACCENT, flex: 1 } }, file.path),
+              editing ? h('button', { className: 'fa-btn fa-primary', onClick: save, disabled: busy }, busy ? 'Saving…' : 'Save as a step') : h('button', { className: 'fa-btn', onClick: () => { setDraft(file.content); setEditing(true); } }, 'Edit'),
+              editing ? h('button', { className: 'fa-btn fa-quiet', onClick: () => setEditing(false) }, 'Cancel') : null),
+            editing ? h('textarea', { className: 'fa-editor', value: draft, onChange: e => setDraft(e.target.value), spellCheck: false, style: { flex: 1 } })
+              : h('pre', { style: { margin: 0, flex: 1, overflow: 'auto', fontFamily: MONO, fontSize: 11.5, lineHeight: 1.5, color: '#dfe7f2', whiteSpace: 'pre-wrap' } }, file.content))
+            : h('div', { className: 'fa-empty' }, 'Pick a file.'))) : null,
+      view === 'changes' ? h('div', { className: 'fa-body' },
+        steps.map(st => h('div', { key: st.sha, 'data-step': st.sha, style: { padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }, onClick: () => showDiff(st) },
+            kindChip(st.kind),
+            h('span', { style: { flex: 1, fontSize: 12.5, color: '#eef4fa' } }, st.summary.replace(/^Start: |^Undo: /, m => m)),
+            h('span', { style: { fontFamily: MONO, fontSize: 9.5, color: 'rgba(255,255,255,0.45)', whiteSpace: 'nowrap' } }, (st.who === 'you' ? 'you' : st.who) + ' · ' + fmtTime(st.at))),
+          st.receipt && st.receipt.files && st.receipt.files.length ? h('div', { style: { fontFamily: MONO, fontSize: 10, color: 'rgba(255,255,255,0.45)', marginTop: 2 } }, st.receipt.files.map(f => f.path).concat((st.receipt.deleted || []).map(d => '− ' + d)).join(' · ')) : null,
+          diff && diff.sha === st.sha ? h('div', { style: { marginTop: 6 } }, h(Diff, { diff: diff.text })) : null))) : null,
+      view === 'artifacts' && artifactsTab ? artifactsTab : null,
+      h('div', { className: 'fa-foot' },
+        h('span', null, codebase.existing ? 'your folder · branch ' + codebase.branch : 'Friday\'s codebase · ' + (codebase.template || '')),
+        h('span', null, (steps.length ? steps.length - 1 : 0) + ' step' + (steps.length === 2 ? '' : 's'))));
+  }
+  function chipEl(text, color, title) {
+    return h('span', { className: 'fa-kind', title, style: { color, borderColor: color + '55', background: color + '14' } }, text);
+  }
+  window.FridayCodebasePanel = CodebasePanel;
+
   // ── The host: one column beside the chat, or a tab over it ────────────
   const SIDE_MIN_HOST_W = 860;   // below this the panel is a tab over the chat
   const PANEL_MIN_W = 300, CHAT_MIN_W = 360;
@@ -466,6 +571,8 @@
     ensureCss();
     const [items, setItems] = useState([]);
     const [sel, setSel] = useState(null);
+    const [codebase, setCodebase] = useState(null);
+    const [stepKey, setStepKey] = useState(0);
     const [open, setOpen] = useState(() => ls.get('friday_artifact_panel_open', '1') === '1');
     const [width, setWidth] = useState(() => Math.max(PANEL_MIN_W, +ls.get('friday_artifact_panel_w', 440) || 440));
     const [hostW, setHostW] = useState(0);
@@ -491,6 +598,18 @@
     }, [convId]);
 
     useEffect(() => { setItems([]); setSel(null); refresh(); }, [convId, refresh]);
+    // Is this chat bound to a codebase? Read once per conversation.
+    useEffect(() => {
+      setCodebase(null);
+      if (!convId) return;
+      let dead = false;
+      getJ('/api/conversations/' + encodeURIComponent(convId)).then(d => {
+        const id = d && d.conversation && d.conversation.codebase;
+        if (!id || dead) return;
+        return getJ('/api/codebases/' + encodeURIComponent(id)).then(c => { if (!dead && c.codebase) { setCodebase(c.codebase); setOpen(true); } });
+      }).catch(() => {});
+      return () => { dead = true; };
+    }, [convId]);
 
     // News from the server: an artifact_put landed in this conversation. The
     // event carries no content; the store is re-read.
@@ -499,6 +618,7 @@
       const unsub = busSubscribe(m => {
         if (m === null) { refresh(); return; }   // the stream is down: a poll
         if (m.conversation_id && m.conversation_id !== convId) return;
+        if (m.type === 'codebase_step') { setStepKey(k => k + 1); setOpen(true); return; }
         refresh(m.artifact_id).then(() => { if (m.author !== 'you') setOpen(true); });
       });
       const onOpen = e => { const d = e.detail || {}; if (d.convId && d.convId !== convId) return; refresh(d.artifactId).then(() => setOpen(true)); };
@@ -518,24 +638,30 @@
       return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
     }, [dragging, hostW]);
 
-    const has = items.length > 0;
+    const has = items.length > 0 || !!codebase;
     const side = hostW >= SIDE_MIN_HOST_W;
     const cur = items.find(i => i.id === sel) || items[items.length - 1];
     const panelW = Math.min(width, Math.max(PANEL_MIN_W, hostW - CHAT_MIN_W - 6));
     const onChanged = rec => refresh(rec && rec.id);
+    const artifactPanel = items.length ? h(FridayArtifactPanel, { convId, items, selectedId: sel, onSelect: setSel, onCollapse: () => setOpen(false), tab: !side, width: panelW, onChanged }) : null;
+    const panel = codebase
+      ? h(CodebasePanel, { convId, codebase, artifactsTab: artifactPanel, onCollapse: () => setOpen(false), tab: !side, width: panelW, refreshKey: stepKey })
+      : artifactPanel;
+    const stripTitle = codebase ? codebase.title : (cur ? (KIND_GLYPH[cur.kind] || '') + ' ' + cur.title : 'Panel');
+    const stripCount = codebase ? null : items.length;
 
     return h('div', { ref, className: 'fa-host', style: { flexDirection: side ? 'row' : 'column' }, 'data-artifact-host': has ? (open ? 'open' : 'closed') : 'none' },
       has && !side ? h('div', { className: 'fa-strip', role: 'tablist' },
         h('button', { role: 'tab', 'aria-selected': !open, className: open ? '' : 'fa-on', onClick: () => setOpen(false) }, 'Chat'),
-        h('button', { role: 'tab', 'aria-selected': open, className: open ? 'fa-on' : '', onClick: () => setOpen(true), title: cur ? cur.title : '' },
-          (cur ? (KIND_GLYPH[cur.kind] || '') + ' ' + cur.title : 'Panel'), h('span', { className: 'fa-count' }, items.length))) : null,
+        h('button', { role: 'tab', 'aria-selected': open, className: open ? 'fa-on' : '', onClick: () => setOpen(true), title: stripTitle },
+          stripTitle, stripCount ? h('span', { className: 'fa-count' }, stripCount) : null)) : null,
       h('div', { className: 'fa-chat', style: has && !side && open ? { display: 'none' } : undefined }, children),
       has && side && open ? h('div', { className: 'fa-divider' + (dragging ? ' fa-dragging' : ''), title: 'Drag to resize', onMouseDown: e => { e.preventDefault(); dragStart.current = { x: e.clientX, w: panelW }; setDragging(true); } }) : null,
-      has && open ? h(FridayArtifactPanel, { convId, items, selectedId: sel, onSelect: setSel, onCollapse: () => setOpen(false), tab: !side, width: panelW, onChanged }) : null,
-      has && side && !open ? h('div', { className: 'fa-rail', role: 'button', title: 'Open the panel', 'aria-label': 'Open the artifact panel', onClick: () => setOpen(true) },
+      has && open ? panel : null,
+      has && side && !open ? h('div', { className: 'fa-rail', role: 'button', title: 'Open the panel', 'aria-label': 'Open the panel', onClick: () => setOpen(true) },
         h('span', { style: { color: ACCENT, fontSize: 13 } }, '⟨'),
-        h('span', { className: 'fa-rail-count' }, items.length),
-        h('span', { className: 'fa-rail-label' }, 'PANEL')) : null);
+        items.length ? h('span', { className: 'fa-rail-count' }, items.length) : null,
+        h('span', { className: 'fa-rail-label' }, codebase ? 'CODEBASE' : 'PANEL')) : null);
   }
   window.FridayArtifactHost = FridayArtifactHost;
 })();
