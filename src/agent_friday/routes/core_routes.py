@@ -397,17 +397,36 @@ def decisions_gate_status():
         out["laya"] = {"ready": False, "loading": False,
                        "error": error_text(e, "Could not read the Laya status")}
 
-    wants_laya = (out["selected_backend"] in ("laya", "laya-union")
-                  or out.get("shadow") in ("laya", "laya-union"))
+    selected = out["selected_backend"]
+    deciding = selected in ("laya", "laya-union")
+    shadowing = (not deciding) and out.get("shadow") in ("laya", "laya-union")
     ready = bool((out["laya"] or {}).get("ready"))
     loading = bool((out["laya"] or {}).get("loading"))
 
+    # EVERY EXPLANATION DESCRIBES THE MODE IN FORCE. Shadow used to borrow the
+    # union's sentence ("held for your sign-off when either one says it
+    # should be") while only the keyword scan was deciding.
+    #
     # DEGRADED means: you selected Laya and it is not answering. The gate is
     # still closed - `union_backend` falls back to the keyword verdict - so
     # this is an honesty flag, not an alarm.
-    if wants_laya and not ready:
+    if shadowing:
+        if ready:
+            out["explain"] = (
+                "The keyword scan decides. Laya scores the same actions "
+                "alongside it and both answers are logged; it changes no "
+                "decision.")
+        else:
+            out["degraded"] = True
+            out["explain"] = (
+                "The keyword scan decides. Laya is %s, so its shadow scores "
+                "are waiting; each one skipped is logged and scored when it is "
+                "back. No decision depends on it."
+                % ("still loading" if loading else "not answering (%s)"
+                   % ((out["laya"] or {}).get("error") or "unavailable")))
+    elif deciding and not ready:
         out["degraded"] = True
-        if out["selected_backend"] == "laya-union":
+        if selected == "laya-union":
             out["effective_backend"] = _dec.DEFAULT_BACKEND
         out["explain"] = (
             "Laya is still loading (about a minute from a cold start). Until "
@@ -417,7 +436,12 @@ def decisions_gate_status():
             "Laya is not answering (%s), so the keyword scan alone is "
             "deciding. Approvals still work; the second opinion is missing."
             % ((out["laya"] or {}).get("error") or "unavailable"))
-    elif wants_laya and ready:
+    elif selected == "laya":
+        out["explain"] = (
+            "Laya alone decides; the keyword scan is not consulted. This is "
+            "an evaluation setting, not one of the three switch positions, "
+            "and it gives up the guarantee that Laya can only add cards.")
+    elif selected == "laya-union":
         out["explain"] = (
             "Both scanners are serving. An action is held for your sign-off "
             "when either one says it should be.")
@@ -427,8 +451,7 @@ def decisions_gate_status():
         last = lay.get("last_missed_ts")
         missed = {k: int(v) for k, v in (lay.get("missed") or {}).items() if v}
         n = sum(missed.values())
-        if (out["selected_backend"] == "laya-union" and last and n
-                and _time.time() - float(last) < _RECENT_MISS_S):
+        if last and n and _time.time() - float(last) < _RECENT_MISS_S:
             out["degraded"] = True
             out["explain"] = (
                 "Laya is loaded but could not answer %d time%s since Friday "
