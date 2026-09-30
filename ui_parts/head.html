@@ -275,6 +275,8 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
         .top-bar.hidden { transform: translateY(-100%); }
+        /* The bar's height, for anything laid out under it (a workspace tab). */
+        :root { --fr-topbar-h: 36px; }
         /* The wordmark (FridayLockup): AGENT FRIDAY™ by FutureSpeak.AI. Amber
            belongs to the FutureSpeak.AI half only (docs/brand/BRAND.md). */
         .fr-lockup { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
@@ -426,7 +428,7 @@ window.addEventListener('DOMContentLoaded',function(){
           filter: drop-shadow(0 0 4px rgba(0,212,255,0.35)); }
         .ws-icon-glyph { width: auto; height: auto; font-size: 13px; line-height: 1; filter: none; }
         .cmd-palette-item .ico .ws-icon { width: 17px; height: 17px; margin-right: 0; vertical-align: -3px; }
-        .ws-tab-name .ws-icon { width: 20px; height: 20px; margin-right: 0; }
+        .ws-tab-name .ws-icon { width: 18px; height: 18px; margin-right: 0; }
         /* A window maximized to the desktop between the top bar and the dock. */
         .fwin.maxed { border-radius: 10px; transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease; }
         .fwin.maxed .win-edge, .fwin.maxed .resize-h { display: none; }
@@ -1262,6 +1264,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
           /* Top bar — keep compact */
           .top-bar { padding: 0 8px; height: 40px; }
+          :root { --fr-topbar-h: 40px; }
 
           /* Dock — horizontally scrollable strip */
           .dock {

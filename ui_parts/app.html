@@ -507,6 +507,15 @@ function fridayResolveTarget(t){
 function fridayNavigate(target){
   if(!target||!target.workspace)return;
   target=fridayResolveTarget(target);
+  // A workspace tab shows one workspace: a target in another opens that
+  // workspace's own page, carrying the same deep-link keys.
+  const here=window.__FRIDAY_STANDALONE__;
+  if(here&&here!=='settings'&&target.workspace!==here&&target.workspace!=='settings'){
+    const q=new URLSearchParams();
+    Object.keys(target).forEach(k=>{if(k!=='workspace'&&target[k]!=null&&target[k]!=='')q.set(k,target[k])});
+    window.location.href='/w/'+encodeURIComponent(target.workspace)+(q.toString()?'?'+q:'');
+    return;
+  }
   window.__fridayNavTarget=target;
   try{window.dispatchEvent(new CustomEvent('friday-nav',{detail:target}))}catch(_){}
 }
@@ -18782,6 +18791,7 @@ function ApprovalProvenance({p}){
 function StandaloneApprovals(){
   const items=useApprovalFeed();const[open,setOpen]=useState(false);const[busy,setBusy]=useState('');
   const decide=(id,decision)=>{setBusy(id);fridayDecideApproval(id,decision).then(()=>setBusy(''))};
+  if(!items.length&&!open)return null;
   return(<>
     <button className={'ws-tab-ask'+(items.length?'':' none')} data-testid="ws-tab-approvals" onClick={()=>setOpen(v=>!v)} title={items.length?'Friday is waiting for your approval':'Nothing is waiting for your approval'}>{items.length?'✋ '+items.length+' waiting for you':'✋ No approvals waiting'}</button>
     {open&&<div className="ws-tab-drawer" role="dialog" aria-label="Approvals">
@@ -19160,6 +19170,12 @@ function ApprovalPopups() {
     {items.map(a => <ApprovalCardBody key={a.approval_id} a={a} busy={busy} onDecide={decide} />)}
   </div>);
 }
+// The context slot of the top bar in a workspace tab: which workspace this is,
+// and the way to it on the desktop (where the scene menu sits on the desktop).
+function ShellTabName({ws}){
+  return(<span className="ws-tab-name" data-testid="ws-tab-name"><WsIcon ws={ws}/><span>{ws.label}</span>
+    <a className="ws-tab-link" href={'/?workspace='+encodeURIComponent(ws.id)} data-testid="ws-tab-back" title="Open the desktop, with this workspace open">Desktop</a></span>);
+}
 function StandaloneShell({ws,children}){
   // Moving the same workspace here again from the desktop finds this tab by
   // name and says where the window was, rather than reloading it. Only the
@@ -19180,15 +19196,6 @@ function StandaloneShell({ws,children}){
   },[ws.id]);
   const maxedTab=(()=>{try{const m=new URLSearchParams(window.location.search).get('max');return!!m&&m!=='0'}catch(e){return false}})();
   return(<div className={'ws-tab'+(maxedTab?' ws-max':'')} data-standalone={ws.id}>
-    <header className="ws-tab-head">
-      <FridayLockup size={15} href="/" title="Back to the desktop"/>
-      <span className="ws-tab-sep" aria-hidden="true">|</span>
-      <div className="ws-tab-name"><WsIcon ws={ws}/><span>{ws.label}</span></div>
-      <span className="ws-tab-sp"/>
-      <StandaloneApprovals/>
-      <a className="ws-tab-link" href="/?chrome=chat" target="_blank" rel="noopener" title="Talk to Friday in a tab of its own">💬 Chat</a>
-      <a className="ws-tab-link" href={'/?workspace='+encodeURIComponent(ws.id)} data-testid="ws-tab-back" title="Back to the Friday desktop, with this workspace open">← Back to desktop</a>
-    </header>
     <main className="ws-tab-body">{children}</main>
   </div>);
 }
@@ -20993,10 +21000,13 @@ function App(){
   const openWinsRef=useRef(openWins);openWinsRef.current=openWins;const closingRef=useRef(closingWins);closingRef.current=closingWins;
   const foldMs=()=>{try{if(window.matchMedia('(prefers-reduced-motion: reduce)').matches)return 130}catch(_){}return document.documentElement.dataset.dazzle==='off'?190:270};
   const cancelClose=id=>{clearTimeout(closeTimers.current[id]);delete closeTimers.current[id];setClosingWins(p=>{if(!p.has(id))return p;const n=new Set(p);n.delete(id);return n})};
-  const toggle=id=>{if(openWinsRef.current.has(id)&&!closingRef.current.has(id)){close(id);return}cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
+  // In a workspace tab there are no windows: another workspace opens as its own
+  // page, Settings as the panel, and this workspace is already here.
+  const tabGo=rawId=>{if(!STANDALONE_WS||STANDALONE_WS==='settings')return false;const id=fridayWorkspaceId(rawId);if(id==='settings')setSettingsOpen(true);else if(id!==STANDALONE_WS)window.location.href='/w/'+encodeURIComponent(id);return true};
+  const toggle=id=>{if(tabGo(id))return;if(openWinsRef.current.has(id)&&!closingRef.current.has(id)){close(id);return}cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
   // Ensure a workspace is OPEN (never toggles it closed) — used by deep-link nav
   // so clicking a notification for an already-open workspace doesn't close it.
-  const openWs=rawId=>{const id=fridayWorkspaceId(rawId);cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
+  const openWs=rawId=>{if(tabGo(rawId))return;const id=fridayWorkspaceId(rawId);cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
   const close=id=>{if(closeTimers.current[id])return;setClosingWins(p=>new Set(p).add(id));closeTimers.current[id]=setTimeout(()=>{delete closeTimers.current[id];setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});setClosingWins(p=>{const n=new Set(p);n.delete(id);return n})},foldMs())};
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
 
@@ -21395,34 +21405,23 @@ function App(){
   const structures=window.fridayVibe?.getStructures?.()??[];
   const moods=window.fridayVibe?.getMoods?.()??['LISTENING','REASONING','EXECUTING','EXCITED','CALM'];
 
-  // A workspace in its own tab: that workspace, full-tab, and nothing else of the desktop.
-  if(STANDALONE_WS&&STANDALONE_WS!=='settings'){
-    const sw=wsInfo[STANDALONE_WS];
-    return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
-      <ApprovalPopups/>
-      {sw?<StandaloneShell ws={sw}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
-        :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the Friday desktop</a></div>}
-    </WsCustomCtx.Provider>);
-  }
-
-  return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
-    <ApprovalPopups/>
-    {/* ── First-run setup chat. index.html puts the consent screens
-         (ConsentFlow, not mirrored here) in front of it. ── */}
-    {!setupDone&&<SetupChat onDone={finishSetupChat}/>}
-    {setupDone&&setupRerun&&<SetupChat onDone={finishSetupChat}/>}
-    {/* Top Bar */}
-    <MeetingRecIndicator/>
-    <div className={`top-bar ${topBarHidden?'hidden':''}`}>
+  // The shell every page shares, the desktop and a workspace tab alike: the top
+  // bar, the chat tray, notifications, settings, Quick Draft, the command palette
+  // and the modals they open (docs/design/active/unified-shell.md). Defined
+  // once; the desktop and the tab each draw these same elements.
+  const shellTab=STANDALONE_WS&&STANDALONE_WS!=='settings'?(wsInfo[STANDALONE_WS]||null):null;
+  const shellMeeting = <MeetingRecIndicator/>;
+  const shellTopBar = <div className={`top-bar ${topBarHidden?'hidden':''}`} data-testid="friday-top-bar">
       <div style={{display:'flex',alignItems:'center',gap:8}}>
-        <FridayLockup size={15} onClick={()=>toggle('system')} title="Open System workspace"/>
+        {shellTab?<FridayLockup size={15} href={'/?workspace='+encodeURIComponent(shellTab.id)} title="Back to the desktop, with this workspace open"/>
+          :<FridayLockup size={15} onClick={()=>toggle('system')} title="Open System workspace"/>}
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {/* Scene selector dropdown */}
         {/* Not positioned, on purpose: the menu's containing block is then the
             top bar itself, not this half of it, whose sides clip on a narrow
             window. With no top or left the menu sits where it would flow,
             right under the button. */}
-        <div ref={sceneMenuRef}>
+        {shellTab?<ShellTabName ws={shellTab}/>:(<div ref={sceneMenuRef}>
           <button onClick={()=>{setSceneMenuOpen(o=>!o);setModelMenuOpen(false)}}
             style={{background:'rgba(0,0,0,0.35)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}
             onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(0,212,255,0.45)'}}
@@ -21464,7 +21463,7 @@ function App(){
             ))}
             <div style={{padding:'2px 12px 6px',fontSize:9,color:'rgba(255,255,255,0.3)',fontFamily:'Inter',lineHeight:1.5}}>Uses your webcam. First use loads MediaPipe from a CDN, so it needs internet.</div>
           </div>}
-        </div>
+        </div>)}
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {/* Model selector pill — click to open dropdown with routing */}
         <div ref={modelMenuRef} style={{position:'relative'}}>
@@ -21703,6 +21702,7 @@ function App(){
             the picker: there was no signal in it. */}
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <StandaloneApprovals/>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
         <button ref={bellRef} onClick={()=>{setNotifOpen(o=>!o);if(!notifOpen){setSettingsOpen(false);setChatOpen(false);setQuickDraft(false)}}}
           style={{background:'none',border:'none',color:notifOpen?'#00d4ff':'#ddd',cursor:'pointer',fontSize:14,position:'relative'}}
@@ -21723,13 +21723,13 @@ function App(){
           aria-label={chatOpen?'Close chat':'Open chat with Friday'}>
           <span style={{fontSize:13}}>&#x1F4AC;</span>
         </button>
-        <button onClick={()=>{if(cameraOn){setCameraControlsOpen(o=>!o)}else{toggleCamera()}}}
+        {!shellTab&&(<button onClick={()=>{if(cameraOn){setCameraControlsOpen(o=>!o)}else{toggleCamera()}}}
           onContextMenu={e=>{e.preventDefault();if(cameraOn){toggleCamera()}else{toggleCamera();}}}
           style={{background:'none',border:'none',color:cameraOn?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14,filter:cameraOn?'drop-shadow(0 0 6px rgba(0,212,255,0.6))':'none'}}
           title={cameraOn?'Camera ON — click for controls (right-click to stop)':'Camera Mode'}
           aria-label={cameraOn?'Camera on, open controls':'Enable camera mode'}>
           <span>&#x1F4F7;</span>{cameraOn&&cameraSendIndicator&&<span style={{position:'relative',top:-6,marginLeft:-4,fontSize:10,color:'#00d4ff'}}>&#x1F441;</span>}
-        </button>
+        </button>)}
         {ccGranted&&<span className="cc-indicator" title="Computer control ACTIVE — Friday can move your mouse and type. Press Ctrl+Shift+Q or click STOP to terminate."><span className="cc-dot"/><span>CC LIVE</span></span>}
         <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}}
           style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#bbb',cursor:'pointer',fontSize:15}}
@@ -21752,151 +21752,20 @@ function App(){
           {connHealth==='ok'?'● LIVE':connHealth==='degraded'?'● DEGRADED':connHealth==='down'?'○ DOWN':'○ —'}
         </span>
       </div>
-    </div>
-
-    {/* Floating Kill Switch — visible whenever computer control is active */}
-    {ccGranted&&<button className="kill-switch" onClick={killSwitch} title="STOP — terminate all computer control immediately (Ctrl+Shift+Q)">
+    </div>;
+  const shellKillSwitch = ccGranted&&<button className="kill-switch" onClick={killSwitch} title="STOP — terminate all computer control immediately (Ctrl+Shift+Q)">
       <span className="ks-icon">&#x26D4;</span>STOP
-    </button>}
-
-    {/* Calm Default State — greeting with ticker, anchored above the dock.
-        bottom must clear the dock (icons + group labels, ~78px) plus its upward
-        box-shadow so the input never sits under the menubar. Matches the
-        chat-panel's dock-clearance constant (116px). */}
-    {noWindows&&<div style={{position:'fixed',left:0,right:0,bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
-      <div style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
-      <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron, sans-serif',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
-      <div style={{position:'relative',zIndex:1,marginBottom:10}}><FridayLockup size={11}/></div>
-      {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:16,position:'relative',zIndex:1}}>
-        {countdowns.map((c,i)=><React.Fragment key={i}>
-          {i>0&&<span className="greeting-ticker-sep"/>}
-          <span className="greeting-ticker-item">
-            <span>{c.emoji||''} {c.label||c.name}</span>
-            <span className="days">{c.days??c.days_until??'?'}d</span>
-          </span>
-        </React.Fragment>)}
-      </div>}
-      {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:16,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
-      <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
-        <FridayChatInput value={promptText} onChange={setPromptText} onSend={sendPrompt} maxHeight={120}
-          placeholder="Ask Friday anything..."
-          style={{width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}/>
-        <button aria-label={promptText.trim()?'Send message':(voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)')} onClick={()=>{if(promptText.trim())sendPrompt();else toggleVoice()}}
-          title={promptText.trim()?'Send message':(voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)')}
-          style={{width:40,height:40,borderRadius:'50%',
-            background:(voiceOn&&!promptText.trim())?'rgba(62,255,161,0.20)':'rgba(0,212,255,0.18)',
-            border:'1px solid '+((voiceOn&&!promptText.trim())?'rgba(62,255,161,0.65)':'rgba(0,212,255,0.4)'),
-            color:(voiceOn&&!promptText.trim())?'#3effa1':'#00d4ff',
-            cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center',
-            boxShadow:(voiceOn&&!promptText.trim())?'0 0 20px rgba(62,255,161,0.7), 0 4px 16px rgba(0,0,0,0.5)':'0 4px 16px rgba(0,0,0,0.5)',
-            animation:(voiceOn&&!promptText.trim())?'micPulse 1.6s ease-in-out infinite':'none',
-            transition:'background .2s, border-color .2s, color .2s, box-shadow .2s'}}>
-          {(voiceOn&&!promptText.trim())?'■':'🎤'}</button>
-      </div>
-      {/* Start my day — sequential spoken briefing (calendar → email → news → tasks) */}
-      <button onClick={()=>window.fridayStartMyDay&&window.fridayStartMyDay()}
-        title="Start my day — a spoken briefing: calendar, then email, news, and tasks"
-        style={{marginTop:14,position:'relative',zIndex:1,pointerEvents:'auto',display:'inline-flex',alignItems:'center',gap:8,background:'rgba(0,212,255,0.10)',border:'1px solid rgba(0,212,255,0.35)',borderRadius:22,padding:'9px 18px',color:'#cdeffd',fontFamily:'Orbitron, sans-serif',fontSize:11,letterSpacing:'0.08em',cursor:'pointer',boxShadow:'0 4px 20px rgba(0,0,0,0.35)',transition:'background .2s,border-color .2s'}}
-        onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,212,255,0.2)';e.currentTarget.style.borderColor='rgba(0,212,255,0.7)'}}
-        onMouseLeave={e=>{e.currentTarget.style.background='rgba(0,212,255,0.10)';e.currentTarget.style.borderColor='rgba(0,212,255,0.35)'}}>
-        <span style={{fontSize:14}}>🌅</span> START MY DAY
-      </button>
-    </div>}
-
-    {/* Camera Mode — PiP previews + control popover */}
-    {cameraOn&&<CameraMode source={cameraSource} intervalSec={cameraIntervalSec}
-      frameRef={cameraFrameRef} setSendIndicator={setCameraSendIndicator}
-      facing={cameraSource==='screen'?null:cameraFacing}
-      onChangeFacing={()=>setCameraFacing(f=>f==='user'?'environment':'user')}
-      onClose={()=>{setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}}/>}
-    {cameraOn&&cameraControlsOpen&&<div className="camera-control-panel">
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>CAMERA MODE</span>
-        <button aria-label={'Close camera controls'} title={'Close camera controls'} onClick={()=>setCameraControlsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:13}}>&#x2715;</button>
-      </div>
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.8)',marginTop:4}}>Source</div>
-      <div className="row">
-        {['screen','webcam','both'].map(s=>
-          <button key={s} className={`src-btn ${cameraSource===s?'active':''}`} onClick={()=>setCameraSource(s)}>{s}</button>
-        )}
-      </div>
-      {(cameraSource==='webcam'||cameraSource==='both')&&<div style={{marginTop:8,display:'flex',gap:6,alignItems:'center',fontSize:11,color:'rgba(255,255,255,0.6)'}}>
-        <span>Facing</span>
-        <button className={`src-btn ${cameraFacing==='user'?'active':''}`} style={{flex:1}} onClick={()=>setCameraFacing('user')}>front</button>
-        <button className={`src-btn ${cameraFacing==='environment'?'active':''}`} style={{flex:1}} onClick={()=>setCameraFacing('environment')}>rear</button>
-      </div>}
-      <div className="camera-privacy-banner"><span className="pulse"/>Camera is active</div>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8,fontSize:11,color:'rgba(255,255,255,0.8)',fontFamily:'JetBrains Mono'}}>
-        <span>Frame every {cameraIntervalSec}s</span>
-        <button className="src-btn" style={{padding:'4px 10px'}} onClick={()=>{setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}}>Stop</button>
-      </div>
-    </div>}
-
-    {/* Floating Windows */}
-    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} closing={closingWins.has(id)} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
-
-    {/* Workspace Studio — contextual per-workspace chat (💬 button on each window) */}
-    {wsChat&&<WorkspaceChat key={wsChat.wsId+':'+wsChat.key} wsId={wsChat.wsId} label={wsChat.label} emoji={wsChat.emoji} seedPrompt={wsChat.seed} onClose={()=>setWsChat(null)}/>}
-
-    {/* Chat Panel — resizable: drag left edge for width, top edge for height. */}
-    <div className={`chat-panel ${chatOpen?'open':''}`} style={chatH?{width:chatW,height:chatH,top:'auto'}:{width:chatW}}>
+    </button>;
+  const shellWsChat = wsChat&&<WorkspaceChat key={wsChat.wsId+':'+wsChat.key} wsId={wsChat.wsId} label={wsChat.label} emoji={wsChat.emoji} seedPrompt={wsChat.seed} onClose={()=>setWsChat(null)}/>;
+  const shellChatPanel = <div className={`chat-panel ${chatOpen?'open':''}`} style={chatH?{width:chatW,height:chatH,top:'auto'}:{width:chatW}}>
       {/* left-edge width handle */}
       <div className="chat-resize-w" title="Drag to resize width" onMouseDown={e=>{e.preventDefault();chatRStart.current={...chatRStart.current,x:e.clientX,w:chatW};setChatResize('w')}}/>
       {/* top-edge height handle */}
       <div className="chat-resize-h" title="Drag to resize height" onMouseDown={e=>{e.preventDefault();const cur=chatH||(e.currentTarget.parentNode.getBoundingClientRect().height);chatRStart.current={...chatRStart.current,y:e.clientY,h:cur};setChatResize('h')}}/>
       <ChatSurface mode="panel" agentSettings={agentSettings} audioDevicePopup={audioDevicePopup} audioDevicePopupRef={audioDevicePopupRef} audioInputDevices={audioInputDevices} audioOutputDevices={audioOutputDevices} chatEnd={chatEnd} chatIn={chatIn} chatLoad={chatLoad} chatMsgs={chatMsgs} micLevel={micLevel} micTestActive={micTestActive} micTestLevel={micTestLevel} micTestMsg={micTestMsg} pausePending={pausePending} refreshAudioDevicesRef={refreshAudioDevicesRef} saveAgentSettings={saveAgentSettings} sendChat={sendChat} setAudioDevicePopup={setAudioDevicePopup} setChatIn={setChatIn} setChatMsgs={setChatMsgs} setChatOpen={setChatOpen} setPausePending={setPausePending} showSources={showSources} speakerTestActive={speakerTestActive} speakerTestMsg={speakerTestMsg} testMicrophone={testMicrophone} testSpeaker={testSpeaker} toggleCiteSources={toggleCiteSources} toggleVoice={toggleVoice} voiceOn={voiceOn} voiceStatus={voiceStatus}/>
-    </div>
-
-    {/* Process Orb Stream Window (Layer 3) — floating, draggable, glassmorphic */}
-    {threadOrb&&<div className="thread-panel open" style={{left:threadPos.x,top:threadPos.y}} onClick={e=>e.stopPropagation()}>
-      <React.Fragment>
-        <div className="thread-header" onMouseDown={startThreadDrag} style={{cursor:'grab'}}>
-          <div className="thread-header-left">
-            <span className="thread-icon">{threadOrb.icon||'⚡'}</span>
-            <span className="thread-name">{threadOrb.label||'Process'}</span>
-          </div>
-          {/* B3: the exact model driving this process + its correlation id. */}
-          {(taskMeta&&taskMeta.model||threadOrb.model)&&<span title={'Model running this process'+(taskMeta&&taskMeta.linked_task_id?' · task '+taskMeta.linked_task_id:'')} style={{fontSize:8,fontFamily:'JetBrains Mono',color:'#00d4ff',border:'1px solid rgba(0,212,255,0.3)',borderRadius:3,padding:'0 4px',marginRight:6,whiteSpace:'nowrap',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis'}}>{(taskMeta&&taskMeta.model)||threadOrb.model}</span>}
-          <span className={`thread-status-badge ${threadOrb.status||'running'}`}>{threadOrb.status||'RUNNING'}</span>
-          <span className="thread-elapsed">{taskMeta&&taskMeta.elapsed!=null?taskMeta.elapsed+'s':''}</span>
-          <button aria-label={'Close this process panel'} title={'Close this process panel'} className="thread-close" onClick={()=>setThreadOrb(null)}>✕</button>
-        </div>
-        <div className="thread-body" ref={threadBodyRef}>
-          {/* Real-time activity log from the task endpoint (preferred). */}
-          {Array.isArray(taskLog)&&taskLog.length>0&&taskLog.map((line,i)=>
-            <div key={'log'+i} className="thread-log-line">{String(line)}</div>)}
-          {/* Reasoning steps (fallback / supplement for process-backed orbs). */}
-          {threadSteps.map((step,i)=><div key={'st'+i} className="thread-step">
-            <div className={`thread-dot ${step.status||'pending'}`}/>
-            <div className="thread-step-content">
-              <div className="thread-step-text">{step.text||''}</div>
-              {step.detail&&<div className={`thread-step-detail ${step._expanded?'expanded':''}`}
-                style={{cursor:'pointer'}}
-                onClick={()=>{const ns=[...threadSteps];ns[i]={...ns[i],_expanded:!ns[i]._expanded};setThreadSteps(ns)}}>
-                {step._expanded?'▾ ':'▸ '}{step.detail}
-              </div>}
-              {step.timestamp&&<div className="thread-step-time">{step.timestamp}</div>}
-            </div>
-          </div>)}
-          {/* Final result once the task finishes. */}
-          {taskMeta&&taskMeta.result&&(taskMeta.status==='complete'||taskMeta.status==='completed_unverified'||taskMeta.status==='failed'||taskMeta.status==='timeout')&&
-            <div className="thread-result">
-              <div className="thread-result-label">RESULT</div>
-              <div className="thread-result-body">{taskMeta.result}</div>
-            </div>}
-          {/* Empty state — only when there is genuinely nothing to show yet. */}
-          {(!taskLog||taskLog.length===0)&&threadSteps.length===0&&!(taskMeta&&taskMeta.result)&&
-            <div style={{textAlign:'center',color:'#666',fontSize:11,padding:20,fontFamily:'JetBrains Mono'}}>
-              {threadOrb.model?('⚙ '+threadOrb.model+' — '):''}waiting for activity…
-            </div>}
-        </div>
-      </React.Fragment>
-    </div>}
-
-    {/* ── B4: Activity Ledger panel — filterable stream of model invocations,
-        subagent spawns, and tool calls (seat, model, duration, tokens). ── */}
-    <TraceModalHost/>
-    {activityOpen&&<div style={{position:'fixed',top:60,right:14,width:activityTab==='traces'?760:400,maxWidth:'calc(100vw - 16px)',maxHeight:'calc(100vh - 120px)',display:'flex',flexDirection:'column',background:'rgba(8,12,20,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:10,zIndex:9500,boxShadow:'0 8px 40px rgba(0,0,0,0.6)'}} onClick={e=>e.stopPropagation()}>
+    </div>;
+  const shellTrace = <TraceModalHost/>;
+  const shellActivity = activityOpen&&<div style={{position:'fixed',top:60,right:14,width:activityTab==='traces'?760:400,maxWidth:'calc(100vw - 16px)',maxHeight:'calc(100vh - 120px)',display:'flex',flexDirection:'column',background:'rgba(8,12,20,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:10,zIndex:9500,boxShadow:'0 8px 40px rgba(0,0,0,0.6)'}} onClick={e=>e.stopPropagation()}>
       <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
         <span style={{fontFamily:'Orbitron, sans-serif',fontSize:10,color:'#00d4ff',letterSpacing:'0.08em'}}>ACTIVITY LEDGER</span>
         <div role="tablist" style={{display:'inline-flex',gap:2,flexShrink:0}}>
@@ -21943,10 +21812,8 @@ function App(){
           });
         })()}
       </div>}
-    </div>}
-
-    {/* Notifications + Tasks dropdown (anchored under bell icon) */}
-    {notifOpen&&<div ref={notifPanelRef} className="notif-dropdown" style={{top:notifAnchor.top,right:notifAnchor.right}}>
+    </div>;
+  const shellNotifs = notifOpen&&<div ref={notifPanelRef} className="notif-dropdown" style={{top:notifAnchor.top,right:notifAnchor.right}}>
       <ReasoningTraySection onOpenViewer={()=>{setActivityTab('traces');setActivityOpen(true);setNotifOpen(false)}}/>
       <div className="notif-section-header">
         <span>TASKS{runningTaskCount>0?` · ${runningTaskCount} LIVE`:''}</span>
@@ -22098,11 +21965,8 @@ function App(){
             </div>}
           </div>);
         })}
-    </div>}
-
-    {/* Settings sidebar — minimal quick-access strip. Full settings in
-        the Settings workspace (dock → System → ⚙️ Settings). */}
-    <div className={`settings-panel ${settingsOpen?'open':''}`}>
+    </div>;
+  const shellSettings = <div className={`settings-panel ${settingsOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 16px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>QUICK SETTINGS</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
@@ -22145,10 +22009,8 @@ function App(){
           <span style={{fontSize:11,color:agentSettings.computer_control_enabled?'#ffb347':'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>{(agentSettings.computer_control_enabled?'On':'Off')+' \u2192'}</span>
         </div>
       </div>
-    </div>
-
-    {/* Quick Draft Popup */}
-    {quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}>
+    </div>;
+  const shellQuickDraft = quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
         <button aria-label={'Close quick draft'} title={'Close quick draft'} onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
@@ -22166,35 +22028,11 @@ function App(){
       {qdResult&&<div style={{maxHeight:220,overflowY:'auto',background:'rgba(0,0,0,0.45)',border:'1px solid rgba(0,212,255,0.1)',borderRadius:8,padding:'14px 16px'}}>
         {qdResult.split(/\n\n+/).filter(Boolean).map((p,i)=><p key={i} style={{fontFamily:'Inter',fontSize:i===0?13:12,lineHeight:1.75,color:i===0?'#e8e8f0':'#ccc',marginBottom:10,whiteSpace:'pre-wrap'}}>{p}</p>)}
       </div>}
-    </div>}
-
-    {/* Dock — grouped (Life / Work / System) */}
-    <div className={`dock ${dockHidden?'hidden':''}`}>
-      {dockShape.groups.map((g,gi)=>(<React.Fragment key={g.name+':'+gi}>
-        {gi>0&&<div className="dock-sep"/>}
-        <div className="dock-group">
-          <div className="dock-group-btns">
-            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
-              <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
-              {w.id==='knowledge'&&wikiPending>0&&<span title={wikiPending+' wiki update'+(wikiPending===1?'':'s')+' waiting for your approval'} style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0e1a',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
-              {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
-              {w.id==='content'&&contentAlerts>0&&<span title="Held or failed posts need your attention — Content → Queue" style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0e1a',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{contentAlerts}</span>}
-            </button>)}
-          </div>
-          {g.name&&<div className="dock-group-label">{g.name}</div>}
-        </div>
-      </React.Fragment>))}
-    </div>
-    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>}
-
-    {/* Global Quick-Post modal — opened from any workspace via window.fridayQuickPost() */}
-    <QuickPostHost/>
-    <PodcastPlayer/>
-
-    {/* Background tasks now live in the bell-icon dropdown above */}
-
-    {/* Task Result Modal */}
-    {taskResultModal&&<div onClick={()=>setTaskResultModal(null)} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+    </div>;
+  const shellPalette = paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>;
+  const shellQuickPost = <QuickPostHost/>;
+  const shellPodcast = <PodcastPlayer/>;
+  const shellTaskModal = taskResultModal&&<div onClick={()=>setTaskResultModal(null)} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
       <div onClick={e=>e.stopPropagation()} style={{width:'min(720px, 90vw)',maxHeight:'85vh',overflowY:'auto',background:'rgba(10,10,18,0.96)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:12,padding:18,boxShadow:'0 12px 40px rgba(0,0,0,0.8)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
           <div>
@@ -22214,7 +22052,207 @@ function App(){
           </div>
         </div>}
       </div>
+    </div>;
+  // A docked chat tray takes its width from a workspace tab rather than
+  // covering it.
+  useEffect(()=>{document.documentElement.style.setProperty('--fr-chat-dock',shellTab&&chatOpen?chatW+'px':'0px')},[shellTab,chatOpen,chatW]);
+  // A workspace in its own tab: that workspace, full-tab, under the same shell
+  // as the desktop (top bar, chat tray, notifications, settings, palette); no
+  // dock, windows, HUD or scene.
+  if(STANDALONE_WS&&STANDALONE_WS!=='settings'){
+    const sw=wsInfo[STANDALONE_WS];
+    return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
+      <ApprovalPopups/>
+      {shellMeeting}{shellTopBar}{shellKillSwitch}
+      {sw?<StandaloneShell ws={sw}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
+        :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the Friday desktop</a></div>}
+      {shellWsChat}{shellChatPanel}{shellTrace}{shellActivity}{shellNotifs}{shellSettings}{shellQuickDraft}{shellPalette}{shellQuickPost}{shellPodcast}{shellTaskModal}
+    </WsCustomCtx.Provider>);
+  }
+
+  return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
+    <ApprovalPopups/>
+    {/* ── First-run setup chat. index.html puts the consent screens
+         (ConsentFlow, not mirrored here) in front of it. ── */}
+    {!setupDone&&<SetupChat onDone={finishSetupChat}/>}
+    {setupDone&&setupRerun&&<SetupChat onDone={finishSetupChat}/>}
+    {/* Top Bar */}
+    {shellMeeting}
+    {shellTopBar}
+
+    {/* Floating Kill Switch — visible whenever computer control is active */}
+    {shellKillSwitch}
+
+    {/* Calm Default State — greeting with ticker, anchored above the dock.
+        bottom must clear the dock (icons + group labels, ~78px) plus its upward
+        box-shadow so the input never sits under the menubar. Matches the
+        chat-panel's dock-clearance constant (116px). */}
+    {noWindows&&<div style={{position:'fixed',left:0,right:0,bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
+      <div style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
+      <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron, sans-serif',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
+      <div style={{position:'relative',zIndex:1,marginBottom:10}}><FridayLockup size={11}/></div>
+      {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:16,position:'relative',zIndex:1}}>
+        {countdowns.map((c,i)=><React.Fragment key={i}>
+          {i>0&&<span className="greeting-ticker-sep"/>}
+          <span className="greeting-ticker-item">
+            <span>{c.emoji||''} {c.label||c.name}</span>
+            <span className="days">{c.days??c.days_until??'?'}d</span>
+          </span>
+        </React.Fragment>)}
+      </div>}
+      {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:16,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
+      <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
+        <FridayChatInput value={promptText} onChange={setPromptText} onSend={sendPrompt} maxHeight={120}
+          placeholder="Ask Friday anything..."
+          style={{width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}/>
+        <button aria-label={promptText.trim()?'Send message':(voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)')} onClick={()=>{if(promptText.trim())sendPrompt();else toggleVoice()}}
+          title={promptText.trim()?'Send message':(voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)')}
+          style={{width:40,height:40,borderRadius:'50%',
+            background:(voiceOn&&!promptText.trim())?'rgba(62,255,161,0.20)':'rgba(0,212,255,0.18)',
+            border:'1px solid '+((voiceOn&&!promptText.trim())?'rgba(62,255,161,0.65)':'rgba(0,212,255,0.4)'),
+            color:(voiceOn&&!promptText.trim())?'#3effa1':'#00d4ff',
+            cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center',
+            boxShadow:(voiceOn&&!promptText.trim())?'0 0 20px rgba(62,255,161,0.7), 0 4px 16px rgba(0,0,0,0.5)':'0 4px 16px rgba(0,0,0,0.5)',
+            animation:(voiceOn&&!promptText.trim())?'micPulse 1.6s ease-in-out infinite':'none',
+            transition:'background .2s, border-color .2s, color .2s, box-shadow .2s'}}>
+          {(voiceOn&&!promptText.trim())?'■':'🎤'}</button>
+      </div>
+      {/* Start my day — sequential spoken briefing (calendar → email → news → tasks) */}
+      <button onClick={()=>window.fridayStartMyDay&&window.fridayStartMyDay()}
+        title="Start my day — a spoken briefing: calendar, then email, news, and tasks"
+        style={{marginTop:14,position:'relative',zIndex:1,pointerEvents:'auto',display:'inline-flex',alignItems:'center',gap:8,background:'rgba(0,212,255,0.10)',border:'1px solid rgba(0,212,255,0.35)',borderRadius:22,padding:'9px 18px',color:'#cdeffd',fontFamily:'Orbitron, sans-serif',fontSize:11,letterSpacing:'0.08em',cursor:'pointer',boxShadow:'0 4px 20px rgba(0,0,0,0.35)',transition:'background .2s,border-color .2s'}}
+        onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,212,255,0.2)';e.currentTarget.style.borderColor='rgba(0,212,255,0.7)'}}
+        onMouseLeave={e=>{e.currentTarget.style.background='rgba(0,212,255,0.10)';e.currentTarget.style.borderColor='rgba(0,212,255,0.35)'}}>
+        <span style={{fontSize:14}}>🌅</span> START MY DAY
+      </button>
     </div>}
+
+    {/* Camera Mode — PiP previews + control popover */}
+    {cameraOn&&<CameraMode source={cameraSource} intervalSec={cameraIntervalSec}
+      frameRef={cameraFrameRef} setSendIndicator={setCameraSendIndicator}
+      facing={cameraSource==='screen'?null:cameraFacing}
+      onChangeFacing={()=>setCameraFacing(f=>f==='user'?'environment':'user')}
+      onClose={()=>{setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}}/>}
+    {cameraOn&&cameraControlsOpen&&<div className="camera-control-panel">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>CAMERA MODE</span>
+        <button aria-label={'Close camera controls'} title={'Close camera controls'} onClick={()=>setCameraControlsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:13}}>&#x2715;</button>
+      </div>
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.8)',marginTop:4}}>Source</div>
+      <div className="row">
+        {['screen','webcam','both'].map(s=>
+          <button key={s} className={`src-btn ${cameraSource===s?'active':''}`} onClick={()=>setCameraSource(s)}>{s}</button>
+        )}
+      </div>
+      {(cameraSource==='webcam'||cameraSource==='both')&&<div style={{marginTop:8,display:'flex',gap:6,alignItems:'center',fontSize:11,color:'rgba(255,255,255,0.6)'}}>
+        <span>Facing</span>
+        <button className={`src-btn ${cameraFacing==='user'?'active':''}`} style={{flex:1}} onClick={()=>setCameraFacing('user')}>front</button>
+        <button className={`src-btn ${cameraFacing==='environment'?'active':''}`} style={{flex:1}} onClick={()=>setCameraFacing('environment')}>rear</button>
+      </div>}
+      <div className="camera-privacy-banner"><span className="pulse"/>Camera is active</div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8,fontSize:11,color:'rgba(255,255,255,0.8)',fontFamily:'JetBrains Mono'}}>
+        <span>Frame every {cameraIntervalSec}s</span>
+        <button className="src-btn" style={{padding:'4px 10px'}} onClick={()=>{setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}}>Stop</button>
+      </div>
+    </div>}
+
+    {/* Floating Windows */}
+    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} closing={closingWins.has(id)} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
+
+    {/* Workspace Studio — contextual per-workspace chat (💬 button on each window) */}
+    {shellWsChat}
+
+    {/* Chat Panel — resizable: drag left edge for width, top edge for height. */}
+    {shellChatPanel}
+
+    {/* Process Orb Stream Window (Layer 3) — floating, draggable, glassmorphic */}
+    {threadOrb&&<div className="thread-panel open" style={{left:threadPos.x,top:threadPos.y}} onClick={e=>e.stopPropagation()}>
+      <React.Fragment>
+        <div className="thread-header" onMouseDown={startThreadDrag} style={{cursor:'grab'}}>
+          <div className="thread-header-left">
+            <span className="thread-icon">{threadOrb.icon||'⚡'}</span>
+            <span className="thread-name">{threadOrb.label||'Process'}</span>
+          </div>
+          {/* B3: the exact model driving this process + its correlation id. */}
+          {(taskMeta&&taskMeta.model||threadOrb.model)&&<span title={'Model running this process'+(taskMeta&&taskMeta.linked_task_id?' · task '+taskMeta.linked_task_id:'')} style={{fontSize:8,fontFamily:'JetBrains Mono',color:'#00d4ff',border:'1px solid rgba(0,212,255,0.3)',borderRadius:3,padding:'0 4px',marginRight:6,whiteSpace:'nowrap',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis'}}>{(taskMeta&&taskMeta.model)||threadOrb.model}</span>}
+          <span className={`thread-status-badge ${threadOrb.status||'running'}`}>{threadOrb.status||'RUNNING'}</span>
+          <span className="thread-elapsed">{taskMeta&&taskMeta.elapsed!=null?taskMeta.elapsed+'s':''}</span>
+          <button aria-label={'Close this process panel'} title={'Close this process panel'} className="thread-close" onClick={()=>setThreadOrb(null)}>✕</button>
+        </div>
+        <div className="thread-body" ref={threadBodyRef}>
+          {/* Real-time activity log from the task endpoint (preferred). */}
+          {Array.isArray(taskLog)&&taskLog.length>0&&taskLog.map((line,i)=>
+            <div key={'log'+i} className="thread-log-line">{String(line)}</div>)}
+          {/* Reasoning steps (fallback / supplement for process-backed orbs). */}
+          {threadSteps.map((step,i)=><div key={'st'+i} className="thread-step">
+            <div className={`thread-dot ${step.status||'pending'}`}/>
+            <div className="thread-step-content">
+              <div className="thread-step-text">{step.text||''}</div>
+              {step.detail&&<div className={`thread-step-detail ${step._expanded?'expanded':''}`}
+                style={{cursor:'pointer'}}
+                onClick={()=>{const ns=[...threadSteps];ns[i]={...ns[i],_expanded:!ns[i]._expanded};setThreadSteps(ns)}}>
+                {step._expanded?'▾ ':'▸ '}{step.detail}
+              </div>}
+              {step.timestamp&&<div className="thread-step-time">{step.timestamp}</div>}
+            </div>
+          </div>)}
+          {/* Final result once the task finishes. */}
+          {taskMeta&&taskMeta.result&&(taskMeta.status==='complete'||taskMeta.status==='completed_unverified'||taskMeta.status==='failed'||taskMeta.status==='timeout')&&
+            <div className="thread-result">
+              <div className="thread-result-label">RESULT</div>
+              <div className="thread-result-body">{taskMeta.result}</div>
+            </div>}
+          {/* Empty state — only when there is genuinely nothing to show yet. */}
+          {(!taskLog||taskLog.length===0)&&threadSteps.length===0&&!(taskMeta&&taskMeta.result)&&
+            <div style={{textAlign:'center',color:'#666',fontSize:11,padding:20,fontFamily:'JetBrains Mono'}}>
+              {threadOrb.model?('⚙ '+threadOrb.model+' — '):''}waiting for activity…
+            </div>}
+        </div>
+      </React.Fragment>
+    </div>}
+
+    {/* ── B4: Activity Ledger panel — filterable stream of model invocations,
+        subagent spawns, and tool calls (seat, model, duration, tokens). ── */}
+    {shellTrace}
+    {shellActivity}
+
+    {/* Notifications + Tasks dropdown (anchored under bell icon) */}
+    {shellNotifs}
+
+    {/* Settings sidebar — minimal quick-access strip. Full settings in
+        the Settings workspace (dock → System → ⚙️ Settings). */}
+    {shellSettings}
+
+    {/* Quick Draft Popup */}
+    {shellQuickDraft}
+
+    {/* Dock — grouped (Life / Work / System) */}
+    <div className={`dock ${dockHidden?'hidden':''}`}>
+      {dockShape.groups.map((g,gi)=>(<React.Fragment key={g.name+':'+gi}>
+        {gi>0&&<div className="dock-sep"/>}
+        <div className="dock-group">
+          <div className="dock-group-btns">
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
+              <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
+              {w.id==='knowledge'&&wikiPending>0&&<span title={wikiPending+' wiki update'+(wikiPending===1?'':'s')+' waiting for your approval'} style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0e1a',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
+              {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
+              {w.id==='content'&&contentAlerts>0&&<span title="Held or failed posts need your attention — Content → Queue" style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0e1a',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{contentAlerts}</span>}
+            </button>)}
+          </div>
+          {g.name&&<div className="dock-group-label">{g.name}</div>}
+        </div>
+      </React.Fragment>))}
+    </div>
+    {shellPalette}
+
+    {/* Global Quick-Post modal — opened from any workspace via window.fridayQuickPost() */}
+    {shellQuickPost}
+    {shellPodcast}
+
+    {/* Background tasks now live in the bell-icon dropdown above */}
+
+    {/* Task Result Modal */}
+    {shellTaskModal}
   </WsCustomCtx.Provider>);
 }
 

@@ -336,6 +336,8 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
         .top-bar.hidden { transform: translateY(-100%); }
+        /* The bar's height, for anything laid out under it (a workspace tab). */
+        :root { --fr-topbar-h: 36px; }
         /* The wordmark (FridayLockup): AGENT FRIDAY™ by FutureSpeak.AI. Amber
            belongs to the FutureSpeak.AI half only (docs/brand/BRAND.md). */
         .fr-lockup { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
@@ -494,7 +496,7 @@ window.addEventListener('DOMContentLoaded',function(){
           filter: drop-shadow(0 0 4px rgba(0,212,255,0.35)); }
         .ws-icon-glyph { width: auto; height: auto; font-size: 13px; line-height: 1; filter: none; }
         .cmd-palette-item .ico .ws-icon { width: 17px; height: 17px; margin-right: 0; vertical-align: -3px; }
-        .ws-tab-name .ws-icon { width: 20px; height: 20px; margin-right: 0; }
+        .ws-tab-name .ws-icon { width: 18px; height: 18px; margin-right: 0; }
         /* A window maximized to the desktop between the top bar and the dock. */
         .fwin.maxed { border-radius: 10px; transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease; }
         .fwin.maxed .win-edge, .fwin.maxed .resize-h { display: none; }
@@ -675,7 +677,7 @@ window.addEventListener('DOMContentLoaded',function(){
            The server marks <html class="ws-standalone"> before anything
            renders. The scene never starts (window.onload is skipped) and
            the HUD, camera and hand-tracking layers are not shown; App draws
-           the one workspace full-tab under .ws-tab-head. */
+           the one workspace full-tab under the shared top bar. */
         html.ws-standalone #friday-scene-canvas,
         html.ws-standalone #hud-overlay,
         html.ws-standalone #camera-indicator,
@@ -688,22 +690,17 @@ window.addEventListener('DOMContentLoaded',function(){
            scrolls instead, and the workspace fills it. */
         html.ws-standalone body { background: #070b14; overflow: hidden; }
         html.ws-standalone #ui-inner { height: 100% !important; }
-        .ws-tab { height: 100%; display: flex; flex-direction: column; overflow: hidden; color: #dbe6f5; }
-        .ws-tab-head { flex: none; position: relative; z-index: 60; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
-            padding: 7px 16px; min-height: 44px; box-sizing: border-box;
-            background: rgba(6,10,18,0.96); border-bottom: 1px solid rgba(0,212,255,0.18); backdrop-filter: blur(6px); }
-        /* the desktop's own wordmark, as on its top bar */
-        .ws-tab-brand { display: flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
-        .ws-tab-mark { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 15px; letter-spacing: 0.06em; color: #00d4ff;
-            text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); }
-        .ws-tab-by { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: rgba(255,255,255,0.72); letter-spacing: 0.04em; margin-left: 4px; }
-        .ws-tab-fs { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 15px; letter-spacing: 0.06em; color: #f59e0b;
-            text-decoration: none; text-shadow: 0 0 14px rgba(245,158,11,0.55); transition: color .2s, text-shadow .2s; }
-        .ws-tab-fs:hover { color: #fbbf24; text-shadow: 0 0 18px rgba(245,158,11,0.85); }
-        .ws-tab-sep { color: rgba(255,255,255,0.28); font-size: 13px; user-select: none; }
-        .ws-tab-name { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: #fff; }
-        .ws-tab-name img { width: 20px; height: 20px; }
-        .ws-tab-sp { flex: 1; }
+        /* The tab sits under the same fixed top bar as the desktop, and a
+           docked chat tray takes its width from the tab instead of covering
+           it (--fr-chat-dock, set by App while the tray is open in a tab). */
+        .ws-tab { height: 100%; display: flex; flex-direction: column; overflow: hidden; color: #dbe6f5;
+            padding-top: var(--fr-topbar-h, 36px); padding-right: var(--fr-chat-dock, 0px); box-sizing: border-box;
+            transition: padding-right 0.3s ease; }
+        html.ws-standalone .chat-panel { bottom: 0; }
+        /* the workspace's name in the top bar's context slot, in a tab */
+        .ws-tab-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; }
+        .ws-tab-name img { width: 18px; height: 18px; }
+        .ws-tab-name .ws-tab-link { margin-left: 6px; font-size: 11px; padding: 2px 8px; }
         .ws-tab-link { font-size: 12px; color: #9fd0ff; text-decoration: none; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.3); border-radius: 7px; background: transparent; cursor: pointer; }
         .ws-tab-link:hover { border-color: #00d4ff; color: #e6f9ff; }
         .ws-tab-ask { font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(245,158,11,0.6); background: rgba(245,158,11,0.12); color: #ffd699; }
@@ -729,12 +726,9 @@ window.addEventListener('DOMContentLoaded',function(){
         .f3-host:has(> .f3-content > .ws-fill) > .f3-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
         .f3-content > .ws-fill { flex: 1 1 auto; min-height: 0; }
         @media (max-width: 640px) {
-            .ws-tab-head { padding: 6px 10px; }
-            .ws-tab-mark, .ws-tab-fs { font-size: 13px; }
-            .ws-tab-sep { display: none; }
             .ws-tab-body { padding: 10px 10px 18px; }
         }
-        .ws-tab-drawer { position: fixed; top: 48px; right: 14px; width: min(460px, 94vw); max-height: 78vh; overflow: auto; z-index: 70;
+        .ws-tab-drawer { position: fixed; top: calc(var(--fr-topbar-h, 36px) + 10px); right: 14px; width: min(460px, 94vw); max-height: 78vh; overflow: auto; z-index: 70;
             background: rgba(8,12,22,0.98); border: 1px solid rgba(245,158,11,0.45); border-radius: 12px; padding: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
         .ws-tab-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; padding: 10px; margin-bottom: 10px; background: rgba(255,255,255,0.02); }
         .ws-tab-toast { position: fixed; right: 16px; bottom: 16px; z-index: 80; display: flex; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 9px;
@@ -2039,6 +2033,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
           /* Top bar — keep compact */
           .top-bar { padding: 0 8px; height: 40px; }
+          :root { --fr-topbar-h: 40px; }
 
           /* Dock — wrapped, NOT a scrollable strip. The strip predates the
              wrap and fought it: flex-start plus overflow-x kept laying the
@@ -7840,6 +7835,17 @@ function fridayResolveTarget(t) {
 function fridayNavigate(target) {
   if (!target || !target.workspace) return;
   target = fridayResolveTarget(target);
+  // A workspace tab shows one workspace: a target in another opens that
+  // workspace's own page, carrying the same deep-link keys.
+  const here = window.__FRIDAY_STANDALONE__;
+  if (here && here !== 'settings' && target.workspace !== here && target.workspace !== 'settings') {
+    const q = new URLSearchParams();
+    Object.keys(target).forEach(k => {
+      if (k !== 'workspace' && target[k] != null && target[k] !== '') q.set(k, target[k]);
+    });
+    window.location.href = '/w/' + encodeURIComponent(target.workspace) + (q.toString() ? '?' + q : '');
+    return;
+  }
   window.__fridayNavTarget = target;
   try {
     window.dispatchEvent(new CustomEvent('friday-nav', {
@@ -53300,6 +53306,7 @@ function StandaloneApprovals() {
     setBusy(id);
     fridayDecideApproval(id, decision).then(() => setBusy(''));
   };
+  if (!items.length && !open) return null;
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
     className: 'ws-tab-ask' + (items.length ? '' : ' none'),
     "data-testid": "ws-tab-approvals",
@@ -54091,9 +54098,26 @@ function ApprovalPopups() {
   })));
 }
 
-// The tab itself: Friday mark, the workspace's name and icon, approvals, the
-// way back to the desktop, and the workspace full-tab. The tab's title and
-// favicon name the workspace, so a row of Friday tabs can be told apart.
+// The context slot of the top bar in a workspace tab: which workspace this is,
+// and the way to it on the desktop (where the scene menu sits on the desktop).
+function ShellTabName({
+  ws
+}) {
+  return /*#__PURE__*/React.createElement("span", {
+    className: "ws-tab-name",
+    "data-testid": "ws-tab-name"
+  }, /*#__PURE__*/React.createElement(WsIcon, {
+    ws: ws
+  }), /*#__PURE__*/React.createElement("span", null, ws.label), /*#__PURE__*/React.createElement("a", {
+    className: "ws-tab-link",
+    href: '/?workspace=' + encodeURIComponent(ws.id),
+    "data-testid": "ws-tab-back",
+    title: 'Open the desktop, with this workspace open'
+  }, "Desktop"));
+}
+// The tab itself: the workspace full-tab, under the same top bar as the
+// desktop (App draws the shell around it). The tab's title and favicon name
+// the workspace, so a row of Friday tabs can be told apart.
 function StandaloneShell({ ws, children }) {
   // Moving the same workspace here again from the desktop (\u2197) finds this
   // tab by name and says where the window was, rather than reloading it
@@ -54145,16 +54169,6 @@ function StandaloneShell({ ws, children }) {
     }
   })();
   return /*#__PURE__*/React.createElement("div", { className: 'ws-tab' + (maxedTab ? ' ws-max' : ''), "data-standalone": ws.id },
-    /*#__PURE__*/React.createElement("header", { className: 'ws-tab-head' },
-      /*#__PURE__*/React.createElement(FridayLockup, { size: 15, href: '/', title: 'Back to the desktop' }),
-      /*#__PURE__*/React.createElement("span", { className: 'ws-tab-sep', "aria-hidden": "true" }, '|'),
-      /*#__PURE__*/React.createElement("div", { className: 'ws-tab-name' },
-        /*#__PURE__*/React.createElement(WsIcon, { ws: ws }),
-        /*#__PURE__*/React.createElement("span", null, ws.label)),
-      /*#__PURE__*/React.createElement("span", { className: 'ws-tab-sp' }),
-      /*#__PURE__*/React.createElement(StandaloneApprovals, null),
-      /*#__PURE__*/React.createElement("a", { className: 'ws-tab-link', href: '/?chrome=chat', target: '_blank', rel: 'noopener', title: 'Talk to Friday in a tab of its own' }, '\uD83D\uDCAC Chat'),
-      /*#__PURE__*/React.createElement("a", { className: 'ws-tab-link', href: '/?workspace=' + encodeURIComponent(ws.id), "data-testid": "ws-tab-back", title: 'Back to the Friday desktop, with this workspace open' }, '\u2190 Back to desktop')),
     /*#__PURE__*/React.createElement("main", { className: 'ws-tab-body' }, children));
 }
 function App() {
@@ -57210,7 +57224,16 @@ function App() {
       return n;
     });
   };
+  // In a workspace tab there are no windows: another workspace opens as its own
+  // page, Settings as the panel, and this workspace is already here.
+  const tabGo = rawId => {
+    if (!STANDALONE_WS || STANDALONE_WS === 'settings') return false;
+    const id = fridayWorkspaceId(rawId);
+    if (id === 'settings') setSettingsOpen(true);else if (id !== STANDALONE_WS) window.location.href = '/w/' + encodeURIComponent(id);
+    return true;
+  };
   const toggle = id => {
+    if (tabGo(id)) return;
     if (openWinsRef.current.has(id) && !closingRef.current.has(id)) {
       close(id);
       return;
@@ -57228,6 +57251,7 @@ function App() {
   // Ensure a workspace is OPEN (never toggles it closed) — used by deep-link nav
   // so clicking a notification for an already-open workspace doesn't close it.
   const openWs = rawId => {
+    if (tabGo(rawId)) return;
     const id = fridayWorkspaceId(rawId);
     cancelClose(id);
     setOpenWins(p => {
@@ -58027,54 +58051,26 @@ function App() {
     mainMsgCount: chatMsgs.length
   };
   const moods = window.fridayVibe?.getMoods?.() ?? ['LISTENING', 'REASONING', 'EXECUTING', 'EXCITED', 'CALM'];
-  // A workspace in its own tab: that workspace, full-tab, and nothing else of
-  // the desktop (no dock, windows, HUD or scene). Settings never gets here
-  // (the server sends /w/settings back to the desktop). An unknown id says so.
-  if (STANDALONE_WS && STANDALONE_WS !== 'settings') {
-    const sw = wsInfo[STANDALONE_WS];
-    return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
-      value: { map: wsCustMap, setCust }
-    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw },
-      /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")))
-      : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
-        'There is no workspace called “' + STANDALONE_WS + '”. ',
-        /*#__PURE__*/React.createElement("a", { href: '/', style: { color: '#00d4ff' } }, 'Back to the Friday desktop')));
-  }
-  return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
-    value: {
-      map: wsCustMap,
-      setCust
-    }
-  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
-    // The server stores the passphrase as the chat begins; this page does
-    // not keep it.
-    onDone: seed => {
-      fetch('/api/setup-chat/begin', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          routing_mode: seed && seed.routing_mode || '',
-          vault_passphrase: seed && seed.vault_passphrase || ''
-        })
-      }).catch(() => {}).then(() => setConsentDone(true));
-    }
-  }), !setupDone && consentDone === true && /*#__PURE__*/React.createElement(SetupChat, {
-    onDone: finishSetupChat
-  }), setupDone && setupRerun && /*#__PURE__*/React.createElement(SetupChat, {
-    onDone: finishSetupChat
-  }), setupDone && needsCloudConsent && /*#__PURE__*/React.createElement(CloudConsentGate, {
-    onDone: () => setNeedsCloudConsent(false)
-  }), /*#__PURE__*/React.createElement(MeetingRecIndicator, null), /*#__PURE__*/React.createElement("div", {
-    className: `top-bar ${topBarHidden ? 'hidden' : ''}`
+  // The shell every page shares, the desktop and a workspace tab alike: the top
+  // bar, the chat tray, notifications, settings, Quick Draft, the command palette
+  // and the modals they open (docs/design/active/unified-shell.md). Defined
+  // once; the desktop and the tab each draw these same elements.
+  const shellTab = STANDALONE_WS && STANDALONE_WS !== 'settings' ? wsInfo[STANDALONE_WS] || null : null;
+  const shellMeeting = /*#__PURE__*/React.createElement(MeetingRecIndicator, null);
+  const shellTopBar = /*#__PURE__*/React.createElement("div", {
+    className: `top-bar ${topBarHidden ? 'hidden' : ''}`,
+    "data-testid": "friday-top-bar"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
       gap: 8
     }
-  }, /*#__PURE__*/React.createElement(FridayLockup, {
+  }, /*#__PURE__*/React.createElement(FridayLockup, shellTab ? {
+    size: 15,
+    href: '/?workspace=' + encodeURIComponent(shellTab.id),
+    title: 'Back to the desktop, with this workspace open'
+  } : {
     size: 15,
     onClick: () => toggle('system'),
     title: "Open System workspace"
@@ -58090,7 +58086,9 @@ function App() {
   // top bar itself, not this half of it, whose sides clip on a narrow
   // window. With no top or left the menu sits where it would flow, right
   // under the button.
-  /*#__PURE__*/React.createElement("div", {
+  shellTab ? /*#__PURE__*/React.createElement(ShellTabName, {
+    ws: shellTab
+  }) : /*#__PURE__*/React.createElement("div", {
     ref: sceneMenuRef
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => {
@@ -58320,7 +58318,7 @@ function App() {
       fontSize: 13,
       userSelect: 'none'
     }
-  }, "|"), orbiting.length > 0 && /*#__PURE__*/React.createElement("button", {
+  }, "|"), !shellTab && orbiting.length > 0 && /*#__PURE__*/React.createElement("button", {
     onClick: clearOrbs,
     disabled: clearingOrbs,
     title: orbiting.length + ' orb(s) in orbit. Clears everything that has '
@@ -58381,7 +58379,7 @@ function App() {
       alignItems: 'center',
       gap: 10
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement(StandaloneApprovals, null), /*#__PURE__*/React.createElement("span", {
     style: {
       fontFamily: 'JetBrains Mono',
       fontSize: 11,
@@ -58474,7 +58472,7 @@ function App() {
     style: {
       fontSize: 13
     }
-  }, "\uD83D\uDCAC")), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCAC")), !shellTab && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       if (cameraOn) {
         setCameraControlsOpen(o => !o);
@@ -58563,310 +58561,23 @@ function App() {
       textShadow: '0 0 6px rgba(0,0,0,0.8)'
     },
     title: connHealth === 'ok' ? 'Connected' : connHealth === 'degraded' ? 'Degraded — server returned a non-OK status' : connHealth === 'down' ? 'Disconnected — cannot reach /api/health' : 'Checking…'
-  }, connHealth === 'ok' ? '● LIVE' : connHealth === 'degraded' ? '● DEGRADED' : connHealth === 'down' ? '○ DOWN' : '○ —'))), ccGranted && /*#__PURE__*/React.createElement("button", {
+  }, connHealth === 'ok' ? '● LIVE' : connHealth === 'degraded' ? '● DEGRADED' : connHealth === 'down' ? '○ DOWN' : '○ —')));
+  const shellKillSwitch = ccGranted && /*#__PURE__*/React.createElement("button", {
     className: "kill-switch",
     onClick: killSwitch,
     title: "STOP \u2014 terminate all computer control immediately (Ctrl+Shift+Q)"
   }, /*#__PURE__*/React.createElement("span", {
     className: "ks-icon"
-  }, "\u26D4"), "STOP"), noWindows && /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'fixed',
-      left: 0,
-      right: 0,
-      bottom: 116,
-      zIndex: 5,
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      pointerEvents: 'none'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      bottom: 0,
-      left: '50%',
-      transform: 'translateX(-50%)',
-      width: 720,
-      height: 280,
-      borderRadius: '50%',
-      background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',
-      pointerEvents: 'none',
-      zIndex: 0
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      zIndex: 1,
-      fontFamily: 'Orbitron, sans-serif',
-      fontSize: 26,
-      color: 'rgba(0,212,255,0.98)',
-      marginBottom: 12,
-      animation: 'fadeIn 1s ease',
-      letterSpacing: '0.06em',
-      textShadow: '0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'
-    }
-  }, getGreeting(), ", boss."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      zIndex: 1,
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement(FridayLockup, {
-    size: 11
-  })), countdowns.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "greeting-ticker",
-    style: {
-      marginBottom: 16,
-      position: 'relative',
-      zIndex: 1
-    }
-  }, countdowns.map((c, i) => /*#__PURE__*/React.createElement(React.Fragment, {
-    key: i
-  }, i > 0 && /*#__PURE__*/React.createElement("span", {
-    className: "greeting-ticker-sep"
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "greeting-ticker-item"
-  }, /*#__PURE__*/React.createElement("span", null, c.emoji || '', " ", c.label || c.name), /*#__PURE__*/React.createElement("span", {
-    className: "days"
-  }, c.days ?? c.days_until ?? '?', "d"))))), countdowns.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      zIndex: 1,
-      fontFamily: 'JetBrains Mono',
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.78)',
-      marginBottom: 16,
-      textShadow: '0 1px 3px rgba(0,0,0,0.85)'
-    }
-  }, "All systems nominal."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      zIndex: 1,
-      pointerEvents: 'auto',
-      display: 'flex',
-      gap: 8,
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement(FridayChatInput, {
-    value: promptText,
-    onChange: setPromptText,
-    onSend: sendPrompt,
-    maxHeight: 120,
-    placeholder: "Ask Friday anything...",
-    style: {
-      width: 360,
-      background: 'rgba(10,14,26,0.75)',
-      backdropFilter: 'blur(16px) saturate(1.2)',
-      WebkitBackdropFilter: 'blur(16px) saturate(1.2)',
-      border: '1px solid rgba(0,212,255,0.15)',
-      borderRadius: 24,
-      padding: '10px 20px',
-      color: '#f0f0f8',
-      fontSize: 13,
-      outline: 'none',
-      fontFamily: 'Inter',
-      transition: 'border-color .2s',
-      boxShadow: '0 4px 30px rgba(0,0,0,0.3)'
-    }
-  }), /*#__PURE__*/React.createElement("button", { "aria-label": promptText.trim() ? 'Send message' : voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)', 
-    onClick: () => {
-      if (promptText.trim()) sendPrompt();else toggleVoice();
-    },
-    title: promptText.trim() ? 'Send message' : voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)',
-    style: {
-      width: 40,
-      height: 40,
-      borderRadius: '50%',
-      background: voiceOn && !promptText.trim() ? 'rgba(62,255,161,0.20)' : 'rgba(0,212,255,0.18)',
-      border: '1px solid ' + (voiceOn && !promptText.trim() ? 'rgba(62,255,161,0.65)' : 'rgba(0,212,255,0.4)'),
-      color: voiceOn && !promptText.trim() ? '#3effa1' : '#00d4ff',
-      cursor: 'pointer',
-      fontSize: 16,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: voiceOn && !promptText.trim() ? '0 0 20px rgba(62,255,161,0.7), 0 4px 16px rgba(0,0,0,0.5)' : '0 4px 16px rgba(0,0,0,0.5)',
-      animation: voiceOn && !promptText.trim() ? 'micPulse 1.6s ease-in-out infinite' : 'none',
-      transition: 'background .2s, border-color .2s, color .2s, box-shadow .2s'
-    }
-  }, voiceOn && !promptText.trim() ? '■' : '🎤')), /*#__PURE__*/React.createElement("button", {
-    onClick: () => window.fridayStartMyDay && window.fridayStartMyDay(),
-    title: "Start my day \u2014 a spoken briefing: calendar, then email, news, and tasks",
-    style: {
-      marginTop: 14,
-      position: 'relative',
-      zIndex: 1,
-      pointerEvents: 'auto',
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 8,
-      background: 'rgba(0,212,255,0.10)',
-      border: '1px solid rgba(0,212,255,0.35)',
-      borderRadius: 22,
-      padding: '9px 18px',
-      color: '#cdeffd',
-      fontFamily: 'Orbitron, sans-serif',
-      fontSize: 11,
-      letterSpacing: '0.08em',
-      cursor: 'pointer',
-      boxShadow: '0 4px 20px rgba(0,0,0,0.35)',
-      transition: 'background .2s,border-color .2s'
-    },
-    onMouseEnter: e => {
-      e.currentTarget.style.background = 'rgba(0,212,255,0.2)';
-      e.currentTarget.style.borderColor = 'rgba(0,212,255,0.7)';
-    },
-    onMouseLeave: e => {
-      e.currentTarget.style.background = 'rgba(0,212,255,0.10)';
-      e.currentTarget.style.borderColor = 'rgba(0,212,255,0.35)';
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 14
-    }
-  }, "\uD83C\uDF05"), " START MY DAY")), cameraOn && /*#__PURE__*/React.createElement(CameraMode, {
-    source: cameraSource,
-    intervalSec: cameraIntervalSec,
-    frameRef: cameraFrameRef,
-    setSendIndicator: setCameraSendIndicator,
-    facing: cameraSource === 'screen' ? null : cameraFacing,
-    onChangeFacing: () => setCameraFacing(f => f === 'user' ? 'environment' : 'user'),
-    onClose: () => {
-      setCameraOn(false);
-      setCameraControlsOpen(false);
-      cameraFrameRef.current = null;
-    }
-  }), cameraOn && cameraControlsOpen && /*#__PURE__*/React.createElement("div", {
-    className: "camera-control-panel"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'Orbitron, sans-serif',
-      fontSize: 11,
-      color: '#00d4ff'
-    }
-  }, "CAMERA MODE"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close camera controls', title: 'Close camera controls', 
-    onClick: () => setCameraControlsOpen(false),
-    style: {
-      background: 'none',
-      border: 'none',
-      color: '#999',
-      cursor: 'pointer',
-      fontSize: 13
-    }
-  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.8)',
-      marginTop: 4
-    }
-  }, "Source"), /*#__PURE__*/React.createElement("div", {
-    className: "row"
-  }, ['screen', 'webcam', 'both'].map(s => /*#__PURE__*/React.createElement("button", {
-    key: s,
-    className: `src-btn ${cameraSource === s ? 'active' : ''}`,
-    onClick: () => setCameraSource(s)
-  }, s))), (cameraSource === 'webcam' || cameraSource === 'both') && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8,
-      display: 'flex',
-      gap: 6,
-      alignItems: 'center',
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.6)'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "Facing"), /*#__PURE__*/React.createElement("button", {
-    className: `src-btn ${cameraFacing === 'user' ? 'active' : ''}`,
-    style: {
-      flex: 1
-    },
-    onClick: () => setCameraFacing('user')
-  }, "front"), /*#__PURE__*/React.createElement("button", {
-    className: `src-btn ${cameraFacing === 'environment' ? 'active' : ''}`,
-    style: {
-      flex: 1
-    },
-    onClick: () => setCameraFacing('environment')
-  }, "rear")), /*#__PURE__*/React.createElement("div", {
-    className: "camera-privacy-banner"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "pulse"
-  }), "Camera is active"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginTop: 8,
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.8)',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "Frame every ", cameraIntervalSec, "s"), /*#__PURE__*/React.createElement("button", {
-    className: "src-btn",
-    style: {
-      padding: '4px 10px'
-    },
-    onClick: () => {
-      setCameraOn(false);
-      setCameraControlsOpen(false);
-      cameraFrameRef.current = null;
-    }
-  }, "Stop"))), [...openWins].map(id => {
-    const w = wsInfo[id];
-    if (!w) return null;
-    return /*#__PURE__*/React.createElement(FWin, {
-      key: id,
-      id: id,
-      title: w.label,
-      emoji: w.ico,
-      zIndex: zMap[id] || 41,
-      closing: closingWins.has(id),
-      onClose: () => close(id),
-      onFocus: () => bringFront(id)
-    }, /*#__PURE__*/React.createElement(Safe, {
-      name: w.label
-    }, wsMap[id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")));
-  }), convWins.map((cw, i) => /*#__PURE__*/React.createElement(ConversationWindow, {
-    key: cw.cid,
-    convId: cw.cid,
-    title: cw.title,
-    offset: i,
-    // Same band as every other window (see bringFront). 132 here predated the
-    // band and would have put a chat window over the dock and the top bar -
-    // harmless only because a chat window is now clamped never to reach them,
-    // which is not a reason to leave a number that says otherwise.
-    zIndex: zMap['chat:' + cw.cid] || Math.min(Z_WIN_TOP, Z_WIN_BASE + i),
-    onFocus: () => bringFront('chat:' + cw.cid),
-    onClose: () => setConvWins(p => p.filter(x => x.cid !== cw.cid)),
-    shared: chatShared
-  })), wsChat && /*#__PURE__*/React.createElement(WorkspaceChat, {
+  }, "\u26D4"), "STOP");
+  const shellWsChat = wsChat && /*#__PURE__*/React.createElement(WorkspaceChat, {
     key: wsChat.wsId + ':' + wsChat.key,
     wsId: wsChat.wsId,
     label: wsChat.label,
     emoji: wsChat.emoji,
     seedPrompt: wsChat.seed,
     onClose: () => setWsChat(null)
-  }),
-  /* The sidebar is a SIBLING of the chat panel, not a change to its insides.
-     The panel is a long compiled tree that a dozen features already depend on;
-     adding a column beside it and shifting it over with CSS cannot break any
-     of them, where restructuring its children could. It exists only in a chat
-     tab - `chrome=chat` - because the floating holographic window is a glance
-     at one thread and has no navigation in it. */
-  window.__FRIDAY_CHROME__ === 'chat'
-    ? /*#__PURE__*/React.createElement(ChatSidebar, {
-        convList: convList, projList: projList, convId: convId,
-        onOpenConversation: openConversation, onRefresh: refreshConvs,
-        apiFetch: apiFetch,
-      })
-    : null,
-  /*#__PURE__*/React.createElement("div", {
+  });
+  const shellChatPanel = /*#__PURE__*/React.createElement("div", {
     className: `chat-panel ${chatOpen ? 'open' : ''}`,
     style: chatH ? {
       width: chatW,
@@ -58959,92 +58670,9 @@ function App() {
     voiceReach: voiceReach,
     voiceStages: voiceStages,
     voiceStatus: voiceStatus
-  })), threadOrb && /*#__PURE__*/React.createElement("div", {
-    className: "thread-panel open",
-    style: {
-      left: threadPos.x,
-      top: threadPos.y
-    },
-    onClick: e => e.stopPropagation()
-  }, /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "thread-header",
-    onMouseDown: startThreadDrag,
-    style: {
-      cursor: 'grab'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "thread-header-left"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "thread-icon"
-  }, threadOrb.icon || '⚡'), /*#__PURE__*/React.createElement("span", {
-    className: "thread-name"
-  }, threadOrb.label || 'Process')), (taskMeta && taskMeta.model || threadOrb.model) && /*#__PURE__*/React.createElement("span", {
-    title: 'Model running this process' + (taskMeta && taskMeta.linked_task_id ? ' · task ' + taskMeta.linked_task_id : ''),
-    style: {
-      fontSize: 8,
-      fontFamily: 'JetBrains Mono',
-      color: '#00d4ff',
-      border: '1px solid rgba(0,212,255,0.3)',
-      borderRadius: 3,
-      padding: '0 4px',
-      marginRight: 6,
-      whiteSpace: 'nowrap',
-      maxWidth: 110,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    }
-  }, taskMeta && taskMeta.model || threadOrb.model), /*#__PURE__*/React.createElement("span", {
-    className: `thread-status-badge ${threadOrb.status || 'running'}`
-  }, threadOrb.status || 'RUNNING'), /*#__PURE__*/React.createElement("span", {
-    className: "thread-elapsed"
-  }, taskMeta && taskMeta.elapsed != null ? taskMeta.elapsed + 's' : ''), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close this process panel', title: 'Close this process panel', 
-    className: "thread-close",
-    onClick: () => setThreadOrb(null)
-  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
-    className: "thread-body",
-    ref: threadBodyRef
-  }, Array.isArray(taskLog) && taskLog.length > 0 && taskLog.map((line, i) => /*#__PURE__*/React.createElement("div", {
-    key: 'log' + i,
-    className: "thread-log-line"
-  }, String(line))), threadSteps.map((step, i) => /*#__PURE__*/React.createElement("div", {
-    key: 'st' + i,
-    className: "thread-step"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `thread-dot ${step.status || 'pending'}`
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "thread-step-content"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "thread-step-text"
-  }, step.text || ''), step.detail && /*#__PURE__*/React.createElement("div", {
-    className: `thread-step-detail ${step._expanded ? 'expanded' : ''}`,
-    style: {
-      cursor: 'pointer'
-    },
-    onClick: () => {
-      const ns = [...threadSteps];
-      ns[i] = {
-        ...ns[i],
-        _expanded: !ns[i]._expanded
-      };
-      setThreadSteps(ns);
-    }
-  }, step._expanded ? '▾ ' : '▸ ', step.detail), step.timestamp && /*#__PURE__*/React.createElement("div", {
-    className: "thread-step-time"
-  }, step.timestamp)))), taskMeta && taskMeta.result && (taskMeta.status === 'complete' || taskMeta.status === 'completed_unverified' || taskMeta.status === 'failed' || taskMeta.status === 'timeout') && /*#__PURE__*/React.createElement("div", {
-    className: "thread-result"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "thread-result-label"
-  }, "RESULT"), /*#__PURE__*/React.createElement("div", {
-    className: "thread-result-body"
-  }, taskMeta.result)), (!taskLog || taskLog.length === 0) && threadSteps.length === 0 && !(taskMeta && taskMeta.result) && /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: 'center',
-      color: '#666',
-      fontSize: 11,
-      padding: 20,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, threadOrb.model ? '⚙ ' + threadOrb.model + ' — ' : '', "waiting for activity\u2026")))), /*#__PURE__*/React.createElement(TraceModalHost, null), activityOpen && /*#__PURE__*/React.createElement("div", {
+  }));
+  const shellTrace = /*#__PURE__*/React.createElement(TraceModalHost, null);
+  const shellActivity = activityOpen && /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'fixed',
       top: 60,
@@ -59241,7 +58869,8 @@ function App() {
         }
       }, "#", String(ev.task_id).slice(0, 6)));
     });
-  })())), notifOpen && /*#__PURE__*/React.createElement("div", {
+  })()));
+  const shellNotifs = notifOpen && /*#__PURE__*/React.createElement("div", {
     ref: notifPanelRef,
     className: "notif-dropdown",
     style: {
@@ -59703,7 +59332,8 @@ function App() {
         openCreationFolder();
       }
     }, "\uD83D\uDCC1 Open Folder")));
-  })), /*#__PURE__*/React.createElement("div", {
+  }));
+  const shellSettings = /*#__PURE__*/React.createElement("div", {
     className: `settings-panel ${settingsOpen ? 'open' : ''}`
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -59827,7 +59457,8 @@ function App() {
     className: "settings-toggle-label"
   }, "Computer Control"), /*#__PURE__*/React.createElement("span", {
     style: { fontSize: 11, color: agentSettings.computer_control_enabled ? '#ffb347' : 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono' }
-  }, (agentSettings.computer_control_enabled ? 'On' : 'Off') + ' \u2192')))), quickDraft && /*#__PURE__*/React.createElement("div", {
+  }, (agentSettings.computer_control_enabled ? 'On' : 'Off') + ' \u2192'))));
+  const shellQuickDraft = quickDraft && /*#__PURE__*/React.createElement("div", {
     ref: quickDraftRef,
     style: {
       position: 'fixed',
@@ -59947,7 +59578,540 @@ function App() {
       marginBottom: 10,
       whiteSpace: 'pre-wrap'
     }
-  }, p)))), /*#__PURE__*/React.createElement("div", {
+  }, p))));
+  const shellPalette = paletteOpen && /*#__PURE__*/React.createElement(CommandPalette, {
+    onClose: () => setPaletteOpen(false),
+    onOpenWs: id => {
+      toggle(id);
+      setPaletteOpen(false);
+    },
+    openWins: openWins
+  });
+  const shellQuickPost = /*#__PURE__*/React.createElement(QuickPostHost, null);
+  const shellPodcast = /*#__PURE__*/React.createElement(PodcastPlayer, null);
+  const shellTaskModal = taskResultModal && /*#__PURE__*/React.createElement("div", {
+    onClick: () => setTaskResultModal(null),
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 200,
+      background: 'rgba(0,0,0,0.7)',
+      backdropFilter: 'blur(6px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: {
+      width: 'min(720px, 90vw)',
+      maxHeight: '85vh',
+      overflowY: 'auto',
+      background: 'rgba(10,10,18,0.96)',
+      border: '1px solid rgba(0,212,255,0.25)',
+      borderRadius: 12,
+      padding: 18,
+      boxShadow: '0 12px 40px rgba(0,0,0,0.8)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: 12,
+      color: '#00d4ff',
+      letterSpacing: '.08em'
+    }
+  }, "TASK RESULT \xB7 ", (taskResultModal.status || '').toUpperCase()), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 14,
+      color: '#fff',
+      marginTop: 3
+    }
+  }, taskResultModal.name)), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setTaskResultModal(null)
+  }, "Close")), taskResultModal.description && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888',
+      marginBottom: 10,
+      fontStyle: 'italic'
+    }
+  }, taskResultModal.description), taskResultModal.result ? /*#__PURE__*/React.createElement(FridayDoc, {
+    compact: true,
+    text: fridayTM(taskResultModal.result),
+    style: {
+      background: 'rgba(0,0,0,0.4)',
+      padding: 12,
+      borderRadius: 8,
+      border: '1px solid rgba(255,255,255,0.04)'
+    }
+  }) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(0,0,0,0.4)',
+      padding: 12,
+      borderRadius: 8,
+      border: '1px solid rgba(255,255,255,0.04)',
+      color: '#888',
+      fontSize: 12,
+      fontStyle: 'italic'
+    }
+  }, "This process didn't return a written result \u2014 see the activity log below for what it did."), (taskResultModal.log || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: 11,
+      color: '#00d4ff',
+      letterSpacing: '.08em',
+      marginBottom: 6
+    }
+  }, "ACTIVITY LOG"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(0,0,0,0.4)',
+      padding: 8,
+      borderRadius: 6,
+      maxHeight: 180,
+      overflowY: 'auto'
+    }
+  }, (taskResultModal.log || []).map((l, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      fontFamily: 'JetBrains Mono',
+      fontSize: 11,
+      color: 'rgba(200,200,220,0.7)',
+      padding: '1px 0'
+    }
+  }, "\u2192 ", l))))));
+  // A docked chat tray takes its width from a workspace tab rather than
+  // covering it.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--fr-chat-dock', shellTab && chatOpen ? chatW + 'px' : '0px');
+  }, [shellTab, chatOpen, chatW]);
+  // A workspace in its own tab: that workspace, full-tab, under the same shell
+  // as the desktop (top bar, chat tray, notifications, settings, palette); no
+  // dock, windows, HUD or scene. Settings never gets here (the server sends
+  // /w/settings back to the desktop). An unknown id says so.
+  if (STANDALONE_WS && STANDALONE_WS !== 'settings') {
+    const sw = wsInfo[STANDALONE_WS];
+    return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
+      value: { map: wsCustMap, setCust }
+    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw },
+      /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")))
+      : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
+        'There is no workspace called “' + STANDALONE_WS + '”. ',
+        /*#__PURE__*/React.createElement("a", { href: '/', style: { color: '#00d4ff' } }, 'Back to the Friday desktop')), shellWsChat, shellChatPanel, shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, shellPalette, shellQuickPost, shellPodcast, shellTaskModal);
+  }
+  return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
+    value: {
+      map: wsCustMap,
+      setCust
+    }
+  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
+    // The server stores the passphrase as the chat begins; this page does
+    // not keep it.
+    onDone: seed => {
+      fetch('/api/setup-chat/begin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          routing_mode: seed && seed.routing_mode || '',
+          vault_passphrase: seed && seed.vault_passphrase || ''
+        })
+      }).catch(() => {}).then(() => setConsentDone(true));
+    }
+  }), !setupDone && consentDone === true && /*#__PURE__*/React.createElement(SetupChat, {
+    onDone: finishSetupChat
+  }), setupDone && setupRerun && /*#__PURE__*/React.createElement(SetupChat, {
+    onDone: finishSetupChat
+  }), setupDone && needsCloudConsent && /*#__PURE__*/React.createElement(CloudConsentGate, {
+    onDone: () => setNeedsCloudConsent(false)
+  }), shellMeeting, shellTopBar, shellKillSwitch, noWindows && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'fixed',
+      left: 0,
+      right: 0,
+      bottom: 116,
+      zIndex: 5,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      pointerEvents: 'none'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      bottom: 0,
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: 720,
+      height: 280,
+      borderRadius: '50%',
+      background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',
+      pointerEvents: 'none',
+      zIndex: 0
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      zIndex: 1,
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: 26,
+      color: 'rgba(0,212,255,0.98)',
+      marginBottom: 12,
+      animation: 'fadeIn 1s ease',
+      letterSpacing: '0.06em',
+      textShadow: '0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'
+    }
+  }, getGreeting(), ", boss."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      zIndex: 1,
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement(FridayLockup, {
+    size: 11
+  })), countdowns.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "greeting-ticker",
+    style: {
+      marginBottom: 16,
+      position: 'relative',
+      zIndex: 1
+    }
+  }, countdowns.map((c, i) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: i
+  }, i > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "greeting-ticker-sep"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "greeting-ticker-item"
+  }, /*#__PURE__*/React.createElement("span", null, c.emoji || '', " ", c.label || c.name), /*#__PURE__*/React.createElement("span", {
+    className: "days"
+  }, c.days ?? c.days_until ?? '?', "d"))))), countdowns.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      zIndex: 1,
+      fontFamily: 'JetBrains Mono',
+      fontSize: 12,
+      color: 'rgba(255,255,255,0.78)',
+      marginBottom: 16,
+      textShadow: '0 1px 3px rgba(0,0,0,0.85)'
+    }
+  }, "All systems nominal."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      zIndex: 1,
+      pointerEvents: 'auto',
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement(FridayChatInput, {
+    value: promptText,
+    onChange: setPromptText,
+    onSend: sendPrompt,
+    maxHeight: 120,
+    placeholder: "Ask Friday anything...",
+    style: {
+      width: 360,
+      background: 'rgba(10,14,26,0.75)',
+      backdropFilter: 'blur(16px) saturate(1.2)',
+      WebkitBackdropFilter: 'blur(16px) saturate(1.2)',
+      border: '1px solid rgba(0,212,255,0.15)',
+      borderRadius: 24,
+      padding: '10px 20px',
+      color: '#f0f0f8',
+      fontSize: 13,
+      outline: 'none',
+      fontFamily: 'Inter',
+      transition: 'border-color .2s',
+      boxShadow: '0 4px 30px rgba(0,0,0,0.3)'
+    }
+  }), /*#__PURE__*/React.createElement("button", { "aria-label": promptText.trim() ? 'Send message' : voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)', 
+    onClick: () => {
+      if (promptText.trim()) sendPrompt();else toggleVoice();
+    },
+    title: promptText.trim() ? 'Send message' : voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)',
+    style: {
+      width: 40,
+      height: 40,
+      borderRadius: '50%',
+      background: voiceOn && !promptText.trim() ? 'rgba(62,255,161,0.20)' : 'rgba(0,212,255,0.18)',
+      border: '1px solid ' + (voiceOn && !promptText.trim() ? 'rgba(62,255,161,0.65)' : 'rgba(0,212,255,0.4)'),
+      color: voiceOn && !promptText.trim() ? '#3effa1' : '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 16,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: voiceOn && !promptText.trim() ? '0 0 20px rgba(62,255,161,0.7), 0 4px 16px rgba(0,0,0,0.5)' : '0 4px 16px rgba(0,0,0,0.5)',
+      animation: voiceOn && !promptText.trim() ? 'micPulse 1.6s ease-in-out infinite' : 'none',
+      transition: 'background .2s, border-color .2s, color .2s, box-shadow .2s'
+    }
+  }, voiceOn && !promptText.trim() ? '■' : '🎤')), /*#__PURE__*/React.createElement("button", {
+    onClick: () => window.fridayStartMyDay && window.fridayStartMyDay(),
+    title: "Start my day \u2014 a spoken briefing: calendar, then email, news, and tasks",
+    style: {
+      marginTop: 14,
+      position: 'relative',
+      zIndex: 1,
+      pointerEvents: 'auto',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 8,
+      background: 'rgba(0,212,255,0.10)',
+      border: '1px solid rgba(0,212,255,0.35)',
+      borderRadius: 22,
+      padding: '9px 18px',
+      color: '#cdeffd',
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: 11,
+      letterSpacing: '0.08em',
+      cursor: 'pointer',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.35)',
+      transition: 'background .2s,border-color .2s'
+    },
+    onMouseEnter: e => {
+      e.currentTarget.style.background = 'rgba(0,212,255,0.2)';
+      e.currentTarget.style.borderColor = 'rgba(0,212,255,0.7)';
+    },
+    onMouseLeave: e => {
+      e.currentTarget.style.background = 'rgba(0,212,255,0.10)';
+      e.currentTarget.style.borderColor = 'rgba(0,212,255,0.35)';
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 14
+    }
+  }, "\uD83C\uDF05"), " START MY DAY")), cameraOn && /*#__PURE__*/React.createElement(CameraMode, {
+    source: cameraSource,
+    intervalSec: cameraIntervalSec,
+    frameRef: cameraFrameRef,
+    setSendIndicator: setCameraSendIndicator,
+    facing: cameraSource === 'screen' ? null : cameraFacing,
+    onChangeFacing: () => setCameraFacing(f => f === 'user' ? 'environment' : 'user'),
+    onClose: () => {
+      setCameraOn(false);
+      setCameraControlsOpen(false);
+      cameraFrameRef.current = null;
+    }
+  }), cameraOn && cameraControlsOpen && /*#__PURE__*/React.createElement("div", {
+    className: "camera-control-panel"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: 11,
+      color: '#00d4ff'
+    }
+  }, "CAMERA MODE"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close camera controls', title: 'Close camera controls', 
+    onClick: () => setCameraControlsOpen(false),
+    style: {
+      background: 'none',
+      border: 'none',
+      color: '#999',
+      cursor: 'pointer',
+      fontSize: 13
+    }
+  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.8)',
+      marginTop: 4
+    }
+  }, "Source"), /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, ['screen', 'webcam', 'both'].map(s => /*#__PURE__*/React.createElement("button", {
+    key: s,
+    className: `src-btn ${cameraSource === s ? 'active' : ''}`,
+    onClick: () => setCameraSource(s)
+  }, s))), (cameraSource === 'webcam' || cameraSource === 'both') && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.6)'
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "Facing"), /*#__PURE__*/React.createElement("button", {
+    className: `src-btn ${cameraFacing === 'user' ? 'active' : ''}`,
+    style: {
+      flex: 1
+    },
+    onClick: () => setCameraFacing('user')
+  }, "front"), /*#__PURE__*/React.createElement("button", {
+    className: `src-btn ${cameraFacing === 'environment' ? 'active' : ''}`,
+    style: {
+      flex: 1
+    },
+    onClick: () => setCameraFacing('environment')
+  }, "rear")), /*#__PURE__*/React.createElement("div", {
+    className: "camera-privacy-banner"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pulse"
+  }), "Camera is active"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 8,
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.8)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "Frame every ", cameraIntervalSec, "s"), /*#__PURE__*/React.createElement("button", {
+    className: "src-btn",
+    style: {
+      padding: '4px 10px'
+    },
+    onClick: () => {
+      setCameraOn(false);
+      setCameraControlsOpen(false);
+      cameraFrameRef.current = null;
+    }
+  }, "Stop"))), [...openWins].map(id => {
+    const w = wsInfo[id];
+    if (!w) return null;
+    return /*#__PURE__*/React.createElement(FWin, {
+      key: id,
+      id: id,
+      title: w.label,
+      emoji: w.ico,
+      zIndex: zMap[id] || 41,
+      closing: closingWins.has(id),
+      onClose: () => close(id),
+      onFocus: () => bringFront(id)
+    }, /*#__PURE__*/React.createElement(Safe, {
+      name: w.label
+    }, wsMap[id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")));
+  }), convWins.map((cw, i) => /*#__PURE__*/React.createElement(ConversationWindow, {
+    key: cw.cid,
+    convId: cw.cid,
+    title: cw.title,
+    offset: i,
+    // Same band as every other window (see bringFront). 132 here predated the
+    // band and would have put a chat window over the dock and the top bar -
+    // harmless only because a chat window is now clamped never to reach them,
+    // which is not a reason to leave a number that says otherwise.
+    zIndex: zMap['chat:' + cw.cid] || Math.min(Z_WIN_TOP, Z_WIN_BASE + i),
+    onFocus: () => bringFront('chat:' + cw.cid),
+    onClose: () => setConvWins(p => p.filter(x => x.cid !== cw.cid)),
+    shared: chatShared
+  })), shellWsChat,
+  /* The sidebar is a SIBLING of the chat panel, not a change to its insides.
+     The panel is a long compiled tree that a dozen features already depend on;
+     adding a column beside it and shifting it over with CSS cannot break any
+     of them, where restructuring its children could. It exists only in a chat
+     tab - `chrome=chat` - because the floating holographic window is a glance
+     at one thread and has no navigation in it. */
+  window.__FRIDAY_CHROME__ === 'chat'
+    ? /*#__PURE__*/React.createElement(ChatSidebar, {
+        convList: convList, projList: projList, convId: convId,
+        onOpenConversation: openConversation, onRefresh: refreshConvs,
+        apiFetch: apiFetch,
+      })
+    : null,
+  shellChatPanel, threadOrb && /*#__PURE__*/React.createElement("div", {
+    className: "thread-panel open",
+    style: {
+      left: threadPos.x,
+      top: threadPos.y
+    },
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "thread-header",
+    onMouseDown: startThreadDrag,
+    style: {
+      cursor: 'grab'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "thread-header-left"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "thread-icon"
+  }, threadOrb.icon || '⚡'), /*#__PURE__*/React.createElement("span", {
+    className: "thread-name"
+  }, threadOrb.label || 'Process')), (taskMeta && taskMeta.model || threadOrb.model) && /*#__PURE__*/React.createElement("span", {
+    title: 'Model running this process' + (taskMeta && taskMeta.linked_task_id ? ' · task ' + taskMeta.linked_task_id : ''),
+    style: {
+      fontSize: 8,
+      fontFamily: 'JetBrains Mono',
+      color: '#00d4ff',
+      border: '1px solid rgba(0,212,255,0.3)',
+      borderRadius: 3,
+      padding: '0 4px',
+      marginRight: 6,
+      whiteSpace: 'nowrap',
+      maxWidth: 110,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, taskMeta && taskMeta.model || threadOrb.model), /*#__PURE__*/React.createElement("span", {
+    className: `thread-status-badge ${threadOrb.status || 'running'}`
+  }, threadOrb.status || 'RUNNING'), /*#__PURE__*/React.createElement("span", {
+    className: "thread-elapsed"
+  }, taskMeta && taskMeta.elapsed != null ? taskMeta.elapsed + 's' : ''), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close this process panel', title: 'Close this process panel', 
+    className: "thread-close",
+    onClick: () => setThreadOrb(null)
+  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
+    className: "thread-body",
+    ref: threadBodyRef
+  }, Array.isArray(taskLog) && taskLog.length > 0 && taskLog.map((line, i) => /*#__PURE__*/React.createElement("div", {
+    key: 'log' + i,
+    className: "thread-log-line"
+  }, String(line))), threadSteps.map((step, i) => /*#__PURE__*/React.createElement("div", {
+    key: 'st' + i,
+    className: "thread-step"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: `thread-dot ${step.status || 'pending'}`
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "thread-step-content"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "thread-step-text"
+  }, step.text || ''), step.detail && /*#__PURE__*/React.createElement("div", {
+    className: `thread-step-detail ${step._expanded ? 'expanded' : ''}`,
+    style: {
+      cursor: 'pointer'
+    },
+    onClick: () => {
+      const ns = [...threadSteps];
+      ns[i] = {
+        ...ns[i],
+        _expanded: !ns[i]._expanded
+      };
+      setThreadSteps(ns);
+    }
+  }, step._expanded ? '▾ ' : '▸ ', step.detail), step.timestamp && /*#__PURE__*/React.createElement("div", {
+    className: "thread-step-time"
+  }, step.timestamp)))), taskMeta && taskMeta.result && (taskMeta.status === 'complete' || taskMeta.status === 'completed_unverified' || taskMeta.status === 'failed' || taskMeta.status === 'timeout') && /*#__PURE__*/React.createElement("div", {
+    className: "thread-result"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "thread-result-label"
+  }, "RESULT"), /*#__PURE__*/React.createElement("div", {
+    className: "thread-result-body"
+  }, taskMeta.result)), (!taskLog || taskLog.length === 0) && threadSteps.length === 0 && !(taskMeta && taskMeta.result) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: 'center',
+      color: '#666',
+      fontSize: 11,
+      padding: 20,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, threadOrb.model ? '⚙ ' + threadOrb.model + ' — ' : '', "waiting for activity\u2026")))), shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, /*#__PURE__*/React.createElement("div", {
     className: `dock ${dockHidden ? 'hidden' : ''}`
   }, dockShape.groups.map((g, gi) => /*#__PURE__*/React.createElement(React.Fragment, {
     key: g.name + ':' + gi
@@ -60069,115 +60233,7 @@ function App() {
     }
   }, contentAlerts)))), g.name && /*#__PURE__*/React.createElement("div", {
     className: "dock-group-label"
-  }, g.name))))), paletteOpen && /*#__PURE__*/React.createElement(CommandPalette, {
-    onClose: () => setPaletteOpen(false),
-    onOpenWs: id => {
-      toggle(id);
-      setPaletteOpen(false);
-    },
-    openWins: openWins
-  }), /*#__PURE__*/React.createElement(QuickPostHost, null), /*#__PURE__*/React.createElement(PodcastPlayer, null), taskResultModal && /*#__PURE__*/React.createElement("div", {
-    onClick: () => setTaskResultModal(null),
-    style: {
-      position: 'fixed',
-      inset: 0,
-      zIndex: 200,
-      background: 'rgba(0,0,0,0.7)',
-      backdropFilter: 'blur(6px)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    onClick: e => e.stopPropagation(),
-    style: {
-      width: 'min(720px, 90vw)',
-      maxHeight: '85vh',
-      overflowY: 'auto',
-      background: 'rgba(10,10,18,0.96)',
-      border: '1px solid rgba(0,212,255,0.25)',
-      borderRadius: 12,
-      padding: 18,
-      boxShadow: '0 12px 40px rgba(0,0,0,0.8)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron, sans-serif',
-      fontSize: 12,
-      color: '#00d4ff',
-      letterSpacing: '.08em'
-    }
-  }, "TASK RESULT \xB7 ", (taskResultModal.status || '').toUpperCase()), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 14,
-      color: '#fff',
-      marginTop: 3
-    }
-  }, taskResultModal.name)), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: () => setTaskResultModal(null)
-  }, "Close")), taskResultModal.description && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#888',
-      marginBottom: 10,
-      fontStyle: 'italic'
-    }
-  }, taskResultModal.description), taskResultModal.result ? /*#__PURE__*/React.createElement(FridayDoc, {
-    compact: true,
-    text: fridayTM(taskResultModal.result),
-    style: {
-      background: 'rgba(0,0,0,0.4)',
-      padding: 12,
-      borderRadius: 8,
-      border: '1px solid rgba(255,255,255,0.04)'
-    }
-  }) : /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: 'rgba(0,0,0,0.4)',
-      padding: 12,
-      borderRadius: 8,
-      border: '1px solid rgba(255,255,255,0.04)',
-      color: '#888',
-      fontSize: 12,
-      fontStyle: 'italic'
-    }
-  }, "This process didn't return a written result \u2014 see the activity log below for what it did."), (taskResultModal.log || []).length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 12
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron, sans-serif',
-      fontSize: 11,
-      color: '#00d4ff',
-      letterSpacing: '.08em',
-      marginBottom: 6
-    }
-  }, "ACTIVITY LOG"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: 'rgba(0,0,0,0.4)',
-      padding: 8,
-      borderRadius: 6,
-      maxHeight: 180,
-      overflowY: 'auto'
-    }
-  }, (taskResultModal.log || []).map((l, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 11,
-      color: 'rgba(200,200,220,0.7)',
-      padding: '1px 0'
-    }
-  }, "\u2192 ", l)))))));
+  }, g.name))))), shellPalette, shellQuickPost, shellPodcast, shellTaskModal);
 }
 
 // Mount with error surface so mobile failures are visible instead of a blank dock.

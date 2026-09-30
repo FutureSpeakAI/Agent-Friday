@@ -40,7 +40,9 @@ test('each workspace renders alone in its own tab: no desktop, dock, windows or 
       canvas: (() => { const c = document.getElementById('friday-scene-canvas'); return !!c && getComputedStyle(c).display !== 'none'; })(),
       title: document.title,
       back: (document.querySelector('[data-testid="ws-tab-back"]') as HTMLAnchorElement | null)?.getAttribute('href'),
-      approvals: !!document.querySelector('[data-testid="ws-tab-approvals"]'),
+      // the desktop's own top bar, with its model selector and chat button
+      bar: document.querySelectorAll('[data-testid="friday-top-bar"]').length,
+      chat: !!document.querySelector('[data-testid="friday-top-bar"] [aria-label="Open chat with Friday"]'),
     }));
     expect(dom.dock, w.id).toBe(0);
     expect(dom.windows, w.id).toBe(0);
@@ -48,7 +50,8 @@ test('each workspace renders alone in its own tab: no desktop, dock, windows or 
     expect(dom.canvas, w.id).toBe(false);
     expect(dom.title, w.id).toBe(w.label + ' · Agent Friday™');
     expect(dom.back, w.id).toBe('/?workspace=' + w.id);
-    expect(dom.approvals, w.id).toBe(true);
+    expect(dom.bar, w.id).toBe(1);
+    expect(dom.chat, w.id).toBe(true);
     expect(errors, w.id).toEqual([]);
     page.off('pageerror', onErr);
   }
