@@ -670,13 +670,22 @@ function notifTargetLabel(t){
 // is generated from src/agent_friday/brand.py (docs/brand/BRAND.md).
 /* fridayTM:begin */
 const FRIDAY_TM_CODE = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/;
-const FRIDAY_TM_WORDS = /(^|[^\p{L}\p{N}_-])(agent[ \t\u00a0]+friday)(?![\p{L}\p{N}_-])(?![ \t]*(?:\u2122|\u00ae|\((?:tm|r)\)))/giu;
-// Text as it is shown: "Agent Friday" gains its trademark sign, once, and
-// code is left alone. Display only: what is stored, read by a model or spoken
-// stays plain. brand.tm is the same rule in Python.
+const FRIDAY_TM_WORDS = /(^|[^\p{L}\p{N}_-])(agent[ \t\u00a0]+friday)(?![\p{L}\p{N}_-])(?![ \t]*(?:\u2122|\u00ae|\((?:[tT][mM]|[rR])\)))/giu;
+const FRIDAY_TM_MAKER = /(^|[^\p{L}\p{N}_@\/.-])(FutureSpeak\.AI)(?![\p{L}\p{N}_\/-])(?![ \t]*(?:\u2122|\u00ae|\((?:[tT][mM]|[rR])\)))/gu;
+const FRIDAY_TM_OWNER = /(?:trademarks? of|\u00a9|\(c\)|copyright)[ \t\d,\u2013-]*$/i;
+// Text as it is shown: "Agent Friday" and "FutureSpeak.AI" gain their
+// trademark sign, once; code and addresses are left alone, and so is
+// "FutureSpeak.AI" where it names the owner (a copyright line, "trademarks
+// of"). Display only: what is stored, read by a model or spoken stays plain.
+// brand.tm is the same rule in Python.
 function fridayTM(text) {
-  if (typeof text !== 'string' || !/friday/i.test(text)) return text;
-  return text.split(FRIDAY_TM_CODE).map((part, i) => i % 2 ? part : part.replace(FRIDAY_TM_WORDS, (m, pre, name) => pre + name + '\u2122')).join('');
+  if (typeof text !== 'string' || (!/friday/i.test(text) && !/futurespeak\.ai/i.test(text))) return text;
+  const maker = part => part.replace(FRIDAY_TM_MAKER, (m, pre, name, off, whole) => {
+    const at = off + pre.length;
+    return pre + name + (FRIDAY_TM_OWNER.test(whole.slice(Math.max(0, at - 24), at)) ? '' : '\u2122');
+  });
+  return text.split(FRIDAY_TM_CODE).map((part, i) => i % 2 ? part
+    : maker(part.replace(FRIDAY_TM_WORDS, (m, pre, name) => pre + name + '\u2122'))).join('');
 }
 /* fridayTM:end */
 window.fridayTM = fridayTM;
@@ -690,7 +699,7 @@ function FridayLockup({size=15,onClick,href,title}){
   return(<span className="fr-lockup" data-testid="friday-lockup">
     {href?<a href={href} {...nameProps}>{name}</a>:onClick?<button type="button" onClick={onClick} {...nameProps}>{name}</button>:<span {...nameProps}>{name}</span>}
     <span className="fr-lockup-by" style={{fontSize:Math.round(size*0.85)}}>by</span>
-    <a className="fr-lockup-maker" href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer" style={{fontSize:size}}>{b.maker}</a>
+    <a className="fr-lockup-maker" href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer" style={{fontSize:size}}>{b.maker}<span className="fr-lockup-tm">{b.mark}</span></a>
   </span>);
 }
 // Friday's own transient notice. The implementation lives in index.html (the
@@ -1722,9 +1731,9 @@ function PodcastPlayer() {
   },
   h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
     h('div', { style: { flex: 1, minWidth: 0 } },
-      h('div', { style: { fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.md, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.show),
+      h('div', { style: { fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.md, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.credit || ep.show),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, margin: '2px 0 4px' } },
-        ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
+        ep.credit || ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
       h(PodcastBadges, { ep: ep })),
     btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); setEp(null); })),
   h('audio', {
@@ -1758,7 +1767,7 @@ function PodcastPlayer() {
     btn(showText ? 'Hide transcript' : 'Transcript', showText ? 'Hide the transcript' : 'Show the transcript', () => setShowText(!showText), { 'aria-expanded': showText })),
   line ? h('div', { 'aria-live': 'polite', style: { fontSize: PODCAST_C.base, lineHeight: 1.45 } },
     h('b', { style: { color: line.speaker === 'a' ? PODCAST_C.accent : PODCAST_C.second } }, who(line.speaker) + ': '),
-    line.text, (line.cites || []).map(cite)) : null,
+    fridayTM(line.text), (line.cites || []).map(cite)) : null,
   src ? h('div', { style: { fontSize: PODCAST_C.md, borderLeft: '2px solid ' + PODCAST_C.accent, paddingLeft: 8, color: PODCAST_C.text } },
     h('b', null, srcOpen + ' '), src.kind === 'fact' ? src.title : (src.title || ''),
     src.expr ? h('div', { style: { color: PODCAST_C.dim, fontFamily: PODCAST_C.mono, fontSize: PODCAST_C.sm } }, 'computed by ', src.expr) : null,
@@ -1773,7 +1782,7 @@ function PodcastPlayer() {
         onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); seek(ln.start || 0); } },
         'aria-current': i === cur ? 'true' : undefined,
         style: { padding: '3px 4px', borderRadius: 4, cursor: 'pointer', background: i === cur ? PODCAST_C.accentSoft : 'transparent' }
-      }, h('b', null, who(ln.speaker) + ': '), ln.text, (ln.cites || []).map(cite)))),
+      }, h('b', null, who(ln.speaker) + ': '), fridayTM(ln.text), (ln.cites || []).map(cite)))),
     (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
 }
@@ -1925,9 +1934,9 @@ function PodcastsView() {
       eps.length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes yet. Every News routine run now comes with one, and you can make your own above.') : null,
       eps.map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
         h('div', { style: { flex: 1, minWidth: 0 } },
-          h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ep.title || ep.show),
+          h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ep.title || ep.credit || ep.show),
           h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim, margin: '2px 0 4px' } },
-            ep.show, ' · ', new Date((ep.created_at || 0) * 1000).toLocaleString(),
+            ep.credit || ep.show, ' · ', new Date((ep.created_at || 0) * 1000).toLocaleString(),
             ep.duration_s ? ' · ' + podcastClock(ep.duration_s) : '',
             ep.status !== 'ready' ? ' · ' + (ep.status === 'failed' ? 'failed: ' + ((ep.error || {}).message || '') : (ep.stage_detail || ep.status)) : ''),
           h(PodcastBadges, { ep: ep })),
@@ -5551,7 +5560,7 @@ function FuturespeakWS(){
       const d=await r.json();setDraft(d.draft||'')}catch(e){setDraft('[Error] '+e.message)}setDrafting(null)};
   const copyText=async(text,label)=>{try{await navigator.clipboard.writeText(text);showToast((label||'Text')+' copied')}catch(e){showToast('Copy failed')}};
   const launchVibeCode=async(task,cwd)=>{try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],cwd:cwd||'~\\Projects'})});showToast('Claude Code launched')}catch(e){showToast('Launch failed')}};
-  const draftBlog=()=>{fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'FutureSpeak.AI — Post Draft',type:'post',channel:'linkedin',notes:'Brand post from Creative Studio.',tags:['futurespeak','brand']})}).then(()=>showToast('Idea captured in Content pipeline')).catch(()=>showToast('Failed'))};
+  const draftBlog=()=>{fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'FutureSpeak.AI — Post Draft',/* brand: plain (a working title the drafting model reads) */type:'post',channel:'linkedin',notes:'Brand post from Creative Studio.',tags:['futurespeak','brand']})}).then(()=>showToast('Idea captured in Content pipeline')).catch(()=>showToast('Failed'))};
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading FutureSpeak workspace...</div>;
 
   const fmt=(n)=>n?'$'+(n>=1000?(n/1000).toFixed(n>=1000000?1:0)+(n>=1000000?'M':'K'):n.toFixed(0)):'—';
@@ -5559,14 +5568,14 @@ function FuturespeakWS(){
   const STATUS_COLORS={discovery:'#888',qualified:'#00d4ff',proposal:'#f59e0b',executed:'#00ff80',closed:'#00ff80','in-review':'#f59e0b',active:'#00ff80'};
 
   return(<div>
-    <FridaySays text={`FutureSpeak.AI · ${pipe?.total||0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
+    <FridaySays text={`${window.FRIDAY_BRAND.makerName} · ${pipe?.total||0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['sites','overview','pipeline','revenue','legal','website','talent','demos','studio'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v==='sites'?'🚀 sites':v}</button>)}</div>
     
 
     {view==='sites'&&<FSStudio/>}
 
     {view==='overview'&&<div>
-      <div className="card" style={{marginBottom:10}}><div className="card-title">FutureSpeak.AI</div>
+      <div className="card" style={{marginBottom:10}}><div className="card-title">{window.FRIDAY_BRAND.makerName}</div>
         <div style={{fontSize:13,color:'#bbb'}}>AI product studio & strategic consultancy. Enterprise AI transformation, agentic system design, AI governance for regulated industries.</div>
         <div style={{marginTop:6,display:'flex',gap:10}}><a href="https://futurespeak.ai" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>futurespeak.ai →</a></div>
       </div>
@@ -5688,7 +5697,7 @@ function FuturespeakWS(){
     {view==='studio'&&<div>
       <div className="card" style={{marginBottom:8}}>
         <div className="card-title">Creative Studio — Brand Assets</div>
-        <div style={{fontSize:11,color:'#888',marginBottom:10}}>On-brand FutureSpeak.AI asset creation hub. Outputs route to Studio + Content pipelines.</div>
+        <div style={{fontSize:11,color:'#888',marginBottom:10}}>On-brand FutureSpeak.AI™ asset creation hub. Outputs route to Studio + Content pipelines.</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
           <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>launchVibeCode('Generate on-brand FutureSpeak social graphic','~\\Projects\\friday-desktop')}>
             <span style={{fontSize:20}}>🎨</span><span>Generate Social Graphic</span>
@@ -5696,7 +5705,7 @@ function FuturespeakWS(){
           <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={draftBlog}>
             <span style={{fontSize:20}}>📝</span><span>Draft Blog Post</span>
           </button>
-          <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>launchVibeCode('Create a FutureSpeak.AI one-pager for the current top opportunity','~\\Projects\\friday-desktop')}>
+          <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>launchVibeCode('Create a FutureSpeak.AI one-pager for the current top opportunity','~\\Projects\\friday-desktop')/* brand: plain (a prompt for the coding agent) */}>
             <span style={{fontSize:20}}>📄</span><span>Create One-Pager</span>
           </button>
         </div>
@@ -17514,6 +17523,7 @@ function SettingsTabAbout(){
     <div style={{textAlign:'center',padding:'24px 16px 20px',background:'var(--fr-glass)',borderRadius:10,border:'1px solid var(--fr-glass-edge)',marginBottom:24}}>
       <div style={{marginBottom:10}}><FridayLockup size={20}/></div>
       <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>{'v'+(h?.version||'5.0.0')} · Desktop OS · Sovereign AI</div>
+      <div className="fr-trademark" data-testid="trademark-notice">{window.FRIDAY_BRAND.notice}</div>
     </div>
     <StSection title="System">
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>

@@ -730,7 +730,7 @@ button:hover{background:rgba(0,212,255,.22);border-color:rgba(0,212,255,.7);box-
 </body>
 </html>""".replace("/*BRAND_TOKENS*/", brand.css_root_block()).replace(
     "{{ product }}", brand.PRODUCT_NAME).replace(
-    "{{ product_upper }}", brand.PRODUCT_NAME.upper()).replace("{{ maker }}", brand.MAKER)
+    "{{ product_upper }}", brand.PRODUCT_NAME.upper()).replace("{{ maker }}", brand.MAKER_NAME)
 
 # The two login banners are fixed, code-owned strings — no user input reaches
 # them today, so there is no live XSS. But LOGIN_HTML.replace('{{ error }}', error)

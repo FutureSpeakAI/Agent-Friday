@@ -12,7 +12,7 @@
 <meta name="theme-color" content="#0a0e1a"/>
 <script id="friday-brand-names">
 /* brand-names:begin (generated from src/agent_friday/brand.py) */
-window.FRIDAY_BRAND = {"product": "Agent Friday", "name": "Agent Friday\u2122", "maker": "FutureSpeak.AI", "lockup": "Agent Friday\u2122 by FutureSpeak.AI", "madeWith": "Made with Agent Friday\u2122", "mark": "\u2122"};
+window.FRIDAY_BRAND = {"product": "Agent Friday", "name": "Agent Friday\u2122", "maker": "FutureSpeak.AI", "makerName": "FutureSpeak.AI\u2122", "lockup": "Agent Friday\u2122 by FutureSpeak.AI\u2122", "madeWith": "Made with Agent Friday\u2122", "notice": "Agent Friday\u2122 and FutureSpeak.AI\u2122 are trademarks of FutureSpeak.AI.", "mark": "\u2122"};
 /* brand-names:end */
 </script>
 <script>
@@ -300,6 +300,7 @@ window.addEventListener('DOMContentLoaded',function(){
             color: var(--fr-wordmark-amber); text-decoration: none; text-shadow: 0 0 14px rgba(245,158,11,0.55);
             transition: color .2s, text-shadow .2s; }
         .fr-lockup-maker:hover { color: #fbbf24; text-shadow: 0 0 18px rgba(245,158,11,0.85); }
+        .fr-trademark { font-size: var(--fr-text-2xs); color: var(--fr-dim); letter-spacing: 0.02em; }
         /* A narrow bar keeps the product's name and drops "by FutureSpeak.AI", so
            the menus in its left half stay clear of the right-hand group; the
            start screen still shows the whole lockup. */

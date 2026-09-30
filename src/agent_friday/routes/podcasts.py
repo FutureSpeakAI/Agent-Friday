@@ -114,6 +114,7 @@ def podcasts_get(eid):
     if err:
         return err
     ep = {k: v for k, v in ep.items() if k != "refs"}
+    ep["credit"] = pe.show_credit(ep)
     return jsonify({"status": "ok", "episode": ep})
 
 

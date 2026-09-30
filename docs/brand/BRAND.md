@@ -18,8 +18,10 @@ To change a colour: edit `brand.py`, run `python scripts/check_brand_tokens.py
 
 ## The name
 
-The product is **Agent Friday™**, and every brand surface says so: the wordmark,
-window and tab titles, the tray, published pages, exports and the About card.
+The product is **Agent Friday™**, made by **FutureSpeak.AI™**, and every brand
+surface says so: the wordmark, window and tab titles, the tray, published pages,
+exports and the About card. Both are trademarks and neither is registered: write
+™, never ®.
 
 Her own name is the one the user gave her when she was born
 (`settings.agent_name`; the owner's is "Friday"). Conversation uses it: her
@@ -31,18 +33,32 @@ by the product's name.
 |---|---|---|
 | `PRODUCT` | Agent Friday | What audio and models get. Never shown. |
 | `PRODUCT_NAME` | Agent Friday™ | Every brand surface. |
-| `PRODUCT_LOCKUP` | Agent Friday™ by FutureSpeak.AI | The wordmark, the tray tooltip. |
+| `MAKER` | FutureSpeak.AI | What audio and models get; the company where it owns the marks. |
+| `MAKER_NAME` | FutureSpeak.AI™ | The maker on a brand surface. |
+| `PRODUCT_LOCKUP` | Agent Friday™ by FutureSpeak.AI™ | The wordmark, the tray tooltip. |
 | `MADE_WITH` | Made with Agent Friday™ | Published pages and export footers. |
+| `TRADEMARK_NOTICE` | Agent Friday™ and FutureSpeak.AI™ are trademarks of FutureSpeak.AI. | The About card, the README. |
+| `from_product(what)` | *what* from Agent Friday™ | How written material credits the product, as podcasts do. |
 
-**The mark in what she says.** When her words name the product, the mark is
-added as the text is shown (`brand.tm`, and `fridayTM` on the page): once,
-never inside code, and only to the words "Agent Friday", not to `agent_friday`
-or an address. It is never added to what is stored, to what a model reads, or
-to a prompt. Audio stays plain: every synthesis entry passes its text through
-`brand.spoken`, so she says "Agent Friday" and never "T M".
+**The marks in what she says.** When her words name the product or its maker,
+the mark is added as the text is shown (`brand.tm`, and `fridayTM` on the page):
+once, never inside code, and only to the names as they are written ("Agent
+Friday", "FutureSpeak.AI"), not to `agent_friday` or an address such as
+futurespeak.ai. Where "FutureSpeak.AI" names the owner, in the trademark line
+and a copyright line, it stays plain. The mark is never added to what is
+stored, to what a model reads, or to a prompt. Audio stays plain: every
+synthesis entry passes its text through `brand.spoken`, so she says "Agent
+Friday" and "FutureSpeak.AI" and never "T M".
+
+**Podcasts.** Written material credits the show: "The Briefing from Agent
+Friday™" heads the captions, the episode card, the ready notice and the audio
+file's tags, and the transcript's lines carry the marks. The hosts say the same
+credit in plain words. A show's name carries no one's name: "The Front Page",
+not "Friday's Front Page".
 
 `tests/unit/test_product_name.py` fails when a UI string names the product
-"Friday by FutureSpeak" or writes "Agent Friday" without ™. A model-facing
+"Friday by FutureSpeak", writes "Agent Friday" or "FutureSpeak.AI" without ™,
+credits the product as "Friday", or titles a page "FRIDAY". A model-facing
 string in a scanned file (a prompt, a file name) carries a `brand: plain`
 marker on its line.
 
@@ -152,16 +168,19 @@ channel, transparent around the rocket), `assets/icons/futurespeak.ico` and
 `app\assets\friday.ico`. The lightning bolt in `assets/icons/futurespeak.svg`
 is the Sites workspace icon and is not the mark.
 
-The wordmark reads **AGENT FRIDAY™** *by* **FutureSpeak.AI**. It is one
+The wordmark reads **AGENT FRIDAY™** *by* **FutureSpeak.AI™**. It is one
 component on the page, `FridayLockup`, used by the top bar, the start screen and
 the About card; it reads the product's name, never her own.
 
 - "AGENT FRIDAY™": Orbitron 900, `--fr-cyan`, `--fr-track-display`, a soft cyan glow; the ™ is set small and raised.
 - Below 900px the top bar shows "AGENT FRIDAY™" alone; the start screen keeps the whole lockup.
 - "by": JetBrains Mono, white at 72%.
-- "FutureSpeak.AI": Orbitron 900, `--fr-wordmark-amber`. This is the only place amber is a brand accent.
+- "FutureSpeak.AI™": Orbitron 900, `--fr-wordmark-amber`, the ™ set small and raised as on the product. This is the only place amber is a brand accent.
+- Under the lockup in the About card, the trademark line, in `--fr-dim`.
 
-Write the company as **FutureSpeak.AI**, with that capitalisation.
+Write the company as **FutureSpeak.AI**, with that capitalisation. As a mark it
+carries ™; as the owner of the marks, in the trademark line or a copyright line,
+it is written plain.
 
 ## Iconography
 

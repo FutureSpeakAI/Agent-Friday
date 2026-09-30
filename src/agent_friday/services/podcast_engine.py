@@ -38,6 +38,7 @@ import threading
 import time
 from pathlib import Path
 
+from agent_friday import brand
 from agent_friday.services import podcast_render as render
 from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services import podcast_sources as sources_mod
@@ -50,12 +51,37 @@ PENDING = ("queued", "waiting", "writing", "speaking", "checking")
 FINISHED = ("ready", "failed", "cancelled")
 
 ROUTINES = ("front_page", "briefing", "weekly", "editorial")
+#: A show's name is a brand surface, so it carries no one's name: the product
+#: credits it ("The Briefing from Agent Friday™"), and her own name is hers.
 SHOW_NAMES = {
-    "front_page": "Friday's Front Page",
+    "front_page": "The Front Page",
     "briefing": "The Briefing",
     "weekly": "The Week",
     "editorial": "The Editorial",
 }
+#: Names episodes were saved under before, read through the names above.
+_LEGACY_SHOWS = {"Friday's Front Page": "The Front Page", "Friday Podcast": ""}
+
+
+def show_name(ep: dict) -> str:
+    """The episode's show, or "" for an episode made outside a show."""
+    show = str((ep or {}).get("show") or "")
+    return _LEGACY_SHOWS.get(show, show)
+
+
+def show_credit(ep: dict, marked: bool = True) -> str:
+    """How written material names an episode's show: "The Briefing from Agent
+    Friday™", or "A podcast from Agent Friday™" outside a show. Unmarked, the
+    same words for text that is stored and gains the mark where it is shown
+    (a notification)."""
+    what = show_name(ep) or "A podcast"
+    return brand.from_product(what) if marked else "%s from %s" % (what, brand.PRODUCT)
+
+
+def _spoken_credit(ep: dict) -> str:
+    """The same credit as the hosts say it: plain words, no trademark sign."""
+    return "%s from %s" % (show_name(ep) or "a podcast", brand.PRODUCT)
+
 
 DEFAULTS = {
     "enabled_for_routines": {r: True for r in ROUTINES},
@@ -195,6 +221,7 @@ def summary(ep: dict) -> dict:
     s["chapters"] = [{"title": c.get("title"), "start": c.get("start")}
                      for c in ep.get("chapters") or []]
     s["source_count"] = len(ep.get("sources") or [])
+    s["credit"] = show_credit(ep)
     return s
 
 
@@ -242,8 +269,7 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
     ep = {
         "id": _new_id(),
         "title": (title or "").strip()[:160],
-        "show": show or (SHOW_NAMES.get((attached or {}).get("routine") or "")
-                         or "Friday Podcast"),
+        "show": show or SHOW_NAMES.get((attached or {}).get("routine") or "") or "",
         "status": "queued",
         "stage_detail": "waiting its turn",
         "privacy": "private" if private else "public",
@@ -423,7 +449,8 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
     chapters = [c for c in (outline.get("chapters") or []) if isinstance(c, dict)][:n_ch + 2]
     if not chapters:
         chapters = [{"title": ep.get("title") or "The story", "sources": sorted(valid)}]
-    title = ep.get("title") or str(outline.get("title") or "").strip()[:160] or ep["show"]
+    title = (ep.get("title") or str(outline.get("title") or "").strip()[:160]
+             or show_name(ep) or "A podcast")
     per = max(80, words // len(chapters))
     lines, rejected = [], []
     for i, ch in enumerate(chapters):
@@ -470,7 +497,7 @@ def signature_lines(ep: dict) -> tuple[list[dict], list[dict]]:
     Fixed text, not written by the model: it is what makes an episode
     recognisably Friday's from its first seconds, whatever the sources.
     """
-    show = ep.get("show") or "Friday Podcast"
+    show = _spoken_credit(ep)
     a, b = ep["hosts"]["a"]["name"], ep["hosts"]["b"]["name"]
     if ep.get("mode") == "data":
         where = ("Every number you heard was computed from your data, and the "
@@ -703,8 +730,10 @@ def produce(eid: str, *, should_stop=None) -> dict:
         if chapters:
             chapters[0]["start"] = 0.0          # the first chapter includes the intro
         names = {k: ep["hosts"][k]["name"] for k in ("a", "b")}
-        (d / "captions.vtt").write_text(render.captions_vtt(lines, names), encoding="utf-8")
-        audio = "audio.mp3" if render.encode_mp3(wav, d / "audio.mp3", ep.get("title", "")) \
+        (d / "captions.vtt").write_text(render.captions_vtt(lines, names, header=show_credit(ep)),
+                                        encoding="utf-8")
+        audio = "audio.mp3" if render.encode_mp3(wav, d / "audio.mp3", brand.tm(ep.get("title", "")),
+                                                 album=show_credit(ep), artist=brand.PRODUCT_NAME) \
             else "audio.wav"
         duration = len(pcm) / 2 / render.RATE
         ep = _update(eid, lines=lines, chapters=chapters, audio=audio,
@@ -822,7 +851,7 @@ def _announce(ep: dict) -> None:
             from agent_friday.core import _PII_TAG_RE, _scrub_pii
             title = _PII_TAG_RE.sub("[redacted]", _scrub_pii(title)[0])
         mins = int(round((ep.get("duration_s") or 0) / 60)) or 1
-        body = "%s · %d min%s" % (ep.get("show") or "Podcast", mins,
+        body = "%s · %d min%s" % (show_credit(ep, marked=False), mins,
                                   " · private, made on this PC" if ep.get("privacy") == "private" else "")
         if (ep.get("check") or {}).get("ok") is False:
             body += " · the listening check found differences"

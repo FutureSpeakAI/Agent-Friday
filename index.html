@@ -12,7 +12,7 @@
 <meta name="theme-color" content="#0a0e1a"/>
 <script id="friday-brand-names">
 /* brand-names:begin (generated from src/agent_friday/brand.py) */
-window.FRIDAY_BRAND = {"product": "Agent Friday", "name": "Agent Friday\u2122", "maker": "FutureSpeak.AI", "lockup": "Agent Friday\u2122 by FutureSpeak.AI", "madeWith": "Made with Agent Friday\u2122", "mark": "\u2122"};
+window.FRIDAY_BRAND = {"product": "Agent Friday", "name": "Agent Friday\u2122", "maker": "FutureSpeak.AI", "makerName": "FutureSpeak.AI\u2122", "lockup": "Agent Friday\u2122 by FutureSpeak.AI\u2122", "madeWith": "Made with Agent Friday\u2122", "notice": "Agent Friday\u2122 and FutureSpeak.AI\u2122 are trademarks of FutureSpeak.AI.", "mark": "\u2122"};
 /* brand-names:end */
 </script>
 <script>
@@ -361,6 +361,7 @@ window.addEventListener('DOMContentLoaded',function(){
             color: var(--fr-wordmark-amber); text-decoration: none; text-shadow: 0 0 14px rgba(245,158,11,0.55);
             transition: color .2s, text-shadow .2s; }
         .fr-lockup-maker:hover { color: #fbbf24; text-shadow: 0 0 18px rgba(245,158,11,0.85); }
+        .fr-trademark { font-size: var(--fr-text-2xs); color: var(--fr-dim); letter-spacing: 0.02em; }
         /* A narrow bar keeps the product's name and drops "by FutureSpeak.AI", so
            the menus in its left half stay clear of the right-hand group; the
            start screen still shows the whole lockup. */
@@ -8113,13 +8114,22 @@ function notifTargetLabel(t) {
 // is generated from src/agent_friday/brand.py (docs/brand/BRAND.md).
 /* fridayTM:begin */
 const FRIDAY_TM_CODE = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/;
-const FRIDAY_TM_WORDS = /(^|[^\p{L}\p{N}_-])(agent[ \t\u00a0]+friday)(?![\p{L}\p{N}_-])(?![ \t]*(?:\u2122|\u00ae|\((?:tm|r)\)))/giu;
-// Text as it is shown: "Agent Friday" gains its trademark sign, once, and
-// code is left alone. Display only: what is stored, read by a model or spoken
-// stays plain. brand.tm is the same rule in Python.
+const FRIDAY_TM_WORDS = /(^|[^\p{L}\p{N}_-])(agent[ \t\u00a0]+friday)(?![\p{L}\p{N}_-])(?![ \t]*(?:\u2122|\u00ae|\((?:[tT][mM]|[rR])\)))/giu;
+const FRIDAY_TM_MAKER = /(^|[^\p{L}\p{N}_@\/.-])(FutureSpeak\.AI)(?![\p{L}\p{N}_\/-])(?![ \t]*(?:\u2122|\u00ae|\((?:[tT][mM]|[rR])\)))/gu;
+const FRIDAY_TM_OWNER = /(?:trademarks? of|\u00a9|\(c\)|copyright)[ \t\d,\u2013-]*$/i;
+// Text as it is shown: "Agent Friday" and "FutureSpeak.AI" gain their
+// trademark sign, once; code and addresses are left alone, and so is
+// "FutureSpeak.AI" where it names the owner (a copyright line, "trademarks
+// of"). Display only: what is stored, read by a model or spoken stays plain.
+// brand.tm is the same rule in Python.
 function fridayTM(text) {
-  if (typeof text !== 'string' || !/friday/i.test(text)) return text;
-  return text.split(FRIDAY_TM_CODE).map((part, i) => i % 2 ? part : part.replace(FRIDAY_TM_WORDS, (m, pre, name) => pre + name + '\u2122')).join('');
+  if (typeof text !== 'string' || (!/friday/i.test(text) && !/futurespeak\.ai/i.test(text))) return text;
+  const maker = part => part.replace(FRIDAY_TM_MAKER, (m, pre, name, off, whole) => {
+    const at = off + pre.length;
+    return pre + name + (FRIDAY_TM_OWNER.test(whole.slice(Math.max(0, at - 24), at)) ? '' : '\u2122');
+  });
+  return text.split(FRIDAY_TM_CODE).map((part, i) => i % 2 ? part
+    : maker(part.replace(FRIDAY_TM_WORDS, (m, pre, name) => pre + name + '\u2122'))).join('');
 }
 /* fridayTM:end */
 window.fridayTM = fridayTM;
@@ -8165,7 +8175,9 @@ function FridayLockup({
     style: {
       fontSize: size
     }
-  }, b.maker));
+  }, b.maker, /*#__PURE__*/React.createElement("span", {
+    className: "fr-lockup-tm"
+  }, b.mark)));
 }
 // ═══ TOAST + STAND-DOWN BANNER ═══
 // Friday's own transient notice, replacing every raw browser fridayToast().
@@ -11320,6 +11332,7 @@ function FridaySays({
   text
 }) {
   if (!text) return null;
+  text = fridayTM(text);
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'rgba(0,212,255,0.04)',
@@ -11654,9 +11667,9 @@ function PodcastPlayer() {
   },
   h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
     h('div', { style: { flex: 1, minWidth: 0 } },
-      h('div', { style: { fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.md, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.show),
+      h('div', { style: { fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.md, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.credit || ep.show),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, margin: '2px 0 4px' } },
-        ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
+        ep.credit || ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
       h(PodcastBadges, { ep: ep })),
     btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); setEp(null); })),
   h('audio', {
@@ -11690,7 +11703,7 @@ function PodcastPlayer() {
     btn(showText ? 'Hide transcript' : 'Transcript', showText ? 'Hide the transcript' : 'Show the transcript', () => setShowText(!showText), { 'aria-expanded': showText })),
   line ? h('div', { 'aria-live': 'polite', style: { fontSize: PODCAST_C.base, lineHeight: 1.45 } },
     h('b', { style: { color: line.speaker === 'a' ? PODCAST_C.accent : PODCAST_C.second } }, who(line.speaker) + ': '),
-    line.text, (line.cites || []).map(cite)) : null,
+    fridayTM(line.text), (line.cites || []).map(cite)) : null,
   src ? h('div', { style: { fontSize: PODCAST_C.md, borderLeft: '2px solid ' + PODCAST_C.accent, paddingLeft: 8, color: PODCAST_C.text } },
     h('b', null, srcOpen + ' '), src.kind === 'fact' ? src.title : (src.title || ''),
     src.expr ? h('div', { style: { color: PODCAST_C.dim, fontFamily: PODCAST_C.mono, fontSize: PODCAST_C.sm } }, 'computed by ', src.expr) : null,
@@ -11705,7 +11718,7 @@ function PodcastPlayer() {
         onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); seek(ln.start || 0); } },
         'aria-current': i === cur ? 'true' : undefined,
         style: { padding: '3px 4px', borderRadius: 4, cursor: 'pointer', background: i === cur ? PODCAST_C.accentSoft : 'transparent' }
-      }, h('b', null, who(ln.speaker) + ': '), ln.text, (ln.cites || []).map(cite)))),
+      }, h('b', null, who(ln.speaker) + ': '), fridayTM(ln.text), (ln.cites || []).map(cite)))),
     (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
 }
@@ -11857,9 +11870,9 @@ function PodcastsView() {
       eps.length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes yet. Every News routine run now comes with one, and you can make your own above.') : null,
       eps.map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
         h('div', { style: { flex: 1, minWidth: 0 } },
-          h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ep.title || ep.show),
+          h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ep.title || ep.credit || ep.show),
           h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim, margin: '2px 0 4px' } },
-            ep.show, ' · ', new Date((ep.created_at || 0) * 1000).toLocaleString(),
+            ep.credit || ep.show, ' · ', new Date((ep.created_at || 0) * 1000).toLocaleString(),
             ep.duration_s ? ' · ' + podcastClock(ep.duration_s) : '',
             ep.status !== 'ready' ? ' · ' + (ep.status === 'failed' ? 'failed: ' + ((ep.error || {}).message || '') : (ep.stage_detail || ep.status)) : ''),
           h(PodcastBadges, { ep: ep })),
@@ -17835,7 +17848,7 @@ function FuturespeakWS() {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        title: 'FutureSpeak.AI — Post Draft',
+        title: 'FutureSpeak.AI — Post Draft', // brand: plain (a working title the drafting model reads)
         type: 'post',
         channel: 'linkedin',
         notes: 'Brand post from Creative Studio.',
@@ -17862,7 +17875,7 @@ function FuturespeakWS() {
     active: '#00ff80'
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
-    text: `FutureSpeak.AI · ${pipe?.total || 0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months ? rev.runway_months + ' mo runway' : 'runway OK'}.`
+    text: `${window.FRIDAY_BRAND.makerName} · ${pipe?.total || 0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months ? rev.runway_months + ' mo runway' : 'runway OK'}.`
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -17886,7 +17899,7 @@ function FuturespeakWS() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "card-title"
-  }, "FutureSpeak.AI"), /*#__PURE__*/React.createElement("div", {
+  }, window.FRIDAY_BRAND.makerName), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 13,
       color: '#bbb'
@@ -18648,7 +18661,7 @@ function FuturespeakWS() {
       color: '#888',
       marginBottom: 10
     }
-  }, "On-brand FutureSpeak.AI asset creation hub. Outputs route to Studio + Content pipelines."), /*#__PURE__*/React.createElement("div", {
+  }, "On-brand FutureSpeak.AI\u2122 asset creation hub. Outputs route to Studio + Content pipelines."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr 1fr',
@@ -18700,7 +18713,7 @@ function FuturespeakWS() {
       justifyContent: 'center',
       gap: 4
     },
-    onClick: () => launchVibeCode('Create a FutureSpeak.AI one-pager for the current top opportunity', '~\\Projects\\friday-desktop')
+    onClick: () => launchVibeCode('Create a FutureSpeak.AI one-pager for the current top opportunity', '~\\Projects\\friday-desktop') // brand: plain (a prompt for the coding agent)
   }, /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 20
@@ -51742,7 +51755,10 @@ function SettingsTabAbout() {
       color: 'rgba(255,255,255,0.45)',
       marginBottom: 8
     }
-  }, (upd?.current_version || h?.version) ? 'v' + (upd?.current_version || h?.version) : 'Version unknown', " \xB7 Desktop OS \xB7 Sovereign AI")), /*#__PURE__*/React.createElement(StSection, {
+  }, (upd?.current_version || h?.version) ? 'v' + (upd?.current_version || h?.version) : 'Version unknown', " \xB7 Desktop OS \xB7 Sovereign AI"), /*#__PURE__*/React.createElement("div", {
+    className: "fr-trademark",
+    "data-testid": "trademark-notice"
+  }, window.FRIDAY_BRAND.notice)), /*#__PURE__*/React.createElement(StSection, {
     title: "Updates"
   }, vt.disagreement ? /*#__PURE__*/React.createElement("div", {
     style: {

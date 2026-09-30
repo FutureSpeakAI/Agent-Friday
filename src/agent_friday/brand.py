@@ -142,45 +142,73 @@ TOKENS = {
 }
 
 # -- names -------------------------------------------------------------------
-#: The product as audio and models get it. It is never shown: shown text uses
-#: PRODUCT_NAME, which carries the trademark sign.
+#: The product and its maker as audio and models get them. Neither is shown
+#: plain: shown text uses PRODUCT_NAME and MAKER_NAME, which carry the
+#: trademark sign: the unregistered mark, never the registered one, since
+#: neither mark is registered.
 PRODUCT = "Agent Friday"
+MAKER = "FutureSpeak.AI"
 TRADEMARK = "\u2122"
 PRODUCT_NAME = PRODUCT + TRADEMARK
-MAKER = "FutureSpeak.AI"
+MAKER_NAME = MAKER + TRADEMARK
 #: The wordmark: the tray tooltip, the top bar, the About card.
-PRODUCT_LOCKUP = f"{PRODUCT_NAME} by {MAKER}"
+PRODUCT_LOCKUP = f"{PRODUCT_NAME} by {MAKER_NAME}"
 #: The mark on pages Friday publishes and on exports.
 MADE_WITH = f"Made with {PRODUCT_NAME}"
+#: Under the lockup in Settings' About card, and in the README. Its last words
+#: name the company that owns both marks, so they are written plain.
+TRADEMARK_NOTICE = f"{PRODUCT_NAME} and {MAKER_NAME} are trademarks of {MAKER}."
+
+
+def from_product(what: str) -> str:
+    """How written material credits the product: "The Briefing from Agent Friday\u2122"."""
+    return f"{what} from {PRODUCT_NAME}"
+
 
 #: Fenced code blocks and inline code: display text inside them is left as it is.
 _CODE = re.compile(r"(```[\s\S]*?(?:```|$)|`[^`\n]*`)")
+#: Not already marked, in any of the forms people type.
+_UNMARKED = r"(?![ \t]*(?:\u2122|\u00ae|\((?:[tT][mM]|[rR])\)))"
 #: The product's words, not an identifier or an address (agent_friday,
 #: agent-friday), and not already marked.
 _PRODUCT_WORDS = re.compile(
-    r"(?<![\w-])(agent[ \t\u00a0]+friday)(?![\w-])(?![ \t]*(?:\u2122|\u00ae|\((?:tm|r)\)))",
-    re.IGNORECASE)
-_SPOKEN_MARK = re.compile(r"[ \t]*\u2122|(?<=friday)[ \t]*\(tm\)", re.IGNORECASE)
+    r"(?<![\w-])(agent[ \t\u00a0]+friday)(?![\w-])" + _UNMARKED, re.IGNORECASE)
+#: The maker as its name is written, not a web or email address
+#: (futurespeak.ai, name@futurespeak.ai, https://futurespeak.ai/...).
+_MAKER_WORDS = re.compile(r"(?<![\w@/.-])(FutureSpeak\.AI)(?![\w/-])" + _UNMARKED)
+#: Where "FutureSpeak.AI" names the company as owner, and stays plain.
+_OWNER = re.compile(r"(?:trademarks? of|\u00a9|\(c\)|copyright)[ \t\d,\u2013-]*$", re.IGNORECASE)
+_SPOKEN_MARK = re.compile(r"[ \t]*\u2122|(?:(?<=friday)|(?<=\.ai))[ \t]*\(tm\)", re.IGNORECASE)
+
+
+def _mark_maker(part: str) -> str:
+    return _MAKER_WORDS.sub(
+        lambda m: m.group(1) if _OWNER.search(part[max(0, m.start() - 24):m.start()])
+        else m.group(1) + TRADEMARK, part)
 
 
 def tm(text: str) -> str:
-    """`text` as it is displayed: "Agent Friday" gains its trademark sign.
+    """`text` as it is displayed: "Agent Friday" and "FutureSpeak.AI" gain
+    their trademark sign.
 
     Idempotent (a marked name is left alone, as are the (R) and (TM) forms),
-    and code, fenced or inline, is not touched. For display only: stored text,
-    text a model reads and text that is spoken stay plain.
+    and code, fenced or inline, is not touched, nor is an address. Where
+    "FutureSpeak.AI" names the owner ("trademarks of", a copyright line) it
+    stays plain. For display only: stored text, text a model reads and text
+    that is spoken stay plain.
     """
     text = "" if text is None else str(text)
-    if "friday" not in text.lower():
+    low = text.lower()
+    if "friday" not in low and "futurespeak.ai" not in low:
         return text
     parts = _CODE.split(text)
-    return "".join(p if i % 2 else _PRODUCT_WORDS.sub(lambda m: m.group(1) + TRADEMARK, p)
+    return "".join(p if i % 2 else _mark_maker(_PRODUCT_WORDS.sub(lambda m: m.group(1) + TRADEMARK, p))
                    for i, p in enumerate(parts))
 
 
 def spoken(text: str) -> str:
-    """`text` as it is spoken: the trademark sign comes off, so the product is
-    said "Agent Friday" and never "Agent Friday T M"."""
+    """`text` as it is spoken: the trademark signs come off, so the names are
+    said "Agent Friday" and "FutureSpeak.AI" and never with a "T M"."""
     text = "" if text is None else str(text)
     return _SPOKEN_MARK.sub("", text) if ("\u2122" in text or "(" in text) else text
 
@@ -204,8 +232,10 @@ PAGE_NAMES = {
     "product": PRODUCT,
     "name": PRODUCT_NAME,
     "maker": MAKER,
+    "makerName": MAKER_NAME,
     "lockup": PRODUCT_LOCKUP,
     "madeWith": MADE_WITH,
+    "notice": TRADEMARK_NOTICE,
     "mark": TRADEMARK,
 }
 

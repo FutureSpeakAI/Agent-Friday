@@ -331,8 +331,11 @@ def write_wav(pcm: bytes, path: Path) -> None:
         w.writeframes(pcm)
 
 
-def encode_mp3(wav_path: Path, mp3_path: Path, title: str = "") -> bool:
-    """A smaller copy for playback, when ffmpeg is on this computer. Local only."""
+def encode_mp3(wav_path: Path, mp3_path: Path, title: str = "", album: str = "",
+               artist: str = "") -> bool:
+    """A smaller copy for playback, when ffmpeg is on this computer. Local only.
+    Its tags are written material: the title, the show's credit as the album
+    ("The Briefing from Agent Friday™") and the product as the artist."""
     try:
         from agent_friday.services.timeline_engine import ffmpeg_exe
         exe = ffmpeg_exe()
@@ -342,8 +345,9 @@ def encode_mp3(wav_path: Path, mp3_path: Path, title: str = "") -> bool:
         return False
     cmd = [exe, "-y", "-loglevel", "error", "-i", str(wav_path),
            "-codec:a", "libmp3lame", "-b:a", "96k"]
-    if title:
-        cmd += ["-metadata", "title=" + title[:200]]
+    for key, value in (("title", title), ("album", album), ("artist", artist)):
+        if value:
+            cmd += ["-metadata", "%s=%s" % (key, value[:200])]
     cmd.append(str(mp3_path))
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=600,
@@ -362,12 +366,17 @@ def _vtt_time(s: float) -> str:
     return "%02d:%02d:%02d.%03d" % (h, m, sec, ms)
 
 
-def captions_vtt(lines: list[dict], names: dict) -> str:
-    """WebVTT with a voice tag per speaker, from the exact line timings."""
-    out = ["WEBVTT", ""]
+def captions_vtt(lines: list[dict], names: dict, header: str = "") -> str:
+    """WebVTT with a voice tag per speaker, from the exact line timings.
+
+    The captions are the written transcript: the header credits the show
+    ("WEBVTT - The Briefing from Agent Friday™") and the lines carry the
+    marks. The lines were spoken plain."""
+    from agent_friday import brand
+    out = ["WEBVTT - " + header if header else "WEBVTT", ""]
     for i, ln in enumerate(lines, 1):
         who = names.get(ln.get("speaker") or "a", "")
-        text = (ln.get("text") or "").replace("-->", "→")
+        text = brand.tm(ln.get("text") or "").replace("-->", "→")
         out += [str(i), "%s --> %s" % (_vtt_time(ln["start"]), _vtt_time(ln["end"])),
                 "<v %s>%s" % (who, text) if who else text, ""]
     return "\n".join(out)
