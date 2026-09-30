@@ -93,6 +93,19 @@ All four are ring-1 (no card): three are reads, and `navigate_to` acts only on
 the owner's own screen. Anything outward *inside* a workflow still raises its
 own card, one at a time, exactly as in chat.
 
+And one limit that was invisible until those tools existed: **a private
+workflow result could not come back at all.** The egress gate's only move on
+TIER_3 material is to withhold it, so "summarise my own mail" ran on a local
+seat and returned "content withheld" — the promise kept, the answer lost. A
+withheld task or workflow result is now offered through the handoff path
+instead: scrubbed to placeholders, refused outright by the never-send floor if
+it touches that, receipted, and read by the owner before any of it leaves.
+
+This is not a relaxation of the gate. The gate blocks or it does not; this
+adds the third option the gate has no way to express — *scrub it and ask*.
+Pinned by `tests/unit/test_voice_workflow_result_handoff.py`, including that
+the model never receives the raw text and that a floor refusal still stands.
+
 ---
 
 ## Not a restriction we could act on yet

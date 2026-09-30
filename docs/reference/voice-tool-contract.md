@@ -174,6 +174,15 @@ it back into the call. `tests/unit/test_voice_private_handoff_seam.py` asserts
 at the point text is handed to the live call, not on the scrub's return value —
 copy that habit.
 
+**Background work gets this for free.** A task or workflow result that the
+egress gate withholds is no longer a dead end: `routes/voice.py`'s
+`_injection_or_card` hands it to `local_context.offer()`, so it comes back as
+a scrubbed card instead of "content withheld". If your tool does its private
+work in a background task — which is the right shape for anything slow — you
+do not need to do anything to get this; it applies to the result on its way
+into the call. What you *should* do is run that work on a local seat, so the
+raw data never reaches a cloud model in the first place.
+
 ---
 
 ## 6. What you do not have to do
