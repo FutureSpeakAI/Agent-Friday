@@ -292,7 +292,7 @@ def edit(cid: str, aid: str, content, title: str | None = None,
     cur = get(cid, aid, settings=settings)
     if cur is None:
         raise KeyError(aid)
-    return put(cid, cur["kind"], title or cur["title"], content, meta=None,
+    return put(cid, cur["kind"], title or cur["title"], content, meta=_carried_meta(cur),
                artifact_id=aid, author="you", settings=settings,
                note=note or "edited by hand")
 
@@ -302,9 +302,20 @@ def restore(cid: str, aid: str, version: int, settings: dict | None = None) -> d
     old = get(cid, aid, version=version, settings=settings)
     if old is None:
         raise KeyError("v%s" % version)
-    return put(cid, old["kind"], old["title"], old["content"], meta=None,
+    return put(cid, old["kind"], old["title"], old["content"], meta=_carried_meta(old),
                artifact_id=aid, author="you", settings=settings,
                note="restored from v%d" % int(version), restored_from=int(version))
+
+
+def _carried_meta(rec: dict) -> dict:
+    """A new version made from an old one keeps its metadata and contract
+    fields: a hand edit must not drop a plan's milestones or an artifact's
+    provenance. `put` lifts the contract keys back out of the meta dict."""
+    meta = dict(rec.get("meta") or {})
+    for k in ("task_id", "goal_id", "sensitivity", "source_refs", "provenance_id", "qa_status"):
+        if rec.get(k) is not None and k not in meta:
+            meta[k] = rec[k]
+    return meta
 
 
 def get(cid: str, aid: str, version: int | None = None, settings: dict | None = None) -> dict | None:

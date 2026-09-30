@@ -93,6 +93,27 @@ def edit_artifact(cid, aid):
     return jsonify({"status": "ok", "artifact": rec})
 
 
+@artifacts_bp.route("/api/artifacts/<cid>/<aid>/plan/approve", methods=["POST"])
+@login_required
+def approve_plan(cid, aid):
+    """The panel's "Build this plan": the user's approval, recorded as a new
+    version, told to the conversation, and built on Friday's next turn."""
+    from agent_friday.services import plans as _plans
+    try:
+        if art.get(cid, aid) is None:
+            return _bad("no such artifact", 404)
+        rec = _plans.approve(cid, aid, by="you")
+    except ValueError as e:
+        return _bad(e)
+    try:
+        from agent_friday.services import conversations as _convs
+        _convs.append(cid, {"role": "system", "text": "\u2705 Plan approved: \"%s\". Friday builds it from the next turn, one milestone at a time." % rec["title"],
+                            "meta": {"kind": "plan_approved", "artifact_id": aid}})
+    except Exception:
+        pass
+    return jsonify({"status": "ok", "artifact": rec})
+
+
 @artifacts_bp.route("/api/artifacts/<cid>/<aid>/restore", methods=["POST"])
 @login_required
 def restore_artifact(cid, aid):

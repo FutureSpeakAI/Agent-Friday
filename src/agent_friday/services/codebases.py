@@ -547,7 +547,9 @@ def context_block_for(cid: str) -> str:
              % (rec["id"], rec["title"], rec.get("template") or "existing folder", rec.get("tier", "B0")),
              "Change files with codebase_edit(files={path: full new content, or null to delete}, summary=one plain line for the user). "
              "Every call is a step the user can undo with \"undo that\" (codebase_undo). Read a file you were not shown with codebase_read. "
-             "Do not say a change is done until the tool result names the step."]
+             "Do not say a change is done until the tool result names the step. "
+             "For a BIG ask (a new feature, several files), call plan_first with a short plan and 3-7 milestones and stop; "
+             "build only after the user approves it."]
     budget = _CONTEXT_MAX
     lines.append("Files:")
     for f in files(cid):

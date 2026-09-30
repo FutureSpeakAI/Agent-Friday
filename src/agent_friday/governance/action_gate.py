@@ -207,6 +207,9 @@ INTERNAL_TOOLS = frozenset({
     # under the Friday home, versioned and never sent anywhere
     # (services/artifacts). Off the record it writes nothing at all.
     "artifact_put",
+    # A plan is an artifact in that same store; approving one is the user's
+    # decision, which the model only reports (services/plans).
+    "plan_first", "plan_approve", "plan_milestone",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it

@@ -83,6 +83,16 @@ def test_a_hand_edit_is_a_version_authored_by_you():
     assert art.get(CID, a["id"])["author"] == "you"
 
 
+def test_a_hand_edit_and_a_restore_keep_the_metadata_and_contract_fields():
+    a = art.put(CID, kind="markdown", title="Draft", content="one",
+                meta={"sensitivity": "TIER_2", "source_refs": ["wiki/notes.md"], "plan": {"milestones": []}})
+    e = art.edit(CID, a["id"], content="two")
+    assert e["sensitivity"] == "TIER_2" and e["source_refs"] == ["wiki/notes.md"]
+    assert e["meta"]["plan"] == {"milestones": []}
+    r = art.restore(CID, a["id"], 1)
+    assert r["sensitivity"] == "TIER_2" and r["meta"]["plan"] == {"milestones": []}
+
+
 def test_list_for_returns_the_current_version_of_each_artifact():
     a = art.put(CID, kind="markdown", title="A", content="1")
     art.put(CID, kind="table", title="B", content={"columns": ["x"], "rows": [[1]]})

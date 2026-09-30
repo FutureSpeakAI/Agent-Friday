@@ -8338,6 +8338,126 @@ CLAUDE_TOOL_HANDLERS.update({"codebase_edit": _tool_codebase_edit, "codebase_und
                              "codebase_read": _tool_codebase_read})
 TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0})
 
+
+# ── Plan-first for big asks (services/plans; spec §4.11 item 4) ──────────────
+CLAUDE_TOOLS.append({
+    "name": "plan_first",
+    "description": (
+        "For a BIG ask (a new feature, several files, anything that takes more than one or two steps), "
+        "write a short plan FIRST and stop. The plan appears in the panel as an editable draft with its "
+        "milestones; nothing is built until the user approves it there or says so in chat. Keep the plan "
+        "under 200 words and the milestones to 3-7 plain lines. After calling this, tell the user in one "
+        "line that the plan is in the panel and ask if they want changes. Small edits do not need a plan."),
+    "input_schema": {"type": "object", "properties": {
+        "title": {"type": "string", "description": "What is being built, e.g. 'Rent tracker with a chart'."},
+        "plan": {"type": "string", "description": "Markdown: what, why, how, what is out of scope."},
+        "milestones": {"type": "array", "items": {"type": "string"}, "description": "3-7 milestones, each one plain line, in order."}},
+        "required": ["title", "plan", "milestones"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "plan_approve",
+    "description": (
+        "Record that the USER approved the current plan, in their own words, in chat ('go ahead', 'build it'). "
+        "Pass their words. Never call this on your own initiative: a plan approved by the model is not approved. "
+        "The panel's 'Build this plan' button does the same thing on screen."),
+    "input_schema": {"type": "object", "properties": {
+        "user_words": {"type": "string", "description": "The user's own words that approve the plan."},
+        "artifact_id": {"type": "string", "description": "Only when several plans exist; normally omitted."}},
+        "required": ["user_words"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "plan_milestone",
+    "description": (
+        "Move one milestone of the approved plan: 'doing' when you start it, 'done' with the step sha when it is "
+        "built, or 'blocked' with one typed blocker and a note the user can act on when you must stop. Then say "
+        "in one line what happened."),
+    "input_schema": {"type": "object", "properties": {
+        "n": {"type": "integer", "description": "The milestone number, from the PLAN context."},
+        "status": {"type": "string", "enum": ["todo", "doing", "done", "blocked"]},
+        "step": {"type": "string", "description": "The codebase step sha that completed it, when done."},
+        "blocker": {"type": "string", "enum": ["missing_evidence", "needs_user_input", "run_failed", "external_wait", "goal_not_met_yet"],
+                    "description": "Required when status is blocked."},
+        "note": {"type": "string", "description": "One line the user can act on."},
+        "artifact_id": {"type": "string", "description": "Only when several plans exist; normally omitted."}},
+        "required": ["n", "status"]},
+})
+
+
+def _plan_in_scope(inp):
+    from agent_friday.services import plans as _plans
+    cid = (_CURRENT_CONVERSATION.get() or "").strip()
+    if not cid:
+        return None, None
+    aid = str((inp or {}).get("artifact_id") or "").strip()
+    if aid:
+        from agent_friday.services import artifacts as _art
+        rec = _art.get(cid, aid)
+    else:
+        rec = _plans.current(cid)
+    return cid, rec
+
+
+def _tool_plan_first(inp):
+    from agent_friday.services import plans as _plans
+    inp = inp or {}
+    cid = (_CURRENT_CONVERSATION.get() or "").strip()
+    if not cid:
+        return "plan_first needs a conversation, and none is current. Nothing was filed."
+    try:
+        rec = _plans.create(cid, str(inp.get("title") or "Plan"), str(inp.get("plan") or ""), list(inp.get("milestones") or []))
+    except ValueError as e:
+        return f"plan_first refused: {e}."
+    return {"status": "awaiting_approval", "artifact_id": rec["id"], "milestones": len(rec["meta"]["plan"]["milestones"]),
+            "note": "The plan is in the panel awaiting the user's approval. Do not build anything until they approve it "
+                    "(the panel's Build this plan, or their words, which you then report with plan_approve). Ask in one "
+                    "line whether they want changes."}
+
+
+def _tool_plan_approve(inp):
+    from agent_friday.services import plans as _plans
+    inp = inp or {}
+    words = " ".join(str(inp.get("user_words") or "").split())
+    if len(words) < 2:
+        return "plan_approve needs the user's own words that approve the plan; a plan is not approved without them."
+    cid, rec = _plan_in_scope(inp)
+    if not cid or rec is None:
+        return "plan_approve: there is no plan in this conversation."
+    try:
+        out = _plans.approve(cid, rec["id"], by="you (in chat: %s)" % words[:80])
+    except ValueError as e:
+        return f"plan_approve refused: {e}."
+    nxt = _plans.next_milestone(out["meta"]["plan"])
+    return {"status": "approved", "artifact_id": out["id"], "next": nxt["n"] if nxt else None,
+            "note": "Approved. Build milestone %s now, in one or a few codebase_edit steps, then plan_milestone." % (nxt["n"] if nxt else "-")}
+
+
+def _tool_plan_milestone(inp):
+    from agent_friday.services import plans as _plans
+    inp = inp or {}
+    cid, rec = _plan_in_scope(inp)
+    if not cid or rec is None:
+        return "plan_milestone: there is no plan in this conversation."
+    try:
+        out = _plans.milestone(cid, rec["id"], int(inp.get("n") or 0), str(inp.get("status") or ""),
+                               step=inp.get("step") or None, blocker=inp.get("blocker") or None, note=str(inp.get("note") or ""))
+    except _plans.NotApproved as e:
+        return f"plan_milestone refused: {e}. Wait for the user's approval."
+    except (ValueError, TypeError) as e:
+        return f"plan_milestone refused: {e}."
+    plan = out["meta"]["plan"]
+    nxt = _plans.next_milestone(plan)
+    m = plan["milestones"][int(inp.get("n")) - 1]
+    return {"status": "ok", "milestone": m["n"], "state": m["status"], "blocked": m.get("blocker"),
+            "next": nxt["n"] if nxt else None,
+            "note": ("Plan complete: say so in one line." if nxt is None and m["status"] != "blocked"
+                     else ("Stopped on a typed blocker; tell the user what you need." if m["status"] == "blocked"
+                           else "Go on to milestone %d." % nxt["n"]))}
+
+
+CLAUDE_TOOL_HANDLERS.update({"plan_first": _tool_plan_first, "plan_approve": _tool_plan_approve,
+                             "plan_milestone": _tool_plan_milestone})
+TOOL_RINGS.update({"plan_first": 1, "plan_approve": 1, "plan_milestone": 1})
+
 # ══════════════════════════════════════════════════════════════
 #  CAPABILITY PREFLIGHT — a tool whose dependency is missing is REMOVED
 # ══════════════════════════════════════════════════════════════

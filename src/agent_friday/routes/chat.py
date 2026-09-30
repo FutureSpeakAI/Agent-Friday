@@ -1557,6 +1557,12 @@ def chat():
                 sp = sp + _cbs.context_block(_conversation_id)
             except Exception:
                 pass
+            # A plan awaiting approval, or approved and under way (services/plans).
+            try:
+                from agent_friday.services import plans as _plans
+                sp = sp + _plans.context_block(_conversation_id)
+            except Exception:
+                pass
             if voice_mode:
                 sp = (
                     "=== VOICE MODE ACTIVE ===\n"
@@ -2643,6 +2649,11 @@ def chat_send():
             try:
                 from agent_friday.services import codebases as _cbs
                 prompt = prompt + _cbs.context_block(_conversation_id)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import plans as _plans
+                prompt = prompt + _plans.context_block(_conversation_id)
             except Exception:
                 pass
             # Assembled here, not by `_get_friday_system_prompt`: the policy

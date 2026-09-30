@@ -147,6 +147,11 @@ def test_the_codebase_panel_has_its_three_tabs_and_listens_for_steps(js):
     assert "+ Codebase" in s, "the sidebar has the third button"
 
 
+def test_a_plan_artifact_shows_its_milestones_and_an_approve_button(js):
+    assert "Build this plan" in js and "/plan/approve" in js
+    assert "data-plan" in js and "data-milestone" in js
+
+
 def test_the_svg_frame_has_no_scripts(js):
     m = re.search(r"SVG_SANDBOX\s*=\s*['\"]([^'\"]*)['\"]", js)
     assert m, "svg is framed with its own sandbox constant"

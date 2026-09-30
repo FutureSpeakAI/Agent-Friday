@@ -321,6 +321,34 @@
     }
   }
 
+  // ── A plan on a markdown artifact (services/plans) ─────────────────────
+  // Milestones with their status; "Build this plan" is the user's approval.
+  const STATUS_COLOR = { todo: 'rgba(255,255,255,0.5)', doing: ACCENT, done: '#00ff80', blocked: AMBER };
+  function PlanStrip({ convId, rec, busy, setBusy, setNote, onChanged }) {
+    const plan = rec.meta.plan;
+    const approve = () => {
+      if (busy) return;
+      setBusy(true);
+      postJ('/api/artifacts/' + encodeURIComponent(convId) + '/' + encodeURIComponent(rec.id) + '/plan/approve', {})
+        .then(({ ok, j }) => {
+          if (!ok) { setNote({ text: 'Not approved: ' + ((j && j.error) || 'unknown error') }); return; }
+          setNote({ text: 'Plan approved. Friday builds it from her next turn, one milestone at a time.', ok: true });
+          onChanged && onChanged(j.artifact);
+        }).catch(e => setNote({ text: 'Not approved: ' + e })).then(() => setBusy(false));
+    };
+    return h('div', { className: 'fa-plan', 'data-plan': plan.approved ? 'approved' : 'awaiting', style: { padding: '8px 10px', borderBottom: '1px solid rgba(0,212,255,0.10)', background: 'rgba(0,212,255,0.03)' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 } },
+        h('span', { style: { fontFamily: 'Orbitron, Inter, sans-serif', fontSize: 9, letterSpacing: '.2em', color: ACCENT } }, 'PLAN'),
+        h('span', { style: { fontSize: 11, color: plan.approved ? '#8ff5c0' : '#ffd28a', flex: 1 } },
+          plan.approved ? 'Approved' + (plan.approved_by ? ' by ' + plan.approved_by : '') : 'Awaiting your approval. Edit the text above if you want changes; Friday sees them.'),
+        !plan.approved ? h('button', { className: 'fa-btn fa-primary', onClick: approve, disabled: busy }, 'Build this plan') : null),
+      h('ol', { style: { margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.6 } }, plan.milestones.map(m => h('li', { key: m.n, 'data-milestone': m.status },
+        h('span', { style: { color: m.status === 'done' ? 'rgba(255,255,255,0.55)' : '#eef4fa', textDecoration: m.status === 'done' ? 'line-through' : 'none' } }, m.title),
+        ' ', h('span', { className: 'fa-kind', style: { color: STATUS_COLOR[m.status] || '#fff', borderColor: (STATUS_COLOR[m.status] || '#fff') + '55', background: (STATUS_COLOR[m.status] || '#fff') + '14' } }, m.status + (m.blocker ? ' · ' + m.blocker : '')),
+        m.note ? h('span', { style: { color: 'rgba(255,255,255,0.6)', fontSize: 11 } }, ' — ' + m.note) : null,
+        m.step ? h('span', { style: { fontFamily: MONO, fontSize: 9.5, color: 'rgba(255,255,255,0.4)' } }, ' ' + String(m.step).slice(0, 7)) : null))));
+  }
+
   // ── The panel ─────────────────────────────────────────────────────────
   function FridayArtifactPanel({ convId, items, selectedId, onSelect, onCollapse, tab, width, onChanged }) {
     const cur = items.find(i => i.id === selectedId) || items[items.length - 1];
@@ -451,6 +479,7 @@
           vAt && vAt.note && !editing ? h('span', { style: { fontSize: 10.5, color: 'rgba(255,255,255,0.5)', marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: vAt.note }, vAt.note) : null)),
       note ? h('div', { className: 'fa-note' + (note.ok ? ' fa-ok' : ''), role: 'status' }, note.text) : null,
       viewV ? h('div', { className: 'fa-note', role: 'status' }, 'Viewing v' + viewV + ' of ' + total + ' · nothing is changed until you restore it') : null,
+      rec && rec.meta && rec.meta.plan ? h(PlanStrip, { convId, rec, busy, setBusy, setNote, onChanged }) : null,
       h('div', { className: 'fa-body' + (flush ? ' fa-flush' : ''), ref: bodyRef },
         rec ? h(Body, { rec, editing, draft, setDraft, reloadKey, size }) : h('div', { className: 'fa-empty' }, 'Loading…')),
       h('div', { className: 'fa-foot' },
