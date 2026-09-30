@@ -8981,7 +8981,7 @@ def _gate_policy_class(tool_name, args):
         return None
     if klass == _g.INTERNAL:
         return "internal"
-    if klass != _g.OUTWARD:
+    if klass not in (_g.OUTWARD, getattr(_g, "OBSERVE", _g.OUTWARD)):
         return None                     # forbidden, or a class we do not map
     try:
         # A trailing space so keywords written with one ("buy ", "pay ") can

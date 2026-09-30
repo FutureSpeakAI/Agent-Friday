@@ -52,7 +52,10 @@ def _isolate(tmp_path, monkeypatch):
 
 
 def _select(monkeypatch, backend):
-    settings = {"decision_backend": backend, "decision_shadow": ""}
+    # These pin the "card" policy for reads: every connector read is judged by
+    # the union and held when it cannot answer, as before 2026-09-29. The
+    # default "observe" policy has its own tests (test_outward_reads_observe).
+    settings = {"decision_backend": backend, "decision_shadow": "", "outward_reads": "card"}
     monkeypatch.setattr("agent_friday.core._load_settings", lambda: settings, raising=False)
 
 

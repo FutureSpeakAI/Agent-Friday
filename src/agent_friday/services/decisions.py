@@ -247,7 +247,7 @@ def _record(row: dict) -> None:
 # gate whose switch-off leaves no trace is one whose history cannot be read.
 
 GATE_EVENTS_NAME = "gate_events.jsonl"
-_GATE_KEYS = ("decision_backend", "decision_shadow")
+_GATE_KEYS = ("decision_backend", "decision_shadow", "outward_reads")
 
 
 def gate_events_path():
@@ -258,7 +258,8 @@ def gate_events_path():
 def _mode_name(pair: dict) -> str:
     try:
         from agent_friday.services import laya_backend
-        return laya_backend.current_mode(pair)
+        return laya_backend.current_mode({k: pair.get(k, "") for k in
+                                          ("decision_backend", "decision_shadow")})
     except Exception:
         return "custom"
 
@@ -293,6 +294,11 @@ def on_settings_change(before: dict, after: dict) -> None:
     try:
         old = {k: str((before or {}).get(k) or "") for k in _GATE_KEYS}
         new = {k: str((after or {}).get(k) or "") for k in _GATE_KEYS}
+        # A key the caller's settings never mention is not a change to it.
+        for k in ("outward_reads",):
+            if k not in (before or {}) and k not in (after or {}):
+                old.pop(k)
+                new.pop(k)
         if old == new:
             return
         source, reason = _change_source()

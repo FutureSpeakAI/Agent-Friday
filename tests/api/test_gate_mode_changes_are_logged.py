@@ -40,8 +40,9 @@ def test_a_python_write_is_recorded_with_both_sides():
     assert len(ev) == 1
     e = ev[0]
     assert e["event"] == "gate_mode"
-    assert e["from"] == {"decision_backend": "laya-union", "decision_shadow": ""}
-    assert e["to"] == {"decision_backend": "keyword", "decision_shadow": ""}
+    gate = lambda d: {k: d[k] for k in ("decision_backend", "decision_shadow")}  # noqa: E731
+    assert gate(e["from"]) == {"decision_backend": "laya-union", "decision_shadow": ""}
+    assert gate(e["to"]) == {"decision_backend": "keyword", "decision_shadow": ""}
     assert e["from_mode"] == "on" and e["to_mode"] == "off"
     assert e["source"] == "python"
     assert e["at"]

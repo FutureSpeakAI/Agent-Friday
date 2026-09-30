@@ -288,9 +288,15 @@ def test_it_fails_closed(monkeypatch):
     agent._execute_tool("create_calendar_event", {"title": "c"}, session_ctx=bg)
     assert not ran
 
-    # Laya configured but not available: a connector "read" is held too.
+    # Laya configured but not available: a connector "read" runs only if its
+    # arguments are clean (observe), and waits if they look private.
     monkeypatch.undo()
     monkeypatch.setattr(action_gate, "_laya_down", lambda: True)
+    assert action_gate.classify("mcp_fakebank_get_balance", {})[0] == action_gate.OBSERVE
+    assert action_gate.classify("mcp_fakebank_get_balance",
+                                {"account": "bank account 4432"})[0] == action_gate.OUTWARD
+    # With reads set to card, it is held as before.
+    monkeypatch.setattr(action_gate, "_outward_reads_policy", lambda: "card")
     assert action_gate.classify("mcp_fakebank_get_balance", {})[0] == action_gate.OUTWARD
 
 
@@ -334,7 +340,8 @@ def test_a_connector_write_with_a_read_sounding_word_is_outward(monkeypatch):
     monkeypatch.setattr(g, "_laya_down", lambda: False)
     assert g.classify("mcp_bank_update_user_info", {})[0] == g.OUTWARD
     assert g.classify("mcp_slack_send_status", {})[0] == g.OUTWARD
-    assert g.classify("mcp_bank_get_balance", {})[0] == g.INTERNAL
+    # A read at a connected service is observe (North star §18.2 Class 0).
+    assert g.classify("mcp_bank_get_balance", {})[0] == g.OBSERVE
 
 
 def test_a_held_action_is_not_announced_as_happening(monkeypatch):

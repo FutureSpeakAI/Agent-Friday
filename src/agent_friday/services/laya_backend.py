@@ -736,7 +736,7 @@ def _answer(state: str, *, wait_s: float = 0.0, also: tuple = ()) -> tuple:
         release()
 
 
-def _answer_bounded(state: str) -> tuple:
+def _answer_bounded(state: str, *, also: tuple = ()) -> tuple:
     """`_answer`, waiting at most `_SCORE_TIMEOUT_S`.
 
     The scoring runs on its own daemon thread. On timeout the caller stops
@@ -746,7 +746,7 @@ def _answer_bounded(state: str) -> tuple:
     """
     global _slow_answers, _last_slow_ts
     hit = _remembered(state)
-    if hit is not None:
+    if hit is not None and all(q in (hit[2].get("also") or {}) for q in also):
         return hit
     release = _reserve_scoring(pilot=False)
     if release is None:
@@ -758,7 +758,7 @@ def _answer_bounded(state: str) -> tuple:
 
     def _run():
         try:
-            box["result"] = _answer_unreserved(state)
+            box["result"] = _answer_unreserved(state, also=also)
         except BaseException as e:  # noqa: BLE001 - re-raised on the caller's thread
             box["error"] = e
         finally:
@@ -901,7 +901,14 @@ def union_backend(question: str, state: str, **kw):
     try:
         # BOUNDED. This runs inside a chat turn; a laptop CPU must not turn
         # the second opinion into a stall. Too slow is answered like loading.
-        severity, conf, detail = _answer_bounded(state)
+        #
+        # A question about a named connector tool (decisions.about_tool) asks
+        # the read questions in the same pass: whether it changes anything
+        # outside and whether its arguments carry private data. The gate's
+        # observe policy (action_gate) needs both to let a read run.
+        from agent_friday.services import decisions as _d
+        also = ("changes_outside", "carries_private") if _d._TOOL.get() else ()
+        severity, conf, detail = _answer_bounded(state, also=also)
     except LayaTooSlow as e:
         _missed_one("busy" if isinstance(e, LayaBusy) else "slow")
         return kw_answer, None, dict(kw_detail, union="keyword-only",

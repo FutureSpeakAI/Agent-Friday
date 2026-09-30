@@ -92,6 +92,23 @@ DIRECT_COMMAND = {
                      "(play, pause, mute, volume, open, go to, timer)."),
 }
 
+#: Do a tool call's ARGUMENTS carry someone's private details out? Asked of
+#: connector reads only. Measured on 13 search-shaped calls: 10/13 (the
+#: request-shaped touches_private scored 8/13). It misses what the PII check
+#: catches (diagnoses, account numbers, medical records) and catches what that
+#: check misses (a relative's address, an email, "my son failed ..."); the gate
+#: uses both, and on 10 private and 10 clean queries together they were
+#: right on all 20.
+CARRIES_PRIVATE = {
+    "type": "choice",
+    "instructions": "What kind of information does this text contain?",
+    "criteria": {
+        "personal": ("private details about a real person: health, money, "
+                     "family, messages, contacts, home address"),
+        "public": "public, technical or generic information, or nothing personal",
+    },
+}
+
 #: The chat pilot's question (services/laya_pilot), registered here so every
 #: question Friday asks has one home.
 SOURCE = {
@@ -113,6 +130,7 @@ QUESTIONS: Dict[str, dict] = {
     "leaves_machine": LEAVES_MACHINE,
     "changes_outside": CHANGES_OUTSIDE,
     "touches_private": TOUCHES_PRIVATE,
+    "carries_private": CARRIES_PRIVATE,
     "direct_command": DIRECT_COMMAND,
     "source": SOURCE,
 }
@@ -126,6 +144,9 @@ QUESTIONS: Dict[str, dict] = {
 #: "hard"), so the shadow asks severity and changes_outside (23/29).
 GATE_SHADOW = ("severity", "changes_outside")
 VOICE = ("touches_private", "direct_command")
+#: A read at a connected service: severity (the union's vote), whether it
+#: changes anything outside, and whether its arguments carry private data.
+CONNECTOR_READ = ("severity", "changes_outside", "carries_private")
 
 
 def select(ids: Iterable[str]) -> Dict[str, dict]:

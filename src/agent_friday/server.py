@@ -292,9 +292,10 @@ def _register_decision_backends():
         wanted = {decisions.active_backend(), decisions.shadow_backend()}
         # Where the gate starts, so every later change has a known origin.
         _gate = {"decision_backend": decisions.active_backend(),
-                 "decision_shadow": decisions.shadow_backend() or ""}
+                 "decision_shadow": decisions.shadow_backend() or "",
+                 "outward_reads": str((_load_settings() or {}).get("outward_reads") or "")}
         decisions.record_gate_event("boot", to=_gate,
-                                    to_mode=laya_backend.current_mode(_gate))
+                                    to_mode=decisions._mode_name(_gate))
         pilot_enabled = (_load_settings() or {}).get("laya_pilot_enabled") is True
         if wanted & {"laya", "laya-union"} or pilot_enabled:
             laya_backend.start_warming()

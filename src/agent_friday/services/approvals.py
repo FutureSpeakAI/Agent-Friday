@@ -166,6 +166,7 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
     # (it fell back to its keyword half), or None when no union decided. A
     # caller whose rule needs both opinions reads this; the verdict does not.
     second_opinion = None
+    union_detail = {}
     if action_class and action_class in table:
         cls = action_class
     else:
@@ -187,8 +188,13 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
             dec = _dec.decide("policy_class", action_description,
                               context={"caller": "approvals.classify"})
             cls = dec.answer
+            _det = getattr(dec, "detail", None) or {}
             second_opinion = {"or": "answered", "keyword-only": "missing"}.get(
-                (getattr(dec, "detail", None) or {}).get("union"))
+                _det.get("union"))
+            # What each half of a union said, for a caller with a finer rule
+            # than gated/not (action_gate's observe policy for reads).
+            union_detail = {"keyword": _det.get("keyword") or cls,
+                            "laya": _det.get("laya"), "also": _det.get("also") or {}}
         except Exception as e:
             _log.warning("decision seam unavailable (%s) — failing closed "
                          "(treating as gated)", e)
@@ -196,7 +202,7 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
     policy = table.get(cls) or table["outward"]
     return {"policy_class": cls, "gated": bool(policy.get("gated")),
             "expires_seconds": policy.get("expires_seconds"),
-            "second_opinion": second_opinion}
+            "second_opinion": second_opinion, "union": union_detail}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

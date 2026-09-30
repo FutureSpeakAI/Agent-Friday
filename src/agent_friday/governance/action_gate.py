@@ -50,6 +50,11 @@ _LOCK = threading.RLock()
 
 INTERNAL = "internal"
 OUTWARD = "outward"
+#: North star §18.2 Class 0: a read at a service the owner connected. It
+#: reaches outside and is receipted as such, and runs without a card unless a
+#: detail came from outside content or its arguments would carry private data
+#: out (see _connector_read).
+OBSERVE = "observe"
 
 
 def _gov_dir() -> Path:
@@ -580,24 +585,127 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
         verb_read = len(parts) > 1 and parts[1] in _READ_VERBS
         if not verb_read:
             return OUTWARD, "a connector tool that is not a read"
-        if _laya_down():
-            return OUTWARD, "the Laya classifier is configured but unavailable"
-        try:
-            from agent_friday.services import approvals as _ap
-            from agent_friday.services import decisions as _dec
-            desc = f"{tool_name} {json.dumps(a, default=str)[:300]}"
-            with _dec.about_tool(tool_name):
-                verdict = _ap.classify(desc)
-            if verdict.get("gated"):
-                return OUTWARD, "the action classifier judged it outward"
-            # Loaded but busy or too slow is the union unable to answer too:
-            # its keyword half alone calls every read verb internal.
-            if verdict.get("second_opinion") == "missing":
-                return OUTWARD, "the Laya classifier could not check it in time"
-        except Exception as e:
-            return OUTWARD, f"the action classifier failed ({e})"
-        return INTERNAL, "a connector read"
+        return _connector_read(tool_name, a)
     return OUTWARD, "an unknown tool is treated as outward"
+
+
+def _outward_reads_policy() -> str:
+    """"observe" (the default) or "card". The owner's switch, in settings."""
+    try:
+        from agent_friday.core import _load_settings
+        v = str((_load_settings() or {}).get("outward_reads") or "observe").lower()
+    except Exception:
+        v = "observe"
+    return v if v in ("observe", "card") else "card"
+
+
+def _args_private(args: dict) -> bool:
+    """Would these arguments carry private data out? The PII check's fast,
+    local layers (structured PII and keywords) plus an email address.
+
+    Deliberately not the embedding layer: its first use loads a model (30 s
+    measured), and on 10 private and 10 clean queries it changed no verdict.
+    A check that cannot run counts as private.
+    """
+    text = json.dumps(args or {}, default=str, ensure_ascii=False)
+    if _EMAIL_IN_ARGS.search(text):
+        return True
+    try:
+        from agent_friday.services import sensitivity_classifier as _sc
+        return _sc.classify(text, egress=True, use_presidio=False,
+                            use_embeddings=False) >= _sc.Tier.PRIVATE
+    except Exception:
+        return True
+
+
+def _has_free_text(args) -> bool:
+    """Is any argument value prose rather than an identifier?
+
+    Laya's carries_private is counted only then. Measured on the live engine,
+    it called {"owner": "octo", "repo": "hello", "pull_number": 3} and
+    {"limit": 10} personal. An identifier without spaces cannot carry "my son
+    failed his math test"; the structured leaks it can carry (an email, a
+    phone number, an account or ID number) are the PII check's, which runs on
+    every argument regardless.
+    """
+    def walk(v):
+        if isinstance(v, str):
+            return bool(re.search(r"\s", v.strip())) or len(v) > 64
+        if isinstance(v, dict):
+            return any(walk(x) for x in v.values())
+        if isinstance(v, (list, tuple)):
+            return any(walk(x) for x in v)
+        return False
+    return walk(args or {})
+
+
+_EMAIL_IN_ARGS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def _connector_read(tool_name: str, a: dict) -> tuple:
+    """A connector tool whose name leads with a read verb.
+
+    OBSERVE (North star §18.2 Class 0) when nothing says otherwise: it reaches
+    a service the owner connected, is receipted as outward, and runs without a
+    card. The owner's direction (2026-09-29): "I think it should also be a high
+    priority that we don't constantly pester the user with approval cards for
+    every single command." His own labels had made every GitHub and Higgsfield
+    lookup card under the union.
+
+    It is OUTWARD, and cards exactly as before, when:
+      * the keyword scan flags it (its words say send, pay, delete ...);
+      * Laya says it changes something outside;
+      * its arguments would carry private data out: the PII check OR Laya's
+        carries_private. Each catches what the other misses; this is the
+        "exfiltrate through a search query" path;
+      * the owner set outward_reads="card", in which case the union's own
+        verdict decides as it did before this policy.
+    A detail from outside content cards through the taint ledger regardless.
+
+    When Laya cannot answer (loading, busy, too slow), the read still runs if
+    the PII check finds its arguments clean; the miss is counted by the union
+    and logged. It waits for the owner only when they look private.
+    """
+    policy = _outward_reads_policy()
+    try:
+        from agent_friday.services import approvals as _ap
+        from agent_friday.services import decisions as _dec
+        desc = f"{tool_name} {json.dumps(a, default=str)[:300]}"
+        with _dec.about_tool(tool_name):
+            verdict = _ap.classify(desc)
+    except Exception as e:
+        return OUTWARD, f"the action classifier failed ({e})"
+    union = verdict.get("union") or {}
+    laya_down = _laya_down()
+    missing = laya_down or verdict.get("second_opinion") == "missing"
+
+    if policy == "card":
+        if laya_down:
+            return OUTWARD, "the Laya classifier is configured but unavailable"
+        if verdict.get("gated"):
+            return OUTWARD, "the action classifier judged it outward"
+        if missing:
+            return OUTWARD, "the Laya classifier could not check it in time"
+        return INTERNAL, "a connector read"
+
+    # The keyword scan's own verdict, not Laya's severity: its words decide.
+    kw = union.get("keyword") or verdict.get("policy_class")
+    if kw and kw != INTERNAL:
+        return OUTWARD, "the keyword scan judged it outward"
+    private = _args_private(a)
+    if missing:
+        if private:
+            return OUTWARD, ("Laya could not check it in time and its arguments "
+                             "look private")
+        return OBSERVE, ("a read at a connected service; Laya could not check it "
+                         "in time and the PII check found nothing private in it")
+    also = union.get("also") or {}
+    if also.get("changes_outside") == "yes":
+        return OUTWARD, "Laya judged that it changes something outside"
+    if private or (also.get("carries_private") == "personal" and _has_free_text(a)):
+        return OUTWARD, "private data would leave in its arguments"
+    return OBSERVE, ("a read at a connected service: it reaches outside, "
+                     "nothing private leaves")
 
 
 # ── 3. Grants for work nobody is watching ───────────────────────────────────
@@ -797,6 +905,11 @@ def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
     if klass == "forbidden":
         return Verdict("deny", klass, f"not allowed: {why}")
     if klass == INTERNAL:
+        return Verdict("card" if tainted else "allow", klass, why)
+    if klass == OBSERVE:
+        # A read at a connected service: runs unasked, receipted as observe.
+        # A detail from outside content could be data being smuggled out
+        # through the query, so that still goes to a card.
         return Verdict("card" if tainted else "allow", klass, why)
     ok, integrity = verify_claws()
     if not ok:

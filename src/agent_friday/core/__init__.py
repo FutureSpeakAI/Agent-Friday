@@ -2532,6 +2532,14 @@ DEFAULT_SETTINGS = {
     # to ~/.friday/decisions.jsonl, changing no verdict. "" is off. This is how
     # a candidate earns the seat above; it is not itself a gate.
     "decision_shadow": "laya",
+    # A read at a service the owner connected (a connector tool whose name
+    # leads with get/list/search/show ...): "observe" runs it without a card,
+    # labelled outward and receipted, unless its arguments would carry private
+    # data out or Laya / the keyword scan flags it (governance/action_gate
+    # _connector_read). "card" asks about every one, as before 2026-09-29.
+    # The owner: "I think it should also be a high priority that we don't
+    # constantly pester the user with approval cards for every single command."
+    "outward_reads": "observe",
     # Optional chat preparation experiment. Alternate ordinary and assisted
     # turns; Laya only prepares read schemas/context and never grants actions.
     "laya_pilot_enabled": False,
