@@ -994,6 +994,22 @@ Backstage tab (what is running, on which address, its init status, the
 coverage table, the last snapshot). Sized honestly in §10: 24–34 agent-days,
 not the earlier 5.
 
+**S5, floci (2026-09-30, code audit done, run pending):** a new lead, an
+MIT-licensed Java 25 / Quarkus emulator that is a LocalStack drop-in on
+:4566 with no account, token or feature gates. The code audit found no
+telemetry, no update check and no built-in external endpoint; its outbound
+clients serve emulated features that call endpoints the user configures, and
+Docker image pulls happen only for Docker-backed services. S3, DynamoDB,
+SQS, SNS, Secrets Manager, Cognito/OIDC, IAM/STS, KMS, SSM, EventBridge and
+Step Functions run in-process; **Lambda runs only in Docker**. No Windows
+binary is published: a Windows user builds it (JDK 25, or GraalVM 25 for the
+~13 MiB native binary) or uses Docker. Conditional recommendation, pending
+the RAM measurement, the egress-blocked run and the parity suites that need
+a JDK 25 here: **wrap it** behind Friday's gateway as the Phase 5 backend,
+keep Friday's own subprocess runner for Lambda-style functions, and re-size
+Phase 5 from 24–34 to about 10–14 agent-days. Details in
+`docs/design/research/2026-09-30-s5-floci-spike.md`.
+
 **"Go live"** swaps one or more stand-in addresses for real endpoints and
 real credentials. It is an outward card that names each service and each
 credential. Going back to stand-ins is one click and needs no card.
@@ -1881,6 +1897,7 @@ Effort is in focused agent-days with review. Each phase is shippable alone.
 | Phase | What | Effort | Depends on |
 |---|---|---|---|
 | **S1–S3** | Spikes, which report and build nothing. **S1 (done, PASS):** esbuild-wasm plus pinned packages built a React app inside the opaque-origin frame on the owner's machine; every isolation probe was blocked; esm.sh is the one package host (unpkg serves raw CommonJS and fails); cold start about 25 s, warm about 2 s; the CSP needs `'wasm-unsafe-eval'` and `worker-src blob:`. **S2 (done):** Node, npm and a dev server run in an AppContainer without admin and cannot read the profile, but host-to-container loopback is dropped in every capability combination; a pipe bridge is the viable shape (§4.4). **S3 (done, 2026-09-30; research doc `2026-09-30-s3-openshell-wsl-spike.md`):** OpenShell 0.1.2 runs on the owner's WSL 2 + Docker Desktop after two fixes that are the experimental part: the Docker driver's supervisor callback must be Docker Desktop's host-gateway (`grpc_endpoint = "https://192.168.65.254:17670"`, gateway bound on all addresses) and the server certificate needs that IP as a SAN. Sandbox Ready in 3 s warm; the workload runs network-none and unprivileged; deny-by-default holds at connect(); `policy update --add-endpoint` applies live in 98 ms with no restart. Telemetry: off via `OPENSHELL_TELEMETRY_ENABLED=false`, propagated to supervisors, zero packets to the NVIDIA endpoint in a 40-minute capture on the distro side; the sandbox side is covered by a per-process connection log only (a Windows capture needs admin). Docker Desktop itself calls `api.docker.com`, `hub.docker.com`, `desktop.docker.com` and `sessions.bugsnag.com` at every start with analytics off, which has no switch outside Docker Business: a finding for every Docker Desktop tier. Not completed: the HTTP-level allow/refuse/revoke with a curl image (cut short by an external `wsl --shutdown`, twice); policy through the Python SDK is UNVERIFIED. Docker Desktop's VM costs about 2.1 GB of host RAM at idle. Nothing needed admin or a reboot. Windows Sandbox is absent; the WHP library is present; microsandbox's Windows path needs the WHP feature enabled, which needs admin to check | 3 | nothing |
+| **S5** | **Research (audit done, run pending the owner's JDK 25):** floci audited for telemetry (none in the code), coverage (six of the salon's seven services in-process; Lambda needs Docker), Windows (build it yourself; no published binary) and licence (MIT). Conditional recommendation: wrap it as the Phase 5 backend, re-sizing Phase 5 to about 10–14 days | 1 | nothing |
 | **S4** | **Research (done):** LocalStack's archived Apache-2.0 tree studied for the gateway, the provider model over moto, persistence and init hooks, coverage tracking, parity testing, licence reuse and the telemetry modules never to import. Verdicts in §4.6.1 and the research doc | 1 | nothing |
 | **1** | **The artifact panel in every chat** (first increment built, on `feat/salon-phase1`): `artifact_put`, the fenced-block fallback, the store with off-record honoured, versions, hand edits as versions, the frame (§4.3), the six kinds, both HTML files, the Settings toggle. Left: the broker's read-only subset (moves to Phase 2 with the bundle broker), the live check after merge (§9.5) | 7–8 | S1 (for `html` apps; the other kinds don't wait) |
 | **1b** | **Publish to web** (§4.10.1): the static bundle packer, the PII scan and licence check, the one card with its spoken form, the "This PC" adapter (separate static server, own tunnel hostname, read-only `published/`, no route to Friday, strict headers, kill switch, reachability status, adversarial tests), the Cloudflare Pages and GitHub Pages adapters on the user's account, the FutureSpeak slot, republish, versions, take-down, the "Made with Friday" mark | 6–8 | 1 |
