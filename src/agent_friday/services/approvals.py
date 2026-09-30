@@ -162,6 +162,10 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
     FAILS CLOSED (treats the action as "outward"/gated) rather than silently
     letting an unclassifiable action auto-proceed."""
     table = effective_policy_table()
+    # Whether the union gate's second opinion answered: "answered", "missing"
+    # (it fell back to its keyword half), or None when no union decided. A
+    # caller whose rule needs both opinions reads this; the verdict does not.
+    second_opinion = None
     if action_class and action_class in table:
         cls = action_class
     else:
@@ -180,15 +184,19 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
         # decisions module itself is unavailable.
         try:
             from agent_friday.services import decisions as _dec
-            cls = _dec.decide("policy_class", action_description,
-                              context={"caller": "approvals.classify"}).answer
+            dec = _dec.decide("policy_class", action_description,
+                              context={"caller": "approvals.classify"})
+            cls = dec.answer
+            second_opinion = {"or": "answered", "keyword-only": "missing"}.get(
+                (getattr(dec, "detail", None) or {}).get("union"))
         except Exception as e:
             _log.warning("decision seam unavailable (%s) — failing closed "
                          "(treating as gated)", e)
             cls = "outward"
     policy = table.get(cls) or table["outward"]
     return {"policy_class": cls, "gated": bool(policy.get("gated")),
-            "expires_seconds": policy.get("expires_seconds")}
+            "expires_seconds": policy.get("expires_seconds"),
+            "second_opinion": second_opinion}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

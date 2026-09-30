@@ -500,8 +500,13 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
         try:
             from agent_friday.services import approvals as _ap
             desc = f"{tool_name} {json.dumps(a, default=str)[:300]}"
-            if _ap.classify(desc).get("gated"):
+            verdict = _ap.classify(desc)
+            if verdict.get("gated"):
                 return OUTWARD, "the action classifier judged it outward"
+            # Loaded but busy or too slow is the union unable to answer too:
+            # its keyword half alone calls every read verb internal.
+            if verdict.get("second_opinion") == "missing":
+                return OUTWARD, "the Laya classifier could not check it in time"
         except Exception as e:
             return OUTWARD, f"the action classifier failed ({e})"
         return INTERNAL, "a connector read"
