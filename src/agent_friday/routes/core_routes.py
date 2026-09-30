@@ -305,6 +305,12 @@ def laya_pilot_status():
         return api_error(e, "Couldn't read the Laya chat pilot")
 
 
+#: How recent a missed Laya answer must be to mark the gate degraded. Long
+#: enough to survive a Settings visit after the action, short enough that one
+#: busy burst at boot does not colour the panel all day.
+_RECENT_MISS_S = 15 * 60
+
+
 @core_bp.route('/api/decisions/gate_status')
 def decisions_gate_status():
     """What is actually deciding which actions need the owner's sign-off.
@@ -383,6 +389,24 @@ def decisions_gate_status():
         out["explain"] = (
             "Both scanners are serving. An action is held for your sign-off "
             "when either one says it should be.")
+        # Loaded is not the same as answering. A busy or slow scorer leaves a
+        # question to the keyword scan alone; a recent one is degraded too.
+        lay = out["laya"] or {}
+        last = lay.get("last_missed_ts")
+        missed = {k: int(v) for k, v in (lay.get("missed") or {}).items() if v}
+        n = sum(missed.values())
+        if (out["selected_backend"] == "laya-union" and last and n
+                and _time.time() - float(last) < _RECENT_MISS_S):
+            out["degraded"] = True
+            out["explain"] = (
+                "Laya is loaded but could not answer %d time%s since Friday "
+                "started (%s), most recently %d min ago. Each of those was "
+                "decided by the keyword scan alone, and a connector read among "
+                "them waited for you instead of running."
+                % (n, "" if n == 1 else "s",
+                   ", ".join("%s %d" % (k.replace("_", " "), v)
+                             for k, v in sorted(missed.items())),
+                   int((_time.time() - float(last)) // 60)))
         slow = int((out["laya"] or {}).get("slow_answers") or 0)
         if slow:
             # A laptop CPU can be too slow for the second opinion. The gate

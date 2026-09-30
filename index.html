@@ -45890,7 +45890,7 @@ function ApprovalScannerPanel({
     style: {
       color: degraded ? '#ffb347' : 'rgba(255,255,255,0.55)'
     }
-  }, laya.loading ? '◌ Laya is loading' : degraded ? '▲ Laya is not answering' : laya.ready ? '● Both scanners serving' : '● Keyword scan serving'), st && st.explain && /*#__PURE__*/React.createElement("div", {
+  }, laya.loading ? '◌ Laya is loading' : degraded ? (laya.ready ? '▲ Laya missed recent answers' : '▲ Laya is not answering') : laya.ready ? '● Both scanners serving' : '● Keyword scan serving'), st && st.explain && /*#__PURE__*/React.createElement("div", {
     style: {
       color: 'rgba(255,255,255,0.42)',
       marginTop: 4

@@ -300,6 +300,10 @@ def status() -> dict:
         "calibration": calibration_report(),
         # Repeated questions answered from memory instead of rescored.
         "answer_cache": answer_cache_stats(),
+        # Union questions the keyword scan answered alone, by reason.
+        "missed": dict(_missed),
+        "last_missed_ts": _last_missed_ts,
+        "last_missed_reason": _last_missed_reason,
     }
 
 
@@ -615,6 +619,42 @@ class LayaTooSlow(TimeoutError):
     """Laya did not answer within `_SCORE_TIMEOUT_S`."""
 
 
+class LayaBusy(LayaTooSlow):
+    """Every scoring slot was still held by an earlier question."""
+
+
+# ---------------------------------------------------------------------------
+#  MISSED ANSWERS
+# ---------------------------------------------------------------------------
+#
+# Every union question Laya does not answer is decided by the keyword half.
+# That fallback is safe and must never be silent, so each one is counted here
+# by reason, and the time of the latest is kept so the gate status can say the
+# second opinion has been missing RECENTLY, not merely at some point since boot.
+
+MISS_REASONS = ("loading", "not_loaded", "busy", "slow", "error")
+_missed = dict.fromkeys(MISS_REASONS, 0)
+_last_missed_ts: Optional[float] = None
+_last_missed_reason: Optional[str] = None
+_missed_lock = threading.Lock()
+
+
+def _missed_one(reason: str) -> None:
+    global _last_missed_ts, _last_missed_reason
+    with _missed_lock:
+        _missed[reason] = _missed.get(reason, 0) + 1
+        _last_missed_ts = time.time()
+        _last_missed_reason = reason
+
+
+def reset_missed() -> None:
+    global _last_missed_ts, _last_missed_reason
+    with _missed_lock:
+        for k in list(_missed):
+            _missed[k] = 0
+        _last_missed_ts = _last_missed_reason = None
+
+
 def _answer(state: str) -> tuple:
     """Direct and shadow scoring share admission with bounded approvals."""
     hit = _remembered(state)
@@ -622,7 +662,7 @@ def _answer(state: str) -> tuple:
         return hit
     release = _reserve_scoring(pilot=False)
     if release is None:
-        raise LayaTooSlow("laya is still busy with earlier actions")
+        raise LayaBusy("laya is still busy with earlier actions")
     try:
         return _answer_unreserved(state)
     finally:
@@ -645,7 +685,7 @@ def _answer_bounded(state: str) -> tuple:
     if release is None:
         _slow_answers += 1
         _last_slow_ts = time.time()
-        raise LayaTooSlow("laya is still busy with earlier actions (too slow on this PC)")
+        raise LayaBusy("laya is still busy with earlier actions (too slow on this PC)")
     box: Dict[str, Any] = {}
     done = threading.Event()
 
@@ -782,6 +822,7 @@ def union_backend(question: str, state: str, **kw):
         # live in one place rather than being re-decided at each call site.
         if not _loading:
             start_warming()
+        _missed_one("loading" if _loading else "not_loaded")
         return kw_answer, None, dict(kw_detail, union="keyword-only",
                                      reason="laya still loading"
                                      if _loading else "laya not loaded")
@@ -790,9 +831,11 @@ def union_backend(question: str, state: str, **kw):
         # the second opinion into a stall. Too slow is answered like loading.
         severity, conf, detail = _answer_bounded(state)
     except LayaTooSlow as e:
+        _missed_one("busy" if isinstance(e, LayaBusy) else "slow")
         return kw_answer, None, dict(kw_detail, union="keyword-only",
                                      reason=exception_text(e))
     except Exception as e:
+        _missed_one("error")
         return kw_answer, None, dict(kw_detail, union="keyword-only",
                                      reason="laya error: %s" % e)
 

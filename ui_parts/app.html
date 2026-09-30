@@ -14729,7 +14729,7 @@ function ApprovalScannerPanel({s,save}){
       background:degraded?'rgba(255,179,71,0.08)':'rgba(255,255,255,0.03)',
       border:`1px solid ${degraded?'rgba(255,179,71,0.25)':'rgba(255,255,255,0.06)'}`}}>
       <span style={{color:degraded?'#ffb347':'rgba(255,255,255,0.55)'}}>
-        {laya.loading?'◌ Laya is loading':degraded?'▲ Laya is not answering':(laya.ready?'● Both scanners serving':'● Keyword scan serving')}
+        {laya.loading?'◌ Laya is loading':degraded?(laya.ready?'▲ Laya missed recent answers':'▲ Laya is not answering'):(laya.ready?'● Both scanners serving':'● Keyword scan serving')}
       </span>
       {st&&st.explain&&<div style={{color:'rgba(255,255,255,0.42)',marginTop:4}}>{st.explain}</div>}
       {laya.error&&!laya.ready&&<div style={{color:'rgba(255,255,255,0.3)',marginTop:4}}>{String(laya.error).slice(0,160)}</div>}
