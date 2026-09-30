@@ -51,6 +51,7 @@ import os
 import threading
 import time
 import weakref
+from collections import OrderedDict
 from typing import Any, Dict, Optional
 
 _log = logging.getLogger("friday.laya")
@@ -297,6 +298,8 @@ def status() -> dict:
         # and whether the checkpoint shipped a temperature that had
         # to be clamped.
         "calibration": calibration_report(),
+        # Repeated questions answered from memory instead of rescored.
+        "answer_cache": answer_cache_stats(),
     }
 
 
@@ -522,6 +525,74 @@ def try_start_pilot_score(state: str, questions: dict, callback) -> str:
     return "started"
 
 
+# ---------------------------------------------------------------------------
+#  ANSWER MEMORY
+# ---------------------------------------------------------------------------
+#
+# The same model asked the same question about the same state gives the same
+# answer, and the gate asks the same things constantly: the Grants screen
+# classifies every connector read tool each time it opens, about thirty
+# questions in one burst. Scoring each afresh held both slots and sent most of
+# a burst to the keyword half ("still busy"), which is the second opinion
+# going missing for no reason but repetition.
+#
+# So an answer is remembered, per loaded model instance, and a remembered one
+# is served without taking a scoring slot. It is Laya's own verdict, so the
+# union's add-only property is unchanged. Only real answers are remembered: an
+# error, a timeout or a keyword-only fallback never is. A scoring that timed
+# out still finishes on its thread, and its answer serves the next ask.
+
+_ANSWER_CACHE_MAX = 512
+_answer_cache: "OrderedDict[str, tuple]" = OrderedDict()
+_answer_cache_owner = None
+_answer_cache_lock = threading.Lock()
+_answer_cache_hits = 0
+_answer_cache_misses = 0
+
+
+def clear_answer_cache() -> None:
+    global _answer_cache_owner, _answer_cache_hits, _answer_cache_misses
+    with _answer_cache_lock:
+        _answer_cache.clear()
+        _answer_cache_owner = None
+        _answer_cache_hits = _answer_cache_misses = 0
+
+
+def answer_cache_stats() -> dict:
+    with _answer_cache_lock:
+        return {"size": len(_answer_cache), "max": _ANSWER_CACHE_MAX,
+                "hits": _answer_cache_hits, "misses": _answer_cache_misses}
+
+
+def _remembered(state: str):
+    """A previous answer from the model loaded NOW, or None."""
+    global _answer_cache_hits, _answer_cache_misses
+    key = str(state or "")
+    with _answer_cache_lock:
+        hit = (_answer_cache.get(key)
+               if _answer_cache_owner is not None and _answer_cache_owner is _agent
+               else None)
+        if hit is None:
+            _answer_cache_misses += 1
+            return None
+        _answer_cache.move_to_end(key)
+        _answer_cache_hits += 1
+    choice, conf, detail = hit
+    return choice, conf, dict(detail, cached=True)
+
+
+def _remember(agent, state: str, answer: tuple) -> None:
+    global _answer_cache_owner
+    with _answer_cache_lock:
+        if _answer_cache_owner is not agent:
+            _answer_cache.clear()
+            _answer_cache_owner = agent
+        _answer_cache[str(state or "")] = answer
+        _answer_cache.move_to_end(str(state or ""))
+        while len(_answer_cache) > max(1, int(_ANSWER_CACHE_MAX)):
+            _answer_cache.popitem(last=False)
+
+
 def _answer_unreserved(state: str) -> tuple:
     agent = _agent
     if agent is None:
@@ -532,10 +603,12 @@ def _answer_unreserved(state: str) -> tuple:
     if choice not in ("hard", "soft"):
         raise ValueError("laya returned %r, not hard/soft" % (choice,))
     conf = a.get("confidence")
-    return choice, (float(conf) if conf is not None else None), {
+    answer = (choice, (float(conf) if conf is not None else None), {
         "source": "laya", "model": MODEL_ID,
         "probabilities": a.get("probabilities") or {},
-    }
+    })
+    _remember(agent, state, answer)
+    return answer
 
 
 class LayaTooSlow(TimeoutError):
@@ -544,6 +617,9 @@ class LayaTooSlow(TimeoutError):
 
 def _answer(state: str) -> tuple:
     """Direct and shadow scoring share admission with bounded approvals."""
+    hit = _remembered(state)
+    if hit is not None:
+        return hit
     release = _reserve_scoring(pilot=False)
     if release is None:
         raise LayaTooSlow("laya is still busy with earlier actions")
@@ -562,6 +638,9 @@ def _answer_bounded(state: str) -> tuple:
     ever-growing backlog.
     """
     global _slow_answers, _last_slow_ts
+    hit = _remembered(state)
+    if hit is not None:
+        return hit
     release = _reserve_scoring(pilot=False)
     if release is None:
         _slow_answers += 1
