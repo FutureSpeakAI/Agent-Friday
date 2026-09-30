@@ -5867,8 +5867,11 @@ function apiFetch(url, opts) {
     return pending;
   }
   window.fridayRefreshSessionToken = refreshSessionToken;
-  setInterval(refreshSessionToken, 3600000);
-  document.addEventListener('visibilitychange', () => {
+  if (typeof setInterval === 'function') {
+    const refreshTimer = setInterval(refreshSessionToken, 3600000);
+    if (refreshTimer && typeof refreshTimer.unref === 'function') refreshTimer.unref();
+  }
+  if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', () => {
     if (!document.hidden && Date.now() - lastRefresh > 600000) refreshSessionToken();
   });
   function replayable(body) {
@@ -6766,11 +6769,84 @@ if (typeof document !== 'undefined') {
   document.addEventListener('click', kwChip);
   document.addEventListener('keydown', kwChip);
 }
+/* MARKUP ALLOWLIST. Reply text is data: whatever marked (or the fallback) emits
+   is rebuilt tag by tag from an allowlist before it reaches innerHTML, so a
+   model reply, a fetched page or an imported note can never run script in
+   Friday's own origin. Anything that is not a whole, allowed tag is escaped. */
+const FRIDAY_MD_TAGS = new Set('p br hr h1 h2 h3 h4 h5 h6 strong b em i u s del ins code pre blockquote ul ol li a img span div table thead tbody tfoot tr th td sup sub details summary kbd mark small'.split(' '));
+const FRIDAY_MD_ATTRS = new Set(['class', 'title', 'href', 'target', 'rel', 'src', 'alt', 'role', 'tabindex', 'style', 'colspan', 'rowspan', 'align', 'start', 'width', 'height', 'open', 'data-kw-page', 'data-kw-query']);
+function fridaySafeUrl(v, isImg) {
+  const t = String(v).replace(/[\u0000- \u007f-\u009f]+/g, '').toLowerCase();
+  if (/^(https?:|mailto:)/.test(t)) return !(isImg && t.startsWith('mailto:'));
+  if (isImg && /^data:image\/(png|jpe?g|gif|webp);/.test(t)) return true;
+  return !/^[a-z][a-z0-9+.\-]*:/.test(t);
+}
+function fridaySanitizeMarkup(html) {
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const dec = s => String(s).replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp|colon|newline|tab);?/gi, (m, e) => {
+    const k = e.toLowerCase();
+    if (k[0] === '#') {
+      const n = k[1] === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
+      return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : '';
+    }
+    return ({amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', colon: ':', newline: '\n', tab: '\t'})[k];
+  });
+  const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:\s+[^\s"'<>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/y;
+  const ATTR = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  const src = String(html == null ? '' : html);
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const lt = src.indexOf('<', i);
+    if (lt < 0) {
+      out += src.slice(i);
+      break;
+    }
+    out += src.slice(i, lt);
+    TAG.lastIndex = lt;
+    const m = TAG.exec(src);
+    if (!m || !FRIDAY_MD_TAGS.has(m[2].toLowerCase())) {
+      out += '&lt;';
+      i = lt + 1;
+      continue;
+    }
+    const name = m[2].toLowerCase();
+    if (m[1]) {
+      out += '</' + name + '>';
+      i = TAG.lastIndex;
+      continue;
+    }
+    let attrs = '';
+    let a;
+    ATTR.lastIndex = 0;
+    while ((a = ATTR.exec(m[3])) !== null) {
+      const an = a[1].toLowerCase();
+      if (!FRIDAY_MD_ATTRS.has(an)) continue;
+      const raw = a[2] !== undefined ? a[2] : a[3] !== undefined ? a[3] : a[4] !== undefined ? a[4] : '';
+      const val = dec(raw);
+      if ((an === 'href' || an === 'src') && !fridaySafeUrl(val, an === 'src')) continue;
+      if (an === 'src' && name !== 'img') continue;
+      if (an === 'href' && name !== 'a') continue;
+      if (an === 'style' && /url\s*\(|expression|@import|\\|behavior|javascript/i.test(val)) continue;
+      attrs += ' ' + an + '="' + esc(val) + '"';
+    }
+    out += '<' + name + attrs + (m[4] ? ' /' : '') + '>';
+    i = TAG.lastIndex;
+  }
+  return out;
+}
+/* A reply that is a whole HTML document is shown as source text: it is never
+   inlined into this page. Running a generated page is what the sandboxed
+   artifact frame is for. */
+function fridayHtmlDocumentSource(doc) {
+  const esc = String(doc).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return '<pre class="friday-doc-source"><code>' + esc + '</code></pre>';
+}
 function renderFridayMarkdown(mdText, opts) {
   const compact = !!(opts && opts.compact);
   const src = mdText == null ? '' : String(mdText);
   if (!src.trim()) return '<div class="friday-doc' + (compact ? ' compact' : '') + '"></div>';
-  if (/^\s*<(?:!DOCTYPE|html|head|body)\b/i.test(src)) return src;
+  if (/^\s*<(?:!DOCTYPE|html|head|body)\b/i.test(src)) return '<div class="friday-doc' + (compact ? ' compact' : '') + '">' + fridayHtmlDocumentSource(src) + '</div>';
   const psrc = fridayCitationize(src);
   let body;
   try {
@@ -6786,6 +6862,7 @@ function renderFridayMarkdown(mdText, opts) {
     body = fridayFallbackMd(psrc);
   }
   body = body.replace(/<a\s+(?![^>]*\btarget=)([^>]*)>/gi, '<a target="_blank" rel="noopener" $1>');
+  body = fridaySanitizeMarkup(body);
   return '<div class="friday-doc' + (compact ? ' compact' : '') + '">' + body + '</div>';
 }
 if (typeof window !== 'undefined') {

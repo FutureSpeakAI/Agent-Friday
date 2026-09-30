@@ -158,7 +158,7 @@ def refusal(method, headers, *, host, is_local, token_valid=False, own_origins=(
 # Sensitive surface for `frame_refusal`. Everything Friday exposes to script is
 # under these prefixes; the health probe is the one deliberately public read.
 SENSITIVE_PREFIXES = ("/api/", "/ws/")
-PUBLIC_READ_PREFIXES = ("/api/health",)
+PUBLIC_READ_PATHS = frozenset({"/api/health"})
 # Loads a document cannot read back: images, media, fonts, tracks.
 PASSIVE_DESTINATIONS = frozenset({"image", "audio", "video", "track", "font"})
 # Routes whose whole job is to be shown inside a sandboxed frame.
@@ -182,7 +182,7 @@ def frame_refusal(method, headers, path, *, host, is_local, own_origins=()):
     sensitive route, whatever it holds. Not the session token's job: a token
     proves who has it, not what document is using it."""
     path = path or ""
-    if not path.startswith(SENSITIVE_PREFIXES) or path.startswith(PUBLIC_READ_PREFIXES):
+    if not path.startswith(SENSITIVE_PREFIXES) or path.rstrip("/") in PUBLIC_READ_PATHS:
         return None
     if not _is_sandboxed_or_foreign(headers, host, is_local, own_origins):
         return None

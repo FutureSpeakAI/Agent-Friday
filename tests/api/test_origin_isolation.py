@@ -325,3 +325,11 @@ def test_a_refusal_names_its_cause_in_a_code_the_page_can_act_on(client):
     assert r.get_json()["code"] == "cross_site"
     r = _req(client, SENSITIVE_GET, headers=SANDBOXED)
     assert r.get_json()["code"] == "sandboxed_or_foreign_frame"
+
+
+def test_only_the_exact_health_probe_is_public(client):
+    """A sibling under /api/health is not the probe; a sandboxed frame is refused."""
+    r = _req(client, "/api/health/capabilities", headers=SANDBOXED)
+    assert _reason(r) == origin_gate.FRAME_REASON
+    r = _req(client, "/api/healthz", headers=SANDBOXED)
+    assert _reason(r) == origin_gate.FRAME_REASON
