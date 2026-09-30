@@ -288,7 +288,7 @@ Phone width: the table becomes cards, one per role; the two buttons pin to the b
 
 ## 8. Voice
 
-Per `docs/reference/voice-tool-contract.md` (**TREE**): one tool, declared in `_VOICE_LIVE_TOOLS`, routed through `_governed`, ring 1 in `governance/action_gate.py` because it reaches nothing outside this machine (the catalogue read is anonymous and cached; the tool itself never triggers a download).
+Spoken phrasings that reach it: "make me a model soup", "what models can this computer run", "re-check my computer" (the onboarding spec's appendix C names the first). Per `docs/reference/voice-tool-contract.md` (**TREE**): one tool, declared in `_VOICE_LIVE_TOOLS`, routed through `_governed`, ring 1 in `governance/action_gate.py` because it reaches nothing outside this machine (the catalogue read is anonymous and cached; the tool itself never triggers a download).
 
 ```python
 ("model_soup_advise",
