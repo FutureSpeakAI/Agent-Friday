@@ -68,7 +68,26 @@
       return window.fridayBusSubscribe(m => { if (m && m.type === 'workspace_bundle_changed' && m.workspace_id === wsId) load(); });
     }, [wsId, load]);
     useEffect(() => { if (ref.current && window.fridayAttachFrame) { try { window.fridayAttachFrame(ref.current); } catch (e) {} } }, [doc]);
-    return h('div', { className: 'ws-bundle', 'data-bundle-ws': wsId, style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
+    // Fills the window body whatever its own height resolves to: an iframe
+    // with no definite height falls back to 150px, and a workspace is not a
+    // thumbnail. The body's height is measured and followed.
+    const wrap = useRef(null);
+    const [height, setHeight] = useState(null);
+    useEffect(() => {
+      const el = wrap.current; if (!el) return undefined;
+      const host = el.closest('.fwin-body, .ws-tab, .ws-standalone') || el.parentElement;
+      if (!host) return undefined;
+      const measure = () => {
+        const cs = getComputedStyle(host);
+        const hgt = host.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+        if (hgt > 80) setHeight(hgt);
+      };
+      measure();
+      if (typeof ResizeObserver === 'undefined') return undefined;
+      const ro = new ResizeObserver(measure); ro.observe(host);
+      return () => ro.disconnect();
+    }, []);
+    return h('div', { ref: wrap, className: 'ws-bundle', 'data-bundle-ws': wsId, style: { display: 'flex', flexDirection: 'column', minHeight: 0, height: height ? height : '100%' } },
       err ? h('div', { style: { padding: 14, fontSize: 12, color: '#f8b4c8' } }, err) : null,
       doc == null && !err ? h('div', { style: { padding: 14, fontSize: 12, color: 'rgba(255,255,255,0.55)' } }, 'Loading your workspace…') : null,
       doc != null ? h('iframe', { key: ver && ver.current ? ver.current : 'v', ref: ref, sandbox: SANDBOX, srcDoc: doc, referrerPolicy: 'no-referrer',
@@ -141,7 +160,7 @@
       versions.map(e => {
         const current = v.current === e.sha256;
         return h('div', { key: e.sha256, 'data-version': e.sha256, 'data-current': current ? '1' : '0', style: { borderLeft: '2px solid ' + (current ? ACCENT : 'rgba(0,212,255,0.3)'), paddingLeft: 10, marginBottom: 10 } },
-          h('div', { style: { fontSize: 12, fontFamily: MONO } }, 'version ' + short(e.sha256) + (e.step ? ' · step ' + e.step : '') + (current ? ' · in use now' : '')),
+          h('div', { style: { fontSize: 12, fontFamily: MONO, color: current ? ACCENT : '#e6eef8' } }, 'version ' + short(e.sha256) + (e.step ? ' · step ' + e.step : '') + (current ? ' · in use now' : '')),
           h('div', { style: dim }, when(e.at) + ' · by ' + (e.by || 'you') + (e.approval_id ? ' · approved' : '')),
           current ? null : h('button', { style: Object.assign({}, btn, { marginTop: 4 }), disabled: !!busy, 'data-rollback': e.sha256, onClick: () => roll(e.sha256) }, busy === e.sha256 ? '…' : 'Roll back to this'));
       }),

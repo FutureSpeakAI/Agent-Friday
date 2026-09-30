@@ -420,8 +420,8 @@ def improve(ws_id: str) -> dict:
     if is_native(ws_id):
         from agent_friday.services import workspace_registry as reg
         raise NativeWorkspace("%s is part of Friday herself. Improving it means editing Friday's own source, "
-                              "which is the self-edit of spec section 7 and is not built yet; the bundle "
-                              "workspaces under \"Mine\" can be improved now." % (reg.label(ws_id) or ws_id))
+                              "which is not built yet. The workspaces you built in the salon, under Mine in the "
+                              "dock, can be improved now." % (reg.label(ws_id) or ws_id))
     rec = get(ws_id)
     if rec is None:
         raise KeyError(ws_id)
