@@ -27,7 +27,7 @@ Killing it manually forfeits that.
 The same function reaps orphans the plan does *not* want, which is what stops
 one leaked seat accumulating per restart.
 
-## There is no auto-restart
+## There is no auto-restart of a dead server
 
 `friday_tray._watchdog` polls every five seconds and notifies when the server
 dies, but deliberately does not resurrect it: whether Friday restarts herself
@@ -39,6 +39,23 @@ makes it treat the port as healthy — and `server.py` holds a single-instance
 lock, so a manual start cannot produce a duplicate. But the tray then does not
 own the process, and its Restart item no-ops until the tray is quit and
 relaunched. Prefer the menu.
+
+### The one exception: a wedged server
+
+A server that is alive but cannot answer is a different case from a dead one.
+`hang_watchdog.AcceptProbe` connects to the server's own port every 10 seconds
+and completes a tiny HTTP request. Six consecutive misses with no request
+completing in between (a slow server that is still finishing work is not a
+miss) write forensics and a receipt to `~/.friday/logs`
+(`wedge-forensics-*.txt`, `wedge-heal-*.json`) and exit with code 75. The tray
+restarts a server that leaves with that code, through the same
+`restart_server` path as the menu item, and says so in a notification. Both
+the probe and the tray cap this at three times an hour; after that the tray
+reports and stops restarting.
+
+The exit does not touch `llama-server`; the restarted server adopts it as
+described above. A server started outside the tray still exits and writes the
+receipt, but nothing restarts it.
 
 ## Reload the browser tab
 

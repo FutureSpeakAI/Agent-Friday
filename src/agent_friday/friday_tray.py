@@ -62,6 +62,16 @@ SERVER_STDERR_LOG = friday_home() / "server_stderr.log"
 # else 3000), overridden by the port the running server recorded after
 # binding, which differs when the requested port was busy. Resolved on every
 # use, because the server may publish a new port after the tray starts.
+# Exit code services/hang_watchdog.EXIT_WEDGED: the server could not answer its
+# own port and left so the tray can restart it.
+WEDGE_EXIT_CODE = 75
+WEDGE_HEALS_PER_HOUR = 3
+
+
+def _is_wedge_exit(returncode) -> bool:
+    return returncode == WEDGE_EXIT_CODE
+
+
 def _port() -> int:
     return server_port()
 
@@ -473,7 +483,9 @@ class FridayTray:
         auto-restart here on purpose — resurrecting a crashed process on a
         loop can mask a repeating fault, and whether Friday restarts
         herself is the user's call, not this watchdog's. A notification is
-        not that call; it's just telling them.
+        not that call; it's just telling them. The one exception is a server
+        that exits with WEDGE_EXIT_CODE: it was alive but could not answer, it
+        wrote a receipt, and the restart is capped per hour.
         """
         while True:
             time.sleep(5)
@@ -484,6 +496,13 @@ class FridayTray:
                 crashed = self.running and not alive
                 self.running = alive
                 self._refresh_menu()
+                if crashed and proc is not None and _is_wedge_exit(proc.returncode):
+                    # The server proved it could not answer and left on
+                    # purpose, with a receipt (services/hang_watchdog
+                    # AcceptProbe). That is a wedged server, not a dead one:
+                    # restarting it is the documented path, not a resurrection.
+                    self._heal_wedged(proc.returncode)
+                    continue
                 if crashed and self.icon is not None:
                     try:
                         self.icon.notify(
@@ -495,6 +514,28 @@ class FridayTray:
                         )
                     except Exception:
                         pass
+
+    def _heal_wedged(self, code) -> None:
+        """Restart after a wedge exit, at most WEDGE_HEALS_PER_HOUR times an
+        hour: a server that wedges repeatedly is a fault to look at, and the
+        tray then says so instead of looping."""
+        now = time.time()
+        self._wedge_heals = [t for t in getattr(self, "_wedge_heals", [])
+                             if now - t < 3600]
+        if len(self._wedge_heals) >= WEDGE_HEALS_PER_HOUR:
+            msg = ("Friday's server has stopped answering %d times this hour. "
+                   "I have stopped restarting it; check %s."
+                   % (len(self._wedge_heals), SERVER_STDERR_LOG))
+        else:
+            self._wedge_heals.append(now)
+            msg = ("Friday stopped answering, so I restarted her. "
+                   "The details are in the logs folder.")
+            threading.Thread(target=self.restart_server, daemon=True).start()
+        if self.icon is not None:
+            try:
+                self.icon.notify(msg, "Friday Desktop")
+            except Exception:
+                pass
 
     def _meeting_status(self) -> dict:
         try:

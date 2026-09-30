@@ -398,3 +398,54 @@ planning fault. **When a warning cannot be cleared by its reader, suspect the
 warning before you restyle it.**
 
 ---
+
+## A listener that is up but not accepting
+
+Symptom: the port is in LISTEN, TCP connects to it fail or hang, the process
+is alive at 0% CPU, and the scheduler is still logging. Every other watchdog
+reads healthy, because they watch the event loop and this is the accept path.
+
+Evidence from the captured incident (Python stacks from `py-spy dump`, port
+table, process thread count): the main thread sat in `serve_forever` →
+`process_request` → `threading.Thread.start` → `Event.wait`. The per-connection
+handler thread never appeared among the process's 26 Python threads, while the
+process held 312 OS threads.
+
+Root cause as far as the evidence reaches: the accept loop of werkzeug's
+threaded server **depends on thread creation succeeding**. `Thread.start`
+blocks until the new thread runs its first line of Python and signals. If the
+OS thread is created but never gets to run Python, the accept loop waits
+forever and every later connection queues in the kernel until the backlog
+fills. That the thread never ran points at something below Python (a lock held
+during thread attach on Windows, or native pool exhaustion); the Python-only
+stacks cannot say which. The 312-to-26 gap says native libraries had created
+roughly 285 threads Python cannot see (OpenMP, MKL, ONNX and CTranslate2 pools
+size themselves to the core count). The native stack was not captured, so the
+lower-level cause remains a hypothesis, and the forensics below capture it the
+next time.
+
+What the design now guarantees, whatever the lower-level cause:
+
+1. **The accept path never creates a thread.** `services/pooled_server.py`
+   pre-starts a fixed worker pool and the accept loop only hands connections to
+   a bounded queue; a full queue is answered with an immediate 503.
+2. **Streams cannot take the pool.** SSE and WebSocket requests are admitted
+   against a cap that leaves a floor of workers for ordinary requests.
+3. **Native thread growth is bounded at boot** (`services/thread_caps.py`), and
+   `hang_watchdog.status()` reports OS threads next to Python threads so a
+   growing gap is visible.
+4. **A listener that stops answering is detected by being a client.**
+   `hang_watchdog.AcceptProbe` completes an HTTP request against its own port
+   from a thread that was started at boot, and on repeated failure captures
+   forensics (Python stacks, `py-spy dump --native` when installed, OS thread
+   count, port table), writes a receipt, and exits with code 75 for the tray to
+   restart. See `docs/reference/restarting-friday.md` for how this sits with
+   "there is no auto-restart".
+
+The lesson generalizes: any component whose liveness depends on an operation
+that can block outside your code (creating a thread, opening a file on a dead
+share) needs that dependency removed from its critical path, and a probe that
+exercises the whole path from the outside, because the inside cannot see it.
+
+Installing `py-spy` (`pip install py-spy`) is what turns the forensics from
+Python-only into native.

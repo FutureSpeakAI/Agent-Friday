@@ -15,6 +15,14 @@ import sys
 import threading
 import logging
 
+# Native thread pools are sized when their library first loads, so the caps
+# go in before anything heavy is imported (services/thread_caps.py).
+try:
+    from agent_friday.services import thread_caps as _thread_caps
+    _thread_caps.apply()
+except Exception:
+    pass
+
 # No console windows from child processes. Friday shells out constantly — git,
 # powershell, ffmpeg, nvidia-smi, the credential helpers, the MCP clients — and
 # on Windows each one flashes a console unless told otherwise, and dozens of
@@ -1243,9 +1251,20 @@ if __name__ == '__main__':
     except Exception as _warm_err:
         print(f"  Voice warm: unavailable ({_warm_err})")
 
+    # The accept loop must never depend on creating a thread: serve from a
+    # fixed pre-started worker pool (services/pooled_server.py), and probe our
+    # own port so a listener that stops answering is healed, not silent.
     try:
-        app.run(host=bind_host, port=_port, debug=False, threaded=True,
-                ssl_context=_ssl_context)
+        from agent_friday.services import hang_watchdog as _hw2
+        from agent_friday.services import pooled_server as _ps
+        _hw2.AcceptProbe(
+            _port, tls=bool(_ssl_context), progress_fn=_ps.completed_count,
+        ).start()
+    except Exception as _probe_err:
+        print(f"  Accept probe: skipped ({_probe_err})")
+    try:
+        from agent_friday.services import pooled_server as _pooled
+        _pooled.serve(bind_host, _port, app, ssl_context=_ssl_context)
     except OSError as _bind_err:
         # The single-instance lock above catches almost all of this now, but
         # stays as a backstop for a race the lock can't see — e.g. something
