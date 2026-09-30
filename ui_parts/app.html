@@ -642,6 +642,9 @@ function fridayRunActions(actions){
       }else if(a.type==='podcast'){
         // Voice or chat steering the podcast player (podcast_tools.podcast_play).
         fridayPodcast(a.op||'play',a.episode_id,{t:a.t});
+      }else if(a.type==='landing'){
+        // show_my_day: the start screen's cluster now, or when it shows on its own.
+        window.dispatchEvent(new CustomEvent('friday:landing',{detail:{summon:!!a.summon,mode:a.mode||null,via:a.via||'friday'}}));
       }else if(a.type==='open_last_source'){
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
@@ -719,6 +722,153 @@ function fridayCountdownWhen(c, now) {
   return 'in ' + days + ' days';
 }
 /* fridayCountdownWhen:end */
+/* fridayLandingJudge:begin */
+// The start screen's cluster (the countdowns, the transparency layer, the chat
+// field, the mic and Start my day) shows when it is useful and fades when it
+// is not (docs/design/active/unified-shell.md §10.2). One pure rule set over
+// what the page already knows: no network call and no model. It answers
+// {show, reason, live, until, next}: `live` while a reason to show holds and
+// `until` when that reason runs out (Infinity while a state such as the
+// pointer resting on it holds), and `next`, when the answer can change with no
+// new input.
+const FRIDAY_LANDING = {
+  idleMs: 5 * 60 * 1000, // back after this long without input, or away from the page
+  newsMs: 60 * 1000, // a return, a new day, opening the page or a summons holds this long
+  dwellMs: 30 * 1000, // then it stays this long: the dock's own idle time
+  hoverMs: 500, // the pointer resting on its area this long
+  marks: [60, 10], // minutes before a timed countdown: within the hour, and at ten
+  markMin: 5 // how long each mark holds
+};
+const FRIDAY_LANDING_MODES = ['smart', 'always', 'never'];
+const FRIDAY_LANDING_MODE_NAMES = {
+  smart: 'Smart (recommended)',
+  always: 'Always',
+  never: 'Never'
+};
+function fridayLandingJudge(s) {
+  const L = FRIDAY_LANDING;
+  const now = s.now;
+  let next = now + 60000;
+  const at = t => {
+    if (t > now && t < next) next = t;
+  };
+  const news = t => t > 0 && now - t < L.newsMs;
+  const out = (show, reason, until) => ({ show, reason, live: !!until, until: until || 0, next });
+  if (s.mode === 'never' && !news(s.summonedAt)) return out(false, 'set to show only when asked');
+  if (s.windows > 0) return out(false, s.front ? 'working in ' + s.front : 'a workspace is open');
+  if (news(s.summonedAt)) {
+    at(s.summonedAt + L.newsMs);
+    return out(true, 'you asked', s.summonedAt + L.newsMs);
+  }
+  if (s.mode === 'always') return out(true, 'set to always show', Infinity);
+  // Typing in it or the pointer resting on it outranks talking and the chat
+  // tray: while voice is on, the cluster's mic is the stop button.
+  if (s.typing) return out(true, 'typing in it', Infinity);
+  if (s.hoverSince > 0) {
+    if (now - s.hoverSince >= L.hoverMs) return out(true, 'the pointer is on it', Infinity);
+    at(s.hoverSince + L.hoverMs);
+  }
+  if (s.voice) return out(false, 'talking');
+  if (s.chat) return out(false, 'in the chat');
+  const moments = [[s.dayStartAt, 'first look today'], [s.returnedAt, 'back after ' + fridayLandingAway(s.awayMs)], [s.openedAt, 'just opened']];
+  for (const [t, why] of moments) {
+    if (news(t)) {
+      at(t + L.newsMs);
+      return out(true, why, t + L.newsMs);
+    }
+  }
+  for (const c of s.items || []) {
+    if (!c || !c.at) continue;
+    const due = c.at * 1000;
+    for (const m of L.marks) {
+      const from = due - m * 60000, to = due - (m - L.markMin) * 60000;
+      if (now >= from && now < to) {
+        at(to);
+        return out(true, (c.label || 'something') + ' in ' + Math.max(1, Math.ceil((due - now) / 60000)) + ' min', to);
+      }
+      at(from);
+    }
+  }
+  if (s.lastReasonAt > 0 && now - s.lastReasonAt < L.dwellMs) {
+    at(s.lastReasonAt + L.dwellMs);
+    return out(true, s.lastReason || 'a moment more', 0);
+  }
+  return out(false, 'nothing needs you here', 0);
+}
+function fridayLandingAway(ms) {
+  const m = Math.round((ms || 0) / 60000);
+  return m < 120 ? m + ' min' : Math.round(m / 60) + ' h';
+}
+// The moments the judge weighs, as a page that has just opened knows them.
+function fridayLandingClock(now) {
+  return {
+    openedAt: now,
+    lastInputAt: now,
+    hiddenAt: 0,
+    returnedAt: 0,
+    awayMs: 0,
+    dayStartAt: 0,
+    day: new Date(now).toDateString(),
+    hoverSince: 0,
+    summonedAt: 0,
+    lastReasonAt: 0,
+    lastReason: '',
+    liveUntil: 0
+  };
+}
+// One judgement. The reason shown last held until now or until it ran out,
+// and the dwell counts from then.
+function fridayLandingStep(st, sees, now) {
+  if (st.liveUntil) st.lastReasonAt = Math.max(st.lastReasonAt, Math.min(now, st.liveUntil));
+  const r = fridayLandingJudge(Object.assign({}, sees, st, { now }));
+  st.liveUntil = r.live ? r.until : 0;
+  if (r.live) {
+    st.lastReasonAt = Math.max(st.lastReasonAt, now);
+    st.lastReason = r.reason;
+  }
+  return r;
+}
+// Input on the page: true when it is a return after the idle time, or the
+// first input of a new day.
+function fridayLandingInput(st, now) {
+  let changed = false;
+  const day = new Date(now).toDateString();
+  if (day !== st.day) {
+    st.day = day;
+    st.dayStartAt = now;
+    changed = true;
+  }
+  if (now - st.lastInputAt >= FRIDAY_LANDING.idleMs) {
+    st.returnedAt = now;
+    st.awayMs = now - st.lastInputAt;
+    changed = true;
+  }
+  st.lastInputAt = now;
+  return changed;
+}
+// The page hidden, or shown again: back after the idle time is a return.
+function fridayLandingVisible(st, visible, now) {
+  if (!visible) {
+    st.hiddenAt = now;
+    return false;
+  }
+  const away = st.hiddenAt ? now - st.hiddenAt : 0;
+  st.hiddenAt = 0;
+  if (away < FRIDAY_LANDING.idleMs) return false;
+  st.returnedAt = now;
+  st.awayMs = away;
+  st.lastInputAt = now;
+  return true;
+}
+// The two keys that reach the cluster's controls while it is hidden (§10.5):
+// Ctrl+/ (Cmd+/) for a chat field, Ctrl+Shift+Space for voice.
+function fridayLandingKey(e) {
+  if (!e || !(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  if (!e.shiftKey && (e.key === '/' || e.code === 'Slash')) return 'chat';
+  if (e.shiftKey && (e.code === 'Space' || e.key === ' ')) return 'voice';
+  return null;
+}
+/* fridayLandingJudge:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
 function FridayCountdowns({items}){
@@ -18677,6 +18827,7 @@ function SettingsTabAppearance({
 }) {
   const dz = ['off', 'subtle', 'full'];
   const cur = s.studio_dazzle || 'full';
+  const lm = FRIDAY_LANDING_MODES.indexOf(s.landing_mode) >= 0 ? s.landing_mode : 'smart';
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "Dock",
     desc: "Which workspaces the dock shows, and in what order."
@@ -18689,6 +18840,42 @@ function SettingsTabAppearance({
     save: save,
     part: "dock"
   }))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Start screen",
+    desc: "When your day shows over the scene: the countdowns, the chat field, the mic and Start my day."
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Show my day",
+    desc: "Smart shows it when it is useful (back at your desk, the start of the day, something coming up within the hour, the pointer resting on it) and fades it while you work or talk. Never shows it only when you ask. Either way Ctrl+/ reaches the chat field and Ctrl+Shift+Space the mic."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Show my day",
+    style: {
+      display: 'flex',
+      gap: 6
+    }
+  }, FRIDAY_LANDING_MODES.map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "aria-checked": lm === v,
+    "data-landing-mode": v,
+    className: 'settings-btn' + (lm === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 16px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        landing_mode: v
+      });
+      window.dispatchEvent(new CustomEvent('friday:landing', {
+        detail: {
+          mode: v,
+          via: 'settings'
+        }
+      }));
+    }
+  }, FRIDAY_LANDING_MODE_NAMES[v]))))), /*#__PURE__*/React.createElement(StSection, {
     title: "3D effects"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "3D dazzle",
@@ -19361,6 +19548,10 @@ function App(){
   const[notifAnchor,setNotifAnchor]=useState({top:40,right:12});
   const[topBarHidden,setTopBarHidden]=useState(false);
   const[dockHidden,setDockHidden]=useState(false);
+  // The start screen's cluster: shown or hidden, and why (fridayLandingJudge).
+  const [landing, setLanding] = useState({ show: true, reason: 'just opened' });
+  const landingElRef = useRef(null);
+  const landingAreaRef = useRef(null);
   // ── Setup Wizard ──
   const[setupDone,setSetupDone]=useState(true); // optimistic — flip after check
   // "Run the setup chat again", from Settings > General > Your profile.
@@ -21133,11 +21324,11 @@ function App(){
      a tab or a chat window cannot open a workspace window, and every held
      stream is one of the six connections a browser allows to one address. */
   const deskRef = useRef({});
-  deskRef.current = { openWins, focusWin, chatOpen };
+  deskRef.current = { openWins, focusWin, chatOpen, landing };
   const deskSoonRef = useRef(null);
   useEffect(() => {
     if (deskSoonRef.current) deskSoonRef.current();
-  }, [openWins, focusWin, chatOpen]);
+  }, [openWins, focusWin, chatOpen, landing.show, landing.reason]);
   useEffect(() => {
     const tabWs = STANDALONE_WS && STANDALONE_WS !== 'settings' ? STANDALONE_WS : null;
     const kind = tabWs ? 'tab' : window.__FRIDAY_CHROME__ === 'chat' ? 'chat' : 'desktop';
@@ -21176,7 +21367,8 @@ function App(){
         focused: document.hasFocus(),
         open: open.map(win),
         focused_window: focused,
-        chat: { open: kind === 'chat' || !!d.chatOpen }
+        chat: { open: kind === 'chat' || !!d.chatOpen },
+        landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined
       };
     };
     const post = (url, body, extra) => apiFetch(url, Object.assign({
@@ -21233,6 +21425,14 @@ function App(){
         fridayRunActions(acts);
       } catch (e) {
         answer({ opened: false, matched: false, note: 'the page could not run it: ' + e });
+        return;
+      }
+      if (acts.some(a => a && a.type === 'landing')) {
+        // show_my_day: answer with what the cluster did, once the page has judged.
+        setTimeout(() => {
+          const l = deskRef.current.landing || {};
+          answer({ opened: true, matched: null, landing: { show: !!l.show, reason: l.reason || '' } });
+        }, 250);
         return;
       }
       if (!ws) {
@@ -21554,6 +21754,173 @@ function App(){
       if(d.id)apiFetch('/api/desktop/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:d.id,result:{applied:true,workspace:d.workspace,page:layoutTab?'tab':'desktop'}})}).catch(()=>{});
     };
     window.addEventListener('friday:layout',on);return()=>window.removeEventListener('friday:layout',on)},[]);
+  // The start screen's cluster (unified-shell.md §10.2): fridayLandingJudge
+  // decides from what this page already knows, each time that changes and at
+  // least once a minute. A change is one line in the console and, through the
+  // state this page reports, one line in the server's log.
+  const landingMode = FRIDAY_LANDING_MODES.indexOf(agentSettings.landing_mode) >= 0 ? agentSettings.landing_mode : 'smart';
+  const landingClock = useRef(null);
+  if (!landingClock.current) landingClock.current = fridayLandingClock(Date.now());
+  const landingSees = useRef({});
+  landingSees.current = {
+    mode: landingMode,
+    windows: openWins.size,
+    front: focusWin && openWins.has(focusWin) ? (WS.find(w => w.id === focusWin) || {}).label || '' : '',
+    voice: !!voiceOn,
+    chat: !!chatOpen,
+    items: countdowns
+  };
+  const landingJudge = useRef(() => {});
+  useEffect(() => {
+    landingJudge.current();
+  }, [landingMode, openWins, focusWin, voiceOn, chatOpen, countdowns]);
+  // Hidden, the cluster takes no focus and no screen reader's attention.
+  useEffect(() => {
+    const el = landingElRef.current;
+    if (el) {
+      if (landing.show) el.removeAttribute('inert');else el.setAttribute('inert', '');
+    }
+  }, [landing.show]);
+  const summonLanding = () => window.dispatchEvent(new CustomEvent('friday:landing', { detail: { summon: true, via: 'palette' } }));
+  const setLandingMode = mode => {
+    saveAgentSettings({ landing_mode: mode });
+    window.dispatchEvent(new CustomEvent('friday:landing', { detail: { mode, via: 'palette' } }));
+  };
+  // Ctrl+/: the cluster's chat field when the desktop shows no window (the
+  // cluster comes with it), else the chat tray's.
+  const focusChatField = () => {
+    if (!STANDALONE_WS && openWins.size === 0) {
+      window.dispatchEvent(new CustomEvent('friday:landing', { detail: { summon: true, focus: true, via: 'key' } }));
+      return;
+    }
+    setChatOpen(true);
+    setTimeout(() => {
+      const f = document.querySelector('.chat-panel [data-chat-input]');
+      if (f) f.focus();
+    }, 60);
+  };
+  const landingDo = useRef({});
+  landingDo.current = { toggleVoice, focusChatField };
+  useEffect(() => {
+    const onKey = e => {
+      const k = fridayLandingKey(e);
+      if (!k) return;
+      if (e.target && e.target.closest && e.target.closest('.monaco-editor, .cm-editor, .CodeMirror')) return;
+      e.preventDefault();
+      try {
+        console.info('[keys] ' + (k === 'voice' ? 'voice' : 'chat field'));
+      } catch (_) {}
+      if (k === 'voice') landingDo.current.toggleVoice();else landingDo.current.focusChatField();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  useEffect(() => {
+    if (STANDALONE_WS) return;
+    const st = landingClock.current;
+    let timer = null;
+    const judge = () => {
+      const now = Date.now();
+      const el = landingElRef.current;
+      const r = fridayLandingStep(st, Object.assign({}, landingSees.current, {
+        typing: !!(el && document.activeElement && el.contains(document.activeElement))
+      }), now);
+      setLanding(p => {
+        if (p.show !== r.show) {
+          try {
+            console.info('[landing] ' + (r.show ? 'shown' : 'hidden') + ': ' + r.reason);
+          } catch (_) {}
+        }
+        return p.show === r.show && p.reason === r.reason ? p : { show: r.show, reason: r.reason };
+      });
+      clearTimeout(timer);
+      timer = setTimeout(judge, Math.min(60000, Math.max(200, r.next - now)));
+    };
+    landingJudge.current = judge;
+    const onMove = e => {
+      let changed = fridayLandingInput(st, Date.now());
+      const area = landingAreaRef.current;
+      let over = false;
+      if (area) {
+        const b = area.getBoundingClientRect();
+        over = e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom;
+      }
+      if (over !== st.hoverSince > 0) {
+        st.hoverSince = over ? Date.now() : 0;
+        changed = true;
+      }
+      if (changed) judge();
+    };
+    const onInput = () => {
+      if (fridayLandingInput(st, Date.now())) judge();
+    };
+    const onFocus = () => setTimeout(judge, 0);
+    const onVisible = () => {
+      if (fridayLandingVisible(st, document.visibilityState === 'visible', Date.now())) judge();
+    };
+    const onLanding = e => {
+      const d = e && e.detail || {};
+      if (d.mode && FRIDAY_LANDING_MODES.indexOf(d.mode) >= 0) {
+        setAgentSettings(a => Object.assign({}, a, { landing_mode: d.mode }));
+        landingSees.current = Object.assign({}, landingSees.current, { mode: d.mode });
+      }
+      if (d.summon) st.summonedAt = Date.now();
+      judge();
+      if (d.focus) setTimeout(() => {
+        const f = landingElRef.current && landingElRef.current.querySelector('[data-chat-input]');
+        if (f) f.focus();
+      }, 40);
+    };
+    window.addEventListener('pointermove', onMove, { passive: true });
+    window.addEventListener('pointerdown', onInput, true);
+    window.addEventListener('keydown', onInput, true);
+    window.addEventListener('wheel', onInput, { passive: true });
+    document.addEventListener('focusin', onFocus);
+    document.addEventListener('focusout', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('friday:landing', onLanding);
+    judge();
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerdown', onInput, true);
+      window.removeEventListener('keydown', onInput, true);
+      window.removeEventListener('wheel', onInput);
+      document.removeEventListener('focusin', onFocus);
+      document.removeEventListener('focusout', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('friday:landing', onLanding);
+    };
+  }, []);
+  const landingCommands = [{
+    id: 'show-my-day',
+    ico: '\uD83D\uDCC5',
+    label: 'Show my day',
+    meta: 'Start screen',
+    aka: ['day', 'my day', 'countdowns', 'start screen', 'landing'],
+    run: summonLanding
+  }].concat(FRIDAY_LANDING_MODES.map(v => ({
+    id: 'landing-' + v,
+    ico: landingMode === v ? '\u2713' : '\u25CB',
+    label: 'Start screen: ' + FRIDAY_LANDING_MODE_NAMES[v],
+    meta: landingMode === v ? 'Now' : 'Setting',
+    aka: ['show my day', 'start screen', 'landing', v],
+    run: () => setLandingMode(v)
+  })), [{
+    id: 'chat-field',
+    ico: '\u2328\uFE0F',
+    label: 'Chat field',
+    meta: 'Ctrl+/',
+    aka: ['type', 'ask', 'chat field', 'input', 'focus'],
+    run: focusChatField
+  }, {
+    id: 'voice',
+    ico: '\uD83C\uDFA4',
+    label: voiceOn ? 'Stop voice' : 'Start voice',
+    meta: 'Ctrl+Shift+Space',
+    aka: ['mic', 'microphone', 'voice', 'talk', 'speak'],
+    run: toggleVoice
+  }]);
   // The shell every page shares, the desktop and a workspace tab alike: the top
   // bar, the chat tray, notifications, settings, Quick Draft, the command palette
   // and the modals they open (docs/design/active/unified-shell.md). Defined
@@ -22184,7 +22551,7 @@ function App(){
         {qdResult.split(/\n\n+/).filter(Boolean).map((p,i)=><p key={i} style={{fontFamily:'Inter',fontSize:i===0?13:12,lineHeight:1.75,color:i===0?'#e8e8f0':'#ccc',marginBottom:10,whiteSpace:'pre-wrap'}}>{p}</p>)}
       </div>}
     </div>;
-  const shellPalette = paletteOpen&&<CommandPalette commands={layoutCommands.concat(barCommands)} onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>;
+  const shellPalette = paletteOpen&&<CommandPalette commands={layoutCommands.concat(landingCommands,barCommands)} onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>;
   const shellQuickPost = <QuickPostHost/>;
   const shellPodcast = <PodcastPlayer/>;
   const shellTaskModal = taskResultModal&&<div onClick={()=>setTaskResultModal(null)} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -22243,8 +22610,8 @@ function App(){
         bottom must clear the dock (icons + group labels, ~78px) plus its upward
         box-shadow so the input never sits under the menubar. Matches the
         chat-panel's dock-clearance constant (116px). */}
-    {noWindows&&<div style={{position:'fixed',left:0,right:0,bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
-      <div style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
+    {!STANDALONE_WS&&<div ref={landingElRef} className={'landing-cluster'+(landing.show?'':' hidden')} aria-hidden={landing.show?undefined:'true'} data-landing={landing.show?'shown':'hidden'} data-testid="landing-cluster" style={{position:'fixed',left:0,right:0,bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
+      <div ref={landingAreaRef} style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
       <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron, sans-serif',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
       <div style={{position:'relative',zIndex:1,marginBottom:10}}><FridayLockup size={11}/></div>
       <FridayCountdowns items={countdowns}/>

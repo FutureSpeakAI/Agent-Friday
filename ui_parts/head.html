@@ -109,6 +109,8 @@ window.addEventListener('DOMContentLoaded',function(){
     --fr-text-2xl: 26px;
     --fr-track-display: 0.06em;
     --fr-track-label: 0.15em;
+    --fr-reveal: 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+    --fr-reveal-time: 0.35s;
 }
 /* brand-tokens:end */
     </style>
@@ -280,7 +282,7 @@ window.addEventListener('DOMContentLoaded',function(){
             background: linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 80%, transparent 100%);
             backdrop-filter: blur(16px);
             border-bottom: 1px solid rgba(255,255,255,0.06);
-            transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+            transition: transform var(--fr-reveal);
         }
         .top-bar.hidden { transform: translateY(-100%); }
         /* The bar's height, for anything laid out under it (a workspace tab). */
@@ -372,9 +374,19 @@ window.addEventListener('DOMContentLoaded',function(){
             padding: 6px 12px 8px;
             background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 80%, transparent 100%);
             backdrop-filter: blur(16px); border-top: 1px solid rgba(255,255,255,0.06);
-            transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+            transition: transform var(--fr-reveal);
         }
         .dock.hidden { transform: translateY(100%); }
+        /* The start screen's cluster fades and sinks as the top bar and the
+           dock slide; hidden, it takes no pointer, no focus and no screen
+           reader's attention (unified-shell.md §10.3). */
+        .landing-cluster {
+            transition: opacity var(--fr-reveal), transform var(--fr-reveal), visibility 0s linear 0s;
+        }
+        .landing-cluster.hidden {
+            opacity: 0; transform: translateY(12px); visibility: hidden;
+            transition: opacity var(--fr-reveal), transform var(--fr-reveal), visibility 0s linear var(--fr-reveal-time);
+        }
         .dock-btn {
             display: flex; flex-direction: column; align-items: center; gap: 2px;
             padding: 6px 12px 4px; background: none; border: 1px solid transparent;

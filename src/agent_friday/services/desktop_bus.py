@@ -15,6 +15,7 @@ the desktop holds the stream, since only it can open a workspace window.
 from __future__ import annotations
 
 import itertools
+import logging
 import queue as _queue
 import threading
 import time
@@ -31,6 +32,7 @@ _LOCK = threading.Lock()
 _CLIENTS: dict[str, dict] = {}          # client id -> record
 _PENDING: dict[str, dict] = {}          # command id -> {"event", "ack"}
 _SEQ = itertools.count(1)
+log = logging.getLogger(__name__)
 
 
 def _record(client_id: str) -> dict:
@@ -76,6 +78,12 @@ def report_state(client_id: str, state: dict) -> bool:
             _CLIENTS.pop(client_id, None)
             return False
         rec = _record(client_id)
+        before = (rec.get("state") or {}).get("landing") or {}
+        landing = state.get("landing") if isinstance(state.get("landing"), dict) else {}
+        if landing and bool(landing.get("shown")) != bool(before.get("shown")):
+            # The start screen's cluster came or went: one line with the page's reason.
+            log.info("landing %s: %s", "shown" if landing.get("shown") else "hidden",
+                     str(landing.get("reason") or "")[:120])
         manifest = state.pop("manifest", None)
         if isinstance(manifest, dict) and manifest:
             rec["manifest"], rec["manifest_at"] = manifest, now

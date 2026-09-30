@@ -2450,6 +2450,10 @@ DEFAULT_SETTINGS = {
     # The workspaces the owner set to fill the screen with the chat tray docked
     # beside them (docs/design/active/unified-shell.md §5): id -> "fullscreen_chat".
     "workspace_layouts": {},
+    # When the start screen's cluster (countdowns, chat field, mic, Start my
+    # day) shows (unified-shell.md §10.4): "smart" when it is useful, "always"
+    # whenever no workspace is open, "never" only when asked (show_my_day).
+    "landing_mode": "smart",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
     # most tasks; Opus 5 remains available for max-reasoning work. Fallback
     # chain: Sonnet 5 → Fable 5 → Opus 5 → Sonnet 5 → Haiku 4.5

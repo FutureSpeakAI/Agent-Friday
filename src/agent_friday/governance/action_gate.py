@@ -175,10 +175,11 @@ INTERNAL_TOOLS = frozenset({
     "update_task", "search_contacts", "read_wiki", "search_wiki", "search_news",
     "open_url", "navigate", "switch_model", "list_sending_accounts",
     # The owner's own desktop: navigate_to opens an item in Friday's UI,
-    # set_workspace_layout lays a workspace out (fullscreen with chat) and
+    # set_workspace_layout lays a workspace out (fullscreen with chat),
+    # show_my_day shows the start screen's cluster or sets when it shows, and
     # check_situation reads state the server already holds. None reaches
     # anyone else.
-    "navigate_to", "check_situation", "set_workspace_layout",
+    "navigate_to", "check_situation", "set_workspace_layout", "show_my_day",
     "get_career_pipeline", "get_briefing", "spawn_task", "propose_wiki_update",
     # Voice's hand-over to the full agent: a background task like spawn_task,
     # whose own actions come back through this checkpoint one by one.

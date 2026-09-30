@@ -108,6 +108,11 @@ TYPE_SCALE = {
     "2xl": "26px",
 }
 
+#: How the top bar, the dock and the start screen's cluster come and go:
+#: one duration and easing, so they move as one (unified-shell.md §10.3).
+REVEAL_TIME = "0.35s"
+REVEAL = REVEAL_TIME + " cubic-bezier(0.2, 0.8, 0.3, 1)"
+
 #: Every `--fr-*` custom property, in the order the :root block declares them.
 TOKENS = {
     "--fr-cyan": CYAN,
@@ -139,6 +144,8 @@ TOKENS = {
     **{f"--fr-text-{step}": size for step, size in TYPE_SCALE.items()},
     "--fr-track-display": "0.06em",
     "--fr-track-label": "0.15em",
+    "--fr-reveal": REVEAL,
+    "--fr-reveal-time": REVEAL_TIME,
 }
 
 # -- names -------------------------------------------------------------------

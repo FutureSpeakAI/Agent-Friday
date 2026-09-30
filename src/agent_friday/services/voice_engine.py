@@ -374,6 +374,14 @@ _VOICE_LIVE_TOOLS = [
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
+    ("show_my_day",
+     "Show the start screen's cluster now ('show my day'): their countdowns, the "
+     "chat field, the mic and Start my day. With mode, set when it shows on its own "
+     "('always show my day' is always): smart (when useful; the default), always, or "
+     "never (only when asked). Their own screen, so no approval is needed. DAY_SHOWN: "
+     "say so in a few words. DAY_NOT_SHOWN: say why in plain words. DAY_MODE: say what "
+     "it will do now. The countdowns are not in the result: do not guess them.",
+     {"mode": ("string", "smart, always or never; empty to show it now.")}, []),
     ("set_workspace_layout",
      "Show a workspace fullscreen with the chat tray docked beside it ('make this "
      "fullscreen with chat'), or back to normal. It is their own screen, so no "
@@ -1274,6 +1282,9 @@ def _voice_tool_run(name, args, send_client, session=None):
         if name == "set_workspace_layout":
             from agent_friday.services import agent as _ag
             return _governed(name, _ag._tool_set_workspace_layout, args)
+        if name == "show_my_day":
+            from agent_friday.services import agent as _ag
+            return _governed(name, _ag._tool_show_my_day, args)
         if name in ("navigate_to", "check_situation"):
             from agent_friday.services import agent as _ag
             _fn = (_ag._tool_navigate_to if name == "navigate_to"

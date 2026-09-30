@@ -720,6 +720,11 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "pin": {"type": "boolean"}}}},
+    {"name": "show_my_day", "description": "Show the start screen's cluster now: the owner's countdowns (from their calendar, commitments and wiki), the chat field, the mic and Start my day ('show my day'). With mode, set when it shows on its own: smart (when useful, fading while they work or talk; the default), always, or never (only when asked). It is the owner's own screen, so no approval is needed. DAY_SHOWN: say so in a few words. DAY_NOT_SHOWN: say why, in plain words. DAY_MODE: say what it will do now. The countdowns are not in the result; do not invent them.",
+     "input_schema": {"type": "object", "properties": {
+         "mode": {"type": "string", "enum": ["smart", "always", "never"],
+                  "description": "Leave empty to show it now; set to change when it shows on its own."}},
+         "required": []}},
     {"name": "set_workspace_layout", "description": "Show a workspace fullscreen with the chat tray docked beside it, or back to its normal layout. It is the owner's own screen, so no approval is needed, and the choice is remembered for that workspace. Leave workspace empty for the one in front. LAYOUT_OK means the screen applied it; LAYOUT_SAVED means it is remembered and applies when that workspace is next open.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id or name; empty for the one in front."},
@@ -2926,6 +2931,55 @@ def _tool_set_workspace_layout(inp):
         return "LAYOUT_OK:%s — %s %s." % (ws, label, how)
     return "LAYOUT_SAVED:%s — remembered: %s %s whenever it is open%s." % (
         ws, label, how, "" if sent else "; no Friday page is showing it now")
+
+
+#: How long show_my_day waits for the desktop page to say what it did.
+LANDING_ACK_S = 3.0
+LANDING_MODES = ("smart", "always", "never")
+_LANDING_MODE_WORDS = {
+    "smart": "shows your day when it is useful and fades while you work or talk",
+    "always": "shows your day whenever no workspace is open",
+    "never": "shows your day only when you ask",
+}
+
+
+def _tool_show_my_day(inp):
+    """Tool handler: the start screen's cluster (the owner's countdowns, the
+    chat field, the mic and Start my day) now, or how it decides to show
+    (settings.landing_mode: smart, always or never). The owner's own screen,
+    so no approval is needed.
+
+    With no mode it asks the desktop page to show the cluster and reports what
+    the page said: DAY_SHOWN, or DAY_NOT_SHOWN with the page's reason (a
+    workspace is open over it). A mode is saved first, then sent (DAY_MODE).
+    The countdowns themselves are never read back to the model: the page shows
+    them, so nothing about the owner's day leaves the machine to answer this."""
+    from agent_friday.core import _save_settings
+    from agent_friday.services import desktop_bus
+    inp = inp or {}
+    mode = str(inp.get("mode") or "").strip().lower()
+    if mode and mode not in LANDING_MODES:
+        return "DAY_FAIL: the start screen's mode is smart, always or never."
+    if mode:
+        _save_settings({"landing_mode": mode})
+    action = {"type": "landing", "summon": not mode, "via": "friday"}
+    if mode:
+        action["mode"] = mode
+    sent = desktop_bus.send([action], timeout=LANDING_ACK_S)
+    seen = (sent.get("ack") or {}).get("landing") or {}
+    if mode:
+        now = (" It is showing now." if seen.get("show") else "") if sent.get("acked") else (
+            "" if sent.get("delivered") else " No Friday desktop page is open now.")
+        return "DAY_MODE:%s — the start screen %s.%s" % (mode, _LANDING_MODE_WORDS[mode], now)
+    if not sent.get("delivered"):
+        return "DAY_NOT_SHOWN — no Friday desktop page is open to show it on."
+    if not sent.get("acked"):
+        return "DAY_NOT_SHOWN — the desktop page did not answer."
+    if seen.get("show"):
+        return "DAY_SHOWN — your day is on the start screen."
+    why = str(seen.get("reason") or "the page could not show it")
+    return "DAY_NOT_SHOWN — %s, so the start screen is covered." % why if why.startswith(
+        "working in") else "DAY_NOT_SHOWN — %s." % why
 
 
 def _organize_result(out):
@@ -5964,6 +6018,7 @@ CLAUDE_TOOL_HANDLERS = {
     "navigate_to": _tool_navigate_to,
     "check_situation": _tool_check_situation,
     "set_workspace_layout": _tool_set_workspace_layout,
+    "show_my_day": _tool_show_my_day,
     "organize_email": _tool_organize_email,
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
@@ -6371,6 +6426,8 @@ TOOL_RINGS: dict[str, int] = {
     "check_situation":      0,   # reads state the server already holds
     # Lays out the owner's own screen and remembers it; ring 1 like navigate_to.
     "set_workspace_layout": 1,
+    # Shows the start screen's cluster, or sets when it shows; the owner's own screen.
+    "show_my_day": 1,
     # Organizing the owner's things (services/item_actions). Files and wiki
     # pages are local changes with an undo; mail only raises a card, like
     # draft_email, and a card is decided by the owner's own words.

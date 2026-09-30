@@ -160,6 +160,11 @@ Tracking: `--fr-track-display` (`0.06em`) for Orbitron; `--fr-track-label`
 (`0.15em`) for uppercase micro-labels. Existing `px` literals in the interface
 are not rewritten here; new code uses the tokens.
 
+Motion: `--fr-reveal` (`0.35s cubic-bezier(0.2, 0.8, 0.3, 1)`) is how the top
+bar, the dock and the start screen's cluster come and go, so the three move as
+one. `--fr-reveal-time` (`0.35s`) is its duration alone, for a step that waits
+for the move to finish: a hidden cluster turns invisible once it has faded.
+
 ## The mark and the wordmark
 
 The mark is the neon rocket: `assets/icons/futurespeak.png` (a real alpha

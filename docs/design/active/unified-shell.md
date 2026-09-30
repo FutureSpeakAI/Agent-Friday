@@ -259,6 +259,14 @@ thinks the cluster is relevant, fading out and away when it is not, much like th
   calendar").
 - **Nothing here calls a model.** A failing source adds nothing and says so in the reply;
   the others still answer. The Family workspace asks for the personal kind only.
+- **A dated line is read carefully.** On a person's page only a field line counts
+  ("Birthday: March 14" on Dana's page is "Dana's birthday"; "Kids: Sam (birthday May 3)" is
+  not Dana's). On the owner's own pages it is theirs ("Your birthday"). On other personal
+  pages the line names the occasion ("Sam's birthday: May 3"). Names the owner asked Friday
+  to forget never show.
+- **The page says when in the server's words** (`fridayCountdownWhen` is
+  `countdowns.short_when`) and asks for the list again every five minutes; the panel cache
+  no longer holds it, since it is polled.
 
 ### 10.2 Relevant moments: the judge
 
@@ -276,8 +284,18 @@ and once a minute.
   - he summons it by voice ("show my day"), by the palette, or by a key;
   - he is typing in its field.
 - **It stays** while its reason holds, and 30 seconds after the last one ends: the dock's own
-  idle time.
+  idle time. An event (a return, the first use of the day, opening the page, a summons) holds
+  for a minute; each mark before a timed countdown (the hour, ten minutes) holds for five;
+  the pointer and typing hold while they last.
 - **Otherwise it is hidden.**
+- **The order the rules are read in:** `never` hides it unless summoned; an open workspace
+  window hides it, a summons included (the start screen is covered, and `show_my_day` says
+  so); a summons shows it, over voice and the chat tray; `always` shows it; typing in it or
+  the pointer resting on it shows it, over voice and the chat tray too (while voice is on,
+  the cluster's mic is the stop button); voice or the chat tray hide it; a new day, a
+  return, opening the page or a mark show it; then the dwell; then hidden.
+- **The cluster stays mounted on the desktop page** and fades. Until now it unmounted
+  whenever a window opened; a workspace tab has no cluster.
 - **One line per change**, in the page's console and in the server log through the state the
   page already reports: "landing shown: back after 14 min", "landing hidden: working in
   News".
@@ -286,8 +304,9 @@ and once a minute.
 
 The cluster fades and sinks a few pixels with the toolbar's own timing and easing,
 `0.35s cubic-bezier(0.2, 0.8, 0.3, 1)`. That becomes one token, `--fr-reveal`, used by the top
-bar, the dock and the cluster. Hidden, the cluster takes no pointer, no focus and no screen
-reader's attention.
+bar, the dock and the cluster, with `--fr-reveal-time` for its duration alone. Hidden, the
+cluster takes no pointer, no focus and no screen reader's attention: it is `inert`,
+`aria-hidden`, and invisible once it has faded.
 
 ### 10.4 The setting and the voice
 
@@ -296,13 +315,18 @@ reader's attention.
   tool contract (internal, ring 1).
 - **"Show my day"** shows the cluster now, for the dwell. "Always show my day" sets the mode.
 - **`never`** means never on its own; a summons still shows it.
+- **What the tool says:** `DAY_SHOWN`; `DAY_NOT_SHOWN` with the page's reason ("working in
+  News, so the start screen is covered", or no desktop page is open); `DAY_MODE` with what the
+  start screen will do now; `DAY_FAIL` for a mode that is not one of the three. The result
+  names nothing from the owner's day: the page shows the countdowns, so nothing about them
+  leaves the machine to answer "show my day".
 
 ### 10.5 Reachable while hidden
 
 - **Ctrl+/ (Cmd+/)** puts the cursor in a chat field: the cluster's when the desktop shows no
   window (summoning it), otherwise the chat tray's.
 - **Ctrl+Shift+Space** starts or stops voice, as the mic does.
-- Both are listed in the palette.
+- Both are listed in the palette. Inside a code editor, Ctrl+/ is left to the editor.
 
 ### 10.6 Verification
 
