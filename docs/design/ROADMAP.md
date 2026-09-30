@@ -171,6 +171,17 @@ building, and several resolve to "nothing to build."
    defects survived. Not a feature; it is the thing that makes the rest
    cheaper.
 
+**Added 2026-09-29: the avatar visual genome**
+(`active/avatar-visual-genome.md`). The spec converges the 2026-09-22 design
+with the uncommitted `evolve-genome.md` draft into one weekly, reversible,
+signed evolution that every structure expresses. Nothing is built. Its §11
+gives the phases and where they sit in the queue:
+- **A0 goes first, as filler.** It is one day of fixes to the live scene:
+  honouring reduced motion, capping the flash on structure changes, and a
+  bounds check on `/api/evolution`.
+- **A1-A3 run alongside the FridayWeaver-2 training.**
+- **A4 (the model authors) comes after that seat lands.**
+
 **Investigate before committing**
 
 9. **Deep research** — built but unreachable: no agent tool, no UI
