@@ -270,6 +270,9 @@ def test_mutations_with_the_live_checkout_as_cwd_are_blocked(live, command):
     "echo 'deploy-2b' > .claude/DEPLOY_LANE", "git worktree remove /tmp/x",
     "echo \"main -> branch is a clean fast-forward\"", "cat > \"$SCRATCH/notes.md\" <<'EOF'\nbody\nEOF",
     "ls .claude/DEPLOY_LANE 2>&1 | sed 's/^/x: /'", "git log -1 2>/dev/null",
+    "S=/tmp/x; mkdir -p \"$S\" && cd \"$S\" && git init -q . && git commit -q --allow-empty -m probe",
+    "rm \"$SCRATCH/old.log\"", "git -C \"$WT\" checkout -b x", "cp AGENTS.md \"$OUT/copy.md\"",
+    "cd $HOME/ftv/std && git checkout -b x",
 ])
 def test_reads_and_worktree_creation_in_the_live_checkout_are_allowed(live, command):
     ok, why = g.decide(bash(command, live["live"]), live["cfg"])

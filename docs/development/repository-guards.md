@@ -68,9 +68,12 @@ block it. Deterministic rules are enforced here instead of being asked for in
 a prompt. Each rule has tests in both directions in
 `tests/unit/test_friday_guard_hook.py`.
 
-1. **Full-suite pytest** in a checkout that carries `pytest_resource_guard.py`
-   is refused and pointed at `scripts/run_suite_guarded.py`. Named test files
-   and node ids run directly.
+1. **Every pytest call says its worker count**: `-n 0`, `-n 1` or `-n 2`
+   (or `-p no:xdist`). A call that says nothing, or says more, is refused in
+   every checkout, because `pytest.ini` defaults to `-n auto` and a worktree
+   on an older base has no `pytest_resource_guard.py` to cap it. A broad run
+   (directories, or nothing) in a Friday checkout is refused outright and
+   pointed at `scripts/run_suite_guarded.py`.
 2. **`wsl` and `docker`** are refused while free memory is under the floor.
    `wsl --shutdown`, listing and status queries never boot the VM and stay
    allowed.
@@ -86,18 +89,24 @@ a prompt. Each rule has tests in both directions in
    `:refspec`, `--mirror`, `--delete`, `commit --amend`, `filter-branch`,
    `filter-repo`, `replace`, `reflog expire`) are refused everywhere.
 
-Register it once per machine in `~/.claude/settings.json` so it applies to
-every checkout and worktree, whatever branch they are on. The path is
-machine-specific and stays out of the tree:
+Install it once per machine as a copy outside every checkout, so enforcement
+never depends on which branch a tree is on, and register that copy in
+`~/.claude/settings.json`, which reaches every checkout and worktree:
+
+```
+cp scripts/hooks/friday_guard.py ~/.claude/hooks/friday_guard.py
+```
+
+Refresh the copy after a change to the script lands. The registration:
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
       {"matcher": "Bash|PowerShell",
-       "hooks": [{"type": "command", "command": "python \"<path to a main checkout>/scripts/hooks/friday_guard.py\"", "timeout": 20}]},
+       "hooks": [{"type": "command", "command": "python \"<home>/.claude/hooks/friday_guard.py\"", "timeout": 20}]},
       {"matcher": "Edit|Write|MultiEdit|NotebookEdit",
-       "hooks": [{"type": "command", "command": "python \"<path to a main checkout>/scripts/hooks/friday_guard.py\"", "timeout": 20}]}
+       "hooks": [{"type": "command", "command": "python \"<home>/.claude/hooks/friday_guard.py\"", "timeout": 20}]}
     ]
   }
 }

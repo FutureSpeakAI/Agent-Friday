@@ -68,10 +68,10 @@ The live Friday, its local model seat and every test run share one PC.
 - One full test suite at a time, through `scripts/run_suite_guarded.py` and
   nothing else. It starts only with at least 12 GB of free RAM and 20 GB of
   free disk, takes `SUITE_LOCK`, caps xdist at two workers while the local
-  model seat is up, and writes a receipt from pytest's real exit code. The
-  guard hook blocks a bare full-suite pytest command; named test files run
-  directly, and `pytest_resource_guard.py` enforces the same floors inside
-  pytest.
+  model seat is up, and writes a receipt from pytest's real exit code. Every
+  other pytest call says `-n 0`, `-n 1` or `-n 2`; the guard hook blocks a
+  call that says nothing, whatever the checkout, because `pytest.ini`
+  defaults to `-n auto` and an older base has no guard to cap it.
 - No WSL or Docker start below the memory floor; the guard hook blocks them.
 
 ## Lessons

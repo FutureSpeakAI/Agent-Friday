@@ -206,6 +206,16 @@ def norm_path(p: str, base: str | None = None) -> str:
     return s
 
 
+UNKNOWN_DIR = "/__unknown__"   # a directory named by a shell variable: not resolvable here
+
+
+def is_variable(tok: str) -> bool:
+    """A path that starts with a shell variable cannot be resolved by this
+    script, so it is never taken to be inside the live checkout."""
+    t = tok.strip().strip("'\"")
+    return t.startswith(("$", "%", "${"))
+
+
 def under(path: str, root: str) -> bool:
     root = root.rstrip("/")
     return path == root or path.startswith(root + "/")
@@ -342,7 +352,9 @@ class Segment:
     def cd_target(self) -> str | None:
         if self.prog in {"cd", "pushd", "set-location", "sl", "push-location", "chdir"}:
             args = [w for w in self.words[1:] if not w.startswith("-")]
-            return norm_path(args[0], self.cwd) if args else norm_path("~")
+            if not args:
+                return norm_path("~")
+            return UNKNOWN_DIR if is_variable(args[0]) else norm_path(args[0], self.cwd)
         return None
 
 
@@ -478,7 +490,8 @@ def check_vm(segs: list[Segment], cfg: dict, ram: float | None) -> str | None:
 # ── rule 3: the live checkout ────────────────────────────────────────────────
 
 def path_args(seg: Segment, start: int = 1) -> list[str]:
-    return [norm_path(w, seg.cwd) for w in seg.words[start:] if not w.startswith("-")]
+    return [norm_path(w, seg.cwd) for w in seg.words[start:]
+            if not w.startswith("-") and not is_variable(w)]
 
 
 def redirect_targets(seg: Segment) -> list[str]:
@@ -508,9 +521,11 @@ def live_mutation(seg: Segment, cfg: dict) -> str | None:
         i, gdir = 1, seg.cwd
         while i < len(words) and words[i].startswith("-"):
             if words[i] == "-C" and i + 1 < len(words):
-                gdir = norm_path(words[i + 1], seg.cwd); i += 2; continue
+                gdir = UNKNOWN_DIR if is_variable(words[i + 1]) else norm_path(words[i + 1], seg.cwd)
+                i += 2
+                continue
             if words[i].startswith("-C") and len(words[i]) > 2:
-                gdir = norm_path(words[i][2:], seg.cwd)
+                gdir = UNKNOWN_DIR if is_variable(words[i][2:]) else norm_path(words[i][2:], seg.cwd)
             i += 1
         sub = words[i] if i < len(words) else ""
         if sub in GIT_WORKTREE_MUTATORS and in_live(gdir, cfg):
@@ -525,8 +540,9 @@ def live_mutation(seg: Segment, cfg: dict) -> str | None:
 
     if prog in SHELL_WRITERS or prog in POWERSHELL_WRITERS:
         targets = path_args(seg)
-        if prog in {"cp", "mv", "copy-item", "move-item", "rename-item"} and targets:
-            targets = targets[-1:]
+        if prog in {"cp", "mv", "copy-item", "move-item", "rename-item"}:
+            last = [w for w in words[1:] if not w.startswith("-")]
+            targets = [] if not last or is_variable(last[-1]) else [norm_path(last[-1], seg.cwd)]
         if prog == "sed" and "-i" not in words and not any(w.startswith("-i") for w in words[1:]):
             targets = []
         if prog == "perl" and not any(w.startswith("-i") for w in words[1:]):
