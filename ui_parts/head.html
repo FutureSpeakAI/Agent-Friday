@@ -38,6 +38,9 @@ window.addEventListener('error',function(e){
      hand-maintained copies; the tray suppresses the hotkey while the
      system-wide version is on, so only one of them ever fires. -->
 <script src="/static/js/friday_push_to_transcribe.js" defer></script>
+<!-- The one door for sandboxed frames (docs/development/frame-broker.md).
+     Loaded before the app so iframes can register on mount. -->
+<script src="/static/js/friday_frame_broker.js"></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){

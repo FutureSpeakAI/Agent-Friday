@@ -166,7 +166,41 @@ function apiFetch(url, opts){
   window.__fridayTokenFetch = true;
   const rawFetch = window.fetch.bind(window);
   const UNSAFE = /^(POST|PUT|PATCH|DELETE)$/i;
+  // The server rotates the session token (every 24 h by default) and a tab can
+  // outlive that. /api/session/token answers only this page: a sandboxed or
+  // foreign document is refused before the route runs. One request is shared
+  // by every caller that needs it.
+  let pending = null;
+  let lastRefresh = Date.now();
+  function refreshSessionToken() {
+    if (!pending) {
+      pending = rawFetch('/api/session/token', {
+        cache: 'no-store'
+      }).then(r => r.ok ? r.json() : null).then(d => {
+        if (d && d.token) {
+          window.__FRIDAY_API_TOKEN = d.token;
+          lastRefresh = Date.now();
+          return true;
+        }
+        return false;
+      }).catch(() => false).then(ok => {
+        pending = null;
+        return ok;
+      });
+    }
+    return pending;
+  }
+  window.fridayRefreshSessionToken = refreshSessionToken;
+  setInterval(refreshSessionToken, 3600000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - lastRefresh > 600000) refreshSessionToken();
+  });
+  function replayable(body) {
+    return body == null || typeof body === 'string' || typeof FormData !== 'undefined' && body instanceof FormData || typeof Blob !== 'undefined' && body instanceof Blob || typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams || body instanceof ArrayBuffer;
+  }
   window.fetch = function (input, init) {
+    let guarded = false;
+    let sent = '';
     try {
       const tok = window.__FRIDAY_API_TOKEN || '';
       const isReq = typeof Request !== 'undefined' && input instanceof Request;
@@ -176,13 +210,32 @@ function apiFetch(url, opts){
         if (u.origin === window.location.origin) {
           const headers = new Headers(init && init.headers || (isReq ? input.headers : undefined));
           if (!headers.has('X-Friday-Token')) headers.set('X-Friday-Token', tok);
+          sent = headers.get('X-Friday-Token');
+          guarded = !isReq && replayable(init && init.body);
           init = Object.assign({}, init, {
             headers
           });
         }
       }
     } catch (e) {}
-    return rawFetch(input, init);
+    const first = rawFetch(input, init);
+    if (!guarded) return first;
+    // A token the server no longer knows is answered with a coded 403: fetch
+    // the current one and send the same request once more.
+    return first.then(async res => {
+      if (res.status !== 403) return res;
+      let code = '';
+      try {
+        code = (await res.clone().json()).code || '';
+      } catch (e) {}
+      if (code !== 'session_token_required') return res;
+      if (!(await refreshSessionToken()) || window.__FRIDAY_API_TOKEN === sent) return res;
+      const headers = new Headers(init.headers);
+      headers.set('X-Friday-Token', window.__FRIDAY_API_TOKEN);
+      return rawFetch(input, Object.assign({}, init, {
+        headers
+      }));
+    });
   };
 })();
 // ── Panel data cache (stale-while-revalidate) ─────────────────────────────
@@ -6110,7 +6163,7 @@ function StudioPromptBar({onCreated}){
             {['png','jpg','jpeg','webp','svg','gif'].includes(fx)&&<img src={f.url} alt={fn} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>}
             {['mp4','webm','mov'].includes(fx)&&<video controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>}
             {['mp3','wav','ogg','m4a'].includes(fx)&&<AlbumArtPlayer name={fn} url={f.url}/>}
-            {fx==='html'&&<iframe src={f.url} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" title={fn} style={{width:'100%',height:320,border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
+            {fx==='html'&&<iframe src={f.url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" title={fn} style={{width:'100%',height:320,border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
             {fx==='md'&&!(result&&result.text)&&<StudioMdPeek url={f.url}/>}
           </div>);})}
       </div>}
@@ -6190,7 +6243,7 @@ function StudioWS(){
         </div>
       </div>
       <ProvenanceBar filename={selected.name}/>
-      {ext==='html'&&<iframe src={url} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" style={{width:'100%',height:'calc(100vh - 240px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
+      {ext==='html'&&<iframe src={url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" style={{width:'100%',height:'calc(100vh - 240px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
       {(ext==='png'||ext==='jpg'||ext==='jpeg'||ext==='webp'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
       {(ext==='mp4'||ext==='webm'||ext==='mov')&&<video controls src={url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>}
       {(ext==='mp3'||ext==='wav'||ext==='ogg'||ext==='m4a')&&<AlbumArtPlayer name={selected.name} url={url} big/>}
@@ -6265,7 +6318,7 @@ function StudioWS(){
         const expandedContent=isImg?<img src={url} alt={f.name} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>:
           isVid?<video controls src={url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>:
           isAud?<AlbumArtPlayer name={f.name} url={url} big/>:
-          isHtml?<iframe src={url} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" style={{width:'100%',height:400,border:'none',borderRadius:8,background:'#0a0a0f'}}/>:
+          isHtml?<iframe src={url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" style={{width:'100%',height:400,border:'none',borderRadius:8,background:'#0a0a0f'}}/>:
           <ProvenanceBar filename={f.name}/>;
         return(<div key={f.name||i} className="card" style={{padding:0,overflow:'hidden',cursor:'default',border:'1px solid rgba(255,255,255,0.06)',borderRadius:12,background:'rgba(10,10,18,0.6)',backdropFilter:'blur(10px)',transition:'border-color .2s'}}
           onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(124,58,237,0.3)'}
@@ -8364,7 +8417,7 @@ function NewsWS(){
     </div>
     <div style={{display:'flex',gap:12}}>
       <div style={{flex:1,overflowY:'auto'}}>
-        {selected.isHtml?<iframe srcDoc={fridayFrameScrollbars(htmlContent)} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>:
+        {selected.isHtml?<iframe srcDoc={fridayFrameScrollbars(htmlContent)} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" ref={window.fridayAttachFrame} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>:
         <FridayDoc text={htmlContent} style={{padding:'4px 8px'}}/>}
       </div>
       {chatOpen&&<div style={{width:280,borderLeft:'1px solid rgba(255,255,255,0.04)',paddingLeft:10,display:'flex',flexDirection:'column'}}>
@@ -9396,7 +9449,7 @@ function buildDraftHtml(text,mode,promptText){
 function openDraftTab(text,mode,promptText){
   const html=buildDraftHtml(text,mode,promptText);
   const blob=new Blob([html],{type:'text/html'});
-  window.open(URL.createObjectURL(blob),'_blank');
+  window.open(URL.createObjectURL(blob),'_blank','noopener');
 }
 function DraftPreview({text}){
   if(!text)return null;

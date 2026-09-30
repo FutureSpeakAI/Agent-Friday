@@ -89,22 +89,55 @@ def save_ws_doc(ws_id, doc):
 
 # ── customization sanitation ───────────────────────────────────────────────
 
-def _sanitize_css(css):
-    """Strip anything that could break out of a <style> or run script.
+_DATA_IMAGE_URL = re.compile(r"^data:image/[a-z0-9.+-]+[;,][a-z0-9+/=%;,._-]*$", re.I)
+_CSS_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.I | re.S)
+_CSS_REMOTE = re.compile(r"(?:[a-z][a-z0-9+.-]*:)?//[^\s)'\";,]*", re.I)
+_CSS_FETCHERS = re.compile(r"(?:-webkit-)?(?:image-set|cross-fade)\s*\(|\bsrc\s*\(", re.I)
+_KEPT_MARK = "\x01"
 
-    The frontend additionally scopes every rule to the workspace root, so this
-    only has to neutralise injection, not enforce scoping.
+
+def _sanitize_css(css):
+    """Reduce model- or file-supplied CSS to something inert inside a <style>
+    element of Friday's own page.
+
+    The page additionally scopes every rule to the workspace root, so this only
+    neutralises injection: no `<` (so no tag and no `</style`, however it is
+    spelled or nested), no backslash (so no escaped `url(`), no @import, no
+    script or expression URLs, and no request to anywhere but an inline image.
+    Removals repeat until nothing more can be removed, so a payload cannot be
+    assembled from the pieces a single pass leaves behind.
     """
     if not isinstance(css, str):
         return ""
-    css = css[:8000]
-    # Kill style/script breakouts and js: urls / expression() hacks.
-    css = re.sub(r"</\s*style", "", css, flags=re.I)
-    css = re.sub(r"<\s*script", "", css, flags=re.I)
-    css = re.sub(r"javascript\s*:", "", css, flags=re.I)
-    css = re.sub(r"expression\s*\(", "(", css, flags=re.I)
-    css = re.sub(r"@import[^;]+;?", "", css, flags=re.I)
+    css = css[:8000].replace("\x00", "").replace(_KEPT_MARK, "")
+    css = css.replace("<", "").replace("\\", "")
+    kept = []
+
+    def _url(m):
+        target = m.group(2).strip()
+        if _DATA_IMAGE_URL.match(target):
+            kept.append("url(" + target + ")")
+            return "%s%d%s" % (_KEPT_MARK, len(kept) - 1, _KEPT_MARK)
+        return "url()"
+
+    prev = None
+    while prev != css:
+        prev = css
+        css = _CSS_URL.sub(_url, css)
+        css = re.sub(r"javascript\s*:|vbscript\s*:", "", css, flags=re.I)
+        css = re.sub(r"expression\s*\(", "(", css, flags=re.I)
+        css = re.sub(r"@import[^;]*;?", "", css, flags=re.I)
+        css = _CSS_FETCHERS.sub("(", css)
+        css = _CSS_REMOTE.sub("", css)
+    css = re.sub(_KEPT_MARK + r"(\d+)" + _KEPT_MARK, lambda m: kept[int(m.group(1))], css)
     return css.strip()
+
+
+def _sanitize_selector(sel):
+    """A `hidden` entry is one selector: it cannot open a rule, end a
+    declaration, start an at-rule or fetch anything."""
+    sel = re.sub(r"[{};@]", "", _sanitize_css(str(sel)))
+    return sel.strip()[:200]
 
 
 def _sanitize_patch(patch):
@@ -122,14 +155,14 @@ def _sanitize_patch(patch):
         elif k == "accent":
             if v is None:
                 out["accent"] = None
-            elif isinstance(v, str) and re.match(r"^#?[0-9a-fA-F]{3,8}$", v.strip()):
+            elif isinstance(v, str) and re.fullmatch(r"#?[0-9a-fA-F]{3,8}", v.strip()):
                 a = v.strip()
                 out["accent"] = a if a.startswith("#") else "#" + a
         elif k == "density":
             out["density"] = v if v in _ALLOWED_DENSITY else None
         elif k == "hidden":
             if isinstance(v, list):
-                out["hidden"] = [str(s)[:200] for s in v][:40]
+                out["hidden"] = [c for c in (_sanitize_selector(x) for x in v[:40]) if c]
             elif v is None:
                 out["hidden"] = None
         elif k == "actions":
@@ -354,7 +387,7 @@ def all_customizations():
     for p in WS_STUDIO_DIR.glob("*.json"):
         try:
             doc = json.loads(p.read_text(encoding="utf-8"))
-            cust = doc.get("customization") or {}
+            cust = _sanitize_patch(doc.get("customization") or {})
             if cust:
                 out[doc.get("workspace") or p.stem] = cust
         except Exception:

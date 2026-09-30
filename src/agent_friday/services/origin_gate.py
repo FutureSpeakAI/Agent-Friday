@@ -20,11 +20,18 @@ narrow, explicit exemption; it was never the cross-site threat.
 For POST/PUT/PATCH/DELETE and any WebSocket upgrade that carries browser
 metadata:
 
-  * a valid session token -> allowed;
-  * otherwise refused. The reason names the cause: another site
-    (`Sec-Fetch-Site: cross-site` or `same-site`, `Origin: null`, an `Origin`
-    that is not one of Friday's own origins, another loopback port included)
-    or, for Friday's own origin, a missing token.
+  * metadata that says another document (`Sec-Fetch-Site: cross-site` or
+    `same-site`, `Origin: null` from a sandboxed frame, an `Origin` that is not
+    one of Friday's own origins, another loopback port included) -> refused,
+    a valid token or not: a token held by a document that is not Friday's page
+    is a leaked token;
+  * Friday's own origin with a valid session token -> allowed;
+  * Friday's own origin without one -> refused, naming the missing token.
+
+Sensitive reads get the same treatment through `frame_refusal`: under /api/ and
+/ws/ a request whose metadata says another document (an opaque-origin sandbox
+included) is refused for every method, with two narrow exceptions that cannot
+be read by script: a top-level navigation, and a passive media load.
 
 Friday's own origins are exact scheme, host and port: a loopback name on the
 port the request arrived on, and the local address (agent.<name>, agent.friday)
@@ -48,6 +55,10 @@ REFUSAL_REASON = (
 TOKEN_REASON = (
     "That request didn't carry this session's token, so I refused it. "
     "Reload Friday's page and try again."
+)
+FRAME_REASON = (
+    "That request came from a page running inside a sandbox or another site, "
+    "and this part of Friday is only open to Friday's own page, so I refused it."
 )
 GATE_ERROR_REASON = (
     "I couldn't check where that request came from, so I refused it. "
@@ -127,13 +138,70 @@ def _foreign_reason(headers, host, is_local, own_origins):
     return None
 
 
-def refusal(method, headers, *, host, is_local, token_valid=False, own_origins=()):
-    """A plain-language reason to refuse this request, or None to let it on."""
+def refusal(method, headers, *, host, is_local, token_valid=False, own_origins=(),
+            token_required=True):
+    """A plain-language reason to refuse this request, or None to let it on.
+
+    `token_required=False` is for the sign-in form alone: it cannot carry a
+    session token (it is how a remote visitor gets one) but is still refused
+    when the metadata says another document sent it."""
     if not is_guarded(method, headers) or not has_browser_metadata(headers):
         return None
-    if token_valid:
+    foreign = _foreign_reason(headers, host, is_local, own_origins)
+    if foreign:
+        return foreign
+    if token_valid or not token_required:
         return None
-    return _foreign_reason(headers, host, is_local, own_origins) or TOKEN_REASON
+    return TOKEN_REASON
+
+
+# Sensitive surface for `frame_refusal`. Everything Friday exposes to script is
+# under these prefixes; the health probe is the one deliberately public read.
+SENSITIVE_PREFIXES = ("/api/", "/ws/")
+PUBLIC_READ_PREFIXES = ("/api/health",)
+# Loads a document cannot read back: images, media, fonts, tracks.
+PASSIVE_DESTINATIONS = frozenset({"image", "audio", "video", "track", "font"})
+# Routes whose whole job is to be shown inside a sandboxed frame.
+FRAMEABLE_PREFIXES = ("/api/creations/", "/api/studio-files/raw")
+ASSET_PREFIXES = ("/api/creations/",)
+
+
+def _is_sandboxed_or_foreign(headers, host, is_local, own_origins) -> bool:
+    site = (headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if site in ("cross-site", "same-site"):
+        return True
+    origin = headers.get("Origin")
+    if origin is None:
+        return False
+    return (origin.strip().lower() == "null" or not _origin_is_own(
+        origin.strip(), host, is_local=is_local, own_origins=own_origins))
+
+
+def frame_refusal(method, headers, path, *, host, is_local, own_origins=()):
+    """FRAME_REASON when a sandboxed or foreign document is talking to a
+    sensitive route, whatever it holds. Not the session token's job: a token
+    proves who has it, not what document is using it."""
+    path = path or ""
+    if not path.startswith(SENSITIVE_PREFIXES) or path.startswith(PUBLIC_READ_PREFIXES):
+        return None
+    if not _is_sandboxed_or_foreign(headers, host, is_local, own_origins):
+        return None
+    if (method or "").upper() in ("GET", "HEAD"):
+        dest = (headers.get("Sec-Fetch-Dest") or "").strip().lower()
+        mode = (headers.get("Sec-Fetch-Mode") or "").strip().lower()
+        if dest in PASSIVE_DESTINATIONS:
+            return None
+        if mode == "navigate" and dest in ("document", ""):
+            return None
+        # A creation shown in a frame, and the files that creation loads next
+        # to itself, are served for exactly that. Nothing here is readable by
+        # the requesting document, and the markup carries its own sandbox.
+        if path.startswith(FRAMEABLE_PREFIXES) and mode == "navigate" \
+                and dest in ("iframe", "frame", "embed", "object"):
+            return None
+        if path.startswith(ASSET_PREFIXES) and dest in ("script", "style"):
+            return None
+    return FRAME_REASON
 
 
 def refusal_or_closed(method, headers, **kw):
@@ -146,3 +214,26 @@ def refusal_or_closed(method, headers, **kw):
         except Exception:
             guarded = True
         return GATE_ERROR_REASON if guarded else None
+
+
+def frame_refusal_or_closed(method, headers, path, **kw):
+    """`frame_refusal`, refusing on any failure to evaluate it under a sensitive path."""
+    try:
+        return frame_refusal(method, headers, path, **kw)
+    except Exception:
+        return GATE_ERROR_REASON if (path or "").startswith(SENSITIVE_PREFIXES) else None
+
+
+_CODES = {
+    REFUSAL_REASON: "cross_site",
+    TOKEN_REASON: "session_token_required",
+    FRAME_REASON: "sandboxed_or_foreign_frame",
+    GATE_ERROR_REASON: "gate_error",
+}
+
+
+def reason_code(reason) -> str:
+    """A stable machine-readable name for a refusal reason. The page retries a
+    request once, after fetching the current token, only for
+    `session_token_required`."""
+    return _CODES.get(reason, "refused")

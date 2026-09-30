@@ -3600,7 +3600,28 @@ def _origin_gate_reason():
         kw = _inputs()
     except Exception:
         return _og.GATE_ERROR_REASON if _og.is_guarded(request.method, request.headers) else None
+    # The sign-in form is how a remote visitor gets a session, so it cannot
+    # carry the token; it is still refused when another site sent it.
+    kw["token_required"] = request.endpoint != "login"
     return _og.refusal_or_closed(request.method, request.headers, **kw)
+
+
+def _frame_gate_reason():
+    """Why the current request is refused because a sandboxed or foreign
+    document sent it to a sensitive route, or None. A session token proves who
+    holds it, not which document is using it, so this holds with a valid token
+    too. Fails closed under /api/ and /ws/."""
+    try:
+        from agent_friday.services import origin_gate as _og
+        from agent_friday.services.local_address import own_origins as _oo
+        return _og.frame_refusal_or_closed(
+            request.method, request.headers, request.path,
+            host=request.host, is_local=_is_local_request(), own_origins=_oo())
+    except Exception:
+        if (request.path or "").startswith(("/api/", "/ws/"))                 and not (request.path or "").startswith("/api/health"):
+            return ("I couldn't check where that request came from, so I refused it. "
+                    "Reload Friday's page and try again.")
+        return None
 
 
 @app.before_request
@@ -3633,9 +3654,10 @@ def check_auth():
         pass
     # Session-token and cross-site gate comes BEFORE loopback trust: trust says
     # who the machine is, not which page in the browser is speaking for it.
-    _og_reason = _origin_gate_reason()
+    _og_reason = _origin_gate_reason() or _frame_gate_reason()
     if _og_reason:
-        return jsonify({"error": _og_reason}), 403
+        from agent_friday.services.origin_gate import reason_code as _reason_code
+        return jsonify({"error": _og_reason, "code": _reason_code(_og_reason)}), 403
     # Loopback / same-machine access is always trusted — auto-authenticate the
     # session so the user never sees a login screen on their own device.
     # Remote access (e.g. via Cloudflare Tunnel) still goes through the
@@ -3672,6 +3694,123 @@ def check_auth():
         if request.is_json or request.path.startswith("/api/"):
             return jsonify({"error": "unauthorized"}), 401
         return redirect(url_for("login"))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  DOCUMENT ISOLATION (response headers)
+# ═══════════════════════════════════════════════════════════════
+#
+# Friday serves two kinds of markup. Its own pages hold the session token and
+# may call every route. Everything else (a Studio creation, a published page, a
+# file preview, a model-written document, an SVG) is somebody's or something's
+# script, and must run in an opaque origin: no cookies, no storage, no reading
+# Friday's responses. The rule is by exclusion: a route that returns markup is
+# sandboxed unless it is named here, so a new route defaults to safe.
+
+OWN_PAGE_ENDPOINTS = frozenset({
+    "core_routes.serve_ui",
+    "core_routes.serve_workspace_tab",
+    "core_routes.serve_widget",
+    "core_routes.serve_friday_live",
+    "login",
+})
+
+_MARKUP_TYPES = frozenset({
+    "text/html", "application/xhtml+xml", "image/svg+xml",
+    "text/xml", "application/xml",
+})
+
+# What a sandboxed document may still do: run script, submit forms, open
+# windows, show dialogs, lock the pointer, download. Never allow-same-origin
+# (that would give it Friday's origin back) and never a top-navigation token.
+SANDBOX_DEFAULT_TOKENS = (
+    "allow-scripts", "allow-forms", "allow-popups", "allow-modals",
+    "allow-pointer-lock", "allow-downloads",
+)
+_SANDBOX_NEVER = frozenset({
+    "allow-same-origin", "allow-top-navigation",
+    "allow-top-navigation-by-user-activation",
+    "allow-top-navigation-to-custom-protocols",
+    "allow-popups-to-escape-sandbox",
+})
+
+# Friday's own pages. `script-src` keeps inline script and eval because the UI
+# is one inline bundle and MediaPipe hand tracking (opt-in, SRI-pinned, loaded
+# from one CDN) compiles WebAssembly and uses eval. `frame-src` admits blob: and
+# data: for the sandboxed previews the page builds itself. Connections, images,
+# media, fonts and styles are left open: the page talks to local model servers
+# and the owner's own providers.
+OWN_PAGE_CSP = "; ".join((
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net",
+    "worker-src 'self' blob:",
+    "frame-src 'self' blob: data:",
+    "frame-ancestors 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+))
+
+
+def _split_csp(value):
+    return [p.strip() for p in (value or "").split(";") if p.strip()]
+
+
+def _sandboxed_csp(existing):
+    """`existing` with a `sandbox` directive that is never wider than either the
+    existing one or Friday's default."""
+    out, seen = [], False
+    for p in _split_csp(existing):
+        bits = p.split()
+        if bits and bits[0].lower() == "sandbox":
+            seen = True
+            kept = [t for t in bits[1:] if t.lower() not in _SANDBOX_NEVER]
+            out.append(" ".join(["sandbox"] + kept))
+        else:
+            out.append(p)
+    if not seen:
+        out.insert(0, " ".join(("sandbox",) + SANDBOX_DEFAULT_TOKENS))
+    return "; ".join(out)
+
+
+def _isolation_headers(resp):
+    """Attach the document-isolation headers to a response. Never raises."""
+    try:
+        ctype = (resp.mimetype or "").lower()
+        if request.endpoint in OWN_PAGE_ENDPOINTS and ctype in _MARKUP_TYPES:
+            if not resp.headers.get("Content-Security-Policy"):
+                resp.headers["Content-Security-Policy"] = OWN_PAGE_CSP
+            resp.headers["Cache-Control"] = "no-store"
+            resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+            resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        elif ctype in _MARKUP_TYPES:
+            resp.headers["Content-Security-Policy"] = _sandboxed_csp(
+                resp.headers.get("Content-Security-Policy"))
+            resp.headers["X-Content-Type-Options"] = "nosniff"
+    except Exception:
+        # A response that cannot be classified is not sent as markup.
+        try:
+            resp.headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
+            resp.headers["X-Content-Type-Options"] = "nosniff"
+        except Exception:
+            pass
+    return resp
+
+
+@app.after_request
+def _apply_isolation_headers(resp):
+    return _isolation_headers(resp)
+
+
+@app.route('/api/session/token')
+def session_token():
+    """The current session token, for a page that stayed open past a rotation.
+
+    Only Friday's own page can read it: the frame gate in check_auth refuses
+    a sandboxed or foreign document before this runs, and a cross-origin
+    response is unreadable to script regardless."""
+    resp = jsonify({"token": _current_api_token()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # ═══════════════════════════════════════════════════════════════

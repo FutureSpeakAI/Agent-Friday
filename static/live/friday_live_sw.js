@@ -2,9 +2,9 @@
 // showing a persistent "voice session active" notification while the
 // phone is in a pocket / screen is off.
 
-const CACHE_NAME = 'friday-live-v1';
+const CACHE_NAME = 'friday-live-v2';
+// The page itself is never cached: it carries the session token.
 const CORE_ASSETS = [
-  '/friday-live',
   '/friday-live/manifest.json',
 ];
 
@@ -23,8 +23,8 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Network-first for the HTML shell, cache-fallback — so we keep working
-// offline briefly if connectivity drops mid-drive.
+// The HTML shell is always fetched from the network (it embeds the session
+// token and is served no-store); only the manifest falls back to the cache.
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -37,8 +37,7 @@ self.addEventListener('fetch', event => {
   // Don't cache API calls.
   if (url.pathname.startsWith('/api/')) return;
 
-  if (url.pathname === '/friday-live' || url.pathname === '/friday-live/' ||
-      url.pathname === '/friday-live/manifest.json') {
+  if (url.pathname === '/friday-live/manifest.json') {
     event.respondWith(
       fetch(req).then(res => {
         const copy = res.clone();

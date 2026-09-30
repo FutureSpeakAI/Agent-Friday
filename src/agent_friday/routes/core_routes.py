@@ -236,7 +236,19 @@ def serve_friday_live():
     # resolves against src/agent_friday/core/, not the repo root. The Friday
     # Live PWA files live under static/live/; anchor to cwd like the other
     # asset routes. URL paths are unchanged (the manifest scopes to /friday-live).
-    return send_from_directory(_LIVE_DIR, 'friday_live.html')
+    # The page opens /ws/live, which needs the session token; the token is
+    # injected the way serve_ui does it, and the response is never cached.
+    try:
+        with open(os.path.join(_LIVE_DIR, 'friday_live.html'), encoding='utf-8') as _f:
+            _html = _f.read()
+    except FileNotFoundError:
+        return 'Friday Live page not found', 404
+    _tok = (f'<script>window.__FRIDAY_API_TOKEN="{core._current_api_token()}";'  # pragma: allowlist secret
+            '</script>')
+    _html = _html.replace('<head>', '<head>' + chr(10) + _tok, 1)
+    resp = Response(_html, content_type='text/html')
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @core_bp.route('/friday-live/manifest.json')
