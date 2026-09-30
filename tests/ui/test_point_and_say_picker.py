@@ -82,7 +82,10 @@ def test_a_click_in_point_mode_posts_one_pick_with_a_selector(port):
         pk = picks[0]
         assert pk["selector"] == "#add" and pk["tag"] == "button" and pk["text"] == "Add"
         assert "<button" in pk["snippet"] and len(pk["snippet"]) <= 400
-        assert set(pk) <= {"__friday", "selector", "tag", "text", "snippet", "rect"}
+        assert set(pk) <= {"__friday", "selector", "tag", "text", "snippet", "rect", "font_px"}
+        # The computed font size crosses too, so "bigger" can mean bigger than now
+        # (a relative em would resolve against the parent, not the element).
+        assert pk["font_px"] == pytest.approx(13.333, abs=0.01)     # a default <button>
         # A hovered element is outlined, a clicked one stays outlined.
         outline = frame.locator("#add").evaluate("el => getComputedStyle(el).outlineStyle")
         assert outline != "none"
@@ -90,6 +93,7 @@ def test_a_click_in_point_mode_posts_one_pick_with_a_selector(port):
         frame.locator("p.lead").click()
         page.wait_for_function("window.__picks.length >= 2", timeout=10000)
         sel = page.evaluate("window.__picks[1].selector")
+        assert page.evaluate("window.__picks[1].font_px") == 16
         assert frame.locator(sel).count() == 1 and frame.locator(sel).evaluate("el => el.className") == "lead"
         # The default action of the click did not fire, and nothing navigated.
         assert frame.locator("h1").text_content() == "Rent tracker"

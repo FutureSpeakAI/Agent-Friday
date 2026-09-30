@@ -97,8 +97,8 @@
     "function selector(el){if(el.id&&/^[A-Za-z][\\w-]*$/.test(el.id)&&document.querySelectorAll('#'+el.id).length===1)return '#'+el.id;var parts=[],cur=el,depth=0;while(cur&&cur.nodeType===1&&cur!==document.documentElement&&depth<6){var part=cur.tagName.toLowerCase();var cls=(cur.getAttribute('class')||'').trim().split(/\\s+/)[0];if(cls&&/^[A-Za-z_][\\w-]*$/.test(cls))part+='.'+cls;var sib=cur.parentElement?Array.prototype.filter.call(cur.parentElement.children,function(c){return c.tagName===cur.tagName}):[];if(sib.length>1)part+=':nth-of-type('+(sib.indexOf(cur)+1)+')';parts.unshift(part);var cand=parts.join(' > ');try{if(document.querySelectorAll(cand).length===1)return cand;}catch(e){}cur=cur.parentElement;depth++;}return parts.join(' > ');}" +
     "document.addEventListener('mouseover',function(e){var t=e.target;if(!(t instanceof Element)||t===document.documentElement||t===document.body)return;if(hov&&hov!==t)hov.removeAttribute('data-fp-hover');hov=t;t.setAttribute('data-fp-hover','');},true);" +
     "document.addEventListener('mouseout',function(e){if(e.target instanceof Element)e.target.removeAttribute('data-fp-hover');},true);" +
-    "document.addEventListener('click',function(e){var t=e.target;if(!(t instanceof Element))return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();if(sel)sel.removeAttribute('data-fp-sel');sel=t;t.removeAttribute('data-fp-hover');t.setAttribute('data-fp-sel','');var r=t.getBoundingClientRect();var html=t.outerHTML.replace(/ data-fp-(hover|sel)=\"\"/g,'');" +
-    "parent.postMessage({__friday:'pick',selector:selector(t),tag:t.tagName.toLowerCase(),text:(t.textContent||'').trim().replace(/\\s+/g,' ').slice(0,200),snippet:html.slice(0,400),rect:{x:r.x,y:r.y,w:r.width,h:r.height}},'*');},true);" +
+    "document.addEventListener('click',function(e){var t=e.target;if(!(t instanceof Element))return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();if(sel)sel.removeAttribute('data-fp-sel');sel=t;t.removeAttribute('data-fp-hover');t.setAttribute('data-fp-sel','');var r=t.getBoundingClientRect();var html=t.outerHTML.replace(/ data-fp-(hover|sel)=\"\"/g,'');var fs=parseFloat(getComputedStyle(t).fontSize)||null;" +
+    "parent.postMessage({__friday:'pick',selector:selector(t),tag:t.tagName.toLowerCase(),text:(t.textContent||'').trim().replace(/\\s+/g,' ').slice(0,200),snippet:html.slice(0,400),rect:{x:r.x,y:r.y,w:r.width,h:r.height},font_px:fs},'*');},true);" +
     "document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(sel)sel.removeAttribute('data-fp-sel');sel=null;}},true);})();";
   window.fridayPickerDoc = html => {
     const s = String(html == null ? '' : html);
@@ -538,7 +538,7 @@
         if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
         const d = e.data;
         if (!d || d.__friday !== 'pick' || typeof d.selector !== 'string') return;
-        const body = { selector: d.selector, tag: d.tag, text: d.text, snippet: d.snippet, rect: d.rect };
+        const body = { selector: d.selector, tag: d.tag, text: d.text, snippet: d.snippet, rect: d.rect, font_px: d.font_px };
         postJ(base + '/pick', body).then(({ ok, j }) => { if (ok) setPick(j.pick); else setNote({ text: 'Could not keep that selection: ' + ((j && j.error) || '') }); }).catch(() => {});
       };
       window.addEventListener('message', onMsg);
@@ -547,7 +547,7 @@
     const quick = action => {
       if (!pick || busy) return;
       setBusy(true);
-      postJ(base + '/quick-style', { selector: pick.selector, action }).then(({ ok, j }) => {
+      postJ(base + '/quick-style', { selector: pick.selector, action, font_px: pick.font_px }).then(({ ok, j }) => {
         if (!ok) { setNote({ text: (j && j.error) || 'That edit did not apply.' }); return; }
         setNote({ text: j.step.summary + ' (a step you can undo)', ok: true });
         loadSteps(); loadPreview();
@@ -607,8 +607,9 @@
       note ? h('div', { className: 'fa-note' + (note.ok ? ' fa-ok' : ''), role: 'status' }, note.text) : null,
       view === 'preview' && (pointing || pick) ? h('div', { className: 'fa-note', 'data-pick': pick ? pick.selector : '', role: 'status', style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
         pick ? h(React.Fragment, null,
-          h('span', { style: { fontFamily: MONO, fontSize: 10 } }, '<' + (pick.tag || 'element') + '>'),
-          h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, (pick.text ? '\u201c' + pick.text.slice(0, 60) + '\u201d' : pick.selector) + ' \u2014 say what to change, here or by voice, or:'),
+          h('span', { style: { flexBasis: '100%', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: pick.selector },
+            h('span', { style: { fontFamily: MONO, fontSize: 10, marginRight: 6 } }, '<' + (pick.tag || 'element') + '>'),
+            (pick.text ? '\u201c' + pick.text.slice(0, 60) + '\u201d' : pick.selector) + ' \u2014 say what to change, here or by voice, or:'),
           ['bigger', 'smaller', 'bolder', 'center', 'hide'].map(a => h('button', { key: a, className: 'fa-btn fa-amber', onClick: () => quick(a), disabled: busy }, a)),
           h('button', { className: 'fa-btn fa-quiet', onClick: clearPick, title: 'Forget the selection' }, 'clear'))
           : h('span', null, 'Point mode: click anything in the preview to select it.')) : null,

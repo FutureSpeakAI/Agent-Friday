@@ -146,7 +146,10 @@ def codebase_quick_style(cid):
     if action:
         if action not in cb.QUICK_ACTIONS:
             return _bad("unknown quick action %r" % action)
-        prop, value = cb.QUICK_ACTIONS[action]
+        rec = cb.load(cid)
+        pick = (rec or {}).get("pick") or {}
+        known = pick.get("font_px") if pick.get("selector") == str(body.get("selector") or "") else None
+        prop, value = cb.quick_value(action, body.get("font_px") or known)
     else:
         prop, value = str(body.get("prop") or ""), str(body.get("value") or "")
     try:

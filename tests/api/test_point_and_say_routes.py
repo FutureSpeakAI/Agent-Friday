@@ -23,6 +23,10 @@ def test_pick_quick_style_and_clear(client):
     assert client.post(base + "/pick", json={"selector": "h1 {"}).status_code == 400
     r = client.post(base + "/quick-style", json={"selector": "main > h1", "action": "bigger"})
     assert r.status_code == 200 and r.get_json()["step"]["author"] == "you"
+    # With the picked element's size on record, bigger is an absolute size.
+    client.post(base + "/pick", json={"selector": "main > h1", "tag": "h1", "font_px": 22})
+    r = client.post(base + "/quick-style", json={"selector": "main > h1", "action": "bigger"})
+    assert r.status_code == 200 and "28px" in r.get_json()["step"]["summary"]
     assert client.post(base + "/quick-style", json={"selector": "main > h1", "action": "explode"}).status_code == 400
     r = client.post(base + "/quick-style", json={"selector": "main > h1", "prop": "color", "value": "#fff"})
     assert r.status_code == 200

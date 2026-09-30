@@ -22,8 +22,8 @@ def _root(monkeypatch, tmp_path):
 def test_a_pick_is_stored_and_told_to_the_model_then_cleared():
     rec = cb.create("Tracker")
     pick = cb.set_pick(rec["id"], {"selector": "main > h1", "tag": "h1", "text": "Tracker", "snippet": "<h1>Tracker</h1>",
-                                   "rect": {"x": 20, "y": 32, "w": 300, "h": 28}})
-    assert pick["selector"] == "main > h1" and pick["at"]
+                                   "rect": {"x": 20, "y": 32, "w": 300, "h": 28}, "font_px": 22})
+    assert pick["selector"] == "main > h1" and pick["at"] and pick["font_px"] == 22
     assert cb.load(rec["id"])["pick"]["tag"] == "h1"
     block = cb.context_block_for(rec["id"])
     assert "pointed at" in block.lower() and "main > h1" in block and "<h1>Tracker</h1>" in block
@@ -70,6 +70,15 @@ def test_quick_style_refuses_anything_but_a_plain_property_and_value(prop, value
     rec = cb.create("Tracker")
     with pytest.raises(ValueError):
         cb.quick_style(rec["id"], "main > h1", prop, value)
+
+
+def test_bigger_means_bigger_than_now_when_the_size_is_known():
+    # A quick action's value is scaled from the element's computed size when
+    # the pick carries one; the plain em value is only the fallback.
+    assert cb.quick_value("bigger", 22) == ("font-size", "28px")
+    assert cb.quick_value("smaller", 22) == ("font-size", "19px")
+    assert cb.quick_value("bigger", None) == ("font-size", "1.25em")
+    assert cb.quick_value("hide", 22) == ("display", "none")
 
 
 def test_the_quick_actions_map_to_plain_rules():

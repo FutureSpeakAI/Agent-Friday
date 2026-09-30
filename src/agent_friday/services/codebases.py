@@ -554,7 +554,23 @@ QUICK_ACTIONS = {
     "bigger": ("font-size", "1.25em"), "smaller": ("font-size", "0.85em"), "bolder": ("font-weight", "700"),
     "hide": ("display", "none"), "center": ("text-align", "center"), "rounder": ("border-radius", "12px"),
 }
+_SCALED = {"bigger": 1.25, "smaller": 0.85}
 _PICK_CSS_NOTE = "/* point-and-say (Friday pick): one rule per quick edit, each its own step */"
+
+
+def quick_value(action: str, font_px) -> tuple:
+    """The rule a quick action writes. "bigger" means bigger than the element
+    is now, so when its computed size is known the value is absolute: a
+    relative em would resolve against the parent, not the element."""
+    prop, value = QUICK_ACTIONS[action]
+    if action in _SCALED and font_px:
+        try:
+            px = float(font_px)
+        except (TypeError, ValueError):
+            px = 0
+        if 4 <= px <= 400:
+            value = "%dpx" % max(6, round(px * _SCALED[action]))
+    return prop, value
 
 
 def _check_selector(selector: str) -> str:
@@ -579,7 +595,11 @@ def set_pick(cid: str, pick: dict) -> dict:
     rect = pick.get("rect") if isinstance(pick.get("rect"), dict) else None
     if rect is not None:
         rect = {k: float(rect.get(k) or 0) for k in ("x", "y", "w", "h")}
-    stored = {"selector": sel, "tag": tag, "text": text, "snippet": snippet, "rect": rect,
+    try:
+        font_px = float(pick.get("font_px")) if pick.get("font_px") is not None else None
+    except (TypeError, ValueError):
+        font_px = None
+    stored = {"selector": sel, "tag": tag, "text": text, "snippet": snippet, "rect": rect, "font_px": font_px,
               "at": datetime.now().isoformat(timespec="seconds")}
     rec["pick"] = stored
     _save(rec)
