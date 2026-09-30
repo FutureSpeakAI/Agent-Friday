@@ -58,6 +58,50 @@ window.addEventListener('DOMContentLoaded',function(){
      Google Fonts to <head> only when the font files are missing and the
      owner has not turned it off (services/web_fonts.py). -->
 <link href="/static/fonts/fonts.css" rel="stylesheet"/>
+    <!-- Friday's scrollbars: one rule set, sized by one brand token. -->
+    <style id="friday-scrollbars">
+        /* Every scroll area in Friday wears this one scrollbar. Its size is
+           one brand token, --scrollbar-size: the track, which is also the grab
+           target. The thumb is drawn a third narrower inside the track and
+           swells to the full track, brighter, under the pointer and while it
+           is dragged; it never shortens past --scrollbar-thumb-min. A frame
+           Friday builds (a mail message, a briefing, a draft) copies this
+           element into its own document (fridayFrameScrollbars), since a frame
+           inherits no styles.
+           Chromium draws these from the ::-webkit-scrollbar rules alone.
+           scrollbar-width and scrollbar-color stay unset for it on purpose:
+           from Chrome 121 either one, anywhere in the cascade, switches that
+           element to the standard properties and every ::-webkit-scrollbar
+           size is ignored. Firefox, which has only the standard properties,
+           gets them inside a block Chromium does not read, at "auto", the
+           widest it allows. */
+        :root {
+            --scrollbar-size: 12px;
+            --scrollbar-thumb-inset: calc(var(--scrollbar-size) / 6);
+            --scrollbar-thumb-min: 48px;
+            --scrollbar-track: rgba(255, 255, 255, 0.025);
+            --scrollbar-thumb: rgba(0, 212, 255, 0.5);
+            --scrollbar-thumb-hover: rgba(0, 212, 255, 0.68);
+            --scrollbar-thumb-active: rgba(0, 212, 255, 0.9);
+        }
+        ::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
+        ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+        ::-webkit-scrollbar-thumb {
+            background-color: var(--scrollbar-thumb);
+            background-clip: padding-box;
+            border: var(--scrollbar-thumb-inset) solid transparent;
+            border-radius: var(--scrollbar-size);
+        }
+        ::-webkit-scrollbar-thumb:vertical { min-height: var(--scrollbar-thumb-min); }
+        ::-webkit-scrollbar-thumb:horizontal { min-width: var(--scrollbar-thumb-min); }
+        ::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-thumb-hover); border-width: 0; }
+        ::-webkit-scrollbar-thumb:active { background-color: var(--scrollbar-thumb-active); border-width: 0; }
+        ::-webkit-scrollbar-corner { background: transparent; }
+        @supports (-moz-appearance: none) {
+            * { scrollbar-width: auto; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+            .dock { scrollbar-width: none; }
+        }
+    </style>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; cursor: default; }
         canvas { display: block; }
@@ -220,20 +264,8 @@ window.addEventListener('DOMContentLoaded',function(){
         .btn-magenta { border-color: rgba(255,0,128,0.35); color: rgba(255,128,180,0.92); }
         .btn-magenta:hover { background: rgba(255,0,128,0.12); color: #ff66a8; border-color: rgba(255,0,128,0.55); }
 
-        /* Every scroll area wears the app's own scrollbar, the thin quiet
-           thumb the windows, Settings and notifications already use, and
-           never the browser's grey default. An area that names its own (a
-           workspace tab's body, the chat list, the dock) keeps it: those
-           rules are more specific. scrollbar-color/-width stay unset in
-           Chromium on purpose: setting them switches every
-           ::-webkit-scrollbar rule off, those included. */
-        ::-webkit-scrollbar { width: 4px; height: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
-        ::-webkit-scrollbar-corner { background: transparent; }
-        @supports (-moz-appearance: none) {
-            * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
-        }
+        /* Scrollbars: the one rule set is the friday-scrollbars style
+           element above. Nothing here sizes or colours a scrollbar. */
 
         /* Top bar — solid-anchored gradient backdrop so text reads against bright scene */
         .top-bar {
@@ -428,9 +460,6 @@ window.addEventListener('DOMContentLoaded',function(){
            while a long render runs (the real % lives in the 3-D process orb). */
         .liq-indet { animation: liqIndet 1.1s infinite linear; }
         @keyframes liqIndet { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
-        .fwin-body::-webkit-scrollbar { width: 4px; }
-        .fwin-body::-webkit-scrollbar-track { background: transparent; }
-        .fwin-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
         /* Bottom-right resize grip — subtle diagonal-line indicator so users know
            the glass panel can be resized; brightens on hover. */
         .resize-h {
@@ -602,10 +631,6 @@ window.addEventListener('DOMContentLoaded',function(){
         .ws-custom-root > .f3-host:has(> .f3-content > .ws-fill) { flex: 1 1 auto; min-height: 0; }
         .f3-host:has(> .f3-content > .ws-fill) > .f3-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
         .f3-content > .ws-fill { flex: 1 1 auto; min-height: 0; }
-        .ws-tab-body::-webkit-scrollbar { width: 12px; height: 12px; }
-        .ws-tab-body::-webkit-scrollbar-track { background: rgba(255,255,255,0.025); }
-        .ws-tab-body::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.3); border-radius: 8px; border: 3px solid #070b14; }
-        .ws-tab-body::-webkit-scrollbar-thumb:hover { background: rgba(0,212,255,0.55); }
         @media (max-width: 640px) {
             .ws-tab-head { padding: 6px 10px; }
             .ws-tab-mark, .ws-tab-fs { font-size: 13px; }
@@ -705,10 +730,6 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .chat-sidebar-scroll {
             flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 6px 10px;
-        }
-        .chat-sidebar-scroll::-webkit-scrollbar { width: 6px; }
-        .chat-sidebar-scroll::-webkit-scrollbar-thumb {
-            background: rgba(255,255,255,0.10); border-radius: 3px;
         }
         /* A 268px column on a phone leaves no chat. Below that width the
            sidebar steps aside entirely rather than splitting a screen that
@@ -814,8 +835,6 @@ window.addEventListener('DOMContentLoaded',function(){
             overflow-y: auto;
         }
         .settings-panel.open { right: 0; }
-        .settings-panel::-webkit-scrollbar { width: 4px; }
-        .settings-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
         .settings-section-title {
             font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.95);
             letter-spacing: 0.12em; margin-bottom: 10px; text-transform: uppercase;
@@ -1216,8 +1235,6 @@ window.addEventListener('DOMContentLoaded',function(){
             animation: notifDropdownSlide 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
             font-family: 'Inter', sans-serif;
         }
-        .notif-dropdown::-webkit-scrollbar { width: 4px; }
-        .notif-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
         .notif-section-header {
             display: flex; justify-content: space-between; align-items: center;
             padding: 9px 14px; border-bottom: 1px solid rgba(0,212,255,0.08);
@@ -2069,8 +2086,6 @@ window.addEventListener('DOMContentLoaded',function(){
         .thread-body {
             flex: 1; overflow-y: auto; padding: 12px 14px;
         }
-        .thread-body::-webkit-scrollbar { width: 4px; }
-        .thread-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
         .thread-step {
             display: flex; gap: 10px; padding: 6px 0;
             position: relative;
@@ -5711,6 +5726,19 @@ function fridayMicBlockedReason() {
     return '';
   }
 }
+/* FRIDAY'S SCROLLBARS INSIDE A FRAME FRIDAY BUILDS. A frame is a document of
+   its own and inherits no styles, so the one scrollbar rule set (the style
+   element with id friday-scrollbars, token and all) is copied into its head.
+   Returns the html unchanged when the page has no such element. */
+function fridayFrameScrollbars(html) {
+  const el = typeof document !== 'undefined' && document.getElementById('friday-scrollbars');
+  const s = String(html == null ? '' : html);
+  if (!el) return s;
+  const css = '<style>' + el.textContent + '</style>';
+  const m = /<head[^>]*>/i.exec(s) || /<html[^>]*>/i.exec(s);
+  return m ? s.slice(0, m.index + m[0].length) + css + s.slice(m.index + m[0].length) : css + s;
+}
+window.fridayFrameScrollbars = fridayFrameScrollbars;
 function apiFetch(url, opts) {
   const tok = window.__FRIDAY_API_TOKEN || '';
   const headers = Object.assign({}, opts && opts.headers);
@@ -26729,7 +26757,7 @@ function NewsWS() {
       overflowY: 'auto'
     }
   }, selected.isHtml ? /*#__PURE__*/React.createElement("iframe", {
-    srcDoc: htmlContent,
+    srcDoc: fridayFrameScrollbars(htmlContent),
     style: {
       width: '100%',
       height: 'calc(100vh - 200px)',
@@ -29958,7 +29986,7 @@ function buildDraftHtml(text, mode, promptText) {
   const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const paras = (text || '').split(/\n\n+/).filter(Boolean);
   const paraHtml = paras.map((p, i) => `<p${i === 0 ? ' style="font-size:18px;color:#e8e8f0"' : ''}>${esc(p).replace(/\n/g, '<br>')}</p>`).join('\n    ');
-  return ['<!DOCTYPE html><html lang="en"><head>', '<meta charset="UTF-8">', `<title>FRIDAY DRAFT — ${esc(label)}</title>`, '<link href="/static/fonts/fonts.css" rel="stylesheet">', '<style>', '* { margin: 0; padding: 0; box-sizing: border-box; }', "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }", '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }', '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }', ".header h1 { font-family: 'Orbitron', monospace; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }", '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }', ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }", '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }', ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7c3aed; border: 1px solid rgba(124,58,237,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }", ".prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }", '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }', ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }", '</style></head><body>', '<div class="container">', '  <div class="header"><h1>FRIDAY DRAFT</h1><div class="neon-line"></div>', `  <div class="subtitle">${esc(label)}</div><div class="date">${esc(now)}</div></div>`, promptText ? `  <div class="prompt-ctx">Prompt: ${esc((promptText || '').substring(0, 200))}</div>` : '', `  <div class="mode-tag">${esc(label.toUpperCase())}</div>`, `  <div class="draft-body">\n    ${paraHtml}\n  </div>`, '  <div class="footer">Generated by FRIDAY · FutureSpeak.AI</div>', '</div></body></html>'].join('\n');
+  return fridayFrameScrollbars(['<!DOCTYPE html><html lang="en"><head>', '<meta charset="UTF-8">', `<title>FRIDAY DRAFT — ${esc(label)}</title>`, '<link href="/static/fonts/fonts.css" rel="stylesheet">', '<style>', '* { margin: 0; padding: 0; box-sizing: border-box; }', "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }", '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }', '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }', ".header h1 { font-family: 'Orbitron', monospace; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }", '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }', ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }", '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }', ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7c3aed; border: 1px solid rgba(124,58,237,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }", ".prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }", '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }', ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }", '</style></head><body>', '<div class="container">', '  <div class="header"><h1>FRIDAY DRAFT</h1><div class="neon-line"></div>', `  <div class="subtitle">${esc(label)}</div><div class="date">${esc(now)}</div></div>`, promptText ? `  <div class="prompt-ctx">Prompt: ${esc((promptText || '').substring(0, 200))}</div>` : '', `  <div class="mode-tag">${esc(label.toUpperCase())}</div>`, `  <div class="draft-body">\n    ${paraHtml}\n  </div>`, '  <div class="footer">Generated by FRIDAY · FutureSpeak.AI</div>', '</div></body></html>'].join('\n'));
 }
 function openDraftTab(text, mode, promptText) {
   const html = buildDraftHtml(text, mode, promptText);

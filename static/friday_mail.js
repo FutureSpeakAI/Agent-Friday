@@ -322,8 +322,8 @@
     const origin = window.location.origin;
     const csp = "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data: " + origin + (showImages ? ' https: http:' : '');
     const base = adapt ? 'html,body{background:#0f1522;color:#dbe6f5}a{color:#7dd3fc}' : 'body{color:#1b1f24}';
-    const doc = '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + csp + '">' +
-      '<base target="_blank"><style>body{margin:12px;font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif;word-wrap:break-word}' + base + 'img{max-width:100%;height:auto}a{cursor:pointer}</style></head><body>' + html + '</body></html>';
+    const doc = (window.fridayFrameScrollbars || (s => s))('<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + csp + '">' +
+      '<base target="_blank"><style>body{margin:12px;font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif;word-wrap:break-word}' + base + 'img{max-width:100%;height:auto}a{cursor:pointer}</style></head><body>' + html + '</body></html>');
     const onLoad = () => {
       let d;
       try { d = ref.current.contentDocument; } catch (_) { return; }
