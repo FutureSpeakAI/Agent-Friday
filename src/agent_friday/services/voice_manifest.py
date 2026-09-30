@@ -274,14 +274,44 @@ def _run_mind(selection: dict, progress) -> dict:
     if tools:
         body["tools"] = tools
     import urllib.request
-    req = urllib.request.Request(
-        base + "/v1/chat/completions", data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=120) as r:
-        resp = json.loads(r.read().decode())
-    choices = resp.get("choices") or []
-    msg = (choices[0].get("message") or {}) if choices else {}
-    if not choices or not (msg.get("content") or msg.get("tool_calls")):
+
+    def _ask(b):
+        req = urllib.request.Request(
+            base + "/v1/chat/completions", data=json.dumps(b).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.loads(r.read().decode())
+
+    def _answered(resp):
+        chs = resp.get("choices") or []
+        m = (chs[0].get("message") or {}) if chs else {}
+        return (chs and (m.get("content") or m.get("tool_calls"))), m, chs
+
+    resp = _ask(body)
+    ok, msg, choices = _answered(resp)
+    if not ok and "chat_template_kwargs" not in body:
+        # The seat is alive and thinking. `needs_thinking_disabled` knows the
+        # families that must never think on a tool turn, but any seat can
+        # spend an eight-token budget inside its own reasoning and return
+        # content '' with finish_reason 'length' -- bonsai2:27b does. Refusing
+        # there tells the owner "your local model is not running" about a seat
+        # that answers arithmetic in two seconds, and closes memory and the
+        # knowledge graph on a voice session for nothing.
+        #
+        # So one retry, asking the way the router asks a thinking model, and
+        # with room to finish. The seat's real turns are not touched: this is
+        # the proof adapting to the seat, not a change to how turns run.
+        if (choices[0].get("finish_reason") if choices else None) == "length" \
+                or not choices:
+            retry = dict(body)
+            retry["chat_template_kwargs"] = {"enable_thinking": False}
+            retry["max_tokens"] = 64
+            try:
+                resp = _ask(retry)
+                ok, msg, choices = _answered(resp)
+            except Exception:
+                pass
+    if not ok:
         raise ProofRefused("voice_stage_unproven",
                            f"{seat} answered with no completion.",
                            {"label": "Prove again", "kind": "retry"})
