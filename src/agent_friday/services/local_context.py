@@ -174,14 +174,56 @@ def _audit(approval_id, text):
 
 # ── The local answer ─────────────────────────────────────────────────────────
 
-def local_answer(question: str) -> tuple:
-    """(text, local_model) from the brain seat, or ("", None) with a reason."""
+def pick_local_seat() -> tuple:
+    """(seat, spoken_note): which local model will read the private data.
+
+    Order: the reasoning seat if it is already serving, then the sidekick if
+    IT is, then either one cold. A seat that is already up answers in a second;
+    a cold one can take a minute, which is why the note exists — the caller
+    says it out loud before the wait rather than leaving a silence that reads
+    as Friday ignoring the question.
+
+    `seat` is None only when there is no local model at all. That case does
+    NOT fall through to the cloud: the whole point of this path is that raw
+    private data is read on this machine, so with nothing to read it, nothing
+    is read.
+    """
+    from agent_friday.services import local_seats
+    try:
+        up = set(local_seats.serving() or {})
+    except Exception:          # residency unknown: treat everything as cold
+        up = set()
+    brain = local_seats.resolve("brain")
+    side = local_seats.resolve("sidekick")
+
+    if brain and brain in up:
+        return brain, ""
+    if side and side in up:
+        return side, ("Friday's main local model is not up, so her smaller "
+                      "local sidekick is reading this one. Say that in one "
+                      "short sentence.")
+    if brain:
+        return brain, ("Friday is starting her local model so it can read "
+                       "this privately — that takes a moment. Say so in one "
+                       "short sentence and keep the conversation going.")
+    if side:
+        return side, ("Friday is starting her local sidekick so it can read "
+                      "this privately — that takes a moment. Say so in one "
+                      "short sentence.")
+    return None, ("Friday has no local model installed, so she cannot read "
+                  "his private data without sending it to a cloud model, and "
+                  "she will not do that. Tell him plainly, and offer to set "
+                  "up a local model in Settings.")
+
+
+def local_answer(question: str, seat: Optional[str] = None) -> tuple:
+    """(text, local_model) from a local seat, or ("", None) when there is none."""
     from agent_friday.routes.voice import (_build_voice_system_prompt,
                                            _voice_user_message)
     from agent_friday.services.agent import _generate_agent, _load_settings
-    from agent_friday.services import local_seats
     settings = _load_settings() or {}
-    seat = local_seats.resolve("brain")
+    if seat is None:
+        seat, _note = pick_local_seat()
     if not seat:
         return "", None
     system, meta = _build_voice_system_prompt(settings)
@@ -221,8 +263,75 @@ def _deliver(conversation_id, text, kind) -> bool:
     return voice_live_channel.deliver(conversation_id, text, kind=kind)
 
 
-def _send(approval_id, conversation_id, text) -> bool:
-    """Hand the approved payload, exactly as shown, to the live call."""
+def sign_receipt(approval_id, text, payload=None, *, under_grant=None) -> None:
+    """Sign a receipt naming exactly what left this machine. Raises on failure.
+
+    The egress log line beside this records that a share happened and how many
+    characters it was. That is enough to notice a share and not enough to
+    audit one: it cannot answer "what did you tell Google about me?".
+
+    So the receipt carries the payload itself. That is safe to keep because it
+    is the text AFTER the scrub and the floor — the same text the owner read
+    on the card and approved — so writing it down creates no copy of anything
+    private that was not already cleared to leave. It also carries the
+    placeholder categories, which say what was held back without saying what
+    it was.
+
+    It is signed with the governance key and appended to the decision BOM, so
+    the record of a share cannot be edited afterwards without detection. Under
+    off-record the signer trims it to its own key set, which is that mode
+    working, not this one failing.
+
+    Raises, deliberately: a share whose receipt cannot be written must not
+    happen. An unauditable disclosure is the thing the receipt exists to
+    prevent.
+    """
+    from agent_friday.governance import action_gate as ag
+    p = payload or {}
+    ag._receipt({
+        "tool": "voice.local_context_share",
+        "class": "egress",
+        "decision": "granted" if under_grant else "owner_approved",
+        "surface": "voice",
+        "approval": approval_id,
+        "grant": under_grant,
+        "destination": p.get("cloud_model") or "(cloud voice model)",
+        "local_model": p.get("local_model") or "(unknown)",
+        "conversation": p.get("conversation_id"),
+        "question": p.get("question"),
+        "shared_text": text,
+        "chars": len(text or ""),
+        "withheld": [q.get("category") for q in (p.get("placeholders") or [])],
+    })
+
+
+def _send(approval_id, conversation_id, text, payload=None, *,
+          under_grant=None) -> bool:
+    """Hand the approved payload, exactly as shown, to the live call.
+
+    The receipt is signed BEFORE the text leaves. If it cannot be signed the
+    share does not happen: the point of the receipt is that nothing goes out
+    unrecorded, which a receipt written afterwards cannot guarantee.
+    """
+    try:
+        sign_receipt(approval_id, text, payload, under_grant=under_grant)
+    except Exception as e:  # noqa: BLE001
+        _log.error("holding a voice context share: its receipt could not be "
+                   "signed (%s: %s)", type(e).__name__, e)
+        _note_in_conversation(
+            conversation_id,
+            "Approved context was NOT sent: Friday could not write the signed "
+            "record of what would leave the machine, so she held it back.")
+        _deliver(conversation_id,
+                 "That context was not sent: Friday could not record what "
+                 "would have left the machine, so she held it back. Tell him "
+                 "so in one sentence.", "notice")
+        SENT_LOG.append({"approval_id": approval_id,
+                         "conversation_id": conversation_id, "text": text,
+                         "delivered": False, "held": "receipt_unsigned",
+                         "at": time.time()})
+        del SENT_LOG[:-50]
+        return False
     ok = _deliver(conversation_id, text, "context")
     if ok:
         _audit(approval_id, text)
@@ -255,13 +364,24 @@ def request(question: str, *, conversation_id, cloud_model: str,
     question = str(question or "").strip()
     if not question:
         return {"status": "unavailable", "reason": "no question"}
+    unavailable = ("Friday's local model is not running, so private context "
+                   "cannot be reached.")
     if answer_fn is not None:
         raw, local_model = answer_fn(question)
     else:
-        raw, local_model = local_answer(question)
+        # Choose the seat and SAY SO before the slow part: summoning a cold
+        # local model can take a minute, and an unexplained minute of silence
+        # is how a working feature gets reported as broken.
+        seat, note = pick_local_seat()
+        if note:
+            _deliver(conversation_id, note, "notice")
+        if not seat:
+            return {"status": "unavailable", "reason": note}
+        raw, local_model = local_answer(question, seat=seat)
+        if not local_model:
+            unavailable = note or unavailable
     if not local_model:
-        return {"status": "unavailable",
-                "reason": "Friday's local model is not running, so private context cannot be reached."}
+        return {"status": "unavailable", "reason": unavailable}
     draft = prepare(raw)
     if _withheld_whole(draft["text"]):
         return {"status": "withheld", "reason": "nothing in the answer could be shared"}
@@ -271,7 +391,10 @@ def request(question: str, *, conversation_id, cloud_model: str,
     grant = _use_conversation_grant(conversation_id)
     if grant:
         sid = "grant-" + uuid.uuid4().hex[:10]
-        _send(sid, conversation_id, draft["text"])
+        if not _send(sid, conversation_id, draft["text"], draft,
+                     under_grant=grant.get("grant_id")):
+            return {"status": "withheld",
+                    "reason": "the share could not be recorded, so it was held"}
         return {"status": "sent", "under_grant": grant.get("grant_id"), "text": draft["text"]}
     from agent_friday.services import approvals
     rec = approvals.create_approval(
@@ -295,7 +418,7 @@ def _on_decision(rec: dict) -> None:
     if rec.get("status") == "approved":
         if not approvals.claim_for_execution(aid):
             return
-        _send(aid, cid, str(p.get("text") or ""))
+        _send(aid, cid, str(p.get("text") or ""), p)
         approvals.mark_used(aid, "local_context", {"version": p.get("version")})
     else:
         _deliver(cid, "He chose not to share that context. Carry on without it, and do "
