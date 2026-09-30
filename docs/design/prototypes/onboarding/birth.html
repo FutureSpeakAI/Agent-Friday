@@ -124,9 +124,9 @@
     <!-- 3 Vault and recovery -->
     <div class="panel" data-panel="3">
       <div class="card accent">
-        <h3>Lock the vault</h3>
-        <p class="small">Some of what Friday keeps for you is encrypted on disk: money, health, legal, family, and anything you mark sensitive. It opens with one of these. Pick one now; you can add the other later.</p>
-        <label class="choice"><input type="radio" name="lock" checked><b>Windows Hello</b> (fingerprint on this PC)<span class="why">Fast. Tied to this PC and this Windows account. Needs the recovery kit below to move to another machine.</span></label>
+        <h3>Lock the vault <span class="pill dim">your choice · nothing ticked</span></h3>
+        <p class="small">Some of what Friday keeps for you is encrypted on disk: money, health, legal, family, and anything you mark sensitive. It opens with one of these. Pick one now; you can add or switch later in the control room, with a receipt.</p>
+        <label class="choice"><input type="radio" name="lock"><b>Windows Hello</b> (fingerprint on this PC) <span class="pill accent">recommended</span><span class="why">Fast. Tied to this PC and this Windows account. Needs the recovery kit below to move to another machine.</span></label>
         <label class="choice"><input type="radio" name="lock"><b>A passphrase</b><span class="why">Works anywhere. Friday never stores it in a file you can read. If you lose it and the kit, the vault is gone. There is no reset.</span></label>
         <label class="choice"><input type="radio" name="lock"><b>No vault for now</b><span class="why">Sensitive data is refused rather than stored in the open. Friday will say so when it happens.</span></label>
       </div>
@@ -164,10 +164,25 @@
         <h3>Where should Friday think? <span class="pill dim">nothing is preselected</span></h3>
         <p class="small">Each choice says what leaves this PC. This PC's Bonsai2 tier is 27B (PTQ1_0), read from the public tier table on this machine; speed is measured after download. Change this any time; Friday never switches on her own.</p>
         <label class="choice"><input type="radio" name="route"><b>On this device only</b><span class="why">Nothing ever leaves. Slower and less capable until Bonsai2 downloads (size and time from the tier table, shown here once measured). Cloud voice, image generation and frontier reasoning are unavailable, and Friday says so where they would appear.</span></label>
-        <label class="choice"><input type="radio" name="route"><b>Local preferred</b><span class="why">Local when it can, cloud only when you say yes for a job. Cloud sees a PII-scrubbed version by default; you see the exact text before it goes.</span></label>
+        <label class="choice"><input type="radio" name="route"><b>Local preferred</b> <span class="pill accent">recommended on this PC</span><span class="why">Local when it can, cloud only when you say yes for a job. Cloud sees a PII-scrubbed version by default; you see the exact text before it goes.</span></label>
         <label class="choice"><input type="radio" name="route"><b>Ask each time</b><span class="why">Every cloud call is an approval card. Slow by design. Good for the first week if you want to watch.</span></label>
         <label class="choice"><input type="radio" name="route"><b>Cloud preferred</b><span class="why">Fastest and most capable. Your own API key, your own bill. Typical: 3 to 12 dollars a month for briefings, triage and research. The egress gate still runs and records every call.</span></label>
         <label class="choice"><input type="radio" name="route"><b>Custom</b><span class="why">Per job, per source. Built in the control room later.</span></label>
+      </div>
+      <div class="two-col" style="margin-top:12px">
+        <div class="card">
+          <h3>Where the picture of you is built <span class="pill dim">your choice</span></h3>
+          <label class="choice"><input type="radio" name="build"><b>On this PC only</b> <span class="pill accent">recommended</span><span class="why">Bonsai2 does every extraction here. Raw mail and documents never leave. Slower on smaller machines, with honest time estimates.</span></label>
+          <label class="choice"><input type="radio" name="build"><b>Cloud per source, when I say so</b><span class="why">Local by default; you can send a named source to the cloud, each time, with time and cost shown. Only scrubbed text goes.</span></label>
+          <label class="choice"><input type="radio" name="build"><b>Cloud by default for extraction</b><span class="why">Fastest. Your key, your bill, every call in the ledger. Health, money, legal and family still never leave.</span></label>
+          <p class="small muted">Changes later in Models and seats, with a receipt.</p>
+        </div>
+        <div class="card">
+          <h3>How the wiki is kept on disk <span class="pill dim">your choice</span></h3>
+          <label class="choice"><input type="radio" name="wiki"><b>Encrypt the whole wiki</b> <span class="pill accent">recommended with a vault lock</span><span class="why">Every page is sealed at rest and opens only through Friday or your kit. Other note apps on this PC stop reading the files.</span></label>
+          <label class="choice"><input type="radio" name="wiki"><b>Readable Markdown, sensitive sections encrypted</b><span class="why">Health, money, legal, family and anything you mark stay sealed. The rest is plain files any editor can open.</span></label>
+          <p class="small muted">Switching either way re-seals or unseals in place, with a receipt.</p>
+        </div>
       </div>
       <div class="card" style="margin-top:12px">
         <h3>A cloud key <span class="pill dim">only if you chose a cloud option</span></h3>
@@ -191,7 +206,7 @@
         </div>
         <div class="card">
           <h3>Her voice</h3>
-          <label class="choice"><input type="radio" name="voice" checked><b>Local voice</b> (on this PC, ready now)<span class="why">Nothing leaves. Good, not perfect.</span></label>
+          <label class="choice"><input type="radio" name="voice"><b>Local voice</b> (on this PC, ready now) <span class="pill accent">recommended</span><span class="why">Nothing leaves. Good, not perfect.</span></label>
           <label class="choice"><input type="radio" name="voice"><b>Cloud voice</b><span class="why">Better and faster to respond. Hears only a PII-free summary made here first. Needs a key and your yes.</span></label>
           <button class="btn secondary sm" onclick="say('This is how I sound. You can change it whenever you like.')">Hear a sample</button>
           <h3 style="margin-top:18px">How to talk about her</h3>
@@ -203,8 +218,8 @@
     <!-- 6 Quiet hours -->
     <div class="panel" data-panel="6">
       <div class="card">
-        <h3>How much should she speak up? <span class="pill ok">defaults to quiet</span></h3>
-        <label class="choice"><input type="radio" name="pro" checked><b>Quiet</b><span class="why">One daily digest at a time you pick. Urgent only if you name what counts as urgent.</span></label>
+        <h3>How much should she speak up? <span class="pill dim">your choice · nothing ticked</span></h3>
+        <label class="choice"><input type="radio" name="pro"><b>Quiet</b> <span class="pill accent">recommended</span><span class="why">One daily digest at a time you pick. Urgent only if you name what counts as urgent.</span></label>
         <label class="choice"><input type="radio" name="pro"><b>Helpful</b><span class="why">Digest plus a heads-up for commitments and calendar changes, never more than three a day.</span></label>
         <label class="choice"><input type="radio" name="pro"><b>Proactive</b><span class="why">She offers as she notices. Raise this later after she has earned it.</span></label>
         <div class="row" style="margin-top:12px">
@@ -215,7 +230,7 @@
       </div>
       <div class="card" style="margin-top:12px">
         <h3>What she may do on her own <span class="pill dim">start narrow</span></h3>
-        <label class="choice"><input type="radio" name="auto" checked><b>Ask before every action</b><span class="why">Every send, spend, delete or post is a card you approve, by voice or on screen.</span></label>
+        <label class="choice"><input type="radio" name="auto"><b>Ask before every action</b> <span class="pill accent">recommended</span><span class="why">Every send, spend, delete or post is a card you approve, by voice or on screen.</span></label>
         <label class="choice"><input type="radio" name="auto"><b>Draft only</b><span class="why">She prepares; you press send.</span></label>
         <label class="choice"><input type="radio" name="auto"><b>Observe only</b><span class="why">She reads and reports. No drafts, no actions.</span></label>
         <p class="small muted">Routine grants come later, one workflow at a time, each narrow and expiring. There is no "full access" setting, on purpose.</p>
@@ -226,7 +241,8 @@
       <button class="btn secondary" id="prev">Back</button>
       <button class="btn" id="nextb">Continue</button>
       <span class="spacer"></span>
-      <button class="btn ghost" onclick="toast('Setup paused with defaults. Friday will offer to finish from Home, once, not repeatedly.')">Set up later</button>
+      <button class="btn secondary" onclick="useRecommended()">Use recommended for the rest</button>
+      <button class="btn ghost" onclick="toast('Setup paused. Nothing was chosen for you; Friday will offer to finish from Home, once.')">Set up later</button>
     </div>
   </section>
 </div>
@@ -270,6 +286,17 @@
     const warm = v[0] > 50, direct = v[1] > 50, funny = v[2] > 50, brief = v[3] < 50;
     let t = (warm ? 'Morning. ' : '') + (direct ? 'Two things' : 'When you have a moment, there are two things') + ' before your 10 o\'clock: Dana\'s contract reply is overdue, and the flight price you watched dropped' + (funny ? ', finally' : '') + '.' + (brief ? ' Draft the reply?' : ' I can draft the reply now and hold it for you to read, or leave it for later, whichever suits.');
     document.getElementById('preview').textContent = '"' + t + '"';
+  }
+  function useRecommended() {
+    const chosen = [];
+    document.querySelectorAll('.panel.active .choice').forEach(l => {
+      const r = l.querySelector('input[type=radio]'); if (!r) return;
+      const group = document.querySelectorAll('.panel.active input[name="' + r.name + '"]:checked');
+      if (group.length) return;
+      if (l.querySelector('.pill.accent')) { r.checked = true; chosen.push(l.querySelector('b').textContent); }
+    });
+    const msg = chosen.length ? 'Chosen for this screen, at your request: ' + chosen.join('; ') + '. Change any of them now or later.' : 'Everything on this screen is already your choice.';
+    toast(msg); say(msg);
   }
   document.addEventListener('keydown', e => { if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); say('Listening.', 'busy'); } });
   document.addEventListener('DOMContentLoaded', () => { go(1); });
