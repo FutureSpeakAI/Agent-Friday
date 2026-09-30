@@ -138,3 +138,29 @@ either direction (this reinforces §6.4).
   version tag, a GitHub release, a published installer and an announcement.
 - **§34's release acceptance is the readiness checklist.** Meeting it does not
   authorise a release.
+
+## A8. The salon's box, and who may change the constitution
+
+**Amends:** §26.11 (tool sandbox network allowlists) and §26.13 (network
+policy) for sandboxed codebase traffic only, and §13.1 (constitution) in
+part. Decided by the owner on 2026-09-29. The design is in
+`docs/design/active/vibe-coding-salon.md` (§4.5, §7.4, §14).
+
+- **The box announces; it does not block reads.** In a codebase's box,
+  reads (GET, HEAD, OPTIONS) and package installs to hosts without a rule go
+  ahead. Each one is announced in the chat and recorded on the step's
+  receipt.
+  - Writes to outside hosts ask, as every outward action does.
+  - Anything carrying private data asks, and shows the exact payload.
+  - The install scan, the 24-hour cooldown and exact pins still apply.
+  - The owner can switch any codebase to "ask", or set an owner rule.
+  - This covers only the box's own traffic. Friday's egress gate,
+    connectors and providers keep §26.13 as written.
+- **The constitution is not editable by Friday on her own authority. The
+  owner may change it through the salon:**
+  - only on a copy of Friday, never the running one;
+  - only through the loud approval: a separate card, a fresh challenge word
+    spoken or typed, and a signed notice afterwards;
+  - never through a grant;
+  - always with §13.2's readable diff and re-attestation before outward
+    actions resume.

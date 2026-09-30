@@ -35,6 +35,8 @@
 > - [`avatar-visual-genome.md`](avatar-visual-genome.md) Appendix A. This is
 >   the positron and negatron model the owner decided on.
 > - [`laya-across-the-harness.md`](laya-across-the-harness.md)
+> - The north star, `docs/design/north-star/`. §14 maps this spec onto it, and
+>   amendment A8 records the two places it departs from it.
 >
 > **Consumes, from parallel work not yet on main at `780e31fa`:**
 > - **The voice contract** and **the private-summary handoff.** They are being
@@ -323,7 +325,7 @@ authoritative.
 
 ### 2.1 LocalStack: borrow the pattern, depend on nothing
 
-**What it is** (all **VERIFIED**; sources in §14):
+**What it is** (all **VERIFIED**; sources in §15):
 
 - **The original product.** LocalStack emulated AWS services (S3, SQS, SNS,
   DynamoDB, Lambda, Kinesis, API Gateway, CloudFormation and more) in one
@@ -373,7 +375,7 @@ backstage at it. Friday never installs it.
 
 ### 2.2 NVIDIA OpenShell: copy the policy model now, adopt the runtime only past a gate
 
-**What it is** (all **VERIFIED** unless marked; sources in §14):
+**What it is** (all **VERIFIED** unless marked; sources in §15):
 
 - **Maturity.** Apache-2.0 and active, about 10.6k stars. The latest stable
   release is **v0.1.2 (2026-09-28)**, with roughly weekly releases. Some APIs
@@ -625,6 +627,13 @@ in Phase 1 is thrown away later.
 | `diff` | `DevDiff` | also used by the Changes tab |
 | `image` / `svg` | `<img>`, with SVG sanitised or framed | |
 
+**Every artifact carries the north star's artifact contract** (§24.1,
+§30.14): id, principal scope, optional task and goal, version, sha256,
+sensitivity, source refs, provenance manifest id, `qa_status` and
+`created_at`. The panel's kinds extend §30.14's `kind` list: `markdown` maps
+to `document`, `table` to `spreadsheet`, and `chart`, `html` and `diff` are
+added. A saved artifact's delivery receipt is the step receipt of §4.8.
+
 **How a model makes one.** It uses one tool:
 
 ```
@@ -816,6 +825,13 @@ Under `ask`, everything without a rule asks. That is the OpenShell default.
 
 **The floor no grant can widen.** A deterministic check runs before any rule
 is written. It is the salon's small "prover".
+
+- **Going live and publishing are non-grantable by default** (north star
+  §18: email, purchases, public publishing and credential changes stay
+  non-grantable). "Trust this codebase" covers the box's own API writes. It
+  never covers "go live", publishing a bundle, or sending mail as the owner.
+  The owner can widen that explicitly for one codebase; Friday never
+  proposes it.
 
 - No rule may allow Friday's port.
 - No rule may allow a host on the never-send list.
@@ -1248,7 +1264,12 @@ sandbox the authoring loop and gate the join."**
    - it merges the branch into the running checkout's branch;
    - it checks the hashes of every untouchable file before and after;
    - it restarts the server by the existing restart path.
-4. **Rollback is one click, or one sentence ("Friday, roll that back").**
+4. **The swap is health-checked, and a failed check rolls back by itself**
+   (north-star amendment A7). After the restart, the running Friday must
+   pass the boot health check and a short smoke run: chat, one tool call,
+   and the approval card path. If it doesn't, `apply_growth` reverts and
+   restarts without being asked, then says what failed.
+5. **Rollback is one click, or one sentence ("Friday, roll that back").**
    It runs `git revert` on the merge and restarts. Additive data leaves
    orphans, which are reported. Transformative data needs the declared-store
    snapshot of `grow-button.md` §8.2, and a change that declares one says so
@@ -1617,7 +1638,62 @@ reasoning is kept so the decision can be revisited on evidence.
 
 ---
 
-## 14. Sources
+## 14. North-star mapping
+
+`docs/design/north-star/agent-friday-ideal-product-spec.md` is the target
+the product is measured against. Its owner rulings are in `AMENDMENTS.md`,
+and `GAP-MATRIX.md` holds the requirement ids used below. Where a ruling and
+the spec differ, the ruling wins.
+
+### 14.1 What the salon implements
+
+| North star | Requirement | Where the salon meets it |
+|---|---|---|
+| §21.15, NS-21.15-1/2/3 | Code: worktrees and branches, scoped sandboxes, tests, security scanning, commit prep, explicit push and merge approvals, provenance to tasks and goals. Friday MUST NOT modify a repository outside a selected worktree or branch | Codebase chats commit only to their own repo or a salon branch (§4.8). Self-edit uses a worktree (§7.1). Every step has a receipt tied to its task and goal (§4.8, §8). Publishing is an outward card |
+| §24.1, §30.14, NS-24.1-1/2 | Artifact contract: id, ancestry, provenance, fingerprint, sensitivity, verification, QA, receipt, versions | §4.2 adopts the §30.14 fields and extends `kind` |
+| §26.11, NS-26.11-1 | Sandboxed execution: scoped directories, allowlists, limits, environment filtering, secret isolation, output caps, receipts | The box tiers (§4.4), the environment built from nothing (FA2), keys at the proxy (§4.7), per-step receipts. B1's weaker guarantees are disclosed, not hidden |
+| §26.13, NS-26.13-1 | A destination policy per connector, provider, skill and renderer | `policy.yaml` per codebase (§4.5). The default for unknown hosts is amended by A8 (§14.2) |
+| §11.3, NS-11.3-11; §26.14 | Browser origin alone must not establish owner authority; proxied loopback is never trusted automatically | Phase 4 is gated on the Origin / Sec-Fetch-Site check this row already picks (§3.2, §10) |
+| §23.3 | Credentials never shown to models; stored encrypted; ownership metadata; revocable | Keys are injected at the proxy and never enter the box. Guest keys carry their owner and codebase, and one click removes them (§4.7) |
+| §23.7–§23.9, NS-23.9-1/2 | Friday-generated skills: manifest, tests, static and security checks, fixture demo, owner-approved install, rollback. A skill cannot loosen cLaws or modify its own permissions | Workspace bundles made in the salon (§4.9) use the `workspace-ecosystem.md` manifest, the step tests, the install scan (§4.5), "installed means disabled", and git rollback. A bundle's grants are the owner's, never its own |
+| §23.12, §7.3, NS-7.3-1, NS-23.12-1 | Marketplace and federation stay absent from the core UX until sandbox, signing, review, permission diff, incident response and revocation are validated | Phase 8 is signed-file export only. Phase 9 (market cards) waits on federation being switched back on *and* on §23.12's validation list |
+| §7.2, NS-7.2-1/2 | Not a creator marketplace or a compute-rental economy | No prices. Positrons and negatrons are ratings, per the owner's 2026-09-22 decision. Nothing is bought or sold |
+| §18, §18.8, §18.9 | Approvals, grants that cannot authorize constitutional violations, delivery receipts, receipt chain | Cards are policy edits (§4.5). The floor refuses grants for loud approvals, and go-live and publishing are non-grantable by default. Step receipts use `goals-and-delivery-receipts.md` |
+| §13.2, §26.24 | A constitution change presents a readable diff and needs re-attestation before outward actions resume | The loud card lists each protected file with a plain-language line. cLaws edits re-pin only after approval (§7.4) |
+| §12, A6, §6.4 | Both paths and the user picks; no silent substitution | Per-codebase seats and key profiles, and the header line (§4.7). A rejected guest key never falls back to the owner's (§11) |
+| §12.9, §29.7 | Cost management and a cost ledger | `cost_calls` gains `key_profile` and `codebase` (§4.7) |
+| A3 | No telemetry, full stop | Every stand-in, backend and engine has telemetry off, verified by packet capture (§8, §9.4). OpenShell ships with telemetry on, so it is a backend only past that gate (§2.2) |
+| A4, §22.5, NS-22.5-1/2 | Voice parity: same cards, answerable by voice or on screen; cloud voice sees private data only as a PII-free local summary | §6 in full. The need for a general spoken card answer (§6.6 item 1) is exactly the gap NS-22.5-1 records |
+| A7 | Continuous deploys only to the owner's Friday: guarded, health-checked, rolled back automatically on failure | The self-edit swap (§7.3 steps 3–4) |
+| §6.5 | "Done" is a verified state | Friday may not say a step is done unless its receipt shows it, including the non-blank preview hash (§4.8, §11) |
+| §6.6, §23.11 | Untrusted content cannot confer authority | Fetched content is tainted (§8). Voice approvals count only in the owner's own latest words (§6.3) |
+
+### 14.2 Where the salon amends it
+
+Two of the owner's 2026-09-29 decisions depart from the spec as written.
+They are recorded as amendment **A8** in `AMENDMENTS.md`.
+
+1. **§26.11 and §26.13 (unexpected domains are blocked or need approval).**
+   In a codebase's box, reads (GET, HEAD, OPTIONS) and package installs to
+   hosts without a rule go ahead and are announced, and they go on the
+   step's receipt. This is decision 1, following the owner's "no
+   restrictions unless the user explicitly sets them".
+   - It applies only to the box's own traffic.
+   - Friday's own egress, connectors and providers keep §26.13 unchanged.
+   - Writes, and anything carrying private data, still ask.
+   - "Ask" stays available per codebase or as an owner rule.
+2. **§13.1 ("non-editable" constitution), in part.** The constitution stays
+   non-editable *by Friday on her own authority*. The owner may change it
+   through the salon (decision 2):
+   - only on the copy;
+   - only through the loud approval of §7.4;
+   - with §13.2's readable diff and re-attestation;
+   - never through a grant.
+
+Decision 3 (guest keys) needs no amendment. It is §23.3's "connection
+ownership metadata" applied per codebase.
+
+## 15. Sources
 
 Checked 2026-09-29.
 
