@@ -98,12 +98,16 @@ def test_broad_pytest_is_blocked_in_a_friday_tree(friday_tree, command):
 
 
 @pytest.mark.parametrize("command", [
-    "pytest tests/unit/test_x.py",
+    "pytest tests/unit/test_x.py -n 0",
     "pytest -q tests/unit/test_x.py::test_a -n 2",
-    "python -m pytest tests/unit/test_a.py tests/unit/test_b.py -q",
-    "pytest -k egress tests/unit/test_egress_gate.py",
+    "python -m pytest tests/unit/test_a.py tests/unit/test_b.py -q -n 1",
+    "pytest -n2 -k egress tests/unit/test_egress_gate.py",
+    "pytest --numprocesses=2 tests/unit/test_x.py",
+    "pytest --numprocesses 0 tests/unit/test_x.py",
+    "pytest -p no:xdist tests/unit/test_x.py",
+    "pytest -n auto tests/unit/test_x.py -n 2",
     "FRIDAY_TESTING=1 ./venv/Scripts/python.exe -m pytest tests/unit/test_x.py -q -p no:cacheprovider -n 0 2>&1 | tail -1",
-    "pytest tests/unit/test_x.py > /tmp/out.txt 2>&1",
+    "pytest tests/unit/test_x.py -n 0 > /tmp/out.txt 2>&1",
     "python scripts/run_suite_guarded.py tests/unit tests/api",
     "pytest --collect-only -q",
     "pytest --version",
@@ -116,10 +120,52 @@ def test_targeted_pytest_and_the_guard_script_are_allowed(friday_tree, command):
     assert ok, why
 
 
-def test_broad_pytest_outside_a_friday_tree_is_not_this_hooks_business(friday_tree):
+@pytest.mark.parametrize("command", [
+    "pytest tests/unit/test_x.py",
+    "pytest tests/unit/test_x.py tests/unit/test_y.py -q",
+    "pytest -n auto tests/unit/test_x.py",
+    "pytest -n 4 tests/unit/test_x.py",
+    "pytest -n3 tests/unit/test_x.py",
+    "pytest --numprocesses=5 tests/unit/test_x.py",
+    "pytest -n logical tests/unit/test_x.py",
+    "pytest -n 2 tests/unit/test_x.py -n auto",
+    "python -m pytest tests/unit/test_x.py::test_a",
+    "cd {tree} && FRIDAY_TESTING=1 ./venv/Scripts/python.exe -m pytest tests/unit/test_a.py tests/unit/test_b.py",
+])
+def test_a_pytest_call_without_an_explicit_small_worker_count_is_blocked(friday_tree, command):
+    tree, _ = friday_tree
+    ok, why = g.decide(bash(command.format(tree=tree), tree), base_cfg())
+    assert not ok, command
+    assert "-n 2" in why
+
+
+def test_the_worker_rule_applies_outside_friday_trees_too(friday_tree):
     _, other = friday_tree
-    ok, _ = g.decide(bash("pytest", other), base_cfg())
+    ok, why = g.decide(bash("pytest tests/test_x.py", other), base_cfg())
+    assert not ok and "-n 2" in why
+    ok, _ = g.decide(bash("pytest tests/test_x.py -n 1", other), base_cfg())
     assert ok
+
+
+def test_a_broad_run_outside_a_friday_tree_only_needs_a_worker_count(friday_tree):
+    _, other = friday_tree
+    ok, why = g.decide(bash("pytest", other), base_cfg())
+    assert not ok and "-n 2" in why and "Full-suite pytest" not in why
+    ok, _ = g.decide(bash("pytest -n 0", other), base_cfg())
+    assert ok
+
+
+def test_an_older_base_without_the_resource_guard_is_still_a_friday_tree(tmp_path):
+    old = tmp_path / "old-base"
+    (old / "src" / "agent_friday").mkdir(parents=True)
+    (old / "tests" / "unit").mkdir(parents=True)
+    ok, why = g.decide(bash("pytest tests/unit -q", old), base_cfg())
+    assert not ok and "run_suite_guarded.py" in why
+    files = "tests/unit/test_avatar_voice.py tests/unit/test_calendar_write_accounts.py"
+    ok, why = g.decide(bash(f"pytest {files}", old), base_cfg())
+    assert not ok and "-n 2" in why
+    ok, why = g.decide(bash(f"pytest {files} -n 2", old), base_cfg())
+    assert ok, why
 
 
 def test_cd_into_a_friday_tree_counts(friday_tree):
@@ -219,7 +265,7 @@ def test_mutations_with_the_live_checkout_as_cwd_are_blocked(live, command):
 @pytest.mark.parametrize("command", [
     "git status", "git log --oneline -5", "git diff", "git worktree add ../x -b x", "git fetch",
     "git stash list", "git branch --show-current", "cat AGENTS.md", "grep -rn foo src",
-    "git log > /tmp/log.txt", "pytest tests/unit/test_x.py", "ls -la", "cp AGENTS.md /tmp/copy.md",
+    "git log > /tmp/log.txt", "pytest tests/unit/test_x.py -n 0", "ls -la", "cp AGENTS.md /tmp/copy.md",
     "sed 's/a/b/' AGENTS.md", "python -c \"print(open('AGENTS.md').read())\"",
     "echo 'deploy-2b' > .claude/DEPLOY_LANE", "git worktree remove /tmp/x",
     "echo \"main -> branch is a clean fast-forward\"", "cat > \"$SCRATCH/notes.md\" <<'EOF'\nbody\nEOF",

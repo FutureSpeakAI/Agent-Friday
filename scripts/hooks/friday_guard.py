@@ -8,9 +8,13 @@ handles the judgement left over.
 
 Rules, each testable in both directions (``tests/unit/test_friday_guard_hook.py``):
 
-1. A broad pytest run (directories, or nothing, so ``testpaths``) inside a
-   repository that carries ``pytest_resource_guard.py`` is refused and pointed
-   at ``scripts/run_suite_guarded.py``. Test files and node ids run directly.
+1. Every pytest call says how many xdist workers it uses: ``-n 0``, ``-n 1``
+   or ``-n 2`` (or ``-p no:xdist``). Anything else is refused in every
+   checkout, because ``pytest.ini`` says ``-n auto`` and a worktree on an
+   older base has no resource guard to cap it: a run of 34 named files once
+   fanned out to five workers and took the machine to its memory ceiling. A
+   broad run (directories, or nothing, so ``testpaths``) in a Friday checkout
+   is refused outright and pointed at ``scripts/run_suite_guarded.py``.
 2. ``wsl`` and ``docker`` commands are refused while free memory is under the
    floor; either one boots a multi-gigabyte VM. ``wsl --shutdown``, listing
    and status queries never boot it and stay allowed.
@@ -56,7 +60,9 @@ DEFAULTS = {
 }
 CONFIG_PATH = Path.home() / ".claude" / "friday-desktop.local.json"
 FRIDAY_MARKER = "pytest_resource_guard.py"
+FRIDAY_PACKAGE = ("src", "agent_friday")   # present on every base, unlike the marker
 GUARD_SCRIPT = "scripts/run_suite_guarded.py"
+MAX_EXPLICIT_WORKERS = 2
 
 SHELL_TOOLS = {"Bash", "PowerShell"}
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -216,7 +222,7 @@ def in_live(path: str, cfg: dict) -> bool:
 def find_friday_root(start: str) -> str | None:
     p = Path(start)
     for d in [p, *p.parents]:
-        if (d / FRIDAY_MARKER).is_file():
+        if (d / FRIDAY_MARKER).is_file() or d.joinpath(*FRIDAY_PACKAGE).is_dir():
             return norm_path(str(d))
     return None
 
@@ -394,18 +400,45 @@ def is_broad_pytest(args: list[str]) -> bool:
     return any("::" not in t and not t.lower().endswith(".py") for t in targets)
 
 
+def xdist_workers(args: list[str]):
+    """What the call says about workers: an int, "auto"/"logical", "off" for
+    ``-p no:xdist``, or None when it says nothing (so pytest.ini decides).
+    The last statement wins, as it does for pytest."""
+    value = None
+    for i, a in enumerate(args):
+        if a in {"-n", "--numprocesses"} and i + 1 < len(args):
+            value = args[i + 1]
+        elif a.startswith("--numprocesses="):
+            value = a.split("=", 1)[1]
+        elif a.startswith("-n") and len(a) > 2 and a[2] in "=0123456789al":
+            value = a[2:].lstrip("=")
+        elif (a == "-p" and i + 1 < len(args) and args[i + 1] == "no:xdist") or a == "-pno:xdist":
+            value = "off"
+    if value is None or value == "off":
+        return value
+    return int(value) if value.isdigit() else value.lower()
+
+
 def check_pytest(segs: list[Segment]) -> str | None:
     for seg in segs:
         args = pytest_args(seg.words)
-        if args is None or not is_broad_pytest(args):
+        if args is None or any(a in PYTEST_NO_RUN_FLAGS for a in args):
             continue
-        if find_friday_root(seg.cwd) is None:
+        if is_broad_pytest(args) and find_friday_root(seg.cwd) is not None:
+            return ("Full-suite pytest is blocked here. Run it through the guard script:\n"
+                    f"    python {GUARD_SCRIPT} [pytest args]\n"
+                    "It checks the free-memory and free-disk floors, takes SUITE_LOCK, caps xdist "
+                    "while the local model seat is up, and writes a receipt with pytest's real exit "
+                    "code. Named test files run directly with an explicit worker count: "
+                    f"pytest tests/unit/test_x.py -n {MAX_EXPLICIT_WORKERS}")
+        n = xdist_workers(args)
+        if n == "off" or (isinstance(n, int) and 0 <= n <= MAX_EXPLICIT_WORKERS):
             continue
-        return ("Full-suite pytest is blocked here. Run it through the guard script:\n"
-                f"    python {GUARD_SCRIPT} [pytest args]\n"
-                "It checks the free-memory and free-disk floors, takes SUITE_LOCK, caps xdist "
-                "while the local model seat is up, and writes a receipt with pytest's real exit "
-                "code. Named test files run directly: pytest tests/unit/test_x.py")
+        said = "it says nothing about workers" if n is None else f"it says -n {n}"
+        return (f"pytest is blocked: {said}. Every pytest call carries -n 0, -n 1 or "
+                f"-n {MAX_EXPLICIT_WORKERS} (or -p no:xdist), because pytest.ini defaults to -n auto "
+                "and a checkout on an older base has no guard to cap it. Full runs go through "
+                f"python {GUARD_SCRIPT}.")
     return None
 
 
