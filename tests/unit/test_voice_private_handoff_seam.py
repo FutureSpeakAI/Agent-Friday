@@ -242,3 +242,39 @@ def test_the_spoken_note_reaches_the_call_before_the_local_model_runs(monkeypatc
     lc.request("What is on his calendar?", conversation_id="conv-seam",
                cloud_model="gemini-live")
     assert order[:2] == ["said:notice", "ran_local"], order
+
+
+# ── Unrestricted cloud mode does not turn this path off ────────────────────
+
+def test_unrestricted_cloud_mode_does_not_disable_the_handoff_scrub(monkeypatch):
+    """seal_outbound skips its PII scrub entirely under recorded unrestricted
+    consent. This path must not.
+
+    The difference is what the two things promise. seal_outbound is a
+    safeguard applied on the way out, and the owner may record a decision to
+    lift it. The handoff is not a safeguard being applied to him — it is the
+    mechanism of the feature: the cloud model asked for a summary, so a
+    summary is what it gets. Honouring "unrestricted" here would silently turn
+    "ask my local model" into "send my mail to Google", which is not what
+    either setting says.
+    """
+    from agent_friday.services import egress_gate as eg
+    monkeypatch.setattr(eg, "is_unrestricted_cloud", lambda: True)
+    try:
+        from agent_friday.privacy import cloud_consent
+        monkeypatch.setattr(cloud_consent, "is_unrestricted_cloud", lambda: True)
+    except Exception:
+        pass
+    scrubbed, placeholders = lc.scrub(RAW_ANSWER)
+    _no_seed_in(scrubbed, "the scrub under unrestricted cloud mode")
+    assert placeholders
+
+
+def test_the_handoff_scrubs_directly_rather_than_through_the_outbound_gate():
+    """Why the test above holds, pinned where it can be checked."""
+    import inspect
+    src = inspect.getsource(lc.scrub)
+    assert "seal_outbound" not in src, (
+        "routing through seal_outbound would inherit its unrestricted-mode "
+        "bypass and send raw private data")
+    assert "_scrub_pii" in src

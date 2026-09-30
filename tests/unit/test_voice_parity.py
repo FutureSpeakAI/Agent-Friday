@@ -272,3 +272,20 @@ def test_each_new_voice_tool_routes_to_a_handler_that_exists(tool, handler,
     out = ve._voice_tool_run(tool, {"kind": "workspace", "name": "x"},
                              lambda *a, **k: None, {"conversation_id": "c1"})
     assert called == [tool], "%s did not reach its handler (got %r)" % (tool, out)
+
+
+def test_the_new_tools_render_as_real_gemini_declarations():
+    """Declaring a tool is not the same as Gemini being able to call it.
+
+    _build_voice_live_tools turns the specs into FunctionDeclarations at
+    session start, so a malformed spec fails in a live call and nowhere else.
+    """
+    types = pytest.importorskip("google.genai.types",
+                                reason="google-genai not installed")
+    rendered = set()
+    for t in ve._build_voice_live_tools(types):
+        for d in (getattr(t, "function_declarations", None) or []):
+            rendered.add(d.name)
+    for name in ("navigate_to", "check_situation", "run_workflow",
+                 "workflow_status"):
+        assert name in rendered, "%s never reaches Gemini" % name
