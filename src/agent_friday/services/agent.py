@@ -8082,6 +8082,15 @@ try:
 except Exception as _ate:  # never let optional deps break the agent import
     print(f"  [AVATAR] registration skipped: {_ate}")
 
+# The hologram window (hologram_window): how much leaning in and out zooms
+# the avatar, the parallax, smoothing and response, and the calibrated
+# sitting distance. Shared into voice. See services/hologram_tools.py.
+try:
+    from agent_friday.services import hologram_tools as _hologram_tools
+    _hologram_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _hte:  # never let optional deps break the agent import
+    print(f"  [HOLOGRAM] registration skipped: {_hte}")
+
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
 # hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.

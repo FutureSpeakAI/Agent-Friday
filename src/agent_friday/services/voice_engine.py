@@ -652,6 +652,9 @@ _VOICE_SHARED_TOOLS = (
     # month's look", "turn evolution off", "what changed?". The same tool the
     # screen uses, so what she says is what the history shows.
     "avatar_evolution",
+    # The hologram window: "make the zoom stronger", "calibrate where I'm
+    # sitting", "reset the window". Persists the dials and applies them live.
+    "hologram_window",
 )
 
 

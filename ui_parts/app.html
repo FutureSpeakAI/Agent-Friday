@@ -645,6 +645,28 @@ function fridayRunActions(actions){
       }else if(a.type==='landing'){
         // show_my_day: the start screen's cluster now, or when it shows on its own.
         window.dispatchEvent(new CustomEvent('friday:landing',{detail:{summon:!!a.summon,mode:a.mode||null,via:a.via||'friday'}}));
+      }else if(a.type==='tracking'){
+        // Voice or chat tuning the hologram window (hologram_tools). The
+        // server has already persisted the dials; this applies them live.
+        // A calibrate is the one op only the page can do, since only the
+        // page knows how wide the face is right now, so it persists that
+        // itself. The result rides back on the action, into the ack.
+        const TK=window.FridayTracking;
+        if(TK){
+          if(a.op==='calibrate'){
+            const seen=typeof isFaceVisible==='undefined'||isFaceVisible;
+            const w=seen&&typeof lastFaceBoxW!=='undefined'?lastFaceBoxW:0;
+            const got=TK.calibrate(w);
+            a.result={calibrated:got||null};
+            if(got){apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({settings:{tracking:TK.get()}})}).catch(()=>{});}
+          }else if(a.op==='reset'){
+            a.result={tracking:TK.reset()};
+          }else if(a.tracking&&typeof a.tracking==='object'){
+            TK.apply(a.tracking);
+            a.result={tracking:TK.get()};
+          }
+        }
       }else if(a.type==='open_last_source'){
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
@@ -16569,7 +16591,7 @@ function TrackingPanel({
       marginBottom: 6,
       lineHeight: 1.6
     }
-  }, "Head tracking moves the view like a window onto the scene: lean and the depth shifts. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the perspective.', 0, 2.5, 0.05), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
+  }, "Head tracking turns the screen into a window onto the scene: lean in and the avatar comes closer, lean back and it recedes, move sideways and it stays put behind the glass. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out zooms the avatar. At 1, halving your distance doubles it, as if it sat right at the glass; 0 turns the zoom off.', 0, 2.5, 0.05), sl('zoom_in_max', 'Zoom in, at most', 'The biggest the avatar may get as you lean in.', 1, 2.5, 0.05, v => v.toFixed(2) + 'x'), sl('zoom_out_max', 'Zoom out, at most', 'The smallest it may get as you lean back.', 1, 2.5, 0.05, v => '1/' + v.toFixed(2)), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('head_response', 'Head response', 'How quickly a fast lean is followed. Left is calmer with a little lag, right is immediate.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
     "aria-label": "Click method",
     style: {
@@ -16619,8 +16641,13 @@ function TrackingPanel({
     },
     onClick: () => {
       const TKx = window.FridayTracking;
-      const w = typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
+      // Only a face the camera sees right now counts; the last width seen
+      // before the hologram was turned off is a distance nobody sits at.
+      const seen = typeof isFaceVisible === 'undefined' || isFaceVisible;
+      const w = seen && typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
       const got = TKx ? TKx.calibrate(w) : null;
+      // Persisted as a dial, so the calibration survives a reload.
+      if (got) commit({ neutral_face_width: got });
       setCalib(got ? 'Set from your current distance.' : 'No face seen. Turn the hologram on and look at the camera.');
       setTimeout(() => setCalib(null), 4000);
     }
@@ -16634,10 +16661,12 @@ function TrackingPanel({
     },
     onClick: () => {
       // Resets the camera dials only; the dock's depth and the debug overlay
-      // belong to other tabs and keep their values.
+      // belong to other tabs, and the calibrated distance is about the seat
+      // and the camera rather than the feel, so all three keep their values.
       const next = Object.assign({}, defaults, {
         dock_depth: cfg.dock_depth,
-        debug_overlay: cfg.debug_overlay
+        debug_overlay: cfg.debug_overlay,
+        neutral_face_width: cfg.neutral_face_width || 0
       });
       setCfg(next);
       if (TK) TK.apply(next);
@@ -21973,7 +22002,10 @@ function App(){
         return;
       }
       if (!ws) {
-        answer({ opened: true, matched: null });
+        // An action that answers for itself (a tracking calibrate or apply)
+        // leaves its result on the action; Friday reads it from the ack.
+        const said = acts.find(a => a && a.result);
+        answer(Object.assign({ opened: true, matched: null }, said ? { result: said.result } : {}));
         return;
       }
       // Wait for the window, then for the workspace to say it shows the thing.

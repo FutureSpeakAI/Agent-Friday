@@ -214,6 +214,8 @@ INTERNAL_TOOLS = frozenset({
     # A step authored by a cloud model sends numbers only, through the spend
     # guard and the egress gate like any model call; it reaches no one.
     "avatar_evolution",
+    # The hologram window's dials: the owner's own settings and own screen.
+    "hologram_window",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
     # find_free_slots reads free/busy only. release_holds deletes nothing but

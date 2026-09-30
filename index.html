@@ -3675,15 +3675,28 @@ window.addEventListener('DOMContentLoaded',function(){
         //
         //   Pinch: one threshold (dist < 0.06). A single threshold chatters
         //   whenever the hand rests near it.
+        // <tracking-engine>
         window.FridayTracking = (function () {
             const DEFAULTS = {
                 parallax_strength: 1.0, depth_strength: 1.0, head_smoothing: 0.35,
                 holo_cues: 0.6, hand_gain: 2.2, hand_accel: 0.6, hand_region: 0.45,
                 hand_deadzone: 0.006, hand_smoothing: 0.30, click_method: 'pinch',
                 pinch_enter: 0.050, pinch_exit: 0.075, dwell_ms: 700,
+                // The window's depth. How many times bigger the avatar may get
+                // as you lean in, how many times smaller as you lean back, how
+                // quickly a fast lean is followed, and the calibrated face
+                // width that counts as sitting normally (0 = not calibrated).
+                zoom_in_max: 1.8, zoom_out_max: 1.5, head_response: 0.5,
+                neutral_face_width: 0,
                 dock_depth: 1.0, debug_overlay: false
             };
             const cfg = Object.assign({}, DEFAULTS);
+            // Math.min/max propagate NaN; a NaN in a projection matrix deletes
+            // the scene rather than softening the effect.
+            const fin = (v, lo, hi, dflt) => {
+                const n = Number(v);
+                return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
+            };
 
             // ── One Euro filter ──────────────────────────────────────────
             // Low cutoff while still (kills jitter), cutoff rises with speed
@@ -3704,7 +3717,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 const tau = 1.0 / (2 * Math.PI * cutoff);
                 return 1.0 / (1.0 + tau / dt);
             };
-            OneEuro.prototype.filter = function (v, t) {
+            OneEuro.prototype.filter = function (v, t, calm) {
                 if (this.last === null) {
                     this.last = t; this.prev = v; this.x.filter(v, 1); return v;
                 }
@@ -3712,7 +3725,11 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (!(dt > 0) || dt > 0.25) dt = 1 / 60;
                 const dv = (v - this.prev) / dt; this.prev = v;
                 const edv = this.dx.filter(dv, this.alpha(this.dCutoff, dt));
-                const cutoff = this.minCutoff + this.beta * Math.abs(edv);
+                // `calm` drops the speed term: a return to neutral after the
+                // face is lost is one large step, and the speed term would
+                // turn that into a snap. Easing is the point of relaxing.
+                const cutoff = calm ? this.minCutoff * 0.6
+                                    : this.minCutoff + this.beta * Math.abs(edv);
                 return this.x.filter(v, this.alpha(cutoff, dt));
             };
             OneEuro.prototype.reset = function () {
@@ -3721,13 +3738,14 @@ window.addEventListener('DOMContentLoaded',function(){
             };
 
             // head_smoothing 0..1 is a feel dial, not a cutoff. Map it onto a
-            // sane One Euro range: 0 responsive, 1 steady.
-            const clamp01 = (v) => Math.max(0, Math.min(1, v));
+            // sane One Euro range: 0 responsive, 1 steady. head_response is
+            // the speed term on its own: how hard a quick lean is followed.
+            const clamp01 = (v) => fin(v, 0, 1, 0.5);
             const fx = new OneEuro(1.0, 0.2), fy = new OneEuro(1.0, 0.2), fz = new OneEuro(0.8, 0.1);
             const hxF = new OneEuro(1.5, 0.4), hyF = new OneEuro(1.5, 0.4);
             function retune() {
-                const s = clamp01(cfg.head_smoothing);
-                const hMin = 2.4 - 2.1 * s, hBeta = 0.35 * (1 - s) + 0.02;
+                const s = clamp01(cfg.head_smoothing), r = clamp01(cfg.head_response);
+                const hMin = 2.4 - 2.1 * s, hBeta = 0.02 + 0.6 * r;
                 fx.minCutoff = fy.minCutoff = hMin; fx.beta = fy.beta = hBeta;
                 fz.minCutoff = hMin * 0.7; fz.beta = hBeta * 0.5;
                 const d = clamp01(cfg.hand_smoothing);
@@ -3739,7 +3757,7 @@ window.addEventListener('DOMContentLoaded',function(){
             // ── head state ───────────────────────────────────────────────
             // x,y in [-1,1] screen-relative; z is lean, >0 nearer.
             const head = { x: 0, y: 0, z: 0, raw: { x: 0, y: 0, z: 0 },
-                           seen: false, baseline: null };
+                           seen: false, baseline: null, zoom: 1, debug: null };
 
             function pushFace(nx, ny, boxW, tSec) {
                 head.raw.x = nx; head.raw.y = ny;
@@ -3766,15 +3784,61 @@ window.addEventListener('DOMContentLoaded',function(){
             // scene back to centre instead of jolting it.
             function relaxToNeutral(tSec) {
                 head.raw.x = 0; head.raw.y = 0; head.raw.z = 0;
-                head.x = fx.filter(0, tSec);
-                head.y = fy.filter(0, tSec);
-                head.z = fz.filter(0, tSec);
+                head.x = fx.filter(0, tSec, true);
+                head.y = fy.filter(0, tSec, true);
+                head.z = fz.filter(0, tSec, true);
                 head.seen = false;
             }
+            // The calibrated width is a setting, so it survives a reload and
+            // a voice "calibrate" can be persisted like any other dial.
             function calibrate(boxW) {
                 head.baseline = (boxW && boxW > 0.02) ? boxW : null;
+                cfg.neutral_face_width = head.baseline || 0;
                 fx.reset(); fy.reset(); fz.reset();
                 return head.baseline;
+            }
+            // A synthetic head for tests and the debug overlay: while set, the
+            // render loop feeds it in place of the webcam. null releases it.
+            function debugHead(nx, ny, boxW) {
+                head.debug = (boxW && boxW > 0) ? { x: +nx || 0, y: +ny || 0, boxW: +boxW } : null;
+            }
+
+            // ── ZOOM FROM LEAN ───────────────────────────────────────────
+            // The window magnifies. head.z is octaves nearer (log2 of the
+            // face-width ratio against the calibrated neutral), so at depth
+            // strength 1 halving your distance doubles the avatar: it behaves
+            // as if it sat right at the glass. Higher is a magnifying window,
+            // 0 is off. zoom_in_max / zoom_out_max bound it either way, and
+            // under reduced motion only a gentle zoom remains.
+            const GENTLE_ZOOM = 1.12;
+            // The eye may dolly no nearer the glass than this fraction of the
+            // neutral distance, so the camera cannot pass through the avatar
+            // whatever the dials say; it caps zoom_in_max at 1 / this.
+            const MIN_GLASS_FRACTION = 0.4;
+            function reducedMotion() {
+                try {
+                    return !!(window.matchMedia
+                              && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+                } catch (e) { return false; }
+            }
+            function headZoom(z) {
+                const dStr = fin(cfg.depth_strength, 0, 4, 1);
+                let zin = fin(cfg.zoom_in_max, 1, 1 / MIN_GLASS_FRACTION, 1.8);
+                let zout = fin(cfg.zoom_out_max, 1, 4, 1.5);
+                if (reducedMotion()) { zin = Math.min(zin, GENTLE_ZOOM); zout = Math.min(zout, GENTLE_ZOOM); }
+                return Math.max(1 / zout, Math.min(zin, Math.pow(2, fin(z, -8, 8, 0) * dStr)));
+            }
+            function zoomFor(z) { head.zoom = headZoom(z); return head.zoom; }
+            // Sideways parallax is the motion reduced motion asks to avoid.
+            function lateralGain() {
+                return reducedMotion() ? 0 : fin(cfg.parallax_strength, 0, 4, 1);
+            }
+            // The zoom is a real dolly: the eye moves to screenDist / zoom, and
+            // applyFrustum shrinks the glass by the same factor, so a point at
+            // the glass grows by exactly `zoom` and nearer parts grow more.
+            function eyeDolly(screenDist, zoom) {
+                const Z = (isFinite(zoom) && zoom > 0) ? zoom : 1;
+                return screenDist * (1 - 1 / Z);
             }
 
             // ── OFF-AXIS (ASYMMETRIC) FRUSTUM ────────────────────────────
@@ -3784,11 +3848,12 @@ window.addEventListener('DOMContentLoaded',function(){
             // behind it swings. The camera's AIM is untouched — shearing the
             // projection instead of turning the camera is exactly the
             // difference between a window and an orbit.
-            function applyFrustum(cam, ex, ey, ez, screenDist) {
+            function applyFrustum(cam, ex, ey, ez, screenDist, zoom) {
                 const n = cam.near, f = cam.far;
-                const halfH = Math.tan((cam.fov * Math.PI / 180) / 2) * screenDist;
+                const Z = (isFinite(zoom) && zoom > 0) ? zoom : 1;
+                const halfH = Math.tan((cam.fov * Math.PI / 180) / 2) * screenDist / Z;
                 const halfW = halfH * cam.aspect;
-                const d = Math.max(0.35 * screenDist, screenDist - ez);
+                const d = Math.max(MIN_GLASS_FRACTION * screenDist, screenDist - ez);
                 const k = n / d;
                 const l = (-halfW - ex) * k, r = (halfW - ex) * k;
                 const b = (-halfH - ey) * k, t = (halfH - ey) * k;
@@ -3891,6 +3956,8 @@ window.addEventListener('DOMContentLoaded',function(){
             function apply(next) {
                 Object.assign(cfg, next || {});
                 retune();
+                const nfw = Number(cfg.neutral_face_width);
+                head.baseline = (isFinite(nfw) && nfw > 0.02) ? nfw : null;
                 document.body.classList.toggle('tracking-debug', !!cfg.debug_overlay);
                 // Written here rather than in the render loop so the dock's
                 // depth is correct before the first frame, and stays correct
@@ -3910,9 +3977,14 @@ window.addEventListener('DOMContentLoaded',function(){
                 head: head, hand: hand,
                 pushFace: pushFace, relaxToNeutral: relaxToNeutral,
                 pushHand: pushHand, handLost: handLost,
-                applyFrustum: applyFrustum, calibrate: calibrate, OneEuro: OneEuro
+                applyFrustum: applyFrustum, calibrate: calibrate, OneEuro: OneEuro,
+                headZoom: headZoom, zoomFor: zoomFor, eyeDolly: eyeDolly,
+                lateralGain: lateralGain, reducedMotion: reducedMotion,
+                debugHead: debugHead,
+                GENTLE_ZOOM: GENTLE_ZOOM, MIN_GLASS_FRACTION: MIN_GLASS_FRACTION
             };
         })();
+        // </tracking-engine>
 
 
         // ════════════════════════════════════════════════════════════════
@@ -4173,7 +4245,8 @@ window.addEventListener('DOMContentLoaded',function(){
 
                 out.textContent =
                     'head  x ' + TK.head.x.toFixed(3) + '  y ' + TK.head.y.toFixed(3) +
-                    '  z ' + TK.head.z.toFixed(3) + (TK.head.seen ? '  [face]' : '  [no face - at rest]') +
+                    '  z ' + TK.head.z.toFixed(3) + '  zoom ' + (TK.head.zoom || 1).toFixed(2) +
+                    (TK.head.seen ? '  [face]' : '  [no face - at rest]') +
                     '\nlag   ' + Math.round(Math.hypot(hx - rx, hy - ry)) + ' px raw->filtered' +
                     '\nhand  ' + (TK.hand.seen
                         ? Math.round(TK.hand.x) + ',' + Math.round(TK.hand.y) +
@@ -4184,7 +4257,10 @@ window.addEventListener('DOMContentLoaded',function(){
                     '  region ' + TK.cfg.hand_region.toFixed(2) +
                     '\npar  ' + TK.cfg.parallax_strength.toFixed(2) +
                     '  depth ' + TK.cfg.depth_strength.toFixed(2) +
-                    '  smooth ' + TK.cfg.head_smoothing.toFixed(2);
+                    '  smooth ' + TK.cfg.head_smoothing.toFixed(2) +
+                    '  resp ' + Number(TK.cfg.head_response).toFixed(2) +
+                    '  zoom in ' + Number(TK.cfg.zoom_in_max).toFixed(2) +
+                    '  out ' + Number(TK.cfg.zoom_out_max).toFixed(2);
             }
             requestAnimationFrame(draw);
         })();
@@ -6948,7 +7024,11 @@ window.addEventListener('DOMContentLoaded',function(){
             // One Euro replaces the fixed per-frame lerps. The mouse fallback
             // runs through the same filter so the two input paths cannot drift
             // apart in feel.
-            if (!(isHologramMode && isFaceVisible)) {
+            if (window.FridayTracking.head.debug) {
+                // A held synthetic head (tests, the debug overlay): no webcam.
+                const dh = window.FridayTracking.head.debug;
+                window.FridayTracking.pushFace(dh.x, dh.y, dh.boxW, performance.now() / 1000);
+            } else if (!(isHologramMode && isFaceVisible)) {
                 window.FridayTracking.relaxToNeutral(performance.now() / 1000);
             }
             currFaceX = window.FridayTracking.head.x;
@@ -7076,7 +7156,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 // but a slow swim. Shearing the projection instead is what
                 // makes the scene sit behind the glass.
                 const TK = window.FridayTracking;
-                const pStr = TK.cfg.parallax_strength, dStr = TK.cfg.depth_strength;
+                const pStr = TK.cfg.parallax_strength;
 
                 // Aim first, from the cinematic target only — head-free.
                 camera.position.copy(baseCamPos);
@@ -7087,9 +7167,19 @@ window.addEventListener('DOMContentLoaded',function(){
 
                 // Then offset the eye in the camera's OWN basis, so the effect
                 // is the same whichever way the cinematic camera is facing.
-                const eyeX = currFaceX * 3.2 * pStr;
-                const eyeY = -currFaceY * 2.4 * pStr;
-                const eyeZ = currFaceZ * 4.5 * dStr;        // lean in / out
+                //
+                // The virtual glass sits at the scene's centre of interest,
+                // which is where every structure is built. Leaning in is a
+                // dolly toward it with the glass shrunk to match (zoomFor), so
+                // the avatar at the glass grows by exactly the zoom; the
+                // lateral offset stays a shear anchored at the glass. Reduced
+                // motion keeps only the gentle zoom (lateralGain is 0).
+                const screenDist = Math.max(4, baseCamPos.distanceTo(targetCamLook));
+                const lat = TK.lateralGain();
+                const eyeX = currFaceX * 3.2 * lat;
+                const eyeY = -currFaceY * 2.4 * lat;
+                const zoom = TK.zoomFor(currFaceZ);
+                const eyeZ = TK.eyeDolly(screenDist, zoom);   // lean in / out
                 const right = new THREE.Vector3(), up = new THREE.Vector3();
                 right.setFromMatrixColumn(camera.matrixWorld, 0);
                 up.setFromMatrixColumn(camera.matrixWorld, 1);
@@ -7098,9 +7188,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 camera.position.addScaledVector(currentLook, eyeZ);
                 camera.updateMatrixWorld();
 
-                // The virtual glass sits at the scene's centre of interest.
-                const screenDist = Math.max(4, baseCamPos.distanceTo(targetCamLook));
-                TK.applyFrustum(camera, eyeX, eyeY, eyeZ, screenDist);
+                TK.applyFrustum(camera, eyeX, eyeY, eyeZ, screenDist, zoom);
 
                 // ── DEPTH-LAYERED PARALLAX + HOLOGRAPHIC CUES ───────────
                 // The DOM HUD floats in front of the glass, so it must move
@@ -7113,7 +7201,9 @@ window.addEventListener('DOMContentLoaded',function(){
                 rootStyle.setProperty('--holo-par-y', (currFaceY * 12 * pStr).toFixed(2) + 'px');
                 rootStyle.setProperty('--holo-tilt-x', (-currFaceY * 5.0 * pStr).toFixed(2) + 'deg');
                 rootStyle.setProperty('--holo-tilt-y', (currFaceX * 7.0 * pStr).toFixed(2) + 'deg');
-                rootStyle.setProperty('--holo-depth', (1 + currFaceZ * 0.05 * dStr).toFixed(3));
+                // The HUD floats in front of the glass: a quarter of the
+                // scene's zoom keeps it in step without it filling the screen.
+                rootStyle.setProperty('--holo-depth', Math.pow(zoom, 0.25).toFixed(3));
                 rootStyle.setProperty('--holo-rim', (cue * (0.18 + 0.5 * Math.min(1, Math.abs(currFaceX)))).toFixed(3));
             }
 
@@ -8249,6 +8339,33 @@ function fridayRunActions(actions) {
         window.dispatchEvent(new CustomEvent('friday:landing', {
           detail: { summon: !!a.summon, mode: a.mode || null, via: a.via || 'friday' }
         }));
+      } else if (a.type === 'tracking') {
+        // Voice or chat tuning the hologram window (hologram_tools). The
+        // server has already persisted the dials; this applies them live.
+        // A calibrate is the one op only the page can do, since only the
+        // page knows how wide the face is right now, so it persists that
+        // itself. The result rides back on the action, into the ack.
+        const TK = window.FridayTracking;
+        if (TK) {
+          if (a.op === 'calibrate') {
+            const seen = typeof isFaceVisible === 'undefined' || isFaceVisible;
+            const w = seen && typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
+            const got = TK.calibrate(w);
+            a.result = { calibrated: got || null };
+            if (got) {
+              apiFetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ settings: { tracking: TK.get() } })
+              }).catch(() => {});
+            }
+          } else if (a.op === 'reset') {
+            a.result = { tracking: TK.reset() };
+          } else if (a.tracking && typeof a.tracking === 'object') {
+            TK.apply(a.tracking);
+            a.result = { tracking: TK.get() };
+          }
+        }
       } else if (a.type === 'open_last_source') {
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
@@ -49946,7 +50063,7 @@ function TrackingPanel({
       marginBottom: 6,
       lineHeight: 1.6
     }
-  }, "Head tracking moves the view like a window onto the scene: lean and the depth shifts. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the perspective.', 0, 2.5, 0.05), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
+  }, "Head tracking turns the screen into a window onto the scene: lean in and the avatar comes closer, lean back and it recedes, move sideways and it stays put behind the glass. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out zooms the avatar. At 1, halving your distance doubles it, as if it sat right at the glass; 0 turns the zoom off.', 0, 2.5, 0.05), sl('zoom_in_max', 'Zoom in, at most', 'The biggest the avatar may get as you lean in.', 1, 2.5, 0.05, v => v.toFixed(2) + 'x'), sl('zoom_out_max', 'Zoom out, at most', 'The smallest it may get as you lean back.', 1, 2.5, 0.05, v => '1/' + v.toFixed(2)), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('head_response', 'Head response', 'How quickly a fast lean is followed. Left is calmer with a little lag, right is immediate.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
     "aria-label": "Click method",
     style: {
@@ -49996,8 +50113,13 @@ function TrackingPanel({
     },
     onClick: () => {
       const TKx = window.FridayTracking;
-      const w = typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
+      // Only a face the camera sees right now counts; the last width seen
+      // before the hologram was turned off is a distance nobody sits at.
+      const seen = typeof isFaceVisible === 'undefined' || isFaceVisible;
+      const w = seen && typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
       const got = TKx ? TKx.calibrate(w) : null;
+      // Persisted as a dial, so the calibration survives a reload.
+      if (got) commit({ neutral_face_width: got });
       setCalib(got ? 'Set from your current distance.' : 'No face seen. Turn the hologram on and look at the camera.');
       setTimeout(() => setCalib(null), 4000);
     }
@@ -50011,10 +50133,12 @@ function TrackingPanel({
     },
     onClick: () => {
       // Resets the camera dials only; the dock's depth and the debug overlay
-      // belong to other tabs and keep their values.
+      // belong to other tabs, and the calibrated distance is about the seat
+      // and the camera rather than the feel, so all three keep their values.
       const next = Object.assign({}, defaults, {
         dock_depth: cfg.dock_depth,
-        debug_overlay: cfg.debug_overlay
+        debug_overlay: cfg.debug_overlay,
+        neutral_face_width: cfg.neutral_face_width || 0
       });
       setCfg(next);
       if (TK) TK.apply(next);
@@ -58649,7 +58773,10 @@ function App() {
         return;
       }
       if (!ws) {
-        answer({ opened: true, matched: null });
+        // An action that answers for itself (a tracking calibrate or apply)
+        // leaves its result on the action; Friday reads it from the ack.
+        const said = acts.find(a => a && a.result);
+        answer(Object.assign({ opened: true, matched: null }, said ? { result: said.result } : {}));
         return;
       }
       // Wait for the window, then for the workspace to say it shows the thing.
