@@ -43869,6 +43869,7 @@ function SoupRow({ label, main, detail, state, reason, action }) {
  *  against the machine as it is now. Read-only until the owner clicks a choice;
  *  the POST is the same one the onboarding gate uses. */
 function CloudConsentRow({ consent, onChanged, compact }) {
+  const E = React.createElement;
   const [assess, setAssess] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -43906,7 +43907,7 @@ function CloudConsentRow({ consent, onChanged, compact }) {
         style: { fontSize: 10, padding: '3px 9px' },
       }, busy ? 'checking…' : 'Re-answer')),
     !compact && E('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.5 } },
-      'Unrestricted means the privacy gate sends everything to the cloud model untouched. Re-answer checks again what this machine can run locally today, and shows both choices with the fresh result.'),
+      'Local preferred chooses where work runs; cloud consent controls what a cloud model receives. Unrestricted sends content without privacy redaction. Re-answer changes the recorded choice shown here.'),
     assess && E('div', {
       style: { marginTop: 8, padding: 10, border: '1px solid rgba(0,212,255,0.25)', borderRadius: 8, background: 'rgba(0,212,255,0.05)' },
     },
@@ -45456,6 +45457,7 @@ function PrivacyCheckLayers() {
   }));
 }
 function PrivacyCloudConsent() {
+  const E = React.createElement;
   const [st, setSt] = useState(null);
   const load = useCallback(() => {
     apiFetch('/api/privacy/cloud-consent').then(r => r.json()).then(setSt).catch(() => setSt({ error: true }));

@@ -384,7 +384,10 @@ def record_consent(choice: str, *, profile: dict | None = None) -> dict:
               "capability_snapshot": snapshot}
 
     from agent_friday.core import _save_settings
-    _save_settings({"model_routing": {"cloud_consent": record}},
+    # Keep older readers consistent with the authoritative consent record.
+    # The legacy flag never overrides an explicit recorded choice.
+    _save_settings({"model_routing": {"cloud_consent": record,
+                                     "unrestricted_cloud": choice == CHOICE_CLOUD}},
                    _internal_cloud_consent_write=True)
     _log.warning("cloud consent recorded: choice=%s capable=%s", choice,
                 snapshot["capable"])

@@ -14672,6 +14672,84 @@ function PrivacyCheckLayers(){
     })}
   </div>;
 }
+function CloudConsentRow({ consent, onChanged, compact }) {
+  const E = React.createElement;
+  const [assess, setAssess] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const c = consent || {};
+  const reask = () => {
+    setBusy(true); setMsg('');
+    apiFetch('/api/privacy/cloud-consent?assess=1').then(r => r.json()).then(j => {
+      if (j && j.status === 'ok') setAssess(j); else setMsg((j && j.message) || 'Could not assess the machine.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const answer = (choice) => {
+    setBusy(true); setMsg('');
+    apiFetch('/api/privacy/cloud-consent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ choice: choice }),
+    }).then(r => r.json()).then(j => {
+      if (j && j.status === 'ok') { setAssess(null); setMsg('Recorded.'); onChanged && onChanged(); }
+      else setMsg((j && j.message) || 'Not recorded.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const when = c.at ? new Date(c.at) : null;
+  const whenTxt = when && !isNaN(when) ? when.toLocaleDateString() : (c.source === 'legacy_unrestricted_cloud_flag' ? 'legacy flag' : 'never');
+  const choiceTxt = c.answered === false || !c.choice ? 'not answered (gated)'
+    : c.choice === 'cloud_unrestricted' ? 'unrestricted'
+    : c.choice === 'cloud_guarded' ? 'cloud, safeguards on' : 'local, private';
+  const cap = assess && assess.capability;
+  return E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11 } },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+      E('span', { style: { color: 'rgba(255,255,255,0.9)' } }, 'Cloud consent: ' + choiceTxt),
+      E('span', { style: { color: 'rgba(255,255,255,0.45)' } }, 'answered ' + whenTxt),
+      c.snapshot_capable === false && E('span', { style: { color: '#f59e0b' } },
+        'the machine said local was not capable' + (c.snapshot_why ? ': ' + c.snapshot_why : '')),
+      E('button', {
+        className: 'settings-btn', disabled: busy, onClick: reask,
+        style: { fontSize: 10, padding: '3px 9px' },
+      }, busy ? 'checking…' : 'Re-answer')),
+    !compact && E('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.5 } },
+      'Local preferred chooses where work runs; cloud consent controls what a cloud model receives. Unrestricted sends content without privacy redaction. Re-answer changes the recorded choice shown here.'),
+    assess && E('div', {
+      style: { marginTop: 8, padding: 10, border: '1px solid rgba(0,212,255,0.25)', borderRadius: 8, background: 'rgba(0,212,255,0.05)' },
+    },
+      E('div', { style: { color: cap && cap.capable ? '#00ff80' : '#f59e0b', marginBottom: 6 } },
+        cap && cap.capable ? 'This machine can run private-local today.'
+          : 'This machine still cannot run the full private-local set: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'no reason given') + '.'),
+      E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        cap && cap.capable && E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('local_private') },
+          'Keep it local and private'),
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('cloud_guarded') },
+          'Cloud with safeguards on'),
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('cloud_unrestricted') },
+          'Allow unrestricted cloud'),
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => setAssess(null),
+          style: { opacity: 0.7 } }, 'Cancel'))),
+    msg && E('div', { style: { fontSize: 10, color: msg === 'Recorded.' ? '#00ff80' : '#f59e0b', marginTop: 4 } }, msg));
+}
+
+function PrivacyCloudConsent() {
+  const E = React.createElement;
+  const [st, setSt] = useState(null);
+  const load = useCallback(() => {
+    apiFetch('/api/privacy/cloud-consent').then(r => r.json()).then(setSt).catch(() => setSt({ error: true }));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  if (!st) return E('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono' } }, 'Reading the consent record…');
+  if (st.error) return E('div', { style: { fontSize: 11, color: '#f59e0b', fontFamily: 'JetBrains Mono' } }, 'Could not read the consent record.');
+  const snap = st.capability_snapshot || {};
+  return E(CloudConsentRow, {
+    consent: {
+      answered: st.answered, choice: st.choice, at: st.at, source: st.source,
+      snapshot_capable: snap.capable,
+      snapshot_why: snap.why || (snap.roles && snap.roles.text && snap.roles.text.why) || snap.chain_why,
+    },
+    onChanged: load,
+  });
+}
+
 function SettingsTabPrivacy({s,save}){
   const[vaultStatus,setVaultStatus]=useState(null);
   const[pass,setPass]=useState('');
@@ -14715,7 +14793,7 @@ function SettingsTabPrivacy({s,save}){
       <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{...(s.model_routing||{}),vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
     </StSection>
     <StSection title="Cloud mode">
-      <StToggle label="Unrestricted Cloud" value={!!(s.model_routing||{}).unrestricted_cloud} onChange={()=>save({model_routing:{...(s.model_routing||{}),unrestricted_cloud:!(s.model_routing||{}).unrestricted_cloud}})} desc="Off (default): cloud sends are still tier-classified, redacted, and PII-scrubbed. On: no privacy safeguard holds anything back from the cloud — full tier content, no redaction, no PII scrub, the never-send list included. Every send is still logged to the egress ledger either way. This is a standing posture, not a one-time consent — leave it off unless you specifically want frontier cloud models to see everything, unfiltered, on every call."/>
+      <PrivacyCloudConsent/>
     </StSection>
     <StSection title="Privacy check" desc="Which of Friday's privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.">
       <PrivacyCheckLayers/>

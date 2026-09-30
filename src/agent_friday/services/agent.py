@@ -9133,13 +9133,17 @@ def _hook_audit_log(ctx, result):
 
 
 def _hook_pii_scrub(ctx, result):
-    """Scrub PII from tool results. Post, priority 95.
+    """Scrub PII from tool results under guarded consent. Post, priority 95.
 
     Screenshots pass through untouched (a regex pass over base64 would be slow
-    and could corrupt the image). Otherwise: scrub into pii_lookup for later
-    rehydration when one is supplied, else destructively redact.
+    and could corrupt the image). Recorded unrestricted cloud consent also
+    passes results unchanged, matching the outbound gate. Otherwise: scrub
+    into pii_lookup for later rehydration when supplied, else redact.
     """
     if ctx.tool_name == 'screenshot':
+        return result
+    from agent_friday.services.egress_gate import is_unrestricted_cloud
+    if is_unrestricted_cloud():
         return result
     if isinstance(ctx.pii_lookup, dict):
         scrubbed, sub = _scrub_pii(result)
@@ -10062,8 +10066,9 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             "Settings → Accounts & Keys (one is enough)."
         )
 
-    if pii_lookup is None:
-        # Legacy path — destructively redact on the way out.
+    from agent_friday.services.egress_gate import is_unrestricted_cloud
+    if pii_lookup is None and not is_unrestricted_cloud():
+        # Legacy guarded path — destructively redact on the way out.
         safe_messages = []
         for m in messages:
             content = m.get('content')
@@ -10073,7 +10078,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 safe_messages.append(m)
         safe_system = _pii_redact(system) if isinstance(system, str) else system
     else:
-        # Caller already scrubbed — trust the inputs.
+        # Caller already prepared inputs, or recorded consent permits them raw.
         safe_messages = list(messages)
         safe_system = system
 

@@ -1428,10 +1428,11 @@ def chat():
                     "=========================\n\n"
                 ) + sp
             lookup = {}
-            # Scrub only when the turn is cloud-bound. Scrubbing every message
+            # Scrub guarded cloud turns. Scrubbing every message
             # (not just the new one) means a cached LOCAL reply retrieved by the
             # pruner is scrubbed at retrieval time before it can reach the cloud.
-            if provider != 'local':
+            from agent_friday.services.egress_gate import is_unrestricted_cloud
+            if provider != 'local' and not is_unrestricted_cloud():
                 if sp:
                     sp, sub = _scrub_pii(sp)
                     lookup.update(sub)
