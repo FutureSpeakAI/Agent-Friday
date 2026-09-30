@@ -1,8 +1,8 @@
 # The salon: Chat and Code in one room, an artifact panel in every chat, and codebases that run in a box
 
-> **Status:** accepted; its three questions were settled on 2026-09-29 as delegated decisions, as recommended, under the owner's "build all pending specs" delegation; the owner may overrule any of them (spec only; nothing in this document is built)
-> **Last verified:** 2026-09-29 against main `780e31fa`
-> **Implementation:** none yet. Builds on:
+> **Status:** accepted and in build. Its three original questions were settled on 2026-09-29 as delegated decisions, as recommended, under the owner's "build all pending specs" delegation. Three owner rulings since then are recorded in §12 (LocalStack is out and no component may phone home; Friday never serves tools or pages to the internet from the user's hardware; "This PC" is the default host for published static artifacts). The 2026-09-30 revision also folds in the spike results (S1, S2, S4), a competitor gap pass and the workspace-evolution re-sequencing (§10).
+> **Last verified:** 2026-09-30 against main `02035ba6`
+> **Implementation:** Phase 1, first increment, on branch `feat/salon-phase1` (not on main): `services/artifacts.py` (the store), `routes/artifacts.py`, the `artifact_put` tool in `services/agent.py`, the fenced-block absorb in `routes/chat.py`, `static/friday_artifacts.js` (the panel and the frame), `FridayChatShell` in `index.html` and `ui_parts/app.html`. Tests: `tests/unit/test_artifacts_store.py`, `test_artifact_tool_and_gate.py`, `test_artifact_panel_ui_files.py`, `tests/api/test_artifacts_routes.py`, `test_chat_absorbs_fenced_artifact.py`, `tests/ui/test_artifact_frame_isolation.py`. Everything else in this document is not built. Builds on:
 > - `index.html`: `ChatSurface`, `ChatSidebar`, `CodeWS` and its `CODE_TABS`
 >   (`DevDiff`, `DevFiles`, `DevGit`, `DevVibe`), `FWin`, `useTabState`,
 >   `useNavTarget`
@@ -369,10 +369,18 @@ tools where it isn't:
 - Azurite (MIT) for Azure storage.
 
 MinIO is out: its repository says it is no longer maintained, and it ships
-source only. **LocalStack is offered only as an optional target the user
-installs themselves**, under their own account and their own agreement, for a
-project that is headed to AWS anyway. Friday detects it and points the
-backstage at it. Friday never installs it.
+source only. **LocalStack is out entirely**, including the earlier idea of
+connecting a user's own install. The evidence (localstack.cloud/pricing,
+checked 2026-09-29): the free Hobby plan requires a LocalStack account,
+"fully offline / air-gapped image delivery" is only on the top tiers, and
+"Telemetry Sharing" is *Enforced* on the free plan. The owner's ruling,
+verbatim: *"I don't want any telemetry built into our system so that's out.
+But let's emulate as much as we can and learn as much as we can and build
+our own as much as we can."* The salon's general rule follows: **no
+component that phones home, ever**, not as a default and not as an option.
+What Friday takes from LocalStack is knowledge: spike S4 studied the archived
+repository and its verdict is in §4.6.1 and
+[`docs/design/research/2026-09-30-localstack-archived-repo-study.md`](../research/2026-09-30-localstack-archived-repo-study.md).
 
 ### 2.2 NVIDIA OpenShell: copy the policy model now, adopt the runtime only past a gate
 
@@ -533,7 +541,7 @@ answers changed the design, and §3.7 says how.
   emulation fidelity."* So the backstage aims for the handful of calls a
   vibe-coded app actually makes: put and get a file, a row, a queue message,
   an email and a login. It does not aim for API completeness. Fidelity past
-  that is what moto server, or a user-installed LocalStack, is for.
+  that is what moto server is for.
 - *"The day LocalStack needed a token, my CI broke."* This is the argument
   for depending only on stand-ins Friday can run with no account, and for
   keeping a stand-in behind an address the app reads from configuration. The
@@ -657,8 +665,22 @@ output store.
 **Where it lives.**
 
 - Artifacts are stored at
-  `~/.friday/artifacts/<conversation_id>/<artifact_id>/v<N>.json`, encrypted
-  at rest like conversations.
+  `~/.friday/artifacts/<conversation_id>/<artifact_id>/v<N>.json`, with an
+  `artifact.json` index beside the versions, written the way conversations
+  are: plain JSON, tmp + fsync + replace. (An earlier draft said "encrypted
+  at rest like conversations"; the conversation store is not encrypted at
+  rest, and the artifact store matches it. Encryption at rest for both is a
+  separate decision.)
+- **As built (Phase 1):** the fenced fallback accepts a whole-block JSON form
+  and a header-line form (`\`\`\`friday-artifact {"kind": "html", "title":
+  "…"}` followed by raw content), because a local model writes HTML far more
+  reliably than JSON-escaped HTML. The page holds **one** event stream for
+  every chat surface: a browser allows about six connections per host and
+  Friday's page already keeps several open, so one stream per surface queued
+  ordinary requests behind them (measured at 15 s for one fetch on the
+  desktop page before the change). Charts are drawn in SVG by the panel
+  itself; `index.html` loads no chart library and React plus SVG is what it
+  already has.
 - **Off the record means nothing is written.** `off_record.py` is asked
   before every write, as every other store asks it. Artifacts in an
   off-the-record chat live in memory and are gone when it ends.
@@ -757,14 +779,32 @@ per-codebase process cap, because `npm run dev` starts Node, which starts
 esbuild. The classification stays OUTWARD in the gate's terms. With a
 "trust this codebase" grant, the grant is what makes it quiet.
 
-**Why not AppContainer for B1?** An AppContainer process can't read the
-user's profile and has no network unless given a capability. That makes it
-the obvious native Windows box. But whether Node, npm and a dev server run in
-one without admin rights, and whether Friday's iframe can reach a server
-inside it, are both **UNKNOWN**. Loopback into and out of an AppContainer is
-blocked by default, and the exemption tool needs admin. Spike S2 answers it.
-If the answer is yes, AppContainer replaces the Low token as B1, and B1 gains
-"no, doesn't read your files".
+**AppContainer for B1: spike S2's answer (2026-09-30, VERIFIED on the
+owner's machine, no admin).** Node, npm and a dev server all run inside an
+AppContainer created per user; `npm install` works with the `internetClient`
+capability; and "does not read your files" is real: every read and write
+under the profile fails with EPERM, the drive root is unreadable, and there
+is no network at all, not even DNS, without a capability. **The blocker is
+the one this paragraph feared: the panel cannot reach a server inside the
+box.** A server binds loopback fine, but every host-side connection (raw
+socket, `localhost`, `[::1]`, the LAN address, a real headless Chromium) is
+silently dropped in every capability combination; the exemption is
+admin-only. What does cross without admin: inherited handles, and named
+pipes in both directions (a host pipe with an "ALL APPLICATION PACKAGES" or
+package ACE and a Low mandatory label; or a container pipe under `LOCAL\`
+reached by the host at `\\.\pipe\Sessions\<n>\AppContainerNamedObjects\<SID>\<name>`).
+So **B1 becomes an AppContainer only with a bridge: a tiny host-side proxy
+on `127.0.0.1:<port>` for the panel, relaying over a pipe to a relay inside
+the container, which reaches the dev server on its own loopback.** Three
+conditions attach: the environment block must contain `LOCALAPPDATA` or
+process creation fails (error 203); Node's real-path walk dies on
+`lstat('C:\\')` unless run with `--preserve-symlinks --preserve-symlinks-main`
+or from a `subst` drive; and Node must be a user-owned copy, because the
+Program Files install lacks the "ALL APPLICATION PACKAGES" ACE. Untested: a
+real Vite or Next dev server's own file watching under these conditions.
+With the bridge, B1 gains "no, doesn't read your files" and the Low token
+becomes the fallback for the copy of Friday (§7), which needs the owner's
+Python environment. The pipe bridge is Phase 4 work and is sized there.
 
 **The copy of Friday (§7) always runs in B1 on a dev checkout.** It has to,
 because it needs the owner's Python environment. It is contained by a fixture
@@ -877,10 +917,64 @@ codebase say so.
 | key-value | the shim | own code | yes |
 | AWS APIs beyond the shim | moto server | Apache-2.0 | yes |
 | Azure storage | Azurite | MIT | yes (npm) |
-| AWS, full fidelity | LocalStack, **user-installed only** | Apache-2.0 + EULA; needs an account | Docker |
 
-**Stand-ins with any telemetry run with it off, and Phase 5 verifies each
-with a capture.** A stand-in Friday cannot silence is not shipped.
+**No component that phones home, ever.** Every backstage dependency (moto,
+Mailpit, Azurite, and anything added later) is audited for telemetry,
+analytics and update checks before it ships, and each is disabled or patched
+out at build time, not by an opt-out flag. A stand-in Friday cannot silence
+is not shipped. Phase 5 carries an **egress test**: the whole backstage runs
+with outbound network blocked at the host, and the test fails if any
+component tries to reach the internet (§9.1). The capture of §9.4 is the
+second check, not the first.
+
+#### 4.6.1 Friday's own local cloud emulator (the Phase 5 build)
+
+The owner's direction is "emulate as much as we can, learn as much as we can,
+build our own as much as we can." Spike S4 read LocalStack's archived
+Apache-2.0 tree (`v4.14.0`, the last open release) to learn from it; the
+study is in `docs/design/research/2026-09-30-localstack-archived-repo-study.md`.
+Its verdicts, adopted here:
+
+- **Licence.** The `v4.14.0` source is Apache-2.0 with a click-through EULA
+  that yields to the licence on conflict. Code from that tag may be reused
+  with attribution: keep the copyright lines, ship the full Apache-2.0 text,
+  mark modified files. Nothing from the unified "LocalStack for AWS" image or
+  anything imported as `localstack.pro.core` is ever copied. Friday sits on
+  upstream moto, not the `moto-ext` fork.
+- **Never imported, ever:** the analytics bus and everything under
+  `localstack/utils/analytics/`, `aws/handlers/analytics.py`,
+  `runtime/analytics.py`, every `services/*/analytics.py`, and the
+  `/_localstack/info` machine-id exposure. Tracking there is on by default
+  and reports to `analytics.localstack.cloud`. Friday has no opt-out flag
+  because there is nothing to opt out of.
+- **Patterns adopted:** one gateway port with a handler chain (request,
+  response, exception, finalizer); service detection from the `Authorization`
+  credential scope, then `X-Amz-Target`, then path and host; a typed request
+  context; account and region derived from the fake access key and passed to
+  moto; account-and-region-bundled stores for Friday's own shims; moto
+  in-process behind a fall-through dispatcher (own handler first, moto next);
+  one error contract with 501 for not-implemented; init stages
+  (`boot.d/start.d/ready.d/shutdown.d`) with a status endpoint; a
+  `/_backstage/` internal prefix on the same port; parity discipline (one
+  compatibility marker per test, snapshot recordings with a last-validated
+  date); a generated implementation-coverage table produced by firing every
+  botocore operation at the gateway; and an `awslocal`-style thin client
+  wrapper (`AWS_ENDPOINT_URL`, dummy keys, a default region).
+- **Not adopted:** a session handshake with any remote before serving; a
+  machine-id file; hard-coded vendor CORS origins; plugin entry points for a
+  single-binary desktop app; a full typed AWS protocol parser unless moto's
+  own protocol layer proves insufficient (UNKNOWN, checked first in Phase 5).
+
+**What Phase 5 builds:** one gateway; moto underneath for S3, SQS, SNS,
+DynamoDB, Secrets Manager and Lambda-style functions run as local
+subprocesses where feasible; Mailpit for email; Azurite for Azure storage;
+SQLite for databases; Friday's own shims for auth (a local OIDC stub),
+key-value and queues; **a published coverage table** of which services and
+API calls work; **parity tests**; **snapshots and restore** of the whole
+backstage state per codebase; and **a Friday-branded status panel** in the
+Backstage tab (what is running, on which address, its init status, the
+coverage table, the last snapshot). Sized honestly in §10: 24–34 agent-days,
+not the earlier 5.
 
 **"Go live"** swaps one or more stand-in addresses for real endpoints and
 real credentials. It is an outward card that names each service and each
@@ -976,6 +1070,50 @@ is working.
     native workspaces are improved, never in place.
 - Today's `workspace_studio` restyling (CSS, accent, density, hidden, actions)
   keeps working. It is the light path, and the salon is the full one.
+- **Seeded templates.** A "+ Codebase" template can be seeded from a plain
+  description of an existing app's core features ("a Trello-like board for
+  my projects"), with an import step for the old app's export file. This is
+  the seam the onboarding spec's "Own your tools" uses: Friday notices,
+  locally and with opt-in, which apps the user relies on and suggests open
+  alternatives or "build your own in the salon." Nothing is built for it
+  here beyond the seam; the Phase 8/9 sharing path stays so anything built
+  can later go to the federation.
+
+#### 4.9.1 Evolving workspaces: the order that makes it safe
+
+The owner, verbatim: *"let's make sure the vibe evolution feature for all of
+the different workspaces is functional as well. that should probably plug
+into the vibe coding salon piece, right?"* It does. What exists today is the
+narrow `/api/vibe-code` launcher and workspace versioning with no UI (§1.1,
+§1.2). Workspace evolution becomes functional as early as it can safely
+happen, in this order:
+
+1. **The cross-site fix first.** Any script in Friday's origin has the whole
+   API today (loopback trust, no CSP, §3.2). A vibe-coded workspace must
+   never run with that power, so the fix is a prerequisite for every step
+   below, and the program lead is prioritising it.
+2. **Workspace-ecosystem Phase 0 and 1 pulled forward (W0/W1):** version
+   history, a review-and-rollback UI for every workspace, and dock show and
+   hide. These land right after salon Phase 1b.
+3. **"Improve this workspace" right after salon Phase 2 (Phase 2b).** From
+   any workspace, by button or by voice ("Friday, improve the News
+   workspace"), a codebase chat opens on that workspace's own bundle with a
+   live side-by-side preview in the sandboxed frame. Every change is a
+   commit with tests and the self-testing loop of §4.11; then one approval
+   to swap it in and one-click rollback. The brand check applies, and
+   nothing may repaint the reserved status colours. This is
+   workspace-scoped evolution, lighter than Phase 7's self-edit of Friday's
+   core. Anything touching governance, the gate or the cLaws keeps the loud
+   approval of §7.4.
+4. **Friday-proposed evolution.** Friday may notice friction in a workspace
+   (repeated manual steps, ignored panels, things the owner asks for often)
+   and *propose* an improvement as a diff with a preview and evidence, one
+   at a time, through the weekly review, with no pestering. It never
+   auto-applies: structural changes require owner approval (north star §6).
+5. **Every workspace is evolvable.** All of the roughly seventeen workspaces
+   get an explicit bundle boundary, taken from the UI session's workspace
+   registry, so "improve this workspace" works everywhere and a native
+   workspace's boundary is a declared set of components rather than a guess.
 
 ### 4.10 Sharing
 
@@ -994,6 +1132,125 @@ owner's ratings model:
 The follow-up list in `avatar-visual-genome.md` Appendix A, which covers code
 where ψ and η still mean the old things, applies unchanged. It is not
 duplicated here.
+
+#### 4.10.1 Publish to web (Phase 1b)
+
+**Owner decision, 2026-09-29.** Any artifact kind (a page, chart, document,
+client-side app, or a podcast episode page) can be published to a web
+address, and **"This PC" is the default host**. The owner's correction that
+shaped it, verbatim: *"I was more thinking like an artifact that Claude
+serves to the public web, if the user so chooses... I don't want to launch
+MCP servers off of my local hardware."*
+
+- **The bundle.** The artifact is packed into a self-contained static bundle:
+  it runs entirely in the visitor's browser, with no backend and no secrets;
+  any data is baked in explicitly and shown in the card; it carries no
+  analytics or tracking of any kind. An optional small "Made with Friday"
+  mark follows the brand system.
+- **The card.** Publishing is an outward action: **one** approval card
+  showing the file list, a preview, the PII-scan result and the licence
+  check, with a receipt. It is voice-first ("publish this"), read back under
+  §6.3. Republish, versions and take-down are supported; republishing an
+  unchanged bundle needs no new card, a changed one does.
+- **Host adapters, pluggable, using the user's own accounts connected once:**
+  1. **"This PC" (default).** A separate, minimal static file server
+     process (Caddy `file_server`, already on the machine, or equivalent)
+     that shares no process, port, cookies or origin with Friday's app
+     server; its own `cloudflared` ingress hostname, distinct from Friday's,
+     with **no proxy or reverse route from that hostname to Friday's app,
+     API or websocket, ever**; it serves only a read-only `published/`
+     directory holding bundles that went through the card, with no directory
+     listing, no uploads, no server-side execution and no query-driven
+     behaviour; strict headers (sandboxed pages, `nosniff`, a CSP that fits
+     self-contained artifacts) and rate limiting at Cloudflare where
+     available; an owner switch that takes all local hosting offline
+     instantly; a status line saying whether pages are reachable right now
+     (PC awake, tunnel up); no analytics and no access logs beyond what rate
+     limiting needs, kept locally. The card warns about uptime (only while
+     the PC is on) and bandwidth for large media such as podcast audio.
+  2. **Cloudflare Pages** and **GitHub Pages** on the user's own account, for
+     pages that must stay up around the clock.
+  3. A slot for a **FutureSpeak-hosted** option, later.
+  The card suggests a hosted adapter when a page is meant to be always-on or
+  carries large media.
+- **Adversarial tests the critic must run (§9.1):** every Friday API and UI
+  path, the websocket, and every path-traversal attempt through the pages
+  hostname must fail (404 or refused); nothing outside `published/` is ever
+  readable.
+- **Not in 1b:** apps that need a backend. They belong to the later "go
+  live" (§4.6) and federation work. Friday never hosts anything dynamic from
+  the user's hardware, never registers domains and never sells hosting.
+
+#### 4.10.2 The tool manifest: a seam for the parked sharing sprint
+
+Every tool made in the salon (especially a tool for Friday herself, §4.11)
+carries a standard manifest from day one, so the parked "federation publish"
+sprint has something to publish. Nothing is shared now; this is the hook.
+
+- **Fields:** the MCP-compatible `name`, `description` and JSON `schema`; the
+  gate risk class; the data scopes it touches, with the vault **never**
+  included by default; the network egress it needs; who pays for model or
+  API calls (the caller's key or an owner cap); whether it runs in the box;
+  its receipt shape; and `share_tier`.
+- **`share_tier`:** `none` (the default), `bundle` (others install and run it
+  on their own Friday, through the signed-bundle path above), or `web` (a
+  static publication through §4.10.1). **The earlier "trusted" and "public"
+  hosting tiers are removed** by the owner's ruling: Friday never serves
+  tools or pages to the internet from the user's hardware, and the salon's
+  B1 and B2 boxes are not internet-facing isolation boundaries. Exposure
+  defaults to off, per tool; there is no telemetry, and receipts are kept
+  locally.
+
+### 4.11 What the competitor pass added
+
+`docs/design/research/2026-09-30-salon-competitor-gap-matrix.md` sets the
+spec against Replit Agent, Lovable, Bolt, v0, Cursor and Codespaces. The salon
+is already ahead on voice, proxy-injected secrets, privacy and telemetry,
+guest keys and the local backstage. The real gaps, folded in here with the
+recommended engineering option taken as a delegated decision (§12), are:
+
+1. **A self-testing loop for the user's app (Phase 4).** Each step runs the
+   preview in the box tier (broker capture in B0, headless Chromium in B1 and
+   B2), captures console and network errors, looks at the screenshot, fixes,
+   and reports done only with that evidence on the receipt. A failed smoke
+   path reports `run_failed`. The harsh-critic gauntlet is offered as a user
+   feature: the critic's verdict is attached to the step, never a veto.
+2. **Point-and-say visual editing (Phase 2).** Select an element in the
+   preview and say or type the change. Selection returns a selector plus a
+   cropped screenshot; simple property edits go through a non-model patcher,
+   the rest is a normal edit turn.
+3. **Bring your own code (Phase 4).** Open any existing repo or local folder
+   (§4.8 already gives it a salon branch); push and open a PR through one
+   card kind, `code_publish`, non-grantable by default, with the receipt's
+   screenshot in the PR body.
+4. **Plan-first mode for big asks (Phase 2).** A short plan as a `markdown`
+   artifact, approval, then build; its milestones become task-ledger tasks
+   and every step closes with a typed blocker, wired to goals.
+5. **Phone preview (Phase 5).** LAN-first behind a one-time 30-minute token
+   with a QR code; a tunnel the user already runs is detected, never
+   installed, and opening one is a card.
+6. **Publish to a web address the user owns.** Static artifacts: §4.10.1
+   (Phase 1b). Apps with a backend: Friday runs the user's own deploy path
+   (folder, ssh, git push, their command), verifies the URL, and never hosts.
+   A pre-publish scan of the app itself joins the card.
+7. **Vibe-code a tool for Friday herself (after Phase 7).** Built and tested
+   in the salon, then registered in the tool catalogue with a declared gate
+   class that is checked and never lowered; voice-callable per the voice
+   contract; callable by the Laya and Needle reflexes only when its class is
+   internal; through the owner-rules and loud-approval path; no grant ever
+   covers an outward self-made tool. It carries the §4.10.2 manifest.
+8. **A data viewer for the app's database (Phase 2):** the `table` artifact
+   bound to a query, with confirmation on destructive SQL.
+9. **Licence checks on every installed package (Phase 5):** announced on each
+   install and flagged for copyleft, unlicensed and non-commercial terms;
+   refusal is an owner rule, not a default (the breeze TTS lesson).
+10. **One-click export as a plain project (Phase 2):** strips `.friday/` and
+    the key binding, writes a plain README, and is INTERNAL; no lock-in, per
+    the north star's portability rules.
+
+Undo stays code-only, as every competitor's does; the Changes tab says so on
+any step that ran a migration. Three items are product intent and are
+flagged for the owner in §12.
 
 ---
 
@@ -1385,6 +1642,23 @@ salon and hand the owner a patch file to merge by hand.
 - **Cross-site prerequisite:** a POST from loopback carrying a foreign
   `Origin` or `Sec-Fetch-Site: cross-site` is refused. This comes from the
   separate fix, and Phase 4 is gated on it.
+- **Backstage egress (Phase 5):** the whole backstage runs with outbound
+  network blocked at the host; any component that tries to reach the
+  internet fails the test.
+- **Publish to web (Phase 1b):** through the pages hostname, every Friday API
+  and UI path, the websocket and every path-traversal attempt returns 404 or
+  is refused; nothing outside `published/` is readable; a bundle with a
+  tracking script or a secret-shaped string is refused before the card; the
+  owner's kill switch makes every published page unreachable within a
+  second; a declined card publishes nothing.
+- **Workspace evolution (Phase 2b):** an improved bundle runs only in the
+  frame; the swap needs one approval; rollback restores the previous bundle
+  hash; a change touching a reserved status colour fails the brand check.
+- **The panel (Phase 1, built):** a second put is a new version and the
+  first is kept; restore is a new version; a hand edit is authored by "you"
+  and the next turn's prompt carries its diff once; off the record nothing is
+  written and the artifact is gone when off-record ends; the shipped frame
+  blocks every probe above.
 
 ### 9.2 Screenshots, actually looked at
 
@@ -1410,12 +1684,24 @@ not count.
     - the version timeline;
     - the panel collapsed;
     - the panel at 390 px as a tab over the chat.
+  - **Phase 1b:**
+    - the publish card with the file list, preview, PII scan and licence
+      check;
+    - the published page in a plain browser, with the "Made with Friday"
+      mark;
+    - the "This PC" status line, reachable and unreachable;
+    - the kill switch.
   - **Phase 2:**
     - "+ Codebase" in the sidebar;
     - a new codebase's first preview;
     - Files;
     - Changes with one-line summaries;
     - after "undo".
+  - **Phase 2b:**
+    - "Improve this workspace" from a workspace's menu;
+    - the workspace and its improved copy side by side;
+    - the swap card;
+    - after rollback.
   - **Phase 3:**
     - the header line on the local seat;
     - the header line on the cloud seat;
@@ -1477,28 +1763,44 @@ Effort is in focused agent-days with review. Each phase is shippable alone.
 
 | Phase | What | Effort | Depends on |
 |---|---|---|---|
-| **S1–S3** | Spikes, which report and build nothing. **S1:** esbuild-wasm plus pinned CDN packages building a React app in an opaque-origin frame on this machine. **S2:** Node, npm and a dev server in an AppContainer without admin, and whether the panel can reach it. **S3:** OpenShell 0.1.x on the owner's WSL 2 + Docker, with telemetry off and a capture, driven from a grant via the Python SDK. Also microsandbox on WHP, as a read-only check of the feature's state | 3 | nothing |
-| **1** | **The artifact panel in every chat:** `artifact_put`, the fenced-block fallback, the store with off-record honoured, versions, the frame (§4.3) and the broker's read-only subset, the six kinds, hand edits as versions, both HTML files | 7–8 | S1 (for `html` apps; the other kinds don't wait) |
-| **2** | **Codebase chat, B0:** "+ Codebase", git-backed steps, Preview, Files and Changes (moving in `DevFiles` and `DevDiff`), undo, templates (static app, React-in-frame, workspace bundle), one-line summaries, step receipts | 6–7 | 1; goals-and-receipts Phase 0 for the receipt classifier |
+| **S1–S3** | Spikes, which report and build nothing. **S1 (done, PASS):** esbuild-wasm plus pinned packages built a React app inside the opaque-origin frame on the owner's machine; every isolation probe was blocked; esm.sh is the one package host (unpkg serves raw CommonJS and fails); cold start about 25 s, warm about 2 s; the CSP needs `'wasm-unsafe-eval'` and `worker-src blob:`. **S2 (done):** Node, npm and a dev server run in an AppContainer without admin and cannot read the profile, but host-to-container loopback is dropped in every capability combination; a pipe bridge is the viable shape (§4.4). **S3 (waiting on the owner):** OpenShell 0.1.2 on WSL 2 + Docker needs Docker Desktop started and the OpenShell CLI and Python SDK installed in the Ubuntu distro; neither is done without the owner's say-so. Windows Sandbox is absent; the WHP library is present; microsandbox's Windows path needs the WHP feature enabled, which needs admin to check | 3 | nothing |
+| **S4** | **Research (done):** LocalStack's archived Apache-2.0 tree studied for the gateway, the provider model over moto, persistence and init hooks, coverage tracking, parity testing, licence reuse and the telemetry modules never to import. Verdicts in §4.6.1 and the research doc | 1 | nothing |
+| **1** | **The artifact panel in every chat** (first increment built, on `feat/salon-phase1`): `artifact_put`, the fenced-block fallback, the store with off-record honoured, versions, hand edits as versions, the frame (§4.3), the six kinds, both HTML files, the Settings toggle. Left: the broker's read-only subset (moves to Phase 2 with the bundle broker), the live check after merge (§9.5) | 7–8 | S1 (for `html` apps; the other kinds don't wait) |
+| **1b** | **Publish to web** (§4.10.1): the static bundle packer, the PII scan and licence check, the one card with its spoken form, the "This PC" adapter (separate static server, own tunnel hostname, read-only `published/`, no route to Friday, strict headers, kill switch, reachability status, adversarial tests), the Cloudflare Pages and GitHub Pages adapters on the user's account, the FutureSpeak slot, republish, versions, take-down, the "Made with Friday" mark | 6–8 | 1 |
+| **W0/W1** | **Workspace-ecosystem Phase 0 and 1, pulled forward** (§4.9.1): version history, a review-and-rollback UI for every workspace, dock show and hide. Sized in that spec; listed here because the salon's order depends on it | 3–4 (that spec's budget) | 1b; the cross-site fix |
+| **2** | **Codebase chat, B0:** "+ Codebase", git-backed steps, Preview, Files and Changes (moving in `DevFiles` and `DevDiff`), undo, templates (static app, React-in-frame, workspace bundle, seeded from a description with import), one-line summaries, step receipts, the frame broker's read-only subset. **Plus the cheap gaps of §4.11:** point-and-say editing, plan-first mode with typed blockers, the data viewer, one-click export | 6–7, plus 9–12 | 1; goals-and-receipts Phase 0 for the receipt classifier |
+| **2b** | **"Improve this workspace"** (§4.9.1): from any workspace by button or voice, a codebase chat on its bundle, side-by-side preview in the frame, commits with tests and the self-testing loop, one approval to swap, one-click rollback, the brand check, explicit bundle boundaries for every workspace from the registry. **Friday-proposed evolution** (diffs with evidence through the weekly review, never auto-applied) follows once owner rules Phase 1 is on main | 5–7, plus 3–4 | 2; W0/W1; **the cross-site fix on main** |
 | **3** | **Seats, keys and meters:** the routing record, key profiles, guest keys in the credential store, proxy key injection for provider calls, `cost_calls` columns, the header line, the Costs split, Claude's agent as an engine (it runs in B2, or in B1 with the disclosure; the codebase itself can still preview in B0) | 5–6 | 2 |
-| **4** | **The box and the proxy:** B1 (generalised `code_sandbox`), B2 on WSL 2 containers, the salon proxy, `policy.yaml`, the floor, the posture setting, install scan, cooldown and pins, the reviewer pass on flags, cards as policy edits, the audit log shared with the broker | 10–12 | 3; **the cross-site fix on main**; owner rules Phase 1 (so rules can see salon actions) |
-| **5** | **The backstage:** the shim (storage, queue, KV, auth stub), SQLite, Mailpit, moto server, Azurite, the go-live card, captures | 5 | 4 |
+| **4** | **The box and the proxy:** B1 as an AppContainer with the pipe bridge (§4.4), with the generalised Low-token `code_sandbox` as the fallback for the copy of Friday, B2 on WSL 2 containers, the salon proxy, `policy.yaml`, the floor, the posture setting, install scan, cooldown and pins, the reviewer pass on flags, cards as policy edits, the audit log shared with the broker. **Plus:** the self-testing loop with the critic toggle, and bring-your-own-code with the `code_publish` card (§4.11) | 10–12, plus 2–3 for the bridge, plus 8–11 | 3; **the cross-site fix on main**; owner rules Phase 1 (so rules can see salon actions) |
+| **5** | **The backstage: Friday's own local cloud emulator** (§4.6.1): the gateway with its handler chain and service detection, moto in-process behind the fall-through dispatcher (S3, SQS, SNS, DynamoDB, Secrets Manager, Lambda-style functions where feasible), Mailpit, Azurite, SQLite, the OIDC stub, key-value and queue shims, init stages, the internal endpoints, snapshots and restore, the parity harness and the published coverage table, the Friday-branded status panel, the telemetry audit of every dependency, the egress test, the go-live card, captures. **Plus:** phone preview with QR, licence checks on installs, the pre-publish scan and the user's own deploy path for apps with a backend (§4.11) | 24–34, plus 8–11 | 4 |
 | **6** | **Voice-first:** focus, the verb table of §6.2, spoken card forms, the private-data file flow through the handoff, `voice_restrictions` entries, the thin `answer_card` only if the contract lacks it | 5–6 | 2 (verbs), 4 (cards); the voice contract and handoff on main |
 | **7** | **Self-edit on a copy:** worktree, the second server with a fixture home, side by side, the red-first gate, `apply_growth`, the loud approval, the `boot_guard` list fix, rollback | 8–10 | 4, 6; goals-and-receipts (receipts); owner rules |
-| **8** | **Workspaces and sharing:** the bundle host (`workspace-ecosystem.md` Phase 2) as the salon's install target, "Improve this workspace", signed bundle export and import, cooldown, re-consent on widening | 6–8 | 2, 4; `workspace-ecosystem.md` Phase 1 fixes |
+| **8** | **Workspaces and sharing:** the bundle host (`workspace-ecosystem.md` Phase 2) as the salon's install target, signed bundle export and import (`share_tier: bundle`), cooldown, re-consent on widening. "Improve this workspace" itself moved to 2b | 5–6 | 2b, 4; `workspace-ecosystem.md` Phase 1 fixes |
+| **T** | **A tool for Friday herself** (§4.11 item 7): build and test in the salon, register in the tool catalogue with a declared gate class, the §4.10.2 manifest, voice-callable, reflex-callable when internal, through owner rules and the loud approval | 6–8 | 7; owner rules |
 | **9** | **Market cards:** only once federation is switched back on and `_verify_peer_card` is fixed. Ratings per Appendix A | its own spec | federation |
 | **B2-OS** | The OpenShell backend: a translator from `policy.yaml`, lifecycle via the SDK, grants driving live network policy | 4–5 | S3 passing its gate; 4 |
 
-**Totals.** Phases 1–8 come to about **55–62 agent-days**, roughly 11–12
-agent-weeks. **The artifact panel (Phase 1) stands alone at about 1.5
-weeks**, and it is useful on day one to every chat and every model.
+**Totals (2026-09-30 re-estimate).** The original Phases 1–8 were 55–62
+agent-days. The changes above add: Phase 1b 6–8; W0/W1 3–4 (from the
+workspace-ecosystem budget); Phase 2b 5–7 plus 3–4 for proposed evolution;
+the B1 pipe bridge 2–3; the competitor gaps 31–42 spread over Phases 2, 4, 5
+and T; and Phase 5 grows from 5 to 24–34. **Phases 1–8 plus 1b, 2b and T now
+come to about 125–160 agent-days, roughly 25–32 agent-weeks.** The artifact
+panel (Phase 1) still stands alone at about 1.5 weeks and is useful on day
+one to every chat and every model.
 
 **Where it is cheapest to stop:**
 
-- **After Phase 2**, the owner has a working salon for everything that runs
-  in a browser, which covers most of what a journalist would build, with no
-  box to maintain.
-- **After Phase 4**, it runs anything.
+- **After Phase 1b** (about 3 weeks in), the owner can make things in any
+  chat, keep every version, and publish any static artifact to a web address
+  from this PC or a Pages account. No codebase, no box.
+- **After Phase 2b** (about 9–10 weeks in), the owner has a working salon for
+  everything that runs in a browser, with point-and-say, plan-first, a data
+  viewer and export, and every workspace can be improved in it and rolled
+  back. Still no box to maintain.
+- **After Phase 4**, it runs anything, with the self-testing loop.
+- **After Phase 5**, apps run against Friday's own local cloud, with no
+  account and no telemetry anywhere.
 
 ### 10.1 Where it slots into the roadmap
 
@@ -1512,20 +1814,28 @@ The queue, as `avatar-visual-genome.md` §11.1 records it:
 
 The recommended order:
 
-1. **S1–S3 and Phase 1 can start now.** They touch only the chat UI and a
-   new store, need no GPU, and block nothing. They sit well next to
-   FridayWeaver-2 training, which holds the GPU.
-2. **Goals-and-receipts Phase 0 and owner-rules Phase 1 land before salon
+1. **S1–S3, S4 and Phase 1 first.** S1, S2 and S4 are done; S3 waits on the
+   owner; Phase 1's first increment is on its branch. They touch only the
+   chat UI and a new store, need no GPU, and block nothing.
+2. **Phase 1b (publish to web) right after Phase 1 lands**, then **W0/W1**
+   (workspace version history, review, rollback, dock show and hide).
+3. **The cross-site fix** (filed separately, prioritised by the program lead)
+   lands before Phase 2b and Phase 4. It is small, and it protects every tab
+   today; without it no vibe-coded workspace may run.
+4. **Goals-and-receipts Phase 0 and owner-rules Phase 1 land before salon
    Phases 2 and 4 respectively.** The salon's steps want receipts from the
    start, and its outward actions want rules. Neither spec is delayed by the
    salon.
-3. **The cross-site fix** (filed separately) lands before Phase 4. It is
-   small, and it protects every tab today.
-4. **Phase 6 waits on the voice contract and handoff reaching main.**
-5. **Phase 7 comes after receipts and owner rules**, and preferably after
-   FridayWeaver-2 lands. The copy then tests against the brain users will
-   run.
-6. **Avatar A0 (one day) is unaffected.** Nothing here competes with it.
+5. **Phase 2 with its cheap gaps, then Phase 2b, "Improve this workspace".**
+   Friday-proposed evolution follows once owner rules are on main, because
+   proposals ride the weekly review.
+6. **Phases 3, 4 and 5** in that order; Phase 5 is now the largest single
+   phase and is the "build our own" emulator.
+7. **Phase 6 waits on the voice contract and handoff reaching main.** (The
+   contract is on main as of `02035ba6`; the handoff is not.)
+8. **Phase 7 comes after receipts and owner rules**, and preferably after
+   FridayWeaver-2 lands. **T (a tool for Friday) comes after 7.**
+9. **Avatar A0 (one day) is unaffected.** Nothing here competes with it.
 
 ---
 
@@ -1571,8 +1881,26 @@ dollar figure.
 - AppContainer is spiked, not assumed;
 - the policy file uses OpenShell's shape, and Friday's proxy enforces it;
 - OpenShell becomes a backend only past the gate in §2.2;
-- LocalStack is never bundled and only user-installed;
-- MinIO is out, and moto, Mailpit and Azurite are in;
+- MinIO is out, and moto, Mailpit and Azurite are in, each audited for
+  anything that phones home (§4.6);
+- charts are drawn in SVG by the panel; no chart library is added;
+- esm.sh is the one package host for frame apps (S1);
+- the page holds one event stream for every chat surface (§4.2);
+- B1 is an AppContainer with a pipe bridge, and the Low token is the
+  fallback for the copy of Friday (S2, §4.4);
+- the backstage is Friday's own emulator on the S4 patterns, and nothing
+  from LocalStack's analytics is ever imported (§4.6.1);
+- the competitor-pass options of §4.11, each taken as recommended:
+  verification per step as evidence not veto; pointer selection returning a
+  selector plus a crop with a non-model patcher for simple edits; push and
+  PR as one non-grantable `code_publish` card; a plan as a `markdown`
+  artifact whose milestones become tasks; LAN-first phone preview with a
+  detected, never installed, tunnel; Friday prepares and verifies publishes
+  and never hosts or sells domains; a self-made tool runs in the box behind
+  a broker stub with a declared gate class that is never lowered; the data
+  viewer is the `table` artifact bound to a query; licence is announced and
+  flagged, refusal is an owner rule; export strips `.friday/` and is
+  INTERNAL; undo stays code-only;
 - keys are injected at the proxy, including for Claude's agent;
 - key and codebase columns go in `cost_calls`;
 - git steps with "step" and "undo" in the UI;
@@ -1613,13 +1941,53 @@ kept so the owner can overrule any of them, or revisit them on evidence.
    - The cost: Friday holds a secret that isn't yours. It is encrypted like
      yours, never enters the box, and its owner can ask you to remove it.
 
+**Owner rulings since the spec was accepted** (dated; each may be revisited
+by the owner):
+
+1. **2026-09-29, LocalStack and telemetry.** *"I don't want any telemetry
+   built into our system so that's out. But let's emulate as much as we can
+   and learn as much as we can and build our own as much as we can."*
+   LocalStack is out entirely (§2.1); no salon component may phone home
+   (§4.6); Phase 5 is Friday's own emulator (§4.6.1).
+2. **2026-09-29, no local hosting of tools.** *"I was more thinking like an
+   artifact that Claude serves to the public web, if the user so chooses...
+   I don't want to launch MCP servers off of my local hardware."* Friday
+   never serves tools or pages to the internet from the user's hardware; the
+   manifest's hosting tiers are gone (§4.10.2); static artifacts publish
+   through §4.10.1.
+3. **2026-09-29, the default publish host is "This PC"**, with the isolated
+   static server, its own tunnel hostname, the read-only `published/`
+   folder, no route to Friday, the kill switch, reachability status and the
+   adversarial tests; hosted adapters are for pages that must stay up around
+   the clock (§4.10.1).
+
+**Product intent flagged for the owner** (from the competitor pass; each is
+a stance on what Friday is for, not an engineering choice; the recommended
+default is taken until the owner says otherwise):
+
+1. **Does Friday publish, or only prepare?** Recommended: she runs the
+   user's own deploy path and verifies the URL, hosts static pages from this
+   PC or the user's own Pages account, and never registers a domain, never
+   picks a vendor and never sells hosting. Every competitor sells hosting.
+2. **May a tool Friday wrote for herself act while the owner is away?**
+   Recommended: an internal-class self-made tool may be reflex-callable; no
+   grant ever covers an outward self-made one. The owner may want it looser
+   or stricter.
+3. **Licence posture: inform, or refuse?** Recommended: announce and flag,
+   never refuse without an owner rule. Whether Friday holds an opinion about
+   what the user's apps may be built from is content policy the owner
+   directs.
+
 **Still open, not blocking:**
 
-- which chart library the panel uses (Phase 1 picks from what `index.html`
-  already loads);
-- PGlite's licence (Phase 5);
+- whether upstream moto's server dispatch handles single-port routing well
+  enough on its own (checked first in Phase 5; it moves the estimate);
+- PGlite's licence (Phase 5), and whether Mailpit ships a Windows build;
 - which hosts Claude's agent contacts beyond the API (the Phase 3 capture);
-- AppContainer feasibility (S2).
+- whether a real Vite or Next dev server tolerates the AppContainer beyond
+  the real-path issue (Phase 4);
+- S3, until the owner clears starting Docker Desktop and installing the
+  OpenShell CLI in the Ubuntu distro.
 
 ---
 
@@ -1702,6 +2070,11 @@ ownership metadata" applied per codebase.
 Checked 2026-09-29.
 
 **LocalStack**
+- Pricing (checked 2026-09-29: Hobby plan needs an account; offline delivery
+  only on top tiers; "Telemetry Sharing" enforced on the free plan):
+  https://localstack.cloud/pricing
+- The S4 study of the archived tree:
+  `docs/design/research/2026-09-30-localstack-archived-repo-study.md`
 - Repository (archived 2026-03-23; README on the unified image, Apache-2.0 +
   EULA, Hobby plan): https://github.com/localstack/localstack
 - README: https://raw.githubusercontent.com/localstack/localstack/main/README.md
@@ -1743,6 +2116,8 @@ Checked 2026-09-29.
   https://docs.docker.com/subscription/desktop-license/
 
 **In this repository**
+- `docs/design/research/2026-09-30-salon-competitor-gap-matrix.md`: the
+  competitor pass behind §4.11, with every product claim cited.
 - `docs/design/active/workspace-ecosystem.md` and
   `docs/design/research/2026-09-20-extension-ecosystems-survey.md`: the
   sandbox, broker, cooldown and ratings evidence (Figma, Obsidian, pnpm, the
