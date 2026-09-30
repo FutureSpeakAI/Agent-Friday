@@ -244,3 +244,20 @@ def test_the_briefing_run_saves_its_story_list_and_calendar(home, monkeypatch):
     assert [e["start_time"] for e in side["calendar"]] == [e["start_time"] for e in fx.events()]
     blob = json.dumps(side)
     assert "someone@example.com" not in blob and "private notes" not in blob
+
+
+def test_the_episode_as_it_went_out_digest_only_fails_the_gate(home, monkeypatch, speaker):
+    """The shape of the real run: sources are the digest's sections, with no
+    story list, and the script references stories the listener never heard
+    introduced. Uses only what existed before the gate, so it fails there."""
+    _write_run(home, sidecar=False)
+    sections = [{"sid": "S3", "title": t} for t in
+                ("Tech chiefs", "AI data-center", "Rowan Hale", "Two injured")]
+    sections += [{"sid": "S2", "kind": "event", "title": "calendar"}] * 3
+    lines = [dict(ln, cites=["S3"] if ln["cites"] else []) for ln in fx.bad_lines(sections)]
+    monkeypatch.setattr(pe, "_llm_json", _writer(lines))
+    done = pe.produce(_briefing()["id"])
+    assert done["status"] == "ready"
+    assert done["script_check"]["ok"] is False
+    assert {"repeats_word", "flat_fragments"} <= {p["code"] for p in done["script_check"]["problems"]}
+    assert "linked" not in done["lines"][-1]["text"]
