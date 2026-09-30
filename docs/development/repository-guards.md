@@ -114,9 +114,10 @@ needs `live_checkout`.
 
 An internal fault in the hook lets the call through with the traceback on
 stderr and in the audit log (exit 1), because the hook runs for every project
-on the machine and a crash must not brick every session. Hooks are read at
-session start; a session that was already open when the hook was registered
-does not have it.
+on the machine and a crash must not brick every session. A registration in
+the user settings reaches sessions that are already open; the first blocked
+call in this repository's own history came from the session that registered
+the hook.
 
 ## The guarded suite runner
 
