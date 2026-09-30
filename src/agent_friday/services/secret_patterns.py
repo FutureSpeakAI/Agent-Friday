@@ -93,9 +93,12 @@ ASSIGN_RES: tuple[re.Pattern, ...] = (
     # A password assignment whose value carries a digit or a symbol, so
     # "Password: Required" and `password = request.form.get(...)` are not
     # secrets but "password=hunter2" is. A value that opens like a filesystem
-    # path (`PWD=/c/Users/...`) is a directory, not a password.
+    # path (`PWD=/c/Users/...`) is a directory, not a password. A masked value
+    # (`********`) and a policy line (`minimum-8 characters`) are not secrets.
     re.compile(r"(?i)\b(?:password|passwd|pwd)" + _Q + r"\s*[:=]\s*" + _Q
                + r"""(?![/~.\\]|[A-Za-z]:[\\/])"""
+               + r"""(?![*•●#x._-]+(?=[\s"',;)]|$))"""
+               + r"""(?!(?:min|max)(?:imum)?-\d+(?=[\s"',;)]|$))"""
                + r"""(?=[^\s"']{6,})[^\s"']*[0-9!@#$%^&*+=/-][^\s"']*"""),
     re.compile(r"(?i)(?<![A-Za-z0-9])(?:api[_-]?key|secret[_-]?(?:access[_-]?)?key|"
                r"client[_-]?secret|access[_-]?token|auth[_-]?token|private[_-]?key)"
@@ -103,7 +106,9 @@ ASSIGN_RES: tuple[re.Pattern, ...] = (
     # A bearer token always carries a digit; a hyphenated phrase does not.
     re.compile(r"(?i)\bbearer\s+(?=[A-Za-z0-9_\-.=+/]*\d)[A-Za-z0-9_\-.=+/]{20,}"),
     # user:password@host inside a URL
-    re.compile(r"[A-Za-z][A-Za-z0-9+.-]{1,}://[^\s/:@]+:[^\s/@]{3,}@[^\s/]+"),
+    # Anchored at the start of the scheme and bounded in length, so a long
+    # unbroken run of letters and digits is scanned once, not once per offset.
+    re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{1,31}://[^\s/:@]+:[^\s/@]{3,}@[^\s/]+"),
 )
 
 _ZERO_WIDTH = re.compile("[​‌‍⁠﻿]")

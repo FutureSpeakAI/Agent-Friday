@@ -9347,6 +9347,10 @@ def _hook_governance(ctx):
     Critical, so it cannot be switched off in settings and an exception in it
     denies the call.
     """
+    refused = _hook_credential_refusal(ctx)
+    if refused.action == "deny":
+        return refused
+
     allowed, reason = _governance_check(ctx.tool_name, ctx.input,
                                         session_ctx=ctx.session_ctx)
     if not allowed:
@@ -9634,6 +9638,42 @@ def _hook_vault_zt(ctx):
     if ring == 2 and not authed:
         return _hooks.DENY(
             "[VAULT DENY] network/vault-tier tool requires an authenticated session")
+    return _hooks.ALLOW
+
+
+def _hook_credential_refusal(ctx):
+    """Key material is refused before anything is narrated, carded or run.
+
+    The first step of the governance checkpoint, ahead of any approval card.
+    The refusal is a denial in the receipt, not a successful read of the key,
+    and the owner's "yes" is never asked for: the answer to "read my key" is
+    the same whoever asks. The handlers repeat these checks as their own
+    backstop (services/credential_paths).
+    """
+    try:
+        from agent_friday.services import credential_paths as _cred
+        inp = ctx.input or {}
+        if ctx.tool_name == "read_file":
+            raw = inp.get("path") or ""
+            p = Path(raw).expanduser().resolve() if raw else None
+            if p is not None and _cred.check(p):
+                return _hooks.DENY(_cred.refusal(p))
+        elif ctx.tool_name == "open_path":
+            target = str(inp.get("path") or inp.get("target") or "").strip()
+            if target:
+                p = Path(target).expanduser()
+                if _cred.check(p):
+                    return _hooks.DENY(_cred.refusal(p))
+        elif ctx.tool_name == "run_command":
+            why = _cred.scan_command(str(inp.get("command") or ""))
+            if why:
+                return _hooks.DENY(_cred.refusal_command(why))
+        elif ctx.tool_name == "run_sandboxed":
+            why = _cred.scan_code(str(inp.get("code") or ""))
+            if why:
+                return _hooks.DENY(_cred.refusal_command(why))
+    except Exception:
+        pass
     return _hooks.ALLOW
 
 

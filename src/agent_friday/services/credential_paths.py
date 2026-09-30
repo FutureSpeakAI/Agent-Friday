@@ -16,6 +16,12 @@ Consulted by read_file, search_files, open_path and run_command's read verbs
 (services/agent.py, services/file_search.py). Never consulted for a path the
 user opens themselves through the UI — this only bounds what the model reaches.
 
+A denied folder still gives up its lookups, which are not secrets: `~/.ssh/config`,
+`known_hosts`, public keys, `~/.aws/config` and `~/.config/gh/config.yml` open
+while they hold no credential (`_LOOKUPS`). A recursive read that starts above a
+credential folder (`$HOME`, the current directory, an archive of the profile) is
+refused as a walk, because it reaches the keys without naming one.
+
 Deliberately NOT the whole vault: the vault holds the owner's own notes
 (finances, legal, family) that Friday works with under the egress gate. Only
 the vault's KEY material is denied (.vault_config.json salt, .governance-key,
@@ -51,8 +57,8 @@ def _deny_dirs() -> list[tuple[Path, str]]:
         (h / ".config" / "gh", "your GitHub CLI sign-in folder"),
         (h / ".azure", "your Azure credentials folder"),
         (h / ".kube", "your Kubernetes credentials folder"),
-        (f / "backups", "Friday's backup folder, which holds copies of her vault and keys"),
-        (f / "security", "Friday's keystore folder"),
+        (f / "backups", "my backup folder, which holds copies of my vault and keys"),
+        (f / "security", "my keystore folder"),
         (f / "providers" / "keys", "your provider API keys folder"),
         (f / "google_accounts" / "tokens", "your Google account tokens folder"),
         (f / "mcp_oauth", "your connector sign-in tokens folder"),
@@ -64,11 +70,23 @@ def _deny_files() -> list[tuple[Path, str]]:
     """Exact files that are key material rather than the owner's content."""
     f = _friday()
     return [
-        (f / "secret_key", "Friday's web session secret"),
+        (f / "secret_key", "my web session secret"),
         (f / "vault" / ".vault_config.json", "the vault key-derivation salt"),
         (f / "vault" / ".governance-key", "the governance signing key"),
     ]
 
+
+#: Files inside a denied folder that are the owner's lookups rather than
+#: secrets: where a host lives, who it trusts, which region a profile uses.
+#: Keyed by the folder's path under the home directory. Each is readable only
+#: while its content holds no credential, so a config that gained a secret
+#: is refused for what it holds.
+_LOOKUPS: dict[tuple[str, ...], tuple[str, ...]] = {
+    (".ssh",): ("config", "known_hosts", "known_hosts.old", "authorized_keys", "*.pub"),
+    (".aws",): ("config",),
+    (".config", "gh"): ("config.yml",),
+}
+_LOOKUP_MAX_BYTES = 256 * 1024
 
 #: Basename globs that are credential material wherever they sit. Matched on
 #: the lower-cased name with any NTFS stream suffix and trailing dots removed.
@@ -94,7 +112,7 @@ _NAME_GLOBS: tuple[tuple[str, str], ...] = (
     (".attestation-key-*", "the vault attestation signing key"),
     (".governance-key", "the governance signing key"),
     (".vault_config.json", "the vault key-derivation salt"),
-    ("keystore.json", "Friday's keystore"),
+    ("keystore.json", "my keystore"),
     ("start.bat", "a launcher that holds your API keys in plain text"),
     ("launch_now.bat", "a launcher that holds your API keys in plain text"),
     ("friday_startup.*", "a launcher that holds your API keys in plain text"),
@@ -141,13 +159,39 @@ def _deny_norms(home: str, friday: str):
     """
     dirs: dict[str, str] = {}
     files: dict[str, str] = {}
+    lookups: dict[str, tuple[str, ...]] = {}
     for d, why in _deny_dirs():
         dirs.setdefault(_asis(d), why)
         dirs.setdefault(_norm(d), why)
     for f, why in _deny_files():
         files.setdefault(_asis(f), why)
         files.setdefault(_norm(f), why)
-    return tuple(dirs.items()), tuple(files.items())
+    for parts, names in _LOOKUPS.items():
+        d = _home().joinpath(*parts)
+        lookups.setdefault(_asis(d), names)
+        lookups.setdefault(_norm(d), names)
+    return tuple(dirs.items()), tuple(files.items()), lookups
+
+
+def _is_clean_lookup(folder: str, cand: str, lookups: dict) -> bool:
+    """True when `cand` is one of the owner's lookup files directly inside the
+    denied `folder` and holds no credential (an absent file holds none)."""
+    names = lookups.get(folder)
+    rest = cand[len(folder) + 1:]
+    if not names or os.sep in rest or not any(fnmatch.fnmatch(rest, n) for n in names):
+        return False
+    try:
+        path = Path(cand)
+        if not path.exists():
+            return True
+        if not path.is_file() or path.stat().st_size > _LOOKUP_MAX_BYTES:
+            return False
+        with open(path, "rb") as fh:
+            text = fh.read(_LOOKUP_MAX_BYTES).decode("latin-1")
+    except Exception:
+        return False
+    from agent_friday.services import secret_patterns
+    return not secret_patterns.contains_secret(text)
 
 
 def _plain_name(name: str) -> str:
@@ -342,12 +386,14 @@ def _verdict(path, sniff: bool = True) -> tuple[str, str] | None:
             rp = Path(rtext)
     except Exception:
         pass
-    dirs, files = _deny_norms(str(_home()), str(_friday()))
+    dirs, files, lookups = _deny_norms(str(_home()), str(_friday()))
     for cand in dict.fromkeys((_asis(p), os.path.normcase(str(rp)))):
         for d, why in dirs:
             if cand == d:
                 return why, "folder"
             if cand.startswith(d + os.sep):
+                if sniff and _is_clean_lookup(d, cand, lookups):
+                    continue
                 return why, "inside"
         for f, why in files:
             if cand == f:
@@ -386,9 +432,9 @@ _COMMAND_MARKERS: tuple[tuple[str, str], ...] = (
     ("id_ed25519", "an SSH private key"),
     ("id_ecdsa", "an SSH private key"),
     ("id_dsa", "an SSH private key"),
-    (".friday/security", "Friday's keystore"),
-    (".friday/backups", "a backup copy of Friday's vault and keys"),
-    ("vault-reencrypt", "a backup copy of Friday's vault and keys"),
+    (".friday/security", "my keystore"),
+    (".friday/backups", "a backup copy of my vault and keys"),
+    ("vault-reencrypt", "a backup copy of my vault and keys"),
     ("providers/keys", "your stored provider API keys"),
     ("google_accounts/tokens", "your Google account tokens"),
     (".friday/mcp_oauth", "your connector sign-in tokens"),
@@ -396,8 +442,8 @@ _COMMAND_MARKERS: tuple[tuple[str, str], ...] = (
     (".governance-key", "the governance signing key"),
     (".vault_config.json", "the vault key-derivation salt"),
     (".attestation-key", "the vault attestation signing key"),
-    ("keystore.json", "Friday's keystore"),
-    ("/secret_key", "Friday's web session secret"),
+    ("keystore.json", "my keystore"),
+    ("/secret_key", "my web session secret"),
     (".token.enc", "an encrypted account token"),
     (".oauth.enc", "an encrypted connector token"),
     (".dpapi", "a Windows-protected secret"),
@@ -469,9 +515,81 @@ _READER_RE = re.compile(
     r"compress-archive|certutil|xargs|foreach(?:-object)?|iwr|irm|curl|wget|"
     r"invoke-webrequest|invoke-restmethod|readall\w+|base64|xxd|od|format-hex|"
     r"scp|sftp|ftp|rsync)(?![a-z0-9_-])")
-_RECURSE_RE = re.compile(r"(?<![a-z0-9_-])(?:-recurse|-r|/s|-recursive|-R)(?![a-z0-9_-])",
-                         re.I)
+#: Recursion asked for by a flag: -Recurse and its PowerShell abbreviations,
+#: -recursive, -Depth, and the robocopy/xcopy switches /S /E /MIR.
+_RECURSE_RE = re.compile(
+    r"(?<![a-z0-9_-])(?:-r(?:e(?:c[a-z]*)?)?|-recursive|-depth)(?![a-z0-9_-])"
+    r"|(?<=\s)/(?:s|e|mir)(?=\s|$)", re.I)
+#: Commands that descend into a directory they are given without being asked.
+_IMPLICIT_RECURSION_RE = re.compile(
+    r"(?<![a-z0-9_-])(?:tar|zip|7z|7za|rar|compress-archive|find|rsync)(?![a-z0-9_-])")
 _MAX_DIR_ENTRIES = 300
+
+#: What a refused walk is called; `refusal_command` reads this to word the
+#: refusal, since no single file was named.
+_WALK_WHY = "a folder that holds your key and credential folders"
+
+#: Symbolic spellings of a directory, resolved before the command is judged.
+#: A space in a substituted path is carried as \x01 so a token stays whole.
+_SPACE = "\x01"
+_HOME_FORMS = re.compile(
+    r"\[(?:system\.)?environment\]::getfolderpath\s*\([^)]*\)|\$\{home\}|\$home(?![a-z0-9_])",
+    re.I)
+_CWD_FORMS = re.compile(
+    r"\$\(\s*(?:pwd|get-location)\s*\)(?:\.path)?|\(\s*(?:pwd|get-location|"
+    r"(?:resolve-path|convert-path)\s+\.)\s*\)(?:\.path)?|\$\{?pwd\}?(?![a-z0-9_])(?:\.path)?",
+    re.I)
+
+
+def _resolve_symbolic(cmd: str) -> str:
+    """`cmd` with `$HOME`, `$PWD`, `(Get-Location)` and
+    `[Environment]::GetFolderPath(..)` replaced by the directory they name.
+
+    Every special folder GetFolderPath names lies under the home directory,
+    so it reads as the home directory: the walk check judges the widest reach.
+    """
+    home = str(_home()).replace(" ", _SPACE)
+    try:
+        cwd = os.getcwd().replace(" ", _SPACE)
+    except OSError:
+        cwd = home
+    return _CWD_FORMS.sub(lambda m: cwd, _HOME_FORMS.sub(lambda m: home, cmd))
+
+
+def _covers_credentials(path: str) -> bool:
+    """True when `path` is a folder with a denied folder or file inside it.
+
+    A recursive read that starts above the credential folders reaches them
+    without naming one. Judged on what exists, so a profile without an .ssh
+    folder is not held back by the walk rule.
+    """
+    try:
+        text, problem = _canonical_windows_spelling(path)
+        root = Path(text)
+        if problem or not root.is_dir():
+            return False
+        dirs, files, _lookups = _deny_norms(str(_home()), str(_friday()))
+        for cand in {_asis(root), _norm(root)}:
+            prefix = cand.rstrip(os.sep) + os.sep
+            if any(d.startswith(prefix) and os.path.exists(d) for d, _why in (*dirs, *files)):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _is_dir(path: str) -> bool:
+    try:
+        return Path(path).is_dir()
+    except Exception:
+        return False
+
+
+def _glob_base(pattern: str) -> str:
+    """The folder a wildcard path expands inside: everything before the wildcard."""
+    cut = min((i for i in (pattern.find(c) for c in "*?[") if i >= 0), default=len(pattern))
+    head = pattern[:cut]
+    return head if head.endswith(("\\", "/")) else os.path.dirname(head)
 
 
 def _directory_holds_credential(path: str, recurse: bool) -> str | None:
@@ -487,7 +605,14 @@ def _directory_holds_credential(path: str, recurse: bool) -> str | None:
         seen = 0
         walker = os.walk(root) if recurse else [(str(root), [], [
             e.name for e in os.scandir(root) if e.is_file(follow_symlinks=False)])]
-        for dp, _dirs, names in walker:
+        for dp, dirs, names in walker:
+            for sub in dirs:
+                seen += 1
+                if seen > _MAX_DIR_ENTRIES:
+                    return None
+                why = check(Path(dp) / sub, sniff=False)
+                if why:
+                    return why
             for name in names:
                 seen += 1
                 if seen > _MAX_DIR_ENTRIES:
@@ -534,20 +659,25 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
     """
     if not cmd:
         return None
-    flat = re.sub(r"[\"'`^+()]", "", cmd).replace("\\", "/").lower()
+    cmd_r = _resolve_symbolic(cmd)
+    flat = re.sub(r"[\"'`^+()]", "", cmd_r.replace(_SPACE, " ")).replace("\\", "/").lower()
     for marker, why in _COMMAND_MARKERS:
         if marker in flat:
             return why
     m = _COMMAND_DIR_RE.search(flat)
     if m:
         return _DIR_WHY[m.group(1)]
-    if any(b in flat for b in _BROWSER_DIR_WORDS) and \
-            any(s in flat for s in _BROWSER_STORE_NAMES):
+    if any(b in flat for b in _BROWSER_DIR_WORDS) and             any(s in flat for s in _BROWSER_STORE_NAMES):
         return "a browser's saved-login or cookie store"
     reads = bool(_READER_RE.search(flat))
-    recurse = bool(_RECURSE_RE.search(flat))
-    for tok in _tokens(re.sub(r"[`^]", "", cmd)):
-        tok = tok.strip(",;|()")
+    implicit = bool(_IMPLICIT_RECURSION_RE.search(flat))
+    recurse = bool(_RECURSE_RE.search(flat)) or implicit
+    walks = reads and recurse
+    named_root = False
+    for tok in _tokens(re.sub(r"[`^]", "", cmd_r)):
+        tok = tok.strip(",;|()").replace(_SPACE, " ")
+        if tok in (".", "..", ".\\", "./", "..\\", "../"):
+            tok = os.path.abspath(tok)
         if len(tok) < 3:
             continue
         if "=" in tok and not tok.startswith(("/", "~", "$", "%")) and tok[1:2] != ":":
@@ -559,11 +689,19 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
             why = check(Path(expanded))
             if why:
                 return why
-            if reads and not any(ch in expanded for ch in "*?["):
+            wild = any(ch in expanded for ch in "*?[")
+            if reads and not wild:
+                if walks and _covers_credentials(expanded):
+                    return _WALK_WHY
+                named_root = named_root or _is_dir(expanded)
                 why = _directory_holds_credential(expanded, recurse)
                 if why:
                     return why
-            if any(ch in expanded for ch in "*?["):
+            if wild:
+                if walks:
+                    named_root = True
+                    if _covers_credentials(_glob_base(expanded)):
+                        return _WALK_WHY
                 import glob
                 try:
                     for i, hit in enumerate(glob.iglob(expanded)):
@@ -574,6 +712,13 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
                             return why
                 except Exception:
                     pass
+    if walks and not named_root:
+        # No folder was named, so the walk starts where the shell already is.
+        try:
+            if _covers_credentials(os.getcwd()):
+                return _WALK_WHY
+        except OSError:
+            pass
     if _depth < _MAX_DEPTH:
         for text in _decoded_command_texts(cmd):
             why = scan_command(text, _depth + 1)
@@ -593,7 +738,7 @@ def redact_secrets(text: str) -> str:
     return secret_patterns.redact(text)
 
 
-_CLOSED = "Key material stays closed to me, even when you ask."
+_CLOSED = "Keys and credentials stay closed to me, even when you ask."
 
 
 def refusal(path) -> str:
@@ -622,11 +767,18 @@ def refusal(path) -> str:
         return (f"I can't read {name} to tell whether it holds a private key, so "
                 f"I'm leaving it closed. A certificate saved as .crt opens fine.")
     lead = f"it sits in {why}" if kind == "inside" else f"it's {why}"
-    return (f"I won't open {name}: {lead}. {_CLOSED} "
-            f"You can open it yourself at {where}.")
+    # A bare name has no folder to point at; "at ." is not a place.
+    where_text = str(where)
+    tail = "You can open it yourself" + (
+        "." if where_text in ("", ".") else f" at {where_text}.")
+    return f"I won't open {name}: {lead}. {_CLOSED} {tail}"
 
 
 def refusal_command(why: str) -> str:
     """The plain line Friday says instead of running a credential-reading command."""
+    if why == _WALK_WHY:
+        return (f"I won't run that: it reads through {why}, and the walk would "
+                f"pass over them. {_CLOSED} Name the folder you want searched "
+                f"and I'll search that one.")
     return (f"I won't run that: it reaches {why}. {_CLOSED} "
             f"Open the file yourself if you need it.")

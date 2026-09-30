@@ -55,12 +55,12 @@ def test_non_admin_share_of_this_pc_is_judged_as_the_local_path(
 
 def test_share_rooted_below_the_drive_is_folded(test_home, shares):
     rel = str(Path(test_home).relative_to(Path(test_home).parent))
-    spelt = "\\\\localhost\\Users\\" + rel + "\\.ssh\\config"
+    spelt = "\\\\localhost\\Users\\" + rel + "\\.ssh\\id_work"
     assert cred.check(spelt, sniff=False), spelt
 
 
 def test_ipv6_literal_host_name_is_this_pc(test_home, shares):
-    rest = _rel_from_drive(Path(test_home) / ".ssh" / "config")
+    rest = _rel_from_drive(Path(test_home) / ".ssh" / "id_work")
     assert cred.check("\\\\0--1.ipv6-literal.net\\C\\" + rest, sniff=False)
 
 
@@ -135,7 +135,7 @@ def test_a_link_resolving_to_a_share_spelling_is_judged_by_its_target(
     link = Path(test_home) / "Documents" / "sshlink"
     target = share_form.format(rel=_rel_from_drive(Path(test_home) / ".ssh"))
     _resolves_to(monkeypatch, link, target)
-    assert cred.check(link / "config", sniff=False)
+    assert cred.check(link / "id_work", sniff=False)
     assert cred.check(link, sniff=False)
 
 
@@ -147,9 +147,9 @@ def test_a_link_to_a_share_spelling_is_refused_by_open_path_and_run_command(
                  + _rel_from_drive(Path(test_home) / ".ssh"))
     opened = []
     monkeypatch.setattr(os, "startfile", lambda p: opened.append(p), raising=False)
-    out = agent._tool_open_path({"path": str(link / "config")})
+    out = agent._tool_open_path({"path": str(link / "id_work")})
     assert not opened and "won't open" in out.lower()
-    assert cred.scan_command('Get-Content "' + str(link / "config") + '"')
+    assert cred.scan_command('Get-Content "' + str(link / "id_work") + '"')
 
 
 def test_a_link_to_an_ordinary_folder_stays_readable(test_home, shares, monkeypatch):

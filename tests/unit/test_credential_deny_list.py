@@ -19,7 +19,7 @@ def _denied_paths():
     h, f = core.HOME, core.FRIDAY_DIR
     return [
         h / ".ssh" / "id_ed25519",
-        h / ".ssh" / "config",
+        h / ".ssh" / "id_work",
         h / ".aws" / "credentials",
         h / ".gnupg" / "secring.gpg",
         f / "security" / "keystore.json",

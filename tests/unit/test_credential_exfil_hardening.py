@@ -76,8 +76,8 @@ def test_alternate_data_stream_and_trailing_dot_are_denied():
 
 def test_env_var_path_is_denied(monkeypatch):
     monkeypatch.setenv("FRIDAY_TEST_HOME_VAR", str(core.HOME))
-    assert cred.check("%FRIDAY_TEST_HOME_VAR%\\.ssh\\config")
-    assert cred.check("$FRIDAY_TEST_HOME_VAR/.ssh/config")
+    assert cred.check("%FRIDAY_TEST_HOME_VAR%\\.ssh\\id_work")
+    assert cred.check("$FRIDAY_TEST_HOME_VAR/.ssh/id_work")
 
 
 def test_a_key_renamed_to_anything_is_denied_by_content(test_home):
