@@ -28,6 +28,8 @@ import os
 import time
 from pathlib import Path
 
+from agent_friday.services import credential_paths as _cred
+
 _MAX_FILES_SCANNED = 4000        # entries examined for a name search
 _MAX_CONTENT_CANDIDATES = 500    # files actually opened for a content search
 _MAX_CONTENT_BYTES = 2 * 1024 * 1024
@@ -130,7 +132,12 @@ def _walk(roots: list[Path], deadline: float, budget: dict):
                     budget["truncated"] = True
                     return
                 budget["scanned"] += 1
-                yield dp / name
+                fp = dp / name
+                # Key material is never a search result — not by name, and (the
+                # real leak) not opened for a content snippet (credential_paths).
+                if _cred.check(fp):
+                    continue
+                yield fp
 
 
 def _score_name(query: str, name: str) -> float:

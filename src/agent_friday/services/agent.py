@@ -970,6 +970,10 @@ def _tool_read_file(inp):
         p = Path(raw).expanduser().resolve()
     except Exception as e:
         return f"Invalid path {raw!r}: {e}"
+    # Friday does not read key material, even when asked (services/credential_paths).
+    from agent_friday.services import credential_paths as _cred
+    if _cred.check(p):
+        return _cred.refusal(p)
     if not p.exists():
         return f"File not found: {p}.{_suggest_near_miss(p)}"
     if not p.is_file():
@@ -2118,6 +2122,13 @@ def _tool_run_command(inp):
     cmd = ((inp or {}).get('command') or '').strip()
     if not cmd:
         return "Empty command."
+    # A read verb aimed at key material is refused before it runs, even when
+    # the owner asks (services/credential_paths). A write/exfil command is
+    # already classified outward and carded by the governance checkpoint.
+    from agent_friday.services import credential_paths as _cred
+    _cred_why = _cred.scan_command(cmd)
+    if _cred_why:
+        return _cred.refusal_command(_cred_why)
     bad = blocked_command_token(cmd)
     if bad is not None:
         return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
@@ -2650,6 +2661,11 @@ def _tool_open_path(inp):
     inp = inp or {}
     target = (inp.get('path') or inp.get('target') or '').strip()
     in_browser = bool(inp.get('in_browser'))
+    # Friday does not open key material, even when asked (services/credential_paths).
+    if target:
+        from agent_friday.services import credential_paths as _cred
+        if _cred.check(Path(target).expanduser()):
+            return _cred.refusal(Path(target).expanduser())
     result = _perform_open(target, in_browser=in_browser)
     if result is None:
         return f"Couldn't find anything matching {target!r} to open."
