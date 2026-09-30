@@ -225,3 +225,50 @@ def test_the_contract_does_not_present_the_unbuilt_spec_as_built():
     have the next session rely on a rule nothing enforces."""
     text = _contract_text()
     assert "not yet built" in text
+
+
+# ── Tonight's desktop work, reachable by voice ─────────────────────────────
+
+def test_voice_can_open_one_specific_thing_on_the_desktop():
+    """navigate_workspace switches a whole workspace; navigate_to opens a
+    THING — an email, a file, a wiki page, a Settings tab. Voice-first means
+    'open the Harbor Legal email' works spoken, not just typed."""
+    assert "navigate_to" in _ids()
+    spec = next(t for t in ve._VOICE_LIVE_TOOLS if t[0] == "navigate_to")
+    assert spec[3] == ["kind"], "kind is the only required argument"
+    for arg in ("query", "id", "section", "workspace"):
+        assert arg in spec[2], "navigate_to needs %r to be useful" % arg
+
+
+def test_the_navigate_description_forbids_claiming_a_failed_open():
+    """NAV_FAIL carries the closest matches; saying 'opened it' is a lie the
+    user can see on their own screen."""
+    spec = next(t for t in ve._VOICE_LIVE_TOOLS if t[0] == "navigate_to")
+    assert "NAV_FAIL" in spec[1] and "closest matches" in spec[1]
+
+
+def test_voice_can_read_the_current_situation():
+    assert "check_situation" in _ids()
+    spec = next(t for t in ve._VOICE_LIVE_TOOLS if t[0] == "check_situation")
+    assert spec[3] == [], "asking what is happening needs no arguments"
+    assert "brief" in spec[1], "a full snapshot is a wall of numbers when spoken"
+
+
+@pytest.mark.parametrize("tool,handler", [
+    ("navigate_to", "_tool_navigate_to"),
+    ("check_situation", "_tool_check_situation"),
+    ("run_workflow", "_tool_run_workflow"),
+    ("workflow_status", "_tool_workflow_status"),
+])
+def test_each_new_voice_tool_routes_to_a_handler_that_exists(tool, handler,
+                                                            monkeypatch):
+    """A declared tool with no route answers 'unknown tool' out loud."""
+    from agent_friday.services import agent as ag
+    assert hasattr(ag, handler), "%s has no handler %s" % (tool, handler)
+    called = []
+    monkeypatch.setattr(ag, handler, lambda inp: called.append(tool) or "ok")
+    monkeypatch.setattr(ag, "_execute_tool",
+                        lambda t, a, handler=None, session_ctx=None: handler(a))
+    out = ve._voice_tool_run(tool, {"kind": "workspace", "name": "x"},
+                             lambda *a, **k: None, {"conversation_id": "c1"})
+    assert called == [tool], "%s did not reach its handler (got %r)" % (tool, out)

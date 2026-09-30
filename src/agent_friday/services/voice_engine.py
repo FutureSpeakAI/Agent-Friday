@@ -333,6 +333,33 @@ _VOICE_LIVE_TOOLS = [
      "asking his OK to share some context, then carry on. The approved context is "
      "handed to you when he decides; if he declines, carry on without it.",
      {"question": ("string", "The question for his local model, in full.")}, ["question"]),
+    ("navigate_to",
+     "Open ONE specific thing on the user's Friday desktop, on screen: an email "
+     "thread, a file, a wiki page or graph node, a Settings tab, a calendar day or "
+     "meeting, a contact, a content post, or a workspace section. Pass his own "
+     "words as `query` ('the Harbor Legal email', 'my budget spreadsheet', 'model "
+     "settings') with the `kind` you think he means. Prefer this over "
+     "navigate_workspace whenever he names a THING rather than a whole workspace. "
+     "It is his own screen, so no approval is needed. NAV_OK means the desktop "
+     "confirmed it — say so in one short sentence. NAV_PARTIAL means it opened "
+     "something else, and NAV_FAIL carries the reason and the closest matches: "
+     "read him the closest matches instead of claiming you opened it.",
+     {"kind": ("string", "One of: workspace, email, file, wiki_page, graph_node, "
+                         "settings, calendar, contact, content_post."),
+      "query": ("string", "His words for the thing."),
+      "id": ("string", "An exact id, if you already have one."),
+      "workspace": ("string", "For kind=workspace: which workspace."),
+      "section": ("string", "A tab or section by name, e.g. 'feed', 'Models'.")},
+     ["kind"]),
+    ("check_situation",
+     "What is happening on this machine right now: which workspaces are open, CPU, "
+     "RAM, GPU memory and disk, which models are loaded or serving, running turns, "
+     "tasks and scheduled jobs, and today's spend. Use it for any question about "
+     "current activity or load ('what are you working on', 'is the GPU busy', 'what "
+     "did today cost'). Keep `detail` at brief for speech and read back only what he "
+     "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
+     {"detail": ("string", "brief (default) or full."),
+      "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
     ("run_workflow",
      "Start one of the user's stored workflows (his routines) by name, spoken. "
      "A workflow's own steps run wherever it says to run them, including on his "
@@ -1098,6 +1125,16 @@ def _voice_tool_run(name, args, send_client, session=None):
         if name == "ask_local_for_context":
             return _governed("ask_local_for_context",
                              lambda a: _tool_ask_local_for_context(a, session), args)
+        if name in ("navigate_to", "check_situation"):
+            from agent_friday.services import agent as _ag
+            _fn = (_ag._tool_navigate_to if name == "navigate_to"
+                   else _ag._tool_check_situation)
+            _cid = session.get("conversation_id") if isinstance(session, dict) else None
+            _tok = _ag._CURRENT_CONVERSATION.set(_cid)
+            try:
+                return _governed(name, _fn, args)
+            finally:
+                _ag._CURRENT_CONVERSATION.reset(_tok)
         if name in ("run_workflow", "workflow_status"):
             # The chain reports back to whatever conversation started it, and
             # it reads that from a contextvar the chat path sets and the voice
