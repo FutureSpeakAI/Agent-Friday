@@ -858,6 +858,8 @@ def _public_sources(docs: list[dict]) -> list[dict]:
                "private": d.get("private", True)}
         if d.get("role"):
             rec["role"] = d["role"]
+        if d.get("story_id"):
+            rec["story_id"] = d["story_id"]
         if d.get("outlet"):
             rec["outlet"] = quality.spoken_outlet(d) or d["outlet"]
         if d.get("kind") == "event":

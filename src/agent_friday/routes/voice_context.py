@@ -236,7 +236,8 @@ def voice_start_my_day():
     not a stale cached context.
     """
     try:
-        ctx = _gather_live_briefing_context()
+        from agent_friday.services.news_links import for_speech
+        ctx = for_speech(_gather_live_briefing_context())
     except Exception as e:
         # The model must be able to say a source failed; it gets the message
         # only (docs/security/codeql-dismissals.md).

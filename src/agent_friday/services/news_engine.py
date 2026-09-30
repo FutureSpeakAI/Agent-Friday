@@ -975,6 +975,19 @@ def _save_briefing_sources(date_str):
         print(f"  [briefing] sources not saved for the episode: {e}")
 
 
+def _finish_briefing(content):
+    """The model's briefing with its story ids turned into links from the
+    fetched URLs (and any link it typed removed). Records the link check with
+    the run's sources; a briefing whose stories are not linked is logged."""
+    from agent_friday.services import news_links
+    stories = _LAST_BRIEFING_SOURCES.get("news") or []
+    problems = news_links.link_problems(content, stories)
+    _LAST_BRIEFING_SOURCES["link_check"] = problems
+    if problems:
+        print(f"  [briefing] link check: {'; '.join(problems[:3])}")
+    return news_links.attach_links(content, stories)
+
+
 def _gather_live_briefing_context():
     """Fetch live calendar, unread email, and news for an on-demand briefing.
 
@@ -1060,22 +1073,23 @@ def _gather_live_briefing_context():
             cats = [c for c in NEWS_CATEGORIES
                     if prefs.get("categories_enabled", {}).get(c, True)]
             items = _fetch_news_items(categories=cats, limit_per=4)
-            _keep_briefing_sources(news=[
-                {k: it.get(k) or "" for k in ("title", "source", "url", "snippet", "category",
-                                               "published")}
-                for it in (items or []) if isinstance(it, dict)])
-            if items:
+            # Each story gets an id the model cites; its link is attached by
+            # code from the fetched URL (services/news_links.py), never typed.
+            from agent_friday.services import news_links
+            stories = news_links.number(items)
+            _keep_briefing_sources(news=stories)
+            if stories:
+                boosted_ids = {s["id"] for s, it in zip(stories, [i for i in items if (i.get("title") or "").strip()])
+                               if it.get("boosted")}
                 by_cat = {}
-                for it in items:
-                    by_cat.setdefault(it["category"], []).append(it)
+                for s in stories:
+                    by_cat.setdefault(s.get("category") or "News", []).append(s)
                 blocks = []
                 for cat, group in by_cat.items():
                     lines = []
-                    for it in group:
-                        star = "⭐ " if it["boosted"] else ""
-                        lines.append(
-                            f"- {star}**{it['title']}** ({it['source']})\n  {it['snippet']}\n  {it['url']}"
-                        )
+                    for s in group:
+                        star = "⭐ " if s["id"] in boosted_ids else ""
+                        lines.append(star + news_links.prompt_lines([s], snippet_chars=240))
                     blocks.append(f"### {cat}\n" + "\n".join(lines))
                 note = ""
                 if boosted:
@@ -1084,21 +1098,26 @@ def _gather_live_briefing_context():
                 if banned:
                     note += (f"\n_(These sources are banned and were excluded — do not cite: "
                              f"{', '.join(sorted(banned))}.)_")
-                return "## Live News (RSS)\n" + "\n\n".join(blocks) + note
+                return ("## Live News (RSS)\n" + news_links.CITE_RULE + "\n\n"
+                        + "\n\n".join(blocks) + note)
             # Fallback: optional Brave Search across the top categories, with
             # banned domains excluded. No-ops cleanly when no API key is set.
-            news_blocks = []
+            found = []
             for cat in (cats or ["AI/Tech"])[:2]:
                 meta = category_meta(cat) or {}
-                lines = []
                 for r in _brave_results(meta.get("query", f"latest {cat} news today"), limit=5):
                     dom = r.get("source") or _extract_domain(r.get("url", ""))
                     if dom and dom not in banned:
-                        lines.append(f"- **{r['title']}** ({dom})\n  {r['snippet']}\n  {r['url']}")
-                if lines:
-                    news_blocks.append(f"### {cat}\n" + "\n".join(lines))
-            if news_blocks:
-                return "## Live News (Brave Search fallback)\n" + "\n\n".join(news_blocks)
+                        found.append(dict(r, source=dom, category=cat))
+            stories = news_links.number(found)
+            _keep_briefing_sources(news=stories)
+            if stories:
+                by_cat = {}
+                for s in stories:
+                    by_cat.setdefault(s.get("category") or "News", []).append(s)
+                return ("## Live News (Brave Search fallback)\n" + news_links.CITE_RULE + "\n\n"
+                        + "\n\n".join("### %s\n%s" % (c, news_links.prompt_lines(g, snippet_chars=240))
+                                      for c, g in by_cat.items()))
             return "## Live News\n(No RSS items available right now.)"
         except Exception as e:
             return f"## Live News\n(News fetch failed: {e})"
@@ -2089,12 +2108,14 @@ def _front_page_story_titles(edition):
 
     lead = edition.get("lead") or {}
     if lead.get("title"):
-        out.append({"title": lead["title"], "source": lead.get("source", "")})
+        out.append({"title": lead["title"], "source": lead.get("source", ""),
+                    "url": lead.get("url", "")})
         _pub(lead["title"], lead.get("source", ""))
     for sec in edition.get("sections") or []:
         for a in sec.get("articles") or []:
             if a.get("title"):
-                out.append({"title": a["title"], "source": a.get("source", "")})
+                out.append({"title": a["title"], "source": a.get("source", ""),
+                            "url": a.get("url", "")})
                 _pub(a["title"], a.get("source", ""))
     return out
 
@@ -2510,8 +2531,11 @@ def _generate_weekly_digest():
     week_id = cnow.strftime('%G-W%V')
     editions = _gather_weekly_editions(7)
 
-    # Compact, de-duplicated story list across the week for the prompt.
-    seen, lines = set(), []
+    # Compact, de-duplicated story list across the week for the prompt. Each
+    # story has an id the model picks by; its title and link are attached by
+    # code (services/news_links.py).
+    from agent_friday.services import news_links
+    seen, week = set(), []
     dates = []
     for ed in editions:
         if ed.get("date"):
@@ -2521,8 +2545,16 @@ def _generate_weekly_digest():
             if not key or key in seen:
                 continue
             seen.add(key)
-            lines.append(f"- {s['title']} ({s.get('source','')})")
-    story_block = "\n".join(lines[:120]) or "(no stories archived this week)"
+            week.append(s)
+    stories = news_links.number(week[:120], prefix="W")
+    story_block = news_links.prompt_lines(stories) or "(no stories archived this week)"
+    try:
+        # The exact lines the model is sent are public headlines.
+        from agent_friday.services.egress_gate import register_public_text
+        for line in story_block.splitlines():
+            register_public_text(line, origin="news-feed")
+    except Exception:
+        pass
     date_range = (f"{min(dates)} – {max(dates)}" if dates
                   else cnow.strftime('%Y-%m-%d'))
 
@@ -2545,11 +2577,12 @@ def _generate_weekly_digest():
             "through-line trends, and give an editorial take on what this means "
             "for the user's work and interests.\n\n"
             "Return ONLY JSON, no prose, in exactly this shape:\n"
-            '{\n  "top_stories": [{"title": "<story>", "why": "<one sentence on '
+            '{\n  "top_stories": [{"id": "<story id, e.g. W3>", "why": "<one sentence on '
             'why it mattered this week>"}],\n  "trends": ["<trend>", "<trend>"],\n'
             '  "editorial": "<3-5 sentence editorial take on what the week means '
             'for the user\'s work and interests>"\n}\n\n'
-            "Give exactly 5 top_stories when there is enough material.\n\n"
+            "Give exactly 5 top_stories when there is enough material. Pick each "
+            "by its id from the list; never write a web address.\n\n"
             "THIS WEEK'S STORIES:\n" + story_block
         )
         system = _get_friday_system_prompt(
@@ -2567,8 +2600,15 @@ def _generate_weekly_digest():
         if isinstance(data, dict):
             ts = data.get("top_stories")
             tr = data.get("trends")
+            by_id = {s["id"]: s for s in stories}
+            picked = []
+            for t in ts or []:
+                s = by_id.get(str((t or {}).get("id") or "").strip()) if isinstance(t, dict) else None
+                if s and s["id"] not in {x["id"] for x in picked}:
+                    picked.append({"id": s["id"], "title": s["title"], "source": s["source"],
+                                   "url": s["url"], "why": str(t.get("why") or "").strip()[:300]})
             synth = {
-                "top_stories": [s for s in (ts or []) if isinstance(s, dict)][:5],
+                "top_stories": picked[:5],
                 "trends": [str(t).strip()[:160] for t in (tr or []) if str(t).strip()][:6],
                 "editorial": (data.get("editorial") or fallback["editorial"]).strip()[:1400],
             }
@@ -2667,17 +2707,24 @@ def _generate_weekly_editorial():
     banned = sorted({(s or "").lower() for s in _load_banned_sources() if s})
 
     # De-duplicated source digest for the prompt; banned sources flagged inline.
-    seen, lines = set(), []
+    # Each article has an id the editorial cites; links are attached by code
+    # from the archived URLs (services/news_links.py), never typed.
+    from agent_friday.services import news_links
+    seen, unique = set(), []
     for a in pool:
         key = (a.get("title") or "")[:90]
         if not key or key in seen:
             continue
         seen.add(key)
-        src = (a.get("source") or a.get("domain") or "").lower()
+        unique.append(a)
+    stories = news_links.number(unique[:160], prefix="E")
+    lines = []
+    for st in stories:
+        src = (st.get("source") or "").lower()
         flag = " [BANNED-SOURCE]" if src in banned else ""
-        lines.append(f"- ({src or 'unknown'}{flag}) {a.get('title','')}: "
-                     f"{(a.get('snippet') or '')[:160]}")
-    article_block = "\n".join(lines[:160]) or "(the archive is thin this week)"
+        lines.append("[%s] (%s%s) %s: %s" % (st["id"], src or "unknown", flag, st["title"],
+                                              st["snippet"][:160]))
+    article_block = "\n".join(lines) or "(the archive is thin this week)"
 
     def _compose(strong):
         directive = EDITORIAL_SYSTEM_PROMPT
@@ -2694,7 +2741,7 @@ def _generate_weekly_editorial():
             "[BANNED-SOURCE]). Write this week's editorial per your directive.\n\n"
             "Banned sources you ARE drawing from this week: "
             + (", ".join(banned) if banned else "(none currently banned)") +
-            "\n\nARTICLES:\n" + article_block)
+            "\n\n" + news_links.CITE_RULE + "\n\nARTICLES:\n" + article_block)
         system = (_get_friday_system_prompt(
                       keywords=user, workspace='briefing',
                       provider=_predict_route_provider(keywords=user, workspace='briefing'),
@@ -2723,7 +2770,18 @@ def _generate_weekly_editorial():
 
     when = (cnow.strftime('%Y-%m-%d %H:%M %Z')
             or cnow.isoformat(timespec='minutes'))
+    link_check = news_links.link_problems(body, stories)
+    cited = [st for st in stories if st["id"] in set(news_links.cited_ids(body))]
+    body = news_links.attach_links(body, stories)
     md = _editorial_markdown(week_id, when, body, banned, score, regenerated)
+    try:
+        # The stories the editorial cites, for its episode's source chips.
+        (EDITORIALS_DIR).mkdir(parents=True, exist_ok=True)
+        (EDITORIALS_DIR / f"{week_id}.sources.json").write_text(
+            json.dumps({"version": 1, "week": week_id, "news": cited,
+                        "link_check": link_check}, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"  [weekly-editorial] sources not saved: {e}")
 
     EDITORIALS_DIR.mkdir(parents=True, exist_ok=True)
     (EDITORIALS_DIR / f"{week_id}.md").write_text(md, encoding="utf-8")

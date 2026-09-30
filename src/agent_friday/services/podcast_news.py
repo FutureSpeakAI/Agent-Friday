@@ -64,8 +64,13 @@ def _story_doc(a: dict) -> dict | None:
             bits.append(str(a[k]))
     if a.get("continuing"):
         bits.append("A continuing story.")
-    return _doc(a["title"], "\n".join(bits), url=a.get("url") or "",
-                source=a.get("source") or "")
+    d = _doc(a["title"], "\n".join(bits), url=a.get("url") or "",
+             source=a.get("source") or "")
+    if a.get("id"):
+        # The id the written routine cited (services/news_links.py): the
+        # episode's source chip resolves to the same story and link.
+        d["story_id"] = a["id"]
+    return d
 
 
 def _front_page_docs(ed: dict) -> list[dict]:
@@ -100,7 +105,13 @@ def _weekly_docs(dg: dict) -> list[dict]:
     docs = []
     for s in dg.get("top_stories") or []:
         if isinstance(s, dict) and s.get("title"):
-            docs.append(_doc(s["title"], "%s\n%s" % (s["title"], s.get("why") or "")))
+            d = _doc(s["title"], "%s\nOutlet: %s\n%s" % (s["title"], s.get("source") or "",
+                                                        s.get("why") or ""),
+                     url=s.get("url") or "", source=s.get("source") or "")
+            d["role"] = "story"
+            if s.get("id"):
+                d["story_id"] = s["id"]
+            docs.append(d)
     if dg.get("trends"):
         docs.append(_doc("Trends this week", "\n".join("- %s" % t for t in dg["trends"])))
     if dg.get("editorial"):
@@ -180,6 +191,24 @@ def briefing_docs(side: dict, markdown: str, run_id: str) -> list[dict]:
     return [d for d in docs if d["text"]]
 
 
+def editorial_docs(side: dict, markdown: str, run_id: str) -> list[dict]:
+    """The Editorial's sources: the stories it cited (outlet, link, the same
+    ids), then its own argument, section by section, as Friday's writing."""
+    docs = []
+    for a in (side.get("news") or [])[:MAX_STORIES]:
+        d = _story_doc(a) if isinstance(a, dict) else None
+        if d:
+            d["role"] = "story"
+            docs.append(d)
+    for d in _markdown_docs(markdown, "Editorial %s" % run_id, private=False):
+        if re.match(r"(?i)^sources$", d["title"].strip()):
+            continue
+        d.update(kind="digest", role="digest", heading=d["title"],
+                 title="Friday's editorial: %s" % _heading_title(d["title"]))
+        docs.append(d)
+    return [d for d in docs if d["text"]]
+
+
 def run_documents(routine: str, run_id: str) -> list[dict]:
     from agent_friday.services.podcast_sources import SourceError
     try:
@@ -199,7 +228,14 @@ def run_documents(routine: str, run_id: str) -> list[dict]:
                 side = json.loads(sidecar_path(run_id).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 side = None
-        if side:
+        if routine == "editorial":
+            try:
+                side = json.loads(p.with_suffix(".sources.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                side = None
+        if side and routine == "editorial":
+            docs = editorial_docs(side, text, run_id)
+        elif side:
             docs = briefing_docs(side, text, run_id)
         else:
             # A run from before its sources were kept: the written sections,

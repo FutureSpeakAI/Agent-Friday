@@ -408,6 +408,8 @@ def generate_briefing():
             )
         if not content or not content.strip():
             return jsonify({"status": "error", "message": "Empty briefing generated"}), 502
+        from agent_friday.services.news_engine import _finish_briefing
+        content = _finish_briefing(content)
 
         date_str = datetime.now().strftime('%Y-%m-%d')
         briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
