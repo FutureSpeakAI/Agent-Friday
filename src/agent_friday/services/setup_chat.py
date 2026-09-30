@@ -29,6 +29,7 @@ the transcript or in front of a model.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
@@ -38,6 +39,8 @@ from agent_friday.paths import friday_home
 from agent_friday.services import secret_shapes
 from agent_friday.services import setup_chat_copy as copy
 from agent_friday.services import setup_profile as profile
+
+_log = logging.getLogger("friday.setup_chat")
 from agent_friday.user_errors import UserFacingError, log_failure
 
 _LOCK = threading.RLock()
@@ -140,7 +143,7 @@ def _ask_question(st: dict, transcript: list, i: int) -> None:
 def _enter(st: dict, transcript: list, stage: str) -> None:
     """Move to `stage` and say its opening line(s)."""
     if stage == "scheduled_cloud" and not _scheduled_cloud_wanted(st):
-        stage = "finish"
+        stage = "room_voice"
     st["stage"] = stage
     if stage == "welcome":
         _say(transcript, copy.WELCOME_BACK if st.get("rerun") else copy.WELCOME, stage)
@@ -174,6 +177,8 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
         _say(transcript, copy.RESEARCH_REVIEW, stage)
     elif stage == "scheduled_cloud":
         _say(transcript, _scheduled_cloud_question(), stage)
+    elif stage == "room_voice":
+        _say(transcript, copy.ROOM_VOICE_ASK, stage)
     elif stage == "finish":
         _say(transcript, copy.FINISH, stage)
 
@@ -229,6 +234,8 @@ def _prompt(st: dict) -> dict:
         p.update(card="research_review", chips=_chips((("done", "Done reviewing"),)))
     elif stage == "scheduled_cloud":
         p.update(chips=_chips(copy.SCHEDULED_CLOUD_CHIPS))
+    elif stage == "room_voice":
+        p.update(chips=_chips(copy.ROOM_VOICE_CHIPS))
     elif stage == "finish":
         p.update(card="finish")
     return p
@@ -666,7 +673,50 @@ def _on_scheduled_cloud(st, transcript, value, text):
     else:
         _heard(transcript, copy.SKIP, "scheduled_cloud")
         _say(transcript, copy.SCHEDULED_CLOUD_SKIPPED, "scheduled_cloud")
+    _enter(st, transcript, "room_voice")
+
+
+# ── Spoken approvals with other people in the room ───────────────────────────
+#
+# His to set, so he is asked rather than told (NS-8.15-2: any setup choice can
+# be revised later, in Settings > Voice). Not a limit on what voice can do: it
+# decides WHOSE spoken "yes" counts when Friday cannot tell one voice from
+# another. Skip leaves the careful answer, which is the shipped default.
+
+
+def _on_room_voice(st, transcript, value, text):
+    choice = str(value or _guard_text(text) or "").strip().lower()
+    labels = dict(copy.ROOM_VOICE_CHIPS)
+    want = None
+    if choice in ("name", "yes", "y", labels["name"].lower()):
+        want = True
+    elif choice in ("anyone", "no", "n", labels["anyone"].lower()):
+        want = False
+    if want is None:
+        _heard(transcript, copy.SKIP, "room_voice")
+        _say(transcript, copy.ROOM_VOICE_SKIPPED, "room_voice")
+    else:
+        _set_room_approvals_require_name(want)
+        _heard(transcript, labels["name"] if want else labels["anyone"], "room_voice")
+        _say(transcript, copy.ROOM_VOICE_NAME if want else copy.ROOM_VOICE_ANYONE,
+             "room_voice")
     _enter(st, transcript, "finish")
+
+
+def _set_room_approvals_require_name(require: bool) -> None:
+    """Write the one key, leaving the rest of settings alone.
+
+    A failure here must not strand setup: the default stands, and the owner
+    can still set it in Settings > Voice.
+    """
+    try:
+        from agent_friday.core import _load_settings, _save_settings
+        s = dict(_load_settings() or {})
+        s["voice_room_approvals_require_name"] = bool(require)
+        _save_settings(s)
+    except Exception as e:  # noqa: BLE001
+        _log.warning("setup could not save the room-approval choice: %s: %s",
+                     type(e).__name__, e)
 
 
 def _on_finish(st, transcript, value, text):
@@ -679,7 +729,8 @@ _HANDLERS = {
     "connect": _on_connect, "reader": _on_reader, "research_ask": _on_research_ask,
     "research_seeds": _on_research_seeds, "questions": _on_questions,
     "style": _on_style, "research_review": _on_research_review,
-    "scheduled_cloud": _on_scheduled_cloud, "finish": _on_finish,
+    "scheduled_cloud": _on_scheduled_cloud,
+    "room_voice": _on_room_voice, "finish": _on_finish,
 }
 
 

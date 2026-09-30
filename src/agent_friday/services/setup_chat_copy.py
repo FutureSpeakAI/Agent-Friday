@@ -20,7 +20,8 @@ from __future__ import annotations
 # can be the thing that makes a model available to read the answers.
 STAGES = ("welcome", "agent_name", "basics", "connect", "reader",
           "research_ask", "research_seeds", "questions", "style",
-          "research_review", "scheduled_cloud", "finish", "done")
+          "research_review", "scheduled_cloud", "room_voice", "finish",
+          "done")
 
 #: What the progress rail shows. Several internal stages share a label.
 STAGE_GROUPS = (
@@ -29,7 +30,7 @@ STAGE_GROUPS = (
     ("research", "Research", ("reader", "research_ask", "research_seeds")),
     ("about", "About you", ("questions",)),
     ("style", "Your Friday", ("style", "research_review")),
-    ("finish", "Finish", ("scheduled_cloud", "finish", "done")),
+    ("finish", "Finish", ("scheduled_cloud", "room_voice", "finish", "done")),
 )
 
 SET_UP_LATER = "Set up later"
@@ -337,6 +338,40 @@ SCHEDULED_CLOUD_ASK = (
 
 #: One line per job in the question above.
 SCHEDULED_CLOUD_LINE = "- {name}: {model}, about {usd} a month"
+
+# ── Spoken approvals when other people are in the room ───────────────────────
+#
+# Yours to set, so you are asked rather than told. It is not a limit on what
+# voice can do: it decides WHOSE "yes" counts when I cannot tell one voice
+# from another. Skipping keeps the careful answer.
+
+ROOM_VOICE_ASK = (
+    "Last one, and it is about other people. When you talk to me with someone "
+    "else in the room, I hear everyone, and I cannot yet tell your voice from "
+    "theirs.\n\n"
+    "That matters for the approvals I ask you for out loud — sending a "
+    "message, spending money, sharing something private. I can require that "
+    "the approval says my name, so \"Friday, send it\" counts and a bare "
+    "\"yeah, send it\" from across the room does not.\n\n"
+    "It is one extra word from you, and without it anyone within earshot can "
+    "approve. Which would you like? You can change it any time in "
+    "Settings > Voice.")
+
+ROOM_VOICE_CHIPS = (("name", "Require my name"),
+                    ("anyone", "Anyone in the room may approve"),
+                    ("skip", SKIP))
+
+ROOM_VOICE_NAME = (
+    "Set: in a room, a spoken approval has to say my name. On your own, "
+    "nothing changes — \"send it\" is enough.")
+
+ROOM_VOICE_ANYONE = (
+    "Set: in a room, anyone I can hear may approve out loud. The cards "
+    "themselves are unchanged, so you can still see every one on screen.")
+
+ROOM_VOICE_SKIPPED = (
+    "Left as it is: in a room, a spoken approval says my name. It is in "
+    "Settings > Voice whenever you want it.")
 
 SCHEDULED_CLOUD_CHIPS = (("yes", "Yes, use the cloud"),
                          ("no", "No, keep them paused"),

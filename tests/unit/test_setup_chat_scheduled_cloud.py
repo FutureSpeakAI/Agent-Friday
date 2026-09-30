@@ -76,24 +76,24 @@ def test_without_a_local_model_the_question_is_asked_with_the_cost(home):
 def test_with_a_local_model_the_question_never_appears(home, monkeypatch):
     from agent_friday.services import setup_reader
     monkeypatch.setattr(setup_reader, "local_model", lambda: "gemma4:26b")
-    assert _through_style() == "finish"
+    assert _through_style() == "room_voice"
     assert not any(e.get("stage") == "scheduled_cloud"
                    for e in sc.view()["transcript"])
 
 
 def test_local_only_routing_already_answers_it(home):
-    assert _through_style(routing="local_only") == "finish"
+    assert _through_style(routing="local_only") == "room_voice"
 
 
 def test_an_existing_answer_is_not_asked_again(home):
     home["settings"]["scheduled_cloud"] = {"answered": True, "allow": False}
-    assert _through_style() == "finish"
+    assert _through_style() == "room_voice"
 
 
-def test_yes_is_saved_and_the_chat_moves_to_finish(home):
+def test_yes_is_saved_and_the_chat_moves_on(home):
     _through_style()
     sc.answer("scheduled_cloud", "yes", "")
-    assert sc.load_state()["stage"] == "finish"
+    assert sc.load_state()["stage"] == "room_voice"
     ans = _answers(home)[-1]
     assert ans["answered"] is True and ans["allow"] is True and ans["at"]
     texts = [e["text"] for e in sc.view()["transcript"]]
@@ -110,7 +110,7 @@ def test_no_is_saved_as_an_answer(home):
 def test_skip_leaves_it_unanswered(home):
     _through_style()
     sc.answer("scheduled_cloud", "skip", "")
-    assert sc.load_state()["stage"] == "finish"
+    assert sc.load_state()["stage"] == "room_voice"
     assert _answers(home) == []
 
 
@@ -133,4 +133,4 @@ def test_the_rail_cannot_open_it_on_a_machine_that_does_not_need_it(home, monkey
     _through_style()
     sc.answer("scheduled_cloud", "skip", "")
     monkeypatch.setattr(setup_reader, "local_model", lambda: "gemma4:26b")
-    assert sc.goto("scheduled_cloud")["stage"] == "finish"
+    assert sc.goto("scheduled_cloud")["stage"] == "room_voice"

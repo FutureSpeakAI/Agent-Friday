@@ -143,7 +143,7 @@ def test_answers_become_a_style_and_saving_writes_the_block(home):
     sc.answer("style", {"action": "save"}, "")
     from agent_friday.services import soul
     assert profile.BLOCK_START in soul.load_soul()
-    assert sc.load_state()["stage"] == "finish"
+    assert sc.load_state()["stage"] == "room_voice"
     assert {"response_length": "concise", "communication_style": "casual"}.items() \
         <= home["settings"][-1].items()
 
@@ -154,6 +154,8 @@ def test_personality_json_is_written_only_when_setup_finishes(home):
     for _ in copy.QUESTIONS:
         sc.answer("questions", "skip", "")
     sc.answer("style", {"action": "skip"}, "")
+    assert sc.load_state()["stage"] == "room_voice"
+    sc.answer("room_voice", "skip", "")
     assert sc.load_state()["stage"] == "finish"
     assert not pfile.exists(), "personality.json ends first-run setup early"
     assert not (home["path"] / ".setup_complete").exists()
