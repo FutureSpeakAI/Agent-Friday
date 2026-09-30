@@ -169,3 +169,44 @@ def test_volume_over_time_is_its_own_fact(waits):
 
 def test_column_names_are_written_as_words(waits):
     assert not any("days_to_close" in f["text"] for f in waits["facts"])
+
+
+def test_the_top_group_comparison_is_computed_not_eyeballed(waits):
+    avg = _fact(waits, "Average days to close by neighborhood")
+    assert "Eastside's average is 2.86 times the next highest (Downtown)" in avg["text"]
+
+
+@pytest.mark.parametrize("line,ok", [
+    ("Eastside's wait is roughly double the rest.", False),     # a ratio nobody computed
+    ("That is nearly half of all requests.", False),
+    ("Eastside waits twice as long.", False),
+    ("Eastside's average is 2.86 times the next highest.", True),  # the computed ratio
+    ("That is a gap of six months.", False),                    # derived, with a unit
+    ("We have three chapters today.", True),                    # a count word, not a claim
+])
+def test_ratios_and_small_numbers_with_units_must_be_computed(waits, line, ok):
+    assert (pdm.untraceable_numbers(line, waits["facts"]) == []) is ok
+
+
+def test_numbers_that_are_names_are_not_claims(tmp_path):
+    """"311" in city_311.csv is the service's name; "Route 66" is a category."""
+    p = tmp_path / "city_311.csv"
+    p.write_text("opened,route,days\n2026-01-01,Route 66,3\n2026-01-02,Route 9,4\n"
+                 "2026-01-03,Route 66,5\n", encoding="utf-8")
+    an = pdm.analyse_refs([{"kind": "dataset", "path": str(p)}], tmp_path / "c")
+    assert pdm.untraceable_numbers("Every 311 request on Route 66.", an["facts"]) == []
+    assert pdm.untraceable_numbers("It took 312 days.", an["facts"]) == ["312"]
+    # The name list is not a source a line can cite.
+    assert all(f["id"].startswith("F") for f in an["facts"] if not f.get("names_only"))
+
+
+def test_the_names_entry_is_never_a_source_or_a_stored_fact(tmp_path, monkeypatch):
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(core, "_load_settings", lambda: {})
+    p = tmp_path / "city_311.csv"
+    p.write_text("opened,route,days\n2026-01-01,Route 66,3\n2026-01-02,Route 9,4\n", encoding="utf-8")
+    ep = pe.load(pe.create([{"kind": "dataset", "path": str(p)}], origin="routine")["id"])
+    docs = pe._gather(ep)
+    assert all(d["sid"].startswith("F") for d in docs)
+    assert any(f.get("names_only") for f in ep["_facts"])

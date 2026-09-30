@@ -188,16 +188,57 @@ def fact_values(text: str) -> list[float]:
     return vals
 
 
+#: Words that state a ratio without a digit. Said on air only when a computed
+#: fact uses the same word; otherwise it is the model's own arithmetic.
+_RATIO_RE = re.compile(r"\b(double[ds]?|doubling|twice|triple[ds]?|tripling|"
+                       r"quadruple[ds]?|half|halved|halving)\b", re.I)
+_UNIT = r"(percent|per cent|%|days?|weeks?|months?|years?|hours?|minutes?|times|points?)\b"
+_SMALL_WORDS = {w: v for w, v in _UNITS.items() if v <= 10}
+_SMALL_UNIT_RE = re.compile(r"(?<![\w.,])(\d+|%s)\s*%s" % ("|".join(_SMALL_WORDS), _UNIT), re.I)
+
+
+def _small_with_unit(text: str) -> list[tuple[int, str, str]]:
+    """Small numbers (ten or under) that carry a unit: (value, unit, as written).
+
+    Exempt from the claim check as bare counts ("two things"), they are claims
+    once a unit follows ("six months", "3 times").
+    """
+    out = []
+    for m in _SMALL_UNIT_RE.finditer(text or ""):
+        tok = m.group(1).lower()
+        v = int(tok) if tok.isdigit() else _SMALL_WORDS[tok]
+        if v <= 10:
+            unit = m.group(2).lower().rstrip("s").replace("per cent", "percent").replace("%", "percent")
+            out.append((v, unit, m.group(0)))
+    return out
+
+
 def untraceable_numbers(text: str, facts: list[dict]) -> list[str]:
-    """The numbers in `text` that no computed fact contains."""
+    """The numbers in `text` that no computed fact contains.
+
+    A number matches any number in the facts at the precision it is stated.
+    A small number with a unit must match the same number with the same unit
+    in a fact: a 6 elsewhere in the facts does not make "six months" true. A
+    ratio word ("double", "half") must appear in a fact.
+    """
     pool = []
     for f in facts or []:
         pool += [abs(v) for v in (f.get("values") or fact_values(f.get("text", "")))]
+    fact_text = " ".join(str(f.get("text") or "") for f in facts or [])
+    fact_units = {(v, u) for v, u, _r in _small_with_unit(fact_text)}
     bad = []
     for v, tol, raw in numbers_in(text):
+        # Within the precision the line states it at, and no looser: 9,451
+        # may stand for 9,450.5, but 312 may not stand for 311.
         v = abs(v)
-        if not any(abs(v - p) <= max(tol, abs(p) * 0.005) for p in pool):
+        if not any(abs(v - p) <= tol + 1e-9 for p in pool):
             bad.append(raw)
+    for v, unit, raw in _small_with_unit(text):
+        if (v, unit) not in fact_units and raw not in bad:
+            bad.append(raw)
+    for m in _RATIO_RE.finditer(text or ""):
+        if not re.search(r"\b%s\b" % re.escape(m.group(1)), fact_text, re.I):
+            bad.append(m.group(1))
     return bad
 
 
@@ -310,8 +351,13 @@ def analyse_frame(df, name: str, facts: _Facts, chart_dir: Path | None,
         means = grp.mean().sort_values(ascending=False).head(5)
         counts = grp.count()
         parts = ["%s %s (%s rows)" % (k, fmt(v), fmt(counts[k])) for k, v in means.items()]
-        aid = facts.add("Average %s by %s: %s." % (label(main), label(c), "; ".join(parts)),
-                        "df.groupby(%r)[%r].mean().nlargest(5)" % (c, main))
+        text = "Average %s by %s: %s." % (label(main), label(c), "; ".join(parts))
+        # The comparison a host will want to make, computed here so it is not
+        # eyeballed on air ("roughly double").
+        if len(means) >= 2 and means.iloc[1] > 0:
+            text += " %s's average is %s times the next highest (%s)." % (
+                means.index[0], fmt(round(means.iloc[0] / means.iloc[1], 2)), means.index[1])
+        aid = facts.add(text, "df.groupby(%r)[%r].mean().nlargest(5)" % (c, main))
         charts.append(_bar_chart(chart_dir, len(charts) + 1,
                                  "Average %s by %s" % (label(main), label(c)),
                                  [(str(k), float(v)) for k, v in means.items()], [aid]))
@@ -392,7 +438,7 @@ def _trend(what: str, series, lf: str, per: str) -> str:
 
 def analyse_refs(refs: list[dict], chart_dir: Path | None) -> dict:
     from agent_friday.services.podcast_sources import is_dataset
-    facts, charts, files = _Facts(), [], []
+    facts, charts, files, names = _Facts(), [], [], set()
     for ref in refs:
         if not is_dataset(ref):
             continue
@@ -401,10 +447,31 @@ def analyse_refs(refs: list[dict], chart_dir: Path | None) -> dict:
         if df is None or df.empty:
             raise SourceError("%s has no rows" % p.name)
         files.append(analyse_frame(df, p.name, facts, chart_dir, charts))
+        names |= _names(df, p)
     if not files:
         raise SourceError("no dataset was given")
-    return {"facts": facts.items, "charts": [c for c in charts if c],
+    items = list(facts.items)
+    if names:
+        # Numbers that are part of names ("311" in city_311.csv, "Route 66")
+        # are not claims. Carried for the line check only: never a source a
+        # line can cite, and never shown to the writer as a fact.
+        items.append({"id": "names", "names_only": True, "text": "",
+                      "values": sorted(float(n) for n in names), "expr": ""})
+    return {"facts": items, "charts": [c for c in charts if c],
             "summary": {"files": files}}
+
+
+def _names(df, path: Path) -> set:
+    """Digits inside the file name, the column names and category values."""
+    import pandas as pd
+    texts = [path.stem] + [str(c) for c in df.columns]
+    for c in df.columns:
+        s = df[c]
+        if (pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s)) \
+                and s.nunique(dropna=True) <= 200:
+            texts += [str(v) for v in s.dropna().unique()[:200]]
+    return {m for t in texts for m in re.findall(r"\d+", t.replace(",", ""))
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", t)}
 
 
 # ── charts ──────────────────────────────────────────────────────────────────

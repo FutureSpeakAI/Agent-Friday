@@ -360,7 +360,9 @@ DATA_RULES = (
     "differences or percentages. Say what each number is of, and over what "
     "period or group. An association is never a cause: say \"went with\" or "
     "\"moved together\", never \"caused\" or \"drove\". Do not approximate "
-    "(\"nearly half\", \"about a third\").\n")
+    "(\"nearly half\", \"about a third\") or compare in words (\"double\", "
+    "\"twice\") unless a fact says it; use the computed \"times\" figure. No "
+    "counts of months or days you worked out yourself.\n")
 
 
 def _system_prompt(ep: dict) -> str:
@@ -548,7 +550,7 @@ def _gather(ep: dict) -> list[dict]:
         ep["data"] = analysis["summary"]
         docs = [{"sid": f["id"], "title": f["text"], "kind": "fact", "text": f["text"],
                  "origin": f.get("expr", ""), "url": "", "private": True}
-                for f in analysis["facts"]]
+                for f in analysis["facts"] if not f.get("names_only")]
         others = [r for r in ep["refs"] if not sources_mod.is_dataset(r)]
     else:
         others = ep["refs"]
@@ -626,7 +628,7 @@ def produce(eid: str, *, should_stop=None) -> dict:
                          lines=script["lines"], rejected=script["rejected"],
                          sources=_public_sources(docs), writer_model=script["model"],
                          facts=[{k: f[k] for k in ("id", "text", "expr") if k in f}
-                                for f in ep.get("_facts") or []] or None,
+                                for f in ep.get("_facts") or [] if not f.get("names_only")] or None,
                          charts=ep.get("charts"), data=ep.get("data"),
                          source_errors=ep.get("source_errors"))
             ep = _update(eid, **_about(ep))

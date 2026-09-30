@@ -1,6 +1,6 @@
 # Local podcasts: any sources, every news routine, data mode
 
-> **Status:** building (phase 1–3 on branch `feat/local-podcasts`)
+> **Status:** implemented on branch `feat/local-podcasts` (phases 1–3); verified by real runs on the reference machine
 > **Last verified:** 2026-09-29 against main `780e31fa`
 > **Implementation:** `services/podcast_engine.py`, `services/podcast_render.py`,
 > `services/podcast_sources.py`, `services/podcast_data.py`,
@@ -106,11 +106,19 @@ turn the feature off.
 
 **Synthesis.**
 - Facts are computed with pandas and numbered F1…Fn, each with the expression
-  that produced it.
+  that produced it. "Which group is highest" is answered by the average per
+  group with the rows it rests on (a total mixes volume with size), and the
+  top group's lead is computed as a "times" figure so it is never eyeballed.
+  Rows per period and the average per period are separate facts.
 - The writer sees only the facts, never the raw rows.
 - A validator parses every number in every line, including spelled-out numbers,
-  percentages and "million". A number must match a fact the line cites, or any
-  computed fact; otherwise the line is cut.
+  percentages and "million". A number must match a computed fact at the
+  precision the line states it (9,451 may stand for 9,450.5; 312 may not stand
+  for 311); otherwise the line is cut. A small number with a unit ("six
+  months", "3 times") must match that number with that unit in a fact, and a
+  ratio word ("double", "half", "twice") must appear in a fact. Numbers that
+  are part of names (the file name, column names, category values: "311",
+  "Route 66") are not claims.
 - Cuts are listed on the episode.
 - ID-like columns (unique integers, names ending in `id`) are excluded from
   statistics.
@@ -277,10 +285,13 @@ Everything but public news articles is private.
 
 `podcast_tools._private_summary(text)` is the single place a private episode's
 content is turned into something a cloud voice session may hear.
-- Today it is the local model's two-sentence summary, passed through
-  `core._scrub_pii`.
-- It is the seam the voice session's shared private-summary handoff replaces
-  when that lands.
+- The local model writes a two-sentence summary, marking every person the way
+  the voice handoff asks (`{{person: Name | relationship}}`).
+- It then goes through the voice handoff's own scrub and floor,
+  `local_context.prepare`: people become relationships, identifiers become
+  numbered placeholders, and anything on the never-send floor withholds the
+  summary entirely. Titles and source names of private episodes use the same
+  path (`podcast_tools._scrub`).
 
 ### 3.8 Settings (`podcasts`)
 
@@ -314,3 +325,30 @@ and 4,500 (~30 min) for long.
 - **Auto-play.** Episodes notify.
 - **Downloading voices at render time.** Refused; a voice is installed once, on
   purpose.
+
+---
+
+## 5. What real runs on the reference machine showed
+
+Each of these was found by producing an episode with the real local model,
+Kokoro on the CPU and faster-whisper, and is fixed with a test:
+
+- **The local model thought itself out of room.** `local_call` sent no
+  reasoning setting to a llama.cpp seat, so Bonsai 2 spent 8,000 tokens
+  reasoning over a 14,000-character outline prompt and returned nothing. Seat
+  calls now ask for no preamble, as the Ollama path always did; the same
+  outline then took 36 s.
+- **The serving local model was invisible to the scheduler.**
+  `_resolve_local_seat` asked the reasoning seat (a cloud model here) and the
+  Ollama daemon (not running); the llama.cpp seat named in
+  `model_routing.local_model` was never asked. It is now.
+- **A busy GPU or low RAM is a moment, not a failure.** Another session's test
+  workers held CUDA contexts and the model stalled; the CPU voice once ran out
+  of memory. Both now wait 20 minutes and retry, up to three tries.
+- **Windows refuses a rename onto a file someone is reading.** Saving
+  `episode.json` retries briefly.
+- **Measured:** a four-minute Front Page episode took 4 min 43 s end to end
+  (writing 1 min 45 s on the GPU seat, speaking about real time on 8 CPU
+  threads); the listening check matched 616 of 618 words (5.2% word error). A
+  data-mode episode over 1,475 rows matched at 2.8%. The only network traffic
+  in either run was to 127.0.0.1.
