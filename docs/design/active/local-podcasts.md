@@ -1,0 +1,316 @@
+# Local podcasts: any sources, every news routine, data mode
+
+> **Status:** building (phase 1–3 on branch `feat/local-podcasts`)
+> **Last verified:** 2026-09-29 against main `780e31fa`
+> **Implementation:** `services/podcast_engine.py`, `services/podcast_render.py`,
+> `services/podcast_sources.py`, `services/podcast_data.py`,
+> `services/podcast_news.py`, `services/podcast_tools.py`, `routes/podcasts.py`
+> **Supersedes / superseded by:** neither. Builds on `services/kokoro_voice.py`,
+> `services/local_call.py`, `services/local_only_guard.py`,
+> `services/scheduler.py` (`idle_work_blocked_reason`), `services/provenance.py`,
+> `services/news_engine.py`, `services/voice_engine.py`, `services/desktop_bus.py`
+> **Written:** 2026-09-29
+
+The pattern (two tagged speakers who alternate, an outline written first, then
+chapter-by-chapter writing that carries the conversation so far, and a cleaning
+pass) is borrowed from podcastfy (Apache-2.0,
+github.com/souzatharsis/podcastfy). Only the idea is borrowed; no code is.
+
+---
+
+## 0. Summary for the owner
+
+1. **Every news routine comes with an episode.** The Front Page (morning and
+   evening), the Briefing, the Weekly Digest and the Weekly Editorial each queue
+   an episode when they finish. The routine is never held up by it; the episode
+   follows a few minutes later and appears on that run in News with a transcript,
+   chapters and a numbered source for every claim.
+2. **All of it is written and spoken on this computer.** The script is written
+   by the local model and the voices are Kokoro, running on the processor so the
+   graphics card stays with the local model. The only thing that reaches the
+   internet is what always did: fetching the articles themselves. Nothing about
+   the episode is sent anywhere.
+3. **Any sources, from anywhere.** Files, wiki pages, knowledge-graph entries,
+   chat conversations, Studio creations, datasets or pasted text. It is reachable
+   from Studio → Podcasts, from the "send to" menu, from chat ("make a podcast
+   from …"), from voice, and as a typed tool.
+4. **Data mode.** For a spreadsheet or CSV, Friday computes the numbers first,
+   on this computer, and draws charts. The hosts may only say numbers that
+   appear in that computation; a line with a number that cannot be traced is
+   cut before it is spoken, and the cut is recorded.
+5. **Checked by ear.** Every finished episode is transcribed back by the local
+   speech recogniser and compared with the script. The episode shows the match
+   rate; one that does not match is marked, not hidden.
+6. **Private stays private.** An episode made from mail, the vault, the wiki,
+   files or chats is labelled "Private · made on this PC". No cloud model or
+   cloud voice is ever used for it, and when voice mode (which may be a cloud
+   voice) asks about it, it hears only a summary with personal details removed.
+
+---
+
+## 1. Why not depend on podcastfy
+
+- **Weight.** Its requirements pin roughly 150 packages, including LangChain,
+  the Google Cloud SDKs, ElevenLabs, a pydantic beta and numpy 1.26. Friday's
+  venv runs numpy 2.4; the pin alone would break Kokoro and faster-whisper.
+- **Every voice it ships is a cloud voice** (OpenAI, Google, ElevenLabs,
+  Microsoft Edge). Edge TTS is free but still a network call. None satisfy
+  "100% local".
+- **Its writer goes through LiteLLM,** which can reach a local model, but it
+  would bypass `local_only_guard`, the egress gate and the vault gating that
+  every Friday model call goes through.
+- What is worth having is the conversation pattern, which is a few hundred
+  lines. It is written fresh against Friday's own local call, guard and
+  provenance, and credited in `CREDITS.md`. podcastfy ships no NOTICE file, so
+  Apache-2.0 §4(d) adds no obligation; the credit is courtesy.
+
+---
+
+## 2. Questioning it from five perspectives (STORM)
+
+Each perspective was asked what it needs, what it fears, and what would make it
+turn the feature off.
+
+### 2.1 Public-radio producer
+
+- **Needs:** a show that sounds produced, not read.
+  - A cold open that states the one thing that matters today.
+  - Chapters with a spoken signpost at each break.
+  - Two voices that are clearly different.
+  - A sign-off that says where the sources are.
+- **Fears:**
+  - Two hosts agreeing with each other for ten minutes.
+  - "Great question!" filler.
+  - Invented colour ("sources tell us").
+- **Would turn it off if** the hosts sound like they are reading a list.
+
+**Synthesis.**
+- The script is planned as an outline of chapters first, then each chapter is
+  written with the lines before it in view.
+- Host B is a questioner and sceptic, not an echo. The prompt forbids praise of
+  the other host's question.
+- Chapter breaks carry a longer pause. The transcript is a numbered, cited
+  script, not a text dump.
+
+### 2.2 Data journalist
+
+- **Needs:** every number traceable to a computation over the file, not to the
+  model's arithmetic.
+  - Denominators and time ranges stated.
+  - Correlation never voiced as cause.
+- **Fears:**
+  - The model "rounding" 41.6% to "nearly half".
+  - Inventing a year-on-year change the data cannot support.
+  - Quietly averaging a column of IDs.
+- **Would turn it off if** one invented number reaches air.
+
+**Synthesis.**
+- Facts are computed with pandas and numbered F1…Fn, each with the expression
+  that produced it.
+- The writer sees only the facts, never the raw rows.
+- A validator parses every number in every line, including spelled-out numbers,
+  percentages and "million". A number must match a fact the line cites, or any
+  computed fact; otherwise the line is cut.
+- Cuts are listed on the episode.
+- ID-like columns (unique integers, names ending in `id`) are excluded from
+  statistics.
+- The prompt says "associated with", never "caused by".
+
+### 2.3 Local TTS engineer
+
+- **Needs:**
+  - Kokoro on the CPU with its own pipeline, separate from voice mode's GPU
+    pipeline.
+  - One model shared by an American pipeline and a British pipeline (voices
+    `a*` and `b*` need different g2p).
+  - The espeak fallback wired.
+  - Bounded synthesis per line.
+- **Fears:**
+  - `KPipeline()` and `load_single_voice()` call `hf_hub_download`, which makes
+    a network request even when the files are cached.
+  - A voice that is not cached is silently downloaded.
+- **Would turn it off if** a render hangs the server.
+
+**Synthesis.**
+- The renderer resolves `config.json`, `kokoro-v1_0.pth` and each voice `.pt`
+  with `huggingface_hub.try_to_load_from_cache` (no network).
+- It passes file paths to `KModel(config=…, model=…)` and to the pipeline.
+- A voice that is not cached is refused with its name. The episode fails
+  loudly rather than downloading.
+- Each line runs under `kokoro_voice.synthesis_budget_s`.
+- Torch threads are capped at half the cores.
+
+### 2.4 GPU scheduler engineer
+
+- **Needs:**
+  - Nothing new on the GPU. The local model already holds about 11 of 12 GB.
+  - Script writing uses that same model through `local_call` and waits its turn
+    in the single slot.
+  - Speech synthesis and the listening check run on the CPU.
+- **Fears:**
+  - A podcast render starting while an image job holds the card.
+  - A 30-minute render landing in the middle of the owner's chat.
+- **Would turn it off if** chat slows because an episode is being made.
+
+**Synthesis.** A single render worker drains a persistent queue at
+`~/.friday/podcasts/queue.json`. Before each job it asks
+`scheduler.idle_work_blocked_reason`:
+- **Routine episodes (short or standard):** 60 s of owner inactivity and any
+  hour. The routine has just used the model, and the episode "follows shortly".
+- **Long episodes:** the owner's own idle window and idle threshold.
+- **An episode the owner just asked for:** only stand-down and the GPU lease
+  gate it.
+
+In every case, stand-down and an exclusive GPU lease hold the queue. A job
+waiting on the gate is "waiting", with the reason shown on the episode.
+
+### 2.5 Accessibility advocate
+
+- **Needs:**
+  - A full transcript and WebVTT captions synchronised to the audio.
+  - Chapter navigation by keyboard.
+  - Playback speed.
+  - Everything controllable by voice.
+- **Fears:**
+  - Audio that plays on its own.
+  - A player that is only reachable by mouse.
+- **Would turn it off if** there is no way to read what was said.
+
+**Synthesis.**
+- Captions are written from exact sample offsets.
+- The player is a native `<audio>` with labelled buttons (previous and next
+  chapter, speed, transcript) and a live-updating current-line region.
+- Episodes notify; they never auto-play.
+- Voice can play, pause, resume, skip chapters and ask "what's the source for
+  that?", which answers from the line playing now.
+
+---
+
+## 3. Design
+
+### 3.1 Episode
+
+`~/.friday/podcasts/<episode_id>/`:
+
+| File | What it holds |
+|---|---|
+| `episode.json` | Id, title, status, privacy, sources, attached run, hosts, chapters with times, lines with times and cites, verification, rejected lines |
+| `audio.wav` | The master; `audio.mp3` too when ffmpeg is present |
+| `captions.vtt` | Timed captions |
+| `charts/*.svg` | Data mode only |
+
+- Statuses run `queued → writing → speaking → checking → ready`, or `failed`
+  with a reason, or `waiting` with the gate's reason.
+- Signed provenance (`services/provenance.py`) is written for the audio with the
+  tool chain (the local model, Kokoro and its voices) and the source list.
+
+### 3.2 Sources
+
+`podcast_sources.resolve(ref)` turns a reference into
+`{id, title, kind, text, origin, private}`. The kinds:
+
+| Kind | Reader |
+|---|---|
+| `file` | `file_extraction.extract_text` |
+| `wiki` | `wiki_engine.wiki_read_text` |
+| `kg_node` | the knowledge-graph store |
+| `conversation` | `conversations.messages`; off-record messages are excluded |
+| `creation` | a Studio file plus its metadata |
+| `dataset` | data mode |
+| `text` | pasted text |
+| `news_run` | a Front Page, Briefing, Digest or Editorial |
+
+Everything but public news articles is private.
+
+### 3.3 Writing
+
+- Always `local_call.call_json`, run on `scheduler._resolve_local_seat()` and
+  inside `local_only_guard.local_only("Podcast")`.
+- There is no cloud writer. The first call plans chapters, each naming its
+  source ids; each later call writes one chapter's lines as
+  `{speaker, text, cites}`.
+- News prompts carry `voice_persona.VOICE_ANCHOR_RULES`, the same evidence rules
+  as every news surface.
+- The validator:
+  - drops lines citing unknown sources;
+  - requires a citation on any line with a number or a proper-noun claim;
+  - merges consecutive same-speaker lines;
+  - in data mode, runs the number check from §2.2.
+
+### 3.4 Speaking and checking
+
+- Kokoro on the CPU, one voice per host. Gaps are 0.30 s between speakers and
+  0.9 s at chapter breaks.
+- The check transcribes the master with `media_tools._whisper()` (base.en, CPU,
+  int8) and scores word error rate after normalising numbers to words on both
+  sides.
+- Below 0.20 the episode is "checked". Otherwise it is "check failed", with the
+  rate. It still plays; it is labelled.
+
+### 3.5 Cloud
+
+- A cloud voice (Gemini TTS through `voice_engine._synthesize_tts_wav_gemini`)
+  exists only when the owner picks it per episode or in Settings.
+- It is refused:
+  - for a private episode;
+  - in `local_only` mode;
+  - inside a local-only run.
+- It is credited on the episode. It is never the default.
+
+### 3.6 Surfaces
+
+- **Tools** (`services/podcast_tools.py`):
+  - `make_podcast`, `podcast_list`, `podcast_play` (play, pause, resume, next
+    or previous chapter, seek) and `podcast_source`.
+  - All are ring 1, classified INTERNAL, and exposed to voice through
+    `_VOICE_SHARED_TOOLS`.
+  - Tool results for private episodes are passed through the private-summary
+    seam (§3.7).
+- **Routes** (`routes/podcasts.py`, owner and loopback only): list, create, get,
+  audio, captions, charts, now-playing.
+- **UI:** one global mini-player, a Podcasts view in Studio, an episode chip on
+  each News run, and a "Make a podcast" destination in the shared send-to menu.
+- **Playback control from voice:** a `podcast` action on the existing desktop
+  bus.
+
+### 3.7 Private-summary seam
+
+`podcast_tools._private_summary(text)` is the single place a private episode's
+content is turned into something a cloud voice session may hear.
+- Today it is the local model's two-sentence summary, passed through
+  `core._scrub_pii`.
+- It is the seam the voice session's shared private-summary handoff replaces
+  when that lands.
+
+### 3.8 Settings (`podcasts`)
+
+```
+enabled_for_routines: {front_page, briefing, weekly, editorial}   default all on
+length:  {front_page: short, briefing: short, weekly: standard, editorial: standard}
+hosts:   {a: {name: "Friday", voice: "af_heart"}, b: {name: "Emma", voice: "bf_emma"}}
+on_ready: "notify"            ("notify" | "silent"; never auto-play)
+cloud_voice: false
+```
+
+Lengths are about 700 words (~5 min) for short, 1,500 (~10 min) for standard
+and 4,500 (~30 min) for long.
+
+### 3.9 The news routines are local
+
+- The Weekly Digest and Weekly Editorial join the Front Page and the Briefing in
+  `LOCAL_ONLY_BY_DEFAULT`.
+- A run started from the News buttons runs inside the same local-only guard as a
+  scheduled one; before this, only scheduled runs were.
+- If no local model is serving, the routine says so rather than going to the
+  cloud.
+
+---
+
+## 4. Not built, deliberately
+
+- **Cloud script writer.** Not needed; the local model writes. If one is added
+  later, it may only ever see the private-summary seam's output for private
+  sources.
+- **Auto-play.** Episodes notify.
+- **Downloading voices at render time.** Refused; a voice is installed once, on
+  purpose.
