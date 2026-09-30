@@ -1252,7 +1252,9 @@
                 DOME:        { kind: 'objects', pick: g => g.children.filter(o => o.geometry && /Cylinder|Octahedron/.test(o.geometry.type)) },
                 CABLES:      { kind: 'objects', pick: g => g.children },
                 NONE:        { kind: 'objects', pick: g => g.children },
-                EDEN:        { kind: 'objects', pick: g => { const s = g.children.find(o => o.type === 'Group' && o.children.length && o.children.every(c => c.type === 'Line')); return s ? s.children : []; } },
+                // Giga Earth's units are the boss's tiles (FridayRez): its sections
+                // are the layers, 2x2 blocks of tiles flip for a tool call.
+                EDEN:        { kind: 'rez' },
                 NETWORK:     { kind: 'points', cloud: g => g.children[0] },
                 MANDELBROT:  { kind: 'points', cloud: g => g.children[0] },
                 MOBIUS:      { kind: 'points', cloud: g => g.children[0] },
@@ -1293,6 +1295,10 @@
             function build(id, group) {
                 const spec = ADAPTERS[id];
                 if (!spec) return null;
+                if (spec.kind === 'rez') {
+                    const n = FridayRez.units();
+                    return n ? { kind: 'rez', spec, n, blocks: FridayRez.blocks() } : null;
+                }
                 if (spec.kind === 'objects') {
                     const objs = spec.pick(group).filter(Boolean);
                     if (!objs.length) return null;
@@ -1351,7 +1357,7 @@
                 if (!group || !group.visible || !ADAPTERS[id]) return null;
                 const C = cache[id] || (cache[id] = build(id, group));
                 if (!C || !C.n) return null;
-                const pts = C.kind === 'objects' ? C.pts : clusterPoints(C);
+                const pts = C.kind === 'objects' ? C.pts : C.kind === 'rez' ? FridayRez.points() : clusterPoints(C);
                 if (C.kind !== 'objects' && !C.blocks) {
                     // A cloud's twist is one cluster lifting and glowing in place:
                     // swapping whole patches of an ocean under a low camera moved
@@ -1359,18 +1365,21 @@
                     C.blocks = (C.kind === 'vertices' ? groupsOf(pts, 4) : pts.map((p, i) => [i]))
                         .map(u => ({ units: u, axis: C.kind === 'vertices' ? unitv(meanOf(pts, u)) : C.thin, centre: meanOf(pts, u) }));
                 }
-                if (C.kind !== 'objects') C.blocks.forEach(b => { b.centre = meanOf(pts, b.units); });
+                if (C.kind !== 'objects') C.blocks.forEach(b => { b.centre = meanOf(pts, b.units); if (C.kind === 'rez') b.axis = unitv(b.centre); });
                 const wp = group.getWorldPosition(V(0, 0, 0));
                 const tw = localDir(group, camera.position.clone()), up = localDir(group, wp.clone().add(V(0, 1, 0)));
                 const ac = V(0, 0, 0).crossVectors(up, tw).normalize();
                 const toward = [tw.x, tw.y, tw.z], upv = [up.x, up.y, up.z], across = [ac.x, ac.y, ac.z];
-                const core = meanOf(pts, pts.map((p, i) => i));
+                // The boss's centre is the ball's: with its front blasted away, the
+                // mean of the tiles left would sit behind it.
+                const core = C.kind === 'rez' ? [0, 0, 0] : meanOf(pts, pts.map((p, i) => i));
                 const rel = pts.map(p => [p[0] - core[0], p[1] - core[1], p[2] - core[2]]);
                 const extent = Math.max(...rel.map(p => Math.hypot(...p))) || 1;
                 const spacing = extent / Math.max(1.5, Math.cbrt(pts.length));
-                const L = Math.max(2, Math.min(8, Math.round(Math.cbrt(pts.length) + 1)));
+                const L = C.kind === 'rez' ? FridayRez.layers().length : Math.max(2, Math.min(8, Math.round(Math.cbrt(pts.length) + 1)));
                 const layers = Array.from({ length: L }, () => []);
-                if (C.spec.concentric) {
+                if (C.kind === 'rez') FridayRez.layers().forEach((l, k) => { layers[k] = l; });
+                else if (C.spec.concentric) {
                     pts.map((p, i) => [Math.hypot(...p), i]).sort((a, b) => a[0] - b[0])
                         .forEach(([, i], k) => layers[Math.min(L - 1, Math.floor(k * L / pts.length))].push(i));
                 } else {
@@ -1386,8 +1395,15 @@
                 // is the one that steps forward for an approval.
                 const facing = pts.map((p, i) => {
                     const s = group.localToWorld(V(p[0], p[1], p[2])).project(camera);
-                    return [s.z < 1 && Math.abs(s.x) < 1 && Math.abs(s.y) < 1 ? 0 : 1, Math.hypot(s.x, s.y), i];
+                    const away = C.kind === 'rez' && (rel[i][0] * toward[0] + rel[i][1] * toward[1] + rel[i][2] * toward[2]) < 0.35 * extent ? 1 : 0;
+                    return [(s.z < 1 && Math.abs(s.x) < 1 && Math.abs(s.y) < 1 ? 0 : 1) + away, Math.hypot(s.x, s.y), i];
                 }).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
+                if (C.kind === 'rez') {
+                    const L = C.lock, front = L !== undefined && rel[L]
+                        && (rel[L][0] * toward[0] + rel[L][1] * toward[1] + rel[L][2] * toward[2]) >= 0.2 * extent;
+                    if (front && facing.indexOf(L) > 0) { facing.splice(facing.indexOf(L), 1); facing.unshift(L); }
+                    C.lock = facing[0];
+                }
                 return { kind: C.kind, id, group, C, absCore: core, an: { units: rel, facing, layers: layers.filter(l => l.length), blocks: C.blocks.map(b => ({
                             units: b.units, axis: b.axis, centre: [b.centre[0] - core[0], b.centre[1] - core[1], b.centre[2] - core[2]] })),
                          top, core: [0, 0, 0], toward, up: upv, across, extent, spacing } };
@@ -1406,6 +1422,18 @@
             function applyGeneric(A, r, accent) {
                 const C = A.C;
                 let approvalAt = null;
+                if (C.kind === 'rez') {
+                    Object.keys(r.units).forEach(k => {
+                        const u = r.units[k];
+                        FridayRez.applyUnit(+k, u, accent, _amber);
+                        if (u.hue === 'approval') approvalAt = [A.an.units[+k], u.d, u.g];
+                    });
+                    showMarker(A, approvalAt);
+                    const core = A.absCore || [0, 0, 0];
+                    FridayRez.lockOn(approvalAt ? [0, 1, 2].map(j => approvalAt[0][j] + approvalAt[1][j] + core[j]) : null,
+                        marker && marker.visible ? marker.material.opacity : 0, camera);
+                    return;
+                }
                 if (C.kind === 'objects') {
                     Object.keys(r.units).forEach(k => {
                         const o = C.objs[+k], u = r.units[k];
@@ -1595,6 +1623,7 @@
                         marker.material.opacity = Math.max(0, marker.material.opacity - 0.03);
                         if (marker.material.opacity <= 0.01) marker.visible = false;
                     }
+                    if (targetStructure === 'EDEN') FridayRez.lockOn(null, marker && marker.visible ? marker.material.opacity : 0, camera);
                     return;
                 }
                 const A = anatomyFor(targetStructure) || genericAnatomy(targetStructure);
@@ -1653,6 +1682,7 @@
                     scanPlane.material.opacity = 0.32 * r.scan.alpha * nearFade;
                     scanPlane.visible = true;
                 } else scanPlane.visible = false;
+                if (A.C && A.C.kind === 'rez') FridayRez.afterGestures(r.thread, A.an.up, A.an.toward, reduced);
             }
 
             return { begin, end, anatomyFor, genericAnatomy, ADAPTERS, resetCache };
@@ -1818,6 +1848,304 @@
         })();
         window.FridayGenome = FridayGenome;
         // </avatar-genome>
+
+        // <rez-boss>
+        // Giga Earth: the Area 1 boss from Rez, in Friday's own palette
+        // (docs/design/active/avatar-visual-genome.md §15). A ball of 200 tiles
+        // in five counter-rotating sections; blasting tiles away reveals an
+        // X-shaped robot, whose loose tiles swirl in arms and ride on rings.
+        // It never evolves by model: the genome's one EDEN gene is the form
+        // on a set track, 0 (sealed) to 6 (final form), and each form shows or
+        // places the same parts. Which tiles go first is seeded per install,
+        // so no two Fridays crack the same way.
+        //
+        // Motion keeps the scene's rules: the sections, arms and rings turn at
+        // the structure's own idle rate (faster only while Friday speaks), and
+        // everything else moves only for a real event, through the gesture
+        // engine: a tool call flips a 2x2 block of tiles, a round lifts one
+        // section, a cloud send opens the top (and, once the rings exist, a
+        // ring throws a tile along the thread), an approval steps one tile
+        // forward inside an amber lock-on frame.
+        const FridayRez = (function () {
+            const SECTIONS = 5, BANDS = SECTIONS * 2, PER = 20, N = BANDS * PER, R = 7;
+            const LAT0 = -75 * Math.PI / 180, DLAT = 15 * Math.PI / 180, DLON = 2 * Math.PI / PER;
+            const ARMS = 4;
+            // What each form shows. gone: share of tiles blasted off the ball
+            // (in the arms from form 4); x: the robot's size (0 = not yet seen).
+            const FORMS = [
+                { name: 'Sealed',     gone: 0.00, core: 0.0, frame: 0, x: 0.00, arms: 0, rings: 0, blades: 4 },
+                { name: 'Cracked',    gone: 0.15, core: 0.5, frame: 0, x: 0.00, arms: 0, rings: 0, blades: 4 },
+                { name: 'Lock-on',    gone: 0.30, core: 0.8, frame: 1, x: 0.00, arms: 0, rings: 0, blades: 4 },
+                { name: 'Unveiled',   gone: 0.50, core: 1.0, frame: 1, x: 0.75, arms: 0, rings: 0, blades: 4 },
+                { name: 'Arms',       gone: 0.62, core: 1.0, frame: 1, x: 0.85, arms: 1, rings: 0, blades: 4 },
+                { name: 'Rings',      gone: 0.72, core: 1.0, frame: 1, x: 0.95, arms: 1, rings: 1, blades: 4 },
+                { name: 'Final form', gone: 0.90, core: 1.0, frame: 1, x: 1.30, arms: 1, rings: 1, blades: 8 },
+            ];
+            const SILVER = new THREE.Color(0xd4dcea), WHITE = new THREE.Color(0xffffff);
+            let form = FORMS[0], formIndex = 0, root = null, tiles = null;
+            let home = [], band = [], col = [], shade = [], order = [], place = [], units = [];
+            let secAngle = new Float32Array(SECTIONS), swirl = 0, ringSpin = 0, robotSpin = 0;
+            let robot = null, bladeMat = null, coreMat = null, frameMat = null, glow = null;
+            let rings = [], ringMat = null, shardMat = null, throws = [], lastThread = 0;
+            let reticle = null;
+            const cur = [];                     // per tile: this frame's p, q, s
+            const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+            const _v = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color(), _ax = new THREE.Vector3();
+            const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3(), _basis = new THREE.Matrix4();
+
+            // A tile's orientation: its face looks out along n, its top to the north.
+            function faceOut(n, q) {
+                _z.copy(n).normalize();
+                _x.set(0, 1, 0).cross(_z); if (_x.lengthSq() < 1e-6) _x.set(1, 0, 0); _x.normalize();
+                _y.copy(_z).cross(_x);
+                return q.setFromRotationMatrix(_basis.makeBasis(_x, _y, _z));
+            }
+            const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, edenOwn: true }; return m; };
+
+            function build(group, stage) {
+                formIndex = Math.max(0, Math.min(FORMS.length - 1, Math.round(+stage || 0)));
+                form = FORMS[formIndex];
+                root = new THREE.Group();
+                // Lit only here: the lights sit in Giga Earth's group, so they
+                // are gathered only while it is on screen.
+                root.add(new THREE.HemisphereLight(0xdfe8ff, 0x0a0c14, 0.55));
+                const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(6, 10, 14); root.add(sun);
+
+                // The ball: one instanced mesh, 200 tiles with a gap between them.
+                const tileMat = own(new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.35, roughness: 0.42, flatShading: true }), 0.96);
+                tiles = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 0.34), tileMat, N);
+                tiles.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+                tiles.frustumCulled = false;
+                home = []; band = []; col = []; shade = [];
+                for (let b = 0; b < BANDS; b++) for (let c = 0; c < PER; c++) {
+                    const lat = LAT0 + (b + 0.5) * DLAT, lon = (c + 0.5) * DLON;
+                    home.push([Math.cos(lat) * Math.sin(lon), Math.sin(lat), Math.cos(lat) * Math.cos(lon)]);
+                    band.push(b); col.push(c);
+                }
+                // Seeded impacts: the tiles nearest them are blasted first, so
+                // holes open as patches, the same ones for the same install.
+                const hits = [];
+                for (let k = 0; k < 6; k++) {
+                    const v = [FridayGenome.rand('EDEN') * 2 - 1, (FridayGenome.rand('EDEN') * 2 - 1) * 0.8, 0.3 + FridayGenome.rand('EDEN')];
+                    const m = Math.hypot(...v); hits.push(v.map(x => x / m));
+                }
+                const rank = home.map((h, i) => {
+                    let best = 9;
+                    hits.forEach((d, k) => { best = Math.min(best, Math.acos(Math.max(-1, Math.min(1, h[0] * d[0] + h[1] * d[1] + h[2] * d[2]))) * (1 + 0.22 * k)); });
+                    shade.push(FridayGenome.rand('EDEN'));
+                    return best + 0.3 * FridayGenome.rand('EDEN');
+                });
+                order = home.map((h, i) => i).sort((a, b) => rank[a] - rank[b]);
+                const goneN = Math.round(form.gone * N);
+                // place[i]: -1 on the ball; otherwise its slot in the arms (form
+                // 4 on), or hidden before the arms exist.
+                place = new Array(N).fill(-1);
+                order.slice(0, goneN).forEach((i, k) => { place[i] = form.arms ? k : -2; });
+                units = []; for (let i = 0; i < N; i++) if (place[i] !== -2) units.push(i);
+                for (let i = 0; i < N; i++) cur[i] = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3(1, 1, 1) };
+                root.add(tiles);
+
+                // The robot: an X of glassy blades round a faceted core, in a
+                // lock-on frame (white; amber is only ever an approval).
+                robot = new THREE.Group();
+                bladeMat = own(new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.2, roughness: 0.25, flatShading: true, emissive: 0x000000 }), 0.9);
+                const bladeGeo = new THREE.OctahedronGeometry(1, 0);
+                for (let k = 0; k < form.blades; k++) {
+                    const major = k < 4, a = (major ? k * 90 + 45 : (k - 4) * 90) * Math.PI / 180;
+                    const len = major ? 2.4 : 1.4;
+                    const blade = new THREE.Mesh(bladeGeo, bladeMat);
+                    blade.scale.set(major ? 0.55 : 0.35, len, 0.2);
+                    blade.position.set(Math.cos(a) * (0.9 + len), Math.sin(a) * (0.9 + len), 0);
+                    blade.rotation.z = a - Math.PI / 2;
+                    robot.add(blade);
+                }
+                coreMat = own(new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.1, roughness: 0.3, flatShading: true, emissive: 0x000000 }), 0.95);
+                robot.add(new THREE.Mesh(new THREE.IcosahedronGeometry(0.85, 0), coreMat));
+                const oct = []; for (let k = 0; k <= 8; k++) { const a = (k + 0.5) * Math.PI / 4; oct.push(new THREE.Vector3(Math.cos(a) * 1.7, Math.sin(a) * 1.7, 0.3)); }
+                frameMat = own(new THREE.LineBasicMaterial({ color: 0xffffff }), 0.75);
+                const frame = new THREE.Line(new THREE.BufferGeometry().setFromPoints(oct), frameMat);
+                frame.visible = !!form.frame; robot.add(frame);
+                robot.visible = form.x > 0 || !!form.frame;
+                robot.userData.frame = frame;
+                root.add(robot);
+                glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite: false }));
+                own(glow.material, 0.22 * form.core);
+                glow.scale.setScalar(R * 0.7); glow.visible = form.core > 0;
+                root.add(glow);
+
+                // Two rings, each carrying six tiles it can throw.
+                rings = [];
+                ringMat = own(new THREE.MeshBasicMaterial({ color: 0xffffff }), 0.7);
+                shardMat = own(new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.35, roughness: 0.4, flatShading: true }), 0.95);
+                const shardGeo = new THREE.BoxGeometry(0.7, 0.45, 0.2);
+                for (let k = 0; k < 2; k++) {
+                    const ring = new THREE.Group();
+                    ring.add(new THREE.Mesh(new THREE.TorusGeometry(R * 1.3, 0.06, 6, 96), ringMat));
+                    for (let j = 0; j < 6; j++) {
+                        const a = j * Math.PI / 3, s = new THREE.Mesh(shardGeo, shardMat);
+                        s.position.set(Math.cos(a) * R * 1.3, Math.sin(a) * R * 1.3, 0); s.rotation.z = a;
+                        ring.add(s);
+                    }
+                    ring.rotation.set(Math.PI / 2 + (k ? -0.45 : 0.45), k ? 0.5 : -0.5, 0);
+                    ring.visible = !!form.rings;
+                    root.add(ring); rings.push(ring);
+                }
+                throws = []; lastThread = 0; reticle = null;
+                group.add(root);
+                return root;
+            }
+
+            // One frame of the structure's own motion: sections turn, arms
+            // swirl, rings spin, at the structure's idle rate (speaking adds).
+            function animate(dt, rate, voice, base, accent, reduced) {
+                if (!root) return;
+                // rate is the scene's per-frame idle turn (at 60 frames a second).
+                const turn = reduced ? 0 : rate * 60 * dt;
+                for (let s = 0; s < SECTIONS; s++) secAngle[s] += turn * (s % 2 ? -1 : 1) * (0.8 + 0.25 * s);
+                swirl += turn * 1.6; ringSpin += turn * 2.2; robotSpin += turn * 0.6;
+                const pulse = 1 + Math.min(0.12, 0.25 * (voice || 0));
+                for (let i = 0; i < N; i++) {
+                    const C = cur[i], h = home[i];
+                    if (place[i] === -2) { C.s.set(0, 0, 0); C.p.set(0, 0, 0); C.q.identity(); }
+                    else if (place[i] === -1) {
+                        const a = secAngle[band[i] >> 1], ca = Math.cos(a), sa = Math.sin(a);
+                        C.p.set(h[0] * ca + h[2] * sa, h[1], -h[0] * sa + h[2] * ca).multiplyScalar(R * pulse);
+                        faceOut(C.p, C.q);
+                        const lat = LAT0 + (band[i] + 0.5) * DLAT;
+                        C.s.set(R * Math.cos(lat) * DLON * 0.86, R * DLAT * 0.86, 1);
+                    } else {
+                        // An arm: a spiral out from the core, tilted toward the viewer.
+                        const k = place[i], arm = k % ARMS, u = Math.floor(k / ARMS) / Math.max(1, Math.ceil(order.length * form.gone / ARMS));
+                        const th = arm * 2 * Math.PI / ARMS + swirl + u * 2.6;
+                        const rad = R * (1.12 + 1.05 * u);
+                        C.p.set(Math.cos(th) * rad, Math.sin(th * 0.5 + arm) * R * 0.25 * u, Math.sin(th) * rad);
+                        C.p.applyAxisAngle(_ax.set(1, 0, 0), 0.5);
+                        faceOut(_v.set(-Math.sin(th), 0.25, Math.cos(th)), C.q);
+                        const sz = 1.25 - 0.45 * u;
+                        C.s.set(1.1 * sz, 0.75 * sz, 1.3);
+                    }
+                    tiles.setMatrixAt(i, _m.compose(C.p, C.q, C.s));
+                    // Silver in Friday's colour: each tile its own shade of it.
+                    _c.copy(base).lerp(SILVER, 0.34 + 0.2 * shade[i]).multiplyScalar(0.42 + 0.16 * shade[i]);
+                    tiles.setColorAt(i, _c);
+                }
+                tiles.instanceMatrix.needsUpdate = true;
+                if (tiles.instanceColor) tiles.instanceColor.needsUpdate = true;
+                // The robot faces the viewer and turns slowly, like a pinwheel.
+                robot.scale.setScalar(Math.max(0.001, form.x || 0.001));
+                robot.children.forEach(c => { if (c !== robot.userData.frame) c.visible = form.x > 0; });
+                robot.rotation.z = robotSpin;
+                bladeMat.color.copy(accent).lerp(WHITE, 0.2).multiplyScalar(0.55); bladeMat.emissive.copy(accent).multiplyScalar(0.1);
+                coreMat.color.copy(accent).lerp(WHITE, 0.3).multiplyScalar(0.6); coreMat.emissive.copy(accent).multiplyScalar(0.25);
+                frameMat.color.copy(accent).lerp(WHITE, 0.6).multiplyScalar(0.7);
+                glow.material.color.copy(accent);
+                ringMat.color.copy(accent).multiplyScalar(0.8);
+                shardMat.color.copy(base).lerp(SILVER, 0.4).multiplyScalar(0.45);
+                rings.forEach((r, k) => { r.rotation.z = ringSpin * (k ? -1 : 1); });
+                if (robot.userData.frame) robot.userData.frame.rotation.z = -robotSpin * 1.5;
+                for (const t of throws) {
+                    t.t += dt;
+                    const f = Math.min(1, t.t / 1.4);
+                    t.mesh.position.copy(t.from).addScaledVector(t.dir, 11 * (1 - (1 - f) * (1 - f)));
+                    t.mesh.rotation.x += dt * 4;
+                    t.mesh.material.opacity = 0.95 * (f < 0.6 ? 1 : 1 - (f - 0.6) / 0.4);
+                    t.mesh.material.color.copy(shardMat.color);
+                    t.mesh.visible = f < 1;
+                }
+                throws = throws.filter(t => { if (t.t < 1.4) return true; root.remove(t.mesh); return false; });
+            }
+
+            // The gesture engine's view of the boss: the tiles in play, in
+            // Giga Earth's own coordinates. Layers (a round lifts one) are the
+            // ball's sections, then each arm; a tool call's 2x2 block is four
+            // neighbours on the ball, never across two sections (which turn
+            // apart), or four neighbours along one arm.
+            function points() { return units.map(i => [cur[i].p.x, cur[i].p.y, cur[i].p.z]); }
+            function layers() {
+                const L = Array.from({ length: SECTIONS + ARMS }, () => []);
+                units.forEach((i, k) => L[place[i] < 0 ? band[i] >> 1 : SECTIONS + place[i] % ARMS].push(k));
+                return L.filter(l => l.length);
+            }
+            function blocks() {
+                const at = {}, arm = {};
+                units.forEach((i, k) => {
+                    if (place[i] < 0) at[band[i] + ',' + col[i]] = k;
+                    else (arm[place[i] % ARMS] = arm[place[i] % ARMS] || []).push([place[i], k]);
+                });
+                const out = [];
+                for (let b = 0; b < BANDS; b += 2) for (let c = 0; c < PER; c += 2) {
+                    const u = [[b, c], [b, c + 1], [b + 1, c], [b + 1, c + 1]].map(([x, y]) => at[x + ',' + (y % PER)]).filter(k => k !== undefined);
+                    if (u.length >= 2) out.push({ units: u, axis: [0, 0, 1], centre: [0, 0, 0] });
+                }
+                Object.values(arm).forEach(list => {
+                    list.sort((a, b) => a[0] - b[0]);
+                    for (let j = 0; j + 1 < list.length; j += 4) out.push({ units: list.slice(j, j + 4).map(x => x[1]), axis: [0, 0, 1], centre: [0, 0, 0] });
+                });
+                return out;
+            }
+
+            // A gesture on one tile: moved, turned and scaled from where the
+            // structure put it this frame, tinted like every other structure.
+            function applyUnit(k, u, accent, amber) {
+                const i = units[k];
+                if (i === undefined) return;
+                const C = cur[i];
+                _v.copy(C.p).add(_ax.set(u.d[0], u.d[1], u.d[2]));
+                _q.copy(C.q);
+                const th = Math.hypot(u.r[0], u.r[1], u.r[2]);
+                if (th > 1e-6) _q.premultiply(_q2.setFromAxisAngle(_ax.set(u.r[0] / th, u.r[1] / th, u.r[2] / th), th));
+                _s.copy(C.s).multiplyScalar(u.s || 1);
+                tiles.setMatrixAt(i, _m.compose(_v, _q, _s));
+                tiles.getColorAt(i, _c);
+                const g = Number.isFinite(u.g) ? u.g : 0;
+                if (u.hue === 'approval') _c.lerp(amber, g);
+                else if (g > 0) _c.lerp(accent, 0.6 * g).multiplyScalar(1 + 0.35 * g);
+                if (u.b !== 1 && Number.isFinite(u.b)) _c.multiplyScalar(u.b);
+                tiles.setColorAt(i, _c);
+                tiles.instanceMatrix.needsUpdate = true;
+                if (tiles.instanceColor) tiles.instanceColor.needsUpdate = true;
+            }
+
+            // The lock-on frame round the tile waiting for an approval, in the
+            // approval hue, facing the viewer; it fades with the approval light.
+            function lockOn(pos, opacity, cam) {
+                if (!reticle) {
+                    const pts = []; for (let k = 0; k <= 8; k++) { const a = (k + 0.5) * Math.PI / 4; pts.push(new THREE.Vector3(Math.cos(a), Math.sin(a), 0)); }
+                    reticle = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+                        new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
+                    reticle.material.userData = null;          // never repainted by the mood
+                    reticle.renderOrder = 1000;
+                    root.add(reticle);
+                }
+                // With no tile (the approval decided) it stays where it was and fades.
+                if (pos) reticle.position.set(pos[0], pos[1], pos[2]);
+                reticle.visible = opacity > 0.01;
+                if (!reticle.visible) return;
+                reticle.quaternion.copy(cam.quaternion);
+                if (root.parent) reticle.quaternion.premultiply(_q2.copy(root.parent.getWorldQuaternion(new THREE.Quaternion())).invert());
+                reticle.scale.setScalar(1.6);
+                reticle.material.opacity = opacity;
+            }
+
+            // A cloud send, once the rings exist: a ring throws one tile out
+            // along the thread. Only on the send itself (the thread rising).
+            function afterGestures(thread, up, toward, reduced) {
+                if (!root) return;
+                if (form.rings && !reduced && thread > 0.01 && lastThread <= 0.01 && throws.length < 3) {
+                    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.22), own(shardMat.clone(), 0.95));
+                    mesh.material.userData = null;
+                    const from = new THREE.Vector3(...up).multiplyScalar(R * 1.3);
+                    const dir = new THREE.Vector3(...up).multiplyScalar(0.8).add(new THREE.Vector3(...toward).multiplyScalar(0.35)).normalize();
+                    mesh.position.copy(from); root.add(mesh);
+                    throws.push({ mesh, from, dir, t: 0 });
+                }
+                lastThread = thread;
+            }
+
+            return { build, animate, points, layers, blocks, applyUnit, lockOn, afterGestures,
+                     FORMS, N, form: () => formIndex, units: () => units.length };
+        })();
+        // </rez-boss>
 
         function setEvolution(idx) {
             if (idx === currentEvolutionIdx && transitionProgress === 1.0) return;
@@ -2119,19 +2447,12 @@
             tunnelGroup.add(tunnelWire); tunnelGroup.add(tunnelSolid);
             gEden.add(tunnelGroup);
 
-            const sphereGeo = new THREE.SphereGeometry(6, 24, 16, 0, Math.PI*2, 0.2, Math.PI - 0.4);
-            const sphereMat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.9 });
-            sphereMat.userData = { isBossSphere: true };
-            edenLady = new THREE.Mesh(sphereGeo, sphereMat);
-            const sphereWire = new THREE.WireframeGeometry(sphereGeo);
-            const sphereWireMat = new THREE.LineBasicMaterial({ color: 0x550000, transparent: true, opacity: 0.6 });
-            sphereWireMat.userData = { isBossWire: true };
-            edenLady.add(new THREE.LineSegments(sphereWire, sphereWireMat));
-            gEden.add(edenLady);
+            // The Area 1 boss, at the form its set track has reached (§15).
+            edenLady = FridayRez.build(gEden, FridayGenome.EX('EDEN', 'stage', 0));
 
             const spineGroup = new THREE.Group();
             const spineMat = createMaterial('line', 0xff3300, 0.8, true, false); spineMat.userData.isAccent = true;
-            for(let i=0; i<FridayGenome.EX('EDEN', 'spines', 15); i++) {
+            for(let i=0; i<15; i++) {
                 const x = (Math.random() - 0.5) * 4; const z = (Math.random() - 0.5) * 4;
                 const pts = [new THREE.Vector3(x, -50, z), new THREE.Vector3(x, 50, z)];
                 spineGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), spineMat));
@@ -2187,6 +2508,8 @@
                         child.geometry.attributes.color.needsUpdate = true;
                     } else if (child.material.userData.isTunnelSolid) {
                         child.material.color.copy(moodLerpValues.baseColor).multiplyScalar(0.05);
+                    } else if (child.material.userData.edenOwn) {
+                        // Giga Earth's boss colours its own parts from the mood (FridayRez.animate).
                     } else if (child.material.userData.isBossSphere) {
                         child.material.color.copy(moodLerpValues.baseColor);
                     } else if (child.material.userData.isBossWire) {
@@ -2586,8 +2909,8 @@
 
             if (structures['EDEN'] && structures['EDEN'].visible) {
                 if (edenLady) {
-                    edenLady.rotation.y += moodLerpValues.rotationSpeed * 5.0 * idleFactor;
-                    edenLady.scale.setScalar(1.0 + audioData.low * 0.5 * moodLerpValues.bloomStrength + holoAmplitude * 0.2);
+                    FridayRez.animate(delta, moodLerpValues.rotationSpeed * 5.0 * idleFactor, holoAmplitude,
+                        moodLerpValues.baseColor, moodLerpValues.accentColor, SceneMotion.reduced());
                 }
                 if (edenPlayer) {
                     const r = 8 + audioData.mid * 5 * moodLerpValues.particleSpeedScale;

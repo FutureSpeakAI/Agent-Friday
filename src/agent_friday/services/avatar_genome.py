@@ -137,8 +137,19 @@ STRUCTURE_GENES = {
                                  "count": True}},
     "NONE":        {"lines":    {"kind": "i", "min": 80, "max": 110, "step": 5, "default": 100,
                                  "count": True}},
-    "EDEN":        {"spines":   {"kind": "i", "min": 12, "max": 16, "step": 1, "default": 15,
-                                 "count": True}},
+    # Giga Earth never evolves by model: its one gene is the form on its set
+    # track (TRACKS), moved only by track_step.
+    "EDEN":        {"stage":    {"kind": "i", "min": 0, "max": 6, "step": 1, "default": 0,
+                                 "track": True}},
+}
+
+#: Structures that evolve on a set track instead of by model (§15). While one
+#: of them is on screen, a step moves it one form along its track and nothing
+#: else; no model is asked and nothing leaves the machine.
+TRACKS = {
+    "EDEN": {"gene": "stage", "label": "Giga Earth",
+             "forms": ("Sealed", "Cracked", "Lock-on", "Unveiled", "Arms", "Rings",
+                       "Final form")},
 }
 
 #: v1 literals that are not genes, carried into the expression unchanged.
@@ -236,7 +247,7 @@ def _iter_genes(target=None):
     for sec, genes in SHARED_GENES.items():
         for k, spec in genes.items():
             yield (sec, k), spec
-    if target in STRUCTURE_GENES:
+    if target in STRUCTURE_GENES and target not in TRACKS:
         for k, spec in STRUCTURE_GENES[target].items():
             yield ("structures", target, k), spec
 
@@ -276,6 +287,9 @@ def clamp_step(parent: dict, proposed: dict, *, target: str, step_number: int):
     parent = clamp_absolute(parent)
     prop = clamp_absolute(proposed)
     out = copy.deepcopy(parent)
+    if target in TRACKS:
+        # A structure on a set track is never a model's to change.
+        return out, []
     moves = []
     cadence = {("palette", "scheme"): ("palette", "scheme_changed_at"),
                ("form", "symmetry"): ("form", "symmetry_changed_at"),
@@ -324,6 +338,30 @@ def clamp_step(parent: dict, proposed: dict, *, target: str, step_number: int):
     return out, ["/".join(p) for p in moved]
 
 
+def track_step(parent: dict, target: str):
+    """The next form on `target`'s set track: (genome, [moved gene paths]),
+    with nothing moved once the track has reached its last form."""
+    parent = clamp_absolute(parent)
+    out = copy.deepcopy(parent)
+    tr = TRACKS.get(target)
+    if not tr:
+        return out, []
+    spec = STRUCTURE_GENES[target][tr["gene"]]
+    cur = out["structures"][target][tr["gene"]]
+    if cur >= spec["max"]:
+        return out, []
+    out["structures"][target][tr["gene"]] = cur + 1
+    return out, ["structures/%s/%s" % (target, tr["gene"])]
+
+
+def track_form(target: str, gen: dict):
+    """The name of the form `gen` shows on `target`'s track, or None."""
+    tr = TRACKS.get(target)
+    if not tr:
+        return None
+    return tr["forms"][clamp_absolute(gen)["structures"][target][tr["gene"]]]
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  Expression: what each structure draws
 # ═══════════════════════════════════════════════════════════════════════════
@@ -358,7 +396,9 @@ def _struct_verts(sid, e):
     if sid == "NONE":
         return e["lines"] * 2
     if sid == "EDEN":
-        return 40 * 40 * 2 + 400 + e["spines"] * 20 + 60 * 2
+        # Tunnel, 240 tiles, the robot, two rings and their shards: the same
+        # parts at every form (a form shows or places them), so the same count.
+        return 40 * 40 * 2 + 240 * 24 + 400 + 15 * 20 + 60 * 2
     return 0
 
 

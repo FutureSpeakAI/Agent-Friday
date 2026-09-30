@@ -568,6 +568,9 @@ def run_step(*, manual=False, now=None, author=None) -> dict:
         st = settings(now=now)
         if not st.get("enabled") and not manual:
             return {"status": "off"}
+        target = current_structure()
+        if target in g.TRACKS:
+            return _track_step(st, target, manual=manual, now=now)
         author = author or st["author"]
         ok, why, fixes = availability(author)
         if not ok:
@@ -576,7 +579,6 @@ def run_step(*, manual=False, now=None, author=None) -> dict:
             blocked = _idle_blocked()
             if blocked:
                 return {"status": "deferred", "reason": blocked}
-        target = current_structure()
         parent = g.active_step()
         parent_gen = g.active_genome()
         number = (parent or {}).get("step", 0) + 1
@@ -656,6 +658,35 @@ def run_step(*, manual=False, now=None, author=None) -> dict:
                 "avatar-step-%s" % step["content_hash"][-12:])
         return {"status": "pending" if ask else "stepped", "step": step["content_hash"],
                 "moved": moved}
+
+
+def _track_step(st, target, *, manual, now) -> dict:
+    """A structure on a set track (§15) moves one form: no model, no
+    signals, nothing sent. Signed and undoable like any other step."""
+    tr = g.TRACKS[target]
+    parent = g.active_step()
+    parent_gen = g.active_genome()
+    child, moved = g.track_step(parent_gen, target)
+    if not moved:
+        reason = "%s is already in its final form" % tr["label"]
+        g.update_state(last_step_at=now, waiting=None)
+        return {"status": "skipped", "reason": reason}
+    form = g.track_form(target, child)
+    digest = "sha256:" + hashlib.sha256(json.dumps(
+        {"track": target, "from": g.track_form(target, parent_gen)}, sort_keys=True)
+        .encode()).hexdigest()
+    ask = st.get("apply_mode") == "ask"
+    step = g.commit_step(child, parent=(parent or {}).get("content_hash"), kind="track",
+                         target=target, reason="The next form on %s's set track." % tr["label"],
+                         author={"path": "track", "model": None}, input_digest=digest,
+                         name="%s: %s" % (tr["label"], form), activate=not ask, sent=None)
+    g.update_state(last_step_at=now, waiting=None,
+                   pending=step["content_hash"] if ask else None)
+    _notify(("A new look is waiting for you" if ask else "Friday's look changed"),
+            "%s moved to its next form: %s." % (tr["label"], form),
+            "avatar-step-%s" % step["content_hash"][-12:])
+    return {"status": "pending" if ask else "stepped", "step": step["content_hash"],
+            "moved": moved}
 
 
 def tick(*, now=None) -> dict:

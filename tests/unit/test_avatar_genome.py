@@ -34,7 +34,7 @@ def test_the_empty_genome_expresses_exactly_the_v1_literals():
     assert ex["NETWORK"]["nodes"] == 120 and ex["NETWORK"]["link_distance"] == 6
     assert ex["ASTROLABE"]["rings"] == 8
     assert ex["MANDELBROT"] == {"max_iter": 40, "step": 0.012}
-    assert ex["EDEN"]["spines"] == 15
+    assert ex["EDEN"]["stage"] == 0          # the sealed ball (§15)
     assert g.is_v1(g.defaults())
 
 

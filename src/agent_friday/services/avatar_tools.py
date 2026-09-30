@@ -68,6 +68,13 @@ def _phrase(d) -> str | None:
         return "my working gestures have a new rhythm"
     if gene == "facets":
         return "a new ring for something I learned to do"
+    if gene.startswith("structures/") and gene.split("/")[1] in g.TRACKS:
+        sid = gene.split("/")[1]
+        tr = g.TRACKS[sid]
+        if isinstance(b, int) and 0 <= b < len(tr["forms"]):
+            return "%s %s to its %s form" % (tr["label"], "moved on" if up else "went back",
+                                             tr["forms"][b].lower())
+        return "%s changed form" % tr["label"]
     if gene.startswith("structures/"):
         parts = gene.split("/")
         where = STRUCTURE_NAMES.get(parts[1], "shape")
@@ -79,6 +86,8 @@ def _phrase(d) -> str | None:
 
 def _credit(step) -> str:
     a = step.get("author") or {}
+    if a.get("path") == "track":
+        return "It follows Giga Earth's set track, so no model was asked"
     if a.get("path") == "seeded" or not a.get("model"):
         return "I made it myself, on this computer"
     who = a["model"]

@@ -117,7 +117,7 @@ WIRING_SCENE = [
     "const nTubes = FridayGenome.EX('CABLES', 'tubes', 80);",
     "for(let i=0; i<FridayGenome.EX('NONE', 'lines', 100); i++) {",
     "const nPillars = FridayGenome.EX('DOME', 'pillars', 8);",
-    "for(let i=0; i<FridayGenome.EX('EDEN', 'spines', 15); i++) {",
+    "edenLady = FridayRez.build(gEden, FridayGenome.EX('EDEN', 'stage', 0));",
     "for(let i=0; i<FridayGenome.EX('NETWORK', 'nodes', 120); i++) {",
     "FridayGenome.start();",
     "FridayGenome.sample(dt, FridayGestures.settled());",

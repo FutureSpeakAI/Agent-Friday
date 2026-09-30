@@ -5,7 +5,9 @@
 > a frontier model authors by default, and the user may choose any model; one
 > shared palette within ±30° of cyan. This is
 > the converged design. §13 adds the processing-state vocabulary (owner
-> approved 2026-09-29), and §14 maps the spec onto the north star. It replaces the 2026-09-22 version of this file and the
+> approved 2026-09-29), and §14 maps the spec onto the north star. §15 puts
+> Giga Earth on a set track of Rez forms that no model changes (owner request
+> 2026-09-30). It replaces the 2026-09-22 version of this file and the
 > uncommitted `docs/design/evolve-genome.md` (2026-09-28). That draft is
 > preserved verbatim in Appendix B so it is in git.
 > **Last verified:** 2026-09-29 against main `41ef21fd`
@@ -499,7 +501,7 @@ exist today. A structure with no section draws exactly as v1.
 | GRID | `wave_scale` → 0.8…1.2 |
 | CABLES | `tubes` 80 → 64…88 |
 | NONE | `lines` 100 → 80…110 |
-| EDEN | `spines` 15 → 12…16; the player stays white (reserved as "you") |
+| EDEN | none by model: `stage` 0…6 moves only along its set track (§15); the player stays white (reserved as "you") |
 
 ### 3.4 Expression
 
@@ -1323,7 +1325,7 @@ language (the owner's guardrail). Only the rendering changes.
 
 | Slot | Meaning | CUBES (richest) | Other structures |
 |---|---|---|---|
-| **unit** | the smallest movable piece | one cube of the 3×3×3 grid (`coreCubes`, `index.html:4739-4752`) | ICOSAHEDRON: a vertex cluster on a shell. NETWORK: a node. DOME: a crystal. ASTROLABE: a ring. TESSERACT: a vertex. QUANTUM: a loop. MANDELBROT: a band of points. MOBIUS: a strip segment. GRID: a row of the ocean. CABLES: a tube. NONE: a line. EDEN: a spine |
+| **unit** | the smallest movable piece | one cube of the 3×3×3 grid (`coreCubes`, `index.html:4739-4752`) | ICOSAHEDRON: a vertex cluster on a shell. NETWORK: a node. DOME: a crystal. ASTROLABE: a ring. TESSERACT: a vertex. QUANTUM: a loop. MANDELBROT: a band of points. MOBIUS: a strip segment. GRID: a row of the ocean. CABLES: a tube. NONE: a line. EDEN: a tile of the Rez boss (§15.5) |
 | **block** | a group of units that turns together | a 2×2 block of cubes | a pair of adjacent units, or one ring (ASTROLABE) |
 | **layer** | an ordered slice that a wave passes through | one of the 3 grid layers (a 4th after growth) | shells, ring index, band index, or depth rows. Each structure lists its layers front to back |
 | **core** | where things arrive and settle | the centre cube position | the innermost shell, hub or centre point |
@@ -1369,11 +1371,11 @@ whatever else is showing.
 
 **As built (2026-09-30).** Three adapter families map each structure onto
 the §13.2 slots:
-- **objects:** shells, rings, pillars and crystals, tubes, lines, loops and
-  spines;
+- **objects:** shells, rings, pillars and crystals, tubes, lines and loops;
 - **point clouds, split into stable clusters:** network, Mandelbrot,
   Mobius and ocean;
-- **the tesseract's sixteen corners**, with their edges following.
+- **the tesseract's sixteen corners**, with their edges following;
+- **Giga Earth's tiles** (§15.5): its own adapter over the Rez boss.
 
 The lattice's own cube turns amber for an approval. On every other
 structure, a waiting approval is one warm light in the approval hue at the
@@ -1640,6 +1642,161 @@ Two notes:
   spec.
 - **No flash rule.** The north star has no explicit flash rule. This spec
   anchors its rule on §33.1 (WCAG 2.2 AA, which includes 2.3.1).
+
+---
+
+## 15. Giga Earth: the Rez track
+
+**Status:** built (2026-09-30), on branch `feat/avatar-lattice-gestures`.
+
+The owner's request (2026-09-30, verbatim):
+
+> "For Giga Earth (Rez), we're going to do some refinement. This one will not
+> evolve with the frontier models. This one will only evolve on a set track,
+> because it is a reference to the videogame Rez for Dreamcast. […] The disco
+> ball has several forms that reveal themselves as the player blasts away the
+> tiles on the surface of the ball. Underneath is an x-shaped robot that
+> begins manipulating the tiles in a variety of ways, including arms that
+> swirl around, and rings that throw projectiles at the player. These will all
+> be part of the expression set of this avatar mode. BTW: Do keep our branding
+> and color schemes for the enhanced Giga Earth avatar, but also try your best
+> to make it look as close to the Rez boss as possible."
+
+### 15.1 In plain words
+
+Giga Earth is now the Area 1 boss from Rez, drawn in Friday's own colours:
+- a ball of 200 tiles in five sections that turn against each other;
+- tiles are blasted away over the weeks, and an X-shaped robot is revealed;
+- its loose tiles swirl in arms, and rings carry tiles it can throw.
+
+It changes only along a **set track** of seven forms. No model, local or
+cloud, ever proposes a change to it.
+
+### 15.2 The track
+
+| Stage | Form | What is on screen |
+|---|---|---|
+| 0 | **Sealed** | The whole ball. This is v1, what every install starts with |
+| 1 | **Cracked** | About 15% of the tiles blasted away in patches. A faint core glow shows through |
+| 2 | **Lock-on** | About 30% gone. A white octagonal lock-on frame sits round the core |
+| 3 | **Unveiled** | Half gone. The X-shaped robot shows: four glassy blades round a faceted core |
+| 4 | **Arms** | The blasted tiles come back as four spiral arms swirling round the robot |
+| 5 | **Rings** | Two tilted rings orbit, each carrying six tiles it can throw |
+| 6 | **Final form** | Only about 10% of the ball is left. The robot opens into an eight-point star, with the arms and rings round it |
+
+The track only ever takes tiles away. A tile blasted at one form stays
+blasted, or swirls in an arm, at every later form.
+
+### 15.3 How it evolves
+
+- **When it moves.** A step moves Giga Earth one form along its track only
+  while Giga Earth is the structure on screen (`current_structure()`, as for
+  every structure). That covers the weekly step, catch-up after time away
+  (one step), and "evolve now" by button or voice. After the final form, a
+  step is skipped with "Giga Earth is already in its final form".
+- **No model.** It runs with no cloud model and no local seat. The author
+  setting (frontier, a chosen model, seeded) does not apply, and it never
+  waits for a model. Nothing leaves the machine: `sent` is `null`, and the
+  input digest is a hash of the track position.
+- **Everything else stays the same.** The step is signed like any other
+  (§7). It appears in the history as "Giga Earth: *Form*", credited to "the
+  set track". It can be:
+  - undone;
+  - rolled back to by name or date;
+  - reset;
+  - held for approval in ask-first mode.
+  Evolution off means no weekly step. The owner can still move it by hand.
+- **No model reaches it.** `clamp_step` never moves Giga Earth's section:
+  - not on a step for another structure;
+  - not when a model proposes while Giga Earth is on screen.
+  Giga Earth no longer has any count gene, so the shared `form/density`
+  gene does not change it either. Its one gene is
+  `structures/EDEN/stage` (0-6, marked `track`), and only `track_step` moves
+  it.
+- **Built as:**
+  - `avatar_genome.TRACKS`, `track_step` and `track_form`;
+  - `avatar_growth._track_step`;
+  - voice replies such as "Giga Earth moved on to its unveiled form. It
+    follows Giga Earth's set track, so no model was asked."
+
+### 15.4 The look: Rez's shapes, Friday's colours
+
+- **Colours come from the palette, never the game.** The Rez boss is orange
+  and white. Here:
+  - tiles are silver tinted with the mood's base colour, each tile its own
+    shade;
+  - blades, core, rings and the core glow take the accent colour;
+  - the lock-on frame is white.
+  The shared palette (§3.2, §6.2) applies to Giga Earth like every other
+  structure. It follows moods and drifts with the genome.
+- **Amber is only ever an approval.** The old boss sphere was orange
+  (`0xff6600`), close to the reserved approval amber. It is gone.
+- **Every install cracks differently.** The patches that open first are
+  seeded from the install's sigil (`FridayGenome.rand('EDEN')`). Every
+  install follows the same track but breaks open in its own way.
+- **Kept from before:** the tunnel, the vertical rails (the "spines", now a
+  fixed 15), the white player figure (reserved as "you"), and the debris.
+- **Drawing:**
+  - the tiles are one instanced mesh (one draw call);
+  - the lights sit inside Giga Earth's group, so they are gathered only
+    while it is on screen;
+  - the element budget is the same at every form, because each form shows
+    or places the same parts.
+
+### 15.5 The expression set
+
+The events and the rules are §13's. On the boss, the same events make Rez
+moves:
+
+| Event (§13.3) | On Giga Earth |
+|---|---|
+| **Speaking** (§1.4) | The ball swells slightly with the voice. The sections, arms and rings turn faster |
+| **Listening** | Tiles on the side facing the user ripple with the voice |
+| **Reasoning, one round** | One section of the ball lifts and glows. From the Arms form on, the rounds also roll through the arms, one arm per layer |
+| **Tool call** | A 2×2 block of tiles flips 90°, like the robot turning tiles over, and flips back when the tool returns. On an arm, it is four neighbouring tiles along that arm |
+| **Cloud send** | The top of the ball opens and the thread rises. From the Rings form on, a ring also throws one tile out along the thread |
+| **Waiting for approval** | The tile nearest the middle of the front steps forward in the approval amber, inside an amber octagonal lock-on frame, the Rez lock-on. The frame follows its tile as the ball turns and fades when the approval is decided |
+| **Verifying** | The scan plane sweeps across the boss |
+
+At rest, the sections turn against each other, the arms swirl and the rings
+spin at the structure's idle rate. That is the same rate the old sphere
+turned at, so the rest motion is the baseline (§1.4), not busy motion. It
+goes faster only while Friday speaks. A tile is thrown only on a real cloud
+send; nothing is thrown on a timer.
+
+Under reduced motion nothing turns. The gestures are brightness only (§13.7),
+and no tile is thrown.
+
+### 15.6 Verification
+
+- **Tests:**
+  - `tests/unit/test_avatar_rez_track.py` covers the server side (8 tests).
+    They failed before the change and pass after it.
+  - `tests/unit/test_rez_boss.py` runs the page side under node with the
+    vendored three.js, from both scene files. It checks that:
+    - every form builds with finite geometry;
+    - blasted tiles never return;
+    - the pattern is per install;
+    - the robot appears from Unveiled and the rings from Rings;
+    - a block never straddles two sections or an arm;
+    - nothing turns under reduced motion.
+  - Four deliberate breaks of the boss (tiles returning, the robot on the
+    sealed ball, turning under reduced motion, a block across two sections)
+    each turn a test red.
+- **Captures:** headless Chrome with `--use-gl=angle` (§10.3):
+  - every form captured and looked at;
+  - every gesture captured and looked at on the Unveiled and Final forms.
+- **Brightness and frame time, per frame:**
+
+  | Form | Largest step up | Largest step down | Steps over 20% | p95 frame |
+  |---|---|---|---|---|
+  | Unveiled | 1.10× | 0.88× | none | 20.8 ms |
+  | Final form | 1.12× | 0.91× | none | 19.0 ms |
+
+- **Not built:** the §13.3 states that are not built anywhere yet
+  (subagents, background work, errors, blocked, saving to memory, private
+  handoff). Giga Earth will express them when the engine does, without
+  changing this section.
 
 ---
 
