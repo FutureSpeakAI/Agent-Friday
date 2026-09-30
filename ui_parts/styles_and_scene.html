@@ -819,11 +819,67 @@
             moodOverride = null;
         }
 
+        // <scene-motion>
+        // Motion safety for the holographic scene. A structure change used to
+        // add +4.0 bloom in a single frame, which doubled the whole scene's
+        // brightness at once, and the scene ignored prefers-reduced-motion.
+        // The rules:
+        //  - the change flash rises over FLASH_ATTACK_S instead of jumping,
+        //    peaks at FLASH_BLOOM_GAIN extra bloom, and fires at most once per
+        //    FLASH_MIN_GAP_S however fast structures are switched;
+        //  - under reduced motion there is no flash at all, a structure change
+        //    is the same slow opacity crossfade with no zoom or particle
+        //    scatter, time lapse stays off, speech drives the scene at half
+        //    amplitude, and speaking does not speed up the spin.
+        // The media query is re-read on change, so flipping the OS setting
+        // takes effect without a reload.
+        const SceneMotion = (function () {
+            const FLASH_BLOOM_GAIN = 0.8;
+            const FLASH_ATTACK_S = 0.4;
+            const FLASH_DECAY_PER_S = 0.3;
+            const FLASH_MIN_GAP_S = 1.0;
+            let reduced = false;
+            try {
+                const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+                reduced = !!mq.matches;
+                const onChange = e => { reduced = !!(e && e.matches); };
+                if (mq.addEventListener) mq.addEventListener('change', onChange);
+                else if (mq.addListener) mq.addListener(onChange);
+            } catch (e) { reduced = false; }
+            let level = 0, rising = false, lastFlashAt = -Infinity;
+            return {
+                reduced: () => reduced,
+                // A structure change asks for a flash; nowS is wall-clock seconds.
+                startFlash(nowS) {
+                    if (reduced || nowS - lastFlashAt < FLASH_MIN_GAP_S) return false;
+                    lastFlashAt = nowS; rising = true;
+                    return true;
+                },
+                // One frame of the flash envelope, 0..1.
+                tick(delta) {
+                    if (reduced) { level = 0; rising = false; return 0; }
+                    if (rising) {
+                        level = Math.min(1, level + delta / FLASH_ATTACK_S);
+                        if (level >= 1) rising = false;
+                    } else if (level > 0) {
+                        level = Math.max(0, level - delta * FLASH_DECAY_PER_S);
+                    }
+                    return level;
+                },
+                flashBloom: flash => flash * FLASH_BLOOM_GAIN,
+                transitionScale: (ease, incoming) => (reduced ? 1
+                    : (incoming ? 1.2 - ease * 0.2 : 1.0 + ease * 0.5)),
+                speechGain: () => (reduced ? 0.5 : 1),
+                timeLapseAllowed: () => !reduced,
+            };
+        })();
+        // </scene-motion>
+
         function setEvolution(idx) {
             if (idx === currentEvolutionIdx && transitionProgress === 1.0) return;
             currentEvolutionIdx = idx;
             currentStructure = targetStructure; targetStructure = EVOLUTION_PATH[idx].id;
-            transitionProgress = 0.0; metamorphosisFlash = 1.0;
+            transitionProgress = 0.0; SceneMotion.startFlash(performance.now() / 1000);
             if (structures[targetStructure]) structures[targetStructure].visible = true;
             const dayText = document.getElementById('evolution-day-text');
             if (dayText) dayText.innerText = `DAY ${idx + 1}: ${EVOLUTION_PATH[idx].name}`;
@@ -836,8 +892,12 @@
         };
 
         function toggleTimeLapse() {
+            // A structure every ten seconds is exactly the motion a reduced-
+            // motion preference asks to avoid; it can still be turned off.
+            if (!timeLapseActive && !SceneMotion.timeLapseAllowed()) return false;
             timeLapseActive = !timeLapseActive;
             if (timeLapseActive) { timeLapseTimer = 0; }
+            return timeLapseActive;
         }
 
         function init() {
@@ -1267,12 +1327,12 @@
             }
 
             // --- TIME LAPSE LOGIC ---
-            if (timeLapseActive) {
+            if (timeLapseActive && SceneMotion.timeLapseAllowed()) {
                 timeLapseTimer += delta;
                 if (timeLapseTimer > 10.0) { timeLapseTimer = 0; setEvolution((currentEvolutionIdx + 1) % EVOLUTION_PATH.length); }
             }
 
-            if (metamorphosisFlash > 0) metamorphosisFlash = Math.max(0, metamorphosisFlash - delta * 0.3);
+            metamorphosisFlash = SceneMotion.tick(delta);
 
             // --- AUDIO PROCESSING ---
             const heartbeat = (Math.sin(elapsed * Math.PI) + 1) / 2;
@@ -1309,7 +1369,7 @@
                 // MOTION — spin speed + particle speed — only follows the mood while
                 // SPEAKING; otherwise it holds the calm IDLE baseline, so a state like
                 // EXECUTING shifts color without adding any movement.
-                const _motionMood = _speaking ? tMood : MOODS.IDLE;
+                const _motionMood = (_speaking && !SceneMotion.reduced()) ? tMood : MOODS.IDLE;
                 moodLerpValues.rotationSpeed = THREE.MathUtils.lerp(moodLerpValues.rotationSpeed, _motionMood.rotationSpeed, moodLerp);
                 moodLerpValues.particleSpeedScale = THREE.MathUtils.lerp(moodLerpValues.particleSpeedScale, _motionMood.particleSpeedScale, moodLerp);
             }
@@ -1338,14 +1398,14 @@
             // --- STRUCTURE TRANSITIONS ---
             if (transitionProgress < 1.0) transitionProgress = Math.min(1.0, transitionProgress + delta * 0.125);
             const ease = smoothstep(transitionProgress); 
-            const scatterIntensity = Math.sin(transitionProgress * Math.PI) + (metamorphosisFlash * 1.5); 
+            const scatterIntensity = SceneMotion.reduced() ? 0 : Math.sin(transitionProgress * Math.PI) + (metamorphosisFlash * 1.5); 
 
             Object.keys(structures).forEach(key => {
                 const g = structures[key];
                 if(g) {
                     updateGroupColors(g);
-                    if (key === targetStructure) { g.visible = true; setGroupOpacity(g, ease); g.scale.setScalar(1.2 - ease * 0.2); }
-                    else if (key === currentStructure && transitionProgress < 1.0) { setGroupOpacity(g, 1 - ease); g.scale.setScalar(1.0 + ease * 0.5); }
+                    if (key === targetStructure) { g.visible = true; setGroupOpacity(g, ease); g.scale.setScalar(SceneMotion.transitionScale(ease, true)); }
+                    else if (key === currentStructure && transitionProgress < 1.0) { setGroupOpacity(g, 1 - ease); g.scale.setScalar(SceneMotion.transitionScale(ease, false)); }
                     else g.visible = false;
                 }
             });
@@ -1653,7 +1713,7 @@
             });
 
             // --- HOLOGRAPHIC REACTIVITY UPDATE ---
-            holoTargetAmplitude = window._fridayHoloAmplitude || 0;
+            holoTargetAmplitude = (window._fridayHoloAmplitude || 0) * SceneMotion.speechGain();
             holoAmplitude += (holoTargetAmplitude - holoAmplitude) * 0.15;
             if (processOrbManager) processOrbManager.update(delta, elapsed);
 
@@ -1661,7 +1721,7 @@
             if (bloomPass && holoPass && holoPass.uniforms) {
                 const bloomIdle = 0.75 + idleFactor * 0.25;
                 const currentBloom = moodLerpValues.bloomStrength * (0.9 + audioData.low * 2.5 + holoAmplitude * 0.8) * bloomIdle;
-                bloomPass.strength = Math.max(0.7, currentBloom) + (metamorphosisFlash * 4.0);
+                bloomPass.strength = Math.max(0.7, currentBloom) + SceneMotion.flashBloom(metamorphosisFlash);
                 if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.003 + Math.sin(elapsed * 0.5) * 0.002 + (metamorphosisFlash * 0.01);
                 if(holoPass.uniforms.angle) holoPass.uniforms.angle.value = Math.sin(elapsed * 0.2);
                 if(holoPass.uniforms.grainAmount) holoPass.uniforms.grainAmount.value = moodLerpValues.grain + (metamorphosisFlash * 0.05);
@@ -1747,7 +1807,7 @@ window.fridayVibe = {
         return typeof isHandTrackingMode !== 'undefined' ? isHandTrackingMode : false;
     },
     toggleTimeLapse: function() {
-        if (typeof toggleTimeLapse === 'function') toggleTimeLapse();
+        if (typeof toggleTimeLapse === 'function') return toggleTimeLapse();
     },
     isTimeLapseOn: function() {
         return typeof timeLapseActive !== 'undefined' ? timeLapseActive : false;

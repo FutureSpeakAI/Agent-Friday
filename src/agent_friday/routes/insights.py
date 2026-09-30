@@ -160,6 +160,25 @@ def career_report(filename):
 #: load, including the very first one.
 EVOLUTION_FILE = FRIDAY_DIR / "evolution.json"
 
+#: The desktop scene's structures, in EVOLUTION_PATH order (index.html).
+SCENE_NAMES = (
+    'GENESIS LATTICE', 'SACRED SPHERE', 'SHANNON NETWORK',
+    'GEODESIC CATHEDRAL', 'LOVELACE ASTROLABE', 'VON NEUMANN TESSERACT',
+    'DIRAC PROBABILITY', 'MANDELBROT SET', 'TURING MOBIUS',
+    'OCEAN OF LIGHT', 'FIBONACCI NERVE', 'TRANSCENDENCE',
+    'GIGA EARTH (REZ)',
+)
+
+
+def _scene_index(val):
+    """A pinned structure index, or None when `val` is not one.
+
+    Booleans are refused even though bool is an int: `true` is not a scene.
+    """
+    if isinstance(val, bool) or not isinstance(val, int):
+        return None
+    return val if 0 <= val < len(SCENE_NAMES) else None
+
 
 def _read_json(path):
     try:
@@ -194,9 +213,15 @@ def get_evolution():
         body = request.get_json(silent=True) or {}
         if 'preferred_scene_index' in body:
             val = body['preferred_scene_index']
+            # An index outside the scene list is refused before it is stored:
+            # a stored 13 used to make every later page load fail with a 500.
+            if val is not None and _scene_index(val) is None:
+                return jsonify({'status': 'error',
+                                'error': 'preferred_scene_index must be null or a '
+                                         'whole number from 0 to %d' % (len(SCENE_NAMES) - 1)}), 400
             # An explicit null is kept, so a pin recorded in personality.json
             # stays cleared.
-            own['preferred_scene_index'] = None if val is None else int(val)
+            own['preferred_scene_index'] = val
             _save_own()
         return jsonify({'status': 'ok', 'preferred_scene_index': own.get('preferred_scene_index')})
 
@@ -211,15 +236,11 @@ def get_evolution():
     except Exception:
         first_launch = today
     day_count = max(1, (today - first_launch).days + 1)
-    names = [
-        'GENESIS LATTICE', 'SACRED SPHERE', 'SHANNON NETWORK',
-        'GEODESIC CATHEDRAL', 'LOVELACE ASTROLABE', 'VON NEUMANN TESSERACT',
-        'DIRAC PROBABILITY', 'MANDELBROT SET', 'TURING MOBIUS',
-        'OCEAN OF LIGHT', 'FIBONACCI NERVE', 'TRANSCENDENCE',
-        'GIGA EARTH (REZ)'
-    ]
+    names = SCENE_NAMES
     calendar_idx = ((day_count - 1) // 4) % len(names)
-    preferred_idx = data.get('preferred_scene_index')
+    # A pin that is not a valid index (written before POST checked, or by
+    # hand) is treated as no pin, so the scene still loads.
+    preferred_idx = _scene_index(data.get('preferred_scene_index'))
     idx = preferred_idx if preferred_idx is not None else calendar_idx
     return jsonify({
         'day': day_count,
