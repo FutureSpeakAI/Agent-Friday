@@ -2099,6 +2099,8 @@ DEFAULT_SETTINGS = {
     # news_local_sources: outlet domains for that beat, fetched as Local
     # feeds and trusted like the built-in high-trust outlets
     # (source_trust_graph.local_beat_sources). Both empty means no Local beat.
+    # The four News routines write on the local model (news_engine.local_news_run).
+    "news_local_only": True,
     "news_local_area": "",
     "news_local_sources": [],
     "communication_style": "professional",  # professional | casual | technical
@@ -2436,6 +2438,20 @@ DEFAULT_SETTINGS = {
     # The switch and the window for work that should happen while the user is
     # away rather than at a fixed hour (the daily creation, among others).
     # ON by default.
+    # ── Podcasts (services/podcast_engine.py, docs/design/active/local-podcasts.md)
+    # Written by the local model and spoken by Kokoro on the CPU. A cloud voice
+    # is only ever used when `cloud_voice` is switched on, and never for an
+    # episode built from private material.
+    "podcasts": {
+        "enabled_for_routines": {"front_page": True, "briefing": True,
+                                 "weekly": True, "editorial": True},
+        "length": {"front_page": "short", "briefing": "short",
+                   "weekly": "standard", "editorial": "standard"},
+        "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
+                  "b": {"name": "Emma", "voice": "bf_emma"}},
+        "on_ready": "notify",
+        "cloud_voice": False,
+    },
     "idle_work": {
         "enabled": True,
         "idle_after_s": 600,   # how long away before idle work starts

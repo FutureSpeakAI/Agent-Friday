@@ -1147,6 +1147,40 @@ WEEKLY_DIGESTS_DIR = FRONT_PAGES_DIR / "weekly"
 # archive including banned sources, and that is disclosed in the output.
 WEEKLY_EDITORIAL_HOUR = 19
 EDITORIALS_DIR = FRIDAY_DIR / "editorials"
+# The four News routines (Front Page, Briefing, Weekly Digest, Editorial) write
+# on the local model, whether a schedule, the News buttons or the offline queue
+# started them. Scheduled runs already carried `task.local_only`; the buttons
+# did not, so a click could reach a cloud model. `news_local_only` (on by
+# default) puts every run inside the same guard the cloud transports refuse in.
+# Fetching the articles still reaches the web: that is reading the news, not
+# writing it. An owner who allowed scheduled jobs onto a cloud model
+# (`scheduled_cloud`) keeps that choice for scheduled runs.
+def local_news_run(label):
+    """Context manager: this routine's model calls are local-only, when the
+    owner's `news_local_only` setting is on (the default)."""
+    import contextlib
+    try:
+        on = bool((core._load_settings() or {}).get("news_local_only", True))
+    except Exception:
+        on = True
+    from agent_friday.services import local_only_guard
+    # A scheduled run the owner explicitly allowed onto one cloud model
+    # (`scheduled_cloud`) is already pinned to it; that consent stands.
+    if not on or local_only_guard.pinned_model():
+        return contextlib.nullcontext()
+    return local_only_guard.local_only(label)
+
+
+def _local_news(label):
+    def deco(fn):
+        @wraps(fn)
+        def run(*a, **kw):
+            with local_news_run(label):
+                return fn(*a, **kw)
+        return run
+    return deco
+
+
 # Below this independence_fostering score the editorial is regenerated with a
 # stronger pushback prompt.
 EDITORIAL_INDEPENDENCE_FLOOR = 0.6
@@ -2049,6 +2083,7 @@ def _previous_front_page(current_id):
     return None
 
 
+@_local_news('Front Page')
 def _generate_front_page(slot="morning"):
     """Build + persist one Front Page edition. Returns the edition dict.
 
@@ -2260,6 +2295,16 @@ def _read_front_page(edition_id):
 # notification always shows, even if the scheduled edition for the same id
 # already pushed one. Best-effort — a notify failure never breaks generation.
 
+def _queue_podcast(routine, run_id):
+    """Every finished run of the four routines gets an episode (queued only;
+    the render follows when the idle gate allows). Never raises."""
+    try:
+        from agent_friday.services import podcast_news
+        podcast_news.queue_for_run(routine, str(run_id or ""))
+    except Exception:
+        pass
+
+
 def _notify_front_page(edition, slot, manual=False):
     """Push the notification for a generated edition — 'ready' when the editor
     answered, and what went wrong when it did not.
@@ -2270,6 +2315,7 @@ def _notify_front_page(edition, slot, manual=False):
     real — but it says which part is missing, names the seat, and offers the
     re-run instead of leaving it to be discovered by refreshing localhost.
     """
+    _queue_podcast('front_page', (edition or {}).get("id"))
     if not (_notif_engine and edition):
         return
     try:
@@ -2325,6 +2371,7 @@ def _notify_front_page(edition, slot, manual=False):
 
 def _notify_weekly_digest(digest, manual=False):
     """Push the 'Weekly Digest ready' notification."""
+    _queue_podcast('weekly', (digest or {}).get("id"))
     if not (_notif_engine and digest):
         return
     try:
@@ -2349,6 +2396,7 @@ def _notify_weekly_digest(digest, manual=False):
 
 def _notify_weekly_editorial(ed, manual=False):
     """Push the 'Editorial is in' notification."""
+    _queue_podcast('editorial', (ed or {}).get("id"))
     if not (_notif_engine and ed):
         return
     try:
@@ -2372,6 +2420,7 @@ def _notify_weekly_editorial(ed, manual=False):
 
 def _notify_briefing(date_str, manual=False):
     """Push the 'Daily briefing ready' notification."""
+    _queue_podcast('briefing', date_str)
     if not (_notif_engine and date_str):
         return
     try:
@@ -2428,6 +2477,7 @@ def _list_weekly_digests():
     return out
 
 
+@_local_news('Weekly Digest')
 def _generate_weekly_digest():
     """Synthesize the week's Front Page editions into one digest. Persists to
     ~/.friday/front_pages/weekly/YYYY-WNN.json and returns the digest dict."""
@@ -2578,6 +2628,7 @@ def _editorial_markdown(week_id, when, body, banned, score, regenerated):
     return "\n".join(parts)
 
 
+@_local_news('Weekly Editorial')
 def _generate_weekly_editorial():
     """Write + persist Friday's weekly editorial. Returns the editorial dict.
 

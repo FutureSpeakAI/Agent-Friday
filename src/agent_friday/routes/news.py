@@ -397,13 +397,15 @@ def generate_briefing():
         # like the chat path does — NOT a hard-coded Anthropic call — so the
         # briefing works on whatever provider chat already works on, instead of
         # failing with "ANTHROPIC_API_KEY is not set" on a non-Anthropic setup.
-        content = _generate_text(
-            [{"role": "user", "content": prompt}],
-            system=system,
-            temperature=0.4,
-            orb_label="📅 Daily Briefing",
-            workspace='briefing',
-        )
+        from agent_friday.services.news_engine import local_news_run
+        with local_news_run("Daily Briefing"):
+            content = _generate_text(
+                [{"role": "user", "content": prompt}],
+                system=system,
+                temperature=0.4,
+                orb_label="📅 Daily Briefing",
+                workspace='briefing',
+            )
         if not content or not content.strip():
             return jsonify({"status": "error", "message": "Empty briefing generated"}), 502
 

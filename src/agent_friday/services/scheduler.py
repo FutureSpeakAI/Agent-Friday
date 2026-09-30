@@ -79,10 +79,12 @@ def _cloud_model_for(rec):
     only when that answer is yes. The caller has already established that no
     local seat is serving; a serving local seat always wins.
     """
-    if (rec or {}).get("id") not in LOCAL_ONLY_BY_DEFAULT:
-        return None
     try:
         from agent_friday.services import scheduled_cloud as _sc
+        # Only the jobs the owner was shown when answering: a job added to
+        # LOCAL_ONLY_BY_DEFAULT later is not silently covered by that answer.
+        if (rec or {}).get("id") not in {sid for sid, _ in _sc.JOBS}:
+            return None
         cfg = _sc.settings()
         if not cfg.get("allow"):
             return None
@@ -123,13 +125,20 @@ def _resolve_local_seat():
         # scheduled run uses the same brain the user does.
         try:
             from agent_friday.core import _load_settings
-            cfg = ((_load_settings() or {}).get("capability_routing") or {})
+            _s = _load_settings() or {}
+            cfg = (_s.get("capability_routing") or {})
             preferred = ((cfg.get("reasoning") or {}).get("model") or "").strip()
+            # The owner's configured local model. A llama.cpp seat on its own
+            # port is not in the Ollama daemon's inventory, so without this a
+            # serving seat reads as "no local model" whenever the daemon is off
+            # and the reasoning seat is a cloud model.
+            configured = str(((_s.get("model_routing") or {}).get("local_model") or "")).strip()
         except Exception:
-            preferred = ""
+            preferred = configured = ""
         candidates = []
-        if preferred:
-            candidates.append(preferred)
+        for name in (preferred, configured):
+            if name and name not in candidates:
+                candidates.append(name)
         candidates += [n for n, _ in (local_seats.installed() or [])]
         for name in candidates:
             if not name:
@@ -300,8 +309,8 @@ def delete_schedule(sid) -> bool:
 
 
 # ── Built-in task registration ───────────────────────────────────────────────
-#: Schedules that ship LOCAL-ONLY: daily creation, briefings, news/front page
-#: and the heartbeat default to the local reasoning model to eliminate cost.
+#: Schedules that ship LOCAL-ONLY: daily creation, the briefing, the front page,
+#: the weekly digest, the weekly editorial and the heartbeat default to the local reasoning model to eliminate cost.
 #:
 #: local-only means STRICTLY local: if no local seat is serving, the run is
 #: SKIPPED with a reason rather than quietly sent to a paid provider. Cloud is
@@ -319,6 +328,8 @@ LOCAL_ONLY_BY_DEFAULT = {
     "sch_news_morning",
     "sch_front_page_evening",
     "sch_afternoon_briefing",
+    "sch_weekly_digest",
+    "sch_weekly_editorial",
     "sch_heartbeat",
 }
 
@@ -1481,9 +1492,11 @@ def _afternoon_briefing_job():
         keywords=prompt, workspace="briefing",
         provider=_predict_route_provider(keywords=prompt, workspace="briefing"),
         vault_control=_gated_vault_control())
-    content = _generate_text([{"role": "user", "content": prompt}], system=system,
-                             temperature=0.4, orb_label="☀️ Afternoon Briefing",
-                             workspace="briefing")
+    from agent_friday.services.news_engine import local_news_run
+    with local_news_run("Afternoon Briefing"):
+        content = _generate_text([{"role": "user", "content": prompt}], system=system,
+                                 temperature=0.4, orb_label="☀️ Afternoon Briefing",
+                                 workspace="briefing")
     if not content or not content.strip():
         return {"changed": False, "summary": "empty briefing"}
     date_str = datetime.now().strftime("%Y-%m-%d")
