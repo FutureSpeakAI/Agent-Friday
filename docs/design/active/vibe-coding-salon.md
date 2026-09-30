@@ -1,6 +1,6 @@
 # The salon: Chat and Code in one room, an artifact panel in every chat, and codebases that run in a box
 
-> **Status:** proposed (spec only; nothing in this document is built)
+> **Status:** accepted; the owner decided its three questions on 2026-09-29 (spec only; nothing in this document is built)
 > **Last verified:** 2026-09-29 against main `780e31fa`
 > **Implementation:** none yet. Builds on:
 > - `index.html`: `ChatSurface`, `ChatSidebar`, `CodeWS` and its `CODE_TABS`
@@ -153,19 +153,17 @@ authoritative.
 | **Speed** | Small edits take seconds. Big changes are slow, because your 12 GB card is mostly held by the brain. | Big changes are fast. The preview updates in about a second whichever path does the work. |
 | **Effort** | About **12 agent-weeks** (about 60 agent-days) across eight phases and three short spikes (§10), each shippable alone. The artifact panel ships first, in about 1.5 weeks. | Same. |
 
-**Three decisions for you** (§12 has the reasoning):
+**Decided by the owner (2026-09-29).** All three went as recommended
+(§12 has the reasoning):
 
-1. **What the box does before you've said anything.** Recommended: installs
+1. **What the box does before you've said anything: "announce".** Installs
    and reading from the internet go ahead and are announced. Anything that
    sends or changes something outside the box asks first, as everywhere else
-   in Friday. The alternative is the OpenShell default, "nothing goes out
-   until allowed".
-2. **Whether Friday may edit her own safety checkpoint and signed laws in the
-   salon.** Recommended: yes, but only with the loud approval of §7.4, and
-   only through the copy. The alternative is "never in the salon; you merge
-   those changes by hand".
-3. **Whether someone else's key may live in your Friday.** Recommended: yes,
-   bound to one codebase, metered separately and removable in one click.
+   in Friday. "Ask me first" stays available as an owner rule.
+2. **Friday may edit her own safety checkpoint and signed laws in the
+   salon**, only with the loud approval of §7.4, and only through the copy.
+3. **Someone else's key may live in your Friday**, bound to one codebase,
+   metered separately and removable in one click.
 
 ---
 
@@ -803,7 +801,7 @@ x-friday:                    # dropped by the OpenShell translator
   default_posture: announce  # decision 1: announce | ask
 ```
 
-**What happens with no rule** depends on decision 1. Under the recommended
+**What happens with no rule** depends on decision 1. Under the decided
 `announce` posture:
 
 | Request | Answers which question | Default |
@@ -1268,7 +1266,7 @@ sandbox the authoring loop and gate the join."**
 - the salon proxy, the policy floor (§4.5) and `apply_growth` itself;
 - everything in `grow-button.md` §7.5's untouchable set.
 
-**What makes it loud.** Under the recommended answer to decision 2:
+**What makes it loud** (decision 2):
 
 - **A separate card, never merged with the ordinary swap card**, listing
   each protected file and a plain-language line on what changes in it.
@@ -1288,9 +1286,8 @@ sandbox the authoring loop and gate the join."**
 `egress_gate.py` and `proof_of_integrity.py` join the protected list, so that
 `/api/code/apply` refuses them too.
 
-If the owner picks the alternative answer to decision 2, these paths are
-simply refused in the salon. The card says "this needs a hand merge", and
-Friday writes the patch file and opens it on screen.
+The rejected alternative, kept for reference: refuse these paths in the
+salon and hand the owner a patch file to merge by hand.
 
 ---
 
@@ -1563,10 +1560,11 @@ dollar figure.
 - the cross-site fix is a prerequisite;
 - ratings per the owner's 2026-09-22 decision.
 
-**For the owner (at most three):**
+**Decided by the owner (2026-09-29), each as recommended below.** The
+reasoning is kept so the decision can be revisited on evidence.
 
 1. **The box's default posture before you've said anything.**
-   *Recommended: "announce".* Reads and installs go ahead and are announced;
+   *Decided: "announce".* Reads and installs go ahead and are announced;
    writes to outside hosts and private-data sends ask, as they already do
    everywhere in Friday.
    - This follows your "no restrictions unless the user explicitly sets
@@ -1578,14 +1576,14 @@ dollar figure.
    - The alternative, "ask", is OpenShell's default. It is safer and noisier.
    - Either way, "ask me before X" is always available as an owner rule.
 2. **Self-editing her checkpoint and laws in the salon.**
-   *Recommended: allowed, only with the loud approval of §7.4.* That means a
+   *Decided: allowed, only with the loud approval of §7.4.* That means a
    separate card, no grant can answer it, a fresh challenge word, and a
    signed notice.
    - The alternative is "never in the salon, hand-merge only". It is simpler
      and stricter, and it means Friday can never fix her own gate even when
      you ask her to.
 3. **Someone else's key in your Friday.**
-   *Recommended: yes, bound to one codebase.* It is metered separately,
+   *Decided: yes, bound to one codebase.* It is metered separately,
    Friday never uses it elsewhere, and it is deleted in one click.
    - The cost: Friday holds a secret that isn't yours. It is encrypted like
      yours, never enters the box, and its owner can ask you to remove it.
