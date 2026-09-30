@@ -11,6 +11,37 @@ from agent_friday.services.model_router import TOOLCALL_FABRICATION_FAILURE_MESS
 
 
 class TestChatIntegrityWiring:
+    def test_local_retry_keeps_the_catalogue_available(self, client, monkeypatch,
+                                                     patch_app):
+        from agent_friday.routing.model_router import ModelRouter
+        from agent_friday.services import tool_catalogue
+
+        patch_app("_build_memory_context_block", lambda *a, **k: "")
+        patch_app("_index_chat_turn", lambda *a, **k: None)
+        monkeypatch.setattr(ModelRouter, "route", lambda *a, **k: {
+            "provider": "local", "model": "test-local-model", "is_local": True,
+            "vault_allowed": True, "vault_access": False, "scrub_pii": False,
+            "refuse": False, "warning": None,
+        })
+        monkeypatch.setattr(tool_catalogue, "enabled", lambda: True)
+        calls = []
+
+        def local_dispatch(messages, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return "[query_calendar] shows an appointment.", []
+            return "No calendar search was performed.", []
+
+        monkeypatch.setattr(chat_mod, "_call_ollama", local_dispatch)
+        response = client.post("/api/chat", json={"message": "Check my calendar"})
+        assert response.status_code == 200
+        assert len(calls) == 2
+        assert calls[0].get("catalogue_all")
+        assert calls[1].get("catalogue_all") is calls[0]["catalogue_all"]
+        loaded, message = tool_catalogue.expand(
+            calls[1]["catalogue_all"], ["query_calendar"], calls[1]["tools"])
+        assert loaded and "Loaded: query_calendar" in message
+
     def test_clean_reply_passes_through_unmodified(self, client):
         # Default stub (CANNED_TEXT) never contains a registry tool name.
         resp = client.post("/api/chat", json={"message": "hello"})

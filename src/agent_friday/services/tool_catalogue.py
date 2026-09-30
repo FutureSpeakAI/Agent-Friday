@@ -47,7 +47,10 @@ LOADER_NAME = "load_tools"
 #: on a local 27B is measured in tens of seconds. The handful of tools that
 #: almost every turn reaches for should not pay it. Kept deliberately short -
 #: every name here is ~200 tokens of permanent rent.
-ALWAYS_RESIDENT = ("search_web", "read_file", "search_files")
+# Local knowledge is as fundamental as public retrieval. Keep its read tools
+# callable without requiring a discovery round before a wiki or graph request.
+ALWAYS_RESIDENT = ("search_web", "read_file", "search_files",
+                   "search_wiki", "read_wiki", "knowledge_query")
 
 
 #: ON by default, because the risk is understood rather than assumed.
@@ -185,14 +188,14 @@ def expand(all_tools: list, names, already: list) -> tuple:
     return new, " ".join(bits)
 
 
-def savings(tools: list) -> dict:
+def savings(tools: list, opening=None) -> dict:
     """What this costs and saves, in tokens. For the harness and the logs."""
     def toks(o):
         s = o if isinstance(o, str) else json.dumps(o, default=str)
         return int(len(s) / 3.9)
 
     full = toks(tools)
-    opening = toks(opening_set(tools))
+    opening = toks(opening_set(tools) if opening is None else opening)
     return {
         "tools": len(tools or []),
         "full_tokens": full,

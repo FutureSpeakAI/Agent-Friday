@@ -1795,6 +1795,7 @@ def chat():
                     _retry_messages, system=system_prompt, model=_route_info['model'],
                     temperature=settings.get('temperature'),
                     orb_label=f"🏠 {_orb_label}", orb_icon='🏠',
+                    catalogue_all=_catalogue_all,
                     tools=_local_tools, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                 )
             if _provider == 'openai':

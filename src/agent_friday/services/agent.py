@@ -334,7 +334,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         if _TCat.enabled() and CLAUDE_TOOLS:
             _open = _TCat.opening_set(CLAUDE_TOOLS)
             try:
-                _s = _TCat.savings(CLAUDE_TOOLS)
+                _s = _TCat.savings(CLAUDE_TOOLS, opening=_open)
                 print("  [tools] catalogue on: %d tools -> %d opening tokens "
                       "(saved %d, %.0f%%)"
                       % (_s["tools"], _s["opening_tokens"],
