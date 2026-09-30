@@ -5,7 +5,9 @@ What it enforces:
 
 1. The `--fr-*` token block in `index.html` and `ui_parts/head.html`
    (delimited by `brand-tokens:begin` / `brand-tokens:end`) is byte-identical
-   to `brand.css_root_block()`. `--write` regenerates it in both files.
+   to `brand.css_root_block()`, and the product-name block
+   (`brand-names:begin` / `brand-names:end`, `window.FRIDAY_BRAND`) to
+   `brand.js_names_block()`. `--write` regenerates both in both files.
 2. The Python modules that keep a colour table (connector states,
    notification priorities, push-to-talk states, account palette, Studio
    showcase) hold no raw brand or status hex; they import `agent_friday.brand`.
@@ -83,31 +85,37 @@ def load_brand(root: Path):
     return mod
 
 
-def block_span(text: str, brand):
-    """(start, end) of the marked token block, or None."""
-    begin = text.find(f"/* {brand.BEGIN_MARKER}")
-    end_marker = f"/* {brand.END_MARKER} */"
+def block_span(text: str, brand, begin_marker: str = "", end_marker: str = ""):
+    """(start, end) of a marked generated block (the token block by default), or None."""
+    begin = text.find(f"/* {begin_marker or brand.BEGIN_MARKER}")
+    end_marker = f"/* {end_marker or brand.END_MARKER} */"
     end = text.find(end_marker)
     if begin < 0 or end < begin:
         return None
     return begin, end + len(end_marker)
 
 
+def _generated(brand):
+    """(what, begin marker, end marker, the text it must be) for each generated block."""
+    return (("token", brand.BEGIN_MARKER, brand.END_MARKER, brand.css_root_block()),
+            ("names", brand.NAMES_BEGIN_MARKER, brand.NAMES_END_MARKER, brand.js_names_block()))
+
+
 def _token_problems(root: Path, brand) -> list:
     problems = []
-    want = brand.css_root_block()
     for rel in UI_FILES:
         path = root / rel
         if not path.is_file():
             problems.append(f"{rel}: file is missing")
             continue
         text = path.read_text(encoding="utf-8")
-        span = block_span(text, brand)
-        if span is None:
-            problems.append(f"{rel}: no brand token block ({brand.BEGIN_MARKER} ... {brand.END_MARKER})")
-        elif text[span[0]:span[1]] != want:
-            problems.append(f"{rel}: the token block differs from brand.css_root_block() "
-                            "(run scripts/check_brand_tokens.py --write)")
+        for what, begin, end, want in _generated(brand):
+            span = block_span(text, brand, begin, end)
+            if span is None:
+                problems.append(f"{rel}: no brand {what} block ({begin} ... {end})")
+            elif text[span[0]:span[1]] != want:
+                problems.append(f"{rel}: the {what} block differs from brand.py "
+                                "(run scripts/check_brand_tokens.py --write)")
     for name, value in RESERVED_PINS.items():
         if getattr(brand, name).lower() != value:
             problems.append(f"brand.py: {name} is {getattr(brand, name)}; the shipped reserved value is {value}")
@@ -121,10 +129,11 @@ def write_blocks(root: Path = REPO_ROOT) -> list:
     for rel in UI_FILES:
         path = root / rel
         text = path.read_text(encoding="utf-8")
-        span = block_span(text, brand)
-        if span is None:
-            continue
-        new = text[:span[0]] + brand.css_root_block() + text[span[1]:]
+        new = text
+        for _what, begin, end, want in _generated(brand):
+            span = block_span(new, brand, begin, end)
+            if span is not None:
+                new = new[:span[0]] + want + new[span[1]:]
         if new != text:
             path.write_bytes(new.encode("utf-8"))
             changed.append(rel)

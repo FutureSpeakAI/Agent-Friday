@@ -22,11 +22,18 @@ Rules that live here because they are about meaning, not looks:
   Violet is the colour of work in progress.
 * FutureSpeak amber is an accent only inside the "FutureSpeak.AI" wordmark.
   It shares its value with WARN, so anywhere else amber reads as "needs you".
+* The product is Agent Friday(TM) wherever the brand shows. Her own name is the
+  one the user chose (settings `agent_name`) and belongs to conversation. The
+  mark is added to text as it is displayed (`tm`), never to what is stored, what
+  a model reads or what is spoken (`spoken` takes it back off for audio).
 
 Stdlib only, no imports from the rest of the package, so build tooling can
 load this file directly.
 """
 from __future__ import annotations
+
+import json
+import re
 
 # -- identity ----------------------------------------------------------------
 CYAN = "#00d4ff"
@@ -134,8 +141,54 @@ TOKENS = {
     "--fr-track-label": "0.15em",
 }
 
+# -- names -------------------------------------------------------------------
+#: The product as audio and models get it. It is never shown: shown text uses
+#: PRODUCT_NAME, which carries the trademark sign.
+PRODUCT = "Agent Friday"
+TRADEMARK = "\u2122"
+PRODUCT_NAME = PRODUCT + TRADEMARK
+MAKER = "FutureSpeak.AI"
+#: The wordmark: the tray tooltip, the top bar, the About card.
+PRODUCT_LOCKUP = f"{PRODUCT_NAME} by {MAKER}"
+#: The mark on pages Friday publishes and on exports.
+MADE_WITH = f"Made with {PRODUCT_NAME}"
+
+#: Fenced code blocks and inline code: display text inside them is left as it is.
+_CODE = re.compile(r"(```[\s\S]*?(?:```|$)|`[^`\n]*`)")
+#: The product's words, not an identifier or an address (agent_friday,
+#: agent-friday), and not already marked.
+_PRODUCT_WORDS = re.compile(
+    r"(?<![\w-])(agent[ \t\u00a0]+friday)(?![\w-])(?![ \t]*(?:\u2122|\u00ae|\((?:tm|r)\)))",
+    re.IGNORECASE)
+_SPOKEN_MARK = re.compile(r"[ \t]*\u2122|(?<=friday)[ \t]*\(tm\)", re.IGNORECASE)
+
+
+def tm(text: str) -> str:
+    """`text` as it is displayed: "Agent Friday" gains its trademark sign.
+
+    Idempotent (a marked name is left alone, as are the (R) and (TM) forms),
+    and code, fenced or inline, is not touched. For display only: stored text,
+    text a model reads and text that is spoken stay plain.
+    """
+    text = "" if text is None else str(text)
+    if "friday" not in text.lower():
+        return text
+    parts = _CODE.split(text)
+    return "".join(p if i % 2 else _PRODUCT_WORDS.sub(lambda m: m.group(1) + TRADEMARK, p)
+                   for i, p in enumerate(parts))
+
+
+def spoken(text: str) -> str:
+    """`text` as it is spoken: the trademark sign comes off, so the product is
+    said "Agent Friday" and never "Agent Friday T M"."""
+    text = "" if text is None else str(text)
+    return _SPOKEN_MARK.sub("", text) if ("\u2122" in text or "(" in text) else text
+
+
 BEGIN_MARKER = "brand-tokens:begin"
 END_MARKER = "brand-tokens:end"
+NAMES_BEGIN_MARKER = "brand-names:begin"
+NAMES_END_MARKER = "brand-names:end"
 
 
 def css_root_block() -> str:
@@ -146,4 +199,24 @@ def css_root_block() -> str:
     return "\n".join(lines)
 
 
-__all__ = [n for n in dir() if n.isupper()] + ["css_root_block"]
+#: What the page reads the names from (window.FRIDAY_BRAND).
+PAGE_NAMES = {
+    "product": PRODUCT,
+    "name": PRODUCT_NAME,
+    "maker": MAKER,
+    "lockup": PRODUCT_LOCKUP,
+    "madeWith": MADE_WITH,
+    "mark": TRADEMARK,
+}
+
+
+def js_names_block() -> str:
+    """The exact text of the names block the UI files carry."""
+    return "\n".join([
+        f"/* {NAMES_BEGIN_MARKER} (generated from src/agent_friday/brand.py) */",
+        "window.FRIDAY_BRAND = " + json.dumps(PAGE_NAMES, ensure_ascii=True) + ";",
+        f"/* {NAMES_END_MARKER} */",
+    ])
+
+
+__all__ = [n for n in dir() if n.isupper()] + ["css_root_block", "js_names_block", "tm", "spoken"]

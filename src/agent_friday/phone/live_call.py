@@ -254,7 +254,8 @@ class CallBridge:
             self.ws.send(json.dumps(msg))
 
     def say(self, text: str) -> None:
-        text = (text or "").strip()
+        from agent_friday import brand
+        text = brand.spoken((text or "").strip())
         if not text:
             return
         pcm24 = self.engine.synthesize(text)

@@ -23,6 +23,7 @@ from pathlib import Path
 import pystray
 from PIL import Image
 
+from agent_friday import brand
 from agent_friday.paths import clear_server_port, friday_home, server_port
 
 # No console windows from anything this process spawns. The tray outlives the
@@ -88,7 +89,7 @@ def _meetings_status_url() -> str:
     return _server_url() + "/api/meetings/status"
 
 
-TRAY_TITLE = "Agent Friday by FutureSpeak.AI"
+TRAY_TITLE = brand.PRODUCT_LOCKUP
 
 
 # Real cold start measured at ~143s (wiki merge, model discovery, embedding
@@ -452,7 +453,7 @@ class FridayTray:
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
-            pystray.MenuItem("Open Friday Desktop", self._open_ui, default=True),
+            pystray.MenuItem("Open " + brand.PRODUCT_NAME, self._open_ui, default=True),
             pystray.MenuItem("Restart Server", self._restart),
             pystray.MenuItem("Voice Debug Log", self._open_voice_log),
             pystray.MenuItem(self._status_label, None, enabled=False),
@@ -510,7 +511,7 @@ class FridayTray:
                             "It has NOT been restarted automatically — "
                             "open the tray menu to restart it, or check "
                             "%s for what happened." % SERVER_STDERR_LOG,
-                            "Friday Desktop",
+                            brand.PRODUCT_NAME,
                         )
                     except Exception:
                         pass
@@ -533,7 +534,7 @@ class FridayTray:
             threading.Thread(target=self.restart_server, daemon=True).start()
         if self.icon is not None:
             try:
-                self.icon.notify(msg, "Friday Desktop")
+                self.icon.notify(msg, brand.PRODUCT_NAME)
             except Exception:
                 pass
 
@@ -624,7 +625,7 @@ class FridayTray:
     def _notify(self, message: str) -> None:
         if self.icon is not None:
             try:
-                self.icon.notify(message, "Friday Desktop")
+                self.icon.notify(message, brand.PRODUCT_NAME)
             except Exception:
                 pass
 

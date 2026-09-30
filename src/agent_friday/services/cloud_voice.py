@@ -675,6 +675,8 @@ def synthesize(text: str, *, provider: str | None = None,
     provider, never quietly downgrades a model, and never returns audio from a
     provider other than the one named in the result.
     """
+    from agent_friday import brand
+    text = brand.spoken(text)
     s = settings if settings is not None else _settings()
     name = provider or resolve_provider(s)
     if not name:

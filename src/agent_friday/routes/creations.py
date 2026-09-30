@@ -27,6 +27,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday import brand
 from agent_friday.paths import contained, safe_name
 from agent_friday.core import (
     CREATIONS_DIR,
@@ -137,8 +138,8 @@ def serve_creation(filename):
 def serve_creation_framed(filename):
     """Branded full-page view of a creation, for when the user clicks
     "Open in Tab". Wraps the raw creation (served at /api/creations/<file>) in a
-    Friday-branded header with a "Return to Friday Desktop" link so a creation
-    opened in a standalone Chrome tab still reads as part of the product."""
+    branded header with a link back to the desktop, so a creation opened in a
+    standalone Chrome tab still reads as part of the product."""
     try:
         _sync_daily_creation_files()
     except Exception:
@@ -196,7 +197,7 @@ def serve_creation_framed(filename):
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · Friday Desktop</title>
+<title>{title} · {brand.PRODUCT_NAME}</title>
 <style>
   :root{{--cyan:#00d4ff;--bg:#05060c;--panel:#0a0d18;}}
   *{{box-sizing:border-box;}}
@@ -244,9 +245,9 @@ def serve_creation_framed(filename):
 </style></head>
 <body>
   <div class="fc-bar">
-    <div class="fc-brand"><span class="fc-logo"></span>FRIDAY DESKTOP
+    <div class="fc-brand"><span class="fc-logo"></span>{brand.PRODUCT_NAME}
       <span class="fc-sub">· Creation · {title}</span></div>
-    <a class="fc-return" href="{home_url}">← Return to Friday Desktop</a>
+    <a class="fc-return" href="{home_url}">← Back to {brand.PRODUCT_NAME}</a>
   </div>
   <div class="fc-body">{body}</div>
 </body></html>"""

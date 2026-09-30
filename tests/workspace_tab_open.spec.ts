@@ -58,7 +58,7 @@ if (-not $p) { '[]'; exit }
 ConvertTo-Json -Compress @([FridayFrontTab]::Titles([uint32]$p.ProcessId))`;
   const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8' }).trim();
   const titles: string[] = JSON.parse(out || '[]');
-  // "News · Agent Friday and 2 more pages - Profile 1 - Microsoft Edge" -> "News · Agent Friday"
+  // "News · Agent Friday™ and 2 more pages - Profile 1 - Microsoft Edge" -> "News · Agent Friday™"
   return titles.map(t => t.replace(/ - Profile \d+ - Microsoft.*$| - Microsoft.*$/, '').replace(/ and \d+ more pages?$/, ''));
 }
 
@@ -138,7 +138,7 @@ async function openWindow(page: Page, id: string) {
 
 /** The workspace the first test moved into a tab (whichever has enough in it
  *  to scroll in the Friday home under test). */
-let moved = { id: 'contacts', title: 'Contacts · Agent Friday' };
+let moved = { id: 'contacts', title: 'Contacts · Agent Friday™' };
 
 const scrollRange = (win: ReturnType<Page['locator']>) => win.locator('.fwin-body').evaluate(el => {
   const sc = (window as any).fridayMainScroller(el);
@@ -157,7 +157,7 @@ test('one click: the tab opens where the window was, the window folds away, the 
     if (range > 200) {
       win = w;
       const label = await page.evaluate(x => WS.find((w: any) => w.id === x).label, id);
-      moved = { id, title: label + ' · Agent Friday' };
+      moved = { id, title: label + ' · Agent Friday™' };
       break;
     }
     await w.locator('.fwin-btns button').last().click();        // close it and try the next
@@ -242,7 +242,7 @@ test('on localhost, the tab opens on Friday\'s own proven address', async () => 
   // served through Friday's own TLS listener on the test port
   await tab.waitForSelector('[data-standalone="news"] .ws-tab-body > *', { timeout: 90000 });
   await expect(page.locator('.fwin:has([data-ws-tab="news"])')).toHaveCount(0);
-  await expectFront(profile, 'News · Agent Friday');
+  await expectFront(profile, 'News · Agent Friday™');
   // the tab on the named address is still found by name from localhost
   await page.bringToFront();
   const before = ctx.pages().length;
@@ -250,5 +250,5 @@ test('on localhost, the tab opens on Friday\'s own proven address', async () => 
   await again.locator('[data-ws-tab="news"]').click();
   await page.waitForTimeout(1500);
   expect(ctx.pages().length).toBe(before);
-  await expectFront(profile, 'News · Agent Friday');
+  await expectFront(profile, 'News · Agent Friday™');
 });

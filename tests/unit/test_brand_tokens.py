@@ -255,7 +255,8 @@ def test_brand_md_documents_every_token_and_the_rules(brand):
         assert f"`{name}`" in doc, f"{name} is not documented"
     assert "positrons" in doc.lower() and "negatrons" in doc.lower()
     for phrase in ("Proof of Integrity", "Asimov's cLaws",
-                   "Asimov's Mind", "FutureSpeak.AI", "DOCK_GROUPS", "## Consolidations",
+                   "Asimov's Mind", "FutureSpeak.AI", "workspace_registry.js", "## The name",
+                   "Agent Friday™", "brand.spoken", "## Consolidations",
                    "## Known debt", "## Audio identity", "not yet made"):
         assert phrase in doc, phrase
     assert re.search(r"failure is error red", doc, re.I)

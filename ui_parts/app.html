@@ -655,6 +655,35 @@ function notifTargetLabel(t){
 // Friday's UI. Prefers marked.js (loaded via CDN in head.html) and falls back
 // to a tiny regex parser if marked isn't ready yet. Output is always wrapped
 // in .friday-doc so the holographic CSS in head.html takes over.
+// ═══ THE PRODUCT'S NAME ═══
+// Brand surfaces name the product, Agent Friday™; conversation uses her own
+// name (settings.agent_name). The names come from window.FRIDAY_BRAND, which
+// is generated from src/agent_friday/brand.py (docs/brand/BRAND.md).
+/* fridayTM:begin */
+const FRIDAY_TM_CODE = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/;
+const FRIDAY_TM_WORDS = /(^|[^\p{L}\p{N}_-])(agent[ \t\u00a0]+friday)(?![\p{L}\p{N}_-])(?![ \t]*(?:\u2122|\u00ae|\((?:tm|r)\)))/giu;
+// Text as it is shown: "Agent Friday" gains its trademark sign, once, and
+// code is left alone. Display only: what is stored, read by a model or spoken
+// stays plain. brand.tm is the same rule in Python.
+function fridayTM(text) {
+  if (typeof text !== 'string' || !/friday/i.test(text)) return text;
+  return text.split(FRIDAY_TM_CODE).map((part, i) => i % 2 ? part : part.replace(FRIDAY_TM_WORDS, (m, pre, name) => pre + name + '\u2122')).join('');
+}
+/* fridayTM:end */
+window.fridayTM = fridayTM;
+// The wordmark, AGENT FRIDAY™ by FutureSpeak.AI: one definition for the top
+// bar, the start screen and the About card. `size` is the cap size in px; the
+// name opens `href`, or runs `onClick`.
+function FridayLockup({size=15,onClick,href,title}){
+  const b=window.FRIDAY_BRAND;
+  const name=[b.product.toUpperCase(),<span key="tm" className="fr-lockup-tm">{b.mark}</span>];
+  const nameProps={className:'fr-lockup-name'+(href||onClick?'':' fr-lockup-static'),title:title,style:{fontSize:size}};
+  return(<span className="fr-lockup" data-testid="friday-lockup">
+    {href?<a href={href} {...nameProps}>{name}</a>:onClick?<button type="button" onClick={onClick} {...nameProps}>{name}</button>:<span {...nameProps}>{name}</span>}
+    <span className="fr-lockup-by" style={{fontSize:Math.round(size*0.85)}}>by</span>
+    <a className="fr-lockup-maker" href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer" style={{fontSize:size}}>{b.maker}</a>
+  </span>);
+}
 // Friday's own transient notice. The implementation lives in index.html (the
 // served, authoritative UI); this mirror calls through to it. Raw browser
 // fridayToast() is not used anywhere: it is a modal the app cannot style, queue or
@@ -1063,8 +1092,8 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
             <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(123,97,255,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb',whiteSpace:m.role==='friday'&&m.via!=='voice'?undefined:'pre-wrap',minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>
               {m.role==='friday'&&m.trace_id?<ChatReasoning traceId={m.trace_id} streaming={!!m.streaming} sources={m.reasoning_sources}/>:null}
               {m.role==='friday'&&m.via!=='voice'
-                ?<div dangerouslySetInnerHTML={{__html:renderFridayMarkdown(m.text||'',{compact:true})}}/>
-                :m.text}
+                ?<div dangerouslySetInnerHTML={{__html:renderFridayMarkdown(fridayTM(m.text||''),{compact:true})}}/>
+                :m.role==='friday'?fridayTM(m.text):m.text}
             </div>
             {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>}
           </div>
@@ -1273,7 +1302,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
     </div>{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
       {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
       {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
-      {cust.note&&<div style={{background:'rgba(255,84,112,0.08)',border:'1px solid rgba(255,84,112,0.25)',borderRadius:8,padding:'7px 10px',marginBottom:10,fontSize:12,color:'#ffd0d8',display:'flex',gap:8,alignItems:'flex-start'}}><span style={{flexShrink:0}}>🛠️</span><div style={{flex:1,minWidth:0}}><FridayDoc text={cust.note} style={{margin:0}}/></div><button aria-label="Ask Friday to remove this note" onClick={()=>openWsChat('remove the pinned note')} title="Ask Friday to remove this note" style={{background:'none',border:'none',color:'#ff8aa0',cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button></div>}
+      {cust.note&&<div style={{background:'rgba(255,84,112,0.08)',border:'1px solid rgba(255,84,112,0.25)',borderRadius:8,padding:'7px 10px',marginBottom:10,fontSize:12,color:'#ffd0d8',display:'flex',gap:8,alignItems:'flex-start'}}><span style={{flexShrink:0}}>🛠️</span><div style={{flex:1,minWidth:0}}><FridayDoc text={fridayTM(cust.note)} style={{margin:0}}/></div><button aria-label="Ask Friday to remove this note" onClick={()=>openWsChat('remove the pinned note')} title="Ask Friday to remove this note" style={{background:'none',border:'none',color:'#ff8aa0',cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button></div>}
       {cust.actions&&cust.actions.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>{cust.actions.map((a,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>openWsChat(a.prompt)}>{a.label}</button>)}</div>}
       {children}
     </div></div>
@@ -1352,7 +1381,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
       </div>}
       {msgs.map((m,i)=>(<div key={i} style={{marginBottom:10,display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
         <div style={{maxWidth:'90%',padding:'7px 11px',borderRadius:10,fontSize:12.5,lineHeight:1.5,background:m.role==='user'?'rgba(0,212,255,0.12)':'rgba(255,255,255,0.05)',border:m.role==='user'?'1px solid rgba(0,212,255,0.22)':'1px solid rgba(255,255,255,0.07)',color:'#dde'}}>
-          {m.role==='user'?m.text:<FridayDoc text={m.text} compact style={{margin:0}}/>}
+          {m.role==='user'?m.text:<FridayDoc text={fridayTM(m.text)} compact style={{margin:0}}/>}
         </div>
         {m.applied&&m.revert_to&&<div style={{display:'flex',alignItems:'center',gap:6,marginTop:4,fontSize:10.5,color:'#9aa'}}>
           <span style={{color:'#00ff80'}}>✨ Applied{m.change?' · '+m.change:''}</span>
@@ -9497,7 +9526,7 @@ function buildDraftHtml(text,mode,promptText){
   return fridayFrameScrollbars([
     '<!DOCTYPE html><html lang="en"><head>',
     '<meta charset="UTF-8">',
-    `<title>FRIDAY DRAFT — ${esc(label)}</title>`,
+    `<title>${esc(label)} · Draft · ${esc(window.FRIDAY_BRAND.name)}</title>`,
     '<link href="/static/fonts/fonts.css" rel="stylesheet">',
     '<style>',
     '* { margin: 0; padding: 0; box-sizing: border-box; }',
@@ -9514,12 +9543,12 @@ function buildDraftHtml(text,mode,promptText){
     ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }",
     '</style></head><body>',
     '<div class="container">',
-    '  <div class="header"><h1>FRIDAY DRAFT</h1><div class="neon-line"></div>',
+    '  <div class="header"><h1>' + esc(window.FRIDAY_BRAND.name.toUpperCase()) + ' DRAFT</h1><div class="neon-line"></div>',
     `  <div class="subtitle">${esc(label)}</div><div class="date">${esc(now)}</div></div>`,
     promptText?`  <div class="prompt-ctx">Prompt: ${esc((promptText||'').substring(0,200))}</div>`:'',
     `  <div class="mode-tag">${esc(label.toUpperCase())}</div>`,
     `  <div class="draft-body">\n    ${paraHtml}\n  </div>`,
-    '  <div class="footer">Generated by FRIDAY · FutureSpeak.AI</div>',
+    '  <div class="footer">' + esc(window.FRIDAY_BRAND.madeWith) + '</div>',
     '</div></body></html>',
   ].join('\n'));
 }
@@ -13861,7 +13890,7 @@ function SetupBasicsCard({ initial, onDone, busy }) {
       {desc && <div className="sc-option-desc">{desc}</div>}
     </div>
   );
-  const list = distros.length ? distros : [{ name: 'default', description: 'Standard Agent Friday, balanced for general use' }];
+  const list = distros.length ? distros : [{ name: 'default', description: 'Standard Agent Friday\u2122, balanced for general use' }];
   return (
     <div className="sc-card">
       <h2 tabIndex={-1} data-sc-focus="">The basics</h2>
@@ -14667,8 +14696,8 @@ function LocalAddressSettings() {
         answers ? h('a', { className: 'la-addr', href: goal + '/', target: '_blank', rel: 'noopener' }, goal.replace(/^https?:\/\//, '')) : h('span', { className: 'la-addr' }, host),
         h('span', { className: 'la-pill ' + (secure ? 'ok' : answers ? 'warn' : 'off') }, secure ? 'Secure' : answers ? 'Not secure yet' : 'Not set up')),
       h('div', { className: 'la-sub' },
-        st.source === 'custom' ? 'Chosen here. ' : 'From the agent’s name, ' + (st.agent_name || 'AGENT FRIDAY') + '. ',
-        'Workspace tabs and the tray’s “Open Friday Desktop” use this address once it works; until then they stay on localhost.'),
+        st.source === 'custom' ? 'Chosen here. ' : 'From the agent’s name, ' + (st.agent_name || 'AGENT FRIDAY') + '. ', /* brand: plain (her default name) */
+        'Workspace tabs and the tray’s “Open ' + window.FRIDAY_BRAND.name + '” use this address once it works; until then they stay on localhost.'),
       st.note && h('div', { className: 'la-warn' }, st.note),
       h(Line, { ok: st.resolves, label: 'This PC knows the name' },
         st.resolves ? host + ' points to this PC.' : 'Not yet. Windows needs one line in its hosts file pointing ' + host + ' at this PC.',
@@ -17431,10 +17460,9 @@ function SettingsTabAbout(){
   },[]);
   const fmtUp=sec=>{if(!sec)return'—';const hh=Math.floor(sec/3600),mm=Math.floor((sec%3600)/60);return hh>0?`${hh}h ${mm}m`:`${mm}m`;};
   return <div>
-    <div style={{textAlign:'center',padding:'24px 16px 20px',background:'linear-gradient(135deg,rgba(245,158,11,0.05),rgba(0,212,255,0.03))',borderRadius:10,border:'1px solid rgba(245,158,11,0.1)',marginBottom:24}}>
-      <div className="st-brand" style={{fontFamily:'Orbitron, sans-serif',fontSize:22,color:'#f59e0b',letterSpacing:'.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 20px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
+    <div style={{textAlign:'center',padding:'24px 16px 20px',background:'var(--fr-glass)',borderRadius:10,border:'1px solid var(--fr-glass-edge)',marginBottom:24}}>
+      <div style={{marginBottom:10}}><FridayLockup size={20}/></div>
       <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>{'v'+(h?.version||'5.0.0')} · Desktop OS · Sovereign AI</div>
-      <div className="st-brand" style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff',letterSpacing:'.2em'}}>BY FUTURESPEAK.AI</div>
     </div>
     <StSection title="System">
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
@@ -19133,8 +19161,6 @@ function ApprovalPopups() {
   </div>);
 }
 function StandaloneShell({ws,children}){
-  // The desktop's wordmark shows the agent's own name when it has been renamed.
-  const[agentName,setAgentName]=useState('AGENT FRIDAY');
   // Moving the same workspace here again from the desktop finds this tab by
   // name and says where the window was, rather than reloading it. Only the
   // desktop that opened this tab is heard.
@@ -19143,11 +19169,10 @@ function StandaloneShell({ws,children}){
     fridayNavigate(t);if(frac>=0)fridayRestoreTabScroll(frac)};
     window.addEventListener('message',onMsg);return()=>window.removeEventListener('message',onMsg)},[ws.id]);
   useEffect(()=>{const frac=window.__fridayTabScroll;delete window.__fridayTabScroll;if(frac>0)return fridayRestoreTabScroll(frac)},[]);
-  useEffect(()=>{fetch('/api/settings').then(r=>r.json()).then(d=>{const n=((d&&(d.settings||d))||{}).agent_name;if(n)setAgentName(n)}).catch(()=>{})},[]);
   useEffect(()=>{
-    // A tab opened for one item names it first: "Q3 plan · Messages · Agent Friday".
+    // A tab opened for one item names it first: "Q3 plan · Messages · Agent Friday™".
     let item='';try{const q=new URLSearchParams(window.location.search);item=q.get('subject')||q.get('title')||q.get('creation')||q.get('file')||''}catch(e){}
-    document.title=(item?item.slice(0,80)+' · ':'')+ws.label+' · Agent Friday';
+    document.title=(item?item.slice(0,80)+' · ':'')+ws.label+' · '+window.FRIDAY_BRAND.name;
     const iconUrl='/assets/icons/'+(ws.icon||ws.id)+'.svg';
     const emojiIcon='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">'+(ws.ico||'▣')+'</text></svg>');
     document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l=>l.parentNode.removeChild(l));
@@ -19156,7 +19181,7 @@ function StandaloneShell({ws,children}){
   const maxedTab=(()=>{try{const m=new URLSearchParams(window.location.search).get('max');return!!m&&m!=='0'}catch(e){return false}})();
   return(<div className={'ws-tab'+(maxedTab?' ws-max':'')} data-standalone={ws.id}>
     <header className="ws-tab-head">
-      <div className="ws-tab-brand"><a className="ws-tab-mark" href="/" title="Back to the Friday desktop">{agentName}</a><span className="ws-tab-by">by</span><a className="ws-tab-fs" href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer">FutureSpeak.AI</a></div>
+      <FridayLockup size={15} href="/" title="Back to the desktop"/>
       <span className="ws-tab-sep" aria-hidden="true">|</span>
       <div className="ws-tab-name"><WsIcon ws={ws}/><span>{ws.label}</span></div>
       <span className="ws-tab-sp"/>
@@ -19326,7 +19351,7 @@ function App(){
   // displays — and it had drifted to claude-opus-4-8 / claude-sonnet-4-6 /
   // gemini-3.1-flash-live-preview, three ids the backend had already moved off,
   // so a user opening Settings was shown a model that was not answering them.
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:true,voice_proactive:true,voice_context_compression:true,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-sonnet-5',subagent_model:'claude-sonnet-5',creative_model:'gemini-nano-banana-2',voice_model:'gemini-2.5-flash-native-audio-latest',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true,
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:true,voice_proactive:true,voice_context_compression:true,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-sonnet-5',subagent_model:'claude-sonnet-5',creative_model:'gemini-nano-banana-2',voice_model:'gemini-2.5-flash-native-audio-latest',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true, /* brand: plain (her default name) */
     // The owner's own dock arrangement. Empty = never shaped, and
     // show_all_workspaces governs. See dockArrangement() near DOCK_GROUPS.
     dock_custom:{order:[],hidden:[]}};
@@ -21390,16 +21415,7 @@ function App(){
     <MeetingRecIndicator/>
     <div className={`top-bar ${topBarHidden?'hidden':''}`}>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
-        <div style={{display:'flex',alignItems:'baseline',gap:5,lineHeight:1}}>
-          <span onClick={()=>toggle('system')} style={{fontFamily:'Orbitron, sans-serif',fontWeight:900,fontSize:15,color:'#00d4ff',cursor:'pointer',userSelect:'none',letterSpacing:'0.06em',textShadow:'0 0 14px rgba(0,212,255,0.45)',transition:'text-shadow .2s'}} title="Open System workspace">{agentSettings.agent_name||'AGENT FRIDAY'}</span>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(255,255,255,0.72)',letterSpacing:'0.04em',marginLeft:4,textShadow:'0 0 6px rgba(0,0,0,0.8)'}}>by</span>
-          <a href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer"
-            style={{fontFamily:'Orbitron, sans-serif',fontWeight:900,fontSize:15,color:'#f59e0b',textDecoration:'none',letterSpacing:'0.06em',transition:'color .2s,text-shadow .2s',textShadow:'0 0 14px rgba(245,158,11,0.55)'}}
-            onMouseEnter={e=>{e.currentTarget.style.color='#fbbf24';e.currentTarget.style.textShadow='0 0 18px rgba(245,158,11,0.85)'}}
-            onMouseLeave={e=>{e.currentTarget.style.color='#f59e0b';e.currentTarget.style.textShadow='0 0 14px rgba(245,158,11,0.55)'}}>
-            FutureSpeak.AI
-          </a>
-        </div>
+        <FridayLockup size={15} onClick={()=>toggle('system')} title="Open System workspace"/>
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {/* Scene selector dropdown */}
         {/* Not positioned, on purpose: the menu's containing block is then the
@@ -21750,7 +21766,7 @@ function App(){
     {noWindows&&<div style={{position:'fixed',left:0,right:0,bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
       <div style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
       <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron, sans-serif',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
-      <div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:9,color:'rgba(0,212,255,0.45)',marginBottom:10,letterSpacing:'0.15em',textTransform:'uppercase'}}>by FutureSpeak.AI</div>
+      <div style={{position:'relative',zIndex:1,marginBottom:10}}><FridayLockup size={11}/></div>
       {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:16,position:'relative',zIndex:1}}>
         {countdowns.map((c,i)=><React.Fragment key={i}>
           {i>0&&<span className="greeting-ticker-sep"/>}
@@ -22065,14 +22081,14 @@ function App(){
             style={{padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:12,color:n.read?'rgba(255,255,255,0.72)':'#fff',cursor:clickable?'pointer':'default',transition:'background .15s'}}>
             <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4,fontWeight:n.read?400:500}}>{n.title||n.message||n.text||'Notification'}</div>
+                <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4,fontWeight:n.read?400:500}}>{fridayTM(n.title||n.message||n.text||'Notification')}</div>
                 {n.time&&<div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#aaa',marginTop:3}}>{n.time}</div>}
               </div>
               {hasDetail&&<span aria-hidden="true" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>{isExpanded?'▾':'▸'}</span>}
               {!hasDetail&&tgt&&<span aria-hidden="true" title={notifTargetLabel(tgt)} style={{fontSize:12,color:'#00d4ff',marginTop:1}}>{tgt.url&&!tgt.workspace?'↗':'→'}</span>}
               {n.id&&<button aria-label="Dismiss" onClick={e=>{e.stopPropagation();clearNotif(n.id)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Dismiss">&#x2715;</button>}
             </div>
-            {isExpanded&&hasDetail&&<FridayDoc compact text={n.detail||n.body||n.message} style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)'}}/>}
+            {isExpanded&&hasDetail&&<FridayDoc compact text={fridayTM(n.detail||n.body||n.message)} style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)'}}/>}
             {isExpanded&&tgt&&!isCreationNotif&&<div style={{marginTop:8,display:'flex',justifyContent:'flex-end'}}>
               <button className="notif-open-btn" onClick={e=>{e.stopPropagation();openTarget()}}>{notifTargetLabel(tgt)} {tgt.url&&!tgt.workspace?'↗':'→'}</button>
             </div>}
@@ -22189,7 +22205,7 @@ function App(){
         </div>
         {taskResultModal.description&&<div style={{fontSize:11,color:'#888',marginBottom:10,fontStyle:'italic'}}>{taskResultModal.description}</div>}
         {taskResultModal.result
-          ?<FridayDoc compact text={taskResultModal.result} style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}/>
+          ?<FridayDoc compact text={fridayTM(taskResultModal.result)} style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}/>
           :<div style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)',color:'#888',fontSize:12,fontStyle:'italic'}}>This process didn't return a written result — see the activity log below for what it did.</div>}
         {(taskResultModal.log||[]).length>0&&<div style={{marginTop:12}}>
           <div style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff',letterSpacing:'.08em',marginBottom:6}}>ACTIVITY LOG</div>

@@ -3,13 +3,18 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>FRIDAY Desktop — FutureSpeak.AI</title>
+<title>Agent Friday™</title>
 <link rel="icon" type="image/x-icon" href="/static/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png"/>
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png"/>
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/static/android-chrome-192x192.png"/>
 <meta name="theme-color" content="#0a0e1a"/>
+<script id="friday-brand-names">
+/* brand-names:begin (generated from src/agent_friday/brand.py) */
+window.FRIDAY_BRAND = {"product": "Agent Friday", "name": "Agent Friday\u2122", "maker": "FutureSpeak.AI", "lockup": "Agent Friday\u2122 by FutureSpeak.AI", "madeWith": "Made with Agent Friday\u2122", "mark": "\u2122"};
+/* brand-names:end */
+</script>
 <script>
 // Surface any script-load failures (blocked CDN, tunnel CSP, offline) instead of blank UI.
 window.__fridayCdnErrors=[];
@@ -270,6 +275,27 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
         .top-bar.hidden { transform: translateY(-100%); }
+        /* The wordmark (FridayLockup): AGENT FRIDAY™ by FutureSpeak.AI. Amber
+           belongs to the FutureSpeak.AI half only (docs/brand/BRAND.md). */
+        .fr-lockup { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
+        .fr-lockup-name { font-family: var(--fr-font-display); font-weight: 900; letter-spacing: var(--fr-track-display);
+            color: var(--fr-cyan); text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); cursor: pointer;
+            user-select: none; background: none; border: 0; padding: 0; transition: text-shadow .2s; }
+        .fr-lockup-name:hover { text-shadow: 0 0 18px rgba(0,212,255,0.75); }
+        .fr-lockup-name.fr-lockup-static { cursor: default; }
+        .fr-lockup-tm { font-size: 0.5em; vertical-align: super; line-height: 0; margin-left: 1px; }
+        .fr-lockup-by { font-family: var(--fr-font-mono); color: rgba(255,255,255,0.72); letter-spacing: 0.04em;
+            margin-left: 4px; text-shadow: 0 0 6px rgba(0,0,0,0.8); }
+        .fr-lockup-maker { font-family: var(--fr-font-display); font-weight: 900; letter-spacing: var(--fr-track-display);
+            color: var(--fr-wordmark-amber); text-decoration: none; text-shadow: 0 0 14px rgba(245,158,11,0.55);
+            transition: color .2s, text-shadow .2s; }
+        .fr-lockup-maker:hover { color: #fbbf24; text-shadow: 0 0 18px rgba(245,158,11,0.85); }
+        /* A narrow bar keeps the product's name and drops "by FutureSpeak.AI", so
+           the menus in its left half stay clear of the right-hand group; the
+           start screen still shows the whole lockup. */
+        @media (max-width: 900px) {
+            .top-bar .fr-lockup-by, .top-bar .fr-lockup-maker { display: none; }
+        }
         /* A flex child will not shrink below its own content unless told it
            may, so both halves of the bar may shrink, and whatever still does
            not fit is clipped at the side rather than sticking out over the

@@ -107,7 +107,7 @@ test('the tab header carries the desktop wordmark, and the title names the works
   expect(head).toContain('FutureSpeak.AI');
   const font = await page.locator('.ws-tab-mark').evaluate(el => getComputedStyle(el).fontFamily);
   expect(font).toContain('Orbitron');
-  await expect(page).toHaveTitle('News · Agent Friday');
+  await expect(page).toHaveTitle('News · Agent Friday™');
 });
 
 test('a workspace tab shrunk very small stays a workspace, not the desktop widget', async ({ page }) => {

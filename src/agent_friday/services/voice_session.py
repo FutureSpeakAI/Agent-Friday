@@ -539,6 +539,8 @@ class VoiceSession:
         self._speak_q.put((turn, clause, receipt))
 
     def _synth(self, engine, clause: str, cancel: threading.Event):
+        from agent_friday import brand
+        clause = brand.spoken(clause)
         if self.gpu_queue is not None and getattr(engine, "device", "") == "cuda":
             out = []
             d = self.gpu_queue.submit(self._current_turn["id"] if self._current_turn else None,

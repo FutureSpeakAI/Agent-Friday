@@ -10,11 +10,41 @@ One source of truth per medium, and nobody keeps a copy:
 | Medium | Source of truth | Guard |
 |---|---|---|
 | Python | `src/agent_friday/brand.py` | `scripts/check_brand_tokens.py` |
-| UI | the `--fr-*` `:root` block in `index.html` and `ui_parts/head.html`, generated from `brand.css_root_block()` | same script; the block must be byte-identical to the generated text (`--write` regenerates it) |
+| UI | the `--fr-*` `:root` block and the `window.FRIDAY_BRAND` names block in `index.html` and `ui_parts/head.html`, generated from `brand.css_root_block()` and `brand.js_names_block()` | same script; each block must be byte-identical to the generated text (`--write` regenerates them) |
 | People | this page | `tests/unit/test_brand_tokens.py` requires every token to be documented here |
 
 To change a colour: edit `brand.py`, run `python scripts/check_brand_tokens.py
 --write`, update the table below. The guard fails until all three agree.
+
+## The name
+
+The product is **Agent Friday™**, and every brand surface says so: the wordmark,
+window and tab titles, the tray, published pages, exports and the About card.
+
+Her own name is the one the user gave her when she was born
+(`settings.agent_name`; the owner's is "Friday"). Conversation uses it: her
+replies, her greetings, the cards that speak for her. A brand surface never
+shows her own name in place of the product's, and conversation never calls her
+by the product's name.
+
+| Constant (`brand.py`) | Value | Use |
+|---|---|---|
+| `PRODUCT` | Agent Friday | What audio and models get. Never shown. |
+| `PRODUCT_NAME` | Agent Friday™ | Every brand surface. |
+| `PRODUCT_LOCKUP` | Agent Friday™ by FutureSpeak.AI | The wordmark, the tray tooltip. |
+| `MADE_WITH` | Made with Agent Friday™ | Published pages and export footers. |
+
+**The mark in what she says.** When her words name the product, the mark is
+added as the text is shown (`brand.tm`, and `fridayTM` on the page): once,
+never inside code, and only to the words "Agent Friday", not to `agent_friday`
+or an address. It is never added to what is stored, to what a model reads, or
+to a prompt. Audio stays plain: every synthesis entry passes its text through
+`brand.spoken`, so she says "Agent Friday" and never "T M".
+
+`tests/unit/test_product_name.py` fails when a UI string names the product
+"Friday by FutureSpeak" or writes "Agent Friday" without ™. A model-facing
+string in a scanned file (a prompt, a file name) carries a `brand: plain`
+marker on its line.
 
 ## Palette
 
@@ -122,9 +152,12 @@ channel, transparent around the rocket), `assets/icons/futurespeak.ico` and
 `app\assets\friday.ico`. The lightning bolt in `assets/icons/futurespeak.svg`
 is the Sites workspace icon and is not the mark.
 
-The wordmark reads **AGENT FRIDAY** *by* **FutureSpeak.AI**:
+The wordmark reads **AGENT FRIDAY™** *by* **FutureSpeak.AI**. It is one
+component on the page, `FridayLockup`, used by the top bar, the start screen and
+the About card; it reads the product's name, never her own.
 
-- "AGENT FRIDAY": Orbitron 900, `--fr-cyan`, `--fr-track-display`, a soft cyan glow.
+- "AGENT FRIDAY™": Orbitron 900, `--fr-cyan`, `--fr-track-display`, a soft cyan glow; the ™ is set small and raised.
+- Below 900px the top bar shows "AGENT FRIDAY™" alone; the start screen keeps the whole lockup.
 - "by": JetBrains Mono, white at 72%.
 - "FutureSpeak.AI": Orbitron 900, `--fr-wordmark-amber`. This is the only place amber is a brand accent.
 
@@ -191,11 +224,12 @@ volume and mute settings; nothing plays while off the record.
 
 ## Per-workspace identity
 
-The shared workspace registry, `DOCK_GROUPS` in `index.html`, is the brand
-system's front door for per-workspace identity. Each entry declares a
-workspace's `id`, `ico` and `label` once, and the dock, window chrome and tabs
-read them from it. Today it declares no accent; a workspace that needs one adds
-it to its registry entry, and the accent is a member of the palette above. The
+The shared workspace registry, `static/workspace_registry.js` (read in Python
+by `services/workspace_registry.py`), is the brand system's front door for
+per-workspace identity. Each entry declares a workspace's `id`, `label`, icon,
+one-line description and optional accent once, and the dock, window chrome,
+tabs, the command palette, voice and the prompts read them from it. An accent,
+where one is set, is a member of the palette above. The
 reserved status hues are never used as a workspace accent. The scoped sets that
 exist now (`.news-ws`, `.msg-ws`, `.cal-ws`, `.st-root`) already point at the
 tokens.

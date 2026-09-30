@@ -509,7 +509,8 @@ MAX_LINE_CHARS = 320
 
 
 def _clean_text(t: str) -> str:
-    t = str(t or "")
+    from agent_friday import brand
+    t = brand.spoken(str(t or ""))
     for rx, rep in _STRIP_RE:
         t = rx.sub(rep, t)
     return t.strip()

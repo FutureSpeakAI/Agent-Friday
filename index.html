@@ -3,13 +3,18 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>FRIDAY Desktop — FutureSpeak.AI</title>
+<title>Agent Friday™</title>
 <link rel="icon" type="image/x-icon" href="/static/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png"/>
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png"/>
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/static/android-chrome-192x192.png"/>
 <meta name="theme-color" content="#0a0e1a"/>
+<script id="friday-brand-names">
+/* brand-names:begin (generated from src/agent_friday/brand.py) */
+window.FRIDAY_BRAND = {"product": "Agent Friday", "name": "Agent Friday\u2122", "maker": "FutureSpeak.AI", "lockup": "Agent Friday\u2122 by FutureSpeak.AI", "madeWith": "Made with Agent Friday\u2122", "mark": "\u2122"};
+/* brand-names:end */
+</script>
 <script>
 // Surface any script-load failures (blocked CDN, tunnel CSP, offline) instead of blank UI.
 window.__fridayCdnErrors=[];
@@ -331,6 +336,27 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
         .top-bar.hidden { transform: translateY(-100%); }
+        /* The wordmark (FridayLockup): AGENT FRIDAY™ by FutureSpeak.AI. Amber
+           belongs to the FutureSpeak.AI half only (docs/brand/BRAND.md). */
+        .fr-lockup { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
+        .fr-lockup-name { font-family: var(--fr-font-display); font-weight: 900; letter-spacing: var(--fr-track-display);
+            color: var(--fr-cyan); text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); cursor: pointer;
+            user-select: none; background: none; border: 0; padding: 0; transition: text-shadow .2s; }
+        .fr-lockup-name:hover { text-shadow: 0 0 18px rgba(0,212,255,0.75); }
+        .fr-lockup-name.fr-lockup-static { cursor: default; }
+        .fr-lockup-tm { font-size: 0.5em; vertical-align: super; line-height: 0; margin-left: 1px; }
+        .fr-lockup-by { font-family: var(--fr-font-mono); color: rgba(255,255,255,0.72); letter-spacing: 0.04em;
+            margin-left: 4px; text-shadow: 0 0 6px rgba(0,0,0,0.8); }
+        .fr-lockup-maker { font-family: var(--fr-font-display); font-weight: 900; letter-spacing: var(--fr-track-display);
+            color: var(--fr-wordmark-amber); text-decoration: none; text-shadow: 0 0 14px rgba(245,158,11,0.55);
+            transition: color .2s, text-shadow .2s; }
+        .fr-lockup-maker:hover { color: #fbbf24; text-shadow: 0 0 18px rgba(245,158,11,0.85); }
+        /* A narrow bar keeps the product's name and drops "by FutureSpeak.AI", so
+           the menus in its left half stay clear of the right-hand group; the
+           start screen still shows the whole lockup. */
+        @media (max-width: 900px) {
+            .top-bar .fr-lockup-by, .top-bar .fr-lockup-maker { display: none; }
+        }
         /* A flex child will not shrink below its own content unless told it
            may. Both halves of the bar therefore kept their full width and ran
            off the edge: measured at 900px the right-hand group reached 908,
@@ -3375,6 +3401,7 @@ window.addEventListener('DOMContentLoaded',function(){
         if (chrome !== 'chat' && chrome !== 'orb') return;
         document.body.classList.add('chrome-' + chrome);
         window.__FRIDAY_CHROME__ = chrome;
+        if (chrome === 'chat') document.title = 'Chat · ' + window.FRIDAY_BRAND.name;
         if (chrome === 'orb') {
           /* The way out. A mode with no exit is a trap, and the orb itself
              cannot carry a control without becoming the thing this mode
@@ -8050,6 +8077,66 @@ function notifTargetLabel(t) {
 // Friday's UI. Prefers marked.js (loaded via CDN in head.html) and falls back
 // to a tiny regex parser if marked isn't ready yet. Output is always wrapped
 // in .friday-doc so the holographic CSS in head.html takes over.
+// ═══ THE PRODUCT'S NAME ═══
+// Brand surfaces name the product, Agent Friday™; conversation uses her own
+// name (settings.agent_name). The names come from window.FRIDAY_BRAND, which
+// is generated from src/agent_friday/brand.py (docs/brand/BRAND.md).
+/* fridayTM:begin */
+const FRIDAY_TM_CODE = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/;
+const FRIDAY_TM_WORDS = /(^|[^\p{L}\p{N}_-])(agent[ \t\u00a0]+friday)(?![\p{L}\p{N}_-])(?![ \t]*(?:\u2122|\u00ae|\((?:tm|r)\)))/giu;
+// Text as it is shown: "Agent Friday" gains its trademark sign, once, and
+// code is left alone. Display only: what is stored, read by a model or spoken
+// stays plain. brand.tm is the same rule in Python.
+function fridayTM(text) {
+  if (typeof text !== 'string' || !/friday/i.test(text)) return text;
+  return text.split(FRIDAY_TM_CODE).map((part, i) => i % 2 ? part : part.replace(FRIDAY_TM_WORDS, (m, pre, name) => pre + name + '\u2122')).join('');
+}
+/* fridayTM:end */
+window.fridayTM = fridayTM;
+// The wordmark, AGENT FRIDAY™ by FutureSpeak.AI: one definition for the top
+// bar, the start screen and the About card. `size` is the cap size in px; the
+// name opens `href`, or runs `onClick`.
+function FridayLockup({
+  size = 15,
+  onClick,
+  href,
+  title
+}) {
+  const b = window.FRIDAY_BRAND;
+  const name = [b.product.toUpperCase(), /*#__PURE__*/React.createElement("span", {
+    key: "tm",
+    className: "fr-lockup-tm"
+  }, b.mark)];
+  const nameProps = {
+    className: 'fr-lockup-name' + (href || onClick ? '' : ' fr-lockup-static'),
+    title: title,
+    style: {
+      fontSize: size
+    }
+  };
+  return /*#__PURE__*/React.createElement("span", {
+    className: "fr-lockup",
+    "data-testid": "friday-lockup"
+  }, href ? /*#__PURE__*/React.createElement("a", Object.assign({
+    href: href
+  }, nameProps), name) : onClick ? /*#__PURE__*/React.createElement("button", Object.assign({
+    type: "button",
+    onClick: onClick
+  }, nameProps), name) : /*#__PURE__*/React.createElement("span", nameProps, name), /*#__PURE__*/React.createElement("span", {
+    className: "fr-lockup-by",
+    style: {
+      fontSize: Math.round(size * 0.85)
+    }
+  }, "by"), /*#__PURE__*/React.createElement("a", {
+    className: "fr-lockup-maker",
+    href: "https://futurespeak.ai/agent-friday-live",
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: {
+      fontSize: size
+    }
+  }, b.maker));
+}
 // ═══ TOAST + STAND-DOWN BANNER ═══
 // Friday's own transient notice, replacing every raw browser fridayToast().
 //
@@ -8059,7 +8146,7 @@ function notifTargetLabel(t) {
 // levels yet"), which is the worst possible surface for that sentence.
 function fridayToast(msg, opts) {
   try {
-    var text = (msg == null ? '' : String(msg));
+    var text = fridayTM(msg == null ? '' : String(msg));
     if (!text.trim()) return;
     var bad = !!(opts && opts.error);
     var host = document.getElementById('friday-toast-host');
@@ -8951,7 +9038,7 @@ function FWin({
       minWidth: 0
     }
   }, /*#__PURE__*/React.createElement(FridayDoc, {
-    text: cust.note,
+    text: fridayTM(cust.note),
     style: {
       margin: 0
     }
@@ -9351,7 +9438,7 @@ function WorkspaceChat({
       color: '#dde'
     }
   }, m.role === 'user' ? m.text : /*#__PURE__*/React.createElement(FridayDoc, {
-    text: m.text,
+    text: fridayTM(m.text),
     compact: true,
     style: {
       margin: 0
@@ -9988,11 +10075,11 @@ function ChatSurface(props) {
     sources: m.reasoning_sources
   }) : null, m.role === 'friday' && m.via !== 'voice' ? /*#__PURE__*/React.createElement("div", {
     dangerouslySetInnerHTML: {
-      __html: renderFridayMarkdown(m.text || '', {
+      __html: renderFridayMarkdown(fridayTM(m.text || ''), {
         compact: true
       })
     }
-  }) : m.text), m.role !== 'user' && /*#__PURE__*/React.createElement(SendTo, {
+  }) : m.role === 'friday' ? fridayTM(m.text) : m.text), m.role !== 'user' && /*#__PURE__*/React.createElement(SendTo, {
     content: m.text,
     dataType: "general",
     options: [{
@@ -32456,7 +32543,7 @@ function buildDraftHtml(text, mode, promptText) {
   const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const paras = (text || '').split(/\n\n+/).filter(Boolean);
   const paraHtml = paras.map((p, i) => `<p${i === 0 ? ' style="font-size:18px;color:#e8e8f0"' : ''}>${esc(p).replace(/\n/g, '<br>')}</p>`).join('\n    ');
-  return fridayFrameScrollbars(['<!DOCTYPE html><html lang="en"><head>', '<meta charset="UTF-8">', `<title>FRIDAY DRAFT — ${esc(label)}</title>`, '<link href="/static/fonts/fonts.css" rel="stylesheet">', '<style>', '* { margin: 0; padding: 0; box-sizing: border-box; }', "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }", '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }', '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }', ".header h1 { font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7b61ff 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }", '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }', ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }", '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7b61ff, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }', ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7b61ff; border: 1px solid rgba(123,97,255,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }", ".prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }", '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }', ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }", '</style></head><body>', '<div class="container">', '  <div class="header"><h1>FRIDAY DRAFT</h1><div class="neon-line"></div>', `  <div class="subtitle">${esc(label)}</div><div class="date">${esc(now)}</div></div>`, promptText ? `  <div class="prompt-ctx">Prompt: ${esc((promptText || '').substring(0, 200))}</div>` : '', `  <div class="mode-tag">${esc(label.toUpperCase())}</div>`, `  <div class="draft-body">\n    ${paraHtml}\n  </div>`, '  <div class="footer">Generated by FRIDAY · FutureSpeak.AI</div>', '</div></body></html>'].join('\n'));
+  return fridayFrameScrollbars(['<!DOCTYPE html><html lang="en"><head>', '<meta charset="UTF-8">', `<title>${esc(label)} · Draft · ${esc(window.FRIDAY_BRAND.name)}</title>`, '<link href="/static/fonts/fonts.css" rel="stylesheet">', '<style>', '* { margin: 0; padding: 0; box-sizing: border-box; }', "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }", '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }', '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }', ".header h1 { font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7b61ff 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }", '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }', ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }", '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7b61ff, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }', ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7b61ff; border: 1px solid rgba(123,97,255,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }", ".prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }", '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }', ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }", '</style></head><body>', '<div class="container">', '  <div class="header"><h1>' + esc(window.FRIDAY_BRAND.name.toUpperCase()) + ' DRAFT</h1><div class="neon-line"></div>', `  <div class="subtitle">${esc(label)}</div><div class="date">${esc(now)}</div></div>`, promptText ? `  <div class="prompt-ctx">Prompt: ${esc((promptText || '').substring(0, 200))}</div>` : '', `  <div class="mode-tag">${esc(label.toUpperCase())}</div>`, `  <div class="draft-body">\n    ${paraHtml}\n  </div>`, '  <div class="footer">' + esc(window.FRIDAY_BRAND.madeWith) + '</div>', '</div></body></html>'].join('\n'));
 }
 function openDraftTab(text, mode, promptText) {
   const html = buildDraftHtml(text, mode, promptText);
@@ -42605,7 +42692,7 @@ function SetupBasicsCard({
   }, desc));
   const list = distros.length ? distros : [{
     name: 'default',
-    description: 'Standard Agent Friday, balanced for general use'
+    description: 'Standard Agent Friday\u2122, balanced for general use'
   }];
   return /*#__PURE__*/React.createElement("div", {
     className: "sc-card"
@@ -43891,8 +43978,8 @@ function LocalAddressSettings() {
         answers ? h('a', { className: 'la-addr', href: goal + '/', target: '_blank', rel: 'noopener' }, goal.replace(/^https?:\/\//, '')) : h('span', { className: 'la-addr' }, host),
         h('span', { className: 'la-pill ' + (secure ? 'ok' : answers ? 'warn' : 'off') }, secure ? 'Secure' : answers ? 'Not secure yet' : 'Not set up')),
       h('div', { className: 'la-sub' },
-        st.source === 'custom' ? 'Chosen here. ' : 'From the agent’s name, ' + (st.agent_name || 'AGENT FRIDAY') + '. ',
-        'Workspace tabs and the tray’s “Open Friday Desktop” use this address once it works; until then they stay on localhost.'),
+        st.source === 'custom' ? 'Chosen here. ' : 'From the agent’s name, ' + (st.agent_name || 'AGENT FRIDAY') + '. ', /* brand: plain (her default name) */
+        'Workspace tabs and the tray’s “Open ' + window.FRIDAY_BRAND.name + '” use this address once it works; until then they stay on localhost.'),
       st.note && h('div', { className: 'la-warn' }, st.note),
       h(Line, { ok: st.resolves, label: 'This PC knows the name' },
         st.resolves ? host + ' points to this PC.' : 'Not yet. Windows needs one line in its hosts file pointing ' + host + ' at this PC.',
@@ -51641,38 +51728,25 @@ function SettingsTabAbout() {
     style: {
       textAlign: 'center',
       padding: '24px 16px 20px',
-      background: 'linear-gradient(135deg,rgba(245,158,11,0.05),rgba(0,212,255,0.03))',
+      background: 'var(--fr-glass)',
       borderRadius: 10,
-      border: '1px solid rgba(245,158,11,0.1)',
+      border: '1px solid var(--fr-glass-edge)',
       marginBottom: 24
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "st-brand",
     style: {
-      fontFamily: 'Orbitron, sans-serif',
-      fontSize: 22,
-      color: '#f59e0b',
-      letterSpacing: '.08em',
-      fontWeight: 700,
-      marginBottom: 4,
-      textShadow: '0 0 20px rgba(245,158,11,0.35)'
+      marginBottom: 10
     }
-  }, "AGENT FRIDAY"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(FridayLockup, {
+    size: 20
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: 'JetBrains Mono',
       fontSize: 12,
       color: 'rgba(255,255,255,0.45)',
       marginBottom: 8
     }
-  }, (upd?.current_version || h?.version) ? 'v' + (upd?.current_version || h?.version) : 'Version unknown', " \xB7 Desktop OS \xB7 Sovereign AI"), /*#__PURE__*/React.createElement("div", {
-    className: "st-brand",
-    style: {
-      fontFamily: 'Orbitron, sans-serif',
-      fontSize: 11,
-      color: '#00d4ff',
-      letterSpacing: '.2em'
-    }
-  }, "BY FUTURESPEAK.AI")), /*#__PURE__*/React.createElement(StSection, {
+  }, (upd?.current_version || h?.version) ? 'v' + (upd?.current_version || h?.version) : 'Version unknown', " \xB7 Desktop OS \xB7 Sovereign AI")), /*#__PURE__*/React.createElement(StSection, {
     title: "Updates"
   }, vt.disagreement ? /*#__PURE__*/React.createElement("div", {
     style: {
@@ -51693,7 +51767,7 @@ function SettingsTabAbout() {
     }
   }, "\u26A0 This install does not match its own records"), vt.disagreement) : null, /*#__PURE__*/React.createElement(StToggle, {
     label: "Check for new versions weekly",
-    desc: "Asks GitHub once a week whether a newer Agent Friday has been released, and tells you if one has. Friday never downloads or installs anything by itself \u2014 you choose. The check sends nothing about you or this machine: no identifier, no usage data, not even which version you are running.",
+    desc: "Asks GitHub once a week whether a newer Agent Friday\u2122 has been released, and tells you if one has. Friday never downloads or installs anything by itself \u2014 you choose. The check sends nothing about you or this machine: no identifier, no usage data, not even which version you are running.",
     value: !!(upd && upd.enabled),
     onChange: toggleUpd
   }), /*#__PURE__*/React.createElement("div", {
@@ -51734,7 +51808,7 @@ function SettingsTabAbout() {
       color: '#00d4ff',
       marginBottom: 6
     }
-  }, "Agent Friday " + upd.latest_version + " is available"), /*#__PURE__*/React.createElement("div", {
+  }, window.FRIDAY_BRAND.name + " " + upd.latest_version + " is available"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'rgba(255,255,255,0.55)',
@@ -51742,7 +51816,7 @@ function SettingsTabAbout() {
       marginBottom: 12,
       fontFamily: 'JetBrains Mono'
     }
-  }, "You are running " + (upd.current_version || 'an unknown version') + ". Download the release, unzip it anywhere, and run \u201CInstall Agent Friday.cmd\u201D. Your notes, settings and connected accounts are kept."), /*#__PURE__*/React.createElement("a", {
+  }, "You are running " + (upd.current_version || 'an unknown version') + ". Download the release, unzip it anywhere, and run \u201CInstall Agent Friday.cmd\u201D. Your notes, settings and connected accounts are kept."), /*#__PURE__*/React.createElement("a", { /* brand: plain (a file name) */
     href: upd.latest_url,
     target: "_blank",
     rel: "noopener noreferrer",
@@ -54021,8 +54095,6 @@ function ApprovalPopups() {
 // way back to the desktop, and the workspace full-tab. The tab's title and
 // favicon name the workspace, so a row of Friday tabs can be told apart.
 function StandaloneShell({ ws, children }) {
-  // The desktop's wordmark shows the agent's own name when it has been renamed.
-  const [agentName, setAgentName] = useState('AGENT FRIDAY');
   // Moving the same workspace here again from the desktop (\u2197) finds this
   // tab by name and says where the window was, rather than reloading it
   // (fridayOpenWorkspaceTab). Only the desktop that opened this tab is heard.
@@ -54046,17 +54118,14 @@ function StandaloneShell({ ws, children }) {
     if (frac > 0) return fridayRestoreTabScroll(frac);
   }, []);
   useEffect(() => {
-    fetch('/api/settings').then(r => r.json()).then(d => { const n = ((d && (d.settings || d)) || {}).agent_name; if (n) setAgentName(n); }).catch(() => {});
-  }, []);
-  useEffect(() => {
     const pending = window.__fridayPendingApprovals;
-    // A tab opened for one item names it first: "Q3 plan · Messages · Agent Friday".
+    // A tab opened for one item names it first: "Q3 plan · Messages · Agent Friday™".
     let item = '';
     try {
       const q = new URLSearchParams(window.location.search);
       item = q.get('subject') || q.get('title') || q.get('creation') || q.get('file') || '';
     } catch (e) {}
-    document.title = (item ? item.slice(0, 80) + ' \u00B7 ' : '') + ws.label + ' \u00B7 Agent Friday';
+    document.title = (item ? item.slice(0, 80) + ' \u00B7 ' : '') + ws.label + ' \u00B7 ' + window.FRIDAY_BRAND.name;
     const iconUrl = '/assets/icons/' + (ws.icon || ws.id) + '.svg';
     const emojiIcon = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">' + (ws.ico || '\u25A3') + '</text></svg>');
     document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l => l.parentNode.removeChild(l));
@@ -54077,10 +54146,7 @@ function StandaloneShell({ ws, children }) {
   })();
   return /*#__PURE__*/React.createElement("div", { className: 'ws-tab' + (maxedTab ? ' ws-max' : ''), "data-standalone": ws.id },
     /*#__PURE__*/React.createElement("header", { className: 'ws-tab-head' },
-      /*#__PURE__*/React.createElement("div", { className: 'ws-tab-brand' },
-        /*#__PURE__*/React.createElement("a", { className: 'ws-tab-mark', href: '/', title: 'Back to the Friday desktop' }, agentName),
-        /*#__PURE__*/React.createElement("span", { className: 'ws-tab-by' }, 'by'),
-        /*#__PURE__*/React.createElement("a", { className: 'ws-tab-fs', href: 'https://futurespeak.ai/agent-friday-live', target: '_blank', rel: 'noopener noreferrer' }, 'FutureSpeak.AI')),
+      /*#__PURE__*/React.createElement(FridayLockup, { size: 15, href: '/', title: 'Back to the desktop' }),
       /*#__PURE__*/React.createElement("span", { className: 'ws-tab-sep', "aria-hidden": "true" }, '|'),
       /*#__PURE__*/React.createElement("div", { className: 'ws-tab-name' },
         /*#__PURE__*/React.createElement(WsIcon, { ws: ws }),
@@ -54577,7 +54643,7 @@ function App() {
     voice_affective: true,
     voice_proactive: true,
     voice_context_compression: true,
-    agent_name: 'AGENT FRIDAY',
+    agent_name: 'AGENT FRIDAY', /* brand: plain (her default name) */
     orchestrator_model: 'claude-opus-4-8',
     subagent_model: 'claude-sonnet-4-6',
     creative_model: 'gemini-nano-banana-2',
@@ -58008,59 +58074,11 @@ function App() {
       alignItems: 'center',
       gap: 8
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'baseline',
-      gap: 5,
-      lineHeight: 1
-    }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement(FridayLockup, {
+    size: 15,
     onClick: () => toggle('system'),
-    style: {
-      fontFamily: 'Orbitron, sans-serif',
-      fontWeight: 900,
-      fontSize: 15,
-      color: '#00d4ff',
-      cursor: 'pointer',
-      userSelect: 'none',
-      letterSpacing: '0.06em',
-      textShadow: '0 0 14px rgba(0,212,255,0.45)',
-      transition: 'text-shadow .2s'
-    },
     title: "Open System workspace"
-  }, agentSettings.agent_name || 'AGENT FRIDAY'), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 13,
-      color: 'rgba(255,255,255,0.72)',
-      letterSpacing: '0.04em',
-      marginLeft: 4,
-      textShadow: '0 0 6px rgba(0,0,0,0.8)'
-    }
-  }, "by"), /*#__PURE__*/React.createElement("a", {
-    href: "https://futurespeak.ai/agent-friday-live",
-    target: "_blank",
-    rel: "noopener noreferrer",
-    style: {
-      fontFamily: 'Orbitron, sans-serif',
-      fontWeight: 900,
-      fontSize: 15,
-      color: '#f59e0b',
-      textDecoration: 'none',
-      letterSpacing: '0.06em',
-      transition: 'color .2s,text-shadow .2s',
-      textShadow: '0 0 14px rgba(245,158,11,0.55)'
-    },
-    onMouseEnter: e => {
-      e.currentTarget.style.color = '#fbbf24';
-      e.currentTarget.style.textShadow = '0 0 18px rgba(245,158,11,0.85)';
-    },
-    onMouseLeave: e => {
-      e.currentTarget.style.color = '#f59e0b';
-      e.currentTarget.style.textShadow = '0 0 14px rgba(245,158,11,0.55)';
-    }
-  }, "FutureSpeak.AI")), /*#__PURE__*/React.createElement("span", {
+  }), /*#__PURE__*/React.createElement("span", {
     "aria-hidden": "true",
     style: {
       color: 'rgba(255,255,255,0.28)',
@@ -58592,14 +58610,11 @@ function App() {
     style: {
       position: 'relative',
       zIndex: 1,
-      fontFamily: 'JetBrains Mono',
-      fontSize: 9,
-      color: 'rgba(0,212,255,0.45)',
-      marginBottom: 10,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase'
+      marginBottom: 10
     }
-  }, "by FutureSpeak.AI"), countdowns.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(FridayLockup, {
+    size: 11
+  })), countdowns.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "greeting-ticker",
     style: {
       marginBottom: 16,
@@ -59608,7 +59623,7 @@ function App() {
         lineHeight: 1.4,
         fontWeight: n.read ? 400 : 500
       }
-    }, n.title || n.message || n.text || 'Notification'), n.time && /*#__PURE__*/React.createElement("div", {
+    }, fridayTM(n.title || n.message || n.text || 'Notification')), n.time && /*#__PURE__*/React.createElement("div", {
       style: {
         fontFamily: 'JetBrains Mono',
         fontSize: 10,
@@ -59648,7 +59663,7 @@ function App() {
       title: "Dismiss"
     }, "\u2715")), isExpanded && hasDetail && /*#__PURE__*/React.createElement(FridayDoc, {
       compact: true,
-      text: n.detail || n.body || n.message,
+      text: fridayTM(n.detail || n.body || n.message),
       style: {
         marginTop: 8,
         padding: '8px 10px',
@@ -60117,7 +60132,7 @@ function App() {
     }
   }, taskResultModal.description), taskResultModal.result ? /*#__PURE__*/React.createElement(FridayDoc, {
     compact: true,
-    text: taskResultModal.result,
+    text: fridayTM(taskResultModal.result),
     style: {
       background: 'rgba(0,0,0,0.4)',
       padding: 12,

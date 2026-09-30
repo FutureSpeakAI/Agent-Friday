@@ -615,6 +615,8 @@ class PiperTTS:
         """Synthesize `text` → 24 kHz PCM16 mono bytes (playback-ready)."""
         if not text or not str(text).strip():
             return b""
+        from agent_friday import brand
+        text = brand.spoken(text)
         self.load()
         raw = self._synthesize_native(text)
         return _resample_pcm16(raw, self._native_rate(), PLAYBACK_RATE)
@@ -1081,6 +1083,8 @@ class LocalVoiceEngine:
         nobody reads it. The exception still propagates: this records, it does
         not swallow, and it never substitutes a different voice.
         """
+        from agent_friday import brand
+        text = brand.spoken(text)
         t0 = time.perf_counter()
         try:
             out = self._get_tts().synthesize(text)
