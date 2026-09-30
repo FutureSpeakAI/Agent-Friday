@@ -69,7 +69,7 @@ compose = ["imageio-ffmpeg>=0.5"]
 provenance = ["mutagen>=1.47"]
 google = ["google-api-python-client>=2.0", "google-auth-oauthlib>=1.0"]  # Gmail/Calendar/Drive
 local = ["sentence-transformers>=2.2", "chromadb>=0.5"]  # on-device embeddings + memory (Ollama itself is an external binary)
-compression = ["headroom-ai==0.38.0"]  # context compression; reports itself unavailable when its native core is missing
+compression = ["headroom-ai==0.39.1"]  # context compression; reports itself unavailable when its native core is missing
 federation = ["pynacl>=1.5"]           # Ed25519 attestation + source-trust federation
 # Privacy / security extras â€” degrade gracefully when absent
 # presidio-analyzer adds Layer 2 NER classification to the egress gate
@@ -100,7 +100,7 @@ all = [
     "google-auth-oauthlib>=1.0",
     "sentence-transformers>=2.2",
     "chromadb>=0.5",
-    "headroom-ai==0.38.0",
+    "headroom-ai==0.39.1",
     "pynacl>=1.5",
     "pdfplumber>=0.11",
     "PyPDFForm>=5.6",
