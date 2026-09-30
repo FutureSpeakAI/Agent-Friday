@@ -29,6 +29,75 @@ one instruction — **verify, do not repeat**.
 
 ---
 
+## Re-verified 2026-09-29 (against main 780e31fa)
+
+Seven read-only surveys re-checked every doc in `active/` and
+`connector-ecosystem.md` against the code. Where this section and the older
+sections below disagree, this one wins. The decisions taken under the owner's
+"build all pending specs" commission are in
+[`docs/decisions/2026-09-29-program-delegated-decisions.md`](../decisions/2026-09-29-program-delegated-decisions.md).
+
+**Still open from §3 "Now"**: all four.
+1. The cloud mouth is not wired. Worse than recorded: the picker's ElevenLabs
+   choice is rejected by the settings enum (`routes/core_routes.py`
+   `_VOICE_ENUMS`) with a 400, so the setting never saves.
+2. The unattended paths are still unscoped: `services/agent.py`
+   `run_workflow_chain`, `_retry_chain_step`, chain advance, on-complete and
+   `_tool_spawn_task`, plus `services/scheduler.py`. There is no
+   `workflow-step` scope.
+3. Startup receipts are not built.
+4. The two core-tool lists still disagree.
+
+**Corrections to the sections below**:
+- `hostname-onboarding.md` is built for Windows, wired and tested, and is not
+  the Caddy design criticised in §2.4. Archive it; do not delete it.
+- Calendar writes are account-explicit (ea3055ec). The only gap left is the
+  Quick Add route in `routes/calendar.py`.
+- Deep research is reachable as a chat tool (37a9ce85).
+- `approvals.py` has about 22 callers. `approval_executor.py` runs approved
+  cards exactly once.
+- The resident seat is `bonsai2:27b`, planned at 65,536 context and served at
+  49,152. `DEFAULT_SETTINGS` still names `gemma4:e2b` for `local_model` and
+  the judgment gate.
+- `connector-ecosystem.md` phases 1–4 are built. Phases 5–6 are not.
+- `task-visibility.md`, `tasks-tray-honesty.md`, `midstream-durability.md` and
+  `voice-mode-diagnosis-and-repair.md` are built. Archive them.
+
+**Live defects found by the re-verification** (each becomes a program item):
+- **Receipts:** `completion_receipts.FAILURE_SENTINELS` omits
+  `[APPROVAL CARD RAISED]`, `[GOVERNANCE HOLD]`, `[BLOCKED`, `[DECLINED]`,
+  `[NOT RUN]` and `TOOL CALL FAILED`. A write that only raised a card
+  therefore satisfies "I saved X".
+- **Marketplace:** a purchase reports success while the transfer fails,
+  because `spend`/`earn` are called without `reason`.
+- **Federation:** `federation._verify_peer_card` accepts a card whose check
+  failed.
+- **Workspaces:**
+  - Workspace undo flips between two states instead of stepping back.
+  - `workspace_chat_turn` skips the blast-radius check.
+  - `routes/workspace_studio.py` has no `@login_required`.
+- **Skills:** a model-authored skill is active at once. There is no draft
+  status.
+- **Learning loop:** it is on by default, and promotions emit no receipts.
+- **Google sign-in:** the legacy `/api/google/auth` route writes a plaintext
+  token that is never migrated. `calendar_write` also points users at that
+  route.
+- **Local retry:** the integrity redispatch drops the tool catalogue.
+  `load_tools` then answers "No such tool".
+- **Tasks:** `GET /api/tasks/<id>` turns unknown progress into 0%.
+- **Settings:** `cloud_spill_ask` and `cloud_spill_min_wait_s` are missing from
+  `DEFAULT_SETTINGS`.
+
+**Unspecced items in the queue**:
+- Laya as Friday's reflexes, to be written from the Laya consolidation's
+  latency numbers.
+- CLM research.
+- FridayWeaver-2 on Bonsai2.
+
+The Vibe Coding Salon spec and local podcasts are on their own branches.
+
+---
+
 ## 0. The finding that matters most
 
 **Status headers in this repo are unreliable in both directions** (**VERIFIED**).
