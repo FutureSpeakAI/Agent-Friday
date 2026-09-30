@@ -10543,12 +10543,19 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             except Exception:
                 pass
 
-            # Echo assistant turn (text + tool_use blocks) into the convo
+            # Preserve signed thinking blocks exactly for the next tool round.
+            # The provider's opaque signature/data belong in its wire history,
+            # never in the displayed reasoning trace or tool result.
             assistant_content = []
             for b in resp.content:
                 btype = getattr(b, 'type', None)
                 if btype == 'text':
                     assistant_content.append({"type": "text", "text": b.text})
+                elif btype == 'thinking':
+                    assistant_content.append({"type": "thinking", "thinking": b.thinking,
+                                              "signature": b.signature})
+                elif btype == 'redacted_thinking':
+                    assistant_content.append({"type": "redacted_thinking", "data": b.data})
                 elif btype == 'tool_use':
                     assistant_content.append({
                         "type": "tool_use",

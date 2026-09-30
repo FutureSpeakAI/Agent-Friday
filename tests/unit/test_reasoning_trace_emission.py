@@ -173,13 +173,13 @@ def _fake_client(blocks_for_round, seen_kwargs):
     return types.SimpleNamespace(messages=_Messages())
 
 
-def _claude_turn(monkeypatch, model, blocks_for_round):
+def _claude_turn(monkeypatch, model, blocks_for_round, **kwargs):
     seen = []
     monkeypatch.setattr(ag, "get_anthropic_client", lambda: _fake_client(blocks_for_round, seen))
     tid = rt.start("chat", "x", parent_id=None)
     with rt.activate(tid):
         ag._call_claude_agent([{"role": "user", "content": "go"}], system="s", model=model,
-                              session_ctx={})
+                              session_ctx={}, **kwargs)
     return tid, seen
 
 
@@ -200,6 +200,47 @@ def test_claude_5_is_asked_for_its_reasoning_summary_and_it_is_recorded(monkeypa
     assert evs[0]["source"] == rt.SOURCE_SUMMARY and evs[0]["text"] == "summary of step one"
     marker = [e for e in evs if e["type"] == "source_marker"][0]
     assert marker["label"] == "reasoning not exposed by provider"
+
+
+def test_sonnet_55_preserves_signed_thinking_across_tool_rounds(monkeypatch):
+    def rounds(i):
+        if i == 1:
+            return ([_Block(type="thinking", thinking="", signature="opaque-signature"),
+                     _Block(type="redacted_thinking", data="opaque-provider-data"),
+                     _Block(type="text", text="Checking."),
+                     _Block(type="tool_use", id="tu1", name="search_web", input={"query": "q"})],
+                    "tool_use")
+        return ([_Block(type="text", text="Done.")], "end_turn")
+
+    tid, seen = _claude_turn(monkeypatch, "claude-sonnet-5-5", rounds, temperature=0.4)
+    assert len(seen) == 2
+    for payload in seen:
+        assert payload["model"] == "claude-sonnet-5-5"
+        assert payload["thinking"] == {"type": "adaptive", "display": "summarized"}
+        assert not {"temperature", "top_p", "top_k"}.intersection(payload)
+        assert payload.get("tool_choice", {}).get("type") not in {"any", "tool"}
+    echoed = next(m["content"] for m in seen[1]["messages"] if m["role"] == "assistant")
+    assert echoed[:2] == [
+        {"type": "thinking", "thinking": "", "signature": "opaque-signature"},
+        {"type": "redacted_thinking", "data": "opaque-provider-data"},
+    ]
+    assert [b["type"] for b in echoed] == ["thinking", "redacted_thinking", "text", "tool_use"]
+    assert seen[1]["messages"][-1]["content"][0]["tool_use_id"] == "tu1"
+    trace_json = json.dumps(rt.live_trace(tid)["events"])
+    assert "opaque-signature" not in trace_json
+    assert "opaque-provider-data" not in trace_json
+
+
+def test_sonnet_55_text_payload_uses_supported_parameters(monkeypatch):
+    seen = []
+    client = _fake_client(lambda i: ([_Block(type="text", text="Done.")], "end_turn"), seen)
+    monkeypatch.setattr(mr, "get_anthropic_client", lambda: client)
+    monkeypatch.setattr(mr, "_seal_or_block", lambda payload, provider: payload)
+    result = mr._call_claude([{"role": "user", "content": "go"}],
+                             model="claude-sonnet-5-5", temperature=0.4)
+    assert result == "Done."
+    assert seen[0]["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert not {"temperature", "top_p", "top_k", "tool_choice"}.intersection(seen[0])
 
 
 def test_redacted_thinking_is_labelled_and_its_payload_not_stored(monkeypatch):
