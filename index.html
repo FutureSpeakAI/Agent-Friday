@@ -9548,9 +9548,22 @@ function podcastClock(s) {
   const m = Math.floor(s / 60), r = s % 60;
   return m + ':' + (r < 10 ? '0' : '') + r;
 }
+// Every colour, face and size is a --fr-* brand token (docs/brand/BRAND.md);
+// the second value in each var() is that token's own value, used only until
+// the token block is on the page. Amber is never used here: it means "needs you".
 const PODCAST_C = {
-  bg: 'rgba(8,12,20,0.96)', line: 'rgba(255,255,255,0.10)', text: 'rgba(255,255,255,0.88)',
-  dim: 'rgba(255,255,255,0.55)', accent: '#00d4ff', ok: '#00ff80', warn: '#f59e0b', bad: '#ff6b8a'
+  bg: 'var(--fr-glass, rgba(10,14,26,0.75))', blur: 'var(--fr-glass-blur, blur(16px) saturate(1.2))',
+  line: 'var(--fr-glass-edge, rgba(255,255,255,0.06))', text: 'var(--fr-text, rgba(255,255,255,0.86))',
+  dim: 'var(--fr-dim, rgba(255,255,255,0.46))', accent: 'var(--fr-cyan, #00d4ff)',
+  surface: 'var(--fr-surface, #0a0e1a)',
+  accentSoft: 'var(--fr-cyan-soft, rgba(0,212,255,0.12))', second: 'var(--fr-violet-soft, #a78bfa)',
+  ok: 'var(--fr-ok, #00ff80)', error: 'var(--fr-error, #f04a2a)',
+  font: "var(--fr-font-body, Inter, system-ui, sans-serif)",
+  display: "var(--fr-font-display, Orbitron, sans-serif)",
+  mono: "var(--fr-font-mono, 'JetBrains Mono', ui-monospace, monospace)",
+  track: 'var(--fr-track-display, 0.06em)',
+  xs: 'var(--fr-text-xs, 10px)', sm: 'var(--fr-text-sm, 11px)', md: 'var(--fr-text-md, 12px)',
+  base: 'var(--fr-text-base, 13px)', lg: 'var(--fr-text-lg, 15px)', xl: 'var(--fr-text-xl, 18px)'
 };
 function PodcastBadges({ ep }) {
   const h = React.createElement;
@@ -9558,14 +9571,14 @@ function PodcastBadges({ ep }) {
   const chk = ep.check || {};
   const pill = (txt, color, title) => h('span', {
     title: title || txt,
-    style: { fontSize: 11, padding: '1px 7px', borderRadius: 10, border: '1px solid ' + color, color: color, whiteSpace: 'nowrap' }
+    style: { fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.font, padding: '1px 7px', borderRadius: 10, border: '1px solid ' + color, color: color, whiteSpace: 'nowrap' }
   }, txt);
   return h('span', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap' } },
     ep.privacy === 'private'
-      ? pill('🔒 Private · made on this PC', PODCAST_C.warn, 'Built from your own material. Written and spoken on this computer; never sent to a cloud model or voice.')
+      ? pill('🔒 Private · made on this PC', PODCAST_C.second, 'Built from your own material. Written and spoken on this computer; never sent to a cloud model or voice.')
       : pill('Public sources', PODCAST_C.dim),
     chk.ok === true ? pill('✓ checked by ear', PODCAST_C.ok, 'Transcribed back on this computer: ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script') : null,
-    chk.ok === false ? pill('⚠ check found differences', PODCAST_C.bad, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
+    chk.ok === false ? pill('⚠ check found differences', PODCAST_C.error, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
     ep.mode === 'data' ? pill('📊 data mode', PODCAST_C.accent, 'Every number is from a computation over your data') : null);
 }
 function PodcastPlayer() {
@@ -9670,7 +9683,7 @@ function PodcastPlayer() {
   const cite = (c) => h('button', {
     key: c, className: 'btn', onClick: () => setSrcOpen(srcOpen === c ? null : c),
     'aria-label': 'Source ' + c + ': ' + ((srcById[c] || {}).title || ''),
-    style: { fontSize: 10, padding: '0 5px', marginLeft: 4, minHeight: 0, lineHeight: '16px' }
+    style: { fontSize: PODCAST_C.xs, fontFamily: PODCAST_C.mono, padding: '0 5px', marginLeft: 4, minHeight: 0, lineHeight: '16px' }
   }, c);
   const chartFor = () => {
     if (!line || !ep.charts) return null;
@@ -9687,15 +9700,15 @@ function PodcastPlayer() {
     role: 'region', 'aria-label': 'Podcast player',
     style: {
       position: 'fixed', right: 16, bottom: 16, zIndex: 180, width: 'min(400px, calc(100vw - 32px))',
-      background: PODCAST_C.bg, border: '1px solid ' + PODCAST_C.line, borderRadius: 12,
-      boxShadow: '0 12px 40px rgba(0,0,0,0.5)', color: PODCAST_C.text, fontSize: 13, padding: 12,
+      background: PODCAST_C.bg, backdropFilter: PODCAST_C.blur, WebkitBackdropFilter: PODCAST_C.blur, border: '1px solid ' + PODCAST_C.line, borderRadius: 12,
+      boxShadow: '0 12px 40px rgba(0,0,0,0.5)', color: PODCAST_C.text, fontFamily: PODCAST_C.font, fontSize: PODCAST_C.base, padding: 12,
       display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '70vh'
     }
   },
   h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
     h('div', { style: { flex: 1, minWidth: 0 } },
-      h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.show),
-      h('div', { style: { color: PODCAST_C.dim, fontSize: 11, margin: '2px 0 4px' } },
+      h('div', { style: { fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.md, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.show),
+      h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, margin: '2px 0 4px' } },
         ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
       h(PodcastBadges, { ep: ep })),
     btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); setEp(null); })),
@@ -9715,27 +9728,27 @@ function PodcastPlayer() {
   h('input', {
     type: 'range', min: 0, max: Math.max(1, ep.duration_s || 0), step: 1, value: Math.floor(t),
     'aria-label': 'Position', 'aria-valuetext': podcastClock(t) + ' of ' + podcastClock(ep.duration_s),
-    onChange: (e) => seek(Number(e.target.value)), style: { width: '100%' }
+    onChange: (e) => seek(Number(e.target.value)), style: { width: '100%', accentColor: PODCAST_C.accent }
   }),
   h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
     btn('⏮', 'Previous chapter', () => stepChapter(-1)),
     btn(playing ? '⏸' : '▶', playing ? 'Pause' : 'Play', () => { const a = audio.current; if (a) (a.paused ? a.play().catch(() => {}) : a.pause()); }),
     btn('⏭', 'Next chapter', () => stepChapter(1)),
-    h('span', { style: { color: PODCAST_C.dim, fontSize: 11, fontFamily: 'monospace' } }, podcastClock(t) + ' / ' + podcastClock(ep.duration_s)),
+    h('span', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.mono } }, podcastClock(t) + ' / ' + podcastClock(ep.duration_s)),
     h('span', { style: { flex: 1 } }),
     h('select', {
       'aria-label': 'Playback speed', value: rate, onChange: (e) => setRate(Number(e.target.value)),
       style: { background: 'transparent', color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6 }
-    }, [0.8, 1, 1.25, 1.5, 1.75, 2].map(r => h('option', { key: r, value: r, style: { color: '#000' } }, r + '×'))),
+    }, [0.8, 1, 1.25, 1.5, 1.75, 2].map(r => h('option', { key: r, value: r, style: { color: PODCAST_C.text, background: PODCAST_C.surface } }, r + '×'))),
     btn(showText ? 'Hide transcript' : 'Transcript', showText ? 'Hide the transcript' : 'Show the transcript', () => setShowText(!showText), { 'aria-expanded': showText })),
-  line ? h('div', { 'aria-live': 'polite', style: { fontSize: 13, lineHeight: 1.45 } },
-    h('b', { style: { color: line.speaker === 'a' ? PODCAST_C.accent : PODCAST_C.warn } }, who(line.speaker) + ': '),
+  line ? h('div', { 'aria-live': 'polite', style: { fontSize: PODCAST_C.base, lineHeight: 1.45 } },
+    h('b', { style: { color: line.speaker === 'a' ? PODCAST_C.accent : PODCAST_C.second } }, who(line.speaker) + ': '),
     line.text, (line.cites || []).map(cite)) : null,
-  src ? h('div', { style: { fontSize: 12, borderLeft: '2px solid ' + PODCAST_C.accent, paddingLeft: 8, color: PODCAST_C.text } },
+  src ? h('div', { style: { fontSize: PODCAST_C.md, borderLeft: '2px solid ' + PODCAST_C.accent, paddingLeft: 8, color: PODCAST_C.text } },
     h('b', null, srcOpen + ' '), src.kind === 'fact' ? src.title : (src.title || ''),
-    src.expr ? h('div', { style: { color: PODCAST_C.dim, fontFamily: 'monospace', fontSize: 11 } }, 'computed by ', src.expr) : null,
+    src.expr ? h('div', { style: { color: PODCAST_C.dim, fontFamily: PODCAST_C.mono, fontSize: PODCAST_C.sm } }, 'computed by ', src.expr) : null,
     src.url ? h('div', null, h('a', { href: src.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, 'Open the source ↗')) : null) : null,
-  chart ? h('img', { src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/charts/' + encodeURIComponent(chart.file), alt: chart.title, style: { width: '100%', borderRadius: 6, background: '#fff' } }) : null,
+  chart ? h('img', { src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/charts/' + encodeURIComponent(chart.file), alt: chart.title, style: { width: '100%', borderRadius: 8 } }) : null,
   showText ? h('div', { style: { overflowY: 'auto', maxHeight: '32vh', borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
     lines.map((ln, i) => h('div', { key: i },
       (i === 0 || lines[i - 1].chapter !== ln.chapter) && chapters[ln.chapter]
@@ -9744,9 +9757,9 @@ function PodcastPlayer() {
         role: 'button', tabIndex: 0, onClick: () => seek(ln.start || 0),
         onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); seek(ln.start || 0); } },
         'aria-current': i === cur ? 'true' : undefined,
-        style: { padding: '3px 4px', borderRadius: 4, cursor: 'pointer', background: i === cur ? 'rgba(0,212,255,0.12)' : 'transparent' }
+        style: { padding: '3px 4px', borderRadius: 4, cursor: 'pointer', background: i === cur ? PODCAST_C.accentSoft : 'transparent' }
       }, h('b', null, who(ln.speaker) + ': '), ln.text, (ln.cites || []).map(cite)))),
-    (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: 11, marginTop: 8 } },
+    (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
 }
 function PodcastChip({ routine, runId }) {
@@ -9762,14 +9775,14 @@ function PodcastChip({ routine, runId }) {
     return () => { dead = true; clearInterval(iv); };
   }, [routine, runId]);
   if (!ep) return null;
-  const style = { fontSize: 12, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: 6 };
+  const style = { fontSize: PODCAST_C.md, fontFamily: PODCAST_C.font, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: 6 };
   if (ep.status === 'ready') {
     return h('button', { className: 'btn', style: style, onClick: () => fridayPodcast('play', ep.id),
       'aria-label': 'Listen to this run\u2019s episode, ' + Math.max(1, Math.round((ep.duration_s || 0) / 60)) + ' minutes' },
       '🎧 Listen · ' + Math.max(1, Math.round((ep.duration_s || 0) / 60)) + ' min');
   }
   if (ep.status === 'failed') {
-    return h('span', { style: Object.assign({}, style, { color: PODCAST_C.bad }), title: (ep.error || {}).message || '' },
+    return h('span', { style: Object.assign({}, style, { color: PODCAST_C.error }), title: (ep.error || {}).message || '' },
       '🎧 Episode failed: ' + (((ep.error || {}).message) || '').slice(0, 90));
   }
   if (ep.status === 'cancelled') return null;
@@ -9827,17 +9840,17 @@ function PodcastsView() {
     fetch('/api/podcasts/' + encodeURIComponent(ep.id) + (what === 'delete' ? '' : '/' + what),
       { method: what === 'delete' ? 'DELETE' : 'POST' }).then(refresh).catch(() => {});
   };
-  const field = { background: 'rgba(255,255,255,0.04)', color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6, padding: '6px 8px', fontSize: 13 };
-  return h('div', { style: { padding: 16, color: PODCAST_C.text, display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 900 } },
+  const field = { background: PODCAST_C.line, color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6, padding: '6px 8px', fontSize: PODCAST_C.base, fontFamily: PODCAST_C.font };
+  return h('div', { style: { padding: 16, color: PODCAST_C.text, fontFamily: PODCAST_C.font, display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 900 } },
     h('div', null,
-      h('h2', { style: { margin: 0, fontSize: 18 } }, '🎧 Podcasts'),
-      h('div', { style: { color: PODCAST_C.dim, fontSize: 12, marginTop: 4 } },
+      h('h2', { style: { margin: 0, fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.xl } }, '🎧 Podcasts'),
+      h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.md, marginTop: 4 } },
         'Two hosts talk through any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and the hosts may only say computed numbers.')),
     h('section', { 'aria-label': 'Make a podcast', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
       rows.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'flex-start' } },
         h('select', { 'aria-label': 'Source type', value: r.kind, style: field,
           onChange: (e) => setRows(rows.map((x, k) => k === i ? { kind: e.target.value, value: x.value } : x)) },
-          PODCAST_KINDS.map(k => h('option', { key: k.id, value: k.id, style: { color: '#000' } }, k.label))),
+          PODCAST_KINDS.map(k => h('option', { key: k.id, value: k.id, style: { color: PODCAST_C.text, background: PODCAST_C.surface } }, k.label))),
         r.kind === 'text'
           ? h('textarea', { 'aria-label': 'Source text', rows: 3, value: r.value, placeholder: PODCAST_KINDS[0].ph, style: Object.assign({ flex: 1, resize: 'vertical' }, field),
               onChange: (e) => setRows(rows.map((x, k) => k === i ? { kind: x.kind, value: e.target.value } : x)) })
@@ -9847,17 +9860,17 @@ function PodcastsView() {
       h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
         h('button', { className: 'btn', onClick: () => setRows(rows.concat([{ kind: 'file', value: '' }])) }, '+ Add source'),
         h('select', { 'aria-label': 'Length', value: length, style: field, onChange: (e) => setLength(e.target.value) },
-          [['short', 'Short (~5 min)'], ['standard', 'Standard (~10 min)'], ['long', 'Long (~30 min)']].map(o => h('option', { key: o[0], value: o[0], style: { color: '#000' } }, o[1]))),
+          [['short', 'Short (~5 min)'], ['standard', 'Standard (~10 min)'], ['long', 'Long (~30 min)']].map(o => h('option', { key: o[0], value: o[0], style: { color: PODCAST_C.text, background: PODCAST_C.surface } }, o[1]))),
         h('input', { 'aria-label': 'Angle or emphasis (optional)', placeholder: 'Angle or emphasis (optional)', value: instructions, style: Object.assign({ flex: 1, minWidth: 180 }, field), onChange: (e) => setInstructions(e.target.value) }),
         h('button', { className: 'btn active', disabled: busy, onClick: make }, busy ? 'Starting…' : 'Make episode')),
-      msg ? h('div', { role: 'status', style: { fontSize: 12, color: PODCAST_C.dim } }, msg) : null,
-      h('div', { style: { fontSize: 11, color: PODCAST_C.dim } }, 'A web page is fetched from the internet to be read; nothing about the episode is sent anywhere.')),
+      msg ? h('div', { role: 'status', style: { fontSize: PODCAST_C.md, color: PODCAST_C.dim } }, msg) : null,
+      h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim } }, 'A web page is fetched from the internet to be read; nothing about the episode is sent anywhere.')),
     h('section', { 'aria-label': 'Episodes', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
       eps.length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes yet. Every News routine run now comes with one, and you can make your own above.') : null,
       eps.map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
         h('div', { style: { flex: 1, minWidth: 0 } },
           h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ep.title || ep.show),
-          h('div', { style: { fontSize: 11, color: PODCAST_C.dim, margin: '2px 0 4px' } },
+          h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim, margin: '2px 0 4px' } },
             ep.show, ' · ', new Date((ep.created_at || 0) * 1000).toLocaleString(),
             ep.duration_s ? ' · ' + podcastClock(ep.duration_s) : '',
             ep.status !== 'ready' ? ' · ' + (ep.status === 'failed' ? 'failed: ' + ((ep.error || {}).message || '') : (ep.stage_detail || ep.status)) : ''),
