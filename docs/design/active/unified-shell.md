@@ -1,9 +1,10 @@
 # One shell: the product name, one top bar everywhere, and fullscreen with chat
 
-> **Status:** built on branch `feat/unified-shell`, not yet on main: piece 1 (the name and
-> ™) `a64cad50`, piece 2 (one top bar) `24c27eb8`, piece 3 (fullscreen with chat)
-> `0015567e`, and piece 4 (the audit and its fixes, recorded in
-> [`docs/brand/fidelity-audit.md`](../../brand/fidelity-audit.md)).
+> **Status:** pieces 1 to 4 built on branch `feat/unified-shell`, not yet on main: piece 1
+> (the name and ™) `a64cad50`, piece 2 (one top bar) `24c27eb8`, piece 3 (fullscreen with
+> chat) `0015567e`, piece 4 (the audit and its fixes, recorded in
+> [`docs/brand/fidelity-audit.md`](../../brand/fidelity-audit.md)) `713c07ea`. §9 and §10
+> (owner additions, 2026-09-30) are accepted for build as pieces 5 to 7.
 > **Last verified:** 2026-09-30 against main `e27ba160` plus `piece/P-BRAND-0` (brand
 > source of truth: `src/agent_friday/brand.py`, `docs/brand/BRAND.md`,
 > `scripts/check_brand_tokens.py`), rebased as branch `feat/unified-shell`.
@@ -186,6 +187,136 @@ one browser at a time for captures. Every new test is shown failing before its c
 2. One top bar everywhere (§4).
 3. Fullscreen with the chat tray (§5).
 4. The audit and its fixes (§6).
+5. Both marks, the trademark line, podcasts' written material and the README (§9).
+6. The landing cluster's content: his countdowns, each with its reason (§10.1).
+7. The landing cluster's moments: the judge, the fade, the setting, the keys (§10.2 to §10.5).
 
 Each lands on `feat/unified-shell` as one commit, with its checks, for the program lead's
 deploy lane.
+
+## 9. Both marks (owner additions, 2026-09-30)
+
+The owner approved the branding above and marks the maker too.
+
+| Constant | Value |
+|---|---|
+| `PRODUCT_NAME` | `Agent Friday™` |
+| `MAKER_NAME` | `FutureSpeak.AI™` |
+| `PRODUCT_LOCKUP` | `Agent Friday™ by FutureSpeak.AI™` |
+| `TRADEMARK_NOTICE` | `Agent Friday™ and FutureSpeak.AI™ are trademarks of FutureSpeak.AI.` |
+
+- **™, never ®:** nothing is registered yet. The notice names the company as the owner, and
+  in that one place, and in a copyright line, "FutureSpeak.AI" is the company, written plain.
+- **The guard** covers both marks: a UI string that writes "FutureSpeak.AI" without ™ fails,
+  as "Agent Friday" without ™ does. A web address or an email address is not the mark, and a
+  string a model reads carries the `brand: plain` marker.
+- **The display filter** (`brand.tm`, `fridayTM`) marks both, under the same rules: once,
+  never inside code, never inside an address, never in what is stored, read by a model or
+  spoken. `brand.spoken` takes both marks off, so audio says plain words.
+- **The trademark line** sits under the lockup in Settings' About card, and in the README.
+- **Her name is unchanged:** in conversation she calls herself by the name the user gave her
+  ("Friday" for the owner). Only brand surfaces use the product name.
+- **Podcasts.** Written material reads "… from Agent Friday™": the transcript (the captions
+  file and the page's transcript), the episode card and its detail (the show notes), the
+  ready notice and the audio file's tags (album "The Briefing from Agent Friday™", artist
+  "Agent Friday™"). The spoken opening and sign-off say "from Agent Friday" in plain words.
+  A show name is a brand surface, so it drops her name: "Friday's Front Page" is "The Front
+  Page", and an episode outside a show is "a podcast from Agent Friday". Episodes made
+  before this keep their audio; their show line is read through the same names.
+- **The README** names the product with the lockup and carries the trademark line. It is the
+  public repository: documentation only, no status notes, nothing personal.
+- **Packaging belongs to the first-install session**, which this branch does not touch. The
+  handoff lists what it names: the Apps list entry (`packaging/windows/lib/Shortcuts.ps1`,
+  `DisplayName = 'Agent Friday'`, `Publisher = 'FutureSpeak.AI'`), the shortcut names
+  ("Agent Friday.lnk", "Uninstall Agent Friday.lnk", "Start Friday when I sign in.lnk") and
+  the installer's own wording.
+
+## 10. The landing cluster: relevant content, at relevant moments
+
+The cluster is what the start screen shows over the scene: the transparency layer, the
+greeting and lockup, the countdowns, the chat field with its mic, and Start my day. Until
+now it shows whenever no workspace window is open, and its countdowns are three fixed
+holidays. The owner's words: only the data Friday thinks is relevant, and only when she
+thinks the cluster is relevant, fading out and away when it is not, much like the toolbar.
+
+### 10.1 Relevant content: his countdowns
+
+`GET /api/countdowns` returns his items, ranked, each with the reason it is there:
+
+| Source | Items | Reason shown |
+|---|---|---|
+| His calendar (the same cached read the Calendar workspace makes) | events in the next 60 days | "from your calendar" |
+| Commitments he made | approved to-dos with a deadline; open follow-ups; goals and their milestones with a due date | "a deadline you set", "you said you'd get back to Dana", "your goal" |
+| His wiki and knowledge graph | birthdays, anniversaries and other dated lines on people and personal pages, rolled to their next date | "from your wiki" |
+
+- **Ranking:** how much it matters times how soon it is. Soon: today counts fully, a week
+  out about half, two months out about a tenth. Matters: an interview, a trip, a birthday
+  or a commitment ranks above a routine meeting; a person more linked in his wiki ranks
+  above one less linked. The top four show.
+- **Generic holidays are gone.** One shows only when it is on his calendar or in his wiki,
+  and then as that entry.
+- **Each item says when** ("in 25 min", "tomorrow", "in 12 days") **and why** ("from your
+  calendar").
+- **Nothing here calls a model.** A failing source adds nothing and says so in the reply;
+  the others still answer. The Family workspace asks for the personal kind only.
+
+### 10.2 Relevant moments: the judge
+
+A rule set in the page, `fridayLandingJudge`, decides from what the page already knows,
+with no network call of its own. It answers `{show, reason}` each time its inputs change
+and once a minute.
+
+- **Hidden while he works or talks:** a workspace window is open, voice is on, or the chat
+  tray is open.
+- **Shown when it is useful:**
+  - he returns after five minutes idle, or to the page after five minutes away;
+  - the first use of the day;
+  - something time-sensitive: a countdown item within the hour, and again at ten minutes;
+  - the pointer rests on the cluster's area for half a second;
+  - he summons it by voice ("show my day"), by the palette, or by a key;
+  - he is typing in its field.
+- **It stays** while its reason holds, and 30 seconds after the last one ends: the dock's own
+  idle time.
+- **Otherwise it is hidden.**
+- **One line per change**, in the page's console and in the server log through the state the
+  page already reports: "landing shown: back after 14 min", "landing hidden: working in
+  News".
+
+### 10.3 The fade
+
+The cluster fades and sinks a few pixels with the toolbar's own timing and easing,
+`0.35s cubic-bezier(0.2, 0.8, 0.3, 1)`. That becomes one token, `--fr-reveal`, used by the top
+bar, the dock and the cluster. Hidden, the cluster takes no pointer, no focus and no screen
+reader's attention.
+
+### 10.4 The setting and the voice
+
+- **`landing_mode`:** `smart` (the default, recommended), `always` or `never`. It sits in
+  Settings, in the palette, and in `show_my_day(mode?)`, a voice and chat tool per the voice
+  tool contract (internal, ring 1).
+- **"Show my day"** shows the cluster now, for the dwell. "Always show my day" sets the mode.
+- **`never`** means never on its own; a summons still shows it.
+
+### 10.5 Reachable while hidden
+
+- **Ctrl+/ (Cmd+/)** puts the cursor in a chat field: the cluster's when the desktop shows no
+  window (summoning it), otherwise the chat tray's.
+- **Ctrl+Shift+Space** starts or stops voice, as the mic does.
+- Both are listed in the palette.
+
+### 10.6 Verification
+
+- The judge is one pure function, tested in node on a table of situations.
+- The ranking is tested on fixed calendars, commitments and wiki pages (fictional names).
+- The tool is tested per the voice contract.
+- A real browser shows the fade and the keys.
+- Stills of the cluster shown and hidden go to the owner.
+
+### 10.7 Decisions taken here, for the owner's veto
+
+- The ™ on FutureSpeak.AI in her shown replies (the display filter marks both).
+- The shows' new names.
+- The hour and ten-minute warnings.
+- The five-minute idle.
+- The half-second hover.
+- The two keys.
