@@ -277,3 +277,18 @@ def test_the_writer_is_not_invited_to_narrate_its_own_process(home, monkeypatch,
     pe.produce(_briefing()["id"])
     rev = [c["user"] for c in llm.calls if "PROBLEMS FOUND" in c["user"]][0]
     assert "never say them aloud" in rev
+
+
+def test_a_revision_that_makes_the_script_worse_is_not_kept(home, monkeypatch, speaker):
+    _write_run(home)
+    ds = fx.docs()
+    good = fx.good_lines(ds)
+    nearly = [dict(ln, text=ln["text"].replace("Example Wire reports that ", "")) for ln in good]
+    worse = [dict(ln, text=ln["text"] + " That is the linchpin. It's context.")
+             if i in (1, 4, 6) else ln for i, ln in enumerate(good)]
+    llm = _writer(nearly, revised=worse)          # the draft has 1 problem; the revisions have more
+    monkeypatch.setattr(pe, "_llm_json", llm)
+    done = pe.produce(_briefing()["id"])
+    assert done["script_check"]["revisions"] == pe.MAX_REVISIONS
+    assert len(done["script_check"]["problems"]) == 1
+    assert "linchpin" not in " ".join(ln["text"] for ln in done["lines"])

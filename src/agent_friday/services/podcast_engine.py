@@ -593,6 +593,9 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
     lines, cut = _drop_dead_lines(lines, problems_of(lines), offset)
     rejected += cut
     problems = problems_of(lines)
+    # Each revision is a new draft, and a new draft can be worse: the episode
+    # keeps whichever draft has the fewest problems.
+    best, best_problems = lines, problems
     revisions = 0
     while problems and revisions < MAX_REVISIONS:
         revisions += 1
@@ -604,6 +607,9 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
             if len(revised) >= 2 and {ln["chapter"] for ln in lines} <= {ln["chapter"] for ln in revised}:
                 lines = revised
         problems = problems_of(lines)
+        if len(problems) < len(best_problems):
+            best, best_problems = lines, problems
+    lines, problems = best, best_problems
     lines = with_signature(lines, ep, len(chapters), docs)
     return {"title": title,
             "chapters": [{"title": str(c.get("title") or "Chapter %d" % (i + 1))[:120],
