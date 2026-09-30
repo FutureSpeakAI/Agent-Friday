@@ -127,15 +127,15 @@
       cardMeter = document.createElement('div');
       cardMeter.style.cssText = 'height:4px;background:#18203a;border-radius:2px;margin-top:8px;overflow:hidden';
       var bar = document.createElement('div');
-      bar.style.cssText = 'height:100%;width:0;background:#ef4444;transition:width .08s linear';
+      bar.style.cssText = 'height:100%;width:0;background:#00d4ff;transition:width .08s linear';
       cardMeter.appendChild(bar);
       cardMeter._bar = bar;
       card.appendChild(cardText);
       card.appendChild(cardMeter);
       document.body.appendChild(card);
     }
-    var colour = { recording: '#ef4444', arming: '#94a3b8', thinking: '#e0a030',
-                   error: '#ef4444', done: '#00ff80' }[state] || '#94a3b8';
+    var colour = { recording: '#00d4ff', arming: '#7a8699', thinking: '#7b61ff',
+                   error: '#ef4444', done: '#00ff80' }[state] || '#7a8699';
     cardText.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;' +
       'background:' + colour + ';margin-right:8px"></span>' +
       String(message || '').replace(/[<>&]/g, function (c) {

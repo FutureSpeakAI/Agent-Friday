@@ -212,8 +212,8 @@ Each visible change is a brand decision, recorded in
 | B8 | Settings danger (failure text, danger button) | `#ff6b8a` | `#ef4444` |
 | B9 | Connector states (Python) | error `#ff5470`, blocked `#ff8c42`, connecting `#f59e0b`, unknown `#888888` | error `#ef4444`, blocked `#ff0080`, connecting `#7b61ff`, unknown `#7a8699` |
 | B10 | Notification priority colours (Python) | critical `#ff3366`, high `#ff8a00`, medium `#ffd23f`, low `#00d4ff` | critical `#f59e0b` (needs you; nothing failed), high `#00d4ff`, medium `#a78bfa`, low `#7a8699` |
-| B11 | Push-to-talk indicator (Python) | arming `#64748b`, recording `#ef4444`, thinking `#e0a030`, done `#22c55e`, clipboard `#e0a030`, idle `#94a3b8` | arming and idle `#7a8699`, recording `#00d4ff`, thinking `#7b61ff`, done `#00ff80`, clipboard `#f59e0b` |
-| B12 | Connected-account palette (Python) | cyan, purple, `#22c55e`, amber, pink, teal, red | cyan, purple, teal, pink, blue, sand, soft violet: no status hue (new accounts only) |
+| B11 | Push-to-talk indicator (Python) | arming `#64748b`, recording `#ef4444`, thinking `#e0a030`, done `#22c55e`, clipboard `#e0a030`, idle `#94a3b8` | arming and idle `#7a8699`, recording `#00d4ff`, thinking `#7b61ff`, done `#00ff80`, clipboard `#f59e0b`; the in-page card in `friday_push_to_transcribe.js` reads the same table and the guard checks it |
+| B12 | Connected-account palette (Python) | cyan, purple, `#22c55e`, amber, pink, teal, red | cyan, purple, teal, pink, blue, sand, silver: no status hue, every pair told apart at a glance; an account saved with an old status hue shows the slot it once held |
 | B13 | Type | body `Helvetica Neue`; Orbitron falling back to `monospace`; the login page in Orbitron throughout | body Inter; Orbitron falls back to `sans-serif` everywhere; the login page is Inter with an Orbitron heading |
 | B14 | The mark | a dark box baked into the PNG and the icon | a real alpha channel; `assets/friday.ico` added for the installer |
 

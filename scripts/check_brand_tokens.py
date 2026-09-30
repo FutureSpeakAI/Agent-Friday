@@ -216,12 +216,40 @@ def _decoration_problems(root: Path, brand) -> list:
     return problems
 
 
+_PTT_JS = "static/js/friday_push_to_transcribe.js"
+#: State -> brand token the in-page push-to-talk card must show.
+_PTT_CARD_STATES = {"recording": "CYAN", "arming": "NEUTRAL", "thinking": "VIOLET",
+                    "error": "ERROR", "done": "OK"}
+
+
+def _page_card_problems(root: Path, brand) -> list:
+    path = root / _PTT_JS
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8")
+    block = re.search(r"var colour = \{(.*?)\}\[state\]", text, re.S)
+    if not block:
+        return [f"{_PTT_JS}: the state colour table is missing"]
+    table = dict(re.findall(r"(\w+):\s*'(#[0-9a-fA-F]{6})'", block.group(1)))
+    problems = []
+    for state, token in _PTT_CARD_STATES.items():
+        want = getattr(brand, token).lower()
+        got = table.get(state, "").lower()
+        if got != want:
+            problems.append(f"{_PTT_JS}: {state} is {got or 'missing'}; it reads {token} ({want}) "
+                            "from brand.py so a live microphone never looks like a failure")
+    meter = re.search(r"bar\.style\.cssText = '([^']*)'", text)
+    if meter and brand.ERROR.lower() in meter.group(1).lower():
+        problems.append(f"{_PTT_JS}: the level meter is painted with the error colour")
+    return problems
+
+
 def find_problems(root: Path = REPO_ROOT) -> list:
     root = Path(root)
     brand = load_brand(root)
     return (_token_problems(root, brand) + _python_problems(root, brand)
             + _font_problems(root) + _status_dot_problems(root)
-            + _decoration_problems(root, brand))
+            + _decoration_problems(root, brand) + _page_card_problems(root, brand))
 
 
 def main(argv=None) -> int:

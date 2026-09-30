@@ -704,7 +704,7 @@ h1{font-family:var(--fr-font-display);font-size:14px;letter-spacing:.25em;text-a
 input[type=email],input[type=text],input[type=password]{width:100%;padding:12px 16px;background:var(--fr-cyan-soft);border:1px solid rgba(0,212,255,.25);border-radius:6px;color:var(--fr-text);font-family:var(--fr-font-body);font-size:var(--fr-text-md);outline:none;transition:border-color .3s}
 input[type=email]:focus,input[type=text]:focus,input[type=password]:focus{border-color:rgba(0,212,255,.7);box-shadow:0 0 15px rgba(0,212,255,.15)}
 input::placeholder{color:var(--fr-faint);font-size:var(--fr-text-xs);letter-spacing:var(--fr-track-label)}
-button{width:100%;padding:12px;margin-top:4px;background:var(--fr-cyan-soft);border:1px solid rgba(0,212,255,.4);border-radius:6px;color:var(--fr-cyan);font-family:var(--fr-font-body);font-size:var(--fr-text-sm);letter-spacing:.2em;cursor:pointer;transition:all .3s}
+button{width:100%;padding:12px;margin-top:4px;background:var(--fr-cyan-soft);border:1px solid rgba(0,212,255,.4);border-radius:6px;color:var(--fr-cyan);font-family:var(--fr-font-body);font-size:var(--fr-text-sm);cursor:pointer;transition:all .3s}
 button:hover{background:rgba(0,212,255,.22);border-color:rgba(0,212,255,.7);box-shadow:0 0 20px rgba(0,212,255,.2)}
 .error{color:var(--fr-deny);font-size:var(--fr-text-2xs);text-align:center;margin-top:12px;letter-spacing:.1em}
 .scan-line{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(0,212,255,.15),transparent);animation:scan 4s linear infinite;pointer-events:none}

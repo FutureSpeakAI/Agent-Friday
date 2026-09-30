@@ -147,6 +147,18 @@ _AUDIT_CATEGORY = "google_account"
 
 # Distinct, color-blind-friendly hues for per-account event coloring / badges.
 _PALETTE = list(brand.ACCOUNT_PALETTE)
+# Accounts connected while the palette still held status hues carry one of these
+# in their saved record. Each shows as the slot it once occupied, so a badge
+# never reads as ok, warn or error.
+_RETIRED_STATUS_HUES = brand.RETIRED_ACCOUNT_HUES
+
+
+def _account_color(rec: dict):
+    """The badge colour for an account record, never a status hue."""
+    color = rec.get("color")
+    slot = _RETIRED_STATUS_HUES.get(str(color).lower())
+    return _PALETTE[slot] if slot is not None else color
+
 
 _MIGRATION_DONE = False
 
@@ -311,6 +323,8 @@ def _public_record(rec: dict) -> dict:
     safe_keys = {"id", "email", "label", "status", "services", "color",
                  "created", "last_sync", "scopes", "enc_method"}
     out = {k: rec.get(k) for k in safe_keys if k in rec}
+    if "color" in out:
+        out["color"] = _account_color(rec)
     # Every consumer of a public record gets the derived verdict alongside the
     # raw status, so no surface has to (or gets to) invent its own answer.
     out["health"] = account_health(rec)
@@ -953,7 +967,7 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None,
             m["account_id"] = aid
             m["account_label"] = rec.get("label")
             m["account_email"] = rec.get("email")
-            m["account_color"] = rec.get("color")
+            m["account_color"] = _account_color(rec)
             messages.append(m)
     messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
     return {"accounts": used, "messages": messages, "errors": errors}
@@ -1067,7 +1081,7 @@ def merged_calendar(days: int = 2) -> dict:
             ev["account_id"] = aid
             ev["account_label"] = rec.get("label")
             ev["account_email"] = rec.get("email")
-            ev["account_color"] = rec.get("color")
+            ev["account_color"] = _account_color(rec)
             events.append(ev)
     events.sort(key=lambda e: e.get("start_time", ""))
     return {"accounts": used, "events": events, "errors": errors}

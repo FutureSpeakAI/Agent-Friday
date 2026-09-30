@@ -78,7 +78,11 @@ PAGE_MUTED = "#a8a8b4"
 ACCOUNT_PINK = "#ec4899"
 ACCOUNT_PURPLE = "#a855f7"
 ACCOUNT_TEAL = "#14b8a6"
-ACCOUNT_PALETTE = (CYAN, ACCOUNT_PURPLE, ACCOUNT_TEAL, ACCOUNT_PINK, CAT_BLUE, CAT_SAND, VIOLET_SOFT)
+ACCOUNT_SILVER = "#cbd5e1"
+ACCOUNT_PALETTE = (CYAN, ACCOUNT_PURPLE, ACCOUNT_TEAL, ACCOUNT_PINK, CAT_BLUE, CAT_SAND, ACCOUNT_SILVER)
+#: Status hues an earlier palette handed to accounts, mapped to the palette slot
+#: each one occupied. A saved account record carrying one shows that slot instead.
+RETIRED_ACCOUNT_HUES = {"#22c55e": 2, OK: 2, WARN: 3, ERROR: 6}
 
 # -- type ----------------------------------------------------------------------
 FONT_DISPLAY = "'Orbitron', sans-serif"
