@@ -187,6 +187,19 @@ for _p in (str(_SRC), str(_ROOT)):
 # which is the only ordering that matters. See the comment block above.
 _silence_child_consoles()
 
+
+# ── No public exposure from a test run ──────────────────────────────────────
+# A unit test once approved a publish card, and the code under test launched a
+# real static server and a real cloudflared quick tunnel from every worker,
+# exposing temporary folders on public addresses with no approval. Two guards
+# (tests/exposure_guard.py) make that impossible in every test process:
+# process creation refuses tunnel binaries, and a socket refuses to bind
+# anything but loopback. tests/unit/test_no_public_exposure_under_tests.py
+# proves they are live.
+from tests.exposure_guard import PublicExposureRefused, install as _install_exposure_guard  # noqa: E402,F401
+
+_install_exposure_guard()
+
 import pytest  # noqa: E402
 
 # The canned model reply, shared so api tests can assert against it.

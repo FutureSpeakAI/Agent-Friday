@@ -389,9 +389,19 @@ def connection(adapter: str) -> Optional[dict]:
 
 
 def publish_remote(adapter: str, bundle) -> str:
-    """Hosted adapters land in the next increment; until then they refuse."""
-    raise RuntimeError("%s is not available yet" % adapter)
+    """Publish through a connected hosted adapter (services/publish_adapters)."""
+    from agent_friday.services import publish_adapters as _pa
+    conn = connection(adapter)
+    if not conn:
+        raise RuntimeError("%s is not connected; connect the account in Settings first"
+                           % _pa.LABELS.get(adapter, adapter))
+    return _pa.publish(adapter, bundle, conn)
 
 
 def unpublish_remote(entry: dict) -> None:
-    raise RuntimeError("%s is not available yet" % entry.get("adapter"))
+    from agent_friday.services import publish_adapters as _pa
+    adapter = str(entry.get("adapter") or "")
+    conn = connection(adapter)
+    if not conn:
+        raise RuntimeError("%s is not connected" % _pa.LABELS.get(adapter, adapter))
+    _pa.unpublish(adapter, str(entry.get("slug") or ""), conn)
