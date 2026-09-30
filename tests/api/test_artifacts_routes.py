@@ -44,6 +44,17 @@ def test_reading_current_and_a_given_version(client):
     assert all("content" not in v for v in vs)
 
 
+def test_the_panel_can_read_a_version_and_the_timeline_in_one_request(client):
+    """The page shares few connections with Friday; a switch is one round trip."""
+    a = art.put(CID, kind="markdown", title="Draft", content="one")
+    art.put(CID, kind="markdown", title="Draft", content="two", artifact_id=a["id"])
+    d = client.get(f"/api/artifacts/{CID}/{a['id']}?include=versions&version=1").get_json()
+    assert d["artifact"]["content"] == "one"
+    assert [v["version"] for v in d["versions"]] == [1, 2]
+    plain = client.get(f"/api/artifacts/{CID}/{a['id']}").get_json()
+    assert "versions" not in plain
+
+
 def test_a_missing_artifact_is_a_404_not_a_500(client):
     r = client.get(f"/api/artifacts/{CID}/art-none")
     assert r.status_code == 404

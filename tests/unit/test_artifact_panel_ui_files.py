@@ -92,6 +92,14 @@ def test_every_kind_has_a_renderer(js):
         assert re.search(r"kind === '%s'|case '%s'|%s:" % (kind, kind, kind), js), kind
 
 
+def test_the_page_shares_one_event_stream_across_every_chat_surface(js):
+    """A browser allows about six connections to one host and Friday's page
+    already holds several open; one stream per chat surface queued ordinary
+    requests behind them (15 s for one fetch on the desktop page)."""
+    assert js.count("new EventSource(") == 1
+    assert "busSubscribe" in js
+
+
 def test_the_svg_frame_has_no_scripts(js):
     m = re.search(r"SVG_SANDBOX\s*=\s*['\"]([^'\"]*)['\"]", js)
     assert m, "svg is framed with its own sandbox constant"

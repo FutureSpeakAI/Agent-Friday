@@ -2,7 +2,8 @@
 
   GET   /api/artifacts?conversation_id=          the conversation's artifacts (metadata)
   POST  /api/artifacts/<cid>                      make one from the panel (authored by "you")
-  GET   /api/artifacts/<cid>/<aid>[?version=N]    one version, with content
+  GET   /api/artifacts/<cid>/<aid>[?version=N][&include=versions]
+                                                  one version, with content (and the timeline)
   GET   /api/artifacts/<cid>/<aid>/versions       the timeline (metadata)
   POST  /api/artifacts/<cid>/<aid>                a hand edit: a new version by "you"
   POST  /api/artifacts/<cid>/<aid>/restore        {version}: a new version with old content
@@ -56,7 +57,12 @@ def read_artifact(cid, aid):
         return _bad(e)
     if rec is None:
         return _bad("no such artifact or version", 404)
-    return jsonify({"status": "ok", "artifact": rec})
+    out = {"status": "ok", "artifact": rec}
+    if request.args.get("include") == "versions":
+        # One request for the panel: the record and its timeline together,
+        # because the page's connections to Friday are few and shared.
+        out["versions"] = art.versions(cid, aid)
+    return jsonify(out)
 
 
 @artifacts_bp.route("/api/artifacts/<cid>/<aid>/versions", methods=["GET"])

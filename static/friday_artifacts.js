@@ -88,6 +88,36 @@
   window.fridayArtifactFrameDoc = html => frameDoc(html, FRAME_CSP, FRAME_BASE_CSS);
   const svgDoc = svg => frameDoc('<!doctype html><html><head></head><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0b0e14">' + String(svg || '') + '</body></html>', SVG_CSP, 'svg{max-width:100%;max-height:100vh}');
 
+  // ── One event stream for the whole page ───────────────────────────────
+  // A browser allows about six connections to one host, and Friday's page
+  // already holds several open (desktop events, approvals, the chat's own).
+  // One more per chat surface would queue ordinary requests behind them, so
+  // every host on the page shares this single EventSource.
+  const bus = { es: null, subs: new Set(), timer: null };
+  function busPoll() {
+    if (!bus.timer) bus.timer = setInterval(() => bus.subs.forEach(f => { try { f(null); } catch (_) {} }), 20000);
+  }
+  function busSubscribe(fn) {
+    bus.subs.add(fn);
+    if (!bus.es && !bus.timer) {
+      const client = 'art-' + Math.random().toString(36).slice(2, 10);
+      try { bus.es = new EventSource('/api/desktop/events?client=' + client + '&kind=chat'); } catch (e) { bus.es = null; }
+      if (bus.es) {
+        bus.es.onmessage = e => {
+          let m = null; try { m = JSON.parse(e.data); } catch (_) { return; }
+          if (m && m.type === 'artifact_put') bus.subs.forEach(f => { try { f(m); } catch (_) {} });
+        };
+        // The stream reconnects by itself; while it is down, a slow poll keeps
+        // the panel honest.
+        bus.es.onerror = busPoll;
+        bus.es.onopen = () => { if (bus.timer) { clearInterval(bus.timer); bus.timer = null; } };
+      } else {
+        busPoll();
+      }
+    }
+    return () => { bus.subs.delete(fn); };
+  }
+
   // ── Look ──────────────────────────────────────────────────────────────
   const ACCENT = '#00d4ff';
   const AMBER = '#f59e0b';
@@ -393,6 +423,9 @@
     const [reloadKey, setReloadKey] = useState(0);
     const bodyRef = useRef(null);
     const [size, setSize] = useState({ w: 0, h: 0 });
+    // Versions already read, keyed id@version: switching back is instant and
+    // never shows another artifact's body while a request is in flight.
+    const cache = useRef({});
 
     useEffect(() => {
       if (!bodyRef.current || typeof ResizeObserver === 'undefined') return;
@@ -403,15 +436,20 @@
 
     // A new current version (Friday's, or ours) shows the latest again.
     useEffect(() => { setViewV(null); setEditing(false); setDraft(null); }, [cur && cur.id, cur && cur.version]);
+    // Another artifact: never leave the previous one's body on screen.
+    useEffect(() => { setRec(cur && cache.current[cur.id + '@' + cur.version] || null); setNote(null); }, [cur && cur.id]);
 
     useEffect(() => {
       if (!cur) return;
       let dead = false;
-      getJ('/api/artifacts/' + encodeURIComponent(convId) + '/' + encodeURIComponent(cur.id) + '/versions')
-        .then(d => { if (!dead) setVersions(d.versions || []); }).catch(() => {});
-      const q = viewV ? '?version=' + viewV : '';
+      const q = '?include=versions' + (viewV ? '&version=' + viewV : '');
+      const key = cur.id + '@' + (viewV || cur.version);
+      if (cache.current[key]) setRec(cache.current[key]);
       getJ('/api/artifacts/' + encodeURIComponent(convId) + '/' + encodeURIComponent(cur.id) + q)
-        .then(d => { if (!dead && d.artifact) setRec(d.artifact); }).catch(() => {});
+        .then(d => {
+          if (d.artifact) { cache.current[cur.id + '@' + d.artifact.version] = d.artifact; if (!dead) setRec(d.artifact); }
+          if (!dead && d.versions) setVersions(d.versions);
+        }).catch(() => {});
       return () => { dead = true; };
     }, [convId, cur && cur.id, cur && cur.version, viewV]);
 
@@ -457,7 +495,8 @@
     const vAt = versions.find(v => v.version === shown) || rec;
     const byYou = vAt && vAt.author === 'you';
 
-    return h('div', { className: 'fa-panel' + (tab ? ' fa-tab' : ''), style: tab ? undefined : { width, flexShrink: 0 }, 'data-artifact-panel': cur.id, role: 'complementary', 'aria-label': 'Artifact panel' },
+    return h('div', { className: 'fa-panel' + (tab ? ' fa-tab' : ''), style: tab ? undefined : { width, flexShrink: 0 }, 'data-artifact-panel': cur.id,
+      'data-artifact-shown': rec ? rec.id + '@' + rec.version : '', role: 'complementary', 'aria-label': 'Artifact panel' },
       h('div', { className: 'fa-head' },
         h('div', { className: 'fa-eyebrow' },
           h('span', { className: 'fa-brand' }, 'FRIDAY ', h('b', null, '· PANEL')),
@@ -532,23 +571,14 @@
     // event carries no content; the store is re-read.
     useEffect(() => {
       if (!convId) return;
-      let es = null, stopped = false, fallback = null;
-      const client = 'art-' + Math.random().toString(36).slice(2, 10);
-      try { es = new EventSource('/api/desktop/events?client=' + client + '&kind=chat'); } catch (e) { es = null; }
-      if (es) {
-        es.onmessage = e => {
-          if (stopped) return;
-          let m = null; try { m = JSON.parse(e.data); } catch (_) { return; }
-          if (!m || m.type !== 'artifact_put' || (m.conversation_id && m.conversation_id !== convId)) return;
-          refresh(m.artifact_id).then(() => { if (m.author !== 'you') setOpen(true); });
-        };
-        es.onerror = () => { if (!fallback) fallback = setInterval(() => !stopped && refresh(), 20000); };
-      } else {
-        fallback = setInterval(() => !stopped && refresh(), 20000);
-      }
+      const unsub = busSubscribe(m => {
+        if (m === null) { refresh(); return; }   // the stream is down: a poll
+        if (m.conversation_id && m.conversation_id !== convId) return;
+        refresh(m.artifact_id).then(() => { if (m.author !== 'you') setOpen(true); });
+      });
       const onOpen = e => { const d = e.detail || {}; if (d.convId && d.convId !== convId) return; refresh(d.artifactId).then(() => setOpen(true)); };
       window.addEventListener('friday:artifact-open', onOpen);
-      return () => { stopped = true; try { es && es.close(); } catch (_) {} if (fallback) clearInterval(fallback); window.removeEventListener('friday:artifact-open', onOpen); };
+      return () => { unsub(); window.removeEventListener('friday:artifact-open', onOpen); };
     }, [convId, refresh]);
 
     useEffect(() => { ls.set('friday_artifact_panel_open', open ? '1' : '0'); }, [open]);
