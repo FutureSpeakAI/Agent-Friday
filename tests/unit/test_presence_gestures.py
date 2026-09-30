@@ -266,3 +266,65 @@ console.log(JSON.stringify(out));
     assert r.returncode == 0, r.stderr
     o = json.loads(r.stdout.strip().splitlines()[-1])
     assert o == {"fresh": True, "busy": False, "fading": False, "after": True}
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_every_output_is_a_finite_number_through_a_burst_and_its_fade(path):
+    """A NaN glow renders a point cloud black for a frame: a flicker."""
+    m = BLOCK.search(path.read_text(encoding="utf-8"))
+    src = m.group(1) + r"""
+// The tool holds units 0 and 1; round 1's wave lights 2 and 3, which then fade.
+const an = { units: [[0,0,1.6],[1.6,0,1.6],[0,1.6,1.6],[1.6,1.6,1.6]], layers: [[2,3],[0,1]],
+             blocks: [{ units: [0,1], axis: [0,0,1], centre: [0.8,0,1.6] }], top: [2,3],
+             core: [0,0,0], toward: [0,0,1], up: [0,1,0], across: [1,0,0], extent: 2.4, spacing: 1.6 };
+const G = FridayGestures, bad = [];
+G.reset();
+G.frame({ type: 'presence', state: 'round', phase: 'step', n: 1 });
+G.frame({ type: 'presence', state: 'tool', phase: 'start', ref: 'a' });
+G.frame({ type: 'presence', state: 'verify', phase: 'once', ok: true });
+G.setApprovals(1);
+for (let i = 0; i < 400; i++) {
+  if (i === 60) { G.frame({ type: 'presence', state: 'tool', phase: 'end', ref: 'a' }); G.setApprovals(0); }
+  const r = G.step(1/60, an);
+  for (const k of Object.keys(r.units)) {
+    const u = r.units[k];
+    for (const v of [...u.d, ...u.r, u.s, u.b, u.g]) if (typeof v !== 'number' || !isFinite(v)) bad.push([i, k, v]);
+  }
+}
+console.log(JSON.stringify({ bad: bad.slice(0, 5), n: bad.length }));
+"""
+    r = subprocess.run([node, "-"], input=src, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["n"] == 0, o["bad"]
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_a_unit_that_leaves_a_layer_mid_wave_fades_without_a_nan(path):
+    """On a flowing structure (the Mobius strip) a cluster can leave the
+    wave's layer mid-wave; its fade must stay a number, or the cloud renders
+    black for a frame."""
+    m = BLOCK.search(path.read_text(encoding="utf-8"))
+    src = m.group(1) + r"""
+const base = { units: [[0,0,0],[1,0,0],[2,0,0],[3,0,0]], blocks: [], top: [3], core: [0,0,0],
+               toward: [0,0,1], up: [0,1,0], across: [1,0,0], extent: 3, spacing: 1 };
+const G = FridayGestures, bad = [];
+G.reset();
+G.frame({ type: 'presence', state: 'round', phase: 'step', n: 1 });
+for (let i = 0; i < 200; i++) {
+  // unit 1 flows out of layer 0 at frame 30 and back at frame 50
+  const layers = (i >= 30 && i < 50) ? [[0], [1, 2, 3]] : [[0, 1], [2, 3]];
+  const r = G.step(1/60, Object.assign({}, base, { layers }));
+  for (const k of Object.keys(r.units)) {
+    const u = r.units[k];
+    for (const v of [u.b, u.g, u.s]) if (typeof v !== 'number' || !isFinite(v)) bad.push([i, k, String(v)]);
+  }
+}
+console.log(JSON.stringify({ n: bad.length, bad: bad.slice(0, 4) }));
+"""
+    r = subprocess.run([node, "-"], input=src, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["n"] == 0, o["bad"]
