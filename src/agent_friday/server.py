@@ -120,6 +120,7 @@ ROUTE_MODULES = [
     'actions', 'activity', 'arbiter', 'avatar',
     'actions', 'activity', 'arbiter',
     'activity', 'arbiter', 'artifacts',
+    'publish',
     'ambient', 'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code',
     'compute', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations',
     'control', 'core_routes', 'desktop',

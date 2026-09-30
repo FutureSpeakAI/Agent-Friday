@@ -100,6 +100,22 @@ def test_the_page_shares_one_event_stream_across_every_chat_surface(js):
     assert "busSubscribe" in js
 
 
+CHART_JS = ROOT / "static" / "friday_chart.js"
+
+
+def test_the_chart_renderer_is_one_shared_file_loaded_before_the_panel():
+    """The panel draws charts with it live and a published chart page carries
+    it inlined, so the two can never drift."""
+    assert CHART_JS.exists()
+    cj = _read(CHART_JS)
+    assert "window.FridayChart" in cj or "root.FridayChart" in cj
+    assert "React" not in cj and "document." not in cj, "the renderer depends on nothing"
+    for p in (INDEX, STYLES):
+        s = _read(p)
+        assert s.index('/static/friday_chart.js') < s.index('/static/friday_artifacts.js'), p.name
+    assert "FridayChart.renderSVG" in _read(PANEL_JS)
+
+
 def test_the_svg_frame_has_no_scripts(js):
     m = re.search(r"SVG_SANDBOX\s*=\s*['\"]([^'\"]*)['\"]", js)
     assert m, "svg is framed with its own sandbox constant"

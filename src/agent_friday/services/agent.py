@@ -2333,6 +2333,13 @@ try:
 except Exception as _e:                                    # pragma: no cover
     _log.warning("approval executor not registered: %s", _e)
 
+# An approved publish card runs the publish, once, through the same path.
+try:
+    from agent_friday.services import publish_web as _publish_web
+    _publish_web.register()
+except Exception as _e:                                    # pragma: no cover
+    _log.warning("publish executor not registered: %s", _e)
+
 # The payload card for sharing local context with the cloud voice model runs
 # through the same single approval path: one decision, executed once.
 try:
@@ -8163,6 +8170,63 @@ def _tool_artifact_put(inp):
 
 CLAUDE_TOOL_HANDLERS.update({"artifact_put": _tool_artifact_put})
 TOOL_RINGS.update({"artifact_put": 1})   # writes Friday's own artifact store; INTERNAL in action_gate
+
+
+# Publish to web (docs/design/active/vibe-coding-salon.md §4.10.1). The tool
+# only files the approval card; nothing is public until the owner approves it
+# (SELF_GATED in action_gate, like draft_email).
+CLAUDE_TOOLS.append({
+    "name": "publish_artifact",
+    "description": (
+        "Ask to publish an artifact from this chat's panel to the web as a "
+        "self-contained static page (a document, table, chart, drawing or "
+        "small client-side app; nothing with a backend). This ONLY files an "
+        "approval card showing the files, a preview, the privacy scan and the "
+        "licence check; NOTHING is public until the user approves it, so never "
+        "say it is published - say a publish card is waiting and read back its "
+        "'spoken' line. The default host is this PC (up only while it is on); "
+        "cloudflare_pages or github_pages stay up around the clock once the "
+        "user has connected an account. If the result says refused, tell the "
+        "user plainly why and what to change."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "artifact_id": {"type": "string", "description": "The artifact to publish (from the ARTIFACTS context)."},
+            "adapter": {"type": "string", "enum": ["this_pc", "cloudflare_pages", "github_pages"],
+                        "description": "Where to host it. Omit for the user's default."},
+            "conversation_id": {"type": "string", "description": "Only when acting for another conversation; normally omitted."},
+        },
+        "required": ["artifact_id"],
+    },
+})
+
+
+def _tool_publish_artifact(inp):
+    from agent_friday.services import publish_web as _pw
+    inp = inp or {}
+    cid = (inp.get("conversation_id") or _CURRENT_CONVERSATION.get() or "").strip()
+    if not cid:
+        return "publish_artifact needs a conversation, and none is current. Nothing was filed."
+    try:
+        out = _pw.request_publish(cid, str(inp.get("artifact_id") or ""),
+                                  adapter=(inp.get("adapter") or None), requested_by="chat")
+    except KeyError:
+        return "publish_artifact: no such artifact in this conversation. Nothing was filed."
+    except ValueError as e:
+        return f"publish_artifact refused: {e}. Nothing was filed."
+    if out.get("refused"):
+        return {"status": "refused", "reasons": out["refused"],
+                "note": "Not publishable as it is. Tell the user why; nothing was filed."}
+    card = out["approval"]
+    p = card.get("payload") or {}
+    return {"status": "card_raised", "approval_id": card.get("approval_id"),
+            "adapter": p.get("adapter_label"), "files": len(p.get("files") or []), "size": p.get("size"),
+            "warnings": p.get("warnings") or [], "spoken": p.get("spoken"),
+            "note": "A publish card is waiting for the user. Nothing is public yet; do not say it is."}
+
+
+CLAUDE_TOOL_HANDLERS.update({"publish_artifact": _tool_publish_artifact})
+TOOL_RINGS.update({"publish_artifact": 2})   # publishing is outward; its own card is the gate
 
 # ══════════════════════════════════════════════════════════════
 #  CAPABILITY PREFLIGHT — a tool whose dependency is missing is REMOVED

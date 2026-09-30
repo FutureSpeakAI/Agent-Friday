@@ -146,12 +146,16 @@ OUTWARD_TOOLS = frozenset({
     # raises one card for the whole batch; services/item_actions changes
     # exactly the conversations it lists, on approval.
     "organize_email",
+    # Publishing a page to the web (services/publish_web). The tool only
+    # raises the card with the files, scan and licence check; the card's
+    # decision hook publishes on approval (SELF_GATED below).
+    "publish_artifact",
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
 #: action itself (draft_email only queues; gmail_send sends on approval).
 SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
-                        "career_update_tracker",
+                        "career_update_tracker", "publish_artifact",
                         # Friday's browser (services/browser_session.py): when
                         # classified outward, the handler submits or fills
                         # only on an approved card for exactly what the page

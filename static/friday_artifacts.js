@@ -23,7 +23,8 @@
  *   index.html; it changes nothing inside ChatSurface. Without this script
  *   the shell is a Fragment and the chat is exactly as it was.
  *
- * Loaded after friday_mail.js; defines window.FridayArtifactHost,
+ * Loaded after friday_chart.js (the chart renderer it shares with published
+ * pages); defines window.FridayArtifactHost,
  * window.FridayArtifactPanel and window.fridayArtifactFrameDoc.
  */
 (function () {
@@ -271,109 +272,18 @@
       }, rows[ri][ci] == null ? '' : String(rows[ri][ci])))))));
   }
 
-  // Charts are drawn here, in SVG, from rows plus a small spec. index.html
-  // loads no chart library and React + SVG is what it already has; a hand
-  // drawn chart is also the one whose every colour is Friday's.
-  function chartSeries(spec) {
-    if (Array.isArray(spec.series) && spec.series.length) {
-      return { x: null, series: spec.series.map((s, i) => ({ name: s.name || ('series ' + (i + 1)), points: (s.data || []).map(p => Array.isArray(p) ? { x: p[0], y: Number(p[1]) } : { x: p.x, y: Number(p.y) }) })) };
-    }
-    const cols = (spec.columns || []).map(c => typeof c === 'object' ? c.name : c);
-    let rows = spec.rows || [];
-    if (rows.length && !Array.isArray(rows[0])) rows = rows.map(r => cols.map(c => r[c]));
-    const xi = spec.x != null ? Math.max(0, cols.indexOf(spec.x)) : 0;
-    let ys = Array.isArray(spec.y) ? spec.y.map(c => cols.indexOf(c)).filter(i => i >= 0) : (spec.y != null ? [cols.indexOf(spec.y)].filter(i => i >= 0) : []);
-    if (!ys.length) ys = cols.map((_, i) => i).filter(i => i !== xi && rows.some(r => isNum(r[i])));
-    return { x: cols[xi], series: ys.map(yi => ({ name: cols[yi], points: rows.map(r => ({ x: r[xi], y: isNum(r[yi]) ? Number(r[yi]) : null })) })) };
-  }
-  function niceTicks(min, max, n) {
-    if (!(max > min)) { max = min + 1; }
-    const span = max - min, step0 = span / Math.max(1, n), mag = Math.pow(10, Math.floor(Math.log10(step0)));
-    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || 10 * mag;
-    const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step, out = [];
-    for (let v = lo; v <= hi + step / 2; v += step) out.push(+v.toFixed(10));
-    return out;
-  }
-  const fmtNum = v => Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : Math.abs(v) >= 1e4 ? (v / 1e3).toFixed(0) + 'k' : (+v.toFixed(2)).toString();
-
+  // Charts are drawn by the shared renderer (static/friday_chart.js): the same
+  // file a published chart page carries, so the panel and the page never drift.
+  const chartSeries = spec => (window.FridayChart ? window.FridayChart.series(spec) : { x: null, series: [] });
   function Chart({ content, size }) {
     const spec = content || {};
-    const type = String(spec.type || 'bar');
-    const { series } = useMemo(() => chartSeries(spec), [content]);
     const W = Math.max(240, size.w || 480), H = Math.max(160, (size.h || 300) - 28);
-    if (!series.length || !series[0].points.length) return h('div', { className: 'fa-empty' }, 'Nothing to chart yet.');
-    const legend = h('div', { className: 'fa-legend' }, series.map((s, i) => h('span', { key: i }, h('i', { style: { background: PALETTE[i % PALETTE.length] } }), s.name)));
-    if (type === 'pie' || type === 'donut') {
-      const pts = series[0].points.filter(p => p.y != null && p.y > 0);
-      const total = pts.reduce((a, p) => a + p.y, 0) || 1;
-      const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 14, r0 = type === 'donut' ? R * 0.55 : 0;
-      let a0 = -Math.PI / 2;
-      const arcs = pts.map((p, i) => {
-        const a1 = a0 + 2 * Math.PI * p.y / total;
-        const big = a1 - a0 > Math.PI ? 1 : 0;
-        const P = (a, r) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
-        const [x0, y0] = P(a0, R), [x1, y1] = P(a1, R), [xi0, yi0] = P(a0, r0), [xi1, yi1] = P(a1, r0);
-        const d = r0 ? `M${x0},${y0} A${R},${R} 0 ${big} 1 ${x1},${y1} L${xi1},${yi1} A${r0},${r0} 0 ${big} 0 ${xi0},${yi0} Z`
-          : `M${cx},${cy} L${x0},${y0} A${R},${R} 0 ${big} 1 ${x1},${y1} Z`;
-        const mid = (a0 + a1) / 2, [lx, ly] = P(mid, (R + r0) / 2 + (r0 ? 0 : R * 0.15));
-        a0 = a1;
-        return h('g', { key: i }, h('path', { d, fill: PALETTE[i % PALETTE.length], stroke: '#0b0e14', strokeWidth: 1.5 }, h('title', null, `${p.x}: ${fmtNum(p.y)} (${(100 * p.y / total).toFixed(1)}%)`)),
-          (a1 - (a0 = a0)) >= 0 && p.y / total > 0.06 ? h('text', { x: lx, y: ly, fill: '#0b0e14', fontSize: 10, fontWeight: 700, textAnchor: 'middle', dominantBaseline: 'middle', fontFamily: 'Inter, sans-serif' }, `${(100 * p.y / total).toFixed(0)}%`) : null);
-      });
-      return h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column' } },
-        spec.title ? h('div', { style: { fontSize: 12, color: '#f1f6fb', fontWeight: 600, marginBottom: 4 } }, spec.title) : null,
-        h('svg', { className: 'fa-chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', role: 'img', 'aria-label': spec.title || 'chart' }, arcs),
-        h('div', { className: 'fa-legend' }, pts.map((p, i) => h('span', { key: i }, h('i', { style: { background: PALETTE[i % PALETTE.length] } }), String(p.x)))));
-    }
-    // Cartesian
-    const cats = series[0].points.map(p => p.x);
-    const allY = series.flatMap(s => s.points.map(p => p.y)).filter(v => v != null && isFinite(v));
-    const stacked = !!spec.stacked && type !== 'scatter';
-    let yMin = Math.min(0, ...allY), yMax = Math.max(0, ...allY);
-    if (stacked) yMax = Math.max(0, ...cats.map((_, i) => series.reduce((a, s) => a + Math.max(0, s.points[i] ? s.points[i].y || 0 : 0), 0)));
-    const ticks = niceTicks(yMin, yMax, 5);
-    yMin = ticks[0]; yMax = ticks[ticks.length - 1];
-    const padL = 12 + Math.max(...ticks.map(t => fmtNum(t).length)) * 6.5, padR = 12, padT = spec.title ? 26 : 12, padB = 30;
-    const iw = W - padL - padR, ih = H - padT - padB;
-    const sy = v => padT + ih - (v - yMin) / (yMax - yMin || 1) * ih;
-    const numericX = type === 'scatter' && cats.every(isNum);
-    const xs = numericX ? cats.map(Number) : null;
-    const xMin = xs ? Math.min(...xs) : 0, xMax = xs ? Math.max(...xs) : 1;
-    const sx = (i) => numericX ? padL + (xs[i] - xMin) / (xMax - xMin || 1) * iw : padL + (i + 0.5) * iw / cats.length;
-    const grid = ticks.map((t, i) => h('g', { key: i },
-      h('line', { x1: padL, x2: W - padR, y1: sy(t), y2: sy(t), stroke: t === 0 ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.07)', strokeWidth: 1 }),
-      h('text', { x: padL - 6, y: sy(t), fill: 'rgba(255,255,255,0.55)', fontSize: 10, textAnchor: 'end', dominantBaseline: 'middle', fontFamily: 'JetBrains Mono, monospace' }, fmtNum(t))));
-    const every = Math.ceil(cats.length / Math.max(1, Math.floor(iw / 64)));
-    const xlabels = cats.map((c, i) => (i % every === 0) ? h('text', { key: i, x: sx(i), y: H - padB + 14, fill: 'rgba(255,255,255,0.6)', fontSize: 10, textAnchor: 'middle', fontFamily: 'Inter, sans-serif' }, String(c).slice(0, 14)) : null);
-    let marks = [];
-    if (type === 'bar') {
-      const gw = iw / cats.length, bw = stacked ? gw * 0.62 : (gw * 0.72) / series.length;
-      const acc = cats.map(() => 0);
-      marks = series.map((s, si) => h('g', { key: si }, s.points.map((p, i) => {
-        if (p.y == null) return null;
-        const x = stacked ? padL + i * gw + (gw - bw) / 2 : padL + i * gw + gw * 0.14 + si * bw;
-        const base = stacked ? acc[i] : 0; if (stacked) acc[i] += p.y;
-        const y0 = sy(base), y1 = sy(base + p.y);
-        return h('rect', { key: i, x, y: Math.min(y0, y1), width: Math.max(1, bw - 2), height: Math.max(1, Math.abs(y1 - y0)), fill: PALETTE[si % PALETTE.length], rx: 2, opacity: 0.92 },
-          h('title', null, `${s.name} · ${p.x}: ${fmtNum(p.y)}`));
-      })));
-    } else {
-      marks = series.map((s, si) => {
-        const pts = s.points.map((p, i) => p.y == null ? null : [sx(i), sy(p.y)]);
-        const segs = []; let cur = [];
-        pts.forEach(p => { if (p) cur.push(p); else if (cur.length) { segs.push(cur); cur = []; } }); if (cur.length) segs.push(cur);
-        const col = PALETTE[si % PALETTE.length];
-        return h('g', { key: si },
-          type !== 'scatter' && segs.map((seg, k) => h('polyline', { key: 'l' + k, points: seg.map(q => q.join(',')).join(' '), fill: 'none', stroke: col, strokeWidth: 2, strokeLinejoin: 'round', strokeLinecap: 'round' })),
-          type === 'area' && segs.map((seg, k) => h('polygon', { key: 'a' + k, points: seg.map(q => q.join(',')).concat([[seg[seg.length - 1][0], sy(Math.max(0, yMin))].join(','), [seg[0][0], sy(Math.max(0, yMin))].join(',')]).join(' '), fill: col, opacity: 0.16 })),
-          pts.map((q, i) => q && h('circle', { key: 'c' + i, cx: q[0], cy: q[1], r: type === 'scatter' ? 4 : 3, fill: col, stroke: '#0b0e14', strokeWidth: 1 }, h('title', null, `${s.name} · ${s.points[i].x}: ${fmtNum(s.points[i].y)}`))));
-      });
-    }
+    const r = useMemo(() => window.FridayChart ? window.FridayChart.renderSVG(spec, W, H) : { svg: '', legend: [], empty: true }, [content, W, H]);
+    if (!window.FridayChart) return h('div', { className: 'fa-empty' }, 'The chart renderer did not load.');
+    if (r.empty) return h('div', { className: 'fa-empty' }, 'Nothing to chart yet.');
     return h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column' } },
-      h('svg', { className: 'fa-chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': spec.title || 'chart', style: { flex: 1, minHeight: 0 } },
-        spec.title ? h('text', { x: padL, y: 16, fill: '#f1f6fb', fontSize: 12, fontWeight: 600, fontFamily: 'Inter, sans-serif' }, spec.title) : null,
-        grid, xlabels, marks),
-      series.length > 1 || spec.legend ? legend : null);
+      h('div', { className: 'fa-chart', style: { flex: 1, minHeight: 0 }, dangerouslySetInnerHTML: { __html: r.svg } }),
+      r.legend.length ? h('div', { className: 'fa-legend' }, r.legend.map((l, i) => h('span', { key: i }, h('i', { style: { background: l.color } }), l.name))) : null);
   }
 
   function Diff({ diff }) {
@@ -481,6 +391,20 @@
           onChanged && onChanged(j.artifact);
         }).catch(e => setNote({ text: 'Not restored: ' + e })).then(() => setBusy(false));
     };
+    const publish = () => {
+      if (!rec || busy) return;
+      setBusy(true);
+      postJ('/api/publish/request', { conversation_id: convId, artifact_id: cur.id, requested_by: 'panel' })
+        .then(({ ok, j }) => {
+          if (!ok) { setNote({ text: 'Could not ask to publish: ' + ((j && j.error) || 'unknown error') }); return; }
+          if (j.status === 'refused') { setNote({ text: 'Not publishable as it is: ' + (j.refused || []).join('; ') }); return; }
+          const a = j.approval || {};
+          setNote({ text: a.status === 'pending'
+            ? 'A publish card is waiting for your approval (' + ((a.payload || {}).size || '') + ', ' + ((a.payload || {}).adapter_label || '') + '). Nothing is public until you approve it.'
+            : 'Publish card: ' + a.status, ok: a.status === 'pending' });
+          try { window.fridayRunActions && a.status === 'pending' && window.fridayRunActions([{ type: 'navigate', workspace: 'system', tab: 'approvals' }]); } catch (_) {}
+        }).catch(e => setNote({ text: 'Could not ask to publish: ' + e })).then(() => setBusy(false));
+    };
     const exportIt = () => {
       if (!rec) return;
       const base = slug(rec.title) + '-v' + rec.version;
@@ -501,6 +425,7 @@
         h('div', { className: 'fa-eyebrow' },
           h('span', { className: 'fa-brand' }, 'FRIDAY ', h('b', null, '· PANEL')),
           h('span', { style: { display: 'flex', gap: 2 } },
+            h('button', { className: 'fa-icon', title: 'Publish to the web (asks first)', 'aria-label': 'Publish to the web', onClick: publish, disabled: busy || !!viewV }, '⤒'),
             h('button', { className: 'fa-icon', title: 'Export', 'aria-label': 'Export', onClick: exportIt }, '⤓'),
             rec && rec.kind === 'html' ? h('button', { className: 'fa-icon', title: 'Reload the app', 'aria-label': 'Reload', onClick: () => setReloadKey(k => k + 1) }, '↻') : null,
             h('button', { className: 'fa-icon', title: tab ? 'Back to the chat' : 'Collapse the panel', 'aria-label': 'Collapse', onClick: onCollapse }, tab ? '✕' : '⟩'))),
