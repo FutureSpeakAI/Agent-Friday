@@ -1,7 +1,7 @@
 # Laya and Needle, Friday's reflexes
 
-**Status:** draft specification; measurements partial (§6.1), build plan and
-decisions pending on them. Not yet ready for the gauntlet. No product code changes in this commit.
+**Status:** specification with measurements, awaiting the owner's three decisions
+(§11) and the program lead's gauntlet. No product code changes. No product code changes in this commit.
 **Written:** 2026-09-29, on this PC (i7-10700F, 8 cores, RTX 4070 12 GB).
 **Question asked:** *"Let's figure out the best and most intelligent and deepest
 and highest resolution manner to integrate both needle and laya within the Friday
@@ -49,12 +49,19 @@ on screen. If it is sure, it acts through the same gate as everything else,
 and outward actions still get their card. Nothing about the gates or the
 constitution loosens.
 
-**What was measured (§6).** Needle 2 and Needle 3 were installed in an
-isolated environment and scored on the 118-example set and on your own
-phrasings, idle and with the local brain generating. Laya's shipping engine
-was timed on each question shape this spec needs, including the ten-item
-choice the resolver depends on. What has been measured so far is in §6.1; the
-full tables are pending.
+**What was measured (§6), and what it changed.** Needle 2 and Needle 3 were
+installed in an isolated environment and scored on the 118-example set and
+on your own phrasings, idle and with the local brain generating. Laya's
+shipping engine was timed on each question shape this spec needs, including
+the ten-item choice the resolver depends on. The tables are in §6; the
+one-line reading is in §6.5: **Laya is a reflex on this PC (0.2 to 0.35 s
+idle, 0.26 to 0.55 s beside a busy brain); Needle, as shipped, is not.**
+Needle 2 takes 4 to 9 s a call against Friday's real tool descriptions and
+gets the tool right 37% of the time; Needle 3 is fast but gets it right 29
+to 50% of the time and abstains on more than half of real commands; neither
+one's confidence tells right from wrong. So the reflex layer below is built
+from Laya plus command templates, and Needle is kept only as a candidate
+for a later fine-tune behind a warm prompt, which is your first decision.
 
 **The build (§9)** is ordered by seconds saved per week of work. The first
 two phases are pure speed and ship nothing new to the gates: the reflex
@@ -82,10 +89,10 @@ shadow scoring needs an answer key and you are the only one who has it.
  └──────┬───────┘
         │ "a command, local, not private"
         ▼
- ┌──────────────┐  0.2–0.6 s   words → one exact tool call, or "no call"
- │  Needle      │──────────▶  arguments filled from the words and real IDs
- │  reflex      │             never free text, never a new tool
- └──────┬───────┘
+ ┌──────────────┐  templates   words → one exact tool call, or "no call"
+ │  fill        │──────────▶  IDs from the shortlist; free-text slots lifted
+ │  (Needle*)   │             from the words or asked back; never a new tool
+ └──────┬───────┘             *Needle only if fine-tuned and warm; §6.5, §11.1
         │ a filled template, or "not a reflex"
         ▼
  ┌──────────────┐             the same governance checkpoint as today
@@ -1120,55 +1127,161 @@ it.
 
 ## 6. Measurements
 
-**Status of this section: partial.** The full runs defined in the companion
-file were started but had not finished when this revision was committed. What
-is below was measured; nothing is estimated. The per-set results land in
-`~/.friday/bench/reflexes/results/` as each set completes, and the tables for
-6.2 to 6.5 are filled from those files in the next revision.
+All on this PC, 2026-09-29/30. Definitions, grading and the utterance sets are
+in the companion file. Nothing here is estimated; where a run was bounded, its
+row count is stated.
 
-### 6.1 Measured so far (2026-09-29/30, idle machine, CPU only)
+### 6.1 Method, in one paragraph
 
-**Needle, per-call cost against Friday's real schemas** (the 8 `t2` tools,
-one stateless call each; two calls per setting, first and second):
+Needle 2 and 3 (`cactus-needle` 3.0.6, telemetry off) were scored on three
+sets: the 118-example, 8-tool set with Friday's own schemas (`t2`); 49
+utterances none of those tools should answer (`nocall`); and the owner's own
+short phrasings labelled by the tool the brain actually called first, with 20
+of Friday's real tools offered (`real`, private). Laya's shipping engine
+(ONNX fp32, 6 threads) was timed on the six question shapes the arc uses.
+Two conditions: **idle**, and **busy**, with a private Bonsai2-27B seat on
+the GPU generating continuously (32-43 tokens/s throughout; the loop's log
+shows zero failed requests during every busy row quoted). The live server's
+seat was never touched.
 
-| Generation | Description clip | Schema chars | Call 1 | Call 2 | Prefill tok/s | Decode tok/s |
-|---|---|---|---|---|---|---|
-| Needle 2 | 600 | 5,416 | 8,752 ms | 7,795 ms | 94 | 47 |
-| Needle 2 | 200 | 4,200 | 4,889 ms | 4,421 ms | 201 | 92 |
-| Needle 2 | 80 | 3,531 | 3,617 ms | 4,279 ms | 147 | 82 |
-| Needle 2, stateful, clip 200 | | | first 4,455 ms | **second, no reset, 658 ms**; after reset 3,711 ms | | |
-| Needle 3 | 600 | 5,416 | 2,465 ms | 2,836 ms | 42 | 25 |
-| Needle 3 | 200 | 4,200 | 3,784 ms | 5,056 ms | 63 | 12 |
-| Needle 3 | 80 | 3,531 | 3,111 ms | 4,736 ms | 91 | 18 |
+### 6.2 Needle
 
-The smoke test with three one-line tools ran 170 to 560 ms on Needle 2 and
-1.5 to 2.3 s on Needle 3. The difference is the tool prompt: a stateless
-call re-reads every schema, and Friday's descriptions run to a thousand
-characters. **A reflex that hands Needle more than a handful of short tools
-is not a reflex on this CPU.** The design already assumed a shortlist; the
-number says the shortlist for Needle is three or four tools with one-line
-descriptions, and that the tool prefix must be kept warm between calls.
-On this probe Needle 3 returned no call at confidence 0.04 to 0.05 on a
-read-file request that Needle 2 answered correctly at 0.99.
+**Idle.** "Right" is: the first call names the expected tool. Argument
+accuracy equalled name accuracy in every set, because Needle always filled
+the required argument when it picked the right tool.
 
-**Laya** on this PC, from commit `efb7a539` (ONNX fp32, p50, CPU ~74% busy):
-gate 1 question 371 ms at 4 threads and 314 ms at 6; voice 1 question 299
-and 227; voice 2 questions 730 and 352; a ~350-token state 1,506 ms. The
-`choice:6-10` shape the resolver needs, and the busy-versus-idle comparison,
-are in the pending runs.
+| Set | Gen | n | Tools | Right | Under-call | Over-call | p50 | p95 | max | Conf. when right / wrong |
+|---|---|---|---|---|---|---|---|---|---|---|
+| t2 | 2 | 118 | 8 | **37.3%** | 17.8% | - | 7.50 s | 14.7 s | 27.9 s | 0.47 / 0.61 |
+| nocall | 2 | 49 | 8 | **34.7%** no-call | - | 65.3% | 5.08 s | 7.6 s | 7.8 s | 1.00 / 0.97 |
+| real | 2 | 60 | 20 | **13.3%** | 11.8% | all 43 conversational rows got a call | 4.22 s | 8.8 s | 10.2 s | 0.47 / 0.50 |
+| t2 | 3 | 118 | 8 | **28.8%** | 51.7% | - | 0.48 s | 1.60 s | 1.9 s | 0.20 / 0.07 |
+| nocall | 3 | 49 | 8 | **91.8%** no-call | - | 8.2% | 0.27 s | 1.07 s | 1.5 s | 0.02 / 0.17 |
+| real | 3 | 40 | 20 | **50.0%** | 66.7% | 35.7% | 0.34 s | 0.57 s | 0.7 s | 0.03 / 0.16 |
 
-**The brain**, from the cost ledger (§2.2): cloud chat p50 4.7 to 8.0 s
-depending on the model, p90 19 to 26 s; local interactive latency is not
-recorded as a duration and is in the pending runs.
+**Busy** (the seat generating throughout; bounded rows):
 
-### 6.2 to 6.5 Pending
+| Set | Gen | n | Right | Under-call | Over-call | p50 | p95 | max |
+|---|---|---|---|---|---|---|---|---|
+| t2 | 2 | 25 | 36.0% | 16.0% | - | 5.70 s | 14.6 s | 15.6 s |
+| t2 | 3 | 40 | 30.0% | 52.5% | - | 2.42 s | 27.1 s | 27.7 s |
+| nocall | 3 | 40 | 95.0% no-call | - | 5.0% | 2.62 s | 10.6 s | 12.2 s |
 
-Needle 2 vs 3 on the 118-example set and on the owner's phrasings (name and
-argument accuracy, no-call correctness, p50/p95, idle and with the brain
-generating), Laya per shape including the ten-item choice, and the
-end-to-end reflex-versus-brain budget. Not yet measured; not estimated.
+**Where the errors are** (idle, t2, per expected tool):
 
----
+- Needle 2 sends `browse_web` to `read_file` (14 of 17), `query_trust_graph`
+  to `search_web` (13 of 14), `search_files` to `search_web` (11 of 16), and
+  `annotate_calendar_events` to no call (8 of 10). It gets `search_web`,
+  `read_file` and `write_file` right about two times in three.
+- Needle 3 gets `annotate_calendar_events` right 10 of 10 and otherwise
+  mostly abstains: `browse_web` to none 16 of 17, `write_file` to none 12 of
+  15, `read_file` to none 9 of 18.
+- On the owner's phrasings, Needle 2 called a tool on every one of the 43
+  conversational rows (17 of the 49 `nocall` over-calls went to
+  `search_web`). Needle 3 kept 18 of 28 conversational rows silent and got 2
+  of the 12 commands.
+
+**Confidence does not separate right from wrong.** Needle 2 reports 0.97
+median confidence on its over-calls and 1.00 on its correct no-calls; at a
+0.50 threshold it would act on 39% of `t2` rows with 46% precision and on
+41% of conversational rows with 0% precision. Needle 3's confidence is below
+0.21 almost everywhere, so a threshold that acts at all acts on 2% of rows.
+
+**The per-call cost is the tool prompt.** A stateless call re-reads the
+schemas; with Friday's descriptions that is the whole latency:
+
+| Generation | Description clip | Schema chars | Call 1 | Call 2 | Prefill tok/s |
+|---|---|---|---|---|---|
+| Needle 2 | 600 | 5,416 | 8.75 s | 7.80 s | 94 |
+| Needle 2 | 200 | 4,200 | 4.89 s | 4.42 s | 201 |
+| Needle 2 | 80 | 3,531 | 3.62 s | 4.28 s | 147 |
+| Needle 2, stateful, clip 200 | | | 4.46 s | **0.66 s with the prefix warm**; 3.71 s after reset | |
+| Needle 3 | 600 | 5,416 | 2.47 s | 2.84 s | 42 |
+| Needle 3 | 200 | 4,200 | 3.78 s | 5.06 s | 63 |
+
+Three one-line tools cost 0.17-0.56 s on Needle 2 in the smoke test. So a
+Needle that is fast on this CPU sees three or four short tools with a warm
+prefix, and nothing else.
+
+**No brain comparator on the same set.** The KV-quality bench directory
+holds only its recall results; its tool-calling rows for Bonsai2 were not
+written. The brain's accuracy on `t2` is therefore not quoted here.
+
+### 6.3 Laya
+
+ONNX fp32 encoder (0 of 150 answers differ from torch fp32), decision head
+in torch, 6 threads, p50 over 20 asks per shape.
+
+| Shape | Question | Bucket | Idle p50 / p95 | Busy p50 / p95 | Reference (efb7a539, 6 thr, CPU ~74% busy) |
+|---|---|---|---|---|---|
+| `yesno_1` | one statement | noul:2 | **195 / 214 ms** | **257 / 498 ms** | voice 1q 227 ms |
+| `yesno_2` | two statements, one pass | noul:2 | 335 / 367 | 552 / 1,060 | voice 2q 352 ms |
+| `choice_2` | two options | choice:2 | 201 / 221 | 342 / 767 | gate 1q 314 ms |
+| `choice_5` | five options | choice:3-5 | 223 / 259 | 322 / 459 | - |
+| `choice_10` | **ten items, the resolver's pick** | choice:6-10 | **283 / 302** | **395 / 573** | - |
+| `choice_12` | twelve (the clamped bucket) | choice:11+ | 323 / 410 | 427 / 479 | - |
+
+Busy here means the seat generating and nothing else on the CPU. A second
+busy run that accidentally overlapped two Laya engines and a Needle run at
+once gave 765 ms for one statement and 1,594 ms for the ten-item choice:
+the worst case if the runtime ever lets reflexes stack, which §4.8 forbids.
+Engine load is 43 s idle and 69 s busy, once per boot.
+
+Idle, every shape the arc uses is under 350 ms; beside a generating brain
+every shape is under 600 ms at p50 and under 1.1 s at p95. The ten-item
+choice costs 40% more than a yes/no, not ten times more.
+
+### 6.4 End to end: a reflex turn against a brain turn
+
+**The local brain, measured on the same seat** (Bonsai2-27B, llama.cpp,
+the 8 t2 tools in the prompt, `max_tokens` 96, temperature 0, five short
+tool turns): first token **0.44-0.67 s** once the prompt prefix is cached,
+**4.09 s** cold; total **2.7-6.3 s** per turn. That is with a 1.6k-token
+tool prompt. Friday's real prompt is about 26k tokens of system text plus
+the catalogue (`tool_selector.py:5-9`), so a cold turn's prefill is an
+order of magnitude longer than this probe; prompt caching hides most of it
+between turns of one conversation and none of it across seats. The cloud
+brain, from the ledger: p50 4.7-8.0 s, p90 19-26 s (§2.2).
+
+**A reflex turn**, from the parts above, with no Needle:
+
+| Stage | Idle | Busy |
+|---|---|---|
+| B. Laya turn shape (two statements, one pass) | 0.34 s | 0.55 s |
+| D. Retrieval from a local store (a budget; the selector's measured 0.11-0.27 s is the nearest comparable) | up to 0.30 s | up to 0.30 s |
+| E. Laya action (5) and item (10) picks, one pass each | 0.22 + 0.28 s | 0.32 + 0.40 s |
+| G. Gate, internal action, keyword path | 0.03 ms | 0.03 ms |
+| **Reflex turn, no Needle** | **about 1.1 s** | **about 1.6 s** |
+| with prefetch on the partial transcript (B and D inside the 0.8 s endpointer window) | **about 0.5 s felt** | **about 0.7 s felt** |
+| Brain turn, local, warm prefix, short | 2.7-6.3 s | - |
+| Brain turn, cloud, median | 4.7-8.0 s | - |
+| Adding a stateless Needle 2 fill | + 4.4-8.8 s | + 5.7 s |
+| Adding a warm-prefix Needle 2 fill | + 0.66 s | not measured |
+
+Against north-star §33.4: navigation under 200 ms is met only by the
+deterministic regex reflex (stage A); a Laya-judged reflex is 0.5-1.6 s,
+which meets "local search results under 1 s" only with prefetch, and beats
+"first visible token under 5 s warmed local" by a wide margin either way.
+
+### 6.5 What the numbers decide
+
+**Laya is a reflex on this PC; Needle, zero-shot, is not.** Laya answers
+every shape the arc needs in 0.2-0.35 s idle and 0.26-0.55 s beside a
+generating brain, and the ten-item choice the resolver depends on costs
+0.28-0.40 s. Needle 2 is the wrong shape for a reflex: 4-9 s per stateless
+call against Friday's schemas, 37% right on the 8-tool set, and it calls a
+tool on every conversational sentence with 0.97 confidence. Needle 3 is
+fast enough (0.3-0.5 s idle) and stays silent on conversation (92-95%), but
+it is right on 29-50% of commands, abstains on more than half of them, and
+its confidence cannot be thresholded. Neither generation's confidence
+separates right from wrong, so neither can be gated the way §4.4 requires.
+
+Therefore the reflex arc is **Laya plus templates**: the resolver needs no
+Needle, text slots are filled by lifting the user's own words with the
+substring check or asked back, and Needle is at most a **fine-tuning
+candidate** for text slots behind a warm prefix, to be tried only if the
+shadow data shows text-slot ask-backs are frequent. That is decision 1 in
+§11.
 
 ## 7. The rules kept
 
@@ -1199,18 +1312,37 @@ were not touched.
 
 ## 9. Phased build plan
 
-**Pending.** The ordering by seconds saved per week of effort depends on
-§6's pending numbers (whether Needle is worth a worker at all, and Laya's
-ten-item cost). The order this spec expects, to be confirmed against §6:
-(1) turn shape in shadow, §5.1, with prefetch on the partial transcript,
-§5.6; (2) the resolver, §5.2, Laya-only, templates with real IDs; (3) tool
-shortlist from the resolver's answers, §5.3; (4) the gate's card features
-and batch-grant offers, §5.7; (5) mail urgency, §5.9; (6) injection triage,
-§5.8; (7) News relevance after the read-log precondition, §5.11; then the
-rest of §5 as background jobs. Effort, gates and budgets per phase are
-written when §6 is complete.
+Ordered by seconds saved per week of engineering. Volumes are the mining's
+sixteen weeks (§2.1) divided out: about 120 user messages a week, 27 of them
+command-shaped, 11 short commands the brain answered with one tool or none,
+36 by voice; `load_tools` rounds about 7 a week. Savings use §6.4's measured
+gaps (a reflex turn at 0.5-1.6 s against a brain turn at 4.7-8.0 s cloud or
+2.7-6.3 s local). The weekly totals are modest in absolute seconds; what
+changes is that the short commands the owner gives most often stop taking
+five to eight seconds. Every phase ships in shadow and is promoted by the
+§4.5 gate; "effort" is engineering days including tests.
 
----
+| Phase | What ships | Effort | Saves per week (measured basis) | Promotion gate |
+|---|---|---|---|---|
+| **P0. Shadow the turn shape** | `laya_runtime.ask` gets its first caller: stage B (§5.1) on every chat and local-voice turn, shadow only, rows to `decisions.jsonl`; the new question ids in the label queue; the `reflex` presence frame from the two existing regex fast paths | 2 days | 0 s; it makes P1 measurable | none: shadow |
+| **P1. The resolver and templates** | §4.3 phase 1 folded in; templates `open_item`, `search_items`, `status`, `run_routine`, `calendar_window`, `briefing`, `switch_seat`; ask-back spoken and on screen; the palette shows the shortlist; §4.9 frames | 5 days | about 27 command turns x (5.5 - 1.1) s, about **2 minutes of waiting a week**, and each of those turns drops from 5-8 s to about 1 s | per workspace: precision at or above 0.98 among acted rows on at least 50 owner-labelled rows; p95 within budget idle and busy; `reflexes.resolver` on |
+| **P2. Prefetch and the shortlist** | §5.6 on the partial transcript; §5.3 tool shortlist from stage D's answers, `load_tools` kept; §5.5 `needs_context` | 3 days | voice: 36 turns x about 0.5 s felt; brain turns: 7 `load_tools` rounds x one brain round (about 5 s), about **35 s a week**, plus fewer tokens per turn (13.3k to at most 4k of schemas) | automatic label: the tool used was in the shortlist on at least 95% of turns |
+| **P3. Gate features and mail** | §5.7 card features and batch-grant offers, ask-count; §5.9 lane union and `needs_reply_soon` | 3 days | faster card decisions (p50 wait today 10 s, p90 229 s); the urgent flag voice already reads | mail: beats the heuristic on the owner's reclassifications; gate: no verdict changes, by test |
+| **P4. Add-only safety and goals** | §5.8 injection triage on `feat/injection-defense`; §5.10 typed blockers; §5.11 read-log precondition and relevance shadow | 4 days | no latency; it is the safety and honesty return | injection: AgentDojo replay, warnings gained against harmless cards gained; blockers: owner labels from the goal review |
+| **P5. The rest** | §5.12 podcasts, §5.13 job fit, §5.14 Doctor grouping, §5.17 salon templates, as each branch lands | 3 days | background jobs; no interactive latency | each with its own automatic or owner key |
+| **P6. Needle, only if decision 1 says yes** | a pinned, sandboxed worker (§4.8); a LoRA fine-tune on the shadow logs' text slots; stateful with a warm prefix, 3-4 short tools | 4 days | + 0.66 s per text-slot fill instead of an ask-back, only on turns with a text slot | beats the word-lift check on owner-labelled slots; p95 under 0.7 s warm; confidence separates right from wrong (it does not today) |
+
+Per-surface latency budgets (idle / busy, p95) that P1-P3 must meet, from
+§6:
+
+| Surface | Budget |
+|---|---|
+| Turn shape (stage B) | 0.40 / 0.70 s; beyond it, the brain path |
+| Resolver pick (stage E, both picks) | 0.60 / 1.00 s; beyond it, ask back |
+| Retrieval (stage D), local stores | 0.30 s; Gmail 1.5 s |
+| Whole reflex turn, felt, with prefetch | 0.7 / 1.1 s |
+| Card features (§5.7) | inside the union's existing 2.5 s |
+| Background questions (§5.8-5.14) | 1 s per item, never on a hot path |
 
 ## 10. North-star mapping
 
@@ -1241,20 +1373,59 @@ written when §6 is complete.
 
 ## 11. Decisions for the owner
 
-**Pending, with the three questions named.** Each is written up with the
-options and a recommendation once §6 is complete.
+Three, and only these; everything else in this spec is an engineering call.
 
-1. **Is Needle allowed at all?** It ships a closed engine binary and its
-   telemetry is on by default. The owner's rule is zero telemetry, not
-   "we turn it off". If the answer is no: Laya plus templates alone (the
-   resolver needs no Needle), or an open decoder fine-tuned on the shadow
-   logs, or a search for an open equivalent.
-2. **May a reflex recognise a spoken "yes" to a card in room mode?** Today
-   the exact-phrase rule decides and the spoken yes must name Friday.
-3. **The labelling hour.** Which shadow questions get an hour of the
-   owner's labels first, because every promotion in §4.5 needs his key.
+### 11.1 Is Needle allowed in Friday at all?
 
----
+**What is true.** Needle's Python is Apache 2.0, but the engine that runs
+the model is a prebuilt binary downloaded from the vendor and loaded into
+Friday's process. Its telemetry is on by default and posts to a vendor
+endpoint on every call. Your rule is zero telemetry, not "we turn it off":
+a dependency whose default is to phone home has to be pinned, sandboxed and
+asserted silent on every boot, forever, and a package update could change
+its behaviour. And measured on this PC it does not earn that trouble:
+zero-shot it is either too slow (Needle 2) or wrong too often (both), and
+its confidence cannot be trusted (§6.5).
+
+**Recommendation: no, for now.** Build P0-P5 with Laya plus templates,
+which needs no Needle: the resolver picks from real IDs, and a free-text
+slot is lifted from your own words or asked back. If the shadow data shows
+text-slot ask-backs are frequent enough to matter, the options are, in
+order: fine-tune an open small decoder on the shadow logs (Needle's own
+LoRA path, but only if you accept the binary; otherwise an open
+function-calling model of similar size with an open runtime), or keep
+asking back, which costs one spoken question and no model.
+
+**If yes:** P6, with the pin, the worker, the boot assertion and the
+promotion gate in §9. Nothing before P6 changes.
+
+### 11.2 May a reflex recognise a spoken "yes" to a card?
+
+**What is true.** Today the exact-phrase rule decides, and in room mode the
+words must name Friday. The mining found 211 short approval replies; the
+exact-phrase rule misses forms like "go ahead, but the short version", and
+the model in the room cannot be allowed to manufacture a yes.
+
+**Recommendation: keep the rule as it is in room mode; allow the reflex
+only in one-person mode, and only after shadow.** P0's shadow adds the
+statement *the user is agreeing to the pending question* beside the
+exact-phrase rule and logs disagreements. If the measured miss rate is
+material, the reflex may recognise those forms in one-person mode with the
+same fingerprint-per-call rule. In room mode nothing changes: the spoken yes
+names Friday, or it is not a yes.
+
+### 11.3 The labelling hour
+
+**What is true.** Every promotion in §4.5 needs your answer key, and only
+the turn-shape and resolver questions need *you*; the others have automatic
+keys. The label queue exists (Settings) and takes one click per row.
+
+**Recommendation.** One hour, in this order: (1) turn shape on 100 recent
+messages, half voice, half text: "was a command", "was private", "was to
+Friday"; (2) resolver picks as they arrive from P1's ask-backs, which are
+labels by construction ("you meant the second one"). Skip mail lanes: the
+reclassify button already records those. Skip everything in P4-P5: the keys
+there are AgentDojo, the goal review and the tracker.
 
 ## Appendix A. Provenance
 

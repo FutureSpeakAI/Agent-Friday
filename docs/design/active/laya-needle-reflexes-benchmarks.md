@@ -193,8 +193,21 @@ same call", and a floor, not a ceiling, for accuracy.
 - `idle`: nothing else of Friday's running on the CPU; the GPU brain not
   resident.
 - `busy`: a llama.cpp seat serving Bonsai2-27B on the GPU **and generating**
-  throughout the run, on a port of its own, so the CPU sees the seat's real
-  sampling and tokenising load. The live server's seat is left alone.
+  throughout the run, on a port of its own (`:8097`, `-c 8192`, `--cache-ram
+  0`), driven by `brain_load.py` (256-token completions back to back; the
+  log records tokens/s per completion and any failed request). A busy row
+  counts only if the loop shows no failed request across the run. The live
+  server's seat is left alone. Two things learned the hard way: the seat
+  hangs after a few minutes under the loop unless the prompt cache is off
+  (`--cache-ram 0`), and a seat launched from a tool shell dies with that
+  shell, so it is launched detached.
+- Bounded busy rows: Needle 3 on the first 40 rows of `t2` and `nocall`,
+  Needle 2 on the first 25 rows of `t2` (its stateless calls are 4-9 s
+  each). Idle runs are complete except `real`, bounded to 60 rows (Needle 2)
+  and 40 rows (Needle 3) for the same reason.
+- The local brain probe: five short tool turns on the same seat with the 8
+  `t2` tools in the prompt, streaming, `max_tokens` 96, temperature 0;
+  reported as time to first token and total (`results/brain_probe.json`).
 
 ### 3.5 Reported
 
