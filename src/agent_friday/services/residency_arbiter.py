@@ -2009,9 +2009,7 @@ class Arbiter:
         self.state = STATE_TRANSITIONING
         try:
             self._serve_pinned_seats()
-            emb = (self.plan["seats"] or {}).get("embedder")
-            if emb and str(emb.get("device", "")).startswith("gpu"):
-                self._load_leased(emb, "embedder")
+            self._restore_embedder()
             self.state = STATE_DEFAULT
         except Exception as e:
             self.state = STATE_ROLLING_BACK
@@ -2785,20 +2783,41 @@ class Arbiter:
         self._record("load-leased", role, seat["model_id"], took)
         return took
 
+    def _gpu_embedder(self):
+        """The plan's embedder seat when it lives on the GPU, else None."""
+        emb = ((self.plan or {}).get("seats") or {}).get("embedder")
+        if (isinstance(emb, dict) and emb.get("model_id")
+                and str(emb.get("device", "")).startswith("gpu")):
+            return emb
+        return None
+
     def _evict_pinned(self):
         """Stand down the seats a lease may take. R10 says which it may not.
+
+        Every pinned llama.cpp seat on the card is displaceable whatever its
+        role, and so is a GPU embedder; each is recorded by role so release
+        brings back exactly what was taken. A seat recorded here is a seat
+        `_restore_pinned` reloads -- the two lists are built from the same
+        source, so a seat cannot be stood down and forgotten.
 
         The sidekick stays. A lease that evicts the whole pinned set makes
         Friday mute for the duration — from the outside the machine looks
         hung rather than busy. The maintainer's ruling: "keep e2b awake so
-        Friday is always alive."
+        Friday is always alive." A model that also serves the sidekick is
+        retained with it.
         """
         displaced = []
-        for role in ("interactive_brain", "sidekick", "embedder"):
+        keep_models = self._retained_models()
+        cands = [(r, s) for r, s in self._pinned_llama_seats()]
+        emb = self._gpu_embedder()
+        if emb is not None:
+            cands.append(("embedder", emb))
+        for role, seat in cands:
             if role in rp.RETAINED_THROUGH_LEASE:
                 continue
-            seat = (self.plan["seats"] or {}).get(role)
-            if not seat or not str(seat.get("device", "")).startswith("gpu"):
+            if seat.get("model_id") in keep_models:
+                continue
+            if not str(seat.get("device", "")).startswith("gpu"):
                 continue
             t0 = time.time()
             self.llama.evict(seat["model_id"])
@@ -2813,12 +2832,39 @@ class Arbiter:
 
         `roles` comes from the lease's own record, so a retained seat is not
         needlessly reloaded — reloading the sidekick would evict it first and
-        briefly produce exactly the silence R10 exists to prevent.
+        briefly produce exactly the silence R10 exists to prevent. The GPU
+        embedder is restored like any other displaced seat; one that cannot be
+        reloaded is reported in `seat_problems`, never dropped.
         """
         if roles is None:
             roles = [r for r, _s in self._pinned_llama_seats()]
-        self._serve_pinned_seats(
-            {r for r in roles if r not in rp.RETAINED_THROUGH_LEASE})
+            if self._gpu_embedder() is not None:
+                roles.append("embedder")
+        wanted = {r for r in roles if r not in rp.RETAINED_THROUGH_LEASE}
+        self._serve_pinned_seats(wanted)
+        if "embedder" in wanted:
+            self._restore_embedder()
+
+    def _restore_embedder(self):
+        emb = self._gpu_embedder()
+        if emb is None:
+            return
+        model_id = emb["model_id"]
+        if (model_id in self.llama.procs
+                or model_id in self.ollama.resident()):
+            self.seat_problems.pop(model_id, None)
+            return
+        try:
+            self._load_leased(emb, "embedder")
+        except Exception as e:
+            self._note_seat_problem("embedder", model_id,
+                                    "load failed: %s" % e)
+            return
+        if model_id in self.llama.procs or model_id in self.ollama.resident():
+            self.seat_problems.pop(model_id, None)
+        elif not self.gpu_not_ours():
+            self._note_seat_problem("embedder", model_id,
+                                    "no process is serving it")
 
     def _retained_models(self):
         seats = self.plan["seats"] or {}
