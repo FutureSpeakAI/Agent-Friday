@@ -487,6 +487,79 @@ def _injection_text(text: str, kind: str) -> str:
     if kind in ("declined", "notice"):
         body = body + "]"
     return _INJECT_LEADS.get(kind, _INJECT_LEADS["result"]) + body
+
+
+#: How every egress-gate refusal opens, in each of its wordings
+#: (services/egress_gate.py:524, :533, :1018). Matched as a marker because the
+#: gate composes the rest of the sentence per tier.
+_GATE_WITHHELD_MARKER = "[EGRESS-GATE:"
+
+#: Kinds whose withheld text is worth offering on a card instead of losing.
+#: A task or workflow result was PRODUCED on this machine, so there is a
+#: scrubbed version of it to offer. A tool result mid-turn is not: the model
+#: is waiting on it, and a card cannot be read in that gap.
+_OFFERABLE_WHEN_WITHHELD = frozenset({"task_result"})
+
+
+def _injection_or_card(text: str, kind: str, conversation_id) -> str:
+    """Gated text for the model — or a scrubbed card, when a private result
+    produced on this machine would otherwise simply be lost.
+
+    A background task or workflow result that the gate withholds is a dead
+    end today: the owner asked for a summary of his own mail, the work ran on
+    a local seat, and what comes back is "content withheld". The gate is right
+    to refuse it — it is TIER_3 — but refusing is the only move it has.
+
+    The work ran here, so there is another move: hand the text through the
+    same path an `ask_local_for_context` answer takes. It is scrubbed to
+    placeholders, the never-send floor refuses it outright if it touches that,
+    the share is receipted, and the owner reads the exact words before any of
+    it leaves.
+
+    Nothing is relaxed. The gate's verdict keeps the promise and loses the
+    answer; this keeps the promise and offers the answer, behind his yes.
+    """
+    body = _injection_text(text, kind)
+    if (kind not in _OFFERABLE_WHEN_WITHHELD or not conversation_id
+            or _GATE_WITHHELD_MARKER not in body):
+        return body
+    try:
+        from agent_friday.services import local_context as _lc
+        out = _lc.offer(
+            text, conversation_id=conversation_id,
+            cloud_model=_voice_live_model_name(),
+            local_model="a background task on this machine",
+            question="the result of the background task he asked for",
+            title="Share this background result with the voice model?")
+    except Exception as e:  # noqa: BLE001
+        _log.warning("could not offer a withheld task result on a card: %s", e)
+        return body
+    status = (out or {}).get("status")
+    if status == "pending":
+        return (_INJECT_LEADS["notice"]
+                + "that background result is private, so Friday scrubbed the "
+                  "identifiers out of it and put the exact text on a card for "
+                  "him to read. Tell him in one short sentence that it is "
+                  "waiting on his screen, and carry on.]")
+    if status == "sent":
+        # A conversation grant was in force: offer() has already queued the
+        # scrubbed text as approved context, so say only that it is coming.
+        return (_INJECT_LEADS["notice"]
+                + "that background result was private; the scrubbed version is "
+                  "on its way to you under the sharing he already allowed for "
+                  "this conversation.]")
+    # withheld / unavailable: the floor refused it, or it could not be
+    # recorded. The gate's own sentence is the honest thing to hand over.
+    return body
+
+
+def _voice_live_model_name() -> str:
+    """The cloud model this call is on, for a card that names its destination."""
+    try:
+        from agent_friday.services.voice_engine import _get_live_model
+        return str(_get_live_model() or "the cloud voice model")
+    except Exception:
+        return "the cloud voice model"
 #: A result slower than this is "late": the conversation has likely moved on.
 VOICE_TOOL_STALE_S = 15.0
 
@@ -3039,7 +3112,8 @@ if sock is not None:
                 if not _inject_q or sess is None or _model_speaking[0]:
                     return
                 text, kind = _inject_q.popleft()
-                handed = _injection_text(text, kind)
+                handed = _injection_or_card(
+                    text, kind, _voice_session.get("conversation_id"))
                 try:
                     await sess.send_client_content(
                         turns={"role": "user", "parts": [{"text": handed}]},
