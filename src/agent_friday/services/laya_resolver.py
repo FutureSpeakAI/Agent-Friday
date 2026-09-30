@@ -50,6 +50,13 @@ from typing import Callable, Dict, List, Optional
 _log = logging.getLogger("friday.laya_resolver")
 
 SHORTLIST_K = 8
+#: Narrow with cosine similarity on Laya's encoder (True) or keep the index's
+#: own word ranking (False). Measured on the owner's 50 real items: word
+#: ranking 43/50 top-1 at p50 0.62 s / p95 3.4 s, cosine 42/50 at 1.0 s /
+#: 5.9 s (it embeds up to 30 titles on the CPU per request). The index's
+#: ranking already put the right item first or second. Both are measured by
+#: tools/laya_resolver_eval.py (--lexical).
+COSINE_SHORTLIST = False
 #: Retrieval keeps this many before the cosine shortlist.
 LEXICAL_K = 30
 #: A choice is acted on only at or above this probability, and with at least
@@ -117,9 +124,34 @@ def command_for(c: Candidate) -> dict:
 #  CANDIDATES: each workspace's own index, by stable id
 # ---------------------------------------------------------------------------
 
+#: Words that say what KIND of thing or what to DO with it. They are not in
+#: the item's title, and counting them capped a perfect title match below the
+#: full-match line ("open that story about ..." scored 0.8 at best).
+_CUE_WORDS = frozenset("""
+open opening show display pull bring up go take view launch find get look read
+please me my that this the story stories article articles headline news item
+email emails mail message messages thread inbox wiki page pages note notes entry
+entries file files document doc folder about on from called named titled
+""".split())
+
+
 def _words(text: str) -> list:
     from agent_friday.services import desktop_targets as dt
-    return dt._content(text)
+    return [w for w in dt._content(text) if w not in _CUE_WORDS]
+
+
+def _dedupe(cands: List[Candidate]) -> List[Candidate]:
+    """One candidate per title: the archive keeps one story under several
+    ids, and two copies of the same title can only split a choice. The
+    best-scored copy (the list is best-first) is kept."""
+    seen, out = set(), []
+    for c in cands:
+        key = (c.kind, re.sub(r"[^a-z0-9]+", " ", c.title.lower()).strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
 
 
 def _email_candidates(text: str) -> List[Candidate]:
@@ -300,6 +332,8 @@ def shortlist(text: str, cands: List[Candidate], k: int = SHORTLIST_K) -> List[C
     """
     if len(cands) <= k:
         return list(cands)
+    if not COSINE_SHORTLIST:
+        return list(cands[:k])
     try:
         from laya.shortlist import embed_fn_from_agent, shortlist_choice
         from agent_friday.services import laya_backend
@@ -379,7 +413,7 @@ def resolve(text: str, *, sources: Optional[Dict[str, Callable]] = None) -> Reso
                               reason="not_an_item", timings_ms=timings)
 
         t = time.monotonic()
-        cands = sources[kind](text) or []
+        cands = _dedupe(sources[kind](text) or [])
         timings["retrieve"] = round((time.monotonic() - t) * 1000.0, 2)
         if not cands:
             return Resolution("not_found", "Nothing matched in %s." % kind, kind=kind,

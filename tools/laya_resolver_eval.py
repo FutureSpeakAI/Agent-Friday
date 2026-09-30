@@ -100,10 +100,13 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("sets", nargs="+")
     p.add_argument("--out")
+    p.add_argument("--lexical", action="store_true",
+                   help="shortlist by the index's word ranking, not Laya-encoder cosine")
     p.add_argument("--no-mail", action="store_true",
                    help="skip rows whose kind is email (Gmail is a network search)")
     a = p.parse_args()
     from agent_friday.services import laya_backend, laya_resolver
+    laya_resolver.COSINE_SHORTLIST = not a.lexical
     laya_backend.register()
     t0 = time.time()
     laya_backend._load_now()
@@ -127,7 +130,10 @@ def main():
                         "rows": [{"expect": r["expect"], "kind": r.get("kind"),
                                   "status": x["status"], "got_kind": x.get("kind"),
                                   "reason": x.get("reason"), "ms": x["timings_ms"].get("total"),
-                                  "ok": (x["status"] == "command" and (x.get("command") or {}).get("input", {}).get("id", (x.get("command") or {}).get("input", {}).get("workspace")) in set(r.get("ids") or []))}
+                                  "timings": x.get("timings_ms"),
+                                  "ok": (x["status"] == "command" and (
+                                      (x.get("chosen") or {}).get("id") in set(r.get("ids") or [])
+                                      or (not r.get("ids") and x.get("kind") == r.get("kind"))))}
                                  for r, x in zip(rows, results)]}
         print(name, json.dumps(report[name]["score"]), flush=True)
     if a.out:

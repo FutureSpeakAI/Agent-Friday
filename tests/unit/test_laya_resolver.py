@@ -206,3 +206,22 @@ def test_a_named_kind_overrides_laya_saying_other(monkeypatch):
     r = laya_resolver.resolve("pull up my notes on the Neurow pitch",
                               sources={"wiki_page": lambda t: cands})
     assert r.status == "command" and r.command["input"]["id"] == "p/neurow.md"
+
+
+def test_cue_words_are_not_search_words():
+    """"open that story about the school board vote": "story" names the kind,
+    it is not in the title, and counting it capped a perfect title at 0.8."""
+    words = laya_resolver._words("open that story about the school board vote")
+    assert "story" not in words and "open" not in words
+    assert {"school", "board", "vote"} <= set(words)
+
+
+def test_the_same_title_twice_is_one_candidate(monkeypatch):
+    laya = _with(monkeypatch, _Laya(kind="news"))
+    cands = [Candidate("news", "a1", "School board votes", "Paper A", 1.0, {"url": "https://x/1"}),
+             Candidate("news", "a2", "School Board Votes", "Paper A", 1.0, {"url": "https://x/2"}),
+             Candidate("news", "b1", "Board game cafe opens", "", 0.4, {"url": "https://x/3"})]
+    r = laya_resolver.resolve("open that story about the school board votes",
+                              sources={"news": lambda t: cands})
+    assert r.status == "command" and r.command["input"]["url"] == "https://x/1"
+    assert not [c for c in laya.calls if "item" in c]
