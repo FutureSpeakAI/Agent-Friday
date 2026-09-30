@@ -55,7 +55,7 @@ it's you're we're they're don't isn't aren't doesn't didn't can't won't i'm i'll
 #: does not count them.
 _PLAIN_NEWS = {w[:5] for w in """reports reported report according confirmed confirms
 announced says said adds added story stories interview interviews calendar meeting
-morning afternoon evening tonight tomorrow yesterday""".split()}
+morning afternoon evening tonight tomorrow yesterday week weekend month""".split()}
 _MONTHS = ("january february march april may june july august september october "
            "november december").split()
 _DAYS = "monday tuesday wednesday thursday friday saturday sunday".split()
@@ -333,6 +333,16 @@ def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool =
     return out
 
 
+def _dismissed(text: str) -> bool:
+    """Called background or noise, and not in the negative ("it is not
+    background")."""
+    for m in _DISMISS_RE.finditer(text):
+        before = text[max(0, m.start() - 24):m.start()].lower()
+        if not re.search(r"\b(not|isn't|aren't|never|no longer|hardly)\b[\w\s']{0,14}$", before):
+            return True
+    return False
+
+
 def safety_problems(lines: list[dict], story_list: list[dict], event_list: list[dict]) -> list[dict]:
     out = []
     fm = first_mentions(lines, story_list)
@@ -343,7 +353,7 @@ def safety_problems(lines: list[dict], story_list: list[dict], event_list: list[
         i = fm[s["sid"]]
         idx = [j for j, ln in _spoken(lines) if j == i or _mentions(ln, s)]
         text = " ".join(lines[j]["text"] for j in idx)
-        if _DISMISS_RE.search(text):
+        if _dismissed(text):
             out.append(_p("safety_dismissed", "\"%s\" is a story about harm to people; it is "
                           "called background or noise instead of being introduced plainly."
                           % s["title"][:90], i, s["sid"]))
@@ -365,8 +375,9 @@ def safety_problems(lines: list[dict], story_list: list[dict], event_list: list[
                 # The event by its time, or by a word of its name that is not
                 # the shared place (saying "Springfield" is not naming it).
                 clocks = {_minutes(*m.groups()) for m in _CLOCK_RE.finditer(text)}
+                # Two words of its name: one ("local") is too common to name it.
                 return (e["start"] is not None and e["start"] in clocks) or \
-                    bool((e["keys"] - place_stems) & {_stem(w) for w in _content(text)})
+                    len((e["keys"] - place_stems) & {_stem(w) for w in _content(text)}) >= 2
             practical = any(
                 {e["sid"] for e in near_events} & set(lines[j].get("cites") or [])
                 or any(names_event(lines[j]["text"], e) for e in near_events)
@@ -524,6 +535,27 @@ def digest_problems(lines: list[dict]) -> list[dict]:
             for i, ln in _spoken(lines) if _DIGEST_REF_RE.search(ln["text"])]
 
 
+_REFRAIN_RE = re.compile(r"\b(i|we)\s+(did not|didn't|have not|haven't|could not|couldn't)\s+"
+                         r"(check|verify|confirm)\w*", re.I)
+_ADDRESS_RE = re.compile(r"\b[A-Z]{2},?\s+\d{5}(?:-\d{4})?\b|,\s*(USA|United States)\b")
+
+
+def refrain_problems(lines: list[dict]) -> list[dict]:
+    """What she did not check is said once, where it matters."""
+    hits = [i for i, ln in _spoken(lines) for _m in _REFRAIN_RE.finditer(ln["text"])]
+    if len(hits) > 1:
+        return [_p("refrain", "\"I did not check\" is said %d times; say what you did not check "
+                   "once, where it matters most." % len(hits), hits[1])]
+    return []
+
+
+def address_problems(lines: list[dict]) -> list[dict]:
+    """A place is said the way a person says it: no postal code or country."""
+    return [_p("reads_address", "A postal address is read out whole: \"%s\". Say the venue or "
+               "the street." % ln["text"][:90], i)
+            for i, ln in _spoken(lines) if _ADDRESS_RE.search(ln["text"])]
+
+
 def fragment_problems(lines: list[dict]) -> list[dict]:
     frags = []
     for i, ln in _spoken(lines):
@@ -556,7 +588,8 @@ def link_claim_problems(lines: list[dict], story_list: list[dict]) -> list[dict]
 
 
 CHECKS = ("ledes", "safety stories", "calendar times", "repetition", "restated close",
-          "headings", "digest references", "fragments", "link claim", "density")
+          "headings", "digest references", "refrains", "addresses", "fragments",
+          "link claim", "density")
 
 
 def script_problems(lines: list[dict], docs: list[dict], *, n_chapters: int = 1,
@@ -572,6 +605,8 @@ def script_problems(lines: list[dict], docs: list[dict], *, n_chapters: int = 1,
     probs += repetition_problems(lines, docs, n_chapters)
     probs += heading_problems(lines, docs)
     probs += digest_problems(lines)
+    probs += refrain_problems(lines)
+    probs += address_problems(lines)
     probs += fragment_problems(lines)
     probs += link_claim_problems(lines, story_list)
     if news and solo:

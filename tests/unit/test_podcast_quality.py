@@ -156,3 +156,40 @@ def test_the_episode_never_points_at_the_written_digest(ds):
     lines = good_lines(ds)
     lines[1] = dict(lines[1], text="My written briefing flags this interview as the day's key moment.")
     assert "digest_referenced" in _codes(_check(lines, ds))
+
+
+# ── from the second real regeneration ───────────────────────────────────────
+
+def test_saying_a_story_is_not_background_is_not_dismissing_it(ds):
+    lines = good_lines(ds)
+    lines[9] = dict(lines[9], text=lines[9]["text"] + " It is not background noise.")
+    assert "safety_dismissed" not in _codes(_check(lines, ds))
+
+
+def test_the_week_is_plain_news_vocabulary(ds):
+    lines = good_lines(ds)
+    for i in (2, 4, 6):
+        lines[i] = dict(lines[i], text=lines[i]["text"] + " It has been a busy week.")
+    assert not [p for p in _check(lines, ds) if p["code"] == "repeats_word" and "week" in p["message"]]
+
+
+def test_what_she_did_not_check_is_said_once_not_as_a_refrain(ds):
+    lines = good_lines(ds)
+    lines[4] = dict(lines[4], text=lines[4]["text"] + " I did not check the bank's method.")
+    lines[8] = dict(lines[8], text=lines[8]["text"] + " I did not verify the bar's name.")
+    assert "refrain" in _codes(_check(lines, ds))
+
+
+def test_a_generic_word_shared_with_an_event_s_name_is_not_a_practical_line(ds):
+    evs = [dict(d, title="Springfield Makers: Local Models Night") if d.get("kind") == "event"
+           and d["start"].endswith("17:30:00-05:00") else d for d in ds]
+    lines = [ln for ln in good_lines(ds) if not ln["text"].startswith(("Your 5:30", "Tonight's"))]
+    lines.insert(9, {"speaker": "a", "chapter": 1, "cites": [], "text": "It is the local story to know."})
+    assert "safety_no_practical_line" in _codes(q.safety_problems(lines, q.stories(evs), q.events(evs)))
+
+
+def test_a_postal_address_is_not_read_out_whole(ds):
+    lines = good_lines(ds)
+    lines[9] = dict(lines[9], text="Your 5:30 PM meetup is at 12 Harbor St, Springfield, IL 62701, "
+                                   "USA, so leave a little early.")
+    assert "reads_address" in _codes(_check(lines, ds))
