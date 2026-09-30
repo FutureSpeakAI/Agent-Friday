@@ -2353,9 +2353,11 @@ function podcastSourceLabel(s, id) {
   const t = String(s.title || id);
   return t.length > 28 ? t.slice(0, 27) + '…' : t;
 }
-// The stories an episode links to: each source with a web address.
+// The stories an episode links to: each source a line cites that has a web address.
 function podcastLinked(ep) {
-  return (ep.sources || []).filter(s => /^https?:\/\//.test(s.url || ''));
+  const cited = new Set();
+  (ep.lines || []).forEach(ln => (ln.cites || []).forEach(c => cited.add(c)));
+  return (ep.sources || []).filter(s => cited.has(s.id) && /^https?:\/\//.test(s.url || ''));
 }
 const PODCAST_SHOWS = [['briefing', 'The Briefing'], ['front_page', 'Front Page'], ['editorial', 'The Editorial'], ['weekly', 'The Week'], ['any', 'Your own episodes']];
 function PodcastBadges({ ep }) {

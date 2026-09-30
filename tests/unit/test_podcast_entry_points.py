@@ -55,6 +55,7 @@ def test_the_listening_check_is_not_named_as_an_editorial_pass():
 def test_the_transcript_lists_its_linked_sources():
     b = _block(INDEX)
     assert "'aria-label': 'Sources'" in b and "podcastLinked(ep).map(" in b
+    assert "cited.has(s.id)" in b          # only the stories heard, not every one offered
 
 
 def test_who_is_on_each_show_is_a_setting_in_studio_with_the_recommendation_shown():
