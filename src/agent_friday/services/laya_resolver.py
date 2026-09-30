@@ -132,7 +132,8 @@ open opening show display pull bring up go take view launch find get look read
 please me my that this the story stories article articles headline news item
 email emails mail message messages thread inbox wiki page pages note notes entry
 entries file files document doc folder about on from called named titled
-""".split())
+calendar calendars event events schedule agenda meeting new tab tabs chrome browser window
+in for""".split())
 
 
 def _words(text: str) -> list:
@@ -305,13 +306,57 @@ def _delegated(kind: str) -> Callable[[str], List[Candidate]]:
     return fn
 
 
+#: Google Calendar's own search is network; a day named outright is parsed
+#: first and needs none.
+CALENDAR_BUDGET_S = 3.0
+
+
+def _calendar_candidates(text: str) -> List[Candidate]:
+    """A day ("tomorrow", "Friday") or an event named by its title.
+
+    The owner's own misses were events by title ("show me the concert on my
+    calendar"), which the date parser cannot read. The desktop has no target
+    for one event yet, so an event opens its DAY; its event id rides along in
+    `extra` for when the registry gains an event target.
+    """
+    day = _delegated("calendar")(text)
+    if day:
+        return day
+    from agent_friday.services import calendar_write
+    from agent_friday.services import desktop_targets as dt
+    q = _words(text)
+    if not q:
+        return []
+    def _search_all():
+        # Every connected calendar account, not only the primary one.
+        from agent_friday.services import google_accounts
+        found = []
+        ids = [a.get("id") for a in google_accounts._accounts_with("calendar")] or [None]
+        for aid in ids:
+            r = calendar_write.find_events(" ".join(q), include_series=False, account_id=aid)
+            found += (r or {}).get("events") or []
+        return {"events": found}
+
+    _done, res = dt._within(_search_all, CALENDAR_BUDGET_S)
+    out = []
+    for ev in ((res or {}).get("events") or []):
+        start = str(ev.get("start") or "")[:10]
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start):
+            continue
+        title = str(ev.get("title") or "(untitled)")
+        out.append(Candidate("calendar", start, title[:90], "on %s" % start,
+                             float(dt._score(q, title.lower())), {"event_id": str(ev.get("id") or "")}))
+    out.sort(key=lambda c: c.score, reverse=True)
+    return out[:LEXICAL_K]
+
+
 CANDIDATE_SOURCES: Dict[str, Callable[[str], List[Candidate]]] = {
     "email": _email_candidates,
     "wiki_page": _wiki_candidates,
     "file": _file_candidates,
     "news": _news_candidates,
     "workspace": _workspace_candidates,
-    "calendar": _delegated("calendar"),
+    "calendar": _calendar_candidates,
     "contact": _delegated("contact"),
 }
 

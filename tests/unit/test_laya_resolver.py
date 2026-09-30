@@ -225,3 +225,30 @@ def test_the_same_title_twice_is_one_candidate(monkeypatch):
                               sources={"news": lambda t: cands})
     assert r.status == "command" and r.command["input"]["url"] == "https://x/1"
     assert not [c for c in laya.calls if "item" in c]
+
+
+def test_a_calendar_event_by_title_opens_its_day(monkeypatch):
+    """"Show me the jazz concert on my calendar": an event named by title, not a day.
+    The date parser alone found nothing; the event search finds its day."""
+    from agent_friday.services import calendar_write, google_accounts
+    monkeypatch.setattr(google_accounts, "_accounts_with", lambda cap: [{"id": "acct1"}])
+    monkeypatch.setattr(calendar_write, "find_events", lambda q, **k: {"ok": True, "events": [
+        {"id": "ev1", "title": "Jazz concert at the Paramount", "start": "2026-10-12T20:00:00-05:00"},
+        {"id": "ev2", "title": "Dentist", "start": "2026-10-03T09:00:00-05:00"}]})
+    cands = laya_resolver.CANDIDATE_SOURCES["calendar"]("Show me the jazz concert on my calendar")
+    assert cands[0].id == "2026-10-12" and cands[0].extra["event_id"] == "ev1"
+    assert laya_resolver.command_for(cands[0]) == {
+        "tool": "navigate_to", "input": {"kind": "calendar", "id": "2026-10-12"}}
+
+
+def test_a_calendar_day_still_uses_the_date_parser(monkeypatch):
+    from agent_friday.services import calendar_write
+    called = []
+    monkeypatch.setattr(calendar_write, "find_events", lambda q, **k: called.append(q) or {"events": []})
+    cands = laya_resolver.CANDIDATE_SOURCES["calendar"]("open my calendar for tomorrow")
+    assert cands and len(cands[0].id) == 10 and not called
+
+
+def test_calendar_and_tab_words_are_not_search_words():
+    words = laya_resolver._words("Open the event in a new tab for the book fair")
+    assert set(words) == {"book", "fair"}
