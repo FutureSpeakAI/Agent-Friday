@@ -5286,6 +5286,15 @@ window.addEventListener('DOMContentLoaded',function(){
                 undoPoints.length = 0;
             }
 
+            // After a rebuild the meshes are new: forget everything held on the old ones.
+            function resetCache() {
+                cubesAnatomy = null;
+                Object.keys(cache).forEach(k => { delete cache[k]; });
+                applied.clear(); undoObjects.clear(); undoPoints.length = 0;
+                if (marker && marker.parent) marker.parent.remove(marker);
+                if (scanPlane && scanPlane.parent) scanPlane.parent.remove(scanPlane);
+            }
+
             function begin() {
                 applied.forEach((r, m) => { m.rotation.x -= r[0]; m.rotation.y -= r[1]; m.rotation.z -= r[2]; });
                 applied.clear();
@@ -5341,13 +5350,15 @@ window.addEventListener('DOMContentLoaded',function(){
 
             function end(dt) {
                 subscribe();
+                FridayGenome.sample(dt, FridayGestures.settled());
                 FridayGestures.setReduced(typeof SceneMotion !== 'undefined' && SceneMotion.reduced());
                 FridayGestures.setMic(window._fridayMicLevel || 0);
                 FridayGestures.setApprovals(window.__fridayPendingApprovals || 0);
                 ensureObjects();
                 if (FridayGestures.settled()) {
                     // At rest: no anatomy, no per-point work, nothing drawn.
-                    if (statusEl) statusEl.style.display = 'none';
+                    const held = FridayGenome.heldMessage();
+                    if (statusEl) { statusEl.textContent = held.toUpperCase(); statusEl.style.display = held ? 'block' : 'none'; }
                     thread.visible = false; scanPlane.visible = false;
                     if (marker) marker.visible = false;
                     return;
@@ -5404,9 +5415,169 @@ window.addEventListener('DOMContentLoaded',function(){
                 } else scanPlane.visible = false;
             }
 
-            return { begin, end, anatomyFor, genericAnatomy, ADAPTERS };
+            return { begin, end, anatomyFor, genericAnatomy, ADAPTERS, resetCache };
         })();
         // </presence-gesture-scene>
+
+        // <avatar-genome>
+        // Friday's look (docs/design/active/avatar-visual-genome.md §3, §6.4):
+        // GET /api/avatar/genome gives the active genome as drawn. The palette
+        // recolours only the cool identity moods (the state moods keep their
+        // hue, §6.2) and eases in through the normal mood lerp, so a new look
+        // never flashes. The form genes are literals the builders read through
+        // EX(); geometry is rebuilt only in the first seconds of a page load
+        // or while the tab is hidden, never as a jump in front of the user.
+        // An empty genome is v1 exactly: EX() returns the v1 literal.
+        //
+        // The frame budget: calm frames (nothing gesturing, the tab visible)
+        // are timed all the time. When a new look lands, its calm-frame p95 is
+        // compared with the look before it; more than 10% slower and the page
+        // puts the old look back and asks the server to undo the step.
+        const FridayGenome = (function () {
+            const REBUILD_WINDOW_MS = 4000, BUDGET = 1.10, BUDGET_MIN_MS = 1.0;
+            const RING = 600, CHECK_SAMPLES = 600;
+            let view = null, hash = null, usedKey = null, pending = false, started = false;
+            const t0 = performance.now(), V1 = {}, calm = [];
+            let rng = {}, check = null, heldNote = 0;
+
+            function EX(id, key, dflt) {
+                const e = view && view.expression && view.expression[id];
+                const v = e ? e[key] : undefined;
+                return (typeof v === 'number' && isFinite(v)) ? v : dflt;
+            }
+            // Seeded from the sigil, which is derived from this install's seed:
+            // the same install always drops the same cubes.
+            function rand(id) {
+                if (!view || !view.sigil) return Math.random();
+                let s = rng[id];
+                if (s === undefined) {
+                    const txt = JSON.stringify(view.sigil) + '/' + id;
+                    s = 2166136261;
+                    for (let i = 0; i < txt.length; i++) { s ^= txt.charCodeAt(i); s = Math.imul(s, 16777619) >>> 0; }
+                }
+                s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+                rng[id] = s;
+                return s / 4294967296;
+            }
+            const toInt = h => parseInt(String(h).slice(1), 16);
+            function applyPalette(v) {
+                const p = (v && v.palette) || {};
+                Object.keys(MOODS).forEach(m => {
+                    if (!V1[m]) V1[m] = Object.assign({}, MOODS[m]);
+                    MOODS[m].baseColor = V1[m].baseColor; MOODS[m].accentColor = V1[m].accentColor;
+                    MOODS[m].bloomStrength = V1[m].bloomStrength * (p.bloom || 1);
+                    MOODS[m].grain = V1[m].grain * (p.grain || 1);
+                });
+                const moods = p.moods || {};
+                Object.keys(moods).forEach(m => {
+                    if (!MOODS[m] || !moods[m]) return;
+                    MOODS[m].baseColor = toInt(moods[m].base);
+                    MOODS[m].accentColor = toInt(moods[m].accent);
+                });
+            }
+            const keyOf = v => JSON.stringify([v && v.expression, v && v.sigil]);
+
+            function rebuild() {
+                pending = false;
+                usedKey = keyOf(view);
+                rng = {};
+                Object.values(structures).forEach(g => {
+                    if (!g) return;
+                    scene.remove(g);
+                    g.traverse(o => {
+                        if (o.geometry && o.geometry.dispose) o.geometry.dispose();
+                        if (o.material && o.material.dispose) o.material.dispose();
+                    });
+                });
+                coreCubes.length = 0; cathedralRings.length = 0; astrolabeRings.length = 0;
+                shannonNodes.length = 0; quantumRings.length = 0; matrixLines.length = 0;
+                buildAllStructures();
+                Object.values(structures).forEach(g => { if (g) { scene.add(g); g.visible = false; setGroupOpacity(g, 0); } });
+                const cur = structures[targetStructure];
+                if (cur) { cur.visible = true; setGroupOpacity(cur, 1); }
+                currentStructure = targetStructure;
+                FridayGestureScene.resetCache();
+            }
+
+            function receive(v, allowCheck) {
+                const h = v && v.step ? v.step.content_hash : 'v1';
+                if (h === hash) return;
+                const prev = view;
+                view = v; hash = h;
+                applyPalette(v);
+                if (keyOf(v) !== usedKey) {
+                    if (performance.now() - t0 < REBUILD_WINDOW_MS || document.hidden) rebuild();
+                    else pending = true;
+                }
+                if (allowCheck && prev) {
+                    const base = p95(calm);
+                    check = base ? { prev, base, samples: [], after: pending } : null;
+                }
+            }
+
+            function p95(a) {
+                if (a.length < 300) return 0;
+                const s = a.slice().sort((x, y) => x - y);
+                return s[Math.floor(s.length * 0.95)];
+            }
+
+            // Called every frame by the scene: time the calm ones.
+            function sample(dt, isCalm) {
+                if (!isCalm || document.hidden || !(dt > 0)) return;
+                const ms = dt * 1000;
+                if (check && !check.after) {
+                    check.samples.push(ms);
+                    if (check.samples.length >= CHECK_SAMPLES) {
+                        const now = p95(check.samples), c = check;
+                        check = null;
+                        if (now > c.base * BUDGET && now - c.base > BUDGET_MIN_MS) held(c.prev, now, c.base);
+                    }
+                    return;
+                }
+                calm.push(ms);
+                if (calm.length > RING) calm.shift();
+            }
+
+            // Too heavy for this machine: back to the previous look, and the
+            // server undoes the step so the next one starts from there.
+            function held(prev, now, base) {
+                hash = null;
+                receive(prev, false);
+                if (pending) rebuild();
+                heldNote = performance.now();
+                try {
+                    fetch('/api/avatar/undo', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ reason: 'frame budget', p95_ms: +now.toFixed(2), baseline_ms: +base.toFixed(2) }) });
+                } catch (_) {}
+                console.warn('[avatar] new look drew slower (p95 ' + now.toFixed(1) + ' ms vs ' + base.toFixed(1) + ' ms); undone');
+            }
+            function heldMessage() {
+                return performance.now() - heldNote < 8000
+                    ? 'That look was too heavy for this computer; I went back' : '';
+            }
+
+            function refresh() {
+                return fetch('/api/avatar/genome').then(r => (r.ok ? r.json() : null))
+                    .then(v => { if (v) receive(v, true); return v; }).catch(() => null);
+            }
+            function start() {
+                if (started) return;
+                started = true;
+                fetch('/api/avatar/genome').then(r => (r.ok ? r.json() : null))
+                    .then(v => { if (v) receive(v, false); }).catch(() => {});
+                setInterval(refresh, 120000);
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden && pending) {
+                        rebuild();
+                        if (check) check.after = false;
+                    }
+                });
+            }
+            return { EX, rand, start, refresh, sample, heldMessage, current: () => view,
+                     _receive: receive, _rebuild: rebuild };
+        })();
+        window.FridayGenome = FridayGenome;
+        // </avatar-genome>
 
         function setEvolution(idx) {
             if (idx === currentEvolutionIdx && transitionProgress === 1.0) return;
@@ -5501,6 +5672,8 @@ window.addEventListener('DOMContentLoaded',function(){
             // setupAudio() uses getUserMedia which would show the mic indicator on page load.
 
             Object.values(structures).forEach(g => { if(g) { scene.add(g); g.visible = false; setGroupOpacity(g, 0); }});
+            // Friday's look: the palette now, the form genes by a rebuild.
+            FridayGenome.start();
             if (structures['CUBES']) { structures['CUBES'].visible = true; setGroupOpacity(structures['CUBES'], 1); }
 
             const _evo = document.getElementById('evolution-day-text');
@@ -5569,9 +5742,9 @@ window.addEventListener('DOMContentLoaded',function(){
             const boxMat = createMaterial('mesh', 0x00ffff, 0.85, false);
             const edgeMat = createMaterial('line', 0x00ffff, 0.8, true); edgeMat.userData.isAccent = true;
             const boxGeo = new THREE.BoxGeometry(1.4, 1.4, 1.4); const edgeGeo = new THREE.EdgesGeometry(boxGeo);
-            const gridSize = 3; const spacing = 1.6; const offset = (gridSize * spacing) / 2 - (spacing / 2);
+            const gridSize = 3; const spacing = FridayGenome.EX('CUBES', 'spacing', 1.6); const offset = (gridSize * spacing) / 2 - (spacing / 2);
             for(let x=0; x<gridSize; x++) { for(let y=0; y<gridSize; y++) { for(let z=0; z<gridSize; z++) {
-                if (Math.random() > 0.85) continue;
+                if (FridayGenome.rand('CUBES') < FridayGenome.EX('CUBES', 'sparsity', 0.15)) continue;
                 // One material per cube, so a gesture can light or tint one
                 // cube (the approval cube) without repainting the rest.
                 const mesh = new THREE.Mesh(boxGeo, boxMat.clone()); 
@@ -5598,8 +5771,9 @@ window.addEventListener('DOMContentLoaded',function(){
             const gDome = new THREE.Group();
             const dMat = createMaterial('mesh', 0x00ffff, 0.1, true, true);
             gDome.add(new THREE.Mesh(new THREE.SphereGeometry(35, 48, 32, 0, Math.PI*2, 0, Math.PI/2), dMat));
-            for(let i=0; i<8; i++) {
-                const angle = (i/8)*Math.PI*2; const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.8, 50, 8), createMaterial('mesh', 0x00ffff, 0.15, true, true));
+            const nPillars = FridayGenome.EX('DOME', 'pillars', 8);
+            for(let i=0; i<nPillars; i++) {
+                const angle = (i/nPillars)*Math.PI*2; const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.8, 50, 8), createMaterial('mesh', 0x00ffff, 0.15, true, true));
                 pillar.position.set(Math.cos(angle)*18, -10, Math.sin(angle)*18); gDome.add(pillar);
             }
             const chMat = createMaterial('mesh', 0xffffff, 0.5, true, true); chMat.userData.isAccent = true;
@@ -5621,8 +5795,9 @@ window.addEventListener('DOMContentLoaded',function(){
             const gCables = new THREE.Group();
             const cableMat = createMaterial('mesh', 0x00ffff, 0.15, true, false); cableMat.userData.isAccent = true;
             const phiFib = Math.PI * (3.0 - Math.sqrt(5.0)); 
-            for(let i=0; i<80; i++) {
-                const y = 1 - (i / 79) * 2; const radius = Math.sqrt(1 - y * y); const theta = phiFib * i;
+            const nTubes = FridayGenome.EX('CABLES', 'tubes', 80);
+            for(let i=0; i<nTubes; i++) {
+                const y = 1 - (i / (nTubes - 1)) * 2; const radius = Math.sqrt(1 - y * y); const theta = phiFib * i;
                 const start = new THREE.Vector3(Math.cos(theta)*radius*30, y*30, Math.sin(theta)*radius*30);
                 const end = new THREE.Vector3(0,0,0); const mid = start.clone().lerp(end, 0.5).applyAxisAngle(new THREE.Vector3(0,1,0), Math.PI/1.5);
                 gCables.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([start, mid, end]), 50, 0.15, 6, false), cableMat));
@@ -5661,7 +5836,7 @@ window.addEventListener('DOMContentLoaded',function(){
             // 7. ASTROLABE
             const gAstrolabe = new THREE.Group();
             const astroMatSolid = createMaterial('mesh', 0x00ffff, 0.15, true, false); const astroMatDash = createMaterial('line', 0x00ffff, 0.6, true, false, true); astroMatDash.userData.isAccent = true;
-            for(let i=1; i<=8; i++) {
+            for(let i=1; i<=FridayGenome.EX('ASTROLABE', 'rings', 8); i++) {
                 const ringGroup = new THREE.Group(); const radius = i * 2.0;
                 ringGroup.add(new THREE.Mesh(new THREE.TorusGeometry(radius, 0.05, 8, 80), astroMatSolid));
                 const dashedEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.TorusGeometry(radius, 0.2, 4, 40)), astroMatDash);
@@ -5691,7 +5866,7 @@ window.addEventListener('DOMContentLoaded',function(){
             const netNodeMat = new THREE.PointsMaterial({ size: 0.6, map: glowTexture, color: 0x00ffff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
             const netLineMat = createMaterial('line', 0x00ffff, 0.2, true, false); netLineMat.userData.isAccent = true;
             const netPts = [];
-            for(let i=0; i<120; i++) {
+            for(let i=0; i<FridayGenome.EX('NETWORK', 'nodes', 120); i++) {
                 let p = new THREE.Vector3((Math.random()-0.5)*20, (Math.random()-0.5)*20, (Math.random()-0.5)*20);
                 netPts.push(p); shannonNodes.push({ pos: p, velocity: new THREE.Vector3((Math.random()-0.5)*0.015, (Math.random()-0.5)*0.015, (Math.random()-0.5)*0.015) });
             }
@@ -5725,7 +5900,7 @@ window.addEventListener('DOMContentLoaded',function(){
             // 12. NONE (Transcendence)
             const gNone = new THREE.Group();
             const lineMat = createMaterial('line', 0x00ffff, 0.2, true, false); lineMat.userData.isAccent = true;
-            for(let i=0; i<100; i++) {
+            for(let i=0; i<FridayGenome.EX('NONE', 'lines', 100); i++) {
                 const x = (Math.random()-0.5)*40; const z = (Math.random()-0.5)*40; const y = (Math.random()-0.5)*40;
                 const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, y-5, z), new THREE.Vector3(x, y+5, z)]), lineMat);
                 line.userData = { speed: 0.01 + Math.random()*0.02, baseY: y }; 
@@ -5757,7 +5932,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
             const spineGroup = new THREE.Group();
             const spineMat = createMaterial('line', 0xff3300, 0.8, true, false); spineMat.userData.isAccent = true;
-            for(let i=0; i<15; i++) {
+            for(let i=0; i<FridayGenome.EX('EDEN', 'spines', 15); i++) {
                 const x = (Math.random() - 0.5) * 4; const z = (Math.random() - 0.5) * 4;
                 const pts = [new THREE.Vector3(x, -50, z), new THREE.Vector3(x, 50, z)];
                 spineGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), spineMat));
@@ -6229,14 +6404,14 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (netGroup && netGroup.children.length > 0 && netGroup.children[0].geometry && netGroup.children[0].geometry.attributes.position) {
                     const nodePos = netGroup.children[0].geometry.attributes.position.array;
                     const linePts = [];
-                    for(let i=0; i<120; i++) {
+                    for(let i=0; i<shannonNodes.length; i++) {
                         if (!shannonNodes[i] || !shannonNodes[i].pos || !shannonNodes[i].velocity) continue;
                         let p = shannonNodes[i].pos; let v = shannonNodes[i].velocity;
                         p.add(v); if(p.length() > 20) v.multiplyScalar(-1);
                         const nDir = p.clone().normalize();
                         nodePos[i*3] = p.x + nDir.x * voiceBreath * 0.5; nodePos[i*3+1] = p.y + nDir.y * voiceBreath * 0.5; nodePos[i*3+2] = p.z + nDir.z * voiceBreath * 0.5;
                         let connected = 0;
-                        for(let j=i+1; j<120; j++) {
+                        for(let j=i+1; j<shannonNodes.length; j++) {
                             if(connected > 3 || !shannonNodes[j] || !shannonNodes[j].pos) break;
                             if(p.distanceTo(shannonNodes[j].pos) < 6 + (audioData.high * 6)) { 
                                 linePts.push(p, shannonNodes[j].pos); connected++; 
@@ -52678,6 +52853,105 @@ const fridayApprovalFeed = (() => {
   };
 })();
 window.fridayApprovalFeed = fridayApprovalFeed;
+// Friday's look, in the scene menu (docs/design/active/avatar-visual-genome.md
+// §8): weekly evolution on or off, who makes the changes, evolve now, undo,
+// and the history with every look credited to whoever made it. The same
+// controls answer by voice through the avatar_evolution tool.
+function AvatarEvolutionSection() {
+  const h = React.createElement;
+  const [st, setSt] = React.useState(null);
+  const [hist, setHist] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [note, setNote] = React.useState('');
+  const [open, setOpen] = React.useState(null);
+  const load = React.useCallback(() => {
+    fetch('/api/avatar/status').then(r => r.ok ? r.json() : null).then(d => { if (d) setSt(d); }).catch(() => {});
+    fetch('/api/avatar/history').then(r => r.ok ? r.json() : null).then(d => { if (d) setHist(d); }).catch(() => {});
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+  const post = (url, body) => {
+    setBusy(true);
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+      .then(r => r.json().catch(() => ({}))).then(d => {
+        setBusy(false); load();
+        if (window.FridayGenome) window.FridayGenome.refresh();
+        return d || {};
+      }).catch(() => { setBusy(false); return {}; });
+  };
+  const openProviders = () => {
+    window.__fridaySettingsTab = 'providers';
+    try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'providers' } })); } catch (_) {}
+    if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'settings' });
+  };
+  const said = d => {
+    if (!d || !d.status) return '';
+    if (d.status === 'stepped') return 'Friday has a new look.';
+    if (d.status === 'pending') return 'A new look is waiting for your OK.';
+    if (d.status === 'waiting') return 'Waiting for a cloud model: ' + (d.reason || '') + '.';
+    if (d.status === 'skipped') return 'No change this time: ' + (d.reason || '') + '.';
+    if (d.status === 'undone') return 'Back to the previous look.';
+    if (d.status === 'none') return 'Nothing to undo.';
+    return '';
+  };
+  const label = { padding: '4px 12px 6px', fontFamily: 'Orbitron', fontSize: 9, color: 'rgba(0,212,255,0.7)', letterSpacing: '0.08em', textTransform: 'uppercase' };
+  const row = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '5px 12px', fontFamily: 'JetBrains Mono', fontSize: 11, color: 'rgba(255,255,255,0.72)' };
+  const btn = { background: 'rgba(0,212,255,0.08)', border: '1px solid rgba(0,212,255,0.25)', borderRadius: 6, color: '#bfefff', fontFamily: 'JetBrains Mono', fontSize: 10, padding: '4px 8px', cursor: 'pointer' };
+  const small = { padding: '2px 12px 6px', fontSize: 10, color: 'rgba(255,255,255,0.5)', fontFamily: 'Inter', lineHeight: 1.4 };
+  if (!st) return h('div', null, h('div', { style: { borderTop: '1px solid rgba(255,255,255,0.06)', margin: '4px 0' } }),
+    h('div', { style: label }, 'Evolution'), h('div', { style: small }, 'Loading…'));
+  const author = st.author || 'frontier';
+  const authors = [['frontier', 'A frontier model (Friday picks)'], ['seeded', 'No model: Friday’s own changes']];
+  if (st.local_seat) authors.push(['local:' + st.local_seat, 'Local: ' + st.local_seat]);
+  if (!authors.some(a => a[0] === author)) authors.push([author, author.split(':').slice(-1)[0]]);
+  const steps = ((hist && hist.steps) || []).filter(s => !s.hidden && s.kind !== 'skipped').slice().reverse().slice(0, 8);
+  const active = hist && hist.active;
+  const who = s => { const a = s.author || {}; return a.path === 'seeded' || !a.model ? 'Friday, no model' : (a.path === 'local' ? a.model + ' (this computer)' : a.model); };
+  const w = st.waiting;
+  const localFix = w && (w.fixes || []).find(f => f.indexOf('use_local:') === 0);
+  return h('div', null,
+    h('div', { style: { borderTop: '1px solid rgba(255,255,255,0.06)', margin: '4px 0' } }),
+    h('div', { style: label }, 'Evolution'),
+    h('div', { style: row },
+      h('span', null, 'Changes each week'),
+      h('button', { style: btn, disabled: busy, 'aria-pressed': !!st.enabled,
+        onClick: () => post('/api/avatar/settings', { enabled: !st.enabled }) }, st.enabled ? 'On' : 'Off')),
+    h('div', { style: Object.assign({}, row, { paddingBottom: 0 }) }, h('span', null, 'Made by')),
+    h('div', { style: Object.assign({}, row, { paddingTop: 3 }) },
+      h('select', { value: author, disabled: busy, 'aria-label': 'Who makes Friday’s looks',
+        style: Object.assign({}, btn, { width: '100%' }),
+        onChange: e => post('/api/avatar/settings', { author: e.target.value }) },
+        authors.map(a => h('option', { key: a[0], value: a[0] }, a[1])))),
+    w ? h('div', { style: Object.assign({}, small, { color: 'rgba(255,255,255,0.75)' }), role: 'status' },
+      'Evolution is waiting for a cloud model: ' + (w.reason || '') + '.',
+      h('div', { style: { display: 'flex', gap: 6, marginTop: 5, flexWrap: 'wrap' } },
+        (w.fixes || []).indexOf('connect_cloud') >= 0 ? h('button', { style: btn, onClick: openProviders }, 'Connect a cloud model') : null,
+        localFix ? h('button', { style: btn, disabled: busy,
+          onClick: () => post('/api/avatar/use-local', { model: localFix.slice(10) }).then(d => setNote(said(d))) },
+          'Use ' + localFix.slice(10) + ' instead') : null)) : null,
+    h('div', { style: Object.assign({}, row, { justifyContent: 'flex-start' }) },
+      h('button', { style: btn, disabled: busy, onClick: () => post('/api/avatar/evolve-now').then(d => setNote(said(d))) }, busy ? 'Working…' : 'Evolve now'),
+      h('button', { style: btn, disabled: busy || !active, onClick: () => post('/api/avatar/undo').then(d => setNote(said(d))) }, 'Undo')),
+    note ? h('div', { style: small, role: 'status', 'aria-live': 'polite' }, note) : null,
+    h('div', { style: Object.assign({}, label, { paddingTop: 8 }) }, 'Looks'),
+    h('button', { style: Object.assign({}, row, { width: '100%', background: !active ? 'rgba(0,212,255,0.10)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }),
+      disabled: busy || !active, onClick: () => post('/api/avatar/reset').then(() => setNote('Back to how Friday first looked.')) },
+      h('span', null, (!active ? '● ' : '') + 'First look'), h('span', { style: { opacity: 0.45, fontSize: 10 } }, 'as she started')),
+    steps.map(s => h('div', { key: s.content_hash },
+      h('div', { style: Object.assign({}, row, { background: s.content_hash === active ? 'rgba(0,212,255,0.10)' : 'transparent' }) },
+        h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+          (s.content_hash === active ? '● ' : '') + (s.name || 'Look ' + s.step)),
+        s.content_hash === active ? h('span', { style: { opacity: 0.45, fontSize: 10 } }, 'now')
+          : h('button', { style: btn, disabled: busy, onClick: () => post('/api/avatar/rollback', { step: s.content_hash }).then(() => setNote('Restored ' + (s.name || 'that look') + '.')) }, 'Restore')),
+      h('div', { style: small },
+        new Date((s.created_at || 0) * 1000).toLocaleDateString() + ' · made by ' + who(s)
+        + (s.author && s.author.warning ? ' · ' + s.author.warning : ''),
+        s.reason ? h('div', { style: { color: 'rgba(255,255,255,0.62)' } }, s.reason) : null,
+        s.sent ? h('button', { style: Object.assign({}, btn, { marginTop: 4, fontSize: 9 }),
+          onClick: () => setOpen(open === s.content_hash ? null : s.content_hash) }, open === s.content_hash ? 'Hide what was sent' : 'What was sent') : null,
+        open === s.content_hash && s.sent ? h('pre', { style: { maxHeight: 160, overflow: 'auto', fontSize: 9, background: 'rgba(0,0,0,0.35)', padding: 6, borderRadius: 6, whiteSpace: 'pre-wrap' } },
+          JSON.stringify(s.sent, null, 1)) : null))),
+    h('div', { style: small }, 'By voice: “Friday, evolve now”, “undo that look”, “go back to last month’s look”, “what changed?”'));
+}
 function useApprovalFeed() {
   const [items, setItems] = useState([]);
   useEffect(() => fridayApprovalFeed.subscribe(setItems), []);
@@ -57296,7 +57570,7 @@ function App() {
     onMouseLeave: e => {
       e.currentTarget.style.background = 'transparent';
     }
-  }, "Reset to auto (evolution)"), /*#__PURE__*/React.createElement("div", {
+  }, "Rotate structures automatically"), /*#__PURE__*/React.createElement(AvatarEvolutionSection, null), /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid rgba(255,255,255,0.06)',
       margin: '4px 0'

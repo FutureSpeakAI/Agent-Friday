@@ -18881,6 +18881,105 @@ const fridayApprovalFeed = (() => {
   };
 })();
 window.fridayApprovalFeed = fridayApprovalFeed;
+// Friday's look, in the scene menu (docs/design/active/avatar-visual-genome.md
+// §8): weekly evolution on or off, who makes the changes, evolve now, undo,
+// and the history with every look credited to whoever made it. The same
+// controls answer by voice through the avatar_evolution tool.
+function AvatarEvolutionSection() {
+  const h = React.createElement;
+  const [st, setSt] = React.useState(null);
+  const [hist, setHist] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [note, setNote] = React.useState('');
+  const [open, setOpen] = React.useState(null);
+  const load = React.useCallback(() => {
+    fetch('/api/avatar/status').then(r => r.ok ? r.json() : null).then(d => { if (d) setSt(d); }).catch(() => {});
+    fetch('/api/avatar/history').then(r => r.ok ? r.json() : null).then(d => { if (d) setHist(d); }).catch(() => {});
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+  const post = (url, body) => {
+    setBusy(true);
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+      .then(r => r.json().catch(() => ({}))).then(d => {
+        setBusy(false); load();
+        if (window.FridayGenome) window.FridayGenome.refresh();
+        return d || {};
+      }).catch(() => { setBusy(false); return {}; });
+  };
+  const openProviders = () => {
+    window.__fridaySettingsTab = 'providers';
+    try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'providers' } })); } catch (_) {}
+    if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'settings' });
+  };
+  const said = d => {
+    if (!d || !d.status) return '';
+    if (d.status === 'stepped') return 'Friday has a new look.';
+    if (d.status === 'pending') return 'A new look is waiting for your OK.';
+    if (d.status === 'waiting') return 'Waiting for a cloud model: ' + (d.reason || '') + '.';
+    if (d.status === 'skipped') return 'No change this time: ' + (d.reason || '') + '.';
+    if (d.status === 'undone') return 'Back to the previous look.';
+    if (d.status === 'none') return 'Nothing to undo.';
+    return '';
+  };
+  const label = { padding: '4px 12px 6px', fontFamily: 'Orbitron', fontSize: 9, color: 'rgba(0,212,255,0.7)', letterSpacing: '0.08em', textTransform: 'uppercase' };
+  const row = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '5px 12px', fontFamily: 'JetBrains Mono', fontSize: 11, color: 'rgba(255,255,255,0.72)' };
+  const btn = { background: 'rgba(0,212,255,0.08)', border: '1px solid rgba(0,212,255,0.25)', borderRadius: 6, color: '#bfefff', fontFamily: 'JetBrains Mono', fontSize: 10, padding: '4px 8px', cursor: 'pointer' };
+  const small = { padding: '2px 12px 6px', fontSize: 10, color: 'rgba(255,255,255,0.5)', fontFamily: 'Inter', lineHeight: 1.4 };
+  if (!st) return h('div', null, h('div', { style: { borderTop: '1px solid rgba(255,255,255,0.06)', margin: '4px 0' } }),
+    h('div', { style: label }, 'Evolution'), h('div', { style: small }, 'Loading…'));
+  const author = st.author || 'frontier';
+  const authors = [['frontier', 'A frontier model (Friday picks)'], ['seeded', 'No model: Friday’s own changes']];
+  if (st.local_seat) authors.push(['local:' + st.local_seat, 'Local: ' + st.local_seat]);
+  if (!authors.some(a => a[0] === author)) authors.push([author, author.split(':').slice(-1)[0]]);
+  const steps = ((hist && hist.steps) || []).filter(s => !s.hidden && s.kind !== 'skipped').slice().reverse().slice(0, 8);
+  const active = hist && hist.active;
+  const who = s => { const a = s.author || {}; return a.path === 'seeded' || !a.model ? 'Friday, no model' : (a.path === 'local' ? a.model + ' (this computer)' : a.model); };
+  const w = st.waiting;
+  const localFix = w && (w.fixes || []).find(f => f.indexOf('use_local:') === 0);
+  return h('div', null,
+    h('div', { style: { borderTop: '1px solid rgba(255,255,255,0.06)', margin: '4px 0' } }),
+    h('div', { style: label }, 'Evolution'),
+    h('div', { style: row },
+      h('span', null, 'Changes each week'),
+      h('button', { style: btn, disabled: busy, 'aria-pressed': !!st.enabled,
+        onClick: () => post('/api/avatar/settings', { enabled: !st.enabled }) }, st.enabled ? 'On' : 'Off')),
+    h('div', { style: Object.assign({}, row, { paddingBottom: 0 }) }, h('span', null, 'Made by')),
+    h('div', { style: Object.assign({}, row, { paddingTop: 3 }) },
+      h('select', { value: author, disabled: busy, 'aria-label': 'Who makes Friday’s looks',
+        style: Object.assign({}, btn, { width: '100%' }),
+        onChange: e => post('/api/avatar/settings', { author: e.target.value }) },
+        authors.map(a => h('option', { key: a[0], value: a[0] }, a[1])))),
+    w ? h('div', { style: Object.assign({}, small, { color: 'rgba(255,255,255,0.75)' }), role: 'status' },
+      'Evolution is waiting for a cloud model: ' + (w.reason || '') + '.',
+      h('div', { style: { display: 'flex', gap: 6, marginTop: 5, flexWrap: 'wrap' } },
+        (w.fixes || []).indexOf('connect_cloud') >= 0 ? h('button', { style: btn, onClick: openProviders }, 'Connect a cloud model') : null,
+        localFix ? h('button', { style: btn, disabled: busy,
+          onClick: () => post('/api/avatar/use-local', { model: localFix.slice(10) }).then(d => setNote(said(d))) },
+          'Use ' + localFix.slice(10) + ' instead') : null)) : null,
+    h('div', { style: Object.assign({}, row, { justifyContent: 'flex-start' }) },
+      h('button', { style: btn, disabled: busy, onClick: () => post('/api/avatar/evolve-now').then(d => setNote(said(d))) }, busy ? 'Working…' : 'Evolve now'),
+      h('button', { style: btn, disabled: busy || !active, onClick: () => post('/api/avatar/undo').then(d => setNote(said(d))) }, 'Undo')),
+    note ? h('div', { style: small, role: 'status', 'aria-live': 'polite' }, note) : null,
+    h('div', { style: Object.assign({}, label, { paddingTop: 8 }) }, 'Looks'),
+    h('button', { style: Object.assign({}, row, { width: '100%', background: !active ? 'rgba(0,212,255,0.10)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }),
+      disabled: busy || !active, onClick: () => post('/api/avatar/reset').then(() => setNote('Back to how Friday first looked.')) },
+      h('span', null, (!active ? '● ' : '') + 'First look'), h('span', { style: { opacity: 0.45, fontSize: 10 } }, 'as she started')),
+    steps.map(s => h('div', { key: s.content_hash },
+      h('div', { style: Object.assign({}, row, { background: s.content_hash === active ? 'rgba(0,212,255,0.10)' : 'transparent' }) },
+        h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+          (s.content_hash === active ? '● ' : '') + (s.name || 'Look ' + s.step)),
+        s.content_hash === active ? h('span', { style: { opacity: 0.45, fontSize: 10 } }, 'now')
+          : h('button', { style: btn, disabled: busy, onClick: () => post('/api/avatar/rollback', { step: s.content_hash }).then(() => setNote('Restored ' + (s.name || 'that look') + '.')) }, 'Restore')),
+      h('div', { style: small },
+        new Date((s.created_at || 0) * 1000).toLocaleDateString() + ' · made by ' + who(s)
+        + (s.author && s.author.warning ? ' · ' + s.author.warning : ''),
+        s.reason ? h('div', { style: { color: 'rgba(255,255,255,0.62)' } }, s.reason) : null,
+        s.sent ? h('button', { style: Object.assign({}, btn, { marginTop: 4, fontSize: 9 }),
+          onClick: () => setOpen(open === s.content_hash ? null : s.content_hash) }, open === s.content_hash ? 'Hide what was sent' : 'What was sent') : null,
+        open === s.content_hash && s.sent ? h('pre', { style: { maxHeight: 160, overflow: 'auto', fontSize: 9, background: 'rgba(0,0,0,0.35)', padding: 6, borderRadius: 6, whiteSpace: 'pre-wrap' } },
+          JSON.stringify(s.sent, null, 1)) : null))),
+    h('div', { style: small }, 'By voice: “Friday, evolve now”, “undo that look”, “go back to last month’s look”, “what changed?”'));
+}
 function useApprovalFeed() {
   const [items, setItems] = useState([]);
   useEffect(() => fridayApprovalFeed.subscribe(setItems), []);
@@ -21349,8 +21448,9 @@ function App(){
               style={{display:'block',width:'100%',textAlign:'left',background:'transparent',border:'none',borderLeft:'2px solid transparent',padding:'6px 12px',cursor:'pointer',color:'rgba(0,212,255,0.45)',fontFamily:'JetBrains Mono',fontSize:10,transition:'background .15s',letterSpacing:'.03em'}}
               onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.04)'}}
               onMouseLeave={e=>{e.currentTarget.style.background='transparent'}}>
-              Reset to auto (evolution)
+              Rotate structures automatically
             </button>
+            <AvatarEvolutionSection/>
             <div style={{borderTop:'1px solid rgba(255,255,255,0.06)',margin:'4px 0'}}/>
             <div style={{padding:'4px 12px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.7)',letterSpacing:'0.08em',textTransform:'uppercase'}}>Camera Tracking</div>
             {[{k:'holo',label:'Face Tracking',hint:'Parallax \u2014 the scene moves with your head',fn:'toggleHologram'},
