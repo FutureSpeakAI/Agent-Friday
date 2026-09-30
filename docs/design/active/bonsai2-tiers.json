@@ -1,0 +1,167 @@
+{
+  "$schema_note": "Machine-readable companion to bonsai2-floor.md. Every number carries a provenance tag: MEASURED (this machine, date given), PUBLISHED (source URL), ESTIMATE (arithmetic on tagged inputs, formula in `estimate_method`), UNMEASURED (no evidence; the tier is a placeholder the installer must confirm on-device before it promises a speed).",
+  "version": 1,
+  "written": "2026-09-30",
+  "model_family": {
+    "publisher": "PrismML (prism-ml on Hugging Face; PrismML-Eng on GitHub)",
+    "bonsai2": {
+      "sizes": ["27B"],
+      "note": "Bonsai 2 ships at ONE size. The base is Qwen3.8-27B (GGUF arch `qwen35`, 64 layers, hybrid gated-DeltaNet with full attention every 4th layer, 262,144 training context). Anything smaller in the Bonsai catalogue is the earlier Bonsai (1-bit) or Ternary Bonsai (1.58-bit) generation.",
+      "license": "Apache-2.0",
+      "repos": {
+        "gguf": "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf",
+        "mlx": "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-mlx-2bit"
+      },
+      "files": [
+        {"packing": "PTQ1_0", "ggml_type": 143, "bits_per_weight": 1.75, "size_gb": 5.95, "size_mib_on_disk": 5672, "role": "smallest footprint; faster decode on Ada-class and L4; the default everywhere memory binds", "provenance": "PUBLISHED model card + MEASURED file size 2026-09-30"},
+        {"packing": "PQ2_0", "ggml_type": 142, "bits_per_weight": 2.13, "size_gb": 7.21, "role": "faster decode where bandwidth is abundant (Ampere, Hopper, Blackwell, Apple M5); crashes in CPU repack on some builds (use --no-repack or PTQ1_0)", "provenance": "PUBLISHED model card; CPU repack crash PUBLISHED atomic.chat guide"},
+        {"packing": "Q2_0_g64", "bits_per_weight": 2.25, "role": "loads on MAINLINE llama.cpp; larger and slower; the escape hatch when the fork has no build for a platform", "provenance": "PUBLISHED PrismML docs/formats"},
+        {"packing": "MLX-2bit", "bits_per_weight": 2.25, "size_gb": 8.49, "role": "Apple Silicon via mlx-lm; best raw decode on Apple", "provenance": "PUBLISHED PrismML docs/run/mlx"},
+        {"packing": "mmproj-Q8_0", "size_gb": 0.63, "role": "vision tower; loaded only for image turns", "provenance": "PUBLISHED + MEASURED file 600 MiB"}
+      ],
+      "quality": {"fp16_score": 86.32, "bonsai2_ptq1_0_score": 84.78, "retained_fraction": 0.982, "benchmarks": 14, "agentic_tool_calling": {"fp16": 76.74, "bonsai2": 74.92}, "provenance": "PUBLISHED model card"},
+      "kv_cache_kib_per_token": 64,
+      "kv_cache_note": "PUBLISHED (atomic.chat guide, consistent with the hybrid layout: 16 full-attention layers x 4 KV heads x 256 dims x 2 x fp16). q8_0 KV halves it. 8K ~0.5 GB, 32K ~2 GB, 64K ~4 GB, 128K ~8 GB, 262K ~16 GB at fp16.",
+      "sampling": {"thinking": {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.05}, "instruct": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0}, "provenance": "PUBLISHED model card"}
+    },
+    "bonsai1_ternary": {
+      "sizes": ["1.7B", "4B", "8B", "27B"],
+      "license": "Apache-2.0",
+      "note": "Ternary-Bonsai-{size}-gguf, Qwen3 bases, 1.58 bpw, 32K YaRN context. The 4B on this machine (Ternary-Bonsai-4B-PQ2_0.gguf, 1,025 MiB) is this generation. Candidate for the sub-floor local option; see decision D1 in bonsai2-floor.md.",
+      "provenance": "PUBLISHED prism-ml org listing + MEASURED GGUF metadata 2026-09-30"
+    }
+  },
+  "runtime": {
+    "required_build": "PrismML fork of llama.cpp, branch `prism` (prism-v7 line), release prism-b10658 or newer",
+    "fork_repo": "https://github.com/PrismML-Eng/llama.cpp",
+    "installed_here": {"path": "~/.friday/runtime/llama.cpp-bonsai", "version": "0.2.0-dev build 10685 commit 7dffb158d, MSVC, CUDA 12", "provenance": "MEASURED 2026-09-30"},
+    "stock_llama_cpp": "REFUSES ggml types 142/143 (issue https://github.com/ggml-org/llama.cpp/issues/29058, open). Ollama and LM Studio cannot load them. A `Q2_0` file on a stock build loads silently and outputs gibberish (no Hadamard activation transform).",
+    "backends": {
+      "cuda": {"status": "supported", "provenance": "PUBLISHED release matrix + MEASURED here"},
+      "metal": {"status": "supported", "provenance": "PUBLISHED release matrix (macOS Apple Silicon and Intel builds)"},
+      "vulkan": {"status": "supported in releases (Windows, Linux); performance UNMEASURED", "provenance": "PUBLISHED docs/run/llamacpp release list"},
+      "hip_rocm": {"status": "supported in releases (Windows HIP, Linux ROCm); UNMEASURED", "provenance": "PUBLISHED"},
+      "sycl_intel": {"status": "listed in fork README; UNMEASURED", "provenance": "PUBLISHED fork README"},
+      "cpu_x86": {"status": "AVX2 and AVX-512 paths; community AVX2/AVX-VNNI kernels landed for Bonsai 2 (issue #196); UNMEASURED here", "provenance": "PUBLISHED"},
+      "cpu_arm_neon": {"status": "supported (macOS, Linux arm64, iOS builds)", "provenance": "PUBLISHED"},
+      "integrated_gpu": {"status": "Vulkan/SYCL builds load on iGPUs but share system RAM; treat as the CPU tier with better prompt processing; UNMEASURED", "provenance": "reasoning, no evidence"}
+    },
+    "flags_always": ["explicit -c (never -c 0: 262K KV exhausts memory)", "-fa on", "--jinja", "--no-webui", "--host 127.0.0.1"],
+    "flags_gpu": ["-ngl 99", "--cache-type-k q8_0 --cache-type-v q8_0", "-b 4096 -ub 2048 when VRAM allows (prompt processing 370 -> 467 tok/s on a 16K prompt, MEASURED 2026-09-18)", "--kv-unified -np 2 so background probes do not queue behind a chat turn"],
+    "flags_cpu": ["-ngl 0", "-t <physical cores>", "PTQ1_0 not PQ2_0 (repack crash)", "-ub 512", "prompt cache on: the first turn's tool registry is the cost that matters (see floor.prompt_cost)"]
+  },
+  "reserves": {
+    "os_reserve_mib": {"windows": 6144, "linux": 4096, "darwin": 4096, "source": "services/hardware_profile.py OS_RESERVE_MIB"},
+    "display_reserve_min_mib": {"windows": 2560, "darwin": 1024, "linux": 512, "source": "services/hardware_profile.py MIN_DISPLAY_RESERVE_MIB"},
+    "friday_desktop_footprint_mib": {"value": 1500, "provenance": "ESTIMATE: Python server plus tray plus browser tab; the installer measures its own RSS and replaces this"},
+    "disk_floor_mib": {"value": 10240, "source": "services/residency_policy.py DISK_FLOOR_MIB (R8)"},
+    "apple_unified_usable_fraction": {"value": 0.75, "provenance": "PUBLISHED guidance (atomic.chat) matching macOS wired-memory limits; installer measures"}
+  },
+  "estimate_method": {
+    "decode_tok_s": "0.7 * memory_bandwidth_gb_s / 5.5 for CPU and unified-memory tiers (decode is bandwidth-bound; 5.5 GB is the PTQ1_0 weight traffic per token excluding the embedding row; 0.7 is the achieved fraction the community AVX2 kernels reached on single-channel DDR5). GPU tiers are interpolated between PUBLISHED L4 (32.1), RTX 4090 (91.1), RTX 5090 (120.5) and MEASURED RTX 4070 (30-36) by memory bandwidth.",
+    "prompt_tok_s": "CPU: ~2x decode on AVX2 (PUBLISHED 16 tok/s vs 8.3 decode on issue #196). GPU: PUBLISHED PP512 figures.",
+    "seat_mib": "weights_mib + kv_mib(context, q8_0 where GPU) + compute_buffer_mib (400 at -ub 512, 1200 at -ub 2048) + 630 mmproj only when vision is on."
+  },
+  "floor": {
+    "name": "APPLICATION FLOOR (Friday's published minimum)",
+    "statement": "The lowest hardware that runs Bonsai 2 27B PTQ1_0 well enough for Friday's core loop: 16 GB RAM, x86-64 with AVX2 and at least 4 physical cores (6 recommended), dual-channel memory, 20 GB free disk, Windows 10/11 64-bit, macOS 14+ on Apple Silicon (16 GB unified), or Linux x86-64/arm64. Any discrete GPU with 8 GB VRAM or more lifts the machine into a GPU tier regardless of RAM class.",
+    "why_16gb": "Windows: 6,144 OS reserve + 1,500 Friday + 5,672 weights + 512 KV (8K, fp16) + 400 compute = 14,228 MiB of 16,384. 8 GB machines cannot hold the weights beside the OS at all (5,672 + 6,144 > 8,192 before Friday runs). 12 GB machines hold it only with nothing else open; they are NOT the floor because a browser tab pushes the weights to the page file and decode falls below 1 tok/s.",
+    "core_loop_definition": "One spoken or typed turn that calls one tool and answers in under 60 seconds after the first turn of a session, with the tool registry trimmed to the CPU profile (tool_selector top-12, ~2K tokens) so prompt processing, not decode, stays inside the budget.",
+    "prompt_cost": "The full registry is ~8.6K tokens (services/model_seat_gate.py GATE_NUM_CTX comment). At the floor's ~16 tok/s prompt rate that is ~9 minutes cold; with the CPU profile's trimmed registry (~2K tokens) it is ~2 minutes once per session and seconds per turn afterwards with the prompt cache. This, not tokens per second, is what makes CPU-only viable or not.",
+    "below_floor_behaviour": "See bonsai2-floor.md §6: Friday says which reserve failed, in numbers, offers the cloud path per amendment A6, and (decision D1) optionally the Ternary Bonsai 4B/1.7B local option with its quality honestly stated."
+  },
+  "tiers": [
+    {
+      "id": "T0",
+      "name": "Below the floor",
+      "hardware": "8 GB RAM, or 12 GB RAM with no discrete GPU, or any 32-bit OS, or x86 without AVX2",
+      "examples": ["8 GB Windows laptops", "Chromebooks", "Raspberry Pi 5 8 GB"],
+      "bonsai2": {"fits": false, "reason": "weights + OS reserve exceed RAM; page-file decode < 1 tok/s"},
+      "friday_offers": ["cloud path (A6)", "D1: Ternary Bonsai 4B PQ2_0 (1,025 MiB) as a labelled lesser local seat, or 1.7B on 8 GB"],
+      "expected_tok_s": null,
+      "provenance": "ESTIMATE from reserves; UNMEASURED"
+    },
+    {
+      "id": "T1",
+      "name": "Floor: CPU-only, 16 GB",
+      "hardware": "16 GB RAM, AVX2, 4-8 cores, dual-channel DDR4-3200 (51 GB/s) or single-channel DDR5",
+      "examples": ["i5-1235U / Ryzen 5 5500U thin laptops with 16 GB", "2020-era desktops"],
+      "bonsai2": {"packing": "PTQ1_0", "context": 8192, "kv_type": "f16", "seat_mib": 6584, "total_committed_mib": 14228, "offload": "none"},
+      "expected_tok_s": {"decode": "3-6", "prompt": "8-16", "provenance": "ESTIMATE (0.7 x 45 / 5.5 = 5.7) bracketed by PUBLISHED 3.9-8.3 on i7-13620H single-channel DDR5 (Bonsai-demo issue #196)"},
+      "friday_profile": "cpu: trimmed tool registry, thinking off, streaming on, one slot",
+      "measured_here": "UNMEASURED: this machine had 2-5 GB RAM available on 2026-09-30 (other sessions' processes) and the 4B CPU bench hung at 3.6 GB RSS; rerun on a quiet box before publishing the number",
+      "verdict": "viable for the core loop with the CPU profile; long documents and deep-reasoner turns route to cloud by the user's choice"
+    },
+    {
+      "id": "T2",
+      "name": "CPU-only, 32 GB, fast memory",
+      "hardware": "32 GB DDR5 dual-channel (80-90 GB/s), AVX-512 or AVX-VNNI, 8+ cores",
+      "examples": ["Ryzen 7 7840HS / Core Ultra 7 laptops", "AMD Strix Halo 32 GB (treat the iGPU as this tier via Vulkan)"],
+      "bonsai2": {"packing": "PTQ1_0", "context": 32768, "kv_type": "f16", "seat_mib": 8168, "offload": "none or iGPU via Vulkan"},
+      "expected_tok_s": {"decode": "8-12", "prompt": "20-40", "provenance": "ESTIMATE (0.7 x 85 / 5.5 = 10.8)"},
+      "measured_here": "UNMEASURED; this box is DDR4 42.7 GB/s (SMBIOS heuristic), estimate 5.4 tok/s CPU-only",
+      "verdict": "comfortable core loop; the system-one seat (Ternary Bonsai 1.7B) can co-reside in RAM"
+    },
+    {
+      "id": "T3a",
+      "name": "Apple Silicon 16 GB unified",
+      "hardware": "M1/M2/M3/M4 base, 16 GB",
+      "bonsai2": {"packing": "PTQ1_0 via fork Metal, or MLX-2bit (8.49 GB) when memory allows", "context": 16384, "usable_mib": 12288, "seat_mib": 7100},
+      "expected_tok_s": {"decode": "10-16", "prompt": "150-300", "provenance": "ESTIMATE from PUBLISHED M4 Pro 18.0 scaled by bandwidth (100-120 GB/s base parts vs 273 GB/s M4 Pro)"},
+      "measured_here": "UNMEASURED (no Apple hardware here)",
+      "verdict": "viable; MLX gives the best decode but the fork's llama-server gives Friday one API on every platform"
+    },
+    {
+      "id": "T3b",
+      "name": "Apple Silicon Pro/Max 24-128 GB",
+      "hardware": "M4 Pro, M5 Pro, M5 Max, M3 Ultra",
+      "bonsai2": {"packing": "PQ2_0 or MLX-2bit", "context": "65536-262144"},
+      "expected_tok_s": {"decode": "18 (M4 Pro), 28.1 (M5 Pro), 47.0 (M5 Max)", "prompt": "387 (M5 Pro), 765 (M5 Max)", "provenance": "PUBLISHED model card"},
+      "verdict": "full soup co-resident (brain + system one + voice + embeddings + image at 48 GB+)"
+    },
+    {
+      "id": "T4",
+      "name": "8 GB discrete GPU",
+      "hardware": "RTX 3050 8G / 4060 / 5060, RX 7600, Arc A770 8G; 16 GB RAM",
+      "bonsai2": {"packing": "PTQ1_0", "context": 8192, "kv_type": "q8_0", "offload": "full on Linux; on Windows the 2,560 MiB display reserve forces 8K or partial offload (-ngl 56 of 64)", "seat_mib": 6600},
+      "expected_tok_s": {"decode": "20-32", "prompt": "300-470", "provenance": "ESTIMATE bracketed by PUBLISHED L4 32.1/467 (same 8-12 GB, 300 GB/s class)"},
+      "measured_here": "UNMEASURED",
+      "verdict": "good core loop; vision on demand evicts context; AMD via Vulkan/HIP UNMEASURED"
+    },
+    {
+      "id": "T5",
+      "name": "12 GB discrete GPU (reference machine)",
+      "hardware": "RTX 4070 / 3060 12G / 5070; i7-10700F; 32 GB DDR4",
+      "bonsai2": {"packing": "PTQ1_0", "context": 49152, "slots": 2, "kv_type": "q8_0", "offload": "full", "mmproj": "loaded", "seat_mib": "~9,800 (64K left 495 MiB free beside Chrome and overlays)"},
+      "expected_tok_s": {"decode": "30-36", "prompt": "95-100 (short prompts), 467 (16K prompt, -ub 2048)", "provenance": "MEASURED 2026-09-18 (llama.cpp-bonsai/run64k.log, seat.log, start-bonsai.bat)"},
+      "cliff": "MEASURED: at 96K context and above the KV no longer fits, layers spill to host, decode falls to 2-5 tok/s (try96k.log, try262k.log 0.48 tok/s)",
+      "verdict": "the reference tier; everything in this table above it is extrapolation from here and from the published card"
+    },
+    {
+      "id": "T6",
+      "name": "16 GB discrete GPU",
+      "hardware": "RTX 4070 Ti Super / 4080 / 5080, RX 7800 XT / 9070 XT",
+      "bonsai2": {"packing": "PTQ1_0 (Ada) or PQ2_0 (RDNA, Blackwell)", "context": 131072, "kv_type": "q8_0"},
+      "expected_tok_s": {"decode": "45-70", "prompt": "800-1400", "provenance": "ESTIMATE between MEASURED 4070 and PUBLISHED 4090"},
+      "verdict": "brain + system one + embeddings + Kokoro co-resident"
+    },
+    {
+      "id": "T7",
+      "name": "24 GB discrete GPU",
+      "hardware": "RTX 3090 / 4090, RX 7900 XTX",
+      "bonsai2": {"packing": "PTQ1_0 on 4090, PQ2_0 on 3090/RDNA", "context": 196608, "kv_type": "q8_0"},
+      "expected_tok_s": {"decode": "91.1 (4090 PTQ1_0), 81.2 (4090 PQ2_0)", "prompt": "1645-3124", "provenance": "PUBLISHED model card"},
+      "verdict": "brain + deep reasoner take turns; image generation (Z-Image, SDXL) co-resides at 64K context"
+    },
+    {
+      "id": "T8",
+      "name": "32 GB+ discrete GPU or workstation",
+      "hardware": "RTX 5090, RTX 6000 Ada, dual-GPU boxes",
+      "bonsai2": {"packing": "PQ2_0", "context": 262144, "kv_type": "f16"},
+      "expected_tok_s": {"decode": "120.5-129.9", "prompt": "1805-3893", "provenance": "PUBLISHED model card (RTX 5090)"},
+      "verdict": "the whole soup co-resident, video generation (Wan 2.2 5B) on the second card or by turns"
+    }
+  ],
+  "first_setup_rule": "ONLY Bonsai 2 27B is suggested at first setup, at the packing and context the tier picks. Gemma, Qwen and every other local family remain fully supported by explicit choice and are never refused (the seat gate is a no-op by maintainer decision).",
+  "knock_on": "FridayWeaver-2 trains on Bonsai 2 (Friday-Models); the E2B/Gemma lineage stops at FridayWeaver-1."
+}
