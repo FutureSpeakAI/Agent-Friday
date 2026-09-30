@@ -3,6 +3,7 @@
 
     python scripts/smoke_podcasts.py            # phase 1: a Briefing run gets an episode
     python scripts/smoke_podcasts.py --phase 2  # also: the page carries the player
+    python scripts/smoke_podcasts.py --phase 3  # also: any source, and data mode
 
 Phase 1 generates today's Briefing through the News route (a real, local
 model call), then waits for that run's episode and checks it end to end:
@@ -102,7 +103,67 @@ def run(base: str, phase: int, wait_s: float, fetcher=fetch, say=print) -> bool:
         check("'podcasts'" in page and "Podcasts" in page, "Studio has a Podcasts view")
         check("--fr-" in page[page.find("PODCASTS — player"):][:6000], "the player reads the brand tokens")
         check(any(ln.get("signature") for ln in lines), "the episode has its signature lines")
+    if phase >= 3:
+        ok &= run_sources(base, wait_s, fetcher, say, check)
     say("ALL PASSED" if ok else "SOME CHECKS FAILED")
+    return ok
+
+
+SMOKE_CSV = ("opened,neighborhood,days_to_close\n"
+             + "".join("2026-%02d-%02d,%s,%d\n" % (1 + i % 6, 1 + i % 27, n, d)
+                       for i, (n, d) in enumerate([("Eastside", 9), ("Downtown", 3), ("Riverside", 4)] * 12)))
+
+
+def _wait(base, eid, wait_s, fetcher):
+    t0 = time.time()
+    ep = {}
+    while time.time() - t0 < wait_s:
+        st, body, _ = fetcher(base + "/api/podcasts/" + eid)
+        ep = json.loads(body).get("episode") or {}
+        if ep.get("status") in ("ready", "failed", "cancelled"):
+            break
+        time.sleep(10)
+    return ep
+
+
+def run_sources(base, wait_s, fetcher, say, check) -> bool:
+    """Phase 3: an episode from any source, and data mode over a spreadsheet."""
+    import tempfile
+    ok = True
+    made = []
+    st, body, _ = fetcher(base + "/api/podcasts", "POST", {"length": "short", "sources": [{
+        "kind": "text", "title": "Smoke notes",
+        "text": "The library opened a second branch on Tuesday. It is open until 9pm on weekdays."}]})
+    eid = (json.loads(body or b"{}").get("episode") or {}).get("id") if st in (200, 202) else None
+    ok &= bool(check(eid, "an episode from pasted text was accepted", "HTTP %s" % st))
+    tmp = Path(tempfile.mkdtemp(prefix="friday-smoke-"))
+    csv = tmp / "smoke_waits.csv"
+    csv.write_text(SMOKE_CSV, encoding="utf-8")
+    st, body, _ = fetcher(base + "/api/podcasts", "POST", {"length": "short", "sources": [
+        {"kind": "dataset", "path": str(csv)}]})
+    did = (json.loads(body or b"{}").get("episode") or {}).get("id") if st in (200, 202) else None
+    ok &= bool(check(did, "a data-mode episode was accepted", "HTTP %s" % st))
+    for e, what in ((eid, "text"), (did, "data")):
+        if not e:
+            continue
+        made.append(e)
+        say("…waiting for the %s episode %s" % (what, e))
+        ep = _wait(base, e, wait_s, fetcher)
+        ok &= bool(check(ep.get("status") == "ready", "the %s episode finished" % what,
+                         "%s: %s" % (ep.get("status"), (ep.get("error") or {}).get("message"))))
+        ok &= bool(check(ep.get("privacy") == "private", "the %s episode is private" % what))
+        if what == "data" and ep.get("status") == "ready":
+            ok &= bool(check(ep.get("mode") == "data" and ep.get("facts"), "data mode computed facts"))
+            ok &= bool(check(any("Average days to close by neighborhood" in f["text"]
+                                 for f in ep.get("facts") or []), "the average per group was computed"))
+            ok &= bool(check(ep.get("charts"), "charts were drawn"))
+    st, body, _ = fetcher(base + "/")
+    page = body.decode("utf-8", "replace")
+    for kind in ("wiki", "kg_node", "conversation"):
+        ok &= bool(check("kind: '%s'" % kind in page, "the page offers a podcast from a %s" % kind))
+    ok &= bool(check("podcastCreationSource(" in page, "the page offers a podcast from a creation"))
+    for e in made:
+        fetcher(base + "/api/podcasts/" + e, "DELETE")
     return ok
 
 

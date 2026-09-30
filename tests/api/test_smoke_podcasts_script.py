@@ -35,11 +35,17 @@ def deployed(tmp_path, monkeypatch, client):
 
     def llm(system, user, *, max_tokens=3000):
         if "Plan an episode" in user:
-            return {"title": "Your briefing", "chapters": [{"title": "Today", "sources": ["S1", "S2"]}]}, "bonsai2:27b"
-        return {"lines": [{"speaker": "a", "text": "The budget passed 7-2.", "cites": ["S3"]},
-                          {"speaker": "b", "text": "And your afternoon?", "cites": []},
-                          {"speaker": "a", "text": "The 3pm review moved.", "cites": ["S2"]},
-                          {"speaker": "b", "text": "Noted.", "cites": []}]}, "bonsai2:27b"
+            return {"title": "Your episode", "chapters": [{"title": "Today"}]}, "bonsai2:27b"
+        import re
+        ids = re.findall(r"^\[([SF]\d+)\]", user, re.M)
+        if "[S3]" in user:              # the Briefing's sections
+            return {"lines": [{"speaker": "a", "text": "The budget passed 7-2.", "cites": ["S3"]},
+                              {"speaker": "b", "text": "And your afternoon?", "cites": []},
+                              {"speaker": "a", "text": "The 3pm review moved.", "cites": ["S2"]},
+                              {"speaker": "b", "text": "Noted.", "cites": []}]}, "bonsai2:27b"
+        return {"lines": [{"speaker": "a", "text": "Here is what the source says.", "cites": ids[:1]},
+                          {"speaker": "b", "text": "And what does it leave out?", "cites": []},
+                          {"speaker": "a", "text": "That is the part to watch.", "cites": ids[:1]}]}, "bonsai2:27b"
 
     class S:
         def speak(self, text, voice):
@@ -75,3 +81,12 @@ def test_the_smoke_check_fails_when_the_hook_is_missing(deployed, monkeypatch):
     said = []
     assert smoke.run("http://smoke", 1, 60, fetcher=deployed, say=said.append) is False
     assert "FAIL the Briefing's hook queued an episode" in " ".join(said)
+
+
+def test_phase_three_checks_any_source_and_data_mode(deployed):
+    said = []
+    assert smoke.run("http://smoke", 3, 60, fetcher=deployed, say=said.append) is True, said
+    joined = "\n".join(said)
+    assert "PASS a data-mode episode was accepted" in joined
+    assert "PASS the average per group was computed" in joined
+    assert "PASS the page offers a podcast from a conversation" in joined
