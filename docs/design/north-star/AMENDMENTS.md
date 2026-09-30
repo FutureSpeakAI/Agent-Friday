@@ -143,7 +143,9 @@ either direction (this reinforces §6.4).
 
 **Amends:** §26.11 (tool sandbox network allowlists) and §26.13 (network
 policy) for sandboxed codebase traffic only, and §13.1 (constitution) in
-part. Decided by the owner on 2026-09-29. The design is in
+part. A delegated decision, as recommended (2026-09-29): taken under the
+owner's "build all pending specs" delegation, not picked by the owner, who may
+overrule it. The design is in
 `docs/design/active/vibe-coding-salon.md` (§4.5, §7.4, §14).
 
 - **The box announces; it does not block reads.** In a codebase's box,

@@ -1,6 +1,6 @@
 # The salon: Chat and Code in one room, an artifact panel in every chat, and codebases that run in a box
 
-> **Status:** accepted; the owner decided its three questions on 2026-09-29 (spec only; nothing in this document is built)
+> **Status:** accepted; its three questions were settled on 2026-09-29 as delegated decisions, as recommended, under the owner's "build all pending specs" delegation; the owner may overrule any of them (spec only; nothing in this document is built)
 > **Last verified:** 2026-09-29 against main `780e31fa`
 > **Implementation:** none yet. Builds on:
 > - `index.html`: `ChatSurface`, `ChatSidebar`, `CodeWS` and its `CODE_TABS`
@@ -155,8 +155,9 @@ authoritative.
 | **Speed** | Small edits take seconds. Big changes are slow, because your 12 GB card is mostly held by the brain. | Big changes are fast. The preview updates in about a second whichever path does the work. |
 | **Effort** | About **12 agent-weeks** (about 60 agent-days) across eight phases and three short spikes (§10), each shippable alone. The artifact panel ships first, in about 1.5 weeks. | Same. |
 
-**Decided by the owner (2026-09-29).** All three went as recommended
-(§12 has the reasoning):
+**Delegated decisions, as recommended (2026-09-29).** All three were taken as
+recommended under the owner's "build all pending specs" delegation, not picked
+by the owner; the owner may overrule any of them (§12 has the reasoning):
 
 1. **What the box does before you've said anything: "announce".** Installs
    and reading from the internet go ahead and are announced. Anything that
@@ -1581,8 +1582,11 @@ dollar figure.
 - the cross-site fix is a prerequisite;
 - ratings per the owner's 2026-09-22 decision.
 
-**Decided by the owner (2026-09-29), each as recommended below.** The
-reasoning is kept so the decision can be revisited on evidence.
+**Delegated decisions, as recommended (2026-09-29).** Each was taken as
+recommended below under the owner's "build all pending specs" delegation,
+not picked by the owner, and is recorded in
+`docs/decisions/2026-09-29-program-delegated-decisions.md`. The reasoning is
+kept so the owner can overrule any of them, or revisit them on evidence.
 
 1. **The box's default posture before you've said anything.**
    *Decided: "announce".* Reads and installs go ahead and are announced;

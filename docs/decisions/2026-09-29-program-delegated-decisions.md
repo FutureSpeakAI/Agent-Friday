@@ -62,6 +62,19 @@ Every entry was checked against the code on main at 780e31fa.
 | D30 | voice-system-clean-sheet Q2 · LuxTTS | **Parked.** | No recommendation in the spec. It is not needed for parity. |
 | D31 | cloud voice · ElevenLabs/Inworld selection | **Fix both halves together: the server accepts the choice, and conversation actually speaks through the cloud voice.** Inworld stays unshipped until it is GA (spec §10.0). | Fixing only the first half would turn a visible error into a silent substitute voice. |
 
+## Salon decisions (vibe-coding-salon.md §12, amendment A8)
+
+These three were first recorded as "decided by the owner". They were not.
+They were taken as the spec recommended, under the owner's delegation, and
+are relabelled "delegated decision, as recommended" in the spec and in
+AMENDMENTS.md A8.
+
+| # | Question | Decision | Why |
+|---|---|---|---|
+| S1 | The box's default network posture | **"Announce".** Reads and installs go ahead and are announced. Writes to outside hosts and private-data sends ask, as they do everywhere else. "Ask" remains available as an owner rule. | The spec's recommendation. It follows the owner's "no restrictions unless the user sets them" and keeps every existing outward-action gate. |
+| S2 | Friday editing her own safety checkpoint and signed laws in the salon | **Allowed only on a copy, and only through the loud approval of §7.4.** That means a separate card, a fresh challenge word, no grant, a signed notice afterwards, and re-attestation before outward actions resume. | The spec's recommendation. The alternative, hand-merge only, would mean Friday could never fix her own gate even when asked. **This touches cLaws, so it is flagged for the owner to confirm.** |
+| S3 | Someone else's API key in your Friday | **Yes, bound to one codebase,** metered separately and removable in one click. | The spec's recommendation. |
+
 ## Brand decisions
 
 | # | Question | Decision | Why |
