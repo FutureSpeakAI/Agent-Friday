@@ -562,6 +562,14 @@ if not _TESTING:
     # Persistent news archive: grow the per-day article store on the RSS cadence.
     threading.Thread(target=_news_archiver_loop, daemon=True).start()
 
+    # Podcast render worker: finishes episodes left mid-render by a restart and
+    # renders queued ones when the idle gate allows (services/podcast_engine.py).
+    try:
+        from agent_friday.services import podcast_engine as _podcast_engine
+        _podcast_engine.start_worker()
+    except Exception as _pw_e:
+        print(f"  Podcasts: render worker not started ({_pw_e})")
+
     # Offline-first resilience: probe connectivity every 30s, auto-switch to
     # local inference when offline, flush the queue + refresh feeds when back.
     threading.Thread(target=_network_monitor_loop, daemon=True).start()

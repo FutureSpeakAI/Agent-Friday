@@ -251,6 +251,11 @@ class _Facts:
         return fid
 
 
+def label(col) -> str:
+    """A column name as words: "days_to_close" is spoken "days to close"."""
+    return re.sub(r"[_\s]+", " ", str(col)).strip()
+
+
 def analyse_frame(df, name: str, facts: _Facts, chart_dir: Path | None,
                   charts: list) -> dict:
     import pandas as pd
@@ -274,7 +279,7 @@ def analyse_frame(df, name: str, facts: _Facts, chart_dir: Path | None,
     for c in num_cols:
         s = df[c].dropna()
         facts.add("%s: total %s, average %s, median %s, lowest %s, highest %s (over %s rows with a value)."
-                  % (c, fmt(s.sum()), fmt(s.mean()), fmt(s.median()), fmt(s.min()),
+                  % (label(c), fmt(s.sum()), fmt(s.mean()), fmt(s.median()), fmt(s.min()),
                      fmt(s.max()), fmt(len(s))),
                   "df[%r].sum()/mean()/median()/min()/max()" % c)
         if label_col is not None:
@@ -284,61 +289,71 @@ def analyse_frame(df, name: str, facts: _Facts, chart_dir: Path | None,
                 if hasattr(lab, "strftime"):
                     lab = lab.strftime("%d %B %Y")
                 facts.add("The highest %s, %s, is in the row where %s is %s."
-                          % (c, fmt(top[c]), label_col, lab),
+                          % (label(c), fmt(top[c]), label(label_col), lab),
                           "df.loc[df[%r].idxmax(), %r]" % (c, label_col))
 
     main = num_cols[0] if num_cols else None
     for c in cat_cols:
         vc = df[c].value_counts(dropna=True).head(5)
         parts = ["%s %s (%s)" % (k, fmt(v), pct(v, rows)) for k, v in vc.items()]
-        fid = facts.add("Most common values of %s, by number of rows: %s." % (c, "; ".join(parts)),
+        fid = facts.add("Most common values of %s, by number of rows: %s." % (label(c), "; ".join(parts)),
                         "df[%r].value_counts().head(5)" % c)
-        if main is not None:
-            g = df.groupby(c)[main].sum().sort_values(ascending=False).head(5)
-            whole = df[main].sum()
-            parts = ["%s %s (%s of all)" % (k, fmt(v), pct(v, whole)) for k, v in g.items()]
-            gid = facts.add("Total %s by %s: %s." % (main, c, "; ".join(parts)),
-                            "df.groupby(%r)[%r].sum().nlargest(5)" % (c, main))
-            charts.append(_bar_chart(chart_dir, len(charts) + 1,
-                                     "Total %s by %s" % (main, c),
-                                     [(str(k), float(v)) for k, v in g.items()], [gid]))
-        elif len(vc) > 1:
-            charts.append(_bar_chart(chart_dir, len(charts) + 1, "Rows by %s" % c,
-                                     [(str(k), float(v)) for k, v in vc.items()], [fid]))
+        if main is None:
+            if len(vc) > 1:
+                charts.append(_bar_chart(chart_dir, len(charts) + 1, "Rows by %s" % label(c),
+                                         [(str(k), float(v)) for k, v in vc.items()], [fid]))
+            continue
+        # "Which group is highest" is answered by the average per group, with
+        # how many rows each average rests on. A total mixes how many rows a
+        # group has with how large each one is.
+        grp = df.groupby(c)[main]
+        means = grp.mean().sort_values(ascending=False).head(5)
+        counts = grp.count()
+        parts = ["%s %s (%s rows)" % (k, fmt(v), fmt(counts[k])) for k, v in means.items()]
+        aid = facts.add("Average %s by %s: %s." % (label(main), label(c), "; ".join(parts)),
+                        "df.groupby(%r)[%r].mean().nlargest(5)" % (c, main))
+        charts.append(_bar_chart(chart_dir, len(charts) + 1,
+                                 "Average %s by %s" % (label(main), label(c)),
+                                 [(str(k), float(v)) for k, v in means.items()], [aid]))
+        tot = grp.sum().sort_values(ascending=False).head(5)
+        whole = df[main].sum()
+        parts = ["%s %s (%s of all)" % (k, fmt(v), pct(v, whole)) for k, v in tot.items()]
+        facts.add("Total %s by %s: %s." % (label(main), label(c), "; ".join(parts)),
+                  "df.groupby(%r)[%r].sum().nlargest(5)" % (c, main))
 
-    if dt_cols and main is not None:
+    if dt_cols:
         dc = dt_cols[0]
-        d = df[[dc, main]].copy()
+        d = df[[dc] + ([main] if main is not None else [])].copy()
         d[dc] = pd.to_datetime(d[dc], errors="coerce", format="mixed")
         d = d.dropna()
         if len(d) >= 3:
             span = (d[dc].max() - d[dc].min()).days
             if span > 3 * 366:
-                rule, label, lf = "YS", "year", "%Y"
+                rule, per, lf = "YS", "year", "%Y"
             elif span > 90:
-                rule, label, lf = "MS", "month", "%B %Y"
+                rule, per, lf = "MS", "month", "%B %Y"
             else:
-                rule, label, lf = "D", "day", "%d %B %Y"
-            series = d.set_index(dc)[main].resample(rule).sum()
-            series = series[series.index.notna()]
-            if len(series) >= 2:
-                first, last = series.iloc[0], series.iloc[-1]
-                peak_at = series.idxmax()
-                change = ("up %s" % pct(last - first, abs(first)) if last >= first
-                          else "down %s" % pct(first - last, abs(first))) if first else "n/a"
-                tid = facts.add(
-                    "Total %s per %s went from %s in %s to %s in %s (%s). The highest %s was %s, with %s."
-                    % (main, label, fmt(first), series.index[0].strftime(lf), fmt(last),
-                       series.index[-1].strftime(lf), change, label, peak_at.strftime(lf),
-                       fmt(series.max())),
-                    "df.set_index(%r)[%r].resample(%r).sum()" % (dc, main, rule))
-                facts.add("The data covers %s to %s."
-                          % (d[dc].min().strftime("%d %B %Y"), d[dc].max().strftime("%d %B %Y")),
-                          "df[%r].min(), df[%r].max()" % (dc, dc))
-                charts.append(_line_chart(chart_dir, len(charts) + 1,
-                                          "Total %s per %s" % (main, label),
-                                          [(i.strftime(lf), float(v)) for i, v in series.items()],
-                                          [tid]))
+                rule, per, lf = "D", "day", "%d %B %Y"
+            facts.add("The data covers %s to %s."
+                      % (d[dc].min().strftime("%d %B %Y"), d[dc].max().strftime("%d %B %Y")),
+                      "df[%r].min(), df[%r].max()" % (dc, dc))
+            by = d.set_index(dc).resample(rule)
+            volume = by.size()
+            if len(volume) >= 2:
+                rid = facts.add(_trend("Rows per %s" % per, volume, lf, per),
+                                "df.set_index(%r).resample(%r).size()" % (dc, rule))
+                charts.append(_line_chart(chart_dir, len(charts) + 1, "Rows per %s" % per,
+                                          [(i.strftime(lf), float(v)) for i, v in volume.items()],
+                                          [rid]))
+            if main is not None:
+                avg = by[main].mean().dropna()
+                if len(avg) >= 2:
+                    tid = facts.add(_trend("Average %s per %s" % (label(main), per), avg, lf, per),
+                                    "df.set_index(%r)[%r].resample(%r).mean()" % (dc, main, rule))
+                    charts.append(_line_chart(chart_dir, len(charts) + 1,
+                                              "Average %s per %s" % (label(main), per),
+                                              [(i.strftime(lf), float(v)) for i, v in avg.items()],
+                                              [tid]))
 
     if len(num_cols) >= 2:
         corr = df[num_cols].corr(numeric_only=True)
@@ -350,18 +365,29 @@ def analyse_frame(df, name: str, facts: _Facts, chart_dir: Path | None,
                     pairs.append((abs(r), a, b, r))
         for _ar, a, b, r in sorted(pairs, reverse=True)[:3]:
             facts.add("%s and %s moved %s (correlation %.2f). That is an association, not a cause."
-                      % (a, b, "together" if r > 0 else "in opposite directions", r),
+                      % (label(a), label(b), "together" if r > 0 else "in opposite directions", r),
                       "df[[%r, %r]].corr()" % (a, b))
 
     for c in df.columns:
         miss = int(df[c].isna().sum())
         if rows and miss / rows > 0.05:
-            facts.add("%s is empty in %s rows (%s)." % (c, fmt(miss), pct(miss, rows)),
+            facts.add("%s is empty in %s rows (%s)." % (label(c), fmt(miss), pct(miss, rows)),
                       "df[%r].isna().sum()" % c)
 
     return {"name": name, "rows": rows, "columns": [str(c) for c in df.columns][:60],
             "numeric": [str(c) for c in num_cols], "categorical": [str(c) for c in cat_cols],
             "dates": [str(c) for c in dt_cols]}
+
+
+def _trend(what: str, series, lf: str, per: str) -> str:
+    """One sentence: from the first period to the last, the change, and the peak."""
+    first, last = float(series.iloc[0]), float(series.iloc[-1])
+    change = ("up %s" % pct(last - first, abs(first)) if last >= first
+              else "down %s" % pct(first - last, abs(first))) if first else "n/a"
+    return ("%s went from %s in %s to %s in %s (%s). The highest %s was %s, with %s."
+            % (what, fmt(first), series.index[0].strftime(lf), fmt(last),
+               series.index[-1].strftime(lf), change, per, series.idxmax().strftime(lf),
+               fmt(series.max())))
 
 
 def analyse_refs(refs: list[dict], chart_dir: Path | None) -> dict:

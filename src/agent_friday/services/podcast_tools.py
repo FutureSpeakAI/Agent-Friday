@@ -23,16 +23,30 @@ from agent_friday.services import podcast_engine as pe
 
 # ── the private-summary seam ────────────────────────────────────────────────
 
+NEUTRAL = "A private episode made from your own material."
+
+
 def _scrub(text: str) -> str:
-    from agent_friday.core import _PII_TAG_RE, _scrub_pii
-    return _PII_TAG_RE.sub("[redacted]", _scrub_pii(text or "")[0])
+    """Private text as a cloud session may see it: the voice handoff's own
+    scrub and floor (local_context.prepare). People become relationships,
+    identifiers become numbered placeholders, and anything on the never-send
+    floor withholds the text entirely."""
+    if not (text or "").strip():
+        return ""
+    try:
+        from agent_friday.services import local_context
+        return local_context.prepare(text).get("text") or "[withheld]"
+    except Exception:
+        return "[withheld]"
 
 
 def _private_summary(text: str, *, sentences: int = 2) -> str:
     """A short, PII-free summary of private text, written by the LOCAL model.
 
-    Never calls a cloud model. If no local model is serving, returns a neutral
-    line rather than any of the text.
+    The local model marks every person the way the voice handoff asks
+    ({{person: Name | relationship}}), and the result goes through the same
+    scrub and floor (`_scrub`). Never calls a cloud model. With no local model,
+    or when the floor refuses, returns a neutral line and none of the text.
     """
     text = (text or "").strip()
     if not text:
@@ -40,18 +54,18 @@ def _private_summary(text: str, *, sentences: int = 2) -> str:
     try:
         out, _model = pe._llm_json(
             "You summarise the owner's private material for a listener who must "
-            "not hear personal details. Never include names of people, contact "
-            "details, addresses, account numbers, health or family details. "
-            "Return JSON only.",
+            "not hear personal details. Every time you mention a person, write "
+            "them as {{person: Name | how they relate to the owner}}, for example "
+            "{{person: Sam | their brother}}. Leave out contact details, "
+            "addresses, account numbers and health details. Return JSON only.",
             "Summarise in at most %d short sentences what this is about, in "
             "general terms.\n\n%s\n\nReturn {\"summary\": \"...\"}."
             % (sentences, text[:12000]), max_tokens=400)
         summary = str(out.get("summary") or "").strip()
     except Exception:
         summary = ""
-    if not summary:
-        return "A private episode made from your own material."
-    return _scrub(summary)
+    safe = _scrub(summary) if summary else ""
+    return safe if safe and safe != "[withheld]" else NEUTRAL
 
 
 def _safe_title(ep: dict) -> str:
@@ -63,7 +77,7 @@ def _brief(ep: dict) -> dict:
     s = pe.summary(ep)
     s["title"] = _safe_title(ep)
     if ep.get("privacy") == "private":
-        s["about"] = ep.get("about_public") or "A private episode made from your own material."
+        s["about"] = ep.get("about_public") or NEUTRAL
     else:
         s["about"] = ep.get("about") or ""
     s["chapters"] = [{"title": (_scrub(c["title"]) if ep.get("privacy") == "private" else c["title"]),

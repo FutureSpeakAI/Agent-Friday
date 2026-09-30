@@ -221,6 +221,19 @@ def test_no_local_model_waits_and_retries_then_fails_with_the_reason(monkeypatch
     assert done["tries"] == pe.MAX_TRIES
 
 
+def test_running_short_of_memory_while_speaking_waits_and_retries(monkeypatch):
+    monkeypatch.setattr(pe, "_llm_json", _fake_writer())
+
+    class Hungry:
+        def speak(self, text, voice):
+            raise MemoryError()
+    monkeypatch.setattr(render, "speaker", lambda: Hungry())
+    done = pe.produce(_text_ep()["id"])
+    assert done["status"] == "waiting" and "short of memory" in done["waiting_reason"]
+    # The script it already wrote is kept; the retry starts at speaking.
+    assert done["lines"]
+
+
 def test_a_script_with_nothing_accountable_is_not_spoken(monkeypatch):
     monkeypatch.setattr(pe, "_llm_json", _fake_writer(lambda n: [
         {"speaker": "a", "text": "Sales hit 900 units.", "cites": []}]))
@@ -411,3 +424,44 @@ def test_captions_are_valid_webvtt():
                               {"a": "Friday", "b": "Emma"})
     assert "00:00:00.000 --> 00:00:01.250" in vtt and "01:01:01.500" in vtt
     assert "Hi → there" in vtt
+
+
+def test_underscores_are_spoken_as_spaces_not_deleted():
+    kept, _ = pe.clean_lines([{"speaker": "a", "text": "The days_to_close column is _really_ long.",
+                               "cites": ["S1"]}], {"S1"})
+    assert kept[0]["text"] == "The days to close column is really long."
+
+
+def test_the_hosts_are_asked_to_alternate_in_one_episode(monkeypatch):
+    llm = _fake_writer()
+    monkeypatch.setattr(pe, "_llm_json", llm)
+    docs = [{"sid": "S1", "title": "A", "text": "x", "url": "", "kind": "text"},
+            {"sid": "S2", "title": "B", "text": "y", "url": "", "kind": "text"}]
+    pe.write_script({"id": "x", "length": "short", "show": "Show", "hosts": pe.DEFAULTS["hosts"]}, docs)
+    chapter = [c["user"] for c in llm.calls if "Chapter " in c["user"]][0]
+    assert "Alternate between the two hosts" in chapter and "one episode, not a series" in chapter
+
+
+def test_a_momentarily_locked_episode_file_is_saved_on_retry(monkeypatch):
+    """Windows refuses a rename onto a file another process has open for a moment."""
+    ep = _text_ep()
+    real = Path.replace
+    refusals = {"n": 0}
+
+    def flaky(self, target):
+        if refusals["n"] < 3:
+            refusals["n"] += 1
+            raise PermissionError(5, "Access is denied")
+        return real(self, target)
+    monkeypatch.setattr(Path, "replace", flaky)
+    assert pe._update(ep["id"], title="Saved anyway")["title"] == "Saved anyway"
+    assert refusals["n"] == 3 and pe.load(ep["id"])["title"] == "Saved anyway"
+
+
+def test_no_render_worker_runs_in_the_test_process():
+    """Under FRIDAY_TESTING the worker never starts, even when an episode is
+    created, and the routes module does not start it at registration."""
+    import agent_friday.routes.podcasts as routes
+    pe.create([{"kind": "text", "text": "x"}])
+    assert pe._WORKER is None
+    assert "start_worker" not in Path(routes.__file__).read_text(encoding="utf-8")

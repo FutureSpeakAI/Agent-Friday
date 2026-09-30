@@ -26,11 +26,6 @@ from agent_friday.services import podcast_engine as pe
 podcasts_bp = Blueprint('podcasts', __name__)
 
 
-@podcasts_bp.record_once
-def _start(_state):
-    pe.start_worker()
-
-
 @podcasts_bp.before_request
 def _gate():
     try:

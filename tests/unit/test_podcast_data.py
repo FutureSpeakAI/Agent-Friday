@@ -56,9 +56,10 @@ def test_id_columns_are_not_averaged(dataset, tmp_path):
 
 def test_a_time_trend_is_computed_and_charted(dataset, tmp_path):
     an = _analysis(dataset, tmp_path)
-    trend = _fact(an, "per month")
-    assert "January 2026" in trend["text"] and "April 2026" in trend["text"]
-    assert "2,000.5" in trend["text"] and "2,500" in trend["text"]
+    trend = _fact(an, "Average sales per month")
+    assert "1,000.2 in January 2026" in trend["text"] and "1,250 in April 2026" in trend["text"]
+    assert "up 25.0%" in trend["text"]
+    assert "Rows per month went from 2 in January 2026 to 2 in April 2026" in _fact(an, "Rows per")["text"]
     files = {c["file"] for c in an["charts"]}
     assert files and all((tmp_path / "charts" / f).is_file() for f in files)
     svg = (tmp_path / "charts" / an["charts"][0]["file"]).read_text(encoding="utf-8")
@@ -129,3 +130,42 @@ def test_a_spreadsheet_without_its_reader_says_so(tmp_path, monkeypatch):
     with pytest.raises(SourceError) as exc:
         pdm.load_frame(p)
     assert "openpyxl" in exc.value.user_message
+
+
+WAITS = """request_id,opened,neighborhood,days_to_close
+1,2026-01-05,Eastside,9
+2,2026-01-06,Eastside,7
+3,2026-01-07,Downtown,2
+4,2026-01-08,Downtown,3
+5,2026-01-09,Downtown,4
+6,2026-01-10,Downtown,3
+7,2026-05-05,Riverside,1
+8,2026-05-06,Downtown,2
+"""
+
+
+@pytest.fixture
+def waits(tmp_path):
+    p = tmp_path / "waits.csv"
+    p.write_text(WAITS, encoding="utf-8")
+    return pdm.analyse_refs([{"kind": "dataset", "path": str(p)}], tmp_path / "charts")
+
+
+def test_which_group_waits_longest_is_answered_by_the_average_not_the_total(waits):
+    """Downtown has the biggest TOTAL (14 days over 5 requests), Eastside the
+    longest AVERAGE wait (8 days over 2). A total mixes volume with duration."""
+    avg = _fact(waits, "Average days to close by neighborhood")
+    assert avg["text"].index("Eastside 8") < avg["text"].index("Downtown 2.8")
+    assert "(2 rows)" in avg["text"] and "(5 rows)" in avg["text"]
+    assert any("Average days to close by neighborhood" == c["title"] for c in waits["charts"])
+
+
+def test_volume_over_time_is_its_own_fact(waits):
+    rows = _fact(waits, "Rows per")
+    assert "6 in January 2026" in rows["text"] and "2 in May 2026" in rows["text"]
+    avg = _fact(waits, "Average days to close per")
+    assert "4.67 in January 2026" in avg["text"] and "1.5 in May 2026" in avg["text"]
+
+
+def test_column_names_are_written_as_words(waits):
+    assert not any("days_to_close" in f["text"] for f in waits["facts"])

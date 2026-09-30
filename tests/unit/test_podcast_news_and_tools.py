@@ -293,6 +293,21 @@ def test_the_private_summary_never_calls_the_cloud(monkeypatch):
     assert "ada@example.com" not in out
 
 
+def test_the_private_summary_uses_the_voice_handoff_scrub_and_floor(monkeypatch):
+    """Names marked by the local model become relationships (local_context.scrub),
+    and anything on the never-send floor withholds the whole summary."""
+    from agent_friday.services import local_call, local_context, scheduler
+    monkeypatch.setattr(scheduler, "_resolve_local_seat", lambda: "bonsai2:27b")
+    monkeypatch.setattr(local_call, "call_json", lambda *a, **k: {
+        "summary": "Planning a visit with {{person: Ada Lovelace | her sister}} in May."})
+    out = podcast_tools._private_summary("private notes")
+    assert "Ada" not in out and "[her sister]" in out
+    monkeypatch.setattr(local_context, "floor_hits", lambda text: ["never-send"])
+    assert podcast_tools._private_summary("private notes") == \
+        "A private episode made from your own material."
+    assert podcast_tools._scrub("Anything at all") == "[withheld]"
+
+
 def test_the_private_summary_without_a_local_model_gives_nothing_away():
     assert podcast_tools._private_summary("Ada's diagnosis") == \
         "A private episode made from your own material."

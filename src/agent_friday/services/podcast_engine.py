@@ -69,8 +69,8 @@ DEFAULTS = {
 
 
 #: Failures that are about the moment, not the episode: the local model was not
-#: serving, or did not answer in time. Retried up to MAX_TRIES, RETRY_AFTER_S apart.
-RETRYABLE = ("no_local_model", "writer_failed", "voice_busy", "voice_timeout")
+#: serving or did not answer in time, or the computer was short of memory. Retried up to MAX_TRIES, RETRY_AFTER_S apart.
+RETRYABLE = ("no_local_model", "writer_failed", "voice_busy", "voice_timeout", "low_memory")
 MAX_TRIES = 3
 RETRY_AFTER_S = 20 * 60
 
@@ -138,7 +138,17 @@ def save(ep: dict) -> dict:
     tmp = d / "episode.json.tmp"
     with _IO_LOCK:
         tmp.write_text(json.dumps(ep, indent=1, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(d / "episode.json")
+        # On Windows the rename is refused while anything else holds the target
+        # open for a moment (the UI polling it, a virus scanner, the indexer).
+        # That is momentary: try again briefly rather than crash the render.
+        for attempt in range(20):
+            try:
+                tmp.replace(d / "episode.json")
+                break
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)
     return ep
 
 
@@ -417,7 +427,9 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
             "SOURCES FOR THIS CHAPTER:\n\n%s\n\n"
             "Chapter %d of %d: \"%s\". Points: %s\n"
             "The conversation so far ended with:\n%s\n\n%s\n"
-            "Write about %d words. Return {\"lines\": [{\"speaker\": \"a\" or \"b\", "
+            "Write about %d words. Alternate between the two hosts, at most three "
+            "sentences per line. The chapters are parts of one episode, not a series. "
+            "Return {\"lines\": [{\"speaker\": \"a\" or \"b\", "
             "\"text\": \"...\", \"cites\": [\"S1\"]}]}."
             % (_source_block(docs, use), i + 1, len(chapters), ch.get("title", ""),
                "; ".join(str(p) for p in (ch.get("points") or [])[:6]) or "(your call)",
@@ -442,7 +454,8 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
 _STRIP_RE = [
     (re.compile(r"\[[^\]]*\]"), " "),            # [laughs], [S1]
     (re.compile(r"\([^)]*(laugh|pause|music|sigh|chuckl)[^)]*\)", re.I), " "),
-    (re.compile(r"[*_#`>]+"), ""),               # markdown
+    (re.compile(r"[*#`>]+"), ""),                # markdown
+    (re.compile(r"_+"), " "),                    # "days_to_close", _emphasis_
     (re.compile(r"^\s*[A-Z][a-zA-Z]{1,20}\s*:\s+"), ""),   # "Friday: " prefixes
     (re.compile(r"\s+"), " "),
 ]
@@ -664,19 +677,12 @@ def produce(eid: str, *, should_stop=None) -> dict:
     except render.RenderError as e:
         if e.code == "cancelled":
             return load(eid)
-        _orb(orb, "fail", ep, detail=str(e))
-        cur = load(eid) or ep
-        tries = int(cur.get("tries") or 0) + 1
-        if e.code in RETRYABLE and tries < MAX_TRIES:
-            # The local model was absent or too busy to answer: wait and try
-            # again, rather than lose the routine's episode to a busy minute.
-            log.info("podcast %s will retry (%s): %s", eid, e.code, e)
-            return _update(eid, status="waiting", tries=tries,
-                           retry_after=time.time() + RETRY_AFTER_S,
-                           waiting_reason=str(e), stage_detail="waiting to try again: " + str(e))
-        log.warning("podcast %s failed: %s", eid, e)
-        return _update(eid, status="failed", tries=tries,
-                       error={"code": e.code, "message": str(e)}, stage_detail="")
+        return _retry_or_fail(eid, orb, ep, e)
+    except MemoryError:
+        # Loading or running the voice on a computer short of RAM: the moment,
+        # not the episode. Retried like a busy model.
+        return _retry_or_fail(eid, orb, ep, render.RenderError(
+            "low_memory", "The computer was short of memory while speaking the episode."))
     except PodcastRefused as e:
         _orb(orb, "fail", ep, detail=str(e))
         return _update(eid, status="failed", error={"code": "refused", "message": str(e)},
@@ -687,6 +693,23 @@ def produce(eid: str, *, should_stop=None) -> dict:
         return _update(eid, status="failed",
                        error={"code": "crashed", "message": "%s: %s" % (type(e).__name__, str(e)[:200])},
                        stage_detail="")
+
+
+def _retry_or_fail(eid: str, orb: str, ep: dict, e: "render.RenderError") -> dict:
+    """A retryable failure waits and tries again, up to MAX_TRIES; others fail."""
+    _orb(orb, "fail", ep, detail=str(e))
+    cur = load(eid) or ep
+    tries = int(cur.get("tries") or 0) + 1
+    if e.code in RETRYABLE and tries < MAX_TRIES:
+        # Absent or busy model, or short of memory: wait and try again rather
+        # than lose the routine's episode to a busy minute.
+        log.info("podcast %s will retry (%s): %s", eid, e.code, e)
+        return _update(eid, status="waiting", tries=tries,
+                       retry_after=time.time() + RETRY_AFTER_S,
+                       waiting_reason=str(e), stage_detail="waiting to try again: " + str(e))
+    log.warning("podcast %s failed: %s", eid, e)
+    return _update(eid, status="failed", tries=tries,
+                   error={"code": e.code, "message": str(e)}, stage_detail="")
 
 
 def _about(ep: dict) -> dict:
@@ -863,11 +886,12 @@ def _worker_loop() -> None:
 
 
 def start_worker() -> None:
-    """Start the single render worker (idempotent). Not started under pytest
-    unless a test asks for it; tests call `produce` directly."""
+    """Start the single render worker (idempotent). Never under FRIDAY_TESTING,
+    like every other background daemon: tests call `produce` directly, and a
+    worker in the test process would render other tests' episodes."""
     global _WORKER
     import os
-    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("FRIDAY_PODCAST_WORKER"):
+    if os.environ.get("FRIDAY_TESTING") == "1" or os.environ.get("PYTEST_CURRENT_TEST"):
         return
     with _WORKER_LOCK:
         if _WORKER is not None and _WORKER.is_alive():
