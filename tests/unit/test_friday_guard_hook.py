@@ -70,6 +70,14 @@ def base_cfg():
     return g.load_config(Path("/definitely/missing.json"))
 
 
+def decide(payload, cfg, **kw):
+    """The hook's decision with the machine probes pinned: plenty of memory and
+    no other pytest process, unless a test says otherwise."""
+    kw.setdefault("ram", 20.0)
+    kw.setdefault("running", [])
+    return g.decide(payload, cfg, **kw)
+
+
 # ── the floors match the pytest plugin ───────────────────────────────────────
 
 def test_default_floors_match_pytest_resource_guard():
@@ -92,7 +100,7 @@ def test_default_floors_match_pytest_resource_guard():
 ])
 def test_broad_pytest_is_blocked_in_a_friday_tree(friday_tree, command):
     tree, _ = friday_tree
-    ok, why = g.decide(bash(command.format(tree=tree), tree), base_cfg())
+    ok, why = decide(bash(command.format(tree=tree), tree), base_cfg())
     assert not ok
     assert "run_suite_guarded.py" in why
 
@@ -116,7 +124,7 @@ def test_broad_pytest_is_blocked_in_a_friday_tree(friday_tree, command):
 ])
 def test_targeted_pytest_and_the_guard_script_are_allowed(friday_tree, command):
     tree, _ = friday_tree
-    ok, why = g.decide(bash(command, tree), base_cfg())
+    ok, why = decide(bash(command, tree), base_cfg())
     assert ok, why
 
 
@@ -134,24 +142,24 @@ def test_targeted_pytest_and_the_guard_script_are_allowed(friday_tree, command):
 ])
 def test_a_pytest_call_without_an_explicit_small_worker_count_is_blocked(friday_tree, command):
     tree, _ = friday_tree
-    ok, why = g.decide(bash(command.format(tree=tree), tree), base_cfg())
+    ok, why = decide(bash(command.format(tree=tree), tree), base_cfg())
     assert not ok, command
     assert "-n 2" in why
 
 
 def test_the_worker_rule_applies_outside_friday_trees_too(friday_tree):
     _, other = friday_tree
-    ok, why = g.decide(bash("pytest tests/test_x.py", other), base_cfg())
+    ok, why = decide(bash("pytest tests/test_x.py", other), base_cfg())
     assert not ok and "-n 2" in why
-    ok, _ = g.decide(bash("pytest tests/test_x.py -n 1", other), base_cfg())
+    ok, _ = decide(bash("pytest tests/test_x.py -n 1", other), base_cfg())
     assert ok
 
 
 def test_a_broad_run_outside_a_friday_tree_only_needs_a_worker_count(friday_tree):
     _, other = friday_tree
-    ok, why = g.decide(bash("pytest", other), base_cfg())
+    ok, why = decide(bash("pytest", other), base_cfg())
     assert not ok and "-n 2" in why and "Full-suite pytest" not in why
-    ok, _ = g.decide(bash("pytest -n 0", other), base_cfg())
+    ok, _ = decide(bash("pytest -n 0", other), base_cfg())
     assert ok
 
 
@@ -159,19 +167,119 @@ def test_an_older_base_without_the_resource_guard_is_still_a_friday_tree(tmp_pat
     old = tmp_path / "old-base"
     (old / "src" / "agent_friday").mkdir(parents=True)
     (old / "tests" / "unit").mkdir(parents=True)
-    ok, why = g.decide(bash("pytest tests/unit -q", old), base_cfg())
+    ok, why = decide(bash("pytest tests/unit -q", old), base_cfg())
     assert not ok and "run_suite_guarded.py" in why
     files = "tests/unit/test_avatar_voice.py tests/unit/test_calendar_write_accounts.py"
-    ok, why = g.decide(bash(f"pytest {files}", old), base_cfg())
+    ok, why = decide(bash(f"pytest {files}", old), base_cfg())
     assert not ok and "-n 2" in why
-    ok, why = g.decide(bash(f"pytest {files} -n 2", old), base_cfg())
+    ok, why = decide(bash(f"pytest {files} -n 2", old), base_cfg())
     assert ok, why
 
 
 def test_cd_into_a_friday_tree_counts(friday_tree):
     tree, other = friday_tree
-    ok, why = g.decide(bash(f"cd {tree} && pytest tests", other), base_cfg())
+    ok, why = decide(bash(f"cd {tree} && pytest tests", other), base_cfg())
     assert not ok and "run_suite_guarded.py" in why
+
+
+# ── rule 5: one machine, one memory budget ───────────────────────────────────
+
+OTHER = [(4242, "python -m pytest tests/unit/test_avatar_voice.py -n 2")]
+
+
+@pytest.mark.parametrize("command", [
+    "pytest tests/unit/test_a.py tests/unit/test_b.py -n 2",
+    "pytest tests/unit/test_a.py -n 2",
+    "pytest tests/unit/test_a.py tests/unit/test_b.py -n 0",
+    "python -m pytest tests/unit/test_a.py::test_x -n 1",
+])
+def test_under_8gb_a_second_run_is_refused_while_another_pytest_runs(friday_tree, command):
+    tree, _ = friday_tree
+    ok, why = decide(bash(command, tree), base_cfg(), ram=6.5, running=OTHER)
+    assert not ok, command
+    assert "already run" in why and "pid 4242" in why and "8 GB" in why
+
+
+@pytest.mark.parametrize("command", [
+    "pytest tests/unit/test_a.py -n 0",
+    "python -m pytest tests/unit/test_a.py::test_x -n 0",
+    "pytest -p no:xdist tests/unit/test_a.py",
+])
+def test_a_single_file_at_n0_may_proceed_under_8gb_with_others_running(friday_tree, command):
+    tree, _ = friday_tree
+    ok, why = decide(bash(command, tree), base_cfg(), ram=6.5, running=OTHER)
+    assert ok, why
+
+
+def test_under_8gb_with_no_other_pytest_a_run_proceeds(friday_tree):
+    tree, _ = friday_tree
+    ok, why = decide(bash("pytest tests/unit/test_a.py tests/unit/test_b.py -n 2", tree), base_cfg(),
+                     ram=6.5, running=[])
+    assert ok, why
+
+
+def test_at_or_above_8gb_others_do_not_matter(friday_tree):
+    tree, _ = friday_tree
+    ok, why = decide(bash("pytest tests/unit/test_a.py tests/unit/test_b.py -n 2", tree), base_cfg(),
+                     ram=8.0, running=OTHER)
+    assert ok, why
+
+
+@pytest.mark.parametrize("command", ["pytest tests/unit/test_a.py -n 0", "pytest tests/unit/test_a.py -n 2"])
+def test_under_4gb_nothing_runs(friday_tree, command):
+    tree, _ = friday_tree
+    ok, why = decide(bash(command, tree), base_cfg(), ram=3.9, running=[])
+    assert not ok and "4 GB" in why
+
+
+def test_at_4gb_a_single_file_at_n0_runs(friday_tree):
+    tree, _ = friday_tree
+    ok, why = decide(bash("pytest tests/unit/test_a.py -n 0", tree), base_cfg(), ram=4.0, running=OTHER)
+    assert ok, why
+
+
+def test_unreadable_memory_or_process_list_refuses_a_multi_file_run(friday_tree):
+    tree, _ = friday_tree
+    ok, why = decide(bash("pytest tests/unit/test_a.py tests/unit/test_b.py -n 2", tree), base_cfg(),
+                     ram=None, running=[])
+    assert not ok and "could not be read" in why
+    ok, why = decide(bash("pytest tests/unit/test_a.py tests/unit/test_b.py -n 2", tree), base_cfg(),
+                     ram=6.5, running=None)
+    assert not ok and "process list" in why
+    ok, why = decide(bash("pytest tests/unit/test_a.py -n 0", tree), base_cfg(), ram=6.5, running=None)
+    assert ok, why
+
+
+def test_the_floors_come_from_config(friday_tree):
+    tree, _ = friday_tree
+    cfg = base_cfg()
+    cfg["pytest_concurrency_floor_gb"] = 100
+    ok, _ = decide(bash("pytest tests/unit/test_a.py tests/unit/test_b.py -n 2", tree), cfg, ram=50, running=OTHER)
+    assert not ok
+
+
+def test_the_process_probe_sees_another_pytest_process_and_not_the_caller():
+    marker = "import time; time.sleep(30)  # pytest-probe-target"
+    child = subprocess.Popen([sys.executable, "-c", marker])
+    try:
+        time.sleep(1.0)
+        found = g.running_pytest_processes()
+        assert found is not None
+        pids = {pid for pid, _ in found}
+        assert child.pid in pids, found
+        assert os.getpid() not in pids, "the calling process is never counted against itself"
+        assert all("friday_guard.py" not in cmd for _, cmd in found)
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+
+
+def test_the_guarded_runner_counts_as_a_pytest_process(friday_tree):
+    tree, _ = friday_tree
+    runner = [(99, "python scripts/run_suite_guarded.py tests/unit tests/api")]
+    ok, why = decide(bash("pytest tests/unit/test_a.py tests/unit/test_b.py -n 2", tree), base_cfg(),
+                     ram=6.5, running=runner)
+    assert not ok and "pid 99" in why
 
 
 # ── rule 2: wsl / docker under the memory floor ──────────────────────────────
@@ -183,40 +291,40 @@ def test_cd_into_a_friday_tree_counts(friday_tree):
     "Start-Process 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe'",
 ])
 def test_vm_commands_are_blocked_under_the_floor(command):
-    ok, why = g.decide(bash(command, "/tmp"), base_cfg(), ram=6.7)
+    ok, why = decide(bash(command, "/tmp"), base_cfg(), ram=6.7)
     assert not ok
     assert "6.7 GB" in why and "12 GB" in why
 
 
 @pytest.mark.parametrize("command", ["wsl -d Ubuntu", "docker ps", "docker compose up"])
 def test_vm_commands_are_allowed_with_room(command):
-    ok, _ = g.decide(bash(command, "/tmp"), base_cfg(), ram=20.0)
+    ok, _ = decide(bash(command, "/tmp"), base_cfg(), ram=20.0)
     assert ok
 
 
 @pytest.mark.parametrize("command", ["wsl --shutdown", "wsl --list", "wsl -l -v", "wsl --status",
                                      "wsl --terminate Ubuntu", "echo docker", "cat docker-notes.md"])
 def test_non_booting_wsl_queries_and_mentions_are_allowed_under_the_floor(command):
-    ok, why = g.decide(bash(command, "/tmp"), base_cfg(), ram=6.7)
+    ok, why = decide(bash(command, "/tmp"), base_cfg(), ram=6.7)
     assert ok, why
 
 
 def test_unreadable_memory_blocks_a_vm_start():
-    ok, why = g.decide(bash("wsl", "/tmp"), base_cfg(), ram=None)
+    ok, why = decide(bash("wsl", "/tmp"), base_cfg(), ram=None)
     assert not ok and "could not be read" in why
 
 
 def test_the_floor_comes_from_config():
     cfg = base_cfg()
     cfg["min_free_ram_gb"] = 4.0
-    ok, _ = g.decide(bash("docker ps", "/tmp"), cfg, ram=6.7)
+    ok, _ = decide(bash("docker ps", "/tmp"), cfg, ram=6.7)
     assert ok
 
 
 # ── rule 3: the live checkout ────────────────────────────────────────────────
 
 def test_editing_the_live_checkout_is_blocked_and_audited(live):
-    ok, why = g.decide(edit(live["live"] / "src" / "server.py"), live["cfg"])
+    ok, why = decide(edit(live["live"] / "src" / "server.py"), live["cfg"])
     assert not ok and "live checkout" in why
     assert "BLOCK" in live["audit"].read_text(encoding="utf-8")
 
@@ -224,26 +332,26 @@ def test_editing_the_live_checkout_is_blocked_and_audited(live):
 @pytest.mark.parametrize("rel", [".claude/SUITE_LOCK", ".claude/DEPLOY_LANE",
                                  ".claude/worktrees/agent-x/src/server.py", ".claude/settings.local.json"])
 def test_the_live_claude_directory_and_its_worktrees_are_exempt(live, rel):
-    ok, why = g.decide(edit(live["live"] / rel), live["cfg"])
+    ok, why = decide(edit(live["live"] / rel), live["cfg"])
     assert ok, why
 
 
 def test_editing_a_worktree_elsewhere_is_allowed(live):
-    ok, _ = g.decide(edit(live["wt"] / "src" / "server.py"), live["cfg"])
+    ok, _ = decide(edit(live["wt"] / "src" / "server.py"), live["cfg"])
     assert ok
 
 
 def test_edit_paths_in_any_spelling_are_recognised(live):
     p = str(live["live"] / "AGENTS.md")
     for spelling in (p, p.replace("\\", "/"), p.upper() if sys.platform == "win32" else p):
-        ok, _ = g.decide(edit(spelling), live["cfg"])
+        ok, _ = decide(edit(spelling), live["cfg"])
         assert not ok, spelling
 
 
 def test_write_and_notebook_tools_are_covered(live):
     for tool, key in (("Write", "file_path"), ("MultiEdit", "file_path"), ("NotebookEdit", "notebook_path")):
         payload = {"tool_name": tool, "tool_input": {key: str(live["live"] / "x.py")}, "cwd": "/tmp"}
-        ok, _ = g.decide(payload, live["cfg"])
+        ok, _ = decide(payload, live["cfg"])
         assert not ok, tool
 
 
@@ -257,7 +365,7 @@ def test_write_and_notebook_tools_are_covered(live):
     "perl -i -pe 's/a/b/' README.md",
 ])
 def test_mutations_with_the_live_checkout_as_cwd_are_blocked(live, command):
-    ok, why = g.decide(bash(command, live["live"]), live["cfg"])
+    ok, why = decide(bash(command, live["live"]), live["cfg"])
     assert not ok, command
     assert "live checkout" in why
 
@@ -275,7 +383,7 @@ def test_mutations_with_the_live_checkout_as_cwd_are_blocked(live, command):
     "cd $HOME/ftv/std && git checkout -b x",
 ])
 def test_reads_and_worktree_creation_in_the_live_checkout_are_allowed(live, command):
-    ok, why = g.decide(bash(command, live["live"]), live["cfg"])
+    ok, why = decide(bash(command, live["live"]), live["cfg"])
     assert ok, (command, why)
 
 
@@ -284,14 +392,14 @@ def test_the_live_checkout_is_reachable_by_cd_and_by_git_dash_c(live):
     for command in (f"cd {L} && git checkout main", f"git -C {L} merge --ff-only x",
                     f"git -C \"{L}\" reset --hard", f"cd {L}; python server.py",
                     f"echo x > {L}/notes.txt", f"sed -i s/a/b/ {L}/AGENTS.md"):
-        ok, _ = g.decide(bash(command, live["wt"]), live["cfg"])
+        ok, _ = decide(bash(command, live["wt"]), live["cfg"])
         assert not ok, command
 
 
 def test_the_same_mutations_in_a_worktree_are_allowed(live):
     for command in ("git checkout -b x", "git reset --hard", "git merge main", "python server.py",
                     "sed -i s/a/b/ AGENTS.md", "echo x > notes.txt", "git commit -m x"):
-        ok, why = g.decide(bash(command, live["wt"]), live["cfg"])
+        ok, why = decide(bash(command, live["wt"]), live["cfg"])
         assert ok, (command, why)
 
 
@@ -301,18 +409,18 @@ def test_powershell_mutations_are_covered(live):
                     f"Set-Content -Path '{L}\\x.txt' -Value 1",
                     f"Remove-Item {L}\\AGENTS.md",
                     f"cd {L}; Start-Process python -ArgumentList server.py"):
-        ok, _ = g.decide(pwsh(command, live["wt"]), live["cfg"])
+        ok, _ = decide(pwsh(command, live["wt"]), live["cfg"])
         assert not ok, command
-    ok, why = g.decide(pwsh(f"Set-Location '{L}'; git status", live["wt"]), live["cfg"])
+    ok, why = decide(pwsh(f"Set-Location '{L}'; git status", live["wt"]), live["cfg"])
     assert ok, why
 
 
 def test_the_deploy_lane_token_is_the_one_bypass_and_it_is_audited(live):
     token = Path(live["cfg"]["deploy_lane_token"])
     token.write_text("deploy-2b by the program lead\n", encoding="utf-8")
-    ok, _ = g.decide(bash("git merge --ff-only x", live["live"]), live["cfg"])
+    ok, _ = decide(bash("git merge --ff-only x", live["live"]), live["cfg"])
     assert ok
-    ok, _ = g.decide(edit(live["live"] / "AGENTS.md"), live["cfg"])
+    ok, _ = decide(edit(live["live"] / "AGENTS.md"), live["cfg"])
     assert ok
     log = live["audit"].read_text(encoding="utf-8")
     assert log.count("BYPASS") == 2 and "deploy-2b" in log
@@ -323,16 +431,16 @@ def test_an_expired_or_empty_token_does_not_bypass(live):
     token.write_text("deploy\n", encoding="utf-8")
     old = time.time() - 5 * 3600
     os.utime(token, (old, old))
-    ok, _ = g.decide(bash("git checkout main", live["live"]), live["cfg"])
+    ok, _ = decide(bash("git checkout main", live["live"]), live["cfg"])
     assert not ok
     token.write_text("", encoding="utf-8")
-    ok, _ = g.decide(bash("git checkout main", live["live"]), live["cfg"])
+    ok, _ = decide(bash("git checkout main", live["live"]), live["cfg"])
     assert not ok
 
 
 def test_without_a_live_checkout_configured_rule_3_is_inactive(live):
     cfg = dict(live["cfg"], live_checkout=None)
-    ok, _ = g.decide(bash("git checkout main", live["live"]), cfg)
+    ok, _ = decide(bash("git checkout main", live["live"]), cfg)
     assert ok
 
 
@@ -347,7 +455,7 @@ def test_without_a_live_checkout_configured_rule_3_is_inactive(live):
     "powershell -Command \"git push --force origin main\"", "bash -c 'git push -f'",
 ])
 def test_history_rewrites_are_blocked_everywhere(command):
-    ok, why = g.decide(bash(command, "/tmp"), base_cfg())
+    ok, why = decide(bash(command, "/tmp"), base_cfg())
     assert not ok, command
     assert "blocked" in why
 
@@ -359,13 +467,13 @@ def test_history_rewrites_are_blocked_everywhere(command):
     "git push --dry-run origin x",
 ])
 def test_ordinary_pushes_and_commits_are_allowed(command):
-    ok, why = g.decide(bash(command, "/tmp"), base_cfg())
+    ok, why = decide(bash(command, "/tmp"), base_cfg())
     assert ok, (command, why)
 
 
 def test_a_heredoc_body_cannot_trip_the_rules():
     command = "git commit -F - <<'EOF'\nfix: git push --force is blocked\n\nwsl and docker too\nEOF\n"
-    ok, why = g.decide(bash(command, "/tmp"), base_cfg(), ram=1.0)
+    ok, why = decide(bash(command, "/tmp"), base_cfg(), ram=1.0)
     assert ok, why
 
 

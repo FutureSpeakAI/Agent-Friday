@@ -71,7 +71,10 @@ The live Friday, its local model seat and every test run share one PC.
   model seat is up, and writes a receipt from pytest's real exit code. Every
   other pytest call says `-n 0`, `-n 1` or `-n 2`; the guard hook blocks a
   call that says nothing, whatever the checkout, because `pytest.ini`
-  defaults to `-n auto` and an older base has no guard to cap it.
+  defaults to `-n auto` and an older base has no guard to cap it. The machine
+  has one memory budget: under 8 GB free, a new run is refused while another
+  pytest process runs anywhere, unless it is a single named file at `-n 0`;
+  under 4 GB nothing runs.
 - No WSL or Docker start below the memory floor; the guard hook blocks them.
 
 ## Lessons

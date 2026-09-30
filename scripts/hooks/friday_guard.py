@@ -24,13 +24,20 @@ Rules, each testable in both directions (``tests/unit/test_friday_guard_hook.py`
    deploy lane bypasses this rule with a token file (see ``lane_token``);
    every bypass and every refusal is appended to the audit log.
 4. Force-pushes and history rewrites are refused everywhere.
+5. One machine, one memory budget: three pytest runs that each obeyed rule 1
+   once pushed the commit charge past 90 % together. Any pytest call needs
+   ``pytest_single_file_floor_gb`` of free memory, and while free memory is
+   under ``pytest_concurrency_floor_gb`` a new run is refused if another
+   pytest process is already running anywhere on the machine, unless it is a
+   single named file at ``-n 0``.
 
 Configuration is per machine and never in the tree:
 ``~/.claude/friday-desktop.local.json`` (or ``$FRIDAY_GUARD_CONFIG``), keys
 ``live_checkout``, ``min_free_ram_gb``, ``min_free_disk_gb``,
-``deploy_lane_token``, ``deploy_lane_ttl_hours``, ``audit_log``. Without a
-config file rules 1, 2 and 4 still apply with the defaults below; rule 3 needs
-``live_checkout`` and is otherwise inactive.
+``deploy_lane_token``, ``deploy_lane_ttl_hours``, ``audit_log``,
+``pytest_concurrency_floor_gb``, ``pytest_single_file_floor_gb``. Without a
+config file rules 1, 2, 4 and 5 still apply with the defaults below; rule 3
+needs ``live_checkout`` and is otherwise inactive.
 
 A fault inside this script must not brick every Claude Code session on the
 machine (it runs for every project), so an unexpected exception lets the call
@@ -57,7 +64,10 @@ DEFAULTS = {
     "deploy_lane_token": None,      # default: <live_checkout>/.claude/DEPLOY_LANE
     "deploy_lane_ttl_hours": 4.0,
     "audit_log": None,              # default: <live_checkout>/.claude/receipts/guard-audit.log
+    "pytest_concurrency_floor_gb": 8.0,   # under this, no second pytest on the machine
+    "pytest_single_file_floor_gb": 4.0,   # under this, no pytest at all
 }
+PYTEST_PROCESS_MARKERS = ("pytest", "run_suite_guarded")
 CONFIG_PATH = Path.home() / ".claude" / "friday-desktop.local.json"
 FRIDAY_MARKER = "pytest_resource_guard.py"
 FRIDAY_PACKAGE = ("src", "agent_friday")   # present on every base, unlike the marker
@@ -143,6 +153,39 @@ def free_ram_gb() -> float | None:
         return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1024 ** 3
     except (ValueError, OSError, AttributeError):
         return None
+
+
+def running_pytest_processes() -> list[tuple[int, str]] | None:
+    """(pid, command line) of every pytest or guarded-runner process on the
+    machine, this process excluded; None when the listing failed."""
+    import subprocess
+    me = os.getpid()
+    try:
+        if sys.platform == "win32":
+            script = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | "
+                      "ForEach-Object { '{0}|{1}' -f $_.ProcessId, $_.CommandLine }")
+            p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                               capture_output=True, text=True, timeout=15, errors="replace")
+        else:
+            p = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, timeout=15,
+                               errors="replace")
+        if p.returncode != 0:
+            return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = []
+    for line in p.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        pid_s, _, cmd = line.partition("|") if sys.platform == "win32" else line.partition(" ")
+        pid_s = pid_s.strip()
+        if not pid_s.isdigit() or int(pid_s) == me:
+            continue
+        low = cmd.lower()
+        if any(m in low for m in PYTEST_PROCESS_MARKERS) and "friday_guard.py" not in low:
+            out.append((int(pid_s), cmd.strip()[:160]))
+    return out
 
 
 def lane_token(cfg: dict, now: float | None = None) -> str | None:
@@ -454,6 +497,70 @@ def check_pytest(segs: list[Segment]) -> str | None:
     return None
 
 
+# ── rule 5: one machine, one memory budget ───────────────────────────────────
+
+def pytest_targets(args: list[str]) -> list[str]:
+    """The test files and node ids a call names (options and their values,
+    redirections excluded)."""
+    targets, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a.startswith("-"):
+            if "=" not in a and a in PYTEST_VALUE_OPTS and a != "-x":
+                skip = True
+            continue
+        if re.fullmatch(r"\d?>>?|&>|<", a):
+            skip = True
+            continue
+        if ">" in a or "<" in a:
+            continue
+        targets.append(a)
+    return targets
+
+
+def is_single_file_serial(args: list[str]) -> bool:
+    targets = pytest_targets(args)
+    if len(targets) != 1:
+        return False
+    t = targets[0]
+    if "::" not in t and not t.lower().endswith(".py"):
+        return False
+    return xdist_workers(args) in (0, "off")
+
+
+def check_pytest_load(segs: list[Segment], cfg: dict, ram: float | None, running) -> str | None:
+    """Refuse a pytest call the machine has no room for. ``running`` is the
+    list from ``running_pytest_processes()`` (None when it could not be read)."""
+    calls = [pytest_args(s.words) for s in segs]
+    calls = [a for a in calls if a is not None and not any(x in PYTEST_NO_RUN_FLAGS for x in a)]
+    if not calls:
+        return None
+    single_floor = float(cfg["pytest_single_file_floor_gb"])
+    conc_floor = float(cfg["pytest_concurrency_floor_gb"])
+    if ram is None:
+        return f"pytest is blocked: free memory could not be read, and any run needs {single_floor:.0f} GB."
+    if ram < single_floor:
+        return (f"pytest is blocked: free memory is {ram:.1f} GB and any run needs at least "
+                f"{single_floor:.0f} GB. Wait for room, or stop what is holding it.")
+    if ram >= conc_floor:
+        return None
+    if all(is_single_file_serial(a) for a in calls):
+        return None
+    if running is None:
+        return (f"pytest is blocked: free memory is {ram:.1f} GB, under the {conc_floor:.0f} GB "
+                "floor for a second run, and the machine's process list could not be read. "
+                "A single named file at -n 0 is the only run allowed without that check.")
+    if running:
+        others = "; ".join(f"pid {pid}: {cmd[:80]}" for pid, cmd in running[:3])
+        return (f"pytest is blocked: free memory is {ram:.1f} GB, under the {conc_floor:.0f} GB "
+                f"floor, and {len(running)} pytest process(es) already run on this machine "
+                f"({others}). Three concurrent runs once pushed the commit charge past 90 %. "
+                "Wait for them to finish, or run a single named file at -n 0.")
+    return None
+
+
 # ── rule 2: wsl / docker under the memory floor ──────────────────────────────
 
 def vm_command(seg: Segment) -> str | None:
@@ -623,9 +730,10 @@ def check_history(segs: list[Segment]) -> str | None:
 _PROBE = object()
 
 
-def decide(payload: dict, cfg: dict, ram=_PROBE, now: float | None = None) -> tuple[bool, str]:
+def decide(payload: dict, cfg: dict, ram=_PROBE, now: float | None = None, running=_PROBE) -> tuple[bool, str]:
     """(allowed, reason). ``ram`` is free memory in GB (None when unreadable; left out to
-    probe); ``now`` a timestamp for token expiry."""
+    probe); ``now`` a timestamp for token expiry; ``running`` the other pytest processes
+    (None when unreadable; left out to probe)."""
     tool = payload.get("tool_name") or ""
     tool_input = payload.get("tool_input") or {}
     cwd = payload.get("cwd") or os.getcwd()
@@ -658,6 +766,17 @@ def decide(payload: dict, cfg: dict, ram=_PROBE, now: float | None = None) -> tu
     if why:
         audit(cfg, f"BLOCK pytest tool={tool} cwd={cwd} cmd={command[:600]!r}")
         return False, why
+
+    if any(pytest_args(s.words) is not None for s in segs):
+        ram = free_ram_gb() if ram is _PROBE else ram
+        if ram is not None and ram < float(cfg["pytest_concurrency_floor_gb"]) and running is _PROBE:
+            running = running_pytest_processes()
+        elif running is _PROBE:
+            running = []
+        why = check_pytest_load(segs, cfg, ram, running)
+        if why:
+            audit(cfg, f"BLOCK pytest-load tool={tool} ram={ram} running={len(running or [])} cmd={command[:600]!r}")
+            return False, why
 
     if any(vm_command(s) for s in segs):
         ram = free_ram_gb() if ram is _PROBE else ram

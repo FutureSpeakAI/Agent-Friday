@@ -88,6 +88,14 @@ a prompt. Each rule has tests in both directions in
 4. **Force-pushes and history rewrites** (`push --force*`, `+refspec`,
    `:refspec`, `--mirror`, `--delete`, `commit --amend`, `filter-branch`,
    `filter-repo`, `replace`, `reflog expire`) are refused everywhere.
+5. **One machine, one memory budget.** Three pytest runs that each obeyed
+   rule 1 once pushed the commit charge past 90 % together. Any pytest call
+   needs `pytest_single_file_floor_gb` (4 GB) of free memory. Under
+   `pytest_concurrency_floor_gb` (8 GB), a new run is refused while another
+   pytest or guarded-runner process exists anywhere on the machine, unless
+   the new run is a single named file at `-n 0`. The process list comes from
+   the operating system at decision time; if it cannot be read, only the
+   single-file case is allowed.
 
 Install it once per machine as a copy outside every checkout, so enforcement
 never depends on which branch a tree is on, and register that copy in
@@ -115,7 +123,8 @@ Refresh the copy after a change to the script lands. The registration:
 Machine-specific values live in `~/.claude/friday-desktop.local.json` (or the
 file `$FRIDAY_GUARD_CONFIG` names), never in the tree: `live_checkout`,
 `min_free_ram_gb`, `min_free_disk_gb`, `deploy_lane_token`,
-`deploy_lane_ttl_hours`, `audit_log`, and for the suite runner `suite_lock`,
+`deploy_lane_ttl_hours`, `audit_log`, `pytest_concurrency_floor_gb`,
+`pytest_single_file_floor_gb`, and for the suite runner `suite_lock`,
 `receipts_dir`, `seat_port`, `max_workers_with_seat`,
 `max_workers_without_seat`, `abort_free_ram_gb`, `abort_free_disk_gb`.
 Without the file rules 1, 2 and 4 apply with the repository's floors; rule 3
