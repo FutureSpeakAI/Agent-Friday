@@ -616,6 +616,10 @@ _VOICE_SHARED_TOOLS = (
     "podcast_list",
     "podcast_play",
     "podcast_source",
+    # Friday's own look: "evolve now", "undo that look", "go back to last
+    # month's look", "turn evolution off", "what changed?". The same tool the
+    # screen uses, so what she says is what the history shows.
+    "avatar_evolution",
 )
 
 

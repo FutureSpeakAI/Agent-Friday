@@ -207,6 +207,10 @@ INTERNAL_TOOLS = frozenset({
     # Podcasts: an episode is written and spoken on this computer and saved in
     # Friday's own folder; playing it steers the owner's own screen.
     "make_podcast", "podcast_list", "podcast_play", "podcast_source",
+    # Friday's own look: it changes only the owner's own desktop and history.
+    # A step authored by a cloud model sends numbers only, through the spend
+    # guard and the egress gate like any model call; it reaches no one.
+    "avatar_evolution",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
     # find_free_slots reads free/busy only. release_holds deletes nothing but

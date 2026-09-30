@@ -7850,6 +7850,15 @@ try:
 except Exception as _pte:  # never let optional deps break the agent import
     print(f"  [PODCASTS] registration skipped: {_pte}")
 
+# Friday's own look (avatar_evolution): describe, evolve now, undo, go back to
+# an earlier look, on/off, who makes it. Shared into voice. See
+# services/avatar_tools.py.
+try:
+    from agent_friday.services import avatar_tools as _avatar_tools
+    _avatar_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _ate:  # never let optional deps break the agent import
+    print(f"  [AVATAR] registration skipped: {_ate}")
+
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
 # hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.
