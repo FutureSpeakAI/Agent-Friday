@@ -1,0 +1,1676 @@
+# The salon: Chat and Code in one room, an artifact panel in every chat, and codebases that run in a box
+
+> **Status:** proposed (spec only; nothing in this document is built)
+> **Last verified:** 2026-09-29 against main `780e31fa`
+> **Implementation:** none yet. Builds on:
+> - `index.html`: `ChatSurface`, `ChatSidebar`, `CodeWS` and its `CODE_TABS`
+>   (`DevDiff`, `DevFiles`, `DevGit`, `DevVibe`), `FWin`, `useTabState`,
+>   `useNavTarget`
+> - `services/code_sandbox.py`, `services/code_engine.py`, `routes/code.py`
+> - `governance/action_gate.py` (`authorize`, `create_grant`, the cLaws pin)
+> - `services/approvals.py`, `services/approval_executor.py`
+> - `services/egress_gate.py`, `services/sensitivity_classifier.py`,
+>   `services/file_grants.py`
+> - `services/local_context.py` and the voice tools in `services/voice_engine.py`
+>   (`delegate_to_friday`, `ask_local_for_context`, `answer_share_request`,
+>   `revise_share_request`, `voice_restrictions`)
+> - `services/residency_arbiter.py`, `services/seat_binding.py`,
+>   `services/seat_transparency.py`, `services/one_key.py`,
+>   `services/credential_store.py`, `services/cost_meter.py`
+> - `services/workspace_studio.py`, `services/boot_guard.py`
+> - `services/task_ledger.py`, `services/compaction.py`
+>
+> **Converges with (does not duplicate):**
+> - [`workspace-ecosystem.md`](workspace-ecosystem.md). The salon is its
+>   "Forge" (Phase 3), and its bundle, broker and sandboxed iframe are used
+>   here unchanged.
+> - [`grow-button.md`](grow-button.md). Self-editing is its Lane B2, with its
+>   untouchable set and its non-model applier.
+> - [`friday-builds-agents.md`](friday-builds-agents.md). Rules FA1–FA13
+>   apply to anything that runs in the box.
+> - [`goals-and-delivery-receipts.md`](goals-and-delivery-receipts.md). Every
+>   salon change ends in a delivery receipt.
+> - [`owner-rules-and-anomaly-detection.md`](owner-rules-and-anomaly-detection.md).
+>   Owner rules apply to the salon's outward actions.
+> - [`avatar-visual-genome.md`](avatar-visual-genome.md) Appendix A. This is
+>   the positron and negatron model the owner decided on.
+> - [`laya-across-the-harness.md`](laya-across-the-harness.md)
+>
+> **Consumes, from parallel work not yet on main at `780e31fa`:**
+> - **The voice contract** and **the private-summary handoff.** They are being
+>   published by the voice work. This spec uses them and defines neither
+>   (§6).
+> - **Workspace deep-links, maximized tabs and item actions.** These are being
+>   built now. `navigate_to` is already on main.
+>
+> **Written:** 2026-09-29
+
+The owner's idea (2026-09-25, verbatim):
+
+> "our local vibe coding salon... a Replit clone that lives on my hardware
+> drinking my tokens, or drinking someone else's if I see fit."
+
+> "Perhaps that artifact window should also be accessible to models not
+> working on code too."
+
+> "Vibe coding new workspaces, or improvements to existing workspaces, should
+> live here too."
+
+The owner's added requirement (2026-09-29, verbatim):
+
+> "I want all of this to be workable in voice-first mode too. No restrictions
+> unless the user explicitly sets them. Voice mode should be able to fire
+> workflows that involve the local model too, in the event that private info
+> needs to be summarized without any PII."
+
+And the question that prompted this spec (verbatim): *"Is the vibe coding
+workspace that combines with the chat workspace going into the pending specs?
+If so, we may be able to learn some things from these two links."* The links
+were LocalStack and NVIDIA OpenShell. §2 answers what Friday takes from each.
+
+Code citations are `path:line` on main `780e31fa`. Paths are relative to
+`src/agent_friday/` unless they start with `index.html`, `ui_parts/`, `docs/`
+or `tests/`. `index.html` line numbers drift, so the identifiers are
+authoritative.
+
+**Evidence registers**, as in `docs/design/ROADMAP.md`:
+
+- **VERIFIED**: read in the tree, or on the cited page, during this pass.
+- **INFERRED**: a conclusion from verified facts, with the reasoning shown.
+- **UNKNOWN**: not settled. The check that would settle it is named, and most
+  of these are spikes in §10.
+
+---
+
+## 0. Summary for the owner (one page)
+
+**What changes for you.**
+
+1. **Every chat gets a panel on the right.** When Friday makes something you
+   would rather see than read, it opens beside the conversation. That can be
+   a table, a chart, a draft, a small working app, or a diff. This applies in
+   every chat and with every model, not only coding chats. You can edit the
+   thing in the panel, ask for changes, go back to any earlier version, or
+   save it.
+2. **"+ Codebase" sits under "+ New chat" and "+ Project".** It opens a chat
+   whose panel has three tabs:
+   - **Preview:** the thing running.
+   - **Files:** what it is made of.
+   - **Changes:** what changed and when.
+
+   Every change Friday makes is saved as a step you can undo. "Undo that"
+   takes you back one step. New workspaces for Friday, and improvements to
+   existing ones, are built here.
+3. **The code runs in a box.** Your vault, your keys, your mail and Friday's
+   own settings are not in the box, and nothing in the box can reach them.
+   - **Inside the box there are no restrictions you didn't set.** Friday
+     installs packages and fetches from the internet as the work needs. Each
+     time, she says what she did, and it goes on the change's receipt.
+   - **Friday asks first only where she already asks today:** anything that
+     sends or changes something outside the box, like publishing, emailing or
+     posting to an API, and anything that would show your private data to a
+     cloud model.
+   - **"Trust this codebase"** turns a question into a standing yes, scoped to
+     that one codebase. You can take it back at any time.
+4. **You choose who does the work, and you can always see it.** The panel's
+   header names the model doing the work and whose key is paying.
+   - Small edits run on your local model by default.
+   - The heavy lifting goes to Opus or Sonnet when you allow it, including
+     Claude's own coding agent running inside the box.
+   - A codebase can use someone else's key. Its spending is metered
+     separately, and Friday never uses it outside that codebase.
+5. **It all works by voice.** You can say "make the header bigger", "undo
+   that", "ship it to the preview", or "what changed?". Friday reads each
+   question aloud in a sentence or two, and your "Friday, allow it" counts
+   the same as a click. A few things are easier on a screen: judging how
+   something looks, reading a long diff line by line, and typing a key.
+   Friday tells you when that is the case, and she never refuses to try by
+   voice.
+6. **Private data stays private.** If a codebase touches anything private,
+   such as your notes, a spreadsheet of sources or a contacts export, the
+   cloud model never sees the raw data.
+   - Your local model writes a summary of its shape instead, with no names or
+     identifiers, plus realistic fake rows to build against.
+   - The real data is used only when the app runs in the box on your machine.
+7. **Friday can improve herself, on a copy.** Friday edits a copy of herself,
+   which runs next to the real one so you can compare them.
+   - The tests must pass, and you approve the swap. Undo is one click.
+   - Changing her own safety checkpoint or her signed laws needs a separate,
+     unmistakable approval, never a routine one.
+   - This only works on a machine that has a git checkout, like yours.
+8. **Later, workspaces become shareable.** A workspace built here can be
+   exported as a signed file and, once federation is switched back on, shared
+   with other Fridays. Its card shows proven value (positrons) next to
+   measured cost (negatrons), with flags kept apart, as you decided on
+   2026-09-22.
+
+**What it costs.**
+
+| | Local path | Cloud path (your choice, per codebase) |
+|---|---|---|
+| **Privacy** | Nothing leaves the computer. There is no telemetry, from Friday or from anything the salon runs. | The cloud model sees your code and your instructions. Private data reaches it only as the local model's summary, and the payload card shows that summary first. |
+| **Money** | Nothing. | Your tokens or the named other party's, metered per codebase and shown in the header and in Costs. A typical small app runs **UNMEASURED** (§11). Phase 1 measures it. |
+| **Speed** | Small edits take seconds. Big changes are slow, because your 12 GB card is mostly held by the brain. | Big changes are fast. The preview updates in about a second whichever path does the work. |
+| **Effort** | About **12 agent-weeks** (about 60 agent-days) across eight phases and three short spikes (§10), each shippable alone. The artifact panel ships first, in about 1.5 weeks. | Same. |
+
+**Three decisions for you** (§12 has the reasoning):
+
+1. **What the box does before you've said anything.** Recommended: installs
+   and reading from the internet go ahead and are announced. Anything that
+   sends or changes something outside the box asks first, as everywhere else
+   in Friday. The alternative is the OpenShell default, "nothing goes out
+   until allowed".
+2. **Whether Friday may edit her own safety checkpoint and signed laws in the
+   salon.** Recommended: yes, but only with the loud approval of §7.4, and
+   only through the copy. The alternative is "never in the salon; you merge
+   those changes by hand".
+3. **Whether someone else's key may live in your Friday.** Recommended: yes,
+   bound to one codebase, metered separately and removable in one click.
+
+---
+
+## 1. What exists today (grounded)
+
+### 1.1 Chat and Code are two rooms today, and the doors are already there
+
+- **Chat is not a workspace. It is one component used everywhere.**
+  - `ChatSurface` (`index.html:7828`) renders both the docked chat and every
+    chat window. Its "+ New Chat" is at `index.html:7951`.
+  - The sidebar is `ChatSidebar` (`index.html:42763`). "+ New chat" is at
+    `:42853` and "+ Project" at `:42863`. A new chat inside a project posts
+    `{title, project}` (`:42784`), and projects live at `/api/projects`
+    (`routes/conversations.py:22-26`). **VERIFIED.**
+  - **So "+ Codebase" is a third button in that row.** It creates a
+    conversation that carries a codebase id, the same way a project chat
+    carries a project.
+- **Code is a workspace.** `CodeWS` (`index.html:24802`) has six tabs in
+  `CODE_TABS` (`:24772`): Repos, Vibe, Git, Files, Procs and Logs. **VERIFIED.**
+  - There is no editor, no terminal and no preview.
+  - `DevVibe` (`:23909`) sends natural language to `/api/code/plan`, and
+    `/api/code/apply` writes whole files (`routes/code.py:516`, `:685`).
+  - `DevFiles` is read-only (`/api/files/list|read`).
+  - `DevGit` does diff, branch, commit, push and PR (`routes/code.py:286-419`).
+  - `DevDiff` (`:23716`) already renders diffs.
+  - **These components are the salon's Files and Changes tabs.** They move
+    into the panel and are not rebuilt.
+- **No chat has an artifact panel.** **VERIFIED:** there is no canvas, artifact
+  or side-panel component in `ChatSurface`. The nearest precedents are:
+  - NewsWS's 280 px side column, which holds a chat beside content;
+  - Workspace Studio's per-workspace chat (`services/workspace_studio.py:1-22`);
+  - HTML previews in iframes in Studio (`index.html:18739`, `:19012`,
+    `:19411`), with `sandbox="allow-scripts …"` on the first two.
+- **One existing iframe is unsafe.** NewsWS renders briefing HTML with
+  `srcDoc` and **no `sandbox` attribute** (`index.html:26483`), so the
+  briefing's scripts run in Friday's origin. **VERIFIED.** It is filed as a
+  separate fix and is not part of this spec's phases. It shows the failure the
+  artifact panel must be built to prevent (§4.3).
+
+### 1.2 Running code today
+
+- **`/api/vibe-code/launch` opens a real Claude Code console on the owner's
+  repo with `--dangerously-skip-permissions`** (`services/code_engine.py:45-86`).
+  It is called from Career, Futurespeak and Studio (`index.html:9674`,
+  `:14755`, `:18869`). **VERIFIED.**
+  - The environment is inherited, which contradicts FA2.
+  - `routes/code.py` calls neither `action_gate` nor `authorize`.
+  - That is defensible for the owner's own repos. It is not defensible as
+    anything a shared codebase can reach (`workspace-ecosystem.md` Phase 3
+    says the same).
+- **The existing "ClaudeCodeAdapter" is neither Claude Code nor the Agent
+  SDK.** It runs Friday's own loop and regex-scrapes file paths
+  (`services/worker_adapters/claude_code_adapter.py:1-7`, `:25`). **VERIFIED.**
+- **`services/code_sandbox.py` (789 lines) is the real sandbox, and it runs
+  Python only.** **VERIFIED**, from its own docstring `:1-44`:
+  - **Host backend:**
+    - a Low-integrity token with privileges dropped;
+    - a Job Object limited to **one process**, with memory, CPU and wall-clock
+      caps;
+    - an environment built from nothing;
+    - a temporary working folder labelled Low;
+    - output caps.
+  - **Its gaps, in its own words:**
+    - the network block is inside Python, "NOT an OS boundary";
+    - a Low process "can still READ what the owner's account can read".
+  - **So host runs are classified OUTWARD and wait for a yes**
+    (`classify`, `:118`, wired into `governance/action_gate.py:431-433`).
+  - **Windows Sandbox backend** (`build_wsb` `:635`): a disposable VM with
+    networking off. Runs there are INTERNAL. The module never turns the
+    Windows feature on.
+- **The owner's machine** (checked read-only during this pass, 2026-09-29):
+  - Windows Sandbox: **not installed** (`WindowsSandbox.exe` is absent).
+  - WSL 2 with `Ubuntu-24.04` and `docker-desktop`: **installed, stopped.**
+  - Docker 28.1.1: **installed.**
+  - Node 24.13.1: **installed.**
+  - Podman: **not installed.**
+
+### 1.3 The gate, grants, keys and meters
+
+- **One checkpoint.** `governance/action_gate.py` (809 lines) does four
+  things (`:1-25`). **VERIFIED.**
+  - It checks the cLaws HMAC pin.
+  - It classifies each action as INTERNAL or OUTWARD.
+  - It holds OUTWARD actions for a chat yes, a card or a scoped grant.
+  - It writes signed receipts to `~/.friday/decision-bom.jsonl`, and it fails
+    closed.
+- **Scoped grants already exist.** `create_grant(tools, scope,
+  expires_in_seconds, max_uses)` (`:524`), with `revoke_grant` and `_use_grant`
+  (`:546-563`). They are keyed by tool and scope.
+  - **"Trust this codebase" is a grant with `scope = codebase:<id>`.** No new
+    ledger is needed.
+- **Keys.**
+  - `services/one_key.py` holds one Anthropic or OpenRouter key per install.
+  - `services/credential_store.py` encrypts at rest.
+  - **Nothing records whose key paid for a call.** `cost_calls`
+    (`services/cost_meter.py:455-460`) has provider, model, tokens, cost,
+    workspace, kind, schedule and run columns, and no key or payer column.
+    **VERIFIED.**
+- **Seats.**
+  - `residency_arbiter.py` owns the GPU.
+  - `seat_binding.py` makes the residency plan drive `capability_routing`.
+  - `seat_transparency.py` already announces every seat change in the chat.
+    That is the precedent for the salon header naming the model and the key.
+    **VERIFIED.**
+
+### 1.4 Self-editing guards today
+
+- `/api/code/apply` runs `boot_guard.safe_mode`, then `check_self_edit` per
+  file, then `check_scope`, and refuses the whole plan if any check fails
+  (`routes/code.py:704-753`). **VERIFIED.**
+- **Gap:** `BOOT_CRITICAL` (`services/boot_guard.py:56-62`) names only
+  `server.py`, `core/__init__.py`, `agent.py`, `model_router.py` and
+  `boot_guard.py`. So `governance/action_gate.py`,
+  `governance/proof_of_integrity.py` and `services/egress_gate.py` **can be
+  written by `/api/code/apply` today.** **VERIFIED.**
+- **cLaws.**
+  - The text is `CLAWS_TEXT` (`governance/proof_of_integrity.py:42`).
+  - Its HMAC is pinned in `~/.friday/governance/claws.pin.json`
+    (`action_gate.py:77-107`).
+  - An edited text therefore *stops outward actions* rather than being
+    refused at write time.
+- **Not built.** No grow button and no worktree use exist anywhere in `src/`.
+  **VERIFIED.**
+
+### 1.5 Voice today
+
+- **Voice can do anything chat can.** `delegate_to_friday` hands a request to
+  the full agent in the background. Outward actions it takes "still raise
+  approval cards, exactly as in chat" (`services/voice_engine.py:315-326`).
+  **VERIFIED.**
+- **The limits voice has are listed, not hidden.** `voice_restrictions()`
+  (`voice_engine.py:753-797`) lists them for the Voice settings tab:
+  - the user's own settings;
+  - approval cards;
+  - the never-send list;
+  - a 20-second limit on direct tools;
+  - room-mode approvals.
+- **Private context already has a path to a cloud model**
+  (`services/local_context.py:1-38`, commit `8c4227e0`):
+  1. The local model answers from private data.
+  2. People become relationship placeholders, and identifiers become
+     numbered placeholders.
+  3. The egress floor refuses never-send material outright.
+  4. A payload card (`local_context_share`) shows the exact text and both
+     model names.
+  5. Spoken decisions count only when "the user's own latest spoken words say
+     so". In "Several people" room mode they count only when the speaker
+     names Friday.
+- **There is no general "answer this approval card by voice" tool yet.** The
+  only spoken decision tool is `answer_share_request`, for share cards.
+  **VERIFIED:** no other card-decision tool is in `voice_engine.py`. §6.3
+  depends on the voice contract to close this.
+
+---
+
+## 2. The two links: what they are, and what Friday takes from each
+
+### 2.1 LocalStack: borrow the pattern, depend on nothing
+
+**What it is** (all **VERIFIED**; sources in §14):
+
+- **The original product.** LocalStack emulated AWS services (S3, SQS, SNS,
+  DynamoDB, Lambda, Kinesis, API Gateway, CloudFormation and more) in one
+  Docker container on edge port 4566. Cloud apps could be built and tested
+  offline, with no account and no bill.
+- **Archived.** The GitHub repository was **archived on 2026-03-23**. The
+  README points to "a single, unified image".
+- **Last open release.** The last Apache-2.0 release is **v4.14.0
+  (2026-02-26)**.
+- **Now needs an account.** Since 2026.3.0, `latest` is the unified image, and
+  it requires an account and `LOCALSTACK_AUTH_TOKEN`. The temporary bypass
+  flag stopped working on 2026-04-06.
+- **Licence.** The README now lists Apache-2.0 **plus an EULA**.
+- **Free plan.** The free "Hobby" plan is for non-commercial use only.
+
+**What that means for Friday.**
+
+- **Friday cannot bundle it or depend on it.** Friday is distributed to other
+  people. The current image needs an account and a token, which is a phone
+  home, and its licence terms change what users may do. The frozen v4.14.0
+  image is legally usable but gets no security fixes, so it is not a
+  foundation.
+- **The lesson is worth more than the product: an app under construction
+  should never need the real cloud.** LocalStack's real idea is that
+  everything an app calls out to has a local stand-in at a known address, so
+  the whole app runs and is tested on your machine. For a vibe-coded app that
+  matters three times over:
+  - **Privacy.** The app's test traffic never leaves the machine.
+  - **Money.** No cloud bill while you iterate.
+  - **Safety.** A bug in half-built code can't email real people or write to
+    a real bucket.
+
+**What Friday builds: the backstage (§4.6).** Each codebase gets local
+stand-ins for storage, a database, a queue, email, auth and key-value storage.
+They are Friday's own small shims where that is enough, and openly licensed
+tools where it isn't:
+
+- moto server (Apache-2.0, active) for AWS APIs;
+- Mailpit (MIT) for email capture;
+- Azurite (MIT) for Azure storage.
+
+MinIO is out: its repository says it is no longer maintained, and it ships
+source only. **LocalStack is offered only as an optional target the user
+installs themselves**, under their own account and their own agreement, for a
+project that is headed to AWS anyway. Friday detects it and points the
+backstage at it. Friday never installs it.
+
+### 2.2 NVIDIA OpenShell: copy the policy model now, adopt the runtime only past a gate
+
+**What it is** (all **VERIFIED** unless marked; sources in §14):
+
+- **Maturity.** Apache-2.0 and active, about 10.6k stars. The latest stable
+  release is **v0.1.2 (2026-09-28)**, with roughly weekly releases. Some APIs
+  are marked experimental. The earlier "0.1.0 coming soon" description is out
+  of date.
+- **Architecture.**
+  - A **gateway** control plane handles sandbox lifecycle, policy delivery
+    and credentials, using per-sandbox JWTs.
+  - A **supervisor** inside each sandbox mediates everything over an
+    authenticated protocol.
+- **Backends:** Docker, Podman, Kubernetes and a libkrun MicroVM.
+- **Isolation.**
+  - Landlock covers the filesystem.
+  - seccomp user-notification stages network calls.
+  - An outer network fence blocks everything except the path to the
+    supervisor.
+- **Policy is YAML with five sections:** `filesystem_policy`, `landlock`,
+  `process`, `network_policies` and `network_middlewares`.
+  - **Egress is denied by default.**
+  - The filesystem and process sections are fixed at creation. The network
+    sections reload live.
+  - An endpoint rule names host, port, protocol and enforcement. It then
+    either grants `access: read-only | full` or lists `rules` with method and
+    path globs.
+  - **Rules are bound to specific binaries**, for example "curl may GET
+    api.github.com".
+- **A policy prover** checks a proposed change with an SMT solver before
+  applying it. The solver is **UNKNOWN**.
+- **Credentials are injected at the proxy.** The docs say agents "never see
+  real credentials", and credentials only go to their approved endpoints.
+- **SDKs:** Python, TypeScript, Go and Rust.
+- **Platforms.** Linux and Apple Silicon are supported. **Windows works only
+  through WSL 2 plus Docker Desktop, marked experimental.**
+- **Telemetry is on by default.** Anonymous operational metrics are sent, and
+  the README lists what they exclude. Opting out takes
+  `OPENSHELL_TELEMETRY_ENABLED=false` on the gateway. Where the data goes is
+  **UNKNOWN**.
+
+**How closely it maps onto Friday** (**INFERRED**, rule by rule):
+
+| OpenShell | Friday today | In the salon |
+|---|---|---|
+| deny-by-default egress | OUTWARD actions wait (`action_gate`) | the box's network goes through one proxy. What it allows by default is decision 1 |
+| network policy edited live | scoped grants (`create_grant`) | **an approval card is a policy edit**: "allow" writes a rule, "trust this codebase" writes a grant-scoped rule, revoke deletes it. No box restarts |
+| method + path rules | the two questions: *does data leave?* and *does it change anything outside?* | GET, HEAD and OPTIONS answer "reads". POST, PUT, PATCH and DELETE answer "changes something outside". Friday's existing cards ask about the second (§4.5) |
+| rules bound to binaries | none | rules bound to the **codebase** and to its **tool** (npm, pip, the app itself, the coding agent) |
+| credentials injected at the proxy | the vault never enters a subprocess (FA2), and the broker pattern (`grow-button.md` §7.6) | **the model API key is injected at Friday's proxy.** The coding agent in the box never holds it (§4.7) |
+| a policy prover before a change | none | a deterministic check that a new rule never widens past the cLaws floor (§4.5). A solver is not needed at this size |
+
+**The verdict: both, in that order.**
+
+1. **Copy the pattern now.** The salon's policy file (§4.5) uses OpenShell's
+   vocabulary and shape: network endpoints, method and path rules, a subject,
+   and live-reloadable network sections. A later OpenShell backend then reads
+   it with a mechanical translation. Friday's own proxy enforces it on every
+   box tier, including those OpenShell cannot run on.
+2. **Offer OpenShell as a box backend only once it passes a gate** (spike S3,
+   §10):
+   - it runs on the owner's WSL 2 + Docker Desktop;
+   - telemetry is off and is **proven off by a packet capture** during a full
+     session, because "no telemetry, ever" is a rule and not a preference;
+   - its Windows support is no longer marked experimental, or the spike shows
+     it is stable here anyway;
+   - its network policy can be driven from Friday's grant ledger through the
+     SDK.
+
+   Until then Friday's own WSL 2 container backend fills that slot. **It is
+   never a default and never required**, because a new Windows user without
+   WSL 2 must still get a working salon (§4.4).
+
+---
+
+## 3. STORM: questioning it from six perspectives
+
+Each perspective asked its hardest questions of the proposed shape. The
+answers changed the design, and §3.7 says how.
+
+### 3.1 The Replit / Codespaces product lead
+
+- *"What is the loop, in seconds?"* Replit's lesson is that the product *is*
+  the preview refresh: type, see it change, keep going. A salon whose preview
+  needs a container start on every change loses to a browser tab. **So the
+  default tier must need no process at all.** It should be a sandboxed iframe
+  that renders the app directly, as chat artifacts do elsewhere. Heavier
+  tiers are for codebases that genuinely need a server.
+- *"Checkpoints, not commits, in the user's vocabulary."* Replit's Agent
+  checkpoints every step and offers rollback. Git is the right storage.
+  "Commit" is the wrong word for a journalist, so the UI says **step** and
+  **undo**, and the Changes tab shows plain-language summaries over the git
+  log.
+- *"Where do secrets go?"* Replit and Codespaces both have a Secrets pane
+  whose values become environment variables in the container. The salon must
+  **not** copy that: an environment variable is exactly what a coding agent,
+  a postinstall script or a crash log leaks. Secrets stay at the proxy
+  (§4.7).
+- *"How is the environment declared?"* Codespaces uses `devcontainer.json`.
+  The container tier honours an existing `devcontainer.json` rather than
+  inventing a format, and the other tiers ignore it.
+
+### 3.2 The sandbox security engineer
+
+- *"Which of your boxes does Windows actually enforce?"* This is the
+  question that shaped §4.4. Only the VM-backed boxes enforce both reads and
+  network: Windows Sandbox, a WSL 2 container, or a WHP microVM. **The browser
+  iframe enforces too**, because the browser is the boundary: an opaque origin
+  plus CSP. The host Low-integrity box enforces *writes* but not reads, and
+  not the network for anything other than Python. `code_sandbox.py` already
+  says so.
+- *"Your proxy is only a boundary if the box can't go around it."* True in a
+  VM or container with a network fence. False in the host box, where Node
+  ignores proxy environment variables whenever it likes. So the host box is
+  never described as network-fenced, and the UI says so plainly.
+- *"The preview is a web page on loopback, and Friday trusts loopback."*
+  This is the sharpest point in the review.
+  - Friday authenticates any request from 127.0.0.1
+    (`core/__init__.py:579-680`), and a grep of `src/` finds **no Origin or
+    Sec-Fetch-Site check** (**VERIFIED**).
+  - A preview served from a dev server at `127.0.0.1:5173` is a different
+    origin, but its requests come *from loopback*. Whether it can make a
+    state-changing call to Friday depends on which routes accept a
+    CORS-simple request. That is **UNKNOWN**, and a separate investigation is
+    filed.
+  - **Either way, the salon may not ship a server-backed preview until
+    Friday refuses cross-site state-changing requests.** This is a
+    prerequisite of Phase 4, and it protects every other tab the user has
+    open too.
+- *"What stops an install script?"* npm and pip run arbitrary code at
+  install time. These controls apply in the tier the codebase runs in:
+  - the deterministic scan plus the read-only reviewer (the queued
+    SkillScan-style pattern);
+  - the 24-hour cooldown from `workspace-ecosystem.md` §4.5;
+  - exact pins (FA12).
+
+  In the host box, install scripts are off (`--ignore-scripts`), because
+  nothing else there would contain them.
+
+### 3.3 The OpenShell maintainer
+
+- *"Don't fork our policy language; target it."* Accepted. The salon's
+  policy file uses OpenShell's section names for network rules and keeps
+  Friday's additions (codebase subject, grant id, expiry) in a namespaced
+  block that a translator drops.
+- *"Credentials at the proxy is the feature. Don't regress it by passing the
+  key in an env var 'just for the SDK'."* Accepted, and it applies to Claude's
+  own coding agent too. The agent in the box points its API base URL at
+  Friday's proxy. The proxy adds the key header on the way out, for that host
+  only (§4.7).
+- *"Windows through WSL is experimental for a reason."* Also accepted. The
+  maintainer cannot promise Windows today, so Friday does not either.
+
+### 3.4 The LocalStack user
+
+- *"The reason I used LocalStack was that my tests never hit AWS, not
+  emulation fidelity."* So the backstage aims for the handful of calls a
+  vibe-coded app actually makes: put and get a file, a row, a queue message,
+  an email and a login. It does not aim for API completeness. Fidelity past
+  that is what moto server, or a user-installed LocalStack, is for.
+- *"The day LocalStack needed a token, my CI broke."* This is the argument
+  for depending only on stand-ins Friday can run with no account, and for
+  keeping a stand-in behind an address the app reads from configuration. The
+  backend behind that address can then change without touching the app.
+- *"Tell me when I'm about to hit the real thing."* "Go live", meaning
+  swapping a stand-in address for a real endpoint, is an outward change. It
+  gets a card that names each service being switched.
+
+### 3.5 The non-engineer creator (a journalist)
+
+- *"I don't know what a diff is, and I shouldn't have to."* The Changes tab
+  leads with Friday's one-line summary of each step, then the before and
+  after preview. The code diff is one click further in.
+- *"I'll mostly be talking, not typing."* This is §6. It has to work without
+  looking at the screen, and it has to say so when looking would help.
+- *"My sources' names can never end up in someone else's model."* This is
+  §6.4. Private data is summarized locally before any cloud model sees
+  anything, and the payload card shows exactly what goes.
+- *"What did this cost me?"* The header shows the running total for this
+  codebase in dollars, and whose dollars.
+- *"Can I just say 'build me a tracker for my FOIA requests'?"* Yes. That is
+  "+ Codebase" with a template, and the first preview appears within one
+  turn.
+
+### 3.6 The federation-market reviewer
+
+- *"What are you actually selling?"* Nothing. The owner decided on
+  2026-09-22 that positrons are proven value, negatrons are measured adoption
+  cost and flags are a separate signed channel. There is no price.
+  (`avatar-visual-genome.md` Appendix A.)
+- *"Who measures the negatrons?"* The installer, on the adopting machine,
+  signed. For a workspace that means its bundle size, its brokered token use
+  per week and its permissions, all measured through the broker's audit log.
+  This settles `workspace-ecosystem.md` §4.6's "cost to run" in favour of the
+  owner's decision: running cost is one of the measured adoption costs.
+- *"Your federation handshake can't fail."* Correct.
+  `_verify_peer_card` still falls through on a failed signature
+  (`workspace-ecosystem.md` §3). Federation is also deferred. **Sharing ships
+  as a signed file first (Phase 8), and federation sharing waits on that fix
+  being a prerequisite.**
+- *"Agents will flood the queue."* Every version gets a machine review. Human
+  review is narrowed to what gets flagged. `authored_by_agent` is shown as a
+  byline, not as a warning.
+
+### 3.7 Synthesis: what the questioning changed
+
+1. **The default box is the browser.** The panel renders in a sandboxed,
+   opaque-origin iframe with a strict CSP (§4.3). That tier needs no process
+   and no install, and the browser enforces it. Most of what the owner will
+   build lives there: single-file apps, charts, tables, and workspace bundles
+   (which `workspace-ecosystem.md` already defines as one HTML file).
+2. **Server-backed codebases get a VM-backed box where one exists.** Where
+   none exists they get the host box, and Friday says plainly what the host
+   box cannot guarantee (§4.4).
+3. **Policy is OpenShell-shaped from day one.** OpenShell itself arrives
+   later, behind a gate.
+4. **Keys live at the proxy, never in the box**, and that includes the key
+   of Claude's own coding agent.
+5. **The backstage replaces the cloud during development.** Going live is an
+   outward card.
+6. **Cross-site protection for Friday's own API is a prerequisite** for any
+   server-backed preview.
+7. **Voice is a peer surface, not an afterthought.** Private data crosses to
+   a cloud model only as a local summary, through machinery that already
+   exists (`local_context.py`) and the voice contract now being published.
+
+---
+
+## 4. Design
+
+### 4.1 One idea, two depths
+
+- **The artifact panel** (Phase 1) belongs to *every* chat. It holds things
+  a model made that are better seen than read.
+- **The codebase chat** (Phases 2–5) is a chat whose panel is bound to a
+  codebase: a git repository plus a box. Its panel adds Preview, Files and
+  Changes.
+
+The codebase chat is the artifact panel with a repository behind it. Nothing
+in Phase 1 is thrown away later.
+
+### 4.2 The artifact panel
+
+**What it shows.** An artifact has a `kind`:
+
+| kind | Rendered by | Notes |
+|---|---|---|
+| `markdown` | `FridayDoc`, the existing renderer | drafts, notes and letters, editable in place |
+| `table` | a sortable table from rows plus a schema | exported as CSV |
+| `chart` | a chart from rows plus a spec | the chart library is chosen in Phase 1 from what `index.html` already loads |
+| `html` | the sandboxed frame (§4.3) | small apps and mockups |
+| `diff` | `DevDiff` | also used by the Changes tab |
+| `image` / `svg` | `<img>`, with SVG sanitised or framed | |
+
+**How a model makes one.** It uses one tool:
+
+```
+artifact_put(conversation_id, artifact_id?, kind, title, content, meta)
+```
+
+It creates or updates the artifact, and every update is a new version. The
+tool is `INTERNAL` for the gate, because it writes only to Friday's own
+output store.
+
+- **Local models without reliable tool calls** can emit a fenced
+  ```` ```friday-artifact ```` block instead. The server parses it into the
+  same call. This is the pattern `workspace_studio`'s ```` ```friday-customize ````
+  block already uses.
+- **The artifact tool is in the always-resident tool set only when the panel
+  is enabled.** Its schema is small (about 150 tokens, **INFERRED** from the
+  other tools of that shape). `tool_catalogue.ALWAYS_RESIDENT` is where it
+  goes.
+
+**Where it lives.**
+
+- Artifacts are stored at
+  `~/.friday/artifacts/<conversation_id>/<artifact_id>/v<N>.json`, encrypted
+  at rest like conversations.
+- **Off the record means nothing is written.** `off_record.py` is asked
+  before every write, as every other store asks it. Artifacts in an
+  off-the-record chat live in memory and are gone when it ends.
+- Versions are kept, never overwritten. The panel's timeline scrubs through
+  them, and "restore" makes a new version.
+
+**Editing in the panel.**
+
+- A `markdown` artifact is editable by hand.
+- A `table` artifact's cells are editable.
+- A hand edit is a new version authored by "you". Friday sees it on her next
+  turn as a diff. That matters because the model must know the user changed
+  something before it edits again.
+
+**Where it appears.**
+
+- On the right of `ChatSurface`, collapsible, remembering its width. In a
+  narrow window it becomes a tab over the chat.
+- It opens by itself on the first `artifact_put` of a turn. An artifact
+  message in the transcript reopens it.
+- It works in the docked chat and in chat windows, because both are
+  `ChatSurface`.
+- **Maximized tabs** (the work in progress) give the panel its own browser
+  tab. **Item actions** add "Open in panel" to any item that can be an
+  artifact, such as a note, a wiki page or a CSV in Files.
+
+`index.html` and `ui_parts/app.html` both change, per `AGENTS.md`.
+
+### 4.3 The frame: the browser as the first box
+
+This is the one mechanism that makes an `html` artifact and a static codebase
+preview safe. It is `workspace-ecosystem.md` §4.3, used unchanged.
+
+```html
+<iframe sandbox="allow-scripts" srcdoc="…"></iframe>
+```
+
+- **`allow-scripts` without `allow-same-origin` gives the frame an opaque
+  origin.** The frame has no cookies, no storage shared with Friday, no reach
+  into Friday's DOM, and no same-origin fetch.
+- **A CSP inside `srcdoc`** sets:
+  - `default-src 'none'`;
+  - `script-src` and `style-src` to `'unsafe-inline'` plus the salon's
+    package CDN host (below);
+  - `connect-src` to nothing, or to the codebase's backstage relay (§4.6);
+  - `img-src` to `data:` and `blob:`;
+  - `form-action 'none'`.
+- **Everything else crosses by `postMessage` to the broker**
+  (`workspace-ecosystem.md` §4.4). There is one broker for workspace bundles
+  and artifacts, with one audit log.
+- **Packages for frame apps come from one pinned CDN host.** Friday rewrites
+  imports to exact versions, which is FA12 in URL form. Examples are React,
+  a chart library, or a small CSS framework.
+  - The 24-hour cooldown applies to the version chosen.
+  - The CDN host is the one network hole a frame has. It is named on the
+    codebase's policy (§4.5) like any other endpoint.
+- **Build tools run in the frame too.** esbuild-wasm (MIT) can bundle JSX in
+  the browser, so a React app can be built with nothing installed on the
+  host. **INFERRED** from its documented browser build. Spike S1 confirms it
+  on the owner's machine.
+
+The frame is the default box for every codebase whose template does not need
+a server. Friday picks the tier from the template and says which one she
+picked.
+
+### 4.4 The box tiers
+
+| Tier | What | Enforced by | Reads your files? | Network fenced? | Needs |
+|---|---|---|---|---|---|
+| **B0: frame** | the app runs in the sandboxed iframe | the browser | no | yes, by CSP | nothing |
+| **B1: host** | build tools and dev servers as Low-integrity processes in a Job Object, with a scrubbed environment and a Low-labelled folder | Windows (writes only) | **yes** | **no** (proxy variables only) | nothing |
+| **B2: VM** | a container in WSL 2 (Docker or Podman), or Windows Sandbox, or a WHP microVM (microsandbox, Apache-2.0) | the hypervisor | no, only the codebase folder is mapped | yes, the only route out is Friday's proxy | one of: WSL 2, Windows Sandbox, WHP. **Friday never turns a Windows feature on** |
+| **B2-OS: OpenShell** | OpenShell on WSL 2 + Docker, fed the salon policy | OpenShell plus the hypervisor | no | yes | past the §2.2 gate |
+
+**How Friday picks a tier** (an engineering call):
+
+1. **B0** when the template needs no server. This is the default for new
+   codebases, artifacts and workspace bundles.
+2. **B2** when the codebase needs processes and a VM backend is present. The
+   first time, Friday says which one, and offers to switch.
+3. **B1** when the codebase needs processes and no VM backend is present.
+   - **Proceed, disclose, offer.** Friday runs it and says, once per
+     codebase and in plain words: "This runs on your PC without a wall
+     around your files or the network. Code here could read your documents.
+     Installing WSL would give it a real wall. Want the steps?"
+   - Package install scripts are off in B1 (`--ignore-scripts`, and
+     `pip install --only-binary :all:` where that works).
+   - B1 never receives the private data of §6.4. That data goes to B2 or
+     stays out.
+   - This is not a restriction on the user. B1 simply cannot make the
+     promise, so it does not claim to.
+
+**B1 is `code_sandbox.py` generalised, not rewritten.** Its Low-token and
+Job Object code is reused. The Job Object's one-process limit becomes a
+per-codebase process cap, because `npm run dev` starts Node, which starts
+esbuild. The classification stays OUTWARD in the gate's terms. With a
+"trust this codebase" grant, the grant is what makes it quiet.
+
+**Why not AppContainer for B1?** An AppContainer process can't read the
+user's profile and has no network unless given a capability. That makes it
+the obvious native Windows box. But whether Node, npm and a dev server run in
+one without admin rights, and whether Friday's iframe can reach a server
+inside it, are both **UNKNOWN**. Loopback into and out of an AppContainer is
+blocked by default, and the exemption tool needs admin. Spike S2 answers it.
+If the answer is yes, AppContainer replaces the Low token as B1, and B1 gains
+"no, doesn't read your files".
+
+**The copy of Friday (§7) always runs in B1 on a dev checkout.** It has to,
+because it needs the owner's Python environment. It is contained by a fixture
+home instead (§7.2).
+
+### 4.5 Network, installs and the policy file
+
+**One proxy.** Every box tier's outbound traffic goes through a Friday-run
+HTTP(S) proxy, the **salon proxy**. The one exception is B1, where it is
+advisory. The salon proxy is a small, separate module, not part of
+`egress_gate.py`: the box's traffic is the app's own traffic, not Friday's
+context. It is where:
+
+- policy is enforced, per codebase, per tool, per host, method and path;
+- credentials are injected (§4.7);
+- every request is logged per codebase, to the same audit log the broker
+  uses;
+- **an approval card becomes a policy edit.** Allow, trust and revoke change
+  the live policy with no box restart.
+
+**The policy file.** It lives at `~/.friday/codebases/<id>/policy.yaml`, is
+written by Friday, and is shown in the Files tab.
+
+```yaml
+version: 1
+network_policies:            # OpenShell's section name and shape
+  package_registry:
+    endpoints:
+      - host: registry.npmjs.org
+        port: 443
+        protocol: rest
+        access: read-only    # GET/HEAD only
+  github_read:
+    endpoints:
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        rules:
+          - allow: { method: GET, path: "/repos/**" }
+x-friday:                    # dropped by the OpenShell translator
+  codebase: rent-tracker
+  subjects: { package_registry: [npm], github_read: [app] }
+  grants: { github_read: "grant_7f3a…" }   # action_gate grant id, expiry lives there
+  default_posture: announce  # decision 1: announce | ask
+```
+
+**What happens with no rule** depends on decision 1. Under the recommended
+`announce` posture:
+
+| Request | Answers which question | Default |
+|---|---|---|
+| GET, HEAD or OPTIONS to any host | "does data leave?" Only what is in the URL. The proxy refuses URLs over 2 KB and query strings holding anything the sensitivity classifier flags | **go ahead and announce** (a line in the chat, "fetched api.weather.gov", and a receipt entry) |
+| package install from npm, PyPI or crates.io | a GET, plus code that will run | **go ahead after the scan and cooldown, and announce** |
+| POST, PUT, PATCH or DELETE to a host other than the backstage | "does it change anything outside?" | **ask**, as every outward action in Friday already does. The card becomes a rule |
+| anything to Friday's own port | none | **refused**, always. The box never talks to Friday except through the broker |
+| anything carrying a value from the box's private data (§6.4) | "does private data leave?" | **refused unless the owner approves that exact payload.** This reuses the `local_context_share` card |
+
+Under `ask`, everything without a rule asks. That is the OpenShell default.
+
+**The floor no grant can widen.** A deterministic check runs before any rule
+is written. It is the salon's small "prover".
+
+- No rule may allow Friday's port.
+- No rule may allow a host on the never-send list.
+- No rule may inject a credential into a request to a host other than the
+  one it is bound to.
+- No grant may cover the loud approvals of §7.4.
+
+**Installs.** An install is announced like any other network event. Before
+it happens, Friday runs:
+
+1. the exact pin, since a lockfile is always written;
+2. the 24-hour cooldown (`workspace-ecosystem.md` §4.5), which offers the
+   previous qualifying version;
+3. the deterministic scan (the queued SkillScan-style checks: install
+   scripts, obfuscation, network calls at import, typosquat distance);
+4. a read-only reviewer model pass, **only when the scan flags something**.
+
+A scan failure is not a restriction. It is the harm-floor equivalent for
+code, like the existing egress floor: the package is not installed, and the
+chat says why and offers an alternative. The user can override a
+scan-flagged install explicitly. That records a signed override and cannot be
+done by a grant.
+
+**Owner rules apply.** "Ask me before any install in Rent Tracker" is an
+owner rule (`owner-rules-and-anomaly-detection.md`). It can only add caution,
+which is how a user "explicitly sets" a restriction.
+
+### 4.6 The backstage: local stand-ins for the cloud
+
+Each codebase gets a `.friday/backstage.json` that maps service names to
+local addresses. The app reads its service URLs from configuration. The
+templates generate code that does, and Friday's instructions for the
+codebase say so.
+
+| Service | Stand-in | Licence | Windows without Docker |
+|---|---|---|---|
+| file storage (S3-shaped) | Friday's own small S3-subset shim (put, get, list, delete on a folder), or moto server when full S3 behaviour matters | own code / Apache-2.0 | yes / yes (pip) |
+| database | SQLite. Postgres through PGlite in B0/B1 (licence **UNKNOWN**, checked in Phase 5) or a Postgres container in B2 | public domain / — | yes / B2 only |
+| queue | a SQLite-backed queue in the shim | own code | yes |
+| email | Mailpit. It captures every message, sends none, and shows them in a web UI the panel can embed | MIT | **UNKNOWN** (a Go binary; Windows builds not checked) |
+| auth | a local login stub with fake users generated per codebase | own code | yes |
+| key-value | the shim | own code | yes |
+| AWS APIs beyond the shim | moto server | Apache-2.0 | yes |
+| Azure storage | Azurite | MIT | yes (npm) |
+| AWS, full fidelity | LocalStack, **user-installed only** | Apache-2.0 + EULA; needs an account | Docker |
+
+**Stand-ins with any telemetry run with it off, and Phase 5 verifies each
+with a capture.** A stand-in Friday cannot silence is not shipped.
+
+**"Go live"** swaps one or more stand-in addresses for real endpoints and
+real credentials. It is an outward card that names each service and each
+credential. Going back to stand-ins is one click and needs no card.
+
+### 4.7 Seats, keys and meters
+
+**The codebase header** is one line, always visible in the panel. For
+example:
+
+> Rent Tracker · **Bonsai2 (this PC)** for small edits · **Opus 5.5** for
+> big ones · **your Anthropic key** · this codebase: $1.84
+
+It changes the instant any of those changes. That uses the
+`seat_transparency.py` rule, "any change produces a visible line", applied
+per codebase.
+
+**Seats per codebase.** A codebase has a small routing record:
+
+- `small_edit_seat`: default is the resident local brain.
+- `heavy_seat`: default is none until the user picks one. It is offered on
+  the first change the local seat struggles with.
+- `engine`: `friday` (Friday's own agent loop) or `claude_agent` (Claude's
+  agent tooling running *inside the box*).
+
+A "small edit" is decided by Friday's router from the request and the diff
+size. The route taken is shown on each step ("edited by Bonsai2").
+
+**Whose key.** A codebase names a **key profile**:
+
+- `mine`, which is `one_key` or the credential store's existing key; or
+- a **guest key**: another party's key, stored in the credential store under
+  `codebase:<id>`. It is usable only by that codebase's calls, and removable
+  in one click. Removal deletes it and shows that it is deleted.
+
+**The proxy injects the key.**
+
+- The Claude agent in the box gets `ANTHROPIC_BASE_URL` pointed at the salon
+  proxy and a dummy key. The proxy swaps the dummy for the real key header,
+  only on requests to the provider's host.
+- The key is never in the box's environment, files or logs. That is FA2
+  made structural, not just promised.
+
+**Metering.**
+
+- `cost_calls` gains `key_profile` and `codebase` columns, added by
+  migration as the cache columns were (`cost_meter.py:463-470`).
+- Costs can then show "your key" and "Alex's key, Rent Tracker" separately.
+- A guest key can carry the payer's own cap, which is a limit the user set.
+  Friday adds none of her own.
+
+**When no local model is resident** (a cloud-only laptop), the small-edit
+seat is the heavy seat. The header says so. It does not pretend a local model
+is working.
+
+### 4.8 Every change is a step
+
+- A codebase is a git repository at `~/.friday/codebases/<id>/repo/`, or an
+  existing folder the user points at. An existing folder gets a salon branch
+  rather than commits on its current branch.
+- **Every applied change is a commit**, with an author line naming the model
+  and the key profile, and a one-line summary Friday writes for people.
+- **Undo** is `git revert` of the last step, and it is itself a step. It
+  walks backwards and does not oscillate. This is the defect
+  `workspace-ecosystem.md` §3 found in `undo_last`, not repeated here.
+- **Every step ends in a delivery receipt** (`goals-and-delivery-receipts.md`
+  §5). The receipt holds:
+  - files written, with hashes;
+  - the commit sha;
+  - tests run and their results;
+  - the preview screenshot hash;
+  - network events;
+  - model, key and cost.
+
+  Friday may not say "done" unless the receipt shows it.
+- **Long sessions** rely on the context compression now on main
+  (`services/compaction.py`). **Resuming after a crash** relies on the task
+  ledger (`services/task_ledger.py`, `task_resume.py`). A codebase chat is a
+  task-ledger run like any other.
+
+### 4.9 Workspaces are made here
+
+- **"+ Codebase → New workspace"** starts from the bundle template of
+  `workspace-ecosystem.md` §4.2: `manifest.json`, one `index.html`, and an
+  icon. It runs in B0.
+- **Installing** puts the bundle through the Phase-2 host of that spec:
+  installed means disabled, a broker controls access, and every call is
+  audited.
+- **"Improve this workspace"** is an item action on any workspace.
+  - For a **bundle**, it opens the bundle's codebase.
+  - For a **native** workspace (the React components in `index.html`), it
+    opens a codebase on Friday's *own* source, which is §7. That is where
+    native workspaces are improved, never in place.
+- Today's `workspace_studio` restyling (CSS, accent, density, hidden, actions)
+  keeps working. It is the light path, and the salon is the full one.
+
+### 4.10 Sharing
+
+The order is exactly that of `workspace-ecosystem.md` Phases 4–5, with the
+owner's ratings model:
+
+1. **Export and import a signed bundle as a file.** Installed means disabled,
+   with a cooldown, and consent is asked again whenever capabilities widen.
+2. **Federation sharing** comes once federation is switched back on and
+   `_verify_peer_card` rejects on failure.
+3. **Market cards** show positrons (retained installs and endorsements),
+   negatrons (installer-measured and signed: bundle size, permissions, and
+   brokered tokens per week) and flags (separate, signed, weighted). There is
+   no blended score and no price.
+
+The follow-up list in `avatar-visual-genome.md` Appendix A, which covers code
+where ψ and η still mean the old things, applies unchanged. It is not
+duplicated here.
+
+---
+
+## 5. UI, using existing elements first
+
+| Surface | Change | Existing element |
+|---|---|---|
+| Chat sidebar | "+ Codebase" after "+ Project" | `ChatSidebar` `:42863` |
+| Chat | the right-hand panel | `ChatSurface`, `FWin` |
+| Panel tabs (codebase) | Preview · Files · Changes · Backstage | `DevFiles`, `DevDiff`, `DevGit`, moved in |
+| Code workspace | Repos, Git and Procs stay. "Vibe" becomes "open in salon" | `CODE_TABS` |
+| Header line | model · key · cost | the `seat_transparency` system line style |
+| Cards | install, network and go-live cards, each with a spoken form (§6.3) | the approval card popup, drawer and System list |
+| Settings → Salon | default posture, default seats, guest keys, box backend | the Settings `TABS` array **and** its matching branch (the documented two-place edit) |
+| Costs | split by key profile and codebase | the Costs view |
+
+**What the Preview tab adds:**
+
+- a reload button;
+- a width switcher (phone, tablet, desktop);
+- an "open in its own tab" button (maximized tabs);
+- a **"describe it"** button, which is the same action as the spoken "what
+  does it look like?" (§6.5).
+
+---
+
+## 6. Voice-first
+
+The owner's rule is **"no restrictions unless the user explicitly sets
+them."** Everything in the salon works by voice. Where a screen genuinely
+helps, Friday says so and still tries.
+
+This section **uses** two pieces being published by the voice work and
+designs neither:
+
+- **The voice contract.** How a spoken request becomes an action, how
+  progress and results are spoken, and how a spoken decision on a card is
+  recognised.
+- **The private-summary handoff.** How the local model summarizes private
+  data without PII before a cloud model receives anything.
+
+Where this section needs something from them, it names the need (§6.6). It
+does not fill the gap itself.
+
+### 6.1 Which codebase you mean
+
+A spoken salon command applies to the **codebase in focus**:
+
+1. the one named ("in Rent Tracker, …");
+2. otherwise, the codebase chat that was last active, on screen or by voice;
+3. otherwise, Friday asks "Which one: Rent Tracker or the FOIA log?" She
+   never guesses between two.
+
+Friday says the codebase name back at the start of her first reply in a
+session ("In Rent Tracker: …"), so a wrong target is caught in one sentence.
+
+### 6.2 Vibe coding by voice
+
+The voice model does not edit code. It hands the request to the salon
+through `delegate_to_friday`, with the codebase in scope, exactly as voice
+hands any substantial request to Friday today. Short results are spoken back
+under the voice contract.
+
+| You say | What happens | Card? |
+|---|---|---|
+| "Make the header bigger." | an edit turn on the codebase in focus → a step → the preview reloads → "Done. The header's 40% bigger. Want it bolder too?" | no (inside the box) |
+| "Undo that." / "Go back two." | revert the last step or two → "Back to before the header change." | no |
+| "Ship it to the preview." / "Show me." | rebuild, reload, and open the panel on screen (`navigate_to`) | no |
+| "What changed?" | the last step's one-line summary. "And before that?" walks back | no |
+| "Read me the diff." | a spoken summary per file. "Line by line" reads it, with a note that the screen is easier (§6.5) | no |
+| "What does it look like?" | a description of the preview (§6.5) | no, unless the describing model is cloud and the preview shows private data (§6.4) |
+| "Add a login." / "Store this in a database." | an edit that uses the backstage (§4.6) | no |
+| "Install a date picker." | the install flow, announced: "Installed react-day-picker 9.4.0; it's two months old and the scan was clean." | only under the `ask` posture |
+| "Let it talk to the weather API." | a GET rule, announced | only under `ask` |
+| "Post the results to my Slack." | a POST to an outside host | **yes** (§6.3) |
+| "Go live." / "Publish it." | outward | **yes** |
+| "Trust this codebase." | a scoped grant, read back first: "Rent Tracker can then post to any host without asking, until you say stop. Sure?" | it *is* the card |
+| "Use Opus for this one." / "Use Alex's key." | the seat or key profile changes and the header line changes, spoken: "Switching to Opus 5.5 on Alex's key." | no. It is the user's choice, disclosed |
+| "How much has this cost?" | the codebase total, split by key | no |
+
+**Progress is spoken as short lines**, under the voice contract's pacing,
+not as a stream of narration: "Editing two files." then "Tests pass."
+
+A long change (more than about 20 seconds) runs in the background, as
+`delegate_to_friday` already does. The outcome is handed back when it is
+done, whether or not the conversation has moved on.
+
+### 6.3 Cards read aloud, and answered by voice
+
+**Every salon card has a spoken form.** It is at most two sentences: *what,
+where, why*, and *how to answer*.
+
+- **Install (only under `ask`, or when scan-flagged):** "Install
+  left-pad-plus 1.0.2 into Rent Tracker? The scan flagged an install script
+  that downloads a file. Say 'Friday, install it anyway' or 'no'."
+- **Network write:** "Rent Tracker wants to POST to hooks.slack.com, path
+  /services/… — the results table. Say 'Friday, allow it once', 'always for
+  this codebase', or 'no'."
+- **Go live:** "Switch Rent Tracker's email from the practice mailbox to
+  your real SendGrid account? Real emails would go to real people. Say
+  'Friday, go live' or 'not yet'."
+- **Private-data share:** this is the existing `local_context_share` card,
+  spoken as it already is.
+
+**Answering.** The recognition rules are the ones that already govern share
+cards (`local_context.py:33-38`), carried into the voice contract for every
+card kind:
+
+- **Only the owner's own latest transcribed words count.** The cloud model
+  cannot approve its own request.
+- **In "Several people" mode, the answer must name Friday** ("Friday, allow
+  it"), because voices are not yet told apart.
+- **"Once", "always for this codebase" and "no" map to** a one-use grant, a
+  `codebase:<id>` grant, and a decline.
+- **The decision is executed once, by the existing approval executor, and
+  the card disappears from every tab.**
+
+A card raised during a voice session also appears on screen, as every card
+does. Answering in either place settles it.
+
+### 6.4 Private data: summarized locally before any cloud model sees it
+
+The owner's rule: *"Voice mode should be able to fire workflows that involve
+the local model too, in the event that private info needs to be summarized
+without any PII."* In the salon it applies to every surface, not only voice.
+
+**What counts as private.** In a codebase, private means:
+
+- anything imported from the vault, the wiki, mail, calendar or contacts;
+- any file the sensitivity classifier (`services/sensitivity_classifier.py`)
+  marks above the cloud tier;
+- any file the user marks private in the Files tab.
+
+These files are flagged in the codebase's `.friday/private.json`, and the
+flag travels with the file through renames.
+
+**What the cloud model gets instead:**
+
+1. **The shape, from the local model**, through the private-summary handoff.
+   That is the file's structure (columns and types, or headings), counts, and
+   a description of what the data is *for*, with every person and identifier
+   replaced by the placeholder rules in `local_context.py`.
+2. **Synthetic rows**, generated locally to match the shape, containing no
+   real values. The cloud model builds and tests the app against these.
+3. **The payload card first**, unless a conversation-scoped grant covers it.
+   It shows the exact summary and the synthetic sample that will be sent,
+   and both model names (`local_context_share`, unchanged).
+
+**The real data is used only where the app runs.** That means in a box on
+this machine, in B0 or B2, never B1 (§4.4). It is also never sent anywhere
+by the box without the exact-payload approval of §4.5. A cloud model that
+asks "show me a real row" gets the card, never the row.
+
+**By voice, this is a workflow Friday fires herself.** "Build me a tracker
+from my sources spreadsheet" works like this:
+
+1. The local model reads the spreadsheet.
+2. It writes the summary and the synthetic rows.
+3. Friday speaks the card: "I'll tell Opus the sheet has 212 rows with name,
+   outlet, beat, last-contact date and a notes column. No names or notes go.
+   Send that?"
+4. On "Friday, send it", the cloud model builds against the synthetic rows.
+5. The preview then loads the real sheet locally.
+
+This path already exists for voice context (`ask_local_for_context`). The
+salon adds a *file-shaped* request to it, and that is the private-summary
+handoff's job.
+
+**When no local model is available**, Friday says so and offers three
+choices:
+
+- build with the cloud model from a shape the user describes aloud;
+- wait for the local seat;
+- use a cloud model on the raw data, with the exact-payload card, which is
+  the user's explicit call.
+
+She does not quietly send raw data, and she does not refuse.
+
+**Local-only mode** (`model_routing.mode == local_only`) means every salon
+model call is local. Friday says what that costs in speed.
+
+### 6.5 What a screen is better for, and what Friday does instead
+
+| Task | Why a screen helps | By voice, Friday… |
+|---|---|---|
+| judging how the preview looks | taste is visual | describes it. With a local vision model resident, the description is local. With a cloud one, it is sent a screenshot only when the preview holds no private data, or with the payload card when it does. She offers "open it on screen" |
+| comparing two versions | side by side is instant | describes the difference in one sentence, then offers "put both on screen" |
+| reading a long diff line by line | eyes are faster than ears | summarizes per file, and reads line by line on request |
+| entering a key or password | **keys must never be spoken**. Transcripts and the room would hear them | opens the key form on screen and says so. By voice, "use Alex's key" selects a key already stored |
+| fixing a layout by pointing | "that button" is ambiguous | asks which one, naming candidates from the DOM: "the blue 'Save' at the bottom, or 'Save draft' at the top?" |
+
+**Nothing is voice-disabled.** The key-entry row is the only one where Friday
+will not do the thing by voice, and that is a secret-handling rule, not a
+voice restriction. It already governs chat, where Friday never asks for a key
+in the transcript.
+
+These entries appear in `voice_restrictions()` so the Voice settings tab
+lists them honestly: "Entering keys needs the screen, because a spoken key
+would be in the transcript."
+
+### 6.6 What this section needs from the voice contract and the handoff
+
+Named so that the parallel work can confirm or refuse them. They are not
+designed here.
+
+1. **A spoken decision on any card kind,** with `answer_share_request`'s
+   rules (own latest words; name Friday in room mode). Today only share
+   cards can be answered by voice (§1.5).
+2. **A file-shaped private-summary request.** The input is a file or table
+   reference plus a purpose. The output is a shape summary plus synthetic
+   rows. It uses the same placeholder rules and the same payload card.
+3. **A "focus" slot** that the salon can set and the voice model can read,
+   holding the codebase in focus (§6.1).
+4. **Progress pacing** for long background work: how often, and how short.
+
+If the voice contract lands without item 1, Phase 6 of this spec carries a
+thin `answer_card` tool that uses `answer_share_request`'s rule verbatim. It
+is retired when the contract supersedes it.
+
+---
+
+## 7. Friday edits a copy of herself
+
+This is `grow-button.md` Lane B2, specified further for the salon. The key
+sentence carries over: **"You cannot sandbox the artifact. You can only
+sandbox the authoring loop and gate the join."**
+
+### 7.1 Where it runs
+
+- **Only on a machine with a git checkout of Friday.** A payload install
+  refuses with a plain explanation, as `grow-button.md` §2.6 requires.
+- **"Improve Friday" opens a codebase on a worktree** of the running
+  checkout, on a branch named `salon/<slug>`. Every change is a step on that
+  branch.
+
+### 7.2 The copy runs beside the original
+
+- The worktree starts **a second Friday server on another port.** It has
+  two protections:
+  - **`FRIDAY_HOME` points at a fixture home** made from the test fixtures,
+    never the real `~/.friday`. That also stops the copy from running the
+    wiki merge against the real home at import.
+  - **An environment built from nothing** (FA2), with no provider keys.
+- **The copy's model calls go through the salon proxy with the codebase's
+  key profile**, like any codebase.
+- **The copy's UI loads in the panel's Preview.** "Side by side" puts the
+  running Friday and the copy next to each other in the panel, at the same
+  width.
+- **The copy has no GPU seat of its own.** Its local-model calls go to the
+  running Friday's seat through the proxy's broker path. They are metered
+  like any other call and never load a second model: a second copy of
+  the brain on a 12 GB card would starve the first.
+
+### 7.3 Tests, then the owner's yes, then the swap
+
+1. **The copy must pass** the required checks in `AGENTS.md`, plus any test
+   the change adds. The added test must be shown to fail on the original,
+   which is the red-first gate of `grow-button.md` §6.2. Results go on the
+   receipt.
+2. **The owner approves the swap** on a card, in chat or by voice. The card
+   shows:
+   - the summary;
+   - the diff stats;
+   - the tests;
+   - the before and after screenshots, which Friday has looked at (§9.3);
+   - the rollback.
+3. **The swap is done by `apply_growth`**, which is not model-authored
+   (`grow-button.md` §7.5):
+   - it merges the branch into the running checkout's branch;
+   - it checks the hashes of every untouchable file before and after;
+   - it restarts the server by the existing restart path.
+4. **Rollback is one click, or one sentence ("Friday, roll that back").**
+   It runs `git revert` on the merge and restarts. Additive data leaves
+   orphans, which are reported. Transformative data needs the declared-store
+   snapshot of `grow-button.md` §8.2, and a change that declares one says so
+   on the swap card.
+
+### 7.4 The loud approval
+
+**What it covers.** A change to any of:
+
+- `governance/**`: the action gate, the cLaws text and pin, Proof of
+  Integrity;
+- `services/egress_gate.py`, `sensitivity_classifier.py`,
+  `credential_store.py`, `vault_passphrase.py` and `privacy/**`;
+- auth and session handling in `core/__init__.py`;
+- the salon proxy, the policy floor (§4.5) and `apply_growth` itself;
+- everything in `grow-button.md` §7.5's untouchable set.
+
+**What makes it loud.** Under the recommended answer to decision 2:
+
+- **A separate card, never merged with the ordinary swap card**, listing
+  each protected file and a plain-language line on what changes in it.
+- **No grant, rule or "trust this codebase" can answer it.** The policy
+  floor enforces that (§4.5).
+- **A spoken or typed challenge.** Friday picks a fresh random word and
+  says or shows it: "To change the checkpoint, say 'Friday, change the
+  checkpoint, amber'." A replayed recording or a TV in the room cannot
+  produce a word that did not exist a moment ago. It works by voice, so it
+  is not a screen restriction.
+- **A visible, audible notice after the swap**, and an entry in the signed
+  receipts that says a protected file changed.
+- **cLaws edits re-pin** through the existing `repin_claws` flow, after
+  approval, never before.
+
+**The `boot_guard` gap in §1.4 is closed as part of Phase 7.** `governance/`,
+`egress_gate.py` and `proof_of_integrity.py` join the protected list, so that
+`/api/code/apply` refuses them too.
+
+If the owner picks the alternative answer to decision 2, these paths are
+simply refused in the salon. The card says "this needs a hand merge", and
+Friday writes the patch file and opens it on screen.
+
+---
+
+## 8. How it fits the existing defences
+
+- **The egress gate** still seals every cloud model call
+  (`seal_outbound`), including calls from the salon's engines. The salon
+  proxy governs *the box's* traffic, and the egress gate governs *Friday's*.
+  Neither replaces the other.
+- **Taint.** Content fetched by the box is untrusted input. When it reaches
+  a model's context through a tool result, the taint rules apply as they do
+  to web pages.
+- **Owner rules** only add caution. Anomaly detection sees salon outward
+  actions in the same outward-action log. A burst of POSTs from one codebase
+  is the "velocity" shape it already watches for.
+- **Goals.** `/goal the tracker imports my CSV and shows a chart` works in a
+  codebase chat. The evaluator reads the step receipts and the preview
+  screenshot hash.
+- **No built-in caps.** The salon adds none. It stops for loops, lack of
+  progress, Stop, and limits the user sets, exactly like every other
+  surface.
+- **No telemetry, ever.** Nothing the salon runs may phone home: stand-ins,
+  a box backend, the coding agent. Each one's opt-out is set and then
+  **verified by capture** in its phase (§9). For Claude's coding agent, that
+  means its non-essential traffic settings are off and the proxy refuses any
+  host but the provider's API. **UNKNOWN** until the Phase 3 capture: which
+  hosts it contacts beyond the API.
+
+---
+
+## 9. Verification plan
+
+### 9.1 Fail-first tests (each must fail on `780e31fa`, or on the phase's base, before its change)
+
+- **Frame isolation:**
+  - an `html` artifact tries `fetch('/api/settings')`, `parent.document`,
+    `document.cookie` and `localStorage`, and each must fail;
+  - its CSP must block a `<script src>` from a non-allowed host.
+- **Broker vocabulary:** asking for the vault, credentials, `run_command` or
+  mail is refused as *unknown*, not as *denied*.
+- **B2 fence:**
+  - from inside the box, reading a path under `~/.friday` fails;
+  - a request to a host with no rule under `ask` fails;
+  - a request to Friday's port always fails;
+  - `env` contains no provider key.
+- **B1 honesty:** the first B1 run of a codebase produces the disclosure
+  line, and the B1 classification is OUTWARD without a grant.
+- **Key injection:** the box's request to the provider reaches the proxy
+  with the dummy key and leaves with the real one. A request to any other
+  host with the dummy key leaves with the dummy.
+- **Policy floor:** writing a rule for Friday's port, a never-send host or a
+  loud-approval path raises an error. A grant cannot answer a loud card.
+- **Cooldown and pins:** an install of a version under 24 hours old gets the
+  previous version, and the lockfile has exact versions.
+- **Private data:**
+  - with a private file in the codebase, the cloud engine's request (captured
+    at `seal_outbound`) contains the summary and the synthetic rows, and none
+    of the real values (asserted by string search for every real cell);
+  - with the card declined, nothing is sent.
+- **Voice:**
+  - a cloud-model-generated "yes" does not approve a card;
+  - in room mode, "allow it" without "Friday" does not approve;
+  - "undo that" reverts exactly one step;
+  - "use Alex's key" changes the header line and the next `cost_calls` row.
+- **Metering:** a call under a guest key writes `key_profile` and
+  `codebase`, and Costs splits the two.
+- **Self-edit:**
+  - the copy's `FRIDAY_HOME` is not the real home;
+  - the copy cannot read a real-home marker file;
+  - `apply_growth` refuses a diff touching an untouchable file without the
+    loud approval;
+  - rollback restores the pre-swap tree hash.
+- **Cross-site prerequisite:** a POST from loopback carrying a foreign
+  `Origin` or `Sec-Fetch-Site: cross-site` is refused. This comes from the
+  separate fix, and Phase 4 is gated on it.
+
+### 9.2 Screenshots, actually looked at
+
+Every UI phase ships screenshots, and **each one is opened and looked at by
+whoever claims the phase done.** The PR description then carries one
+sentence per screenshot saying what it shows. That sentence is the evidence
+the image was read, not just produced. A screenshot nobody described does
+not count.
+
+- **Taken against a page served for the check, never by driving the live
+  server's mutating routes:**
+  - `127.0.0.1`, not `localhost`;
+  - stubbed non-GET requests;
+  - mocked WebSockets.
+- **Widths:** 1440, 1024 and 390 px.
+- **States:** docked chat, chat window, and maximized tab.
+- **The set, per phase:**
+  - **Phase 1:**
+    - a table artifact;
+    - a chart artifact;
+    - a markdown draft mid-edit;
+    - an `html` app;
+    - the version timeline;
+    - the panel collapsed;
+    - the panel at 390 px as a tab over the chat.
+  - **Phase 2:**
+    - "+ Codebase" in the sidebar;
+    - a new codebase's first preview;
+    - Files;
+    - Changes with one-line summaries;
+    - after "undo".
+  - **Phase 3:**
+    - the header line on the local seat;
+    - the header line on the cloud seat;
+    - the header line on a guest key;
+    - Costs split by key.
+  - **Phase 4:**
+    - an install announcement line;
+    - an `ask`-posture install card;
+    - a network-write card;
+    - the B1 disclosure line.
+  - **Phase 5:**
+    - the Backstage tab;
+    - Mailpit's captured mail in the panel;
+    - the go-live card.
+  - **Phase 6:**
+    - a voice-originated card on screen alongside its spoken form (the
+      transcript line);
+    - the private-data payload card showing the summary and the synthetic
+      rows.
+  - **Phase 7:**
+    - Friday and the copy side by side;
+    - the swap card;
+    - the loud card with its challenge word;
+    - the post-swap notice.
+- **What the looker checks:**
+  - nothing clipped (dropdowns and menus inside the panel stay visible);
+  - the panel's scroll is independent of the chat's;
+  - the header line is readable at 390 px;
+  - cards name the model and the key;
+  - no real private value is visible in any cloud-bound payload shown.
+
+### 9.3 Friday looks too
+
+For the self-edit swap card, the before and after screenshots are taken by
+Friday. They are described by the resident local vision model when there is
+one, or by a cloud one with a card. **A swap card with screenshots that were
+not described is not raised.** This is `grow-button.md` §7's vision check,
+used here as evidence and not as a veto.
+
+### 9.4 Captures
+
+**Phases 3, 4, 5 and the S3 spike** each run a full session with a packet
+capture on the host. The pass condition: every outbound connection is to a
+host named on the codebase's policy, or to the provider API through the
+proxy. Any other host fails the phase. That is how "no telemetry" is
+checked, not asserted.
+
+### 9.5 Live check after merge
+
+For each phase, one real session on the owner's machine, by screen and by
+voice, with the receipts and costs read back. Voice is checked in "Several
+people" mode too.
+
+---
+
+## 10. Phased build plan
+
+Effort is in focused agent-days with review. Each phase is shippable alone.
+
+| Phase | What | Effort | Depends on |
+|---|---|---|---|
+| **S1–S3** | Spikes, which report and build nothing. **S1:** esbuild-wasm plus pinned CDN packages building a React app in an opaque-origin frame on this machine. **S2:** Node, npm and a dev server in an AppContainer without admin, and whether the panel can reach it. **S3:** OpenShell 0.1.x on the owner's WSL 2 + Docker, with telemetry off and a capture, driven from a grant via the Python SDK. Also microsandbox on WHP, as a read-only check of the feature's state | 3 | nothing |
+| **1** | **The artifact panel in every chat:** `artifact_put`, the fenced-block fallback, the store with off-record honoured, versions, the frame (§4.3) and the broker's read-only subset, the six kinds, hand edits as versions, both HTML files | 7–8 | S1 (for `html` apps; the other kinds don't wait) |
+| **2** | **Codebase chat, B0:** "+ Codebase", git-backed steps, Preview, Files and Changes (moving in `DevFiles` and `DevDiff`), undo, templates (static app, React-in-frame, workspace bundle), one-line summaries, step receipts | 6–7 | 1; goals-and-receipts Phase 0 for the receipt classifier |
+| **3** | **Seats, keys and meters:** the routing record, key profiles, guest keys in the credential store, proxy key injection for provider calls, `cost_calls` columns, the header line, the Costs split, Claude's agent as an engine (it runs in B2, or in B1 with the disclosure; the codebase itself can still preview in B0) | 5–6 | 2 |
+| **4** | **The box and the proxy:** B1 (generalised `code_sandbox`), B2 on WSL 2 containers, the salon proxy, `policy.yaml`, the floor, the posture setting, install scan, cooldown and pins, the reviewer pass on flags, cards as policy edits, the audit log shared with the broker | 10–12 | 3; **the cross-site fix on main**; owner rules Phase 1 (so rules can see salon actions) |
+| **5** | **The backstage:** the shim (storage, queue, KV, auth stub), SQLite, Mailpit, moto server, Azurite, the go-live card, captures | 5 | 4 |
+| **6** | **Voice-first:** focus, the verb table of §6.2, spoken card forms, the private-data file flow through the handoff, `voice_restrictions` entries, the thin `answer_card` only if the contract lacks it | 5–6 | 2 (verbs), 4 (cards); the voice contract and handoff on main |
+| **7** | **Self-edit on a copy:** worktree, the second server with a fixture home, side by side, the red-first gate, `apply_growth`, the loud approval, the `boot_guard` list fix, rollback | 8–10 | 4, 6; goals-and-receipts (receipts); owner rules |
+| **8** | **Workspaces and sharing:** the bundle host (`workspace-ecosystem.md` Phase 2) as the salon's install target, "Improve this workspace", signed bundle export and import, cooldown, re-consent on widening | 6–8 | 2, 4; `workspace-ecosystem.md` Phase 1 fixes |
+| **9** | **Market cards:** only once federation is switched back on and `_verify_peer_card` is fixed. Ratings per Appendix A | its own spec | federation |
+| **B2-OS** | The OpenShell backend: a translator from `policy.yaml`, lifecycle via the SDK, grants driving live network policy | 4–5 | S3 passing its gate; 4 |
+
+**Totals.** Phases 1–8 come to about **55–62 agent-days**, roughly 11–12
+agent-weeks. **The artifact panel (Phase 1) stands alone at about 1.5
+weeks**, and it is useful on day one to every chat and every model.
+
+**Where it is cheapest to stop:**
+
+- **After Phase 2**, the owner has a working salon for everything that runs
+  in a browser, which covers most of what a journalist would build, with no
+  box to maintain.
+- **After Phase 4**, it runs anything.
+
+### 10.1 Where it slots into the roadmap
+
+The queue, as `avatar-visual-genome.md` §11.1 records it:
+
+1. CLM research
+2. goals and receipts
+3. FridayWeaver-2
+4. the salon
+5. owner rules
+
+The recommended order:
+
+1. **S1–S3 and Phase 1 can start now.** They touch only the chat UI and a
+   new store, need no GPU, and block nothing. They sit well next to
+   FridayWeaver-2 training, which holds the GPU.
+2. **Goals-and-receipts Phase 0 and owner-rules Phase 1 land before salon
+   Phases 2 and 4 respectively.** The salon's steps want receipts from the
+   start, and its outward actions want rules. Neither spec is delayed by the
+   salon.
+3. **The cross-site fix** (filed separately) lands before Phase 4. It is
+   small, and it protects every tab today.
+4. **Phase 6 waits on the voice contract and handoff reaching main.**
+5. **Phase 7 comes after receipts and owner rules**, and preferably after
+   FridayWeaver-2 lands. The copy then tests against the brain users will
+   run.
+6. **Avatar A0 (one day) is unaffected.** Nothing here competes with it.
+
+---
+
+## 11. Costs and failure modes
+
+**Money** is **UNMEASURED**. Phase 3 measures a reference session: build a
+small tracker app, twenty edits, local for small edits and Opus 5.5 for
+three big ones. The header reports the result. This spec does not guess a
+dollar figure.
+
+**VRAM.**
+
+- **B0 costs no VRAM.** It runs in the browser, and the preview uses the GPU
+  only as a web page does.
+- **B2 on WSL 2 takes host RAM, not VRAM.** Docker Desktop's VM reserves
+  memory, which is **UNMEASURED** on this machine and measured in S3.
+- **The local seat is the existing brain.** The salon never loads a second
+  model.
+
+**Failure modes:**
+
+| Failure | What happens |
+|---|---|
+| no local seat resident | the header says so. Small edits go to the heavy seat if one is set; otherwise Friday asks which to use |
+| WSL 2 stopped | Friday starts it only when a B2 codebase opens, says so, and shows the time it took |
+| a B2 backend missing | B1 with disclosure (§4.4) |
+| the proxy down | the box has no network, *and says so in the chat*. Nothing fails open |
+| a guest key rejected | the header turns red and says whose key failed. Nothing falls back to the owner's key without asking |
+| an install flagged | not installed, with the reason and an alternative, and an explicit override on offer |
+| preview blank | the step is not reported as done, because the receipt includes the preview screenshot hash of a non-blank frame |
+| the copy fails its tests | no swap card. The failure is spoken or shown with the failing test's name |
+| OpenShell changes its policy format | only the translator changes. `policy.yaml` is Friday's |
+
+---
+
+## 12. Decisions
+
+**Engineering calls made in this spec** (not the owner's):
+
+- the artifact panel first, in every chat;
+- the browser frame is the default box;
+- the tier order B0 → B2 → B1, with disclosure;
+- AppContainer is spiked, not assumed;
+- the policy file uses OpenShell's shape, and Friday's proxy enforces it;
+- OpenShell becomes a backend only past the gate in §2.2;
+- LocalStack is never bundled and only user-installed;
+- MinIO is out, and moto, Mailpit and Azurite are in;
+- keys are injected at the proxy, including for Claude's agent;
+- key and codebase columns go in `cost_calls`;
+- git steps with "step" and "undo" in the UI;
+- receipts per step;
+- a fixture home for the copy;
+- the challenge word for loud approvals;
+- the cross-site fix is a prerequisite;
+- ratings per the owner's 2026-09-22 decision.
+
+**For the owner (at most three):**
+
+1. **The box's default posture before you've said anything.**
+   *Recommended: "announce".* Reads and installs go ahead and are announced;
+   writes to outside hosts and private-data sends ask, as they already do
+   everywhere in Friday.
+   - This follows your "no restrictions unless the user explicitly sets
+     them". The questions left are Friday's existing ones, not new salon
+     restrictions.
+   - The cost is that a bad package can fetch anything it wants while it
+     builds. The scan, the cooldown and the box's wall are what stand in
+     the way, and the wall is weaker in B1.
+   - The alternative, "ask", is OpenShell's default. It is safer and noisier.
+   - Either way, "ask me before X" is always available as an owner rule.
+2. **Self-editing her checkpoint and laws in the salon.**
+   *Recommended: allowed, only with the loud approval of §7.4.* That means a
+   separate card, no grant can answer it, a fresh challenge word, and a
+   signed notice.
+   - The alternative is "never in the salon, hand-merge only". It is simpler
+     and stricter, and it means Friday can never fix her own gate even when
+     you ask her to.
+3. **Someone else's key in your Friday.**
+   *Recommended: yes, bound to one codebase.* It is metered separately,
+   Friday never uses it elsewhere, and it is deleted in one click.
+   - The cost: Friday holds a secret that isn't yours. It is encrypted like
+     yours, never enters the box, and its owner can ask you to remove it.
+
+**Still open, not blocking:**
+
+- which chart library the panel uses (Phase 1 picks from what `index.html`
+  already loads);
+- PGlite's licence (Phase 5);
+- which hosts Claude's agent contacts beyond the API (the Phase 3 capture);
+- AppContainer feasibility (S2).
+
+---
+
+## 13. What would falsify this
+
+- **B0 is too small.** If the owner's first five real codebases all need a
+  server, the frame-first bet is wrong, and B2 becomes the default wherever
+  it exists.
+- **"Announce" is noise.** If the owner stops reading install lines within a
+  week, announcements need batching per step, or they are theatre.
+- **The local seat can't do small edits.** If Bonsai2's edit acceptance
+  rate over the first fifty steps is under half, the default small-edit seat
+  should be the heavy seat, with a line saying so.
+- **Voice approvals get made by accident.** One accidental approval in
+  room mode means room mode needs Household Identity before salon cards can
+  be answered by voice there.
+- **Nobody shares.** If Phase 8's file export sees no use, Phase 9 is
+  building a market for nothing, as `workspace-ecosystem.md` §7 already
+  warns.
+
+---
+
+## 14. Sources
+
+Checked 2026-09-29.
+
+**LocalStack**
+- Repository (archived 2026-03-23; README on the unified image, Apache-2.0 +
+  EULA, Hobby plan): https://github.com/localstack/localstack
+- README: https://raw.githubusercontent.com/localstack/localstack/main/README.md
+- Releases (v4.14.0, 2026-02-26):
+  https://api.github.com/repos/localstack/localstack/releases
+- Pricing (Hobby, non-commercial): https://localstack.cloud/pricing
+- Account and auth token requirement for the single image:
+  https://blog.localstack.cloud/localstack-single-image-next-steps/ ;
+  https://blog.localstack.cloud/the-road-ahead-for-localstack/
+
+**NVIDIA OpenShell**
+- Repository (Apache-2.0, releases, telemetry opt-out in README):
+  https://github.com/NVIDIA/OpenShell ;
+  https://api.github.com/repos/NVIDIA/OpenShell/releases
+- Architecture (gateway, supervisor, Landlock, seccomp, credential
+  injection): https://docs.nvidia.com/openshell/latest/about/architecture
+- Support matrix (backends; Windows through WSL 2 + Docker Desktop,
+  experimental): https://docs.nvidia.com/openshell/latest/about/support-matrix
+- Policy overview (five sections, default deny, live network reload):
+  https://docs.nvidia.com/openshell/latest/how-it-works/policies/overview
+- Policy schema and network rules (method and path, binaries):
+  https://docs.nvidia.com/openshell/v0.0.116/reference/policy-schema ;
+  https://docs.nvidia.com/openshell/dev/how-it-works/policies/network-rules
+- Policy prover (SMT): https://docs.nvidia.com/openshell/how-it-works/policies/prover
+- NemoClaw (reference stack on OpenShell):
+  https://docs.nvidia.com/nemoclaw/latest/about/overview
+
+**Stand-ins and boxes**
+- moto (Apache-2.0): https://github.com/getmoto/moto
+- Mailpit (MIT): https://github.com/axllent/mailpit
+- Azurite (MIT): https://github.com/Azure/Azurite
+- MinIO (archived, source only): https://github.com/minio/minio
+- microsandbox (Apache-2.0, Windows via WHP):
+  https://github.com/superradcompany/microsandbox
+- E2B self-host (Linux with KVM only): https://github.com/e2b-dev/infra
+- gVisor (Linux only): https://gvisor.dev/docs/
+- Windows Sandbox: https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-faq
+- Docker Desktop licence (free for personal use and small businesses):
+  https://docs.docker.com/subscription/desktop-license/
+
+**In this repository**
+- `docs/design/active/workspace-ecosystem.md` and
+  `docs/design/research/2026-09-20-extension-ecosystems-survey.md`: the
+  sandbox, broker, cooldown and ratings evidence (Figma, Obsidian, pnpm, the
+  Felt et al. permission studies).
+- `docs/design/active/grow-button.md` §6–§8: the red-first gate, the
+  untouchable set, and rollback.
+- `docs/design/active/friday-builds-agents.md` §7: FA1–FA13.
+- `docs/design/active/avatar-visual-genome.md` Appendix A: the ratings
+  decision.

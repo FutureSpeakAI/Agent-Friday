@@ -260,6 +260,36 @@ Its §11 gives the phases and where they sit in the queue:
 - **A1-A4 wait until tonight's `index.html` work lands.** A4 is the voice
   control.
 
+**Added 2026-09-29: the vibe coding salon**
+(`active/vibe-coding-salon.md`). It joins Chat and Code in one room:
+- an artifact panel in every chat;
+- "+ Codebase" chats with Preview, Files and Changes;
+- code that runs in a box and can't reach the vault, with keys injected at a
+  proxy.
+
+It also covers voice-first use, including private data summarized locally
+before any cloud model sees it, and Friday editing a copy of herself.
+
+It converges `workspace-ecosystem.md` (it is that spec's Forge) and
+`grow-button.md` Lane B2, and adds no parallel design. From the two links
+the owner raised:
+- **LocalStack:** the pattern is taken (local stand-ins for cloud services);
+  the product is not bundled.
+- **OpenShell:** the policy model is copied now; the runtime is adopted only
+  past a gate (§2.2).
+
+Nothing is built. Its §10.1 gives the order:
+- **Spikes S1–S3 and Phase 1 (the artifact panel, about 1.5 weeks) can start
+  now.** They need no GPU.
+- **Phase 2 waits on goals-and-receipts Phase 0.**
+- **Phase 4 waits on owner-rules Phase 1** and on a fix that makes Friday's
+  API refuse cross-site requests.
+- **Phase 6 (voice) waits on the voice contract and private-summary handoff
+  reaching main.**
+- **Phase 7 (self-edit) comes after receipts and owner rules.**
+
+Phases 1–8 total about 12 agent-weeks.
+
 **Investigate before committing**
 
 9. **Deep research** — built but unreachable: no agent tool, no UI
