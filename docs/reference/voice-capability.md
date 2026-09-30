@@ -2,6 +2,11 @@
 
 Voice can do anything chat can, unless the user has restricted Friday.
 
+> Adding a capability to voice? See
+> [voice-tool-contract.md](voice-tool-contract.md) — how a typed tool becomes
+> voice-callable, spoken confirmation, reading an approval card back, and the
+> rule for anything that touches private data.
+
 ## How
 
 - **Direct tools** (`services/voice_engine.py`, `_VOICE_LIVE_TOOLS` and
