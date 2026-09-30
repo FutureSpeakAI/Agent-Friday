@@ -13370,10 +13370,26 @@ const PODCAST_C = {
   xs: 'var(--fr-text-xs, 10px)', sm: 'var(--fr-text-sm, 11px)', md: 'var(--fr-text-md, 12px)',
   base: 'var(--fr-text-base, 13px)', lg: 'var(--fr-text-lg, 15px)', xl: 'var(--fr-text-xl, 18px)'
 };
+// A source chip's label: the outlet as said aloud, "Calendar 9:00 AM", a
+// computed fact's id, or the start of the title. Never the bare "S3".
+function podcastSourceLabel(s, id) {
+  if (!s) return id;
+  if (s.outlet) return s.outlet;
+  if (s.kind === 'event') return 'Calendar' + (s.when ? ' ' + s.when : '');
+  if (s.kind === 'fact') return s.id;
+  const t = String(s.title || id);
+  return t.length > 28 ? t.slice(0, 27) + '…' : t;
+}
+// The stories an episode links to: each source with a web address.
+function podcastLinked(ep) {
+  return (ep.sources || []).filter(s => /^https?:\/\//.test(s.url || ''));
+}
+const PODCAST_SHOWS = [['briefing', 'The Briefing'], ['front_page', 'Front Page'], ['editorial', 'The Editorial'], ['weekly', 'The Week'], ['any', 'Your own episodes']];
 function PodcastBadges({ ep }) {
   const h = React.createElement;
   if (!ep) return null;
   const chk = ep.check || {};
+  const sc = ep.script_check || {};
   const pill = (txt, color, title) => h('span', {
     title: title || txt,
     style: { fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.font, padding: '1px 7px', borderRadius: 10, border: '1px solid ' + color, color: color, whiteSpace: 'nowrap' }
@@ -13382,8 +13398,11 @@ function PodcastBadges({ ep }) {
     ep.privacy === 'private'
       ? pill('🔒 Private · made on this PC', PODCAST_C.second, 'Built from your own material. Written and spoken on this computer; never sent to a cloud model or voice.')
       : pill('Public sources', PODCAST_C.dim),
-    chk.ok === true ? pill('✓ checked by ear', PODCAST_C.ok, 'Transcribed back on this computer: ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script') : null,
-    chk.ok === false ? pill('⚠ check found differences', PODCAST_C.error, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
+    sc.ok === true ? pill('✓ script checked', PODCAST_C.ok, 'Checked before it was spoken: ' + (sc.checks || []).join(', ') + '.') : null,
+    sc.ok === false ? pill('⚠ script: ' + (sc.problems || []).length + ' problem' + ((sc.problems || []).length === 1 ? '' : 's'), PODCAST_C.error,
+      'The script check found problems the writer could not fix:\n' + (sc.problems || []).map(p => '• ' + p.message).join('\n')) : null,
+    chk.ok === true ? pill('✓ audio matches script', PODCAST_C.ok, 'Transcribed back on this computer: ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script. This checks the audio, not the writing.') : null,
+    chk.ok === false ? pill('⚠ audio differs from script', PODCAST_C.error, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
     ep.mode === 'data' ? pill('📊 data mode', PODCAST_C.accent, 'Every number is from a computation over your data') : null);
 }
 function PodcastPlayer() {
@@ -13485,11 +13504,12 @@ function PodcastPlayer() {
   const srcById = {};
   (ep.sources || []).forEach(s => { srcById[s.id] = s; });
   (ep.facts || []).forEach(f => { srcById[f.id] = { id: f.id, title: f.text, kind: 'fact', expr: f.expr }; });
-  const cite = (c) => h('button', {
-    key: c, className: 'btn', onClick: () => setSrcOpen(srcOpen === c ? null : c),
-    'aria-label': 'Source ' + c + ': ' + ((srcById[c] || {}).title || ''),
-    style: { fontSize: PODCAST_C.xs, fontFamily: PODCAST_C.mono, padding: '0 5px', marginLeft: 4, minHeight: 0, lineHeight: '16px' }
-  }, c);
+  const cite = (c) => h(React.Fragment, { key: c }, ' ', h('button', {
+    className: 'btn', onClick: (e) => { e.stopPropagation(); setSrcOpen(srcOpen === c ? null : c); },
+    title: (srcById[c] || {}).title || c,
+    'aria-label': 'Source: ' + podcastSourceLabel(srcById[c], c) + ((srcById[c] || {}).title ? ', ' + srcById[c].title : ''),
+    style: { fontSize: PODCAST_C.xs, fontFamily: PODCAST_C.font, padding: '0 6px', minHeight: 0, lineHeight: '16px', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'baseline' }
+  }, podcastSourceLabel(srcById[c], c)));
   const chartFor = () => {
     if (!line || !ep.charts) return null;
     const cs = line.cites || [];
@@ -13550,7 +13570,7 @@ function PodcastPlayer() {
     h('b', { style: { color: line.speaker === 'a' ? PODCAST_C.accent : PODCAST_C.second } }, who(line.speaker) + ': '),
     fridayTM(line.text), (line.cites || []).map(cite)) : null,
   src ? h('div', { style: { fontSize: PODCAST_C.md, borderLeft: '2px solid ' + PODCAST_C.accent, paddingLeft: 8, color: PODCAST_C.text } },
-    h('b', null, srcOpen + ' '), src.kind === 'fact' ? src.title : (src.title || ''),
+    src.outlet ? h('b', null, src.outlet + ': ') : null, src.title || '',
     src.expr ? h('div', { style: { color: PODCAST_C.dim, fontFamily: PODCAST_C.mono, fontSize: PODCAST_C.sm } }, 'computed by ', src.expr) : null,
     src.url ? h('div', null, h('a', { href: src.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, 'Open the source ↗')) : null) : null,
   chart ? h('img', { src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/charts/' + encodeURIComponent(chart.file), alt: chart.title, style: { width: '100%', borderRadius: 8 } }) : null,
@@ -13564,6 +13584,11 @@ function PodcastPlayer() {
         'aria-current': i === cur ? 'true' : undefined,
         style: { padding: '3px 4px', borderRadius: 4, cursor: 'pointer', background: i === cur ? PODCAST_C.accentSoft : 'transparent' }
       }, h('b', null, who(ln.speaker) + ': '), fridayTM(ln.text), (ln.cites || []).map(cite)))),
+    podcastLinked(ep).length ? h('div', { role: 'list', 'aria-label': 'Sources', style: { marginTop: 10, borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
+      h('div', { style: { fontWeight: 600, color: PODCAST_C.accent, marginBottom: 4 } }, 'Sources'),
+      podcastLinked(ep).map(s => h('div', { key: s.id, role: 'listitem', style: { fontSize: PODCAST_C.md, margin: '2px 0' } },
+        s.outlet ? h('b', null, s.outlet + ': ') : null,
+        h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title)))) : null,
     (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
 }
@@ -13651,6 +13676,10 @@ function PodcastsView() {
   const [instructions, setInstructions] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [formats, setFormats] = useState(null);
+  useEffect(() => { fetch('/api/podcasts/formats').then(r => r.json()).then(d => setFormats(d.formats || null)).catch(() => {}); }, []);
+  const setFormat = (routine, format) => fetch('/api/podcasts/formats', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ routine: routine, format: format }) })
+    .then(r => r.json()).then(d => { if (d.formats) setFormats(d.formats); }).catch(() => {});
   const refresh = () => fetch('/api/podcasts?limit=60').then(r => r.json()).then(d => setEps(d.episodes || [])).catch(() => {});
   useEffect(() => {
     refresh();
@@ -13691,7 +13720,14 @@ function PodcastsView() {
     h('div', null,
       h('h2', { style: { margin: 0, fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.xl } }, '🎧 Podcasts'),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.md, marginTop: 4, maxWidth: '80ch' } },
-        'Two hosts talk through any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and the hosts may only say computed numbers.')),
+        'Episodes from any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and only computed numbers are said.')),
+    formats ? h('section', { 'aria-label': 'Who is on each show', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' } },
+      h('div', { style: { width: '100%', fontWeight: 600 } }, 'Who is on each show'),
+      PODCAST_SHOWS.map(([key, label]) => formats[key] ? h('label', { key: key, style: { display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: PODCAST_C.md } },
+        label,
+        h('select', { value: formats[key].format, 'aria-label': label + ': who is on the show', onChange: (e) => setFormat(key, e.target.value), style: field },
+          [['solo', 'Friday alone'], ['duo', 'Two hosts']].map(([v, t]) => h('option', { key: v, value: v, style: { color: PODCAST_C.text, background: PODCAST_C.surface } },
+            t + (formats[key].recommended === v ? ' (recommended)' : ''))))) : null)) : null,
     h('section', { 'aria-label': 'Make a podcast', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
       rows.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'flex-start' } },
         h('select', { 'aria-label': 'Source type', value: r.kind, style: field,

@@ -33,3 +33,31 @@ def test_send_to_news_and_the_player_are_still_there():
     for src in (INDEX, APP):
         assert "dest: 'podcast'" in src or "dest:'podcast'" in src
         assert "PodcastChip" in src and "function PodcastPlayer(" in src
+
+
+def _block(src):
+    return src[src.index("// ═══ PODCASTS — player"):src.index("const NEWS_PODCAST_ROUTINE = {")]
+
+
+def test_source_chips_are_titled_and_spaced_never_a_bare_id():
+    b = _block(INDEX)
+    assert "h(React.Fragment, { key: c }, ' ', h('button'" in b
+    assert "podcastSourceLabel(srcById[c], c)" in b and "}, c);" not in b
+
+
+def test_the_listening_check_is_not_named_as_an_editorial_pass():
+    b = _block(INDEX)
+    assert "checked by ear" not in b
+    assert "'✓ audio matches script'" in b and "This checks the audio, not the writing." in b
+    assert "'✓ script checked'" in b and "'⚠ script: '" in b
+
+
+def test_the_transcript_lists_its_linked_sources():
+    b = _block(INDEX)
+    assert "'aria-label': 'Sources'" in b and "podcastLinked(ep).map(" in b
+
+
+def test_who_is_on_each_show_is_a_setting_in_studio_with_the_recommendation_shown():
+    b = _block(INDEX)
+    assert "'Who is on each show'" in b and "' (recommended)'" in b
+    assert "fetch('/api/podcasts/formats', { method: 'PUT'" in b
