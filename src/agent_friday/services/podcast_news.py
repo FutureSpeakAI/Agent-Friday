@@ -25,6 +25,33 @@ log = logging.getLogger(__name__)
 
 ROUTINES = ("front_page", "briefing", "weekly", "editorial")
 MAX_STORIES = 18
+#: A solo newscast of about five minutes carries about eight stories.
+MAX_BRIEFING_STORIES = 8
+
+#: News value, most first: local safety, then policy, the economy, the world,
+#: science and health, technology, then the rest. Consumer gadgets come last,
+#: so the cap cuts them first. Within a rank, the feed's own order holds.
+_RANK_BY_CATEGORY = [
+    (re.compile(r"local", re.I), 0),
+    (re.compile(r"politic|policy|government|election|law", re.I), 1),
+    (re.compile(r"business|econom|financ|market", re.I), 2),
+    (re.compile(r"world|international", re.I), 3),
+    (re.compile(r"science|health|climate|environment", re.I), 4),
+    (re.compile(r"tech|ai", re.I), 5),
+]
+_GADGET_RE = re.compile(r"\b(headphones?|earbuds?|hands-on|review(?:ed)?|streaming (?:stick|device)|"
+                        r"fire tv|smartwatch|gadgets?|deals?|discounts?|unboxing|remote control)\b", re.I)
+
+
+def news_rank(item: dict) -> int:
+    text = "%s %s" % (item.get("title") or "", item.get("snippet") or "")
+    if _GADGET_RE.search(text):
+        return 9
+    from agent_friday.services.podcast_quality import is_safety_story
+    if is_safety_story({"title": item.get("title"), "text": item.get("snippet")}):
+        return 0
+    cat = item.get("category") or ""
+    return next((r for rx, r in _RANK_BY_CATEGORY if rx.search(cat)), 6)
 _RUN_ID_RE = re.compile(r"^[0-9A-Za-z-]{4,40}$")
 
 
@@ -161,9 +188,11 @@ def briefing_docs(side: dict, markdown: str, run_id: str) -> list[dict]:
     """The Briefing's sources: one per story (outlet and link), one per calendar
     event (its times), then Friday's written tasks and insight as context."""
     docs = []
-    for a in (side.get("news") or [])[:MAX_STORIES]:
-        if not isinstance(a, dict) or not a.get("title"):
-            continue
+    news = [a for a in side.get("news") or [] if isinstance(a, dict) and a.get("title")]
+    news = sorted(news, key=news_rank)[:MAX_BRIEFING_STORIES]
+    from agent_friday.services import news_links
+    news_links.resolve_links(news)
+    for a in news:
         d = _story_doc(a)
         if d:
             d.update(private=True, role="story")

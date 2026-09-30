@@ -151,6 +151,15 @@ def settings() -> dict:
         return copy.deepcopy(DEFAULTS)
 
 
+def home_city() -> str:
+    """Where the owner lives, from their own setting (the Local beat), or ""."""
+    try:
+        from agent_friday.core import _load_settings
+        return str((_load_settings() or {}).get("news_local_area") or "").strip()[:80]
+    except Exception:
+        return ""
+
+
 def format_for(routine: str = "") -> str:
     """"solo" or "duo" for a routine's episodes ("" or "any": everything else)."""
     key = routine if routine in RECOMMENDED_FORMAT else "any"
@@ -329,6 +338,7 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         "voice_engine": voice_engine,
         "hosts": hosts,
         "format": format_for((attached or {}).get("routine") or ""),
+        "home": home_city(),
         "created_at": time.time(),
     }
     save(ep)
@@ -473,13 +483,21 @@ NEWS_RULES = (
     "your calendar\").\n"
     "- Introduce every story you mention. Its first mention is a spoken lede: "
     "what happened, who, where, when, and the outlet named aloud (\"The "
-    "Guardian reports that on Tuesday, in Washington, ...\"). Then one line on "
-    "why it matters to the listener today. Never refer to a story as if the "
-    "listener had already read it (\"the pledge\", \"the $400B figure\").\n"
+    "Guardian reports that on Tuesday, in Washington, ...\"). Never refer to a "
+    "story as if the listener had already read it (\"the pledge\", \"the $400B "
+    "figure\"). If a story has a real tie to the listener (their work, today's "
+    "calendar, their neighbourhood), say it in one line; if not, no tie is "
+    "needed: never invent one.\n"
+    "- Every fact in a sentence comes from the story that sentence is about; "
+    "never carry a day, a name or a number over from another story.\n"
     "- A story about violence, death or local safety is introduced plainly and "
     "humanely, with only what is confirmed and who confirmed it. It is never "
-    "background or noise. If it happened where the listener is going today "
-    "(the calendar's locations), add one practical line.\n"
+    "background or noise, and it gets no read or opinion. Add a practical line "
+    "only for a specific tie: a road closure, or today's event venue or street.\n"
+    "- \"My read\" is only for stories that are not about violence or crime, "
+    "and rests on the facts you just reported.\n"
+    "- If a fact is unknown, leave it out or say it once as a fact (\"police "
+    "haven't released a time\"); never talk about what you checked or chose.\n"
     "- Say only the times the calendar gives, exactly. Say \"before\" or "
     "\"after\" only when the calendar's order says so. Say a place the way a "
     "person would (the venue or the street), never a postal code or country.\n"
@@ -504,6 +522,10 @@ def _system_prompt(ep: dict) -> str:
         from agent_friday.services.voice_persona import VOICE_ANCHOR_RULES
         parts.append(VOICE_ANCHOR_RULES)
         parts.append(NEWS_RULES)
+        city = (ep.get("home") or "").split(",")[0].strip()
+        if city:
+            parts.append("The listener lives in %s. For a story there, say \"here in %s\"; "
+                         "never call %s a place they are going.\n" % (city, city, city))
     if ep.get("mode") == "data":
         parts.append(DATA_RULES)
     if ep.get("instructions"):
@@ -583,7 +605,8 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
     lines = merge_turns(lines)
 
     news = bool((ep.get("attached") or {}).get("routine"))
-    gate = dict(n_chapters=len(chapters), news=news, personal=news, solo=solo)
+    gate = dict(n_chapters=len(chapters), news=news, personal=news, solo=solo,
+                home=ep.get("home") or "")
 
     offset = len(signature_lines(ep)[0])
 
@@ -741,6 +764,7 @@ def _clean_text(t: str) -> str:
     from agent_friday import brand
     t = brand.spoken(str(t or ""))
     t = _HEADING_TEXT_RE.sub(" ", str(t or ""))
+    t = quality.META_RE.sub(" ", t)          # the writer narrating its process
     for rx, rep in _STRIP_RE:
         t = rx.sub(rep, t)
     return t.strip()
@@ -1021,6 +1045,49 @@ def _retry_or_fail(eid: str, orb: str, ep: dict, e: "render.RenderError") -> dic
     log.warning("podcast %s failed: %s", eid, e)
     return _update(eid, status="failed", tries=tries,
                    error={"code": e.code, "message": str(e)}, stage_detail="")
+
+
+def transcript_bytes(ep: dict) -> bytes:
+    """The episode as a text file: its checks, the transcript with each line's
+    sources, and the stories heard, each linked. UTF-8 with a byte-order mark,
+    which Windows readers need to show curly quotes and dashes."""
+    def mmss(x):
+        return "%d:%02d" % divmod(int(round(x or 0)), 60)
+    src = {s["id"]: s for s in ep.get("sources") or []}
+    names = {k: v["name"] for k, v in (ep.get("hosts") or {}).items()}
+    out = [ep.get("title") or ep.get("show") or "Episode",
+           "%s · %s · %s" % (ep.get("show") or "", mmss(ep.get("duration_s")),
+                             "Friday alone" if ep.get("format") == "solo" else "two hosts"), ""]
+    chk = ep.get("check") or {}
+    if chk.get("wer") is not None:
+        out.append("Audio matches script: %d%% of words (a transcription check, not an "
+                   "editorial one)." % round(100 * (1 - chk["wer"])))
+    sc = ep.get("script_check")
+    if sc is not None:
+        out.append("Script check: " + ("passed" if sc.get("ok") else
+                                       "%d problem(s):" % len(sc.get("problems") or [])))
+        out += ["  - " + p["message"] for p in sc.get("problems") or []]
+    out += ["", "TRANSCRIPT"]
+    chapters = ep.get("chapters") or []
+    chap = None
+    for ln in ep.get("lines") or []:
+        c = ln.get("chapter")
+        if c != chap and c is not None and c < len(chapters):
+            chap = c
+            out += ["", "== %s ==" % chapters[c]["title"]]
+        tags = []
+        for cid in ln.get("cites") or []:
+            s = src.get(cid) or {}
+            tags.append(s.get("outlet") or ("Calendar " + s["when"] if s.get("when") else "")
+                        or s.get("title") or cid)
+        out.append("[%s] %s: %s%s" % (mmss(ln.get("start")), names.get(ln.get("speaker"), ""),
+                                      ln["text"], ("   (" + "; ".join(tags) + ")") if tags else ""))
+    cited = {c for ln in ep.get("lines") or [] for c in ln.get("cites") or []}
+    heard = [s for s in ep.get("sources") or []
+             if s["id"] in cited and str(s.get("url") or "").startswith("http")]
+    out += ["", "SOURCES"] + (["  %s: %s — %s" % (s.get("outlet") or "", s["title"], s["url"])
+                               for s in heard] or ["  (no linked source)"])
+    return ("\n".join(out) + "\n").encode("utf-8-sig")
 
 
 def _about(ep: dict) -> dict:

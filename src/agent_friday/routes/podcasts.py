@@ -8,6 +8,7 @@
     GET    /api/podcasts/<id>              one episode: chapters, cited lines, sources, check
     GET    /api/podcasts/<id>/audio        the audio (range requests supported)
     GET    /api/podcasts/<id>/captions.vtt timed captions
+    GET    /api/podcasts/<id>/transcript.txt the transcript, checks and linked sources
     GET    /api/podcasts/<id>/charts/<f>   a data-mode chart (SVG)
     POST   /api/podcasts/<id>/cancel
     POST   /api/podcasts/<id>/retry        a failed episode, from the stage it failed at
@@ -161,7 +162,18 @@ def podcasts_audio(eid):
 
 @podcasts_bp.route('/api/podcasts/<eid>/captions.vtt', methods=['GET'])
 def podcasts_captions(eid):
-    return _file(eid, "captions.vtt", "text/vtt")
+    return _file(eid, "captions.vtt", "text/vtt; charset=utf-8")
+
+
+@podcasts_bp.route('/api/podcasts/<eid>/transcript.txt', methods=['GET'])
+def podcasts_transcript(eid):
+    """The transcript with its checks and linked sources, as a UTF-8 text file."""
+    from flask import Response
+    ep = pe.load(eid)
+    if not ep or not ep.get("lines"):
+        return jsonify({"status": "error", "message": "No transcript yet."}), 404
+    return Response(pe.transcript_bytes(ep), mimetype="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="%s-transcript.txt"' % eid})
 
 
 @podcasts_bp.route('/api/podcasts/<eid>/charts/<name>', methods=['GET'])

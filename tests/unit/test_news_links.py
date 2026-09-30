@@ -137,3 +137,14 @@ def test_a_briefing_episode_s_stories_carry_the_briefing_s_ids(stories):
     docs = podcast_news.briefing_docs({"news": stories, "calendar": []}, "# B\n## Tasks\n- one\n", "2031-03-12")
     assert [(d["story_id"], d["url"]) for d in docs if d.get("role") == "story"][:2] == [
         ("N1", "https://examplewire.com/2031/transit"), ("N2", "https://exampleledger.com/storm")]
+
+
+def test_the_written_briefing_links_to_the_publisher_not_google(monkeypatch):
+    from agent_friday.services import news_engine as ne
+    stories = nl.number([{"title": "Council passes the budget", "source": "news.google.com",
+                          "url": "https://news.google.com/rss/articles/CBMiabc", "snippet": "x"}])
+    monkeypatch.setattr(nl, "resolve_url", lambda url, fetch=None: "https://publisher.example/budget"
+                        if "news.google.com" in url else url)
+    monkeypatch.setitem(ne._LAST_BRIEFING_SOURCES, "news", stories)
+    out = ne._finish_briefing("The council passed the budget. [N1]")
+    assert "https://publisher.example/budget" in out and "news.google.com" not in out

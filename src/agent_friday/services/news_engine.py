@@ -981,6 +981,8 @@ def _finish_briefing(content):
     the run's sources; a briefing whose stories are not linked is logged."""
     from agent_friday.services import news_links
     stories = _LAST_BRIEFING_SOURCES.get("news") or []
+    # Publisher links, not news.google.com redirects, for the stories used.
+    news_links.resolve_links(stories, news_links.cited_ids(content))
     problems = news_links.link_problems(content, stories)
     _LAST_BRIEFING_SOURCES["link_check"] = problems
     if problems:
@@ -2600,6 +2602,8 @@ def _generate_weekly_digest():
         if isinstance(data, dict):
             ts = data.get("top_stories")
             tr = data.get("trends")
+            news_links.resolve_links(stories, [str((t or {}).get("id") or "")
+                                               for t in ts or [] if isinstance(t, dict)])
             by_id = {s["id"]: s for s in stories}
             picked = []
             for t in ts or []:
@@ -2770,6 +2774,7 @@ def _generate_weekly_editorial():
 
     when = (cnow.strftime('%Y-%m-%d %H:%M %Z')
             or cnow.isoformat(timespec='minutes'))
+    news_links.resolve_links(stories, news_links.cited_ids(body))
     link_check = news_links.link_problems(body, stories)
     cited = [st for st in stories if st["id"] in set(news_links.cited_ids(body))]
     body = news_links.attach_links(body, stories)

@@ -44,7 +44,6 @@ def test_a_lede_needs_the_outlet_said_aloud(ds):
 def test_a_safety_story_filed_as_background_fails(ds):
     codes = _codes(_check(bad_lines(ds), ds))
     assert "safety_dismissed" in codes and "safety_unattributed" in codes
-    assert "safety_no_practical_line" in codes      # the meetup is in the same town
 
 
 def test_before_your_interviews_is_checked_against_the_calendar(ds):
@@ -140,16 +139,12 @@ def test_a_name_that_opens_the_headline_is_who():
     assert "robinhood" in s["entities"]
 
 
-def test_a_city_in_an_event_s_title_counts_as_where_you_are_going(ds):
-    evs = [dict(d, title="Makers meetup Springfield", location="12 Harbor St") if d.get("kind") == "event"
+def test_a_city_shared_with_an_event_is_not_a_tie_that_needs_a_practical_line(ds):
+    """Sharing a city (the listener's own, often) is not a specific tie."""
+    evs = [dict(d, title="Makers meetup Springfield", location="Springfield") if d.get("kind") == "event"
            and d["start"].endswith("17:30:00-05:00") else d for d in ds]
-    lines = [dict(ln, cites=[c for c in ln["cites"] if not c.startswith("S") or
-                             next(x for x in evs if x["sid"] == c).get("kind") != "event"])
-             if "5:30 PM" in ln["text"] else ln
-             for ln in good_lines(ds) if not ln["text"].startswith("Tonight's meetup")]
-    lines = [dict(ln, text=ln["text"].replace("Your 5:30 PM meetup is in Springfield, so c", "C"))
-             for ln in lines]
-    assert "safety_no_practical_line" in _codes(q.safety_problems(lines, q.stories(evs), q.events(evs)))
+    lines = [ln for ln in good_lines(ds) if not ln["text"].startswith(("Your 5:30", "Tonight's"))]
+    assert "safety_no_practical_line" not in _codes(q.safety_problems(lines, q.stories(evs), q.events(evs)))
 
 
 def test_the_episode_never_points_at_the_written_digest(ds):
@@ -181,11 +176,14 @@ def test_what_she_did_not_check_is_said_once_not_as_a_refrain(ds):
 
 
 def test_a_generic_word_shared_with_an_event_s_name_is_not_a_practical_line(ds):
-    evs = [dict(d, title="Springfield Makers: Local Models Night") if d.get("kind") == "event"
-           and d["start"].endswith("17:30:00-05:00") else d for d in ds]
+    """The story names the venue's street, so a practical line is owed; one
+    common word shared with the event's name ("local") is not that line."""
+    near = [dict(d, text=d["text"] + " The bar is on Harbor St.") if d["title"].startswith("Two injured")
+            else dict(d, title="Makers: Local Models Night") if d.get("kind") == "event"
+            and d["start"].endswith("17:30:00-05:00") else d for d in ds]
     lines = [ln for ln in good_lines(ds) if not ln["text"].startswith(("Your 5:30", "Tonight's"))]
     lines.insert(9, {"speaker": "a", "chapter": 1, "cites": [], "text": "It is the local story to know."})
-    assert "safety_no_practical_line" in _codes(q.safety_problems(lines, q.stories(evs), q.events(evs)))
+    assert "safety_no_practical_line" in _codes(q.safety_problems(lines, q.stories(near), q.events(near)))
 
 
 def test_a_postal_address_is_not_read_out_whole(ds):

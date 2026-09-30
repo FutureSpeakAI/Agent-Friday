@@ -277,11 +277,8 @@ def events(docs: list[dict]) -> list[dict]:
                     "keys": {_stem(w) for w in _content(d.get("title") or "")},
                     "places": {p.strip().lower() for p in re.split(r"[,\n]", d.get("location") or "")
                                if re.fullmatch(r"[A-Za-z][A-Za-z .'-]{2,}", p.strip() or "")
-                               and len(p.strip()) > 2}
-                    # A city is often in the event's name ("Makers meetup Springfield").
-                    | {w.lower().strip(":,") for w in (d.get("title") or "").split()
-                       if len(w.strip(":,")) >= 4 and w[0].isupper() and w.strip(":,").isalpha()
-                       and w.lower().strip(":,") not in _STOP}})
+                               and len(p.strip()) > 2},
+                    "venue": _venue_words(d.get("location") or "")})
     return out
 
 
@@ -315,6 +312,133 @@ def _p(code: str, message: str, line: int | None = None, sid: str = "") -> dict:
     return {"code": code, "message": message, "line": line, "sid": sid}
 
 
+_STREET = r"(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|plaza|square|park)"
+
+
+def _venue_words(location: str) -> set:
+    """The specific place in an event's location: its venue or street words,
+    not the city, state, postcode or country."""
+    parts = [p.strip() for p in re.split(r"[,\n]", location or "") if p.strip()]
+    out = set()
+    for k, part in enumerate(parts):
+        street = bool(re.search(r"\d", part)) or bool(re.search(r"\b%s\.?$" % _STREET, part, re.I))
+        if street or (k == 0 and len(parts) > 1):
+            out |= {w.lower() for w in re.findall(r"[A-Za-z]{4,}", part)
+                    if not re.fullmatch(_STREET, w, re.I) and w.lower() not in _STOP}
+    return out
+
+
+_DESTINATION_RE = re.compile(r"\b(where you(?:'| a)re (?:going|headed|heading)|going to be in person|"
+                             r"on your way to)\b", re.I)
+
+
+def home_problems(lines: list[dict], home: str) -> list[dict]:
+    """The listener lives in `home`: it is "here", never a place they are going."""
+    city = (home or "").split(",")[0].strip().lower()
+    if not city:
+        return []
+    return [_p("home_as_destination", "%s is home, so it is \"here in %s\", not a place you are "
+               "going: \"%s\"" % (city.title(), city.title(), ln["text"][:90]), i)
+            for i, ln in _spoken(lines)
+            if _DESTINATION_RE.search(ln["text"]) and city in ln["text"].lower()]
+
+
+_SENT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _hard_facts(text: str) -> set:
+    """The checkable facts in a sentence: names mid-sentence, figures, days and months."""
+    facts = set(_caps(text, initial=False))
+    facts |= {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", text) if len(w) > 1}
+    facts |= {w for w in _words(text) if w in _DAYS or w in _MONTHS}
+    return facts
+
+
+def attribution_problems(lines: list[dict], story_list: list[dict], docs: list[dict],
+                         home: str = "") -> list[dict]:
+    """Every fact in a sentence about one story is in that story: a day, a name
+    or a figure from another story is crossed over ("the hearing is set for
+    Wednesday" in a sentence about a different incident)."""
+    if len(story_list) < 2:
+        return []
+    words = {s["sid"]: set(_words("%s %s" % (s["title"], s["text"])))
+             | {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", "%s %s" % (s["title"], s["text"]))}
+             for s in story_list}
+    shared = set()
+    for d in docs:
+        if d.get("kind") in ("event", "digest") or d.get("role") in ("event", "digest"):
+            shared |= set(_words("%s %s" % (d.get("title") or "", d.get("text") or "")))
+    shared |= set(_words(home or ""))
+    sids = {s["sid"] for s in story_list}
+    out = []
+    for i, ln in _spoken(lines):
+        cited = [c for c in ln.get("cites") or [] if c in sids]
+        for sent in _SENT_RE.split(ln["text"]):
+            about = [s for s in story_list if _mentions({"text": sent, "cites": []}, s)]
+            if not about and len(cited) == 1:
+                about = [s for s in story_list if s["sid"] == cited[0]]
+            if len(about) != 1:
+                continue
+            if cited and about[0]["sid"] not in cited:
+                out.append(_p("crossed_facts", "A sentence about \"%s\" sits in a line that cites a "
+                              "different story: \"%s\"" % (about[0]["title"][:60], sent[:90]),
+                              i, about[0]["sid"]))
+                break
+            own = words[about[0]["sid"]]
+            foreign = sorted(f for f in _hard_facts(sent) - own - shared
+                             if any(f in words[o] for o in words if o != about[0]["sid"]))
+            if foreign:
+                out.append(_p("crossed_facts", "A sentence about \"%s\" carries %s from another story: "
+                              "\"%s\"" % (about[0]["title"][:60], ", ".join(f.title() for f in foreign),
+                                          sent[:90]), i, about[0]["sid"]))
+                break
+    return out
+
+
+_OPINION_RE = re.compile(r"\b(my read|my take|in my view|i think|i'd argue|i would argue|"
+                         r"my sense|the way i see it)\b", re.I)
+
+
+def opinion_problems(lines: list[dict], story_list: list[dict], docs: list[dict]) -> list[dict]:
+    """No editorial read on a story of violence or crime; elsewhere a read rests
+    on the facts of the stories its line cites."""
+    by_sid = {d["sid"]: d for d in docs}
+    safety = {s["sid"] for s in story_list if s["safety"]}
+    out = []
+    for i, ln in _spoken(lines):
+        for sent in _SENT_RE.split(ln["text"]):
+            if not _OPINION_RE.search(sent):
+                continue
+            about = {s["sid"] for s in story_list if _mentions({"text": sent, "cites": []}, s)}
+            if (set(ln.get("cites") or []) | about) & safety:
+                out.append(_p("opinion_on_violence", "No read or opinion on a story of violence "
+                              "or crime; report what is confirmed: \"%s\"" % sent[:90], i))
+                continue
+            basis = " ".join("%s %s" % (by_sid[c].get("title") or "", by_sid[c].get("text") or "")
+                             for c in ln.get("cites") or [] if c in by_sid)
+            grounded = len({_stem(w) for w in _content(sent)} & {_stem(w) for w in _content(basis)})
+            if grounded < 2 and not (_hard_facts(sent) & _hard_facts(basis)):
+                out.append(_p("ungrounded_read", "A read must rest on the facts of the stories "
+                              "it cites: \"%s\"" % sent[:90], i))
+    return out
+
+
+#: The writer narrating its own process ("I did not check the time, so I am
+#: not inventing one"). Never speech: cut before it is spoken, named if it
+#: survives.
+META_RE = re.compile(
+    r"[^.!?]*\b(?:I|I'm|I am|I'll|we)\b[^.!?]*\b(?:did not|didn't|do not|don't|won't|will not|"
+    r"am not|'m not|not going to|can't|cannot)\b[^.!?]*\b(?:check\w*|verif\w*|confirm\w*|guess\w*|"
+    r"invent\w*|speculat\w*|giv\w+ you|leav\w+ it out|tell you)\b[^.!?]*[.!?]", re.I)
+
+
+def meta_problems(lines: list[dict]) -> list[dict]:
+    return [_p("meta_narration", "The script narrates its own process; leave the unknown out, "
+               "or say it once as a fact (\"police haven't released a time\"): \"%s\""
+               % m.group(0).strip()[:90], i)
+            for i, ln in _spoken(lines) for m in [META_RE.search(ln["text"])] if m]
+
+
 def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool = True) -> list[dict]:
     out = []
     fm = first_mentions(lines, story_list)
@@ -323,7 +447,6 @@ def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool =
         if i is None:
             continue
         window = " ".join(ln["text"] for ln in lines[i:i + 2] if not ln.get("signature"))
-        low = window.lower()
         wws = set(_words(window)) | {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?", window)}
         missing = []
         aliases = outlet_aliases(s)
@@ -338,10 +461,6 @@ def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool =
         if len({_stem(w) for w in _content(window)} & s["keys"]) < min(2, len(s["keys"])) \
                 or len(_words(window)) < MIN_LEDE_WORDS:
             missing.append("what happened")
-        if personal:
-            after = [ln["text"] for ln in lines[i:i + 3] if not ln.get("signature")]
-            if not any(_YOU_RE.search(t) for t in after):
-                missing.append("why it matters to you")
         if missing:
             out.append(_p("no_lede", "\"%s\" is first mentioned without a spoken lede; it lacks %s."
                           % (s["title"][:90], ", ".join(missing)), i, s["sid"]))
@@ -361,7 +480,6 @@ def _dismissed(text: str) -> bool:
 def safety_problems(lines: list[dict], story_list: list[dict], event_list: list[dict]) -> list[dict]:
     out = []
     fm = first_mentions(lines, story_list)
-    near = set().union(*[e["places"] for e in event_list]) if event_list else set()
     for s in story_list:
         if not s["safety"] or s["sid"] not in fm:
             continue
@@ -378,11 +496,14 @@ def safety_problems(lines: list[dict], story_list: list[dict], event_list: list[
                           "officials, the outlet), and only what is confirmed." % s["title"][:90],
                           i, s["sid"]))
         story_words = set(_words("%s %s" % (s["title"], s["text"])))
-        close = {p for p in near if set(p.split()) <= story_words}
+        # A practical line is owed only for a specific tie to today's plans:
+        # the story names the venue or the street of an event. Sharing a city
+        # is not one, least of all the listener's own.
+        close = {w for e in event_list for w in e.get("venue", set()) if w in story_words}
         if close:
             # The practical line ties this story to the event it is near: a
             # line of the story (or the one after it) that names that event.
-            near_events = [e for e in event_list if e["places"] & close]
+            near_events = [e for e in event_list if e.get("venue", set()) & close]
             span = sorted({j for k in idx for j in (k, k + 1) if j < len(lines)})
             place_stems = {_stem(w) for p in close for w in p.split()}
 
@@ -398,8 +519,8 @@ def safety_problems(lines: list[dict], story_list: list[dict], event_list: list[
                 or any(names_event(lines[j]["text"], e) for e in near_events)
                 for j in span if not lines[j].get("signature"))
             if not practical:
-                out.append(_p("safety_no_practical_line", "\"%s\" happened in %s, where you are "
-                              "going today; say plainly what that means for your plans."
+                out.append(_p("safety_no_practical_line", "\"%s\" names %s, where one of today's "
+                              "events is; give the event's time and what it means for it."
                               % (s["title"][:90], ", ".join(sorted(c.title() for c in close))),
                               i, s["sid"]))
     return out
@@ -602,13 +723,16 @@ def link_claim_problems(lines: list[dict], story_list: list[dict]) -> list[dict]
     return []
 
 
-CHECKS = ("ledes", "safety stories", "calendar times", "repetition", "restated close",
-          "headings", "digest references", "refrains", "addresses", "fragments",
-          "link claim", "density")
+CHECKS = ("ledes", "safety stories", "home city", "facts stay with their story",
+          "no opinion on violence", "grounded reads", "no process narration",
+          "calendar times", "repetition", "restated close", "headings",
+          "digest references", "refrains", "addresses", "fragments", "link claim",
+          "density")
 
 
 def script_problems(lines: list[dict], docs: list[dict], *, n_chapters: int = 1,
-                    news: bool = False, personal: bool = False, solo: bool = False) -> list[dict]:
+                    news: bool = False, personal: bool = False, solo: bool = False,
+                    home: str = "") -> list[dict]:
     """Every problem with the script, in reading order."""
     story_list = stories(docs)
     event_list = events(docs)
@@ -616,6 +740,10 @@ def script_problems(lines: list[dict], docs: list[dict], *, n_chapters: int = 1,
     if news:
         probs += lede_problems(lines, story_list, personal=personal)
         probs += safety_problems(lines, story_list, event_list)
+        probs += home_problems(lines, home)
+        probs += attribution_problems(lines, story_list, docs, home)
+        probs += opinion_problems(lines, story_list, docs)
+    probs += meta_problems(lines)
     probs += time_problems(lines, event_list, docs)
     probs += repetition_problems(lines, docs, n_chapters)
     probs += heading_problems(lines, docs)

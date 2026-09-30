@@ -132,3 +132,89 @@ def for_speech(context: str) -> str:
     which a voice would read out. The outlet stays, to be named aloud."""
     text = (context or "").replace(CITE_RULE, "")
     return re.sub(r"(?m)^(\W{0,3})\[[A-Z]\d{1,3}\]\s*", r"\1- ", text)
+
+
+# ── Google News redirects ───────────────────────────────────────────────────
+#
+# A Google News feed item links to news.google.com/rss/articles/<id>, not to
+# the publisher. The id is either the publisher's URL, base64-encoded (older
+# items), or an opaque id Google exchanges for the URL on request. Links put
+# in front of a reader are the publisher's; one that cannot be resolved is
+# kept, so the story still opens.
+
+_GN_RE = re.compile(r"^https?://news\.google\.com/(?:rss/)?(?:articles|read)/([A-Za-z0-9_\-]+)")
+_GN_EXEC = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
+_RESOLVED: dict = {}
+
+
+def _decode_old(gid: str) -> str:
+    import base64
+    try:
+        raw = base64.urlsafe_b64decode(gid + "=" * (-len(gid) % 4))
+    except (ValueError, TypeError):
+        return ""
+    m = re.search(rb"https?://[\x21-\x7e]+", raw)
+    if not m:
+        return ""
+    url = m.group(0).decode("ascii", "ignore")
+    # The protobuf framing byte after the URL is not part of it.
+    return re.sub(r"[^\w/%&=?#.:~+\-]+$", "", url)
+
+
+def _fetch(url: str, data: str | None = None) -> str:
+    """GET through the SSRF guard; POST only to Google's fixed exchange endpoint."""
+    if data is None:
+        from agent_friday.services.web_safety import safe_get
+        return safe_get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}).text
+    if url != _GN_EXEC:
+        raise ValueError("refusing to post anywhere but Google's link exchange")
+    import requests
+    from agent_friday.services.web_safety import assert_safe
+    assert_safe(url)
+    return requests.post(url, data={"f.req": data}, timeout=10,
+                         headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                                  "User-Agent": "Mozilla/5.0"}).text
+
+
+def resolve_url(url: str, *, fetch=None) -> str:
+    """The publisher's URL for a Google News link; any other URL unchanged."""
+    m = _GN_RE.match(url or "")
+    if not m:
+        return url
+    if url in _RESOLVED:
+        return _RESOLVED[url]
+    gid = m.group(1)
+    real = _decode_old(gid)
+    if real and "news.google.com" not in real and not real.startswith("https://news.google"):
+        _RESOLVED[url] = real
+        return real
+    fetch = fetch or _fetch
+    try:
+        import json as _json
+        page = fetch("https://news.google.com/rss/articles/" + gid)
+        sig = re.search(r'data-n-a-sg="([^"]+)"', page)
+        ts = re.search(r'data-n-a-ts="([^"]+)"', page)
+        aid = re.search(r'data-n-a-id="([^"]+)"', page)
+        if not (sig and ts):
+            return url
+        inner = ('["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,null,null,'
+                 'null,null,null,0,1],"X","X",1,[1,1,1],1,1,null,0,0,null,0],"%s",%s,"%s"]'
+                 % (aid.group(1) if aid else gid, ts.group(1), sig.group(1)))
+        body = fetch(_GN_EXEC, _json.dumps([[["Fbv4je", inner]]]))
+        found = re.search(r'garturlres\\",\\"(https?://[^"\\]+)', body)
+        if found:
+            _RESOLVED[url] = found.group(1)
+            return found.group(1)
+    except Exception:
+        pass
+    return url
+
+
+def resolve_links(stories: list[dict], ids=None, *, fetch=None) -> list[dict]:
+    """Replace Google News redirects with publisher URLs for the given story ids
+    (all when None). Only the stories a routine used are looked up."""
+    want = set(ids) if ids is not None else None
+    for s in stories:
+        if want is None or s.get("id") in want:
+            s["url"] = resolve_url(s.get("url") or "", fetch=fetch)
+    return stories
