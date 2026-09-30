@@ -102,6 +102,8 @@ def test_broad_pytest_is_blocked_in_a_friday_tree(friday_tree, command):
     "pytest -q tests/unit/test_x.py::test_a -n 2",
     "python -m pytest tests/unit/test_a.py tests/unit/test_b.py -q",
     "pytest -k egress tests/unit/test_egress_gate.py",
+    "FRIDAY_TESTING=1 ./venv/Scripts/python.exe -m pytest tests/unit/test_x.py -q -p no:cacheprovider -n 0 2>&1 | tail -1",
+    "pytest tests/unit/test_x.py > /tmp/out.txt 2>&1",
     "python scripts/run_suite_guarded.py tests/unit tests/api",
     "pytest --collect-only -q",
     "pytest --version",

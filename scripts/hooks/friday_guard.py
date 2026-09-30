@@ -383,6 +383,11 @@ def is_broad_pytest(args: list[str]) -> bool:
             if "=" not in a and a in PYTEST_VALUE_OPTS and a != "-x":
                 skip = True
             continue
+        if re.fullmatch(r"\d?>>?|&>|<", a):
+            skip = True  # a redirection operator: its target is a file, not a test
+            continue
+        if ">" in a or "<" in a:
+            continue  # a compact redirection such as 2>&1 or >out.txt
         targets.append(a)
     if not targets:
         return True
@@ -591,28 +596,28 @@ def decide(payload: dict, cfg: dict, ram=_PROBE, now: float | None = None) -> tu
 
     why = check_history(segs)
     if why:
-        audit(cfg, f"BLOCK history tool={tool} cwd={cwd} cmd={command[:200]!r}")
+        audit(cfg, f"BLOCK history tool={tool} cwd={cwd} cmd={command[:600]!r}")
         return False, why
 
     why = check_pytest(segs)
     if why:
-        audit(cfg, f"BLOCK pytest tool={tool} cwd={cwd} cmd={command[:200]!r}")
+        audit(cfg, f"BLOCK pytest tool={tool} cwd={cwd} cmd={command[:600]!r}")
         return False, why
 
     if any(vm_command(s) for s in segs):
         ram = free_ram_gb() if ram is _PROBE else ram
         why = check_vm(segs, cfg, ram)
         if why:
-            audit(cfg, f"BLOCK vm tool={tool} ram={ram} cmd={command[:200]!r}")
+            audit(cfg, f"BLOCK vm tool={tool} ram={ram} cmd={command[:600]!r}")
             return False, why
 
     why = check_live_shell(segs, cfg)
     if why:
         token = lane_token(cfg, now)
         if token:
-            audit(cfg, f"BYPASS lane={token!r} tool={tool} cwd={cwd} cmd={command[:200]!r}")
+            audit(cfg, f"BYPASS lane={token!r} tool={tool} cwd={cwd} cmd={command[:600]!r}")
             return True, ""
-        audit(cfg, f"BLOCK live tool={tool} cwd={cwd} cmd={command[:200]!r}")
+        audit(cfg, f"BLOCK live tool={tool} cwd={cwd} cmd={command[:600]!r}")
         return False, why
 
     return True, ""
