@@ -289,6 +289,8 @@ def status() -> dict:
         "error": _load_error,
         "shadow": shadow_backend(),
         "device": "cpu",
+        "engine": getattr(_agent, "_friday_engine", None),
+        "threads": getattr(_agent, "_friday_threads", None),
         # Decisions Laya did not answer within _SCORE_TIMEOUT_S; each was
         # decided by the keyword scan alone.
         "slow_answers": int(_slow_answers),
@@ -353,6 +355,7 @@ def _load_now():
         reset_calibration_warnings()
         agent = capture_load_warnings(
             lambda: laya.load(MODEL_ID, device="cpu"))
+        _use_engine(agent)
         with _agent_lock:
             _agent = agent
             _load_error = None
@@ -401,6 +404,29 @@ def _load_now():
         return None
     finally:
         _loading = False
+
+
+def _use_engine(agent) -> None:
+    """Put the loaded model on the engine `laya_runtime` selects.
+
+    A faster engine that cannot run here (no artifact, failed agreement
+    check, a runtime error) leaves laya's own fp32 path in place and says so;
+    it is never a reason for the gate to be without its second opinion.
+    """
+    from agent_friday.services import laya_runtime
+    try:
+        from agent_friday.core import _load_settings
+        wanted = (_load_settings() or {}).get("laya_runtime") or "auto"
+    except Exception:
+        wanted = "auto"
+    engine = laya_runtime.choose_engine(wanted)
+    try:
+        laya_runtime.apply_engine(agent, engine)
+    except Exception as e:
+        _log.warning("laya engine %s unavailable (%s); running fp32", engine, e)
+        laya_runtime.apply_engine(agent, "torch-fp32")
+    _log.info("laya engine: %s, %s threads", getattr(agent, "_friday_engine", "?"),
+              getattr(agent, "_friday_threads", "?"))
 
 
 def start_warming(force: bool = False) -> None:
@@ -597,20 +623,33 @@ def _remember(agent, state: str, answer: tuple) -> None:
             _answer_cache.popitem(last=False)
 
 
-def _answer_unreserved(state: str) -> tuple:
+def _answer_unreserved(state: str, *, also: tuple = ()) -> tuple:
+    """Severity, plus the `also` questions in the same forward pass.
+
+    `also` answers ride in detail["also"] as {question: choice}. The shadow
+    asks the gate's two finer questions this way (laya_questions.GATE_SHADOW):
+    they cost one batched pass, not three calls, and they change no verdict.
+    """
     agent = _agent
     if agent is None:
         raise RuntimeError("laya not loaded yet")
-    r = agent.predict(str(state or ""), SEVERITY_QUESTION)
+    if also:
+        from agent_friday.services import laya_questions
+        questions = laya_questions.select(("severity",) + tuple(also))
+    else:
+        questions = SEVERITY_QUESTION
+    r = agent.predict(str(state or ""), questions)
     a = (r.get("answers") or {}).get("severity") or {}
     choice = a.get("choice")
     if choice not in ("hard", "soft"):
         raise ValueError("laya returned %r, not hard/soft" % (choice,))
     conf = a.get("confidence")
-    answer = (choice, (float(conf) if conf is not None else None), {
-        "source": "laya", "model": MODEL_ID,
-        "probabilities": a.get("probabilities") or {},
-    })
+    detail = {"source": "laya", "model": MODEL_ID,
+              "probabilities": a.get("probabilities") or {}}
+    if also:
+        detail["also"] = {q: ((r.get("answers") or {}).get(q) or {}).get("choice")
+                          for q in also}
+    answer = (choice, (float(conf) if conf is not None else None), detail)
     _remember(agent, state, answer)
     return answer
 
@@ -660,13 +699,14 @@ def reset_missed() -> None:
 _BACKGROUND_WAIT_S = 60.0
 
 
-def _answer(state: str, *, wait_s: float = 0.0) -> tuple:
+def _answer(state: str, *, wait_s: float = 0.0, also: tuple = ()) -> tuple:
     """Direct and shadow scoring share admission with bounded approvals.
 
     `wait_s` > 0 waits that long for a slot, polling; the default never waits.
+    A remembered answer serves only if it carries every `also` question.
     """
     hit = _remembered(state)
-    if hit is not None:
+    if hit is not None and all(q in (hit[2].get("also") or {}) for q in also):
         return hit
     if _agent is None:
         if wait_s and not _loading:
@@ -680,7 +720,7 @@ def _answer(state: str, *, wait_s: float = 0.0) -> tuple:
     if release is None:
         raise LayaBusy("laya is still busy with earlier actions")
     try:
-        return _answer_unreserved(state)
+        return _answer_unreserved(state, also=also)
     finally:
         release()
 
@@ -738,11 +778,15 @@ def laya_backend(question: str, state: str, **kw):
     and `decide` falls back to keyword and records that it did - which is the
     wanted behaviour for a question this model was never given.
     """
-    wait_s = _BACKGROUND_WAIT_S if kw.get("background") else 0.0
+    background = bool(kw.get("background"))
+    wait_s = _BACKGROUND_WAIT_S if background else 0.0
+    # A background (shadow) scoring asks the gate's finer questions too, in
+    # the same pass: evidence for a later two-answer gate, no verdict change.
+    also = ("leaves_machine", "changes_outside") if background else ()
     if question == "action_severity":
-        return _answer(state, wait_s=wait_s)
+        return _answer(state, wait_s=wait_s, also=also)
     if question == "policy_class":
-        severity, conf, detail = _answer(state, wait_s=wait_s)
+        severity, conf, detail = _answer(state, wait_s=wait_s, also=also)
         if severity == "soft":
             return "internal", conf, dict(detail, severity=severity)
         # The LABEL for a hard action stays with the incumbent. It is

@@ -2522,6 +2522,10 @@ DEFAULT_SETTINGS = {
     # Optional chat preparation experiment. Alternate ordinary and assisted
     # turns; Laya only prepares read schemas/context and never grants actions.
     "laya_pilot_enabled": False,
+    # How Laya runs on the CPU (services/laya_runtime): "auto" takes the
+    # fastest engine measured and checked on this PC, else laya's own fp32.
+    # "torch-fp32" | "torch-int8" | "onnx-int8" pin one.
+    "laya_runtime": "auto",
     # ── Creative policy (services/creative_policy.py) ──
     # What Friday refuses to generate, written down where the user can read
     # and set it. Before this existed there was nothing legible for a seat to

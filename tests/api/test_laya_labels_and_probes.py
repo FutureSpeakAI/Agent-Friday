@@ -135,3 +135,37 @@ def test_the_routes_label_and_report(_isolate, client):
     assert r.status_code == 200
     body = client.get("/api/decisions/gate_status").get_json()
     assert body["evidence"]["laya"]["right"] == 1
+
+
+class _ThreeAnswers:
+    """Answers every gate question; says data leaves but nothing changes."""
+
+    def __init__(self):
+        self.calls = []
+
+    def predict(self, text, questions):
+        self.calls.append(sorted(questions))
+        out = {}
+        for q in questions:
+            out[q] = {"choice": {"severity": "soft", "leaves_machine": "yes",
+                                 "changes_outside": "no"}.get(q, "no"), "confidence": 0.8}
+        return {"answers": out}
+
+
+def test_the_shadow_asks_all_three_gate_questions_in_one_pass(_isolate, monkeypatch):
+    agent = _ThreeAnswers()
+    monkeypatch.setattr(laya_backend, "_agent", agent)
+    approvals.classify("mcp_github_search_users {}")
+    assert agent.calls == [["changes_outside", "leaves_machine", "severity"]]
+    shadows = [r for r in _rows(_isolate / "decisions.jsonl") if r.get("shadow")]
+    assert shadows[0]["detail"]["also"] == {"leaves_machine": "yes", "changes_outside": "no"}
+
+
+def test_evidence_scores_leaves_machine_against_the_owner(_isolate, monkeypatch):
+    monkeypatch.setattr(laya_backend, "_agent", _ThreeAnswers())
+    approvals.classify("mcp_github_search_users {}")
+    laya_labels.label(tool="mcp_github_search_users", reaches_outside=True, by="owner")
+    ev = laya_labels.evidence()
+    # severity said soft (wrong), leaves_machine said yes (right).
+    assert ev["laya"] == {"right": 0, "wrong": 1}
+    assert ev["laya_leaves_machine"] == {"right": 1, "wrong": 0}
