@@ -8928,6 +8928,7 @@ def _task_log_tool(session_ctx, name, args):
 
 
 from agent_friday.services import tool_receipts as _receipts
+from agent_friday.services import credential_paths as _cred_paths
 
 #: Verb prefixes a model habitually invents in front of a tool's real name.
 #: Example: a seat calls `mcp_higgsfield_get_balance` when the registered
@@ -9090,7 +9091,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
         try:
             _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
+            _cred_paths.REFUSED.set(False)
             result = handler(ctx.input)
+            _refused = _cred_paths.REFUSED.get()
         finally:
             _CURRENT_SURFACE.reset(_surface_tok)
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
@@ -9108,7 +9111,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     # Receipt written only after the handler actually returned. This is the
     # only place one is created, so a receipt cannot exist for a call that did
     # not happen — which is what makes an unbacked claim detectable later.
-    _receipts.record(name, ok=True)
+    # A credential refusal raised by the handler itself is a denial, not a read.
+    if _refused:
+        _receipts.record(name, ok=False, denied=True, detail=result)
+    else:
+        _receipts.record(name, ok=True)
 
     # Cap result size to prevent token explosion in the model context window.
     # The voice path already caps at 8 KB; apply the same limit uniformly here.
@@ -9664,6 +9671,11 @@ def _hook_credential_refusal(ctx):
                 p = Path(target).expanduser()
                 if _cred.check(p):
                     return _hooks.DENY(_cred.refusal(p))
+                # A bare name or alias is judged by what it resolves to, so a
+                # key found by name is refused before any card or narration.
+                resolved = _resolve_open_target(target)
+                if resolved and _cred.check(Path(resolved)):
+                    return _hooks.DENY(_cred.refusal(Path(resolved)))
         elif ctx.tool_name == "run_command":
             why = _cred.scan_command(str(inp.get("command") or ""))
             if why:

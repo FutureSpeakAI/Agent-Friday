@@ -30,10 +30,17 @@ the attestation signing key), never the owner's content.
 from __future__ import annotations
 
 import fnmatch
+import contextvars
 import functools
 import os
 import re
 from pathlib import Path
+
+#: Set when a refusal line has been issued in this context. The tool runner
+#: clears it before a handler runs and reads it after, so a refusal raised by
+#: any layer is receipted as a denial and never as a successful read.
+REFUSED: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "credential_refusal_issued", default=False)
 
 
 def _home() -> Path:
@@ -502,9 +509,70 @@ def _decoded_command_texts(cmd: str):
                 yield text
 
 
+_TOKEN_RE = re.compile(r"""\"([^\"]+)\"|'([^']+)'|(\S+)""")
+_SEGMENT_SPLIT = re.compile(r"([;|&\n])")
+
+
 def _tokens(cmd: str):
-    for m in re.finditer(r"""\"([^\"]+)\"|'([^']+)'|(\S+)""", cmd):
+    for m in _TOKEN_RE.finditer(cmd):
         yield next(g for g in m.groups() if g)
+
+
+_HOME_SPELLINGS = ("~", "~/", "~\\")
+_VERB_PREFIXES = {"sudo", "env", "command", "time", "nohup", "exec", "call", "start"}
+#: Commands that USE a key named on their command line: the key authenticates
+#: a connection and its content is never printed.
+_SSH_VERBS = {"ssh", "scp", "sftp"}
+_KUBE_VERBS = {"kubectl", "helm", "k9s", "kubectx", "kubens"}
+#: Commands whose every folder argument is a source or a place to list.
+_ARCHIVE_VERBS = {"tar", "zip", "7z", "7za", "rar", "compress-archive"}
+#: Words that put the folder after them in the walk-root position.
+_ROOT_LEADS = {"get-childitem", "gci", "ls", "dir", "find", "tree", "robocopy",
+               "xcopy", "rsync", "-path", "-literalpath", "-lp"}
+
+
+def _verb(tokens: list[str]) -> str:
+    """The command a segment runs: its first word, past sudo-style prefixes."""
+    for t in tokens:
+        w = t.strip("&.(").lower()
+        if not w or w in _VERB_PREFIXES or ("=" in w and not w.startswith("-")):
+            continue
+        base = re.split(r"[\\/]", w)[-1]
+        return base[:-4] if base.endswith(".exe") else base
+    return ""
+
+
+def _use_indexes(tokens: list[str]) -> set[int]:
+    """Token positions that name a key for USE (`ssh -i KEY`, `kubectl
+    --kubeconfig FILE`) in a segment whose command only uses it."""
+    verb, out = _verb(tokens), set()
+    for i, t in enumerate(tokens):
+        low = t.lower()
+        nxt = tokens[i + 1].lower() if i + 1 < len(tokens) else ""
+        if verb in _SSH_VERBS:
+            if low == "-i" and nxt:
+                out.add(i + 1)
+            elif low == "-o" and nxt.startswith("identityfile="):
+                out.add(i + 1)
+            elif low.startswith(("identityfile=", "-oidentityfile=")):
+                out.add(i)
+        elif verb in _KUBE_VERBS:
+            if low == "--kubeconfig" and nxt:
+                out.add(i + 1)
+            elif low.startswith("--kubeconfig="):
+                out.add(i)
+    return out
+
+
+def _segments(cmd: str) -> list[list[tuple[int, int, str]]]:
+    """`cmd` split at ; | & and newlines into lists of (start, end, token)."""
+    out, pos = [], 0
+    for part in _SEGMENT_SPLIT.split(cmd):
+        if part not in (";", "|", "&", "\n"):
+            out.append([(pos + m.start(), pos + m.end(), next(g for g in m.groups() if g))
+                        for m in _TOKEN_RE.finditer(part)])
+        pos += len(part)
+    return out
 
 
 #: A command that can carry file content somewhere: read, copy, archive,
@@ -512,7 +580,7 @@ def _tokens(cmd: str):
 _READER_RE = re.compile(
     r"(?<![a-z0-9_-])(?:cat|type|gc|get-content|more|less|head|tail|sls|"
     r"select-string|findstr|grep|rg|copy|cp|xcopy|robocopy|copy-item|tar|zip|"
-    r"compress-archive|certutil|xargs|foreach(?:-object)?|iwr|irm|curl|wget|"
+    r"compress-archive|7z|7za|rar|certutil|xargs|foreach(?:-object)?|iwr|irm|curl|wget|"
     r"invoke-webrequest|invoke-restmethod|readall\w+|base64|xxd|od|format-hex|"
     r"scp|sftp|ftp|rsync)(?![a-z0-9_-])")
 #: Recursion asked for by a flag: -Recurse and its PowerShell abbreviations,
@@ -646,6 +714,68 @@ def scan_code(code: str) -> str | None:
     return None
 
 
+def _path_token(tok: str) -> str | None:
+    """`tok` reduced to the path it may name, or None for a plain word."""
+    tok = tok.strip(",;|()").replace(_SPACE, " ")
+    if tok in _HOME_SPELLINGS:
+        tok = _expand("~")
+    elif tok in (".", "..", ".\\", "./", "..\\", "../"):
+        tok = os.path.abspath(tok)
+    if len(tok) < 3:
+        return None
+    if "=" in tok and not tok.startswith(("/", "~", "$", "%")) and tok[1:2] != ":":
+        tok = tok.split("=", 1)[1]
+    if ("/" in tok or "\\" in tok or tok.startswith("~")
+            or tok.startswith("$env:") or tok.startswith("%")
+            or (len(tok) > 1 and tok[1] == ":")):
+        return tok
+    return None
+
+
+def _flat(text: str) -> str:
+    return re.sub(r"[\"'`^+()]", "", text.replace(_SPACE, " ")).replace("\\", "/").lower()
+
+
+def _is_clean_credential_path(tok: str) -> bool:
+    """True for a path in a credential area that `check` nevertheless allows:
+    a lookup with no secret in it, or a public key."""
+    path = _path_token(tok)
+    if not path or any(ch in path for ch in "*?["):
+        return False
+    flat = _flat(path)
+    if not (any(m in flat for m, _w in _COMMAND_MARKERS) or _COMMAND_DIR_RE.search(flat)):
+        return False
+    try:
+        target = Path(_expand(path))
+        if check(target) is not None:
+            return False
+        if _plain_name(target.name).endswith(".pub"):
+            return True
+        dirs, _files, _lookups = _deny_norms(str(_home()), str(_friday()))
+        return any(_asis(target).startswith(d + os.sep) for d, _why in dirs)
+    except Exception:
+        return False
+
+
+def _without_exempt(cmd: str) -> str:
+    """`cmd` with the tokens that only look like reading a credential blanked.
+
+    A key named for use (`ssh -i KEY`, `kubectl --kubeconfig FILE`, in the
+    segment of the command that uses it), a lookup such as `~/.ssh/config` and
+    a public key, each while `check` allows the path. Blanking is by position,
+    so the same spelling elsewhere in the command is still judged.
+    """
+    spans = []
+    for seg in _segments(cmd):
+        use = _use_indexes([t for _a, _b, t in seg])
+        for i, (a, b, t) in enumerate(seg):
+            if i in use or _is_clean_credential_path(t):
+                spans.append((a, b))
+    for a, b in reversed(spans):
+        cmd = cmd[:a] + " " + cmd[b:]
+    return cmd
+
+
 def scan_command(cmd: str, _depth: int = 0) -> str | None:
     """A reason a shell command reads a credential path, or None.
 
@@ -659,8 +789,8 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
     """
     if not cmd:
         return None
-    cmd_r = _resolve_symbolic(cmd)
-    flat = re.sub(r"[\"'`^+()]", "", cmd_r.replace(_SPACE, " ")).replace("\\", "/").lower()
+    cmd_r = _without_exempt(re.sub(r"[`^]", "", _resolve_symbolic(cmd)))
+    flat = _flat(cmd_r)
     for marker, why in _COMMAND_MARKERS:
         if marker in flat:
             return why
@@ -674,18 +804,32 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
     recurse = bool(_RECURSE_RE.search(flat)) or implicit
     walks = reads and recurse
     named_root = False
-    for tok in _tokens(re.sub(r"[`^]", "", cmd_r)):
-        tok = tok.strip(",;|()").replace(_SPACE, " ")
-        if tok in (".", "..", ".\\", "./", "..\\", "../"):
-            tok = os.path.abspath(tok)
-        if len(tok) < 3:
-            continue
-        if "=" in tok and not tok.startswith(("/", "~", "$", "%")) and tok[1:2] != ":":
-            tok = tok.split("=", 1)[1]
-        if ("/" in tok or "\\" in tok or tok.startswith("~")
-                or tok.startswith("$env:") or tok.startswith("%")
-                or (len(tok) > 1 and tok[1] == ":")):
-            expanded = _expand(tok)
+    for seg in _segments(cmd_r):
+        words = [t for _a, _b, t in seg]
+        verb = _verb(words)
+        prev = ""
+        for tok in words:
+            lead, prev = prev, tok.lower()
+            path = _path_token(tok)
+            if path is None:
+                # A folder named without a slash is a folder all the same: it
+                # is judged like a path, and it is the walk root when it stands
+                # where a root stands.
+                bare = tok.strip(",;|()").replace(_SPACE, " ")
+                if not (reads and bare and not bare.startswith("-")):
+                    continue
+                full = os.path.abspath(bare)
+                if not _is_dir(full):
+                    continue
+                if walks and _covers_credentials(full):
+                    return _WALK_WHY
+                why = _directory_holds_credential(full, recurse)
+                if why:
+                    return why
+                if lead in _ROOT_LEADS or verb in _ARCHIVE_VERBS:
+                    named_root = True
+                continue
+            expanded = _expand(path)
             why = check(Path(expanded))
             if why:
                 return why
@@ -749,6 +893,7 @@ def refusal(path) -> str:
     a device path is not called key material, and a .pem she cannot read is
     not called a key.
     """
+    REFUSED.set(True)
     hit = _verdict(path)
     why, kind = hit if hit else ("a credential or key file", "file")
     if kind == "device":
@@ -776,6 +921,7 @@ def refusal(path) -> str:
 
 def refusal_command(why: str) -> str:
     """The plain line Friday says instead of running a credential-reading command."""
+    REFUSED.set(True)
     if why == _WALK_WHY:
         return (f"I won't run that: it reads through {why}, and the walk would "
                 f"pass over them. {_CLOSED} Name the folder you want searched "
