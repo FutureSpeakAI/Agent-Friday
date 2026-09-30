@@ -3706,6 +3706,16 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
     kind = "scheduled" if rec.get('schedule_id') else "subagent"
     trace = _rtrace.start(kind, name or description or "Background task", model=model,
                           task_id=task_id, parent_id=parent, trace_id=tid)
+    # A helper cluster splits off the lattice (avatar-visual-genome.md §13).
+    # A scheduled run is shown as background work by its process instead.
+    _helper_ref = None
+    if kind == "subagent":
+        try:
+            from agent_friday.services import presence as _presence
+            _helper_ref = _presence.opaque(task_id)
+            _presence.emit("subagent", "start", ref=_helper_ref, turn=parent)
+        except Exception:
+            _helper_ref = None
     # A cloud pin taken on the spawning thread (a scheduled job the owner
     # allowed onto one cloud model) is thread-local, so it is re-entered here,
     # on the thread that actually makes the model calls.
@@ -3732,6 +3742,31 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                 st = str((TASKS.get(task_id) or {}).get('status') or 'complete')
             _rtrace.finish(trace, "complete" if st.startswith("complete") else st,
                            reply=(TASKS.get(task_id) or {}).get('result'))
+        if _helper_ref:
+            try:
+                from agent_friday.services import presence as _presence
+                with TASKS_LOCK:
+                    _st = str((TASKS.get(task_id) or {}).get('status') or '')
+                _presence.emit("subagent", "end", ref=_helper_ref, turn=parent,
+                               ok=_st.startswith("complete"))
+            except Exception:
+                pass
+
+
+def _evidence_verdict(tool_trace):
+    """The evidence gate: a task is verified only when it used a tool other
+    than spawning another task. Returns (verified, summary, final_status),
+    and shows the check on the lattice as one verification pass (§13)."""
+    evidence = [t for t in (tool_trace or []) if t.get('name') not in ('spawn_task',)]
+    verified = len(evidence) > 0
+    summary = (', '.join(dict.fromkeys(t['name'] for t in evidence[:10]))
+               if evidence else 'no tools used')
+    try:
+        from agent_friday.services import presence as _presence
+        _presence.emit("verify", "once", ok=verified, turn=_presence.current_turn())
+    except Exception:
+        pass
+    return verified, summary, ('complete' if verified else 'completed_unverified')
 
 
 def _ledger_view_chars_for(model):
@@ -4006,10 +4041,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         tool_trace = combined_trace
 
         # ── Evidence gate: require tool use for verified completion ──
-        evidence = [t for t in tool_trace if t.get('name') not in ('spawn_task',)]
-        verified = len(evidence) > 0
-        verification_summary = ', '.join(dict.fromkeys(t['name'] for t in evidence[:10])) if evidence else 'no tools used'
-        final_status = 'complete' if verified else 'completed_unverified'
+        verified, verification_summary, final_status = _evidence_verdict(tool_trace)
 
         # A reply that IS a provider error is not a completed task, whatever the
         # verifier concluded — the verifier grades the work, and there is no work
@@ -8575,6 +8607,12 @@ def _task_log_tool(session_ctx, name, args):
     """
     # The reasoning trace shows the call while it runs, chat turns included.
     _rtrace.tool_started(name, args)
+    # One twist of the lattice per call (avatar-visual-genome.md §13).
+    try:
+        from agent_friday.services import presence as _presence
+        _presence.tool_started(name)
+    except Exception:
+        pass
     tid = (session_ctx or {}).get("task_id")
     if not tid:
         return
@@ -10157,6 +10195,11 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
     here (task-visibility.md TV3), before the orb early-return."""
     _rtrace.tool_finished(name, args, result, ok=(_tool_call_status(result) == "ok"),
                           duration_ms=int(duration_ms or 0))
+    try:
+        from agent_friday.services import presence as _presence
+        _presence.tool_finished(name, ok=(_tool_call_status(result) == "ok"))
+    except Exception:
+        pass
     try:
         from agent_friday.services import task_ledger as _tl
         _tl.note_tool(_journal().current_task(), name, args, result)

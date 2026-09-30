@@ -176,6 +176,14 @@ def _seal_or_block(payload, provider):
                          alternatives=[provider])
     except Exception:
         pass
+    # The lattice's vent (avatar-visual-genome.md §13): opened here, where a
+    # payload has been sealed for a cloud provider and is about to leave --
+    # never on a routing guess, never for a blocked send.
+    try:
+        from agent_friday.services import presence as _presence
+        _presence.emit("egress", "sent", route="cloud", turn=_presence.current_turn())
+    except Exception:
+        pass
     return sealed
 
 
@@ -3472,6 +3480,8 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     vault = _load_vault_summary()
     needs = _detect_context_needs(message, workspace)
     sources_consulted = []
+    # How many sources were actually retrieved: one lattice cube each (§13).
+    _retrieved = 0
 
     # Tier helpers. Default to PUBLIC; sensitive sections opt up. When the
     # vault_access module is unavailable, tiers are inert integers.
@@ -3592,6 +3602,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         mem_text = '\n'.join(f"- {m}" for m in vault['recent_memories'])
         add(f"\n== RECENT MEMORIES ==\n{mem_text}", _T2)
         sources_consulted.append('memory')
+        _retrieved += len(vault['recent_memories'])
 
     if 'wiki' in needs:
         # Extract a search term from the message
@@ -3616,6 +3627,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
             # policies depending on which loader reached it first.
             add(f"\n== WIKI/BRIEFING DATA ==\n{wiki_text}", classify(wiki_text, _T2))
             sources_consulted.append('wiki')
+            _retrieved += len(wiki_results)
 
     if 'epistemic' in needs:
         try:
@@ -3717,6 +3729,8 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
             # health/legal (sensitive) — classify so cloud drops the sensitive bits.
             add(_smart_text, classify(_smart_text, _T2))
             sources_consulted.append('wiki_smart')
+            # One block of pages chosen together; counted as one source.
+            _retrieved += 1
     except Exception as _e:
         add(f"\n== PERSONAL CONTEXT ==\n(smart-context load failed: {_e})", _T1)
 
@@ -3796,6 +3810,13 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     # gating is off (today's posture), so an ungated cloud prompt produced
     # NO record anywhere of what vault material it carried. Never allowed
     # to break assembly: a ledger failure is swallowed, not raised.
+    if _retrieved:
+        try:
+            from agent_friday.services import presence as _presence
+            _presence.emit("retrieval", "once", n=int(_retrieved),
+                           turn=_presence.current_turn())
+        except Exception:
+            pass
     try:
         from agent_friday.services import retrieval_ledger as _rl
         from agent_friday.services.egress_gate import is_local_provider as _is_local

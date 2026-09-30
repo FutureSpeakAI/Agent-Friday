@@ -38,6 +38,15 @@ def note_fallback(step: str):
 
 def record_generation(model, provider=None, seat=None):
     _tls.generation = {"model": model, "provider": provider, "seat": seat}
+    # Where this call ran, for the lattice (avatar-visual-genome.md §13).
+    try:
+        from agent_friday.services import presence as _presence
+        from agent_friday.services.egress_gate import is_local_provider
+        local = bool(provider) and is_local_provider(str(provider)) and seat != "cloud"
+        _presence.emit("route", "step", route="local" if local else "cloud",
+                       turn=_presence.current_turn())
+    except Exception:
+        pass
 
 
 def last_generation():

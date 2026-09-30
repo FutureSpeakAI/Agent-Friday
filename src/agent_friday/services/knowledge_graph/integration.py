@@ -178,6 +178,12 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
                                        "ts": time.time()})
     except Exception:
         pass
+    # A cube settles into the lattice's core (avatar-visual-genome.md §13).
+    try:
+        from agent_friday.services import presence as _presence
+        _presence.emit("memory_saved", "once")
+    except Exception:
+        pass
     return eid
 
 

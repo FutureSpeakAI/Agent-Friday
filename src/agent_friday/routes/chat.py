@@ -737,6 +737,12 @@ def chat_stream():
         except Exception as e:                     # never strand the client
             traceback.print_exc()
             box["error"] = error_text(e, "The chat turn failed")
+            # A cube knocks out of line on the lattice (§13).
+            try:
+                from agent_friday.services import presence as _presence
+                _presence.emit("error", "once", turn=_tid)
+            except Exception:
+                pass
         finally:
             _PILOT_OFF_RECORD.reset(_pilot_privacy_token)
             try:
@@ -899,6 +905,12 @@ def chat():
             _nav = None
         if _nav is not None:
             _nav_reply, _nav_ws = _nav
+            # An instant command: one fast snap twist (§13).
+            try:
+                from agent_friday.services import presence as _presence
+                _presence.emit("reflex", "once")
+            except Exception:
+                pass
             _u = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                   'role': 'user', 'text': message, 'pinned': False, 'workspace': workspace}
             _f = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
@@ -928,6 +940,11 @@ def chat():
             print(f"  [OPEN-INTENT] skipped: {_oie}")
             _open_reply = None
         if _open_reply is not None:
+            try:
+                from agent_friday.services import presence as _presence
+                _presence.emit("reflex", "once")
+            except Exception:
+                pass
             _u = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                   'role': 'user', 'text': message, 'pinned': False, 'workspace': workspace}
             _f = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),

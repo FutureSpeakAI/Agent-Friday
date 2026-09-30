@@ -1924,6 +1924,21 @@ def process_register(pid, *, name="Task", label=None, category="default",
             "trace_id": _current_trace_id(),
         }
     turn_pet(label=label or name, model=model)
+    # The lattice's background orbiter (avatar-visual-genome.md §13): a
+    # scheduled run is background work from the moment it is registered.
+    if str(pid).startswith("sched-"):
+        _presence_frame("background", "start", ref=pid)
+
+
+def _presence_frame(state, phase, *, ref=None, **fields):
+    """One presence frame (services/presence.py). Never raises."""
+    try:
+        from agent_friday.services import presence as _pr
+        if ref is not None:
+            fields["ref"] = _pr.opaque(ref)
+        _pr.emit(state, phase, **fields)
+    except Exception:
+        pass
 
 
 def _current_trace_id():
@@ -1947,6 +1962,8 @@ def process_update(pid, *, status=None, progress=None, label=None,
         p = PROCESSES.get(pid)
         if not p:
             return
+        _was_step, _was_status = p.get("step_n"), p.get("status")
+        _trace = p.get("trace_id")
         if status is not None:
             p["status"] = status
         if progress is not None:
@@ -1970,6 +1987,34 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["ended"] = _time.time()
     # `step` here is a tray step record; the turn's round is `step_n`.
     turn_pet(label=label, step=step_n, detail=step)
+    _presence_for_update(pid, _trace, status, progress, step_n,
+                         _was_step, _was_status)
+
+
+def _presence_for_update(pid, trace, status, progress, step_n, was_step, was_status):
+    """The presence frames one process_update really means (§13.5): a new
+    agent round, a true progress fraction (a completion is not progress), an
+    error, and the end of a scheduled run. Only the agent loops set step_n,
+    and it is the round the status line prints."""
+    ended = status in ("completed", "error") and was_status not in ("completed", "error")
+    if step_n is not None and int(step_n) > 0 and int(step_n) != was_step:
+        _presence_frame("round", "step", turn=trace, n=int(step_n))
+    if progress is not None and status not in ("completed", "error"):
+        try:
+            from agent_friday.services import presence as _pr
+            _pr.progress(pid, progress)
+        except Exception:
+            pass
+    if status == "error" and was_status != "error":
+        _presence_frame("error", "once", ref=pid, turn=trace)
+    if ended:
+        if str(pid).startswith("sched-"):
+            _presence_frame("background", "end", ref=pid, ok=(status == "completed"))
+        try:
+            from agent_friday.services import presence as _pr
+            _pr.progress_done(pid)
+        except Exception:
+            pass
 
 
 def process_log(pid, line: str):

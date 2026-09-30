@@ -335,6 +335,13 @@ def _send(approval_id, conversation_id, text, payload=None, *,
     ok = _deliver(conversation_id, text, "context")
     if ok:
         _audit(approval_id, text)
+        # The one small cube that leaves the frosted lattice: the scrubbed
+        # summary, and only once it was really delivered (§13).
+        try:
+            from agent_friday.services import presence as _presence
+            _presence.emit("handoff", "sent")
+        except Exception:
+            pass
     SENT_LOG.append({"approval_id": approval_id, "conversation_id": conversation_id,
                      "text": text, "delivered": ok, "at": time.time()})
     del SENT_LOG[:-50]
@@ -366,6 +373,12 @@ def request(question: str, *, conversation_id, cloud_model: str,
         return {"status": "unavailable", "reason": "no question"}
     unavailable = ("Friday's local model is not running, so private context "
                    "cannot be reached.")
+    # The lattice frosts while the local model works on it (§13).
+    try:
+        from agent_friday.services import presence as _presence
+        _presence.emit("handoff", "start")
+    except Exception:
+        pass
     if answer_fn is not None:
         raw, local_model = answer_fn(question)
     else:
