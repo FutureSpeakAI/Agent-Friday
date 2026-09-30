@@ -3,6 +3,7 @@ import io
 import json
 import functools as _functools
 import glob
+from agent_friday.services import workspace_registry as _ws_registry
 from contextvars import ContextVar
 
 #: The conversation a tool call belongs to, for the duration of that call.
@@ -697,7 +698,7 @@ CLAUDE_TOOLS = [
                       "properties": {"model": {"type": "string",
                                                "description": "The model the user named, in their words."}},
                       "required": ["model"]}},
-    {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: career, knowledge (the wiki's pages and its graph), studio, trust, system, news, draft, code, finance, health, contacts, content, messages, calendar, family, futurespeak.",
+    {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: " + _ws_registry.tool_list() + ".",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "navigate_to", "description": "Open one specific thing on the user's Friday desktop, on screen: a workspace section or tab, an email thread in Messages, a file in Studio's file browser, a wiki page or graph node in Knowledge, a Settings tab or section, a calendar day or meeting, a contact card, or a content post. Pass the user's own words as query ('the Harbor Legal email', 'my budget spreadsheet', 'model settings') or an exact id you already have. It is the user's own screen, so no approval is needed. NAV_OK means the desktop confirmed it; NAV_PARTIAL, the window opened on something else; NAV_FAIL gives the reason and closest matches.",
      "input_schema": {"type": "object", "properties": {
@@ -2641,64 +2642,14 @@ def _maybe_handle_open_intent(message):
 # chat turn like "open the studio" or "switch to news" into a REAL on-screen
 # navigation (a structured action the client executes) instead of text that only
 # claims it will. Keep keys lowercase and singular-ish; the resolver normalizes.
-_WORKSPACE_ALIASES = {
-    # There is no 'home' alias: the desktop is the landing screen and has no
-    # window, so "take me home" means closing the open windows, which is not an
-    # alias's job. An alias pointing at a workspace that does not exist is the
-    # drift `test_workspace_aliases` exists to catch.
-    'career': 'career', 'jobs': 'career', 'job search': 'career',
-    'job pipeline': 'career', 'careers': 'career', 'job': 'career', 'work': 'career',
-    # The wiki's pages and the knowledge graph are one workspace, Knowledge.
-    'knowledge': 'knowledge', 'wiki': 'knowledge', 'notes': 'knowledge',
-    'knowledge base': 'knowledge', 'knowledgebase': 'knowledge',
-    'second brain': 'knowledge', 'knowledge graph': 'knowledge',
-    'galaxy': 'knowledge', 'wiki pages': 'knowledge',
-    'studio': 'studio', 'creations': 'studio', 'gallery': 'studio',
-    'create': 'studio', 'art': 'studio', 'creative': 'studio',
-    'trust': 'trust', 'trust graph': 'trust', 'reputation': 'trust', 'trust score': 'trust',
-    'system': 'system', 'system health': 'system', 'health check': 'system',
-    # Settings is its OWN workspace (dock id 'settings') — for months this
-    # table sent "open settings" to the System workspace and Friday looked
-    # like she didn't know her own UI.
-    'settings': 'settings', 'setting': 'settings', 'settings menu': 'settings',
-    'system settings': 'settings', 'preferences': 'settings',
-    'options': 'settings', 'config': 'settings', 'configuration': 'settings',
-    'workflows': 'workflows', 'workflow': 'workflows',
-    'scheduled tasks': 'workflows', 'schedules': 'workflows',
-    'pipelines': 'workflows', 'automations': 'workflows',
-    'marketplace': 'marketplace', 'market': 'marketplace',
-    'store': 'marketplace', 'shop': 'marketplace', 'skill store': 'marketplace',
-    'news': 'news', 'headlines': 'news', 'feed': 'news', 'newsfeed': 'news',
-    'front page': 'news', 'frontpage': 'news', 'top stories': 'news',
-    'breaking news': 'news', 'newspaper': 'news', 'the news': 'news',
-    'draft': 'draft', 'drafts': 'draft', 'writing': 'draft', 'writer': 'draft',
-    'code': 'code', 'coding': 'code', 'editor': 'code', 'ide': 'code',
-    'code editor': 'code',
-    'finance': 'finance', 'money': 'finance', 'budget': 'finance', 'finances': 'finance',
-    'banking': 'finance', 'accounts': 'finance', 'spending': 'finance',
-    'health': 'health', 'wellness': 'health', 'fitness': 'health', 'medical': 'health',
-    'contacts': 'contacts', 'people': 'contacts', 'people graph': 'contacts',
-    'address book': 'contacts', 'relationships': 'contacts',
-    'content': 'content', 'content studio': 'content',
-    'messages': 'messages', 'inbox': 'messages', 'dms': 'messages',
-    'chats': 'messages', 'texts': 'messages', 'messaging': 'messages',
-    'calendar': 'calendar', 'schedule': 'calendar', 'agenda': 'calendar',
-    'events': 'calendar', 'cal': 'calendar',
-    'family': 'family', 'household': 'family',
-    'futurespeak': 'futurespeak', 'sites': 'futurespeak', 'future speak': 'futurespeak',
-    'website': 'futurespeak', 'websites': 'futurespeak', 'web': 'futurespeak',
-}
-
-# Display labels for the confirmation message (a few don't title-case cleanly).
-_WORKSPACE_LABELS = {
-    'career': 'Career', 'knowledge': 'Knowledge', 'studio': 'Studio',
-    'trust': 'Trust', 'system': 'System', 'news': 'News', 'draft': 'Draft',
-    'code': 'Code', 'finance': 'Finance', 'health': 'Health',
-    'contacts': 'Contacts', 'content': 'Content', 'messages': 'Messages',
-    'calendar': 'Calendar', 'family': 'Family',
-    'futurespeak': 'FutureSpeak', 'settings': 'Settings',
-    'marketplace': 'Marketplace', 'workflows': 'Workflows',
-}
+# Every word that names a workspace, and each workspace's name, come from the
+# one registry the dock itself reads (static/workspace_registry.js, parsed by
+# services/workspace_registry), so Friday names a workspace exactly as the
+# dock does and an alias cannot point at a workspace that does not exist.
+# There is no 'home': the desktop is the landing screen and has no window, so
+# "take me home" means closing the open windows, which is not an alias's job.
+_WORKSPACE_ALIASES = _ws_registry.aliases()
+_WORKSPACE_LABELS = _ws_registry.labels()
 
 
 def _resolve_workspace(name):
@@ -8435,7 +8386,7 @@ def _confirmation_question(name, tool_input):
         return f"Would you like me to open {tgt} on your computer?"
     if name == "navigate":
         tgt = inp.get("workspace") or "that workspace"
-        return f"I can switch you to the {tgt} workspace — shall I?"
+        return f"I can switch you to {_WORKSPACE_LABELS.get(_resolve_workspace(tgt) or '', tgt)} — shall I?"
     if name == "write_file":
         tgt = inp.get("path") or "a file"
         return f"Would you like me to create {tgt}?"

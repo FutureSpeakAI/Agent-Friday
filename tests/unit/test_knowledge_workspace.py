@@ -50,11 +50,16 @@ def _top(text, head):
     return text[a:m.end()]
 
 
+def _registry_js():
+    return (ROOT / "static" / "workspace_registry.js").read_text(encoding="utf-8")
+
+
 def _dock_source(text):
-    """DOCK_GROUPS and the registries derived from it (adjacent in both files)."""
-    a = text.index("const DOCK_GROUPS")
+    """DOCK_GROUPS and the registries derived from it (adjacent in both files),
+    with the workspace registry the page loads before them."""
+    a = text.index("function fridayDockGroups")
     b = text.index("\n", text.index("const WS_GROUP_OF", a))
-    return text[a:b]
+    return "var window = globalThis;\n" + _registry_js() + "\n" + text[a:b]
 
 
 def _run(tmp_path, js):
@@ -121,11 +126,13 @@ console.log(JSON.stringify({
 
 @pytest.mark.parametrize("ui", sorted(UI))
 def test_one_knowledge_icon_and_no_wiki_icon(ui):
-    block = _dock_source(_text(ui))
-    ids = re.findall(r"\bid:\s*'([a-z0-9_-]+)'", block)
+    from agent_friday.services import workspace_registry
+    assert "fridayDockGroups(window.FRIDAY_WORKSPACE_REGISTRY)" in _dock_source(_text(ui))
+    reg = workspace_registry.parse(_registry_js())
+    ids = [w["id"] for w in reg["workspaces"]]
     assert "knowledge" in ids and "wiki" not in ids
-    # Ctrl+K "wiki" still finds it.
-    assert re.search(r"id:\s*'knowledge'[^}]*aka:\s*\[[^\]]*'wiki'", block, flags=re.S)
+    # Ctrl+K "wiki" still finds it: the dock's `aka` is the registry's aliases.
+    assert "wiki" in next(w for w in reg["workspaces"] if w["id"] == "knowledge")["aliases"]
 
 
 @pytest.mark.parametrize("ui", sorted(UI))

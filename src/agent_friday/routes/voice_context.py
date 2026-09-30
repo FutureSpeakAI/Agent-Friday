@@ -26,6 +26,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.services import workspace_registry as _ws_registry
 from agent_friday.core import (
     FRIDAY_DIR,
 )  # noqa: E501
@@ -61,13 +62,9 @@ from agent_friday.services.news_engine import (
 voice_context_bp = Blueprint('voice_context', __name__)
 
 
-WORKSPACE_VOICE_LABELS = {
-    'news': 'News', 'calendar': 'Calendar',
-    'messages': 'Comms Center', 'career': 'Career', 'futurespeak': 'FutureSpeak',
-    'knowledge': 'Knowledge', 'trust': 'Trust', 'finance': 'Finance', 'health': 'Health',
-    'family': 'Family', 'contacts': 'Contacts',
-    'studio': 'Studio', 'code': 'Code', 'content': 'Content', 'system': 'System',
-}
+# What voice calls each workspace: the dock's own names (services/
+# workspace_registry), so voice never names one differently from the screen.
+WORKSPACE_VOICE_LABELS = _ws_registry.labels()
 
 
 def _vc_calendar():

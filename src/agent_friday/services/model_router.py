@@ -3067,7 +3067,7 @@ FRIDAY_SYSTEM_PROMPT = (
     "  • run_command(command) — Execute PowerShell commands (non-destructive by policy)\n"
     "  • open_url(url) — Open a URL / web page in the user's web browser (opens a real browser tab on screen)\n"
     "  • open_path(path) — Open a local file or folder, or launch an app (Notepad, Explorer, Word, Chrome, Spotify…)\n"
-    "  • navigate(workspace) — Switch the Friday desktop UI to a workspace on-screen (home, news, calendar, studio…)\n"
+    "  • navigate(workspace) — Switch the Friday desktop UI to a workspace on-screen (news, messages, calendar, studio…)\n"
     "  • navigate_to(kind, query) — Open one exact thing on the desktop: an email thread, a file, a wiki page, a Settings section, a day, a contact\n"
     "  • search_email(query) — Search/read recent Gmail (built-in read-only Google integration)\n"
     "  • draft_email(to, subject, body) — Compose email (needs a write-enabled Gmail connection)\n"

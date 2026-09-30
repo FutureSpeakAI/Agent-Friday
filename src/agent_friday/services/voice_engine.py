@@ -587,14 +587,8 @@ def _navigate_tool_description(desc):
     was 'opening settings' while the resolver sent them to System."""
     if "{workspace_ids}" not in desc:
         return desc
-    try:
-        from agent_friday.services.agent import _WORKSPACE_ALIASES
-        ids = ", ".join(sorted(set(_WORKSPACE_ALIASES.values())))
-    except Exception:
-        ids = ("calendar, career, code, contacts, content, draft, family, "
-               "finance, futurespeak, health, home, marketplace, messages, "
-               "knowledge, news, settings, studio, system, trust")
-    return desc.replace("{workspace_ids}", ids)
+    from agent_friday.services import workspace_registry
+    return desc.replace("{workspace_ids}", workspace_registry.tool_list())
 
 
 def _build_voice_live_tools(types, behavior=None):
@@ -1089,7 +1083,9 @@ def _voice_tool_run(name, args, send_client, session=None):
             except Exception:
                 pass
             if ok:
-                return f"Done — I've opened the {wsid} workspace on screen. Tell the user it's up."
+                from agent_friday.services import workspace_registry
+                return (f"Done — I've opened {workspace_registry.label(wsid)} on screen. "
+                        "Tell the user it's up.")
             return f"That didn't work: {res}. Tell the user, and offer another approach."
         if name == "open_url":
             url = (args.get("url") or "").strip()

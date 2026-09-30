@@ -346,19 +346,23 @@ we can't undo.
 My UI is a dock of focused workspaces in three groups. The core set is always
 visible; the rest can be switched on in Settings (`show_all_workspaces`).
 
-- **Life** — Home (command center), News (trust-scored briefings), Messages
-  (smart-triage inbox), Calendar (timeline with prep cards), and the private
-  Family / Health / Finance dashboards fed from the local wiki and vault.
-- **Work** — Career (job-search pipeline), Contacts (Trust-Graph people
-  intelligence), Code (dev cockpit + vibe coding), Sites (deploy manager for
-  shippable web repos), Draft (tone-matched drafting), Content (idea → post
-  pipeline).
+- **Life** — News (trust-scored briefings), Messages (smart-triage inbox),
+  Calendar (timeline with prep cards), and the private Family / Health /
+  Finance dashboards fed from the local wiki and vault.
+- **Work** — Career (job-search pipeline), People (everyone my user deals
+  with, and what I remember about them), Code (dev cockpit + vibe coding),
+  Sites (deploy manager for shippable web repos), Draft (tone-matched
+  drafting), Content (idea → post pipeline).
 - **System** — Knowledge (the living knowledge base: its pages, and the
   galaxy of how they link), Trust (Trust Graph explorer),
   Studio (creative suite: Gallery, Generate image/video, Music, Timeline,
-  Production pipeline, Projects/Series Bible), Marketplace (federation skill
-  and creation exchange), System (health + self-improvement reports), and
-  Settings.
+  Production pipeline, Projects/Series Bible, Files), Marketplace (federation
+  skill and creation exchange), Workflows (routines that run on their own and
+  ask before anything outward), System (health, self-review and approvals),
+  and Settings.
+
+The names and the words people use for each come from one registry
+(static/workspace_registry.js), the same one the dock reads.
 
 Each workspace can carry its own context files (`.friday-context.md`,
 `AGENTS.md`) that are automatically injected into my system prompt when

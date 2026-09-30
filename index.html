@@ -31,6 +31,9 @@ window.addEventListener('error',function(e){
 <script src="/static/vendor/marked-9.1.6.min.js"></script>
 <link rel="stylesheet" href="/static/vendor/atom-one-dark-11.9.0.min.css">
 <script src="/static/vendor/highlight-11.9.0.min.js"></script>
+<!-- Friday's workspaces: the one list the dock, window and tab titles, the
+     command palette and the server's navigate tools and voice all read. -->
+<script src="/static/workspace_registry.js"></script>
 <!-- Push-to-transcribe inside the tab. One file rather than two
      hand-maintained copies; the tray suppresses the hotkey while the
      system-wide version is on, so only one of them ever fires. -->
@@ -409,6 +412,13 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fwin-bar:active { cursor: grabbing; }
         .fwin-title { font-family: 'Inter', sans-serif; font-size: 12px; color: rgba(255,255,255,0.9); font-weight: 600; }
+        /* A workspace's own mark beside its name: in a window's title, the
+           command palette and a tab's header (WsIcon). */
+        .ws-icon { display: inline-block; width: 15px; height: 15px; vertical-align: -3px; margin-right: 6px;
+          filter: drop-shadow(0 0 4px rgba(0,212,255,0.35)); }
+        .ws-icon-glyph { width: auto; height: auto; font-size: 13px; line-height: 1; filter: none; }
+        .cmd-palette-item .ico .ws-icon { width: 17px; height: 17px; margin-right: 0; vertical-align: -3px; }
+        .ws-tab-name .ws-icon { width: 20px; height: 20px; margin-right: 0; }
         .fwin-btns button {
             background: none; border: none; color: rgba(255,255,255,0.6); cursor: pointer;
             font-size: 16px; padding: 0 4px; transition: color 0.2s;
@@ -5958,109 +5968,30 @@ if (typeof document !== 'undefined') {
   if (window.__FRIDAY_STANDALONE__) {/* one workspace, nothing else to warm */} else if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
 }
 // ── end panel data cache ──────────────────────────────────────────────────
-// Full dock. `core:true` marks the trimmed 10-icon set shown to fresh installs
-// (show_all_workspaces=false). Existing installs (show_all_workspaces=true) see
-// every workspace. WS (below) always includes all items so deep-link navigation
-// resolves regardless of which subset the dock renders.
-const DOCK_GROUPS = [{
-  name: 'Life',
-  items: [{
-    id: 'news',
-    ico: '📰',
-    label: 'News',
-    core: true
-  }, {
-    id: 'messages',
-    ico: '💬',
-    label: 'Messages',
-    core: true
-  }, {
-    id: 'calendar',
-    ico: '📅',
-    label: 'Calendar',
-    core: true
-  }, {
-    id: 'family',
-    ico: '👪',
-    label: 'Family'
-  }, {
-    id: 'health',
-    ico: '❤️',
-    label: 'Health'
-  }, {
-    id: 'finance',
-    ico: '💰',
-    label: 'Finance'
-  }]
-}, {
-  name: 'Work',
-  items: [{
-    id: 'career',
-    ico: '💼',
-    label: 'Career',
-    core: true
-  }, {
-    id: 'contacts',
-    ico: '👥',
-    label: 'Contacts',
-    core: true
-  }, {
-    id: 'code',
-    ico: '💻',
-    label: 'Code',
-    core: true
-  }, {
-    id: 'futurespeak',
-    ico: '🌐',
-    label: 'Sites',
-    core: true
-  }, {
-    id: 'draft',
-    ico: '✍️',
-    label: 'Draft'
-  }, {
-    id: 'content',
-    ico: '📝',
-    label: 'Content'
-  }]
-}, {
-  name: 'System',
-  items: [{
-    // The wiki's pages and the knowledge graph are one workspace. `aka` keeps
-    // the old name findable (Ctrl+K "wiki"); WS_ALIASES keeps it openable.
-    id: 'knowledge',
-    ico: '🌌',
-    label: 'Knowledge',
-    core: true,
-    aka: ['wiki', 'pages', 'notes', 'knowledge graph', 'galaxy']
-  }, {
-    id: 'trust',
-    ico: '🔗',
-    label: 'Trust'
-  }, {
-    id: 'studio',
-    ico: '🎨',
-    label: 'Studio'
-  }, {
-    id: 'marketplace',
-    ico: '🛒',
-    label: 'Marketplace'
-  }, {
-    id: 'workflows',
-    ico: '🧩',
-    label: 'Workflows'
-  }, {
-    id: 'system',
-    ico: '🖥️',
-    label: 'System',
-    core: true
-  }, {
-    id: 'settings',
-    ico: '⚙️',
-    label: 'Settings',
-    core: true
-  }]
-}];
+// The dock's workspaces, each with its name, icon, group, accent, one-line
+// description and the other words people use for it, come from ONE registry:
+// static/workspace_registry.js, loaded in the head, the same list the server's
+// navigate tools, voice and Friday's own prompts read. `core:true` marks the
+// trimmed set shown to fresh installs (show_all_workspaces=false). WS (below)
+// always holds every workspace so a deep link resolves whichever subset the
+// dock renders.
+function fridayDockGroups(reg) {
+  const R = reg || {};
+  return (R.groups || []).map(g => ({
+    name: g.label,
+    items: (R.workspaces || []).filter(w => w.group === g.id).map(w => ({
+      id: w.id,
+      ico: w.glyph,
+      icon: w.icon || w.id,
+      label: w.label,
+      core: !!w.core,
+      aka: w.aliases || [],
+      blurb: w.blurb || '',
+      accent: w.accent || 'cyan'
+    }))
+  })).filter(g => g.items.length);
+}
+const DOCK_GROUPS = fridayDockGroups(window.FRIDAY_WORKSPACE_REGISTRY);
 const WS = DOCK_GROUPS.flatMap(g => g.items);
 const WS_BY_ID = WS.reduce((m, w) => (m[w.id] = w, m), {});
 const WS_GROUP_OF = DOCK_GROUPS.reduce((m, g) => (g.items.forEach(w => { m[w.id] = g.name; }), m), {});
@@ -6845,6 +6776,28 @@ const FWIN_FIRST_SIZE = {
     v: 1
   }
 };
+/* A WORKSPACE'S MARK: its SVG from the registry (assets/icons/<icon>.svg), or
+   its glyph when the image cannot load. One component, so a window's title,
+   the command palette and a tab's header show the mark the dock shows. `ws`
+   is a workspace or its id; `glyph` is what to show for anything else. */
+function WsIcon({
+  ws,
+  glyph
+}) {
+  const w = typeof ws === 'string' ? WS_BY_ID[fridayWorkspaceId(ws)] || null : ws || null;
+  const [failed, setFailed] = useState(false);
+  if (!w || !w.icon || failed) return /*#__PURE__*/React.createElement("span", {
+    className: "ws-icon ws-icon-glyph",
+    "aria-hidden": "true"
+  }, (w && w.ico) || glyph || '\u25A3');
+  return /*#__PURE__*/React.createElement("img", {
+    className: "ws-icon",
+    src: '/assets/icons/' + w.icon + '.svg',
+    alt: "",
+    "aria-hidden": "true",
+    onError: () => setFailed(true)
+  });
+}
 function FWin({
   id,
   title,
@@ -6863,7 +6816,7 @@ function FWin({
   const aimAtDock = () => {
     const el = fwinRef.current;
     if (!el) return;
-    const img = document.querySelector('.dock-btn img[src="assets/icons/' + id + '.svg"]');
+    const img = document.querySelector('.dock-btn img[src="assets/icons/' + ((WS_BY_ID[id] || {}).icon || id) + '.svg"]');
     // offsetLeft/Top: the window's own position, unaffected by the scale
     // the opening animation is applying at this moment.
     if (img && el.offsetWidth) {
@@ -7067,7 +7020,10 @@ function FWin({
     }
   }, /*#__PURE__*/React.createElement("span", {
     className: "fwin-title"
-  }, emoji, " ", title, /*#__PURE__*/React.createElement(ConnectorDot, {
+  }, /*#__PURE__*/React.createElement(WsIcon, {
+    ws: id,
+    glyph: emoji
+  }), title, /*#__PURE__*/React.createElement(ConnectorDot, {
     wsId: id
   }), customized && /*#__PURE__*/React.createElement("span", {
     title: "Friday has customized this workspace \u2014 open \uD83D\uDCAC to tweak or revert",
@@ -9427,9 +9383,11 @@ function CommandPalette({
   const wsResults = WS.filter(w => !query || w.label.toLowerCase().includes(query) || w.id.includes(query) || (w.aka || []).some(a => a.includes(query))).map(w => ({
     kind: 'ws',
     id: w.id,
-    ico: w.ico,
+    ico: /*#__PURE__*/React.createElement(WsIcon, {
+      ws: w
+    }),
     label: w.label,
-    meta: openWins.has(w.id) ? 'open' : 'open workspace'
+    meta: openWins.has(w.id) ? 'open' : w.blurb || 'open workspace'
   }));
   const contactResults = (query ? contacts.filter(c => (c.name || c.label || '').toLowerCase().includes(query)) : []).slice(0, 6).map(c => ({
     kind: 'contact',
@@ -19792,7 +19750,7 @@ function StudioWS() {
     }, "Open file \u2192")));
   }
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
-    text: creations.length + ' creations in the gallery. Generate images, video & music, compose timelines, or run a full production.'
+    text: creations.length + (creations.length === 1 ? ' creation' : ' creations') + ' in the gallery. Generate images, video & music, compose timelines, or run a full production.'
   }), minor && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -28513,7 +28471,7 @@ function NewsWS() {
       textAlign: 'center',
       padding: 20
     }
-  }, "No briefings match. The daily briefing runs at 7:32 AM \u2014 or hit \u2728 Generate Now.") : filteredBriefs.map((b, i) => {
+  }, "No briefings match. The daily briefing runs at 7:32 AM \u2014 or hit \u2728 Generate Briefing.") : filteredBriefs.map((b, i) => {
     const isOpen = expanded[b.date];
     return /*#__PURE__*/React.createElement("div", {
       key: b.date || i,
@@ -28758,7 +28716,7 @@ function NewsWS() {
       color: '#777',
       marginTop: 10
     }
-  }, "Changes save instantly and shape your next \u2728 Generate Now and the live feed.")), panel === 'diet' && /*#__PURE__*/React.createElement("div", {
+  }, "Changes save instantly and shape your next \u2728 Generate Briefing and the live feed.")), panel === 'diet' && /*#__PURE__*/React.createElement("div", {
     className: "news-side"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -51896,8 +51854,14 @@ function StandaloneShell({ ws, children }) {
   }, []);
   useEffect(() => {
     const pending = window.__fridayPendingApprovals;
-    document.title = ws.label + ' \u00B7 Agent Friday';
-    const iconUrl = ws.id === 'workflows' ? null : '/assets/icons/' + ws.id + '.svg';
+    // A tab opened for one item names it first: "Q3 plan · Messages · Agent Friday".
+    let item = '';
+    try {
+      const q = new URLSearchParams(window.location.search);
+      item = q.get('subject') || q.get('title') || q.get('creation') || q.get('file') || '';
+    } catch (e) {}
+    document.title = (item ? item.slice(0, 80) + ' \u00B7 ' : '') + ws.label + ' \u00B7 Agent Friday';
+    const iconUrl = '/assets/icons/' + (ws.icon || ws.id) + '.svg';
     const emojiIcon = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">' + (ws.ico || '\u25A3') + '</text></svg>');
     document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l => l.parentNode.removeChild(l));
     const link = document.createElement('link');
@@ -51915,7 +51879,7 @@ function StandaloneShell({ ws, children }) {
         /*#__PURE__*/React.createElement("a", { className: 'ws-tab-fs', href: 'https://futurespeak.ai/agent-friday-live', target: '_blank', rel: 'noopener noreferrer' }, 'FutureSpeak.AI')),
       /*#__PURE__*/React.createElement("span", { className: 'ws-tab-sep', "aria-hidden": "true" }, '|'),
       /*#__PURE__*/React.createElement("div", { className: 'ws-tab-name' },
-        ws.id !== 'workflows' && /*#__PURE__*/React.createElement("img", { src: '/assets/icons/' + ws.id + '.svg', alt: '', onError: e => { e.target.style.display = 'none'; } }),
+        /*#__PURE__*/React.createElement(WsIcon, { ws: ws }),
         /*#__PURE__*/React.createElement("span", null, ws.label)),
       /*#__PURE__*/React.createElement("span", { className: 'ws-tab-sp' }),
       /*#__PURE__*/React.createElement(StandaloneApprovals, null),
@@ -57756,14 +57720,14 @@ function App() {
       }
     },
     onMouseDown: e => { if (e.button === 1) e.preventDefault(); },
-    title: suggestedWs.has(w.id) && !openWins.has(w.id) ? 'Suggested — Friday predicts you’ll want this' : undefined,
+    title: suggestedWs.has(w.id) && !openWins.has(w.id) ? 'Suggested — Friday predicts you’ll want this' : w.blurb ? w.label + ' — ' + w.blurb : undefined,
     style: {
       position: 'relative'
     }
   }, /*#__PURE__*/React.createElement("span", {
     className: "ico"
   }, /*#__PURE__*/React.createElement("img", {
-    src: `assets/icons/${w.id}.svg`,
+    src: `assets/icons/${w.icon || w.id}.svg`,
     alt: w.label,
     // A local 404 can error BEFORE React attaches onError, so the fallback
     // never fired and the dock showed a broken-image glyph.

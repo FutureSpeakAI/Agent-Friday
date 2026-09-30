@@ -53,16 +53,17 @@ def _dock_groups():
     wider than a handful of buttons. Studio sits in the middle of its group
     with neighbours on both sides, so nothing about paint order protects it.
     """
+    from agent_friday.services import workspace_registry
     src = APP.read_text(encoding="utf-8")
-    try:
-        blk = src[src.index("const DOCK_GROUPS=["):src.index("const WS=DOCK_GROUPS")]
-    except ValueError:                                         # pragma: no cover
-        pytest.fail("DOCK_GROUPS moved in ui_parts/app.html")
+    assert "const DOCK_GROUPS=fridayDockGroups(window.FRIDAY_WORKSPACE_REGISTRY);" in src, (
+        "ui_parts/app.html no longer builds the dock from the registry")
+    reg = workspace_registry.parse(
+        (APP.parents[1] / "static" / "workspace_registry.js").read_text(encoding="utf-8"))
     groups = []
-    for name, body in re.findall(r"\{name:'([^']+)',items:\[(.*?)\]\}", blk, re.S):
-        items = re.findall(r"id:'([^']+)',ico:'([^']*)',label:'([^']+)'", body)
+    for g in reg["groups"]:
+        items = [(w["id"], w["glyph"], w["label"]) for w in reg["workspaces"] if w["group"] == g["id"]]
         if items:
-            groups.append((name, items))
+            groups.append((g["label"], items))
     assert sum(len(i) for _, i in groups) > 12, (
         "parsed only %r out of DOCK_GROUPS; its shape changed"
         % [(n, len(i)) for n, i in groups]

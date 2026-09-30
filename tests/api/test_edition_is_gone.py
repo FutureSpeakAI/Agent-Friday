@@ -105,34 +105,30 @@ def test_the_edition_workspace_tab_redirects_home(client):
 # The UI.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _dock_ids(path, pattern):
+def _dock_ids(path):
+    """The dock's workspaces: both UI files build the dock from the one
+    registry (static/workspace_registry.js), so its ids are the dock's."""
+    from agent_friday.services import workspace_registry
     text = path.read_text(encoding="utf-8", errors="replace")
-    start = text.find("const DOCK_GROUPS")
-    assert start != -1, "DOCK_GROUPS not found in %s" % path.name
-    end = text.find("\nconst ", start + 1)
-    block = text[start:end if end != -1 else start + 20000]
-    ids = re.findall(pattern, block)
-    assert len(ids) > 10, "parsed only %d dock ids from %s" % (len(ids), path.name)
+    assert re.search(r"const DOCK_GROUPS\s*=\s*fridayDockGroups\(window\.FRIDAY_WORKSPACE_REGISTRY\)", text), (
+        "%s no longer builds the dock from the registry" % path.name)
+    reg = REPO / "static" / "workspace_registry.js"
+    ids = [w["id"] for w in workspace_registry.parse(reg.read_text(encoding="utf-8"))["workspaces"]]
+    assert len(ids) > 10, "parsed only %d dock ids from the registry" % len(ids)
     return ids
 
 
-@pytest.mark.parametrize("path,pattern", [
-    (INDEX, r"\bid:\s*'([a-z0-9_-]+)'"),
-    (APP, r"\bid:'([a-z0-9_-]+)'"),
-])
-def test_the_dock_has_no_edition_icon(path, pattern):
-    ids = _dock_ids(path, pattern)
+@pytest.mark.parametrize("path", [INDEX, APP])
+def test_the_dock_has_no_edition_icon(path):
+    ids = _dock_ids(path)
     assert "edition" not in ids, "%s still ships an edition dock icon" % path.name
 
 
-@pytest.mark.parametrize("path,pattern", [
-    (INDEX, r"\bid:\s*'([a-z0-9_-]+)'"),
-    (APP, r"\bid:'([a-z0-9_-]+)'"),
-])
-def test_neither_edition_nor_home_is_in_the_dock(path, pattern):
+@pytest.mark.parametrize("path", [INDEX, APP])
+def test_neither_edition_nor_home_is_in_the_dock(path):
     """Both were landing screens and both are gone. Edition held the first dock
     slot and Home the second; the dock now starts with whatever followed them."""
-    ids = _dock_ids(path, pattern)
+    ids = _dock_ids(path)
     assert "edition" not in ids, "%s still ships an edition icon" % path.name
     assert "home" not in ids, "%s still ships a home icon" % path.name
 

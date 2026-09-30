@@ -31,6 +31,9 @@ window.addEventListener('error',function(e){
 <script src="/static/vendor/marked-9.1.6.min.js"></script>
 <link rel="stylesheet" href="/static/vendor/atom-one-dark-11.9.0.min.css">
 <script src="/static/vendor/highlight-11.9.0.min.js"></script>
+<!-- Friday's workspaces: the one list the dock, window and tab titles, the
+     command palette and the server's navigate tools and voice all read. -->
+<script src="/static/workspace_registry.js"></script>
 <!-- Push-to-transcribe inside the tab. One file rather than two
      hand-maintained copies; the tray suppresses the hotkey while the
      system-wide version is on, so only one of them ever fires. -->
@@ -341,6 +344,13 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fwin-bar:active { cursor: grabbing; }
         .fwin-title { font-family: 'Inter', sans-serif; font-size: 12px; color: rgba(255,255,255,0.9); font-weight: 600; }
+        /* A workspace's own mark beside its name: in a window's title, the
+           command palette and a tab's header (WsIcon). */
+        .ws-icon { display: inline-block; width: 15px; height: 15px; vertical-align: -3px; margin-right: 6px;
+          filter: drop-shadow(0 0 4px rgba(0,212,255,0.35)); }
+        .ws-icon-glyph { width: auto; height: auto; font-size: 13px; line-height: 1; filter: none; }
+        .cmd-palette-item .ico .ws-icon { width: 17px; height: 17px; margin-right: 0; vertical-align: -3px; }
+        .ws-tab-name .ws-icon { width: 20px; height: 20px; margin-right: 0; }
         .fwin-btns button {
             background: none; border: none; color: rgba(255,255,255,0.6); cursor: pointer;
             font-size: 16px; padding: 0 4px; transition: color 0.2s;

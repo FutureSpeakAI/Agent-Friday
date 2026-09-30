@@ -306,39 +306,16 @@ if (typeof document !== 'undefined') {
   if (window.__FRIDAY_STANDALONE__) {/* one workspace, nothing else to warm */} else if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
 }
 // ── end panel data cache ──────────────────────────────────────────────────
-// Full dock. `core:true` marks the trimmed 10-icon set shown to fresh installs
-// (show_all_workspaces=false). Existing installs (show_all_workspaces=true) see
-// every workspace. WS (below) always includes all items so deep-link navigation
-// resolves regardless of which subset the dock renders.
-const DOCK_GROUPS=[
-  {name:'Life',items:[
-    
-    {id:'news',ico:'📰',label:'News',core:true},
-    {id:'messages',ico:'💬',label:'Messages',core:true},
-    {id:'calendar',ico:'📅',label:'Calendar',core:true},
-    {id:'family',ico:'👪',label:'Family'},
-    {id:'health',ico:'❤️',label:'Health'},
-    {id:'finance',ico:'💰',label:'Finance'},
-  ]},
-  {name:'Work',items:[
-    {id:'career',ico:'💼',label:'Career',core:true},
-    {id:'contacts',ico:'👥',label:'Contacts',core:true},
-    {id:'code',ico:'💻',label:'Code',core:true},
-    {id:'futurespeak',ico:'🌐',label:'Sites',core:true},
-    {id:'draft',ico:'✍️',label:'Draft'},
-    {id:'content',ico:'📝',label:'Content'},
-  ]},
-  {name:'System',items:[
-    // The wiki's pages and the knowledge graph are one workspace. `aka` keeps
-    // the old name findable (Ctrl+K "wiki"); WS_ALIASES keeps it openable.
-    {id:'knowledge',ico:'🌌',label:'Knowledge',core:true,aka:['wiki','pages','notes','knowledge graph','galaxy']},
-    {id:'trust',ico:'🔗',label:'Trust'},
-    {id:'studio',ico:'🎨',label:'Studio'},
-    {id:'marketplace',ico:'🛒',label:'Marketplace'},
-    {id:'workflows',ico:'🧩',label:'Workflows'},{id:'system',ico:'🖥️',label:'System',core:true},
-    {id:'settings',ico:'⚙️',label:'Settings',core:true},
-  ]},
-];
+// The dock's workspaces, each with its name, icon, group, accent, one-line
+// description and the other words people use for it, come from ONE registry:
+// static/workspace_registry.js, loaded in the head, the same list the server's
+// navigate tools, voice and Friday's own prompts read. `core:true` marks the
+// trimmed set shown to fresh installs (show_all_workspaces=false). WS (below)
+// always holds every workspace so a deep link resolves whichever subset the
+// dock renders.
+function fridayDockGroups(reg){const R=reg||{};
+  return(R.groups||[]).map(g=>({name:g.label,items:(R.workspaces||[]).filter(w=>w.group===g.id).map(w=>({id:w.id,ico:w.glyph,icon:w.icon||w.id,label:w.label,core:!!w.core,aka:w.aliases||[],blurb:w.blurb||'',accent:w.accent||'cyan'}))})).filter(g=>g.items.length)}
+const DOCK_GROUPS=fridayDockGroups(window.FRIDAY_WORKSPACE_REGISTRY);
 const WS=DOCK_GROUPS.flatMap(g=>g.items);
 const WS_BY_ID=WS.reduce((m,w)=>(m[w.id]=w,m),{});
 const WS_GROUP_OF=DOCK_GROUPS.reduce((m,g)=>(g.items.forEach(w=>{m[w.id]=g.name}),m),{});
@@ -1039,6 +1016,15 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
 // version for that size (see FWin). Knowledge shows its galaxy and a page
 // side by side.
 const FWIN_FIRST_SIZE={knowledge:{w:1180,h:760,v:1}};
+/* A WORKSPACE'S MARK: its SVG from the registry, or its glyph when the image
+   cannot load; the window title, the command palette and a tab's header all
+   show the mark the dock shows. */
+function WsIcon({ws,glyph}){
+  const w=typeof ws==='string'?WS_BY_ID[fridayWorkspaceId(ws)]||null:ws||null;
+  const[failed,setFailed]=useState(false);
+  if(!w||!w.icon||failed)return <span className="ws-icon ws-icon-glyph" aria-hidden="true">{(w&&w.ico)||glyph||'\u25A3'}</span>;
+  return <img className="ws-icon" src={'/assets/icons/'+w.icon+'.svg'} alt="" aria-hidden="true" onError={()=>setFailed(true)}/>;
+}
 function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   // Size & position persist per workspace and are clamped to the viewport so a
   // window can never be dragged or resized off-screen.
@@ -1109,7 +1095,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   },[id]);
   return(<div className={'fwin'+(closing?' closing':'')} ref={fwinRef} style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
-      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
+      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
     </div>{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
       {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
       {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
@@ -1251,7 +1237,7 @@ function CommandPalette({onClose,onOpenWs,openWins}){
 
   const query=q.trim().toLowerCase();
   const wsResults=WS.filter(w=>!query||w.label.toLowerCase().includes(query)||w.id.includes(query)||(w.aka||[]).some(a=>a.includes(query)))
-    .map(w=>({kind:'ws',id:w.id,ico:w.ico,label:w.label,meta:openWins.has(w.id)?'open':'open workspace'}));
+    .map(w=>({kind:'ws',id:w.id,ico:<WsIcon ws={w}/>,label:w.label,meta:openWins.has(w.id)?'open':w.blurb||'open workspace'}));
   const contactResults=(query?contacts.filter(c=>(c.name||c.label||'').toLowerCase().includes(query)):[]).slice(0,6)
     .map(c=>({kind:'contact',id:c.id||c.name,ico:'👤',label:c.name||c.label,meta:c.email||c.role||'contact'}));
   const routineResults=(query?routines.filter(r=>(r.label||r.name||'').toLowerCase().includes(query)):[]).slice(0,6)
@@ -6118,7 +6104,7 @@ function StudioWS(){
     </div>);
   }
   return(<div>
-    <FridaySays text={creations.length+' creations in the gallery. Generate images, video & music, compose timelines, or run a full production.'}/>
+    <FridaySays text={creations.length+(creations.length===1?' creation':' creations')+' in the gallery. Generate images, video & music, compose timelines, or run a full production.'}/>
     {minor&&<div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8,padding:'5px 10px',borderRadius:8,background:'rgba(34,197,94,0.08)',border:'1px solid rgba(34,197,94,0.3)'}}>
       <span style={{fontSize:13}}>👨‍👧</span><span style={{fontSize:11,color:'#7fe0a8',fontWeight:600}}>Family mode</span>
       <span style={{fontSize:10,color:'#5a8a6a'}}>— age-appropriate filtering is on for everything Friday creates here. Hiding older adult content from this gallery is coming soon.</span>
@@ -8691,7 +8677,7 @@ function NewsWS(){
         <input className="input" style={{flex:1,fontSize:11}} value={briefSearch} onChange={e=>setBriefSearch(e.target.value)} placeholder="Filter by date (e.g. 2026-06)"/>
       </div>
       {loading?<div style={{color:'#999',textAlign:'center',padding:30}}>Loading archive…</div>:
-       filteredBriefs.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No briefings match. The daily briefing runs at 7:32 AM — or hit ✨ Generate Now.</div>:
+       filteredBriefs.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No briefings match. The daily briefing runs at 7:32 AM — or hit ✨ Generate Briefing.</div>:
        filteredBriefs.map((b,i)=>{const isOpen=expanded[b.date];return(
        <div key={b.date||i} className={'brief-card'+(isOpen?' expanded':'')} onClick={()=>!isOpen&&setExpanded({...expanded,[b.date]:true})}>
          <div className="brief-cardhead">
@@ -8740,7 +8726,7 @@ function NewsWS(){
           <span key={c} className={'toggle-pill '+(prefs.categories_enabled[c]?'on':'')} onClick={()=>toggleCat(c)}>{c}</span>)}
       </div>
       <NewsLocalBeatSettings/>
-      <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Now and the live feed.</div>
+      <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Briefing and the live feed.</div>
     </div>}
     {panel==='diet'&&<div className="news-side">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>📊 YOUR MEDIA DIET</h3><button aria-label={'Close this panel'} title={'Close this panel'} className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
@@ -18773,8 +18759,10 @@ function StandaloneShell({ws,children}){
   useEffect(()=>{const frac=window.__fridayTabScroll;delete window.__fridayTabScroll;if(frac>0)return fridayRestoreTabScroll(frac)},[]);
   useEffect(()=>{fetch('/api/settings').then(r=>r.json()).then(d=>{const n=((d&&(d.settings||d))||{}).agent_name;if(n)setAgentName(n)}).catch(()=>{})},[]);
   useEffect(()=>{
-    document.title=ws.label+' · Agent Friday';
-    const iconUrl=ws.id==='workflows'?null:'/assets/icons/'+ws.id+'.svg';
+    // A tab opened for one item names it first: "Q3 plan · Messages · Agent Friday".
+    let item='';try{const q=new URLSearchParams(window.location.search);item=q.get('subject')||q.get('title')||q.get('creation')||q.get('file')||''}catch(e){}
+    document.title=(item?item.slice(0,80)+' · ':'')+ws.label+' · Agent Friday';
+    const iconUrl='/assets/icons/'+(ws.icon||ws.id)+'.svg';
     const emojiIcon='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">'+(ws.ico||'▣')+'</text></svg>');
     document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l=>l.parentNode.removeChild(l));
     const link=document.createElement('link');link.rel='icon';link.href=iconUrl||emojiIcon;if(iconUrl)link.type='image/svg+xml';link.onerror=()=>{link.href=emojiIcon};document.head.appendChild(link);
@@ -18783,7 +18771,7 @@ function StandaloneShell({ws,children}){
     <header className="ws-tab-head">
       <div className="ws-tab-brand"><a className="ws-tab-mark" href="/" title="Back to the Friday desktop">{agentName}</a><span className="ws-tab-by">by</span><a className="ws-tab-fs" href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer">FutureSpeak.AI</a></div>
       <span className="ws-tab-sep" aria-hidden="true">|</span>
-      <div className="ws-tab-name">{ws.id!=='workflows'&&<img src={'/assets/icons/'+ws.id+'.svg'} alt="" onError={e=>{e.target.style.display='none'}}/>}<span>{ws.label}</span></div>
+      <div className="ws-tab-name"><WsIcon ws={ws}/><span>{ws.label}</span></div>
       <span className="ws-tab-sp"/>
       <StandaloneApprovals/>
       <a className="ws-tab-link" href="/?chrome=chat" target="_blank" rel="noopener" title="Talk to Friday in a tab of its own">💬 Chat</a>

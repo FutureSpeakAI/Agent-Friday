@@ -28,13 +28,12 @@ def _dock_ids() -> set:
     parse ever stops matching, this fails loudly rather than silently
     validating against an empty set.
     """
+    from agent_friday.services import workspace_registry
     text = _INDEX_HTML.read_text(encoding="utf-8", errors="replace")
-    start = text.find("const DOCK_GROUPS")
-    assert start != -1, "DOCK_GROUPS not found in index.html — parser is stale"
-    # The dock array ends where the next top-level `const ` declaration begins.
-    end = text.find("\nconst ", start + 1)
-    block = text[start:end if end != -1 else start + 20000]
-    ids = set(re.findall(r"\bid:\s*'([a-z0-9_-]+)'", block))
+    assert "const DOCK_GROUPS = fridayDockGroups(window.FRIDAY_WORKSPACE_REGISTRY);" in text, (
+        "index.html no longer builds the dock from the registry")
+    reg = _INDEX_HTML.parent / "static" / "workspace_registry.js"
+    ids = {w["id"] for w in workspace_registry.parse(reg.read_text(encoding="utf-8"))["workspaces"]}
     assert len(ids) > 10, f"parsed only {len(ids)} dock ids — parser is stale"
     return ids
 
