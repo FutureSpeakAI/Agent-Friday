@@ -56,12 +56,33 @@ on_wiki_dirty(lambda reason: emit_kg_event("wiki_changed", {"reason": reason}))
 
 
 def _ensure_fresh() -> KnowledgeGraphStore:
-    """Rebuild Tier A if the wiki changed since the last build."""
+    """Serve the saved graph immediately; refresh stale data off-request."""
     store = KnowledgeGraphStore()
-    if peek_wiki_dirty() or not (store.base / "entities.json").exists():
-        with _rebuild_lock:
-            if consume_wiki_dirty() or not (store.base / "entities.json").exists():
-                wiki_graph.rebuild_tier_a(store=store)
+    missing = not (store.base / "entities.json").exists()
+    if not (peek_wiki_dirty() or missing):
+        return store
+    if not _rebuild_lock.acquire(blocking=False):
+        return store
+
+    def refresh():
+        try:
+            # Consume before the scan: a later edit must request another pass.
+            if consume_wiki_dirty() or missing:
+                info = wiki_graph.rebuild_tier_a(store=store)
+                emit_kg_event("reindexed", info)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Background graph refresh failed")
+            mark_wiki_dirty("rebuild_failed")
+            emit_kg_event("index_error", {"message": "Graph refresh failed; saved graph retained."})
+        finally:
+            _rebuild_lock.release()
+
+    try:
+        threading.Thread(target=refresh, name="knowledge-graph-refresh", daemon=True).start()
+    except Exception:
+        _rebuild_lock.release()
+        raise
     return store
 
 
@@ -114,6 +135,21 @@ def kg_graph():
         ids = {e["id"] for e in entities}
         relationships = [r for r in relationships
                          if r["source"] in ids and r["target"] in ids]
+
+    # The initial canvas only needs labels, coordinates and wiki navigation.
+    # Full cited evidence remains in /node and the default graph export.
+    if request.args.get("view") == "compact":
+        node_fields = ("id", "title", "type", "degree", "frequency", "community",
+                       "level", "section", "updated", "x", "y", "z", "tier")
+        entities = [{**{k: e[k] for k in node_fields if k in e},
+                     "description": (e.get("description") or "")[:480],
+                     "provenance": {k: v for k, v in (e.get("provenance") or {}).items()
+                                    if k in ("wiki_pages", "sensitivity")}}
+                    for e in entities]
+        relationships = [{k: r[k] for k in ("id", "source", "target", "weight") if k in r}
+                         for r in relationships]
+        communities = [{k: c[k] for k in ("id", "community", "title", "size", "level") if k in c}
+                       for c in communities]
 
     return jsonify({
         "status": "ok",
@@ -202,9 +238,17 @@ def kg_reindex():
     data = request.get_json(silent=True) or {}
     tier = (data.get("tier") or "A").upper()
     if tier == "A":
-        with _rebuild_lock:
-            info = wiki_graph.rebuild_tier_a()
-        consume_wiki_dirty()
+        if not _rebuild_lock.acquire(blocking=False):
+            return jsonify({"status": "busy", "message": "Tier A refresh already running"}), 409
+        try:
+            consume_wiki_dirty()
+            try:
+                info = wiki_graph.rebuild_tier_a()
+            except Exception:
+                mark_wiki_dirty("rebuild_failed")
+                raise
+        finally:
+            _rebuild_lock.release()
         emit_kg_event("reindexed", info)
         return jsonify({"status": "ok", **info})
     if tier == "B":
