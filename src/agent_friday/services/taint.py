@@ -452,6 +452,10 @@ POLICY = {
     "detail": "ask",
     "post_url": "ask",
     "message_body": "note",
+    # A file or wiki page to organize. The change stays on this PC and has an
+    # undo, and a batch or a move that reaches further raises a card anyway,
+    # so where the name came from is shown, not enforced.
+    "local_item": "note",
 }
 
 #: Per-tool argument roles for Friday's own tools.
@@ -465,6 +469,16 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     # Opening an item on the owner's own screen, and reading Friday's state.
     "navigate_to": {},
     "check_situation": {},
+    # Organizing (services/item_actions). Mail always goes on a card, which
+    # shows where each detail came from.
+    "organize_email": {"query": "detail", "thread_ids": "detail", "label": "detail",
+                       "account": "detail"},
+    "organize_files": {"items": "local_item", "to": "local_item", "new_name": "local_item",
+                       "moves": "local_item"},
+    "organize_wiki": {"pages": "local_item", "to": "local_item", "new_name": "local_item",
+                      "tags": "local_item", "moves": "local_item"},
+    "undo_action": {},
+    "answer_card": {},
     "release_holds": {},
     "find_free_slots": {},
     "text_by_phone": {"to": "recipient", "body": "message_body"},
@@ -673,6 +687,7 @@ _ROLE_WORDS = {
     "detail": "The detail “{v}”",
     "post_url": "The address it sends to, {v},",
     "message_body": "A link or address in the message ({v})",
+    "local_item": "The item {v}",
 }
 
 

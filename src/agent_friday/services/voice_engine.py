@@ -374,6 +374,79 @@ _VOICE_LIVE_TOOLS = [
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
+    # Organizing mail, files and wiki pages (services/item_actions). A result
+    # meant for this cloud session names counts, never a subject, sender,
+    # account, file or page Friday found (voice-tool-contract.md §5).
+    ("organize_email",
+     "Archive, label, move, star, mark read or unread, Trash, restore or report "
+     "spam on the user's Gmail: all the mail a Gmail search finds (from:, "
+     "subject:, older_than:1y, is:unread, label:). Nothing changes yet: it raises "
+     "ONE approval card for the whole batch and returns one sentence to read "
+     "back. Say it, then the three ways out: yes, no, or change it (a narrower "
+     "search: call again with replaces set to the card_id). The conversations "
+     "are listed on their screen, not in this result, because mail is private; "
+     "to hear what is in them, use ask_local_for_context. When they answer, call "
+     "answer_card. If no account can be changed, Friday needs a one-time "
+     "reconnect in Settings, Accounts: say that, and do NOT say you cannot reach "
+     "their mail.",
+     {"action": ("string", "One of: archive, inbox, read, unread, star, unstar, "
+                           "label, unlabel, move, trash, restore, spam, not_spam."),
+      "query": ("string", "The Gmail search, e.g. from:linkedin.com older_than:1m."),
+      "thread_ids": ("array", "Conversation ids from search_email, instead of a query."),
+      "label": ("string", "For label, unlabel and move."),
+      "account": ("string", "Only this account."),
+      "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
+      "why": ("string", "One short line for the card.")},
+     ["action"]),
+    ("organize_files",
+     "Move, rename or trash the user's files, or make a folder, in Documents, "
+     "Downloads, Desktop, Creations or Projects. Name each file as a path inside "
+     "one of those folders (Documents/Taxes/w2.pdf). One file changes at once: "
+     "say what was done in a sentence. Two or more wait for ONE approval card: "
+     "read back its sentence and the three ways out (yes, no, or change it: call "
+     "again with replaces set to the card_id), then call answer_card with their "
+     "answer. Nothing is deleted or overwritten, and undo_action puts a change back.",
+     {"action": ("string", "One of: move, rename, trash, new_folder."),
+      "items": ("array", "The files or folders."),
+      "to": ("string", "Destination folder (move), or the folder to make (new_folder)."),
+      "new_name": ("string", "For rename."),
+      "moves": ("array", "To sort into several folders at once: 'file => folder' each."),
+      "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
+      "why": ("string", "One short line for the card.")},
+     ["action"]),
+    ("organize_wiki",
+     "Move, rename, tag, untag, archive or trash pages in the user's wiki (the "
+     "Knowledge workspace), named by title or path. One page changes at once; two "
+     "or more wait for ONE approval card, read back like organize_files. When a "
+     "name fits several pages, the choices are numbered on their screen: ask "
+     "which number, then call again with that page given as #1, #2 and so on. A "
+     "rename updates the links to the page; undo_action puts a change back.",
+     {"action": ("string", "One of: move, rename, tag, untag, archive, trash."),
+      "pages": ("array", "The pages, by title or path, or #n for a numbered choice."),
+      "to": ("string", "Folder to move into."),
+      "new_name": ("string", "For rename."),
+      "tags": ("array", "For tag and untag."),
+      "moves": ("array", "'page => folder' each, to sort several in one card."),
+      "replaces": ("string", "The card_id of the card this one changes; that card is withdrawn."),
+      "why": ("string", "One short line for the card.")},
+     ["action"]),
+    ("undo_action",
+     "Undo one of Friday's organize changes: the newest in this conversation, or "
+     "the receipt_id a result named. Files and pages go back at once: say so. "
+     "Mail goes back on an approval card: read it back and ask, then call "
+     "answer_card with their answer.",
+     {"receipt_id": ("string", "rcpt_... from an earlier result; empty for the newest.")},
+     []),
+    ("answer_card",
+     "Record the user's spoken answer to an organize card (from organize_email, "
+     "organize_files, organize_wiki or undo_action), right after they give it. It "
+     "counts only if their own words say it, and in a room of several people a "
+     "yes must name Friday. NOT RECORDED means it did not count: ask them "
+     "directly, and never say it was done. RUNNING means it is still working: say "
+     "so; you are told the outcome when it finishes.",
+     {"card_id": ("string", "The card_id the tool returned."),
+      "decision": ("string", "approve or decline.")},
+     ["card_id", "decision"]),
     ("run_workflow",
      "Start one of the user's stored workflows (his routines) by name, spoken. "
      "A workflow's own steps run wherever it says to run them, including on his "
@@ -531,9 +604,10 @@ _VOICE_SHARED_TOOLS = (
     "open_path",
     "search_email",
     "screenshot",
-    # navigate_to and check_situation are voice tools too, declared in
-    # _VOICE_LIVE_TOOLS with the manners a spoken reply needs; a name has one
-    # declaration, so they are not borrowed from the text registry here.
+    # navigate_to, check_situation and the organize tools (organize_email,
+    # organize_files, organize_wiki, undo_action, answer_card) are voice tools
+    # too, declared in _VOICE_LIVE_TOOLS with the manners a spoken reply needs;
+    # a name has one declaration, so they are not borrowed from the registry.
     # Podcasts, by voice: make one ("from my notes on X"), play and steer it,
     # and "what's the source for that?". make_podcast only queues, so it
     # answers inside the bridge's limit; private episodes are described to a
@@ -636,9 +710,13 @@ def _build_voice_live_tools(types, behavior=None):
     }
     decls = []
     for name, desc, props, required in _VOICE_LIVE_TOOLS:
+        # "array" is a list of strings; every other type is a scalar.
         schema_props = {
-            pname: types.Schema(type=_type_map.get(ptype, types.Type.STRING),
-                                description=pdesc)
+            pname: (types.Schema(type=types.Type.ARRAY, description=pdesc,
+                                 items=types.Schema(type=types.Type.STRING))
+                    if ptype == "array" else
+                    types.Schema(type=_type_map.get(ptype, types.Type.STRING),
+                                 description=pdesc))
             for pname, (ptype, pdesc) in props.items()
         }
         decls.append(_decl(
@@ -1151,6 +1229,18 @@ def _voice_tool_run(name, args, send_client, session=None):
             from agent_friday.services import agent as _ag
             _fn = (_ag._tool_navigate_to if name == "navigate_to"
                    else _ag._tool_check_situation)
+            _cid = session.get("conversation_id") if isinstance(session, dict) else None
+            _tok = _ag._CURRENT_CONVERSATION.set(_cid)
+            try:
+                return _governed(name, _fn, args)
+            finally:
+                _ag._CURRENT_CONVERSATION.reset(_tok)
+        if name in ("organize_email", "organize_files", "organize_wiki",
+                    "undo_action", "answer_card"):
+            # An approved batch runs in the background and reports to the
+            # conversation that asked, which this call's session names.
+            from agent_friday.services import agent as _ag
+            _fn = getattr(_ag, "_tool_" + name)
             _cid = session.get("conversation_id") if isinstance(session, dict) else None
             _tok = _ag._CURRENT_CONVERSATION.set(_cid)
             try:

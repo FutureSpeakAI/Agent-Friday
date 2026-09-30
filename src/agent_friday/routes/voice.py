@@ -2296,9 +2296,14 @@ if sock is not None:
                     model=_brain,
                     max_tokens=_voice_reply_cap(settings),
                     temperature=settings.get("temperature"),
+                    # The owner's own words for this turn, and that they were
+                    # spoken: a card is decided by those words (answer_card),
+                    # exactly as a typed or cloud-voice answer is.
                     session_ctx={"authenticated": _ws_authenticated,
                                  "provider": _prov,
-                                 "is_voice": True},
+                                 "is_voice": True,
+                                 "surface": "voice-local",
+                                 "owner_text": str(user_text or "")[:4000]},
                     workspace=settings.get("active_workspace") or "",
                     on_text_delta=on_delta,
                 )

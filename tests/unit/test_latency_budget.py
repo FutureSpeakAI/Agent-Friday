@@ -33,10 +33,13 @@ from agent_friday.services import tool_budget as tb
 #: from the user's own wiki and vault, which are not fixed.
 MAX_SYSTEM_PROMPT_TOKENS = 6_000
 
-#: Every tool's full schema: ~18,769 tokens for 107 tools. This is what a turn
+#: Every tool's full schema: ~20,450 tokens for 114 tools. This is what a turn
 #: pays only when the tool index is switched off (FRIDAY_TOOL_CATALOGUE=0), so
-#: it is the fallback's cost, and it still grows with every tool added.
-MAX_TOOL_CATALOGUE_TOKENS = 20_000
+#: it is the fallback's cost, and it still grows with every tool added. Raised
+#: from 20,000 for the organize tools (mail, files, wiki, undo, and answering
+#: their cards), about 1,100 tokens, which voice needs as real tools rather
+#: than a hand-over to chat.
+MAX_TOOL_CATALOGUE_TOKENS = 23_000
 
 #: What a turn actually sends by default: the tool index (name and one line
 #: per tool, services/tool_catalogue.py) plus the few resident tools. ~3,425

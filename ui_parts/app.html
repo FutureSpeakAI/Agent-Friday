@@ -7130,6 +7130,35 @@ function SitesWS(){
 // checkpoint receipt from /api/governance/receipts, checked server-side. ───
 const RECEIPT_VISIT_KEY='friday.receipts.lastVisit';
 const RECEIPT_DECISION_COLOR={allow:'#00ff80',confirm:'#00d4ff',card:'#f59e0b',deny:'#ff0080'};
+/* CHANGES FRIDAY MADE: the receipts of her organize actions (mail, files, wiki
+   pages), newest first, each with its own Undo; the owner's Undo puts a change
+   back at once, mail included (routes/actions.py). */
+function FridayChangesCard(){
+  const[recs,setRecs]=useState(null);const[err,setErr]=useState('');const[busy,setBusy]=useState('');const[said,setSaid]=useState({});
+  const load=()=>fetch('/api/actions/receipts?limit=15').then(r=>r.json()).then(d=>{setRecs(d.receipts||[]);setErr('')}).catch(e=>setErr(String(e.message||e)));
+  useEffect(()=>{load()},[]);
+  const undo=rid=>{if(busy)return;setBusy(rid);
+    fetch('/api/actions/receipts/'+encodeURIComponent(rid)+'/undo',{method:'POST'}).then(r=>r.json())
+      .then(d=>{setSaid(s=>Object.assign({},s,{[rid]:d.status==='ok'?(d.result&&d.result.text)||'Put back.':d.error||'Not undone.'}))})
+      .catch(e=>setSaid(s=>Object.assign({},s,{[rid]:String(e.message||e)}))).then(()=>{setBusy('');load()})};
+  const when=at=>{const d=new Date(at);return isNaN(d)?String(at||''):d.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})};
+  const DOM={email:'✉️',files:'📁',wiki:'🌌'};
+  return(<div className="card" data-testid="friday-changes" style={{marginBottom:10,padding:10,border:'1px solid rgba(0,212,255,0.18)'}}>
+    <div className="card-title" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span>↩ Changes Friday made</span>
+      <button className="btn" aria-label="Refresh the changes" title="Refresh" style={{fontSize:11,padding:'2px 8px'}} onClick={load}>↻ Refresh</button></div>
+    <div style={{fontSize:11,color:'#7f93ad',margin:'2px 2px 8px'}}>Mail, files and wiki pages Friday organized for you. Undo puts each one back; nothing was ever deleted.</div>
+    {err?<div style={{fontSize:11,color:'#ff9a9a'}}>Couldn't read the changes: {err}</div>
+      :recs===null?<div style={{fontSize:11,color:'#888'}}>Loading…</div>
+      :recs.length===0?<div style={{fontSize:11,color:'#888',padding:'4px 2px'}}>No changes yet. When Friday archives mail, moves files or tidies wiki pages for you, each change appears here with its Undo.</div>
+      :recs.map(r=>(<div key={r.receipt_id} data-receipt={r.receipt_id} style={{display:'flex',gap:8,alignItems:'flex-start',padding:'6px 2px',borderTop:'1px solid rgba(255,255,255,0.05)',fontSize:12}}>
+        <span aria-hidden="true">{DOM[r.domain]||'⚙️'}</span>
+        <div style={{flex:1,minWidth:0}}><div style={{color:r.undone?'#7f93ad':'#dbe6f5',textDecoration:r.undone?'line-through':'none'}}>{r.summary||r.tool}</div>
+          <div style={{fontSize:10,color:'#7f93ad',fontFamily:'JetBrains Mono'}}>{when(r.at)}{r.approval_id?' · approved on a card':''}{r.undone?' · undone':''}{r.off_record?' · off the record':''}</div>
+          {said[r.receipt_id]&&<div style={{fontSize:11,color:'#9fe7ff',marginTop:2}}>{said[r.receipt_id]}</div>}</div>
+        {r.undoable&&<button className="btn" style={{fontSize:11,padding:'2px 10px'}} disabled={!!busy} aria-label={'Undo: '+(r.summary||r.tool)} onClick={()=>undo(r.receipt_id)}>{busy===r.receipt_id?'…':'↩ Undo'}</button>}
+      </div>))}
+  </div>);
+}
 function WhatFridayDidCard(){
   const[mode,setMode]=useState('visit');const[day,setDay]=useState('');
   const[data,setData]=useState(null);const[err,setErr]=useState('');const[showAll,setShowAll]=useState(false);
@@ -7373,6 +7402,9 @@ function SystemWS(){
 
     {/* ─── What Friday did (signed receipts) ─── */}
     <WhatFridayDidCard/>
+
+    {/* ─── Changes Friday made (organize receipts, each with Undo) ─── */}
+    <FridayChangesCard/>
 
     {/* ─── Approvals ─── */}
     <div ref={apRef} className="card" style={{marginBottom:10,padding:10,border:'1px solid rgba(245,158,11,0.25)'}}>
@@ -18727,12 +18759,17 @@ function LocalContextShareCard({a,busy,onDecide}){
     </div>
   </div>;
 }
+// One of Friday's organize batches (services/item_actions): mail, files or
+// wiki pages, listed one per line on the card.
+function fridayIsBatchCard(a){return!!(a&&a.payload&&a.payload.handler==='item_batch')}
 function ApprovalCardBody({ a, busy, onDecide }) {
   // The share card has its own body: the exact payload, edit, and four choices.
   if (a && a.kind === 'local_context_share') return <LocalContextShareCard a={a} busy={busy} onDecide={onDecide}/>;
   return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
     {a.action_description && <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}
+    {fridayIsBatchCard(a) && <ul data-testid="batch-lines" style={{ fontSize: 11, color: '#b8c7dc', margin: '6px 0 0', padding: '0 0 0 16px', maxHeight: 220, overflowY: 'auto' }}>{(a.payload.lines || []).map((line, i) => <li key={i}>{line}</li>)}</ul>}
+    {fridayIsBatchCard(a) && <div style={{ fontSize: 10, color: '#7f93ad', marginTop: 4 }}>Approve changes exactly what is listed. Afterwards, “undo that” or System › Changes Friday made puts it back.</div>}
     <ApprovalPagePreview a={a} />
     <ApprovalProvenance p={a.provenance} />
     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 4 }}>{a.kind} · {a.policy_class}{a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''}</div>

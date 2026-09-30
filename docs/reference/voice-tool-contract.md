@@ -31,6 +31,9 @@ Everything lives in `services/voice_engine.py` unless noted.
     ["arg"])                      # required args; [] if none
    ```
 
+   An argument's type is `string`, `integer`, `number`, `boolean`, or `array`
+   (a list of strings).
+
 2. **Route it** in `_voice_tool_run`, through `_governed`:
 
    ```python

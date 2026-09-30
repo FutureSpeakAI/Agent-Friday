@@ -1,5 +1,5 @@
 """One registry names every workspace, and the page keeps the contracts the
-server's navigate tools rely on.
+server's organize and navigate tools rely on.
 
   * The page loads static/workspace_registry.js before the app, and the dock,
     window titles, tab headers and the command palette read it.
@@ -10,7 +10,8 @@ server's navigate tools rely on.
   * A window can fill the desktop; a tab Friday opened for one item confirms
     what it shows under the id the server put in its address.
   * Messages takes a Gmail search and a maximized conversation; News opens one
-    story on its own.
+    story on its own; a batch card lists its items; System lists Friday's
+    changes, each with its Undo.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_friday.services import workspace_registry
+from agent_friday.services import item_actions, workspace_registry
 
 ROOT = Path(__file__).resolve().parents[2]
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8")
@@ -124,3 +125,23 @@ def test_news_opens_one_story_on_its_own(ui):
     s = UI[ui]
     assert "function NewsArticleView" in s
     assert re.search(r"keys:\s*\[\s*'tab',\s*'article',\s*'url',\s*'title',\s*'source'\s*\]", s)
+
+
+@pytest.mark.parametrize("ui", sorted(UI))
+def test_a_batch_card_lists_its_items(ui):
+    s = UI[ui]
+    assert "handler === 'item_batch'" in s or "handler==='item_batch'" in s
+    assert item_actions.HANDLER == "item_batch"
+
+
+@pytest.mark.parametrize("ui", sorted(UI))
+def test_system_lists_fridays_changes_with_undo(ui):
+    s = UI[ui]
+    assert "function FridayChangesCard" in s
+    assert "/api/actions/receipts?limit=15" in s and "'/undo'" in s
+
+
+def test_the_receipts_routes_the_page_calls_exist():
+    src = (ROOT / "src" / "agent_friday" / "routes" / "actions.py").read_text(encoding="utf-8")
+    assert '"/api/actions/receipts", methods=["GET"]' in src
+    assert '"/api/actions/receipts/<rid>/undo", methods=["POST"]' in src

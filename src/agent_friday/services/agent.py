@@ -720,6 +720,45 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "pin": {"type": "boolean"}}}},
+    {"name": "organize_email", "description": "Archive, label, move, star, mark read or unread, Trash, restore or report spam on the user's Gmail. Pick the mail with a Gmail search in query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or thread_ids from search_email. Nothing changes yet: it raises ONE approval card for the whole batch and returns a readback; say it to the user in one sentence and ask: yes, no, or change it (call again with replaces=the card_id). They approve on the card, or by saying yes (then call answer_card). Every change can be undone (undo_action).",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["archive", "inbox", "read", "unread", "star", "unstar", "label", "unlabel", "move", "trash", "restore", "spam", "not_spam"]},
+         "query": {"type": "string", "description": "A Gmail search, e.g. from:linkedin.com older_than:1m"},
+         "thread_ids": {"type": "array", "items": {"type": "string"}, "description": "Conversation ids (account:thread) instead of a query."},
+         "label": {"type": "string", "description": "For label, unlabel and move."},
+         "account": {"type": "string", "description": "Only this account (label or address)."},
+         "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
+         "why": {"type": "string", "description": "One short line for the card."}},
+      "required": ["action"]}},
+    {"name": "organize_files", "description": "Move, rename or trash the user's files, or make a folder, in Documents, Downloads, Desktop, Creations or Projects. Name each file as a path inside one of those folders (Documents/Taxes/w2.pdf) or the full path search_files gave. One file changes now; two or more (or anything in Projects, or into a folder a cloud service syncs) wait for ONE approval card. Trash goes to Friday's own trash, nothing is deleted or overwritten, and undo_action puts it back.",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["move", "rename", "trash", "new_folder"]},
+         "items": {"type": "array", "items": {"type": "string"}, "description": "The files or folders."},
+         "to": {"type": "string", "description": "Destination folder (move), or the folder to make (new_folder)."},
+         "new_name": {"type": "string", "description": "For rename."},
+         "moves": {"type": "array", "items": {"type": "string"}, "description": "To sort into several folders in one card: 'file => folder' each."},
+         "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
+         "why": {"type": "string", "description": "One short line for the card."}},
+      "required": ["action"]}},
+    {"name": "organize_wiki", "description": "Move, rename, tag, untag, archive or trash pages in the user's wiki (the Knowledge workspace). Name pages by title or path (people/dana.md); an ambiguous title returns numbered choices to ask about (then give the page as #1, #2...). A rename updates the links to the page. One page changes now; two or more wait for ONE approval card. Archive keeps a page out of the graph, trash moves it to Friday's trash, and undo_action puts it back.",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["move", "rename", "tag", "untag", "archive", "trash"]},
+         "pages": {"type": "array", "items": {"type": "string"}},
+         "to": {"type": "string", "description": "Folder to move into."},
+         "new_name": {"type": "string", "description": "For rename."},
+         "tags": {"type": "array", "items": {"type": "string"}},
+         "moves": {"type": "array", "items": {"type": "string"}, "description": "'page => folder' each, to sort in one card."},
+         "replaces": {"type": "string", "description": "The card_id of the card this one changes; that card is withdrawn."},
+         "why": {"type": "string", "description": "One short line for the card."}},
+      "required": ["action"]}},
+    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki): the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
+     "input_schema": {"type": "object", "properties": {
+         "receipt_id": {"type": "string", "description": "rcpt_... from an earlier result; empty for the newest."}}}},
+    {"name": "answer_card", "description": "Record the user's own answer to an organize approval card (from organize_email, organize_files, organize_wiki or undo_action), right after they give it: yes / go ahead approves, no / cancel declines. It counts only if their own words, said after the card was raised, say so.",
+     "input_schema": {"type": "object", "properties": {
+         "card_id": {"type": "string", "description": "The approval_id the tool returned."},
+         "decision": {"type": "string", "enum": ["approve", "decline"]}},
+      "required": ["card_id", "decision"]}},
     {"name": "revert_workspace", "description": "Undo a change Friday made to one of the user's workspaces. Use whenever the user says 'roll that back', 'undo that', 'put it back', or 'restore my workspace to how it was this morning'. Modes: 'undo' (the most recent change), 'as_of' (the state at a time — pass when), 'version' (a specific version_id from the history), 'reset' (back to baseline). Every undo is itself snapshotted, so an undo can be undone. Call list_workspace_history first if you need to see what changed.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id, e.g. 'studio', 'news', 'calendar'."},
@@ -2833,6 +2872,105 @@ def _tool_check_situation(inp):
     if (inp.get('detail') or 'brief') == 'full':
         return json.dumps(situation.compact(snap), default=str) + note
     return situation.brief(snap) + note
+
+
+def _organize_result(out):
+    """One organize result as the model reads it: the status first, then what
+    to say, then the ids it may need next."""
+    out = dict(out or {})
+    status = out.get("status")
+    if status == "pending_approval":
+        lead = "CARD_RAISED: nothing has changed yet. Read this back and ask: "
+        text = ((out.get("readback") or "") + " The three ways out: yes, no, or change it "
+                "(call again with replaces set to the card_id).")
+    elif status in ("complete", "partial", "running"):
+        lead = "DONE: " if status == "complete" else ("PARTLY DONE: " if status == "partial" else "RUNNING: ")
+        text = out.get("text") or ""
+    else:
+        lead = "NOT DONE: " if status in ("failed", "denied", "blocked") else ""
+        text = out.get("text") or out.get("readback") or str(status or "")
+    ids = []
+    if out.get("approval_id"):
+        ids.append("card_id=%s" % out["approval_id"])
+    if out.get("receipt_id"):
+        ids.append("receipt_id=%s" % out["receipt_id"])
+    notes = "; ".join(out.get("notes") or [])
+    return lead + text + (" (" + ", ".join(ids) + ")" if ids else "") + ((" Note: " + notes) if notes else "")
+
+
+def _organize_call(fn, *args, **kw):
+    """Run one organize function for a tool call. A result bound for the cloud
+    voice model is QUIET: counts, never a name Friday found."""
+    from agent_friday.services import item_actions as _ia
+    tok = _ia.QUIET.set(_cloud_voice())
+    try:
+        return _organize_result(fn(*args, conversation_id=_CURRENT_CONVERSATION.get(),
+                                   owner_words=_CURRENT_OWNER_TEXT.get(), **kw))
+    except _ia.Refused as e:
+        return "NOT DONE: " + str(e.user_message)
+    finally:
+        _ia.QUIET.reset(tok)
+
+
+def _voice_room() -> bool:
+    """True when this call was spoken with several people in the room."""
+    if not (_CURRENT_SURFACE.get() or "").startswith("voice"):
+        return False
+    try:
+        from agent_friday.services.voice_engine import _voice_room_mode
+        return _voice_room_mode()
+    except Exception:
+        return True
+
+
+def _tool_organize_email(inp):
+    """Tool handler: one approval card for a batch of Gmail changes."""
+    from agent_friday.services import item_actions as _ia
+    inp = inp or {}
+    return _organize_call(_ia.propose_email, inp.get("action") or "", query=inp.get("query") or "",
+                          thread_ids=inp.get("thread_ids") or None, account=inp.get("account") or "",
+                          label=inp.get("label") or "", why=inp.get("why") or "",
+                          replaces=inp.get("replaces") or "", room_mode=_voice_room())
+
+
+def _tool_organize_files(inp):
+    """Tool handler: one local file change now, or a batch on one card."""
+    from agent_friday.services import item_actions as _ia
+    inp = inp or {}
+    return _organize_call(_ia.organize_files, inp.get("action") or "", items=inp.get("items") or None,
+                          to=inp.get("to") or "", new_name=inp.get("new_name") or "",
+                          moves=inp.get("moves") or None, why=inp.get("why") or "",
+                          replaces=inp.get("replaces") or "")
+
+
+def _tool_organize_wiki(inp):
+    """Tool handler: one wiki change now, or a batch on one card."""
+    from agent_friday.services import item_actions as _ia
+    inp = inp or {}
+    return _organize_call(_ia.organize_wiki, inp.get("action") or "", pages=inp.get("pages") or None,
+                          to=inp.get("to") or "", new_name=inp.get("new_name") or "",
+                          tags=inp.get("tags") or None, moves=inp.get("moves") or None,
+                          why=inp.get("why") or "", replaces=inp.get("replaces") or "")
+
+
+def _tool_undo_action(inp):
+    """Tool handler: undo one organize receipt."""
+    from agent_friday.services import item_actions as _ia
+    return _organize_call(_ia.undo, str((inp or {}).get("receipt_id") or ""))
+
+
+def _tool_answer_card(inp):
+    """Tool handler: the owner's own words decide an organize card."""
+    from agent_friday.services import item_actions as _ia
+    inp = inp or {}
+    surface = _CURRENT_SURFACE.get() or "chat"
+    tok = _ia.QUIET.set(_cloud_voice())
+    try:
+        return _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),
+                               _CURRENT_OWNER_TEXT.get(), room_mode=_voice_room(),
+                               surface=surface)["text"]
+    finally:
+        _ia.QUIET.reset(tok)
 
 
 def _tool_switch_model(inp):
@@ -5739,6 +5877,11 @@ CLAUDE_TOOL_HANDLERS = {
     "navigate": _tool_navigate,
     "navigate_to": _tool_navigate_to,
     "check_situation": _tool_check_situation,
+    "organize_email": _tool_organize_email,
+    "organize_files": _tool_organize_files,
+    "organize_wiki": _tool_organize_wiki,
+    "undo_action": _tool_undo_action,
+    "answer_card": _tool_answer_card,
     "switch_model": _tool_switch_model,
     "draft_email": _tool_draft_email,
     "text_by_phone": _tool_text_by_phone,
@@ -6139,6 +6282,14 @@ TOOL_RINGS: dict[str, int] = {
     # phone-origin turn (ring 0 only) cannot drive the screen at home.
     "navigate_to":          1,
     "check_situation":      0,   # reads state the server already holds
+    # Organizing the owner's things (services/item_actions). Files and wiki
+    # pages are local changes with an undo; mail only raises a card, like
+    # draft_email, and a card is decided by the owner's own words.
+    "organize_files":       1,
+    "organize_wiki":        1,
+    "organize_email":       2,
+    "undo_action":          2,
+    "answer_card":          2,
     # Ring 1 — WRITE (local state mutation, always allowed)
     "write_file":           1,
     "write_clipboard":      1,

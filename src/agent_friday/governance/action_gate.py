@@ -142,6 +142,10 @@ OUTWARD_TOOLS = frozenset({
     # The career-ops tracker is the owner's record. The tool only raises a
     # card listing every field; services/career_ops writes on approval.
     "career_update_tracker",
+    # Changes to the owner's Gmail, which reach every device. The tool only
+    # raises one card for the whole batch; services/item_actions changes
+    # exactly the conversations it lists, on approval.
+    "organize_email",
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
@@ -152,7 +156,12 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
                         # classified outward, the handler submits or fills
                         # only on an approved card for exactly what the page
                         # holds at that moment, and raises that card otherwise.
-                        "browser_click", "browser_type"})
+                        "browser_click", "browser_type",
+                        # services/item_actions: a batch, or a change that
+                        # reaches past this PC, raises ONE card and runs on
+                        # approval; one local change runs with an undo.
+                        "organize_email", "organize_files", "organize_wiki",
+                        "undo_action"})
 
 #: Friday's own tools that stay inside: reading, searching, drafting, local
 #: files the confirmation gate already asks about, memory writes the taint
@@ -181,6 +190,9 @@ INTERNAL_TOOLS = frozenset({
     "search_past_conversations",
     # The voice model's note on the conversation: state in memory, nothing more.
     "note_conversation_state",
+    # Decides one of Friday's organize cards, and only from the owner's own
+    # words said after the card was raised (services/item_actions).
+    "answer_card",
     # Background research reads the web and runs local models; its report
     # lands in the conversation. Nothing it does reaches another person.
     "deep_research",
@@ -240,7 +252,9 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          # By what it opens: services/open_safety.py.
                          "open_path",
                          # By the seed image they upload: services/seed_images.py.
-                         "generate_video", "generate_music"})
+                         "generate_video", "generate_music",
+                         # By how many items and where: services/item_actions.
+                         "organize_files", "organize_wiki", "undo_action"})
 
 #: Tools whose outward case is decided on a card even in an interactive chat,
 #: never by a yes/no question. generate_video and generate_music are outward
@@ -568,6 +582,19 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
                     else _co.classify_scan(a))
         except Exception as e:
             return OUTWARD, f"the career-ops action could not be classified ({e})"
+    if tool_name in ("organize_files", "organize_wiki", "undo_action"):
+        # One local change Friday can undo is internal. A batch, anything in
+        # the code projects, a move into a folder a cloud client syncs, and
+        # putting mail back wait for one card (the handler raises it).
+        try:
+            from agent_friday.services import item_actions as _ia
+            if tool_name == "organize_files":
+                return _ia.classify_files(a)
+            if tool_name == "organize_wiki":
+                return _ia.classify_wiki(a)
+            return _ia.classify_undo(a, (ctx or {}).get("conversation_id"))
+        except Exception as e:
+            return OUTWARD, f"the change could not be classified ({e})"
     if tool_name == "content_create_post":
         if a.get("publish_at") or a.get("optimal_time"):
             return OUTWARD, "it schedules a post to go out"

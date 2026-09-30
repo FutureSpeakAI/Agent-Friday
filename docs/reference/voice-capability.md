@@ -12,6 +12,12 @@ Voice can do anything chat can, unless the user has restricted Friday.
 - **Direct tools** (`services/voice_engine.py`, `_VOICE_LIVE_TOOLS` and
   `_VOICE_SHARED_TOOLS`) answer quick things inside the conversation: the
   calendar, email, news, the wiki, files, the screen.
+- **Organizing** (`organize_email`, `organize_files`, `organize_wiki`,
+  `undo_action`, `answer_card`) raises one card per batch and reads it back in
+  a sentence; the user answers yes, no, or change it, and `answer_card`
+  decides it through the voice path's own rule. The cloud voice model hears
+  counts, never a subject, sender, file or page name; the card lists them on
+  screen, and an ambiguous page name is numbered there to choose from.
 - **`delegate_to_friday`** hands any other request to the full Friday agent.
   It runs as a background task with the full tool registry, on the
   conversation's bound seat or else the background seat

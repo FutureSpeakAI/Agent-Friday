@@ -23245,6 +23245,144 @@ const RECEIPT_DECISION_COLOR = {
   card: '#f59e0b',
   deny: '#ff0080'
 };
+/* CHANGES FRIDAY MADE: the receipts of her organize actions (mail, files, wiki
+   pages; services/action_journal), newest first, each with its own Undo. The
+   Undo here is the owner acting through the page, so it puts a change back at
+   once, mail included (routes/actions.py). */
+function FridayChangesCard() {
+  const [recs, setRecs] = useState(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState('');
+  const [said, setSaid] = useState({});
+  const load = () => fetch('/api/actions/receipts?limit=15').then(r => r.json()).then(d => {
+    setRecs(d.receipts || []);
+    setErr('');
+  }).catch(e => setErr(String(e.message || e)));
+  useEffect(() => {
+    load();
+  }, []);
+  const undo = rid => {
+    if (busy) return;
+    setBusy(rid);
+    fetch('/api/actions/receipts/' + encodeURIComponent(rid) + '/undo', {
+      method: 'POST'
+    }).then(r => r.json()).then(d => {
+      setSaid(s => Object.assign({}, s, {
+        [rid]: d.status === 'ok' ? (d.result && d.result.text) || 'Put back.' : d.error || 'Not undone.'
+      }));
+    }).catch(e => setSaid(s => Object.assign({}, s, {
+      [rid]: String(e.message || e)
+    }))).then(() => {
+      setBusy('');
+      load();
+    });
+  };
+  const when = at => {
+    const d = new Date(at);
+    return isNaN(d) ? String(at || '') : d.toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  };
+  const DOM = {
+    email: '\u2709\uFE0F',
+    files: '\uD83D\uDCC1',
+    wiki: '\uD83C\uDF0C'
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    "data-testid": "friday-changes",
+    style: {
+      marginBottom: 10,
+      padding: 10,
+      border: '1px solid rgba(0,212,255,0.18)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\u21A9 Changes Friday made"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    "aria-label": "Refresh the changes",
+    title: "Refresh",
+    style: {
+      fontSize: 11,
+      padding: '2px 8px'
+    },
+    onClick: load
+  }, "\u21BB Refresh")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#7f93ad',
+      margin: '2px 2px 8px'
+    }
+  }, "Mail, files and wiki pages Friday organized for you. Undo puts each one back; nothing was ever deleted."), err ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#ff9a9a'
+    }
+  }, "Couldn't read the changes: ", err) : recs === null ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888'
+    }
+  }, "Loading\u2026") : recs.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888',
+      padding: '4px 2px'
+    }
+  }, "No changes yet. When Friday archives mail, moves files or tidies wiki pages for you, each change appears here with its Undo.") : recs.map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.receipt_id,
+    "data-receipt": r.receipt_id,
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'flex-start',
+      padding: '6px 2px',
+      borderTop: '1px solid rgba(255,255,255,0.05)',
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, DOM[r.domain] || '\u2699\uFE0F'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: r.undone ? '#7f93ad' : '#dbe6f5',
+      textDecoration: r.undone ? 'line-through' : 'none'
+    }
+  }, r.summary || r.tool), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#7f93ad',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, when(r.at), r.approval_id ? ' \u00B7 approved on a card' : '', r.undone ? ' \u00B7 undone' : '', r.off_record ? ' \u00B7 off the record' : ''), said[r.receipt_id] && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#9fe7ff',
+      marginTop: 2
+    }
+  }, said[r.receipt_id])), r.undoable && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11,
+      padding: '2px 10px'
+    },
+    disabled: !!busy,
+    "aria-label": 'Undo: ' + (r.summary || r.tool),
+    onClick: () => undo(r.receipt_id)
+  }, busy === r.receipt_id ? '\u2026' : '\u21A9 Undo'))));
+}
 function WhatFridayDidCard() {
   const [mode, setMode] = useState('visit');
   const [day, setDay] = useState('');
@@ -24038,7 +24176,7 @@ function SystemWS() {
     a: a,
     busy: apBusy,
     onDecide: decideApproval
-  }))), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement(WhatFridayDidCard, null), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement(WhatFridayDidCard, null), /*#__PURE__*/React.createElement(FridayChangesCard, null), /*#__PURE__*/React.createElement("div", {
     className: "card-title"
   }, "Disk Space"), disks.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -51804,6 +51942,11 @@ function LocalContextShareCard({
     setDraft(p.text || '');
   }, '#999'), btn("Don't send", () => decide('decline'), '#ff0080', 'Nothing is shared; Friday carries on without it'), !editing && btn('Allow for this conversation', () => decide('allow_conversation'), '#8ab4ff', 'Send this, and share this kind of context without asking again in this conversation (expires in 4 hours)')));
 }
+// One of Friday's organize batches (services/item_actions): mail, files or
+// wiki pages, listed one per line on the card.
+function fridayIsBatchCard(a) {
+  return !!(a && a.payload && a.payload.handler === 'item_batch');
+}
 function ApprovalCardBody({
   a,
   busy,
@@ -51834,7 +51977,25 @@ function ApprovalCardBody({
       color: '#999',
       marginTop: 2
     }
-  }, a.action_description), /*#__PURE__*/React.createElement(ApprovalPagePreview, {
+  }, a.action_description), fridayIsBatchCard(a) && /*#__PURE__*/React.createElement("ul", {
+    "data-testid": "batch-lines",
+    style: {
+      fontSize: 11,
+      color: '#b8c7dc',
+      margin: '6px 0 0',
+      padding: '0 0 0 16px',
+      maxHeight: 220,
+      overflowY: 'auto'
+    }
+  }, (a.payload.lines || []).map((line, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, line))), fridayIsBatchCard(a) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#7f93ad',
+      marginTop: 4
+    }
+  }, "Approve changes exactly what is listed. Afterwards, “undo that” or System › Changes Friday made puts it back."), /*#__PURE__*/React.createElement(ApprovalPagePreview, {
     a: a
   }), /*#__PURE__*/React.createElement(ApprovalProvenance, {
     p: a.provenance
