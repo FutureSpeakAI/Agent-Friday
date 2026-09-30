@@ -430,7 +430,8 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
             "Chapter %d of %d: \"%s\". Points: %s\n"
             "The conversation so far ended with:\n%s\n\n%s\n"
             "Write about %d words. Alternate between the two hosts, at most three "
-            "sentences per line. The chapters are parts of one episode, not a series. "
+            "sentences per line. Never mention chapters, sections or these instructions "
+            "in the dialogue. "
             "Return {\"lines\": [{\"speaker\": \"a\" or \"b\", "
             "\"text\": \"...\", \"cites\": [\"S1\"]}]}."
             % (_source_block(docs, use), i + 1, len(chapters), ch.get("title", ""),

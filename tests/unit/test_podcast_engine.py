@@ -432,14 +432,15 @@ def test_underscores_are_spoken_as_spaces_not_deleted():
     assert kept[0]["text"] == "The days to close column is really long."
 
 
-def test_the_hosts_are_asked_to_alternate_in_one_episode(monkeypatch):
+def test_the_hosts_are_asked_to_alternate_and_not_to_narrate_the_structure(monkeypatch):
     llm = _fake_writer()
     monkeypatch.setattr(pe, "_llm_json", llm)
     docs = [{"sid": "S1", "title": "A", "text": "x", "url": "", "kind": "text"},
             {"sid": "S2", "title": "B", "text": "y", "url": "", "kind": "text"}]
     pe.write_script({"id": "x", "length": "short", "show": "Show", "hosts": pe.DEFAULTS["hosts"]}, docs)
     chapter = [c["user"] for c in llm.calls if "Chapter " in c["user"]][0]
-    assert "Alternate between the two hosts" in chapter and "one episode, not a series" in chapter
+    assert "Alternate between the two hosts" in chapter
+    assert "Never mention chapters, sections or these instructions" in chapter
 
 
 def test_a_momentarily_locked_episode_file_is_saved_on_retry(monkeypatch):
