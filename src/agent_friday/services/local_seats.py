@@ -366,6 +366,62 @@ def _configured(role: str) -> str | None:
     return configured
 
 
+#: The local brain, per the Bonsai2-only standard. `model_plan.FLOOR_MODEL`
+#: names the smallest thing that can hold a tool contract and is shared with
+#: the installer's tiers; it is not the seat the brain should land on when no
+#: LOCAL model is named for the role.
+LOCAL_BRAIN_DEFAULT = "bonsai2:27b"
+
+#: Roles served by a local seat whose capability entry may legitimately name a
+#: cloud model, because the same capability also routes cloud work. For these,
+#: a cloud name means "no local preference recorded", not "guess".
+_LOCAL_BRAIN_ROLES = frozenset({"brain", "judge"})
+
+
+def _role_default(role: str) -> str | None:
+    """What a local-brain role falls back to when nothing local is recorded.
+
+    Only the brain-shaped roles: a sidekick or an extractor has its own
+    smaller-is-fine ordering, and pushing the 27B at them would be a
+    regression, not a repair.
+    """
+    if role not in _LOCAL_BRAIN_ROLES:
+        return None
+    return _configured_local_model()
+
+
+def _configured_local_model() -> str | None:
+    """The local model the owner has actually chosen, from either place it is
+    recorded, falling back to the Bonsai2 standard.
+
+    `capability_routing.local` and `model_routing.local_model` both name it;
+    they are read here rather than guessed at, because a size-ordered guess
+    over whatever the daemon happens to report is how the brain seat ends up
+    on a Gemma-4 e-series served by an Ollama daemon that is not running while
+    Bonsai2 answers on :8090.
+    """
+    s = {}
+    try:
+        from agent_friday.core import _load_settings
+        s = _load_settings() or {}
+    except Exception:
+        s = {}
+    if not s:
+        try:
+            import os
+            import pathlib
+            home = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+            s = json.loads(pathlib.Path(home, ".friday", "settings.json")
+                           .read_text("utf-8")) or {}
+        except Exception:
+            s = {}
+    for value in (((s.get("capability_routing") or {}).get("local") or {}).get("model"),
+                  (s.get("model_routing") or {}).get("local_model")):
+        if value and not _names_a_cloud_model(value):
+            return str(value)
+    return LOCAL_BRAIN_DEFAULT
+
+
 def _announce(role: str, wanted: str | None, got: str) -> None:
     sig = (role, wanted, got)
     if sig in _ANNOUNCED:
@@ -399,12 +455,22 @@ def resolve(role: str, configured: str | None = None) -> str | None:
     """
     rows = installed()
     if not rows:
-        return configured or _configured(role)
+        return configured or _configured(role) or _role_default(role)
 
     names = {n for n, _ in rows}
     wanted = configured or _configured(role)
 
-    for candidate in (configured, _configured(role)):
+    # THE OWNER'S LOCAL MODEL BEFORE ANY GUESS.
+    #
+    # `capability_routing.reasoning` routes cloud reasoning as well as the
+    # brain seat, so it may legitimately name a cloud model; `_configured`
+    # then returns None, meaning "nothing local recorded for this role". That
+    # is not licence to guess. Guessing walks the size-ordered list of
+    # whatever the daemon reports and lands the brain on a Gemma-4 e-series
+    # behind a stopped Ollama daemon while Bonsai2 serves on :8090 -- which
+    # reads, in the log, as `[seats] brain: using 'gemma4:e2b-...'` with no
+    # substitution warning at all, because nothing was asked for.
+    for candidate in (configured, _configured(role), _role_default(role)):
         if candidate and candidate in names:
             if candidate != wanted:
                 _announce(role, wanted, candidate)
