@@ -714,6 +714,160 @@ def guest_keys(cid: str) -> list:
         return []
 
 
+GUEST_PROVIDERS = ("anthropic",)
+
+
+def _keys_path(cid: str) -> Path:
+    return repo_path(cid) / ".friday" / "keys.json"
+
+
+def _write_keys(cid: str, keys: list) -> None:
+    p = _keys_path(cid)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"keys": keys}, indent=2), encoding="utf-8")
+
+
+def _store_name(cid: str, label: str) -> str:
+    """The credential store's name for this codebase's guest key: the store
+    keeps only letters, digits, dashes and underscores, so the name is built
+    from those and can never collide with a provider's own key."""
+    slug = re.sub(r"[^a-z0-9]+", "-", label.strip().lower()).strip("-") or "key"
+    return "codebase_%s_%s" % (re.sub(r"[^A-Za-z0-9]", "", cid), slug)
+
+
+def add_guest_key(cid: str, label: str, provider: str, key: str, *, cap_usd: Optional[float] = None,
+                  by: str = "you") -> dict:
+    """Another party's key for this codebase only. The secret goes to the
+    credential store; the record here holds everything but it."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    label = " ".join(str(label or "").split())
+    provider = str(provider or "").strip().lower()
+    if not label or len(label) > 40 or label.lower() == "mine":
+        raise ValueError("a guest key needs a short name for whose it is (not 'mine')")
+    if provider not in GUEST_PROVIDERS:
+        raise ValueError("guest keys are supported for %s only, for now" % ", ".join(GUEST_PROVIDERS))
+    if not str(key or "").strip():
+        raise ValueError("the key itself is missing")
+    keys = guest_keys(cid)
+    if any(k["label"].lower() == label.lower() for k in keys):
+        raise ValueError("this codebase already has a key called %r; remove it first" % label)
+    cap = None
+    if cap_usd not in (None, "", 0, "0"):
+        try:
+            cap = round(float(cap_usd), 2)
+        except (TypeError, ValueError):
+            raise ValueError("the cap must be a dollar amount")
+        if cap <= 0:
+            raise ValueError("the cap must be a dollar amount above zero")
+    from agent_friday.services import credential_store as _cs
+    name = _store_name(cid, label)
+    _cs.set_provider_key(name, str(key).strip())
+    meta = {"label": label, "provider": provider, "added_at": _now_iso(), "cap_usd": cap, "store_name": name, "by": by}
+    keys.append(meta)
+    _write_keys(cid, keys)
+    _system_line(rec, "Guest key added: %s's key (%s), for this codebase only%s."
+                 % (label, provider.capitalize(), (", capped at $%.2f" % cap) if cap else ""))
+    return dict(meta)
+
+
+def remove_guest_key(cid: str, label: str, *, by: str = "you") -> bool:
+    """Delete the key and its record, say so, and return the codebase to the owner's key if it was in use."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    keys = guest_keys(cid)
+    hit = [k for k in keys if k["label"].lower() == str(label or "").strip().lower()]
+    if not hit:
+        return False
+    meta = hit[0]
+    from agent_friday.services import credential_store as _cs
+    try:
+        _cs.delete_provider_key(meta["store_name"])
+    except Exception as e:
+        _log.warning("could not delete the stored guest key %s: %s", meta["store_name"], e)
+    _write_keys(cid, [k for k in keys if k is not meta])
+    back = ""
+    if (rec.get("key_profile") or "mine") == meta["label"]:
+        rec["key_profile"] = "mine"
+        rec.pop("key_rejected", None)
+        _save(rec)
+        back = " This codebase runs on your key again."
+    _system_line(rec, "%s's key was removed and deleted.%s" % (meta["label"], back))
+    return True
+
+
+def guest_key_secret(cid: str, label: str) -> Optional[str]:
+    hit = [k for k in guest_keys(cid) if k["label"] == label]
+    if not hit:
+        return None
+    from agent_friday.services import credential_store as _cs
+    return _cs.get_provider_key(hit[0]["store_name"])
+
+
+def guest_key_for_turn(session_ctx: Optional[dict]) -> Optional[dict]:
+    """The guest key a turn runs on, from the turn's session context, or None for the owner's key."""
+    sc = session_ctx or {}
+    cid, label = sc.get("codebase"), sc.get("key_profile")
+    if not cid or not label or label == "mine":
+        return None
+    hit = [k for k in guest_keys(cid) if k["label"] == label]
+    if not hit:
+        return None
+    secret = guest_key_secret(cid, label)
+    if not secret:
+        return None
+    return {"codebase": cid, "label": label, "provider": hit[0]["provider"], "secret": secret, "cap_usd": hit[0].get("cap_usd")}
+
+
+def guest_key_over_cap(cid: str, label: str) -> Optional[dict]:
+    """{spent, cap} when the payer's own cap is reached; None when there is no cap or room remains.
+    The cap is the user's limit; Friday adds none of her own."""
+    hit = [k for k in guest_keys(cid) if k["label"] == label]
+    if not hit or not hit[0].get("cap_usd"):
+        return None
+    try:
+        from agent_friday.services import cost_meter as _cm
+        spent = float((_cm.codebase_costs(cid).get("by_key_profile") or {}).get(label, 0.0) or 0.0)
+    except Exception:
+        return None
+    cap = float(hit[0]["cap_usd"])
+    return {"spent": round(spent, 4), "cap": cap} if spent >= cap else None
+
+
+def mark_key_rejected(cid: str, label: str, reason: str, *, by: str = "provider") -> dict:
+    """A guest key the provider refused: the header turns red and names whose
+    key failed; the key profile stays as it was. Nothing falls back."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    rec["key_rejected"] = ("%s's key was rejected: %s. Nothing was sent on your key; fix or replace it under "
+                           "Settings \u2192 Salon, or say \"use my key\"." % (label, reason))
+    _save(rec)
+    _system_line(rec, "Key rejected: %s's key was refused by the provider (%s). Nothing fell back to your key." % (label, reason))
+    return rec
+
+
+def clear_key_rejected(cid: str) -> None:
+    rec = load(cid)
+    if rec is not None and rec.pop("key_rejected", None) is not None:
+        _save(rec)
+        _announce_header_only(rec)
+
+
+def _announce_header_only(rec: dict) -> None:
+    try:
+        from agent_friday.services import desktop_bus
+        desktop_bus.broadcast({"type": "codebase_header", "codebase_id": rec["id"], "conversation_id": rec.get("conversation_id")}, kind="chat")
+    except Exception:
+        pass
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
 def _system_line(rec: dict, text: str, kind: str = "seat_change") -> None:
     """A seat_transparency-style line in the codebase's chat, and the header event on the bus."""
     conv_id = rec.get("conversation_id")
@@ -766,6 +920,7 @@ def set_key_profile(cid: str, profile: str, *, by: str = "you") -> dict:
         raise ValueError("no guest key called %r on this codebase; add one under Settings \u2192 Salon first" % profile)
     old = rec.get("key_profile") or "mine"
     rec["key_profile"] = profile
+    rec.pop("key_rejected", None)
     _save(rec)
     def name(p):
         return "your key" if p == "mine" else "%s's key" % p

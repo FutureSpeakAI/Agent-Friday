@@ -9655,132 +9655,138 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     voice surface's own helpers). It runs through exactly the same chain;
     there is no other way to invoke a tool handler.
     """
-    handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
-    if not handler:
-        resolved, suggestions = _resolve_tool_name(name)
-        if resolved:
-            print(f"  [tools] '{name}' is not registered; resolved to "
-                  f"'{resolved}' (unambiguous match)")
-            name, handler = resolved, CLAUDE_TOOL_HANDLERS[resolved]
-        else:
-            # A bare "Unknown tool: x" is a dead end: it says the call failed
-            # but not what would work, and a dead end is where invented
-            # results come from. Name the near misses and state plainly that
-            # nothing ran, so the honest next move is obvious.
-            hint = ("Closest registered tools: "
-                    + ", ".join(suggestions)) if suggestions else \
-                   "No similarly-named tool is registered."
-            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so "
-                    f"nothing ran and no result was produced. {hint} "
-                    f"Retry with an exact name from your tool list, or tell "
-                    f"the user you could not do it. Do not describe an "
-                    f"outcome: there isn't one.")
-
-    ctx = _hooks.HookContext(
-        tool_name=name,
-        input=_restore_placeholders(tool_input or {}, pii_lookup),
-        session_ctx=session_ctx,
-        pii_lookup=pii_lookup,
-    )
-    ctx.meta["t_start"] = _time.time()
-
-    # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
-    # A DENY short-circuits; the deny message is what the model sees as the result.
-    verdict = _hooks.run_pre_hooks(ctx)
-    if verdict.action == "deny":
-        _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
-        return verdict.reason
-
-    # Say what is about to happen BEFORE it happens, and only once it will
-    # happen: derived from the tool actually being invoked, after every gate
-    # has allowed it, so the narration cannot describe work that is not
-    # occurring -- including an action waiting on an approval card.
+    # Whose key this turn runs on, for the handlers that write receipts (§4.7).
+    _kp_tok = _CURRENT_KEY_PROFILE.set(str((session_ctx or {}).get('key_profile') or ''))
     try:
-        from agent_friday.services.model_router import announce_tool
-        announce_tool(name, ctx.input)
-    except Exception:
-        pass
+        handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
+        if not handler:
+            resolved, suggestions = _resolve_tool_name(name)
+            if resolved:
+                print(f"  [tools] '{name}' is not registered; resolved to "
+                      f"'{resolved}' (unambiguous match)")
+                name, handler = resolved, CLAUDE_TOOL_HANDLERS[resolved]
+            else:
+                # A bare "Unknown tool: x" is a dead end: it says the call failed
+                # but not what would work, and a dead end is where invented
+                # results come from. Name the near misses and state plainly that
+                # nothing ran, so the honest next move is obvious.
+                hint = ("Closest registered tools: "
+                        + ", ".join(suggestions)) if suggestions else \
+                       "No similarly-named tool is registered."
+                return (f"TOOL CALL FAILED — no tool named '{name}' exists, so "
+                        f"nothing ran and no result was produced. {hint} "
+                        f"Retry with an exact name from your tool list, or tell "
+                        f"the user you could not do it. Do not describe an "
+                        f"outcome: there isn't one.")
 
-    try:
-        # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
-        # tool that spawns background work had no way to say where that work
-        # should report - and everything it had to say went to Main, which is
-        # where explanations go to be unread. Set around the call rather than
-        # threaded through sixty handler signatures; a ContextVar because
-        # tasks run in threads and a module global would cross-talk.
-        _tok = _CURRENT_CONVERSATION.set(
-            ((session_ctx or {}).get("conversation_id")
-             or (session_ctx or {}).get("conversation")) or None)
-        # Provenance of this call's arguments, for any approval card the
-        # handler raises (the email card is created inside draft_email).
-        _ttok = _taint_mod.CURRENT.set(ctx.meta.get("taint"))
-        _ktok = _taint_mod.CURRENT_KEY.set(_taint_mod.ledger_key(session_ctx))
-        # The owner's decision behind this call, as the hooks established it
-        # (approved card, grant, or a chat yes to exactly this call). A handler
-        # whose action needs one checks it again before acting.
-        from agent_friday.governance import action_gate as _gate_mod
-        _dtok = _gate_mod.DECIDED.set(ctx.meta.get("owner_decided"))
-        _sc = session_ctx or {}
-        _owner_tok = _CURRENT_OWNER_TEXT.set(
-            "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
-            else str(_sc.get("owner_text") or ""))
-        _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
+        ctx = _hooks.HookContext(
+            tool_name=name,
+            input=_restore_placeholders(tool_input or {}, pii_lookup),
+            session_ctx=session_ctx,
+            pii_lookup=pii_lookup,
+        )
+        ctx.meta["t_start"] = _time.time()
+
+        # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
+        # A DENY short-circuits; the deny message is what the model sees as the result.
+        verdict = _hooks.run_pre_hooks(ctx)
+        if verdict.action == "deny":
+            _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
+            return verdict.reason
+
+        # Say what is about to happen BEFORE it happens, and only once it will
+        # happen: derived from the tool actually being invoked, after every gate
+        # has allowed it, so the narration cannot describe work that is not
+        # occurring -- including an action waiting on an approval card.
         try:
-            _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
-            _cred_paths.REFUSED.set(False)
-            result = handler(ctx.input)
-            _refused = _cred_paths.REFUSED.get()
-        finally:
-            _CURRENT_SURFACE.reset(_surface_tok)
-            _CURRENT_OWNER_TEXT.reset(_owner_tok)
-            _gate_mod.DECIDED.reset(_dtok)
-            _taint_mod.CURRENT_KEY.reset(_ktok)
-            _taint_mod.CURRENT.reset(_ttok)
-            _CURRENT_CONVERSATION.reset(_tok)
-        if not isinstance(result, str):
-            result = json.dumps(result, default=str)
-    except Exception as e:
-        traceback.print_exc()
-        _receipts.record(name, ok=False, detail=str(e))
-        return ExceptionText(f"Tool error ({name}): {e}")
-
-    # Receipt written only after the handler actually returned. This is the
-    # only place one is created, so a receipt cannot exist for a call that did
-    # not happen — which is what makes an unbacked claim detectable later.
-    # A credential refusal raised by the handler itself is a denial, not a read.
-    if _refused:
-        _receipt_credential_refusal(name, ctx.input, "refused by the handler")
-        _receipts.record(name, ok=False, denied=True, detail=result)
-    else:
-        _receipts.record(name, ok=True)
-
-    # Cap result size to prevent token explosion in the model context window.
-    # The voice path already caps at 8 KB; apply the same limit uniformly here.
-    _TOOL_RESULT_MAX = 8192
-    if isinstance(result, str) and len(result) > _TOOL_RESULT_MAX:
-        result = result[:_TOOL_RESULT_MAX] + f"\n[truncated — {len(result)} chars total]"
-
-    # ── Every date in a tool result carries a code-computed weekday, so
-    # the model never derives one itself. ──
-    if isinstance(result, str):
-        try:
-            from agent_friday.services.clock import annotate_weekdays
-            result = annotate_weekdays(result)
+            from agent_friday.services.model_router import announce_tool
+            announce_tool(name, ctx.input)
         except Exception:
             pass
 
-    # ── PostToolUse chain — audit log, PII scrub, cost attribution. ──
-    return _hooks.run_post_hooks(ctx, result)
+        try:
+            # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
+            # tool that spawns background work had no way to say where that work
+            # should report - and everything it had to say went to Main, which is
+            # where explanations go to be unread. Set around the call rather than
+            # threaded through sixty handler signatures; a ContextVar because
+            # tasks run in threads and a module global would cross-talk.
+            _tok = _CURRENT_CONVERSATION.set(
+                ((session_ctx or {}).get("conversation_id")
+                 or (session_ctx or {}).get("conversation")) or None)
+            # Provenance of this call's arguments, for any approval card the
+            # handler raises (the email card is created inside draft_email).
+            _ttok = _taint_mod.CURRENT.set(ctx.meta.get("taint"))
+            _ktok = _taint_mod.CURRENT_KEY.set(_taint_mod.ledger_key(session_ctx))
+            # The owner's decision behind this call, as the hooks established it
+            # (approved card, grant, or a chat yes to exactly this call). A handler
+            # whose action needs one checks it again before acting.
+            from agent_friday.governance import action_gate as _gate_mod
+            _dtok = _gate_mod.DECIDED.set(ctx.meta.get("owner_decided"))
+            _sc = session_ctx or {}
+            _owner_tok = _CURRENT_OWNER_TEXT.set(
+                "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
+                else str(_sc.get("owner_text") or ""))
+            _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
+            try:
+                _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
+                _cred_paths.REFUSED.set(False)
+                result = handler(ctx.input)
+                _refused = _cred_paths.REFUSED.get()
+            finally:
+                _CURRENT_SURFACE.reset(_surface_tok)
+                _CURRENT_OWNER_TEXT.reset(_owner_tok)
+                _gate_mod.DECIDED.reset(_dtok)
+                _taint_mod.CURRENT_KEY.reset(_ktok)
+                _taint_mod.CURRENT.reset(_ttok)
+                _CURRENT_CONVERSATION.reset(_tok)
+            if not isinstance(result, str):
+                result = json.dumps(result, default=str)
+        except Exception as e:
+            traceback.print_exc()
+            _receipts.record(name, ok=False, detail=str(e))
+            return ExceptionText(f"Tool error ({name}): {e}")
+
+        # Receipt written only after the handler actually returned. This is the
+        # only place one is created, so a receipt cannot exist for a call that did
+        # not happen — which is what makes an unbacked claim detectable later.
+        # A credential refusal raised by the handler itself is a denial, not a read.
+        if _refused:
+            _receipt_credential_refusal(name, ctx.input, "refused by the handler")
+            _receipts.record(name, ok=False, denied=True, detail=result)
+        else:
+            _receipts.record(name, ok=True)
+
+        # Cap result size to prevent token explosion in the model context window.
+        # The voice path already caps at 8 KB; apply the same limit uniformly here.
+        _TOOL_RESULT_MAX = 8192
+        if isinstance(result, str) and len(result) > _TOOL_RESULT_MAX:
+            result = result[:_TOOL_RESULT_MAX] + f"\n[truncated — {len(result)} chars total]"
+
+        # ── Every date in a tool result carries a code-computed weekday, so
+        # the model never derives one itself. ──
+        if isinstance(result, str):
+            try:
+                from agent_friday.services.clock import annotate_weekdays
+                result = annotate_weekdays(result)
+            except Exception:
+                pass
+
+        # ── PostToolUse chain — audit log, PII scrub, cost attribution. ──
+        return _hooks.run_post_hooks(ctx, result)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  BUILT-IN LIFECYCLE HOOKS (Part B). Refactored out of _execute_tool's former
-#  hard-coded gate sequence into named, reorderable, per-settings-toggleable
-#  hooks. This is behaviour-preserving — same checks, same order — but the chain
-#  is now extensible (skills can register their own) and visible in Settings.
-#  Built-ins occupy priority 0–99; user/skill hooks default to 100 so they run
-#  after the critical gates and can only tighten, never loosen, governance.
-# ═══════════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  BUILT-IN LIFECYCLE HOOKS (Part B). Refactored out of _execute_tool's former
+    #  hard-coded gate sequence into named, reorderable, per-settings-toggleable
+    #  hooks. This is behaviour-preserving — same checks, same order — but the chain
+    #  is now extensible (skills can register their own) and visible in Settings.
+    #  Built-ins occupy priority 0–99; user/skill hooks default to 100 so they run
+    #  after the critical gates and can only tighten, never loosen, governance.
+    # ═══════════════════════════════════════════════════════════════════════════
+    finally:
+        _CURRENT_KEY_PROFILE.reset(_kp_tok)
+
 
 def _creations_write_preapproved(name, inp) -> bool:
     """write_file into the creations folders is project work, not persistent
@@ -11333,6 +11339,50 @@ def _no_empty_text(messages):
     return out
 
 
+def _guest_client_for_turn(client, session_ctx):
+    """The provider client a turn should use: the owner's, or one built on the
+    guest key its codebase names (salon spec §4.7). The guest key is used for
+    that codebase's calls only; a cap the payer set stops the call before it
+    is made. Returns (client, guest) with guest None for the owner's key."""
+    from agent_friday.services import codebases as _cb
+    g = _cb.guest_key_for_turn(session_ctx or {})
+    if not g:
+        return client, None
+    over = _cb.guest_key_over_cap(g["codebase"], g["label"])
+    if over:
+        raise RuntimeError("%s's key has reached the cap you set for it ($%.2f of $%.2f). Nothing was sent on your key; "
+                           "raise the cap under Settings \u2192 Salon or say \"use my key\"." % (g["label"], over["spent"], over["cap"]))
+    if g["provider"] != "anthropic":
+        raise RuntimeError("%s's key is for %s, and guest keys are supported for Anthropic only for now. Nothing was sent on your key."
+                           % (g["label"], g["provider"]))
+    if client is not None and hasattr(client, "with_options"):
+        return client.with_options(api_key=g["secret"]), g
+    from anthropic import Anthropic
+    return Anthropic(api_key=g["secret"]), g
+
+
+def _guest_auth_failed(guest, exc):
+    """A provider error under a guest key: when it is the key being refused
+    (401/403), record it so the header turns red and stop the turn with a plain
+    sentence; never fall back to the owner's key. Any other error is not the
+    key's fault and is left to the caller. Returns None when it did not raise."""
+    if not guest:
+        return None
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    name = type(exc).__name__
+    if status not in (401, 403) and name not in ("AuthenticationError", "PermissionDeniedError"):
+        return None
+    from agent_friday.services import codebases as _cb
+    try:
+        _cb.mark_key_rejected(guest["codebase"], guest["label"], "%s%s" % (name, (" %s" % status) if status else ""))
+    except Exception as e:
+        _log.warning("could not record the rejected guest key: %s", e)
+    raise RuntimeError("%s's key was rejected by the provider (%s). Nothing was sent on your key; fix or replace it under "
+                       "Settings \u2192 Salon, or say \"use my key\"." % (guest["label"], status or name))
+
+
 def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None, workspace=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
@@ -11345,6 +11395,8 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     from agent_friday.services.local_only_guard import apply_pin
     model = apply_pin("anthropic", model)
     client = get_anthropic_client()
+    # A codebase under a guest key runs on that key and nothing else (§4.7).
+    client, _guest = _guest_client_for_turn(client, session_ctx)
     if client is None:
         # One key is enough: with only an OpenRouter key, the same Claude
         # model runs the same tool loop through OpenRouter
@@ -11665,7 +11717,11 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 pass
             _t0 = _time.time()
             _pilot_model_round(session_ctx, "cloud")
-            resp = client.messages.create(**kwargs)
+            try:
+                resp = client.messages.create(**kwargs)
+            except Exception as _gexc:
+                _guest_auth_failed(_guest, _gexc)      # raises for a refused guest key; never falls back
+                raise
             _rtrace.after_anthropic_response(resp, model=kwargs.get("model"), seat="cloud",
                                              thinking_requested=bool(_thinking_cfg))
             try:

@@ -187,6 +187,31 @@ def codebase_key(cid):
     return jsonify({"status": "ok", "key_profile": rec["key_profile"], "header": cb.header(cid)})
 
 
+@codebases_bp.route("/api/codebases/<cid>/keys", methods=["GET", "POST"])
+@login_required
+def codebase_keys(cid):
+    """Guest keys for this codebase. The secret is written to the credential
+    store and never comes back out through this route."""
+    if cb.load(cid) is None:
+        return _bad("no such codebase", 404)
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        meta = cb.add_guest_key(cid, str(body.get("label") or ""), str(body.get("provider") or "anthropic"),
+                                str(body.get("key") or ""), cap_usd=body.get("cap_usd"), by="you")
+        return jsonify({"status": "ok", "key": meta, "keys": cb.guest_keys(cid), "header": cb.header(cid)})
+    return jsonify({"status": "ok", "keys": cb.guest_keys(cid)})
+
+
+@codebases_bp.route("/api/codebases/<cid>/keys/<label>", methods=["DELETE"])
+@login_required
+def codebase_key_delete(cid, label):
+    if cb.load(cid) is None:
+        return _bad("no such codebase", 404)
+    if not cb.remove_guest_key(cid, label, by="you"):
+        return _bad("no such guest key", 404)
+    return jsonify({"status": "ok", "deleted": True, "keys": cb.guest_keys(cid), "header": cb.header(cid)})
+
+
 @codebases_bp.route("/api/codebases/<cid>/costs", methods=["GET"])
 @login_required
 def codebase_costs(cid):
