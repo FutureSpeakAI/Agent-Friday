@@ -455,6 +455,18 @@ repository and its verdict is in §4.6.1 and
    never a default and never required**, because a new Windows user without
    WSL 2 must still get a working salon (§4.4).
 
+   **S3 result (2026-09-30):** it runs here after two WSL-specific fixes
+   (the supervisor callback and the certificate SAN); telemetry is off and
+   proven off on the gateway side by capture, on the sandbox side by a
+   connection log; Windows support is not stable out of the box, which is
+   what the two fixes show; the policy is driven live through the CLI in
+   98 ms, through the SDK unverified. B2-OS stays behind the gate with the
+   recipe written down. A finding beyond OpenShell: Docker Desktop calls
+   Docker's hosts and Bugsnag at every start with analytics off, so any B2
+   backend that must not phone home uses Podman or plain containerd inside
+   the distro, not Docker Desktop. Details in
+   `docs/design/research/2026-09-30-s3-openshell-wsl-spike.md`.
+
 ---
 
 ## 3. STORM: questioning it from six perspectives
@@ -1800,7 +1812,7 @@ Effort is in focused agent-days with review. Each phase is shippable alone.
 
 | Phase | What | Effort | Depends on |
 |---|---|---|---|
-| **S1–S3** | Spikes, which report and build nothing. **S1 (done, PASS):** esbuild-wasm plus pinned packages built a React app inside the opaque-origin frame on the owner's machine; every isolation probe was blocked; esm.sh is the one package host (unpkg serves raw CommonJS and fails); cold start about 25 s, warm about 2 s; the CSP needs `'wasm-unsafe-eval'` and `worker-src blob:`. **S2 (done):** Node, npm and a dev server run in an AppContainer without admin and cannot read the profile, but host-to-container loopback is dropped in every capability combination; a pipe bridge is the viable shape (§4.4). **S3 (waiting on the owner):** OpenShell 0.1.2 on WSL 2 + Docker needs Docker Desktop started and the OpenShell CLI and Python SDK installed in the Ubuntu distro; neither is done without the owner's say-so. Windows Sandbox is absent; the WHP library is present; microsandbox's Windows path needs the WHP feature enabled, which needs admin to check | 3 | nothing |
+| **S1–S3** | Spikes, which report and build nothing. **S1 (done, PASS):** esbuild-wasm plus pinned packages built a React app inside the opaque-origin frame on the owner's machine; every isolation probe was blocked; esm.sh is the one package host (unpkg serves raw CommonJS and fails); cold start about 25 s, warm about 2 s; the CSP needs `'wasm-unsafe-eval'` and `worker-src blob:`. **S2 (done):** Node, npm and a dev server run in an AppContainer without admin and cannot read the profile, but host-to-container loopback is dropped in every capability combination; a pipe bridge is the viable shape (§4.4). **S3 (done, 2026-09-30; research doc `2026-09-30-s3-openshell-wsl-spike.md`):** OpenShell 0.1.2 runs on the owner's WSL 2 + Docker Desktop after two fixes that are the experimental part: the Docker driver's supervisor callback must be Docker Desktop's host-gateway (`grpc_endpoint = "https://192.168.65.254:17670"`, gateway bound on all addresses) and the server certificate needs that IP as a SAN. Sandbox Ready in 3 s warm; the workload runs network-none and unprivileged; deny-by-default holds at connect(); `policy update --add-endpoint` applies live in 98 ms with no restart. Telemetry: off via `OPENSHELL_TELEMETRY_ENABLED=false`, propagated to supervisors, zero packets to the NVIDIA endpoint in a 40-minute capture on the distro side; the sandbox side is covered by a per-process connection log only (a Windows capture needs admin). Docker Desktop itself calls `api.docker.com`, `hub.docker.com`, `desktop.docker.com` and `sessions.bugsnag.com` at every start with analytics off, which has no switch outside Docker Business: a finding for every Docker Desktop tier. Not completed: the HTTP-level allow/refuse/revoke with a curl image (cut short by an external `wsl --shutdown`, twice); policy through the Python SDK is UNVERIFIED. Docker Desktop's VM costs about 2.1 GB of host RAM at idle. Nothing needed admin or a reboot. Windows Sandbox is absent; the WHP library is present; microsandbox's Windows path needs the WHP feature enabled, which needs admin to check | 3 | nothing |
 | **S4** | **Research (done):** LocalStack's archived Apache-2.0 tree studied for the gateway, the provider model over moto, persistence and init hooks, coverage tracking, parity testing, licence reuse and the telemetry modules never to import. Verdicts in §4.6.1 and the research doc | 1 | nothing |
 | **1** | **The artifact panel in every chat** (first increment built, on `feat/salon-phase1`): `artifact_put`, the fenced-block fallback, the store with off-record honoured, versions, hand edits as versions, the frame (§4.3), the six kinds, both HTML files, the Settings toggle. Left: the broker's read-only subset (moves to Phase 2 with the bundle broker), the live check after merge (§9.5) | 7–8 | S1 (for `html` apps; the other kinds don't wait) |
 | **1b** | **Publish to web** (§4.10.1): the static bundle packer, the PII scan and licence check, the one card with its spoken form, the "This PC" adapter (separate static server, own tunnel hostname, read-only `published/`, no route to Friday, strict headers, kill switch, reachability status, adversarial tests), the Cloudflare Pages and GitHub Pages adapters on the user's account, the FutureSpeak slot, republish, versions, take-down, the "Made with Friday" mark | 6–8 | 1 |
@@ -1851,8 +1863,8 @@ The queue, as `avatar-visual-genome.md` §11.1 records it:
 
 The recommended order:
 
-1. **S1–S3, S4 and Phase 1 first.** S1, S2 and S4 are done; S3 waits on the
-   owner; Phase 1's first increment is on its branch. They touch only the
+1. **S1–S3, S4 and Phase 1 first.** S1, S2, S3 and S4 are done; Phase 1's
+   first increment is on its branch. They touch only the
    chat UI and a new store, need no GPU, and block nothing.
 2. **Phase 1b (publish to web) right after Phase 1 lands**, then **W0/W1**
    (workspace version history, review, rollback, dock show and hide).
@@ -1888,7 +1900,11 @@ dollar figure.
 - **B0 costs no VRAM.** It runs in the browser, and the preview uses the GPU
   only as a web page does.
 - **B2 on WSL 2 takes host RAM, not VRAM.** Docker Desktop's VM reserves
-  memory, which is **UNMEASURED** on this machine and measured in S3.
+  memory: **measured in S3** at about 2.1 GB of host RAM for Docker
+  Desktop's VM at idle (1.15 → 3.29 GB at start, settling at 2.0–2.4 GB),
+  plus 24 MB for an OpenShell supervisor and 10 MB for an idle workload.
+  Docker's engine is reachable 11 s after a warm start and 116 s after a
+  cold WSL start.
 - **The local seat is the existing brain.** The salon never loads a second
   model.
 
@@ -2023,8 +2039,9 @@ default is taken until the owner says otherwise):
 - which hosts Claude's agent contacts beyond the API (the Phase 3 capture);
 - whether a real Vite or Next dev server tolerates the AppContainer beyond
   the real-path issue (Phase 4);
-- S3, until the owner clears starting Docker Desktop and installing the
-  OpenShell CLI in the Ubuntu distro.
+- S3's last check: the HTTP-level allow, refuse and revoke through curl in
+  a sandbox, and a Windows-side packet capture (`pktmon`, admin) if the
+  sandbox path is to be proven the way the gateway side was.
 
 ---
 
