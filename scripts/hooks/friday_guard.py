@@ -106,8 +106,10 @@ SHELL_WRITERS = {"sed", "perl", "tee", "rm", "mv", "cp", "touch", "truncate", "l
 POWERSHELL_WRITERS = {"set-content", "add-content", "out-file", "remove-item", "move-item",
                       "copy-item", "new-item", "rename-item", "clear-content", "ri", "rm",
                       "del", "erase", "mv", "cp", "sc", "ac", "ni", "rni", "rmdir", "rd"}
-SERVER_MARKERS = ("server.py", "agent_friday.server", "friday_tray", "agentfriday.exe",
-                  "flask run", "waitress-serve", "launch_friday", "start_friday")
+SERVER_SCRIPTS = {"server.py", "friday_tray.py", "launch_friday.py", "start_friday.py",
+                  "launch_friday.bat", "start_friday.bat", "agentfriday.exe", "agentfriday"}
+SERVER_MODULES = {"agent_friday.server", "agent_friday.friday_tray", "agent_friday"}
+SERVER_PROGRAMS = {"waitress-serve", "gunicorn"}
 WRAPPERS = {"sudo", "nohup", "time", "exec", "env", "start", "start-process", "call", "&", "."}
 NESTED_SHELLS = {"bash", "sh", "zsh", "powershell", "powershell.exe", "pwsh", "pwsh.exe",
                  "cmd", "cmd.exe"}
@@ -655,9 +657,9 @@ def live_mutation(seg: Segment, cfg: dict) -> str | None:
             return f"git {sub} in the live checkout"
         return None
 
-    if any(m in seg.text.lower() for m in SERVER_MARKERS):
-        if here or any(in_live(p, cfg) for p in path_args(seg, 0)):
-            return "a server launch from the live checkout"
+    launch = server_launch(seg, cfg)
+    if launch:
+        return launch
 
     if prog in SHELL_WRITERS or prog in POWERSHELL_WRITERS:
         targets = path_args(seg)
@@ -678,6 +680,49 @@ def live_mutation(seg: Segment, cfg: dict) -> str | None:
     if here and prog in {"python", "python3", "py", "python.exe"}:
         if re.search(r"open\([^)]*['\"][wa]", seg.text) or re.search(r"write_(text|bytes)\(", seg.text):
             return "a Python write from the live checkout"
+    return None
+
+
+def server_launch(seg: Segment, cfg: dict) -> str | None:
+    """Why this segment starts a Friday server with the live checkout's
+    interpreter or tree, or None. Decided by what the command runs (the
+    script, module or program), never by words in its arguments: a test file
+    named test_published_server.py is not a server. A second Friday server
+    can reap the live one's model seat, so the launch counts as live when the
+    interpreter is the live venv, the entry point lives in the live tree, or
+    the working directory is the live tree."""
+    words = seg.words
+    if not words:
+        return None
+    prog = seg.prog
+    here = in_live(seg.cwd, cfg)
+    interp_live = in_live(norm_path(words[0], seg.cwd), cfg)
+
+    if prog in SERVER_PROGRAMS or (prog == "flask" and "run" in words[1:]):
+        return "a server launch from the live checkout" if (here or interp_live) else None
+
+    if prog in SERVER_SCRIPTS:   # the entry point run directly: AgentFriday.exe, a .bat, a script
+        return "a server launch from the live checkout" if (here or in_live(norm_path(words[0], seg.cwd), cfg)) else None
+
+    if not (prog.startswith("python") or prog in {"py", "pythonw"}):
+        return None
+    i = 1
+    while i < len(words):
+        w = words[i]
+        if w == "-m":
+            module = words[i + 1] if i + 1 < len(words) else ""
+            if module in SERVER_MODULES and (here or interp_live):
+                return f"a Friday server launch (-m {module}) with the live interpreter or tree"
+            return None
+        if w == "-c":
+            return None
+        if w.startswith("-"):
+            i += 1
+            continue
+        script = w.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if script in SERVER_SCRIPTS and (here or interp_live or in_live(norm_path(w, seg.cwd), cfg)):
+            return f"a Friday server launch ({script}) with the live interpreter or tree"
+        return None
     return None
 
 

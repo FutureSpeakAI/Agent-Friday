@@ -410,6 +410,36 @@ def test_the_live_checkout_is_reachable_by_cd_and_by_git_dash_c(live):
         assert not ok, command
 
 
+def test_a_test_file_named_like_a_server_is_not_a_server_launch(live):
+    """The salon session's case: the live venv is shared by every worktree, and
+    a test file's name is an argument, not what the command runs."""
+    venv_py = str(live["live"] / "venv" / "Scripts" / "python.exe")
+    ok, why = decide(bash(f"{venv_py} -m pytest tests/unit/test_published_server.py -n 0", live["wt"]), live["cfg"])
+    assert ok, why
+    ok, why = decide(bash(f"FRIDAY_TESTING=1 {venv_py} -m pytest tests/unit/test_published_server.py tests/unit/test_server_routes.py -n 2", live["wt"]), live["cfg"])
+    assert ok, why
+    ok, why = decide(bash(f"{venv_py} -c \"print('server.py')\"", live["wt"]), live["cfg"])
+    assert ok, why
+    ok, why = decide(bash("cat docs/server.py.md && grep friday_tray README.md", live["wt"]), live["cfg"])
+    assert ok, why
+
+
+def test_a_server_launch_with_the_live_interpreter_is_refused_from_a_worktree(live):
+    venv_py = str(live["live"] / "venv" / "Scripts" / "python.exe")
+    for command in (f"{venv_py} server.py", f"{venv_py} -m agent_friday.server", f"{venv_py} -m agent_friday.friday_tray",
+                    f"nohup {venv_py} server.py --port 3000", f"{venv_py} {live['live']}/server.py"):
+        ok, why = decide(bash(command, live["wt"]), live["cfg"])
+        assert not ok, command
+        assert "server launch" in why
+
+
+def test_a_server_launch_from_the_live_tree_is_refused_with_any_interpreter(live):
+    for command in ("python server.py", "py -3 -m agent_friday.server", "flask run", "waitress-serve app:app",
+                    "Start-Process python -ArgumentList server.py"):
+        ok, why = decide(bash(command, live["live"]), live["cfg"])
+        assert not ok, command
+
+
 def test_the_same_mutations_in_a_worktree_are_allowed(live):
     for command in ("git checkout -b x", "git reset --hard", "git merge main", "python server.py",
                     "sed -i s/a/b/ AGENTS.md", "echo x > notes.txt", "git commit -m x"):
