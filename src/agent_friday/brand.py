@@ -13,6 +13,10 @@ is a proposal.
 Rules that live here because they are about meaning, not looks:
 
 * Cyan is the brand. The holographic triad is cyan, violet, magenta.
+* Decoration never borrows a status hue. Category accents, lane dots and
+  account badges draw from the CAT_* and ACCOUNT_* hues; the guard fails a
+  category property that points at a status token.
+* A live microphone is the brand (cyan), not a failure.
 * Four hues are reserved for status. A failure is ERROR, a refusal is DENY,
   amber (WARN) means only "needs you", OK means done or connected.
   Violet is the colour of work in progress.
@@ -36,6 +40,9 @@ VIOLET_SOFT = "#a78bfa"
 # -- scoped category hues the UI already ships (news, message lanes) ---------
 CAT_TEAL = "#2dd4bf"
 CAT_PINK = "#f472b6"
+CAT_BLUE = "#60a5fa"
+#: A warm neutral that is deliberately not amber.
+CAT_SAND = "#d6c7a1"
 
 # -- reserved status hues ----------------------------------------------------
 OK = "#00ff80"
@@ -67,12 +74,11 @@ PAGE_TEXT = "#e8e8f0"
 PAGE_MUTED = "#a8a8b4"
 
 #: Hues that tell one connected account from another, in assignment order.
-#: The two purple/pink/teal members are account-only decoration; the rest are
-#: tokens. Account colour is decoration and must never carry a status.
+#: Account colour is decoration and holds no status hue.
 ACCOUNT_PINK = "#ec4899"
 ACCOUNT_PURPLE = "#a855f7"
 ACCOUNT_TEAL = "#14b8a6"
-ACCOUNT_PALETTE = (CYAN, ACCOUNT_PURPLE, OK, WARN, ACCOUNT_PINK, ACCOUNT_TEAL, ERROR)
+ACCOUNT_PALETTE = (CYAN, ACCOUNT_PURPLE, ACCOUNT_TEAL, ACCOUNT_PINK, CAT_BLUE, CAT_SAND, VIOLET_SOFT)
 
 # -- type ----------------------------------------------------------------------
 FONT_DISPLAY = "'Orbitron', sans-serif"
@@ -100,6 +106,8 @@ TOKENS = {
     "--fr-violet-soft": VIOLET_SOFT,
     "--fr-cat-teal": CAT_TEAL,
     "--fr-cat-pink": CAT_PINK,
+    "--fr-cat-blue": CAT_BLUE,
+    "--fr-cat-sand": CAT_SAND,
     "--fr-ok": OK,
     "--fr-warn": WARN,
     "--fr-deny": DENY,

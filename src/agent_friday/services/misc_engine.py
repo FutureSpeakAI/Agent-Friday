@@ -139,6 +139,7 @@ def _build_draft_html(draft_text, mode, prompt_text=''):
     if not paras:
         paras = [(draft_text or '').strip() or '(empty)']
 
+    from agent_friday import brand
     _lead_style = ' style="font-size:18px;color:#e8e8f0"'
     _nl = chr(10)
     para_html = '\n    '.join(
@@ -162,12 +163,12 @@ def _build_draft_html(draft_text, mode, prompt_text=''):
         '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }\n'
         '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }\n'
         '.header h1 { font-family: \'Orbitron\', sans-serif; font-size: 28px; font-weight: 900; '
-        'background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); '
+        'background: linear-gradient(135deg, ' + brand.CYAN + ' 0%, ' + brand.VIOLET + ' 50%, ' + brand.MAGENTA + ' 100%); '
         '-webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }\n'
         '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }\n'
         '.header .date { font-family: \'JetBrains Mono\', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }\n'
-        '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }\n'
-        '.mode-tag { display: inline-block; font-family: \'JetBrains Mono\', monospace; font-size: 11px; color: #7c3aed; border: 1px solid rgba(124,58,237,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }\n'
+        '.neon-line { height: 2px; background: linear-gradient(90deg, ' + ', '.join(brand.TRIAD) + '); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }\n'
+        '.mode-tag { display: inline-block; font-family: \'JetBrains Mono\', monospace; font-size: 11px; color: ' + brand.VIOLET + '; border: 1px solid rgba(123,97,255,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }\n'
         '.prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: \'JetBrains Mono\', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }\n'
         '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }\n'
         '.footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: \'JetBrains Mono\', monospace; }\n'

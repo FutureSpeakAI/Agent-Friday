@@ -719,7 +719,7 @@ function fridayCitationize(src){
     let host='link';try{host=url.replace(/^https?:\/\//,'').split('/')[0]}catch(e){}
     return '<a href="'+esc(url)+'" target="_blank" rel="noopener" class="friday-cite" title="'+esc(url)+'" style="'+base+'background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.4);color:#00d4ff;text-decoration:none;">🔗 '+esc(host)+'</a>';
   });
-  out=out.replace(/\[wiki:([^\]]+)\]/g,(_,p)=>chip('rgba(124,58,237,0.14)','rgba(124,58,237,0.45)','#b794f6','📄 '+p.trim(),'Open in Knowledge · '+p.trim(),' role="link" tabindex="0" data-kw-page="'+esc(p.trim())+'"'));
+  out=out.replace(/\[wiki:([^\]]+)\]/g,(_,p)=>chip('rgba(123,97,255,0.14)','rgba(123,97,255,0.45)','#b794f6','📄 '+p.trim(),'Open in Knowledge · '+p.trim(),' role="link" tabindex="0" data-kw-page="'+esc(p.trim())+'"'));
   out=out.replace(/\[news:([^\]]+)\]/g,(_,p)=>{const outlet=p.split('/')[0].trim();return chip('rgba(245,158,11,0.14)','rgba(245,158,11,0.45)','#fbbf24','📰 '+outlet,'News · '+p.trim())});
   // B6: raw memory-system artifacts must never render as-is in prose. The
   // recall block feeds the model lines like "- [2026-08-01] You: …", and
@@ -1060,7 +1060,7 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
           </div>
           :<div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',minWidth:0,justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
-            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb',whiteSpace:m.role==='friday'&&m.via!=='voice'?undefined:'pre-wrap',minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>
+            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(123,97,255,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb',whiteSpace:m.role==='friday'&&m.via!=='voice'?undefined:'pre-wrap',minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>
               {m.role==='friday'&&m.trace_id?<ChatReasoning traceId={m.trace_id} streaming={!!m.streaming} sources={m.reasoning_sources}/>:null}
               {m.role==='friday'&&m.via!=='voice'
                 ?<div dangerouslySetInnerHTML={{__html:renderFridayMarkdown(m.text||'',{compact:true})}}/>
@@ -1946,12 +1946,12 @@ function TalkToFridayButton({contentType,title,summary,style}){
   };
   return<button onClick={onClick} title={`Discuss "${title||'this'}" with Friday`} style={Object.assign({},{
     fontSize:10,padding:'3px 9px',cursor:'pointer',
-    background:active?'rgba(124,58,237,0.35)':'rgba(124,58,237,0.1)',
-    border:'1px solid rgba(124,58,237,'+(active?'0.7':'0.3')+')',
+    background:active?'rgba(123,97,255,0.35)':'rgba(123,97,255,0.1)',
+    border:'1px solid rgba(123,97,255,'+(active?'0.7':'0.3')+')',
     borderRadius:5,color:active?'#e0c8ff':'#b794f6',
     display:'inline-flex',alignItems:'center',gap:4,
     transition:'all .2s',whiteSpace:'nowrap',fontFamily:'inherit',
-    boxShadow:active?'0 0 10px rgba(124,58,237,0.35)':'none',
+    boxShadow:active?'0 0 10px rgba(123,97,255,0.35)':'none',
   },style||{})}>
     <span style={{fontSize:11}}>🎤</span>{active?'Starting…':'Discuss with Friday'}
   </button>;
@@ -2017,11 +2017,11 @@ function CareerWS(){
       <div style={{display:'flex',gap:8,marginBottom:12}}>
         <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20}}>{entries.length}</div><div className="stat-label">evaluated</div></div>
         <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20,color:'#00d4ff'}}>{applied}</div><div className="stat-label">applied</div></div>
-        <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20,color:'#7c3aed'}}>{interviewing}</div><div className="stat-label">interviewing</div></div>
+        <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20,color:'#7b61ff'}}>{interviewing}</div><div className="stat-label">interviewing</div></div>
         <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20,color:'#00ff80'}}>{offered}</div><div className="stat-label">offers</div></div>
       </div>
       <div className="card" style={{marginBottom:12}}><div className="card-title">Pipeline Funnel</div>
-        {[{l:'Evaluated',c:entries.length,cl:'#f59e0b',p:100},{l:'Applied',c:applied,cl:'#00d4ff',p:entries.length?Math.round(applied/entries.length*100):0},{l:'Interviewing',c:interviewing,cl:'#7c3aed',p:entries.length?Math.round(interviewing/entries.length*100):0},{l:'Offers',c:offered,cl:'#00ff80',p:entries.length?Math.round(offered/entries.length*100):0}].map((s,i)=><div key={i} style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}><span style={{color:'#aaa'}}>{s.l}</span><span style={{fontFamily:'Orbitron, sans-serif',color:s.cl}}>{s.c} ({s.p}%)</span></div><div className="progress-bar"><div className="progress-fill" style={{width:Math.max(s.p,2)+'%',background:s.cl}}/></div></div>)}
+        {[{l:'Evaluated',c:entries.length,cl:'#f59e0b',p:100},{l:'Applied',c:applied,cl:'#00d4ff',p:entries.length?Math.round(applied/entries.length*100):0},{l:'Interviewing',c:interviewing,cl:'#7b61ff',p:entries.length?Math.round(interviewing/entries.length*100):0},{l:'Offers',c:offered,cl:'#00ff80',p:entries.length?Math.round(offered/entries.length*100):0}].map((s,i)=><div key={i} style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}><span style={{color:'#aaa'}}>{s.l}</span><span style={{fontFamily:'Orbitron, sans-serif',color:s.cl}}>{s.c} ({s.p}%)</span></div><div className="progress-bar"><div className="progress-fill" style={{width:Math.max(s.p,2)+'%',background:s.cl}}/></div></div>)}
       </div>
       {reports.length>0&&<div className="card"><div className="card-title">Recent Evaluations</div>{reports.slice(0,5).map((r,i)=><div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11,cursor:'pointer',color:'#aaa'}} onClick={()=>loadReport(r.name)}>{r.name}</div>)}</div>}
       {!hasData&&<div className="card" style={{textAlign:'center',padding:20}}><div style={{fontSize:16,marginBottom:8}}>Get Started</div><div style={{fontSize:12,color:'#888',marginBottom:12}}>Paste a job URL above to evaluate your first role.</div><div style={{fontSize:11,color:'#999'}}>Career-ops uses A-F scoring across 10 weighted dimensions. Generates tailored CVs and tracks applications.</div></div>}
@@ -5292,7 +5292,7 @@ const FS_DEPLOY_META={
 const FS_CAT_META={
   company:{c:'#00d4ff',ico:'🚀'},
   client:{c:'#f59e0b',ico:'🤝'},
-  personal:{c:'#7c3aed',ico:'💜'},
+  personal:{c:'#7b61ff',ico:'💜'},
 };
 function FSProjectCard({p,onToast,onChanged}){
   const[expanded,setExpanded]=useState(false);
@@ -5696,7 +5696,7 @@ function LicenseChip({terms,price}){
   if(!terms)return null;
   const free=['CC-BY-4.0','CC-BY-SA-4.0','CC0'].includes(terms);
   const priced=terms==='priced';
-  const col=priced?'#f59e0b':free?'#22c55e':'#7fb6c9';
+  const col=priced?'#f59e0b':free?'#00ff80':'#7fb6c9';
   return(<span style={{fontSize:9,fontFamily:'JetBrains Mono',color:col,border:'1px solid '+col+'55',background:col+'14',borderRadius:4,padding:'1px 5px',whiteSpace:'nowrap'}}>{LIC_LBL[terms]||terms}{priced&&price?` · ${price}mψ`:''}</span>);
 }
 // Provenance + license bar for the creation viewer. Shows the signed Content
@@ -5714,7 +5714,7 @@ function ProvenanceBar({filename}){
   const save=async()=>{setSaving(true);try{await fetch('/api/provenance/by-file/'+encodeURIComponent(filename)+'/license',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({license:lic})});await load();setEdit(false);}catch(e){}setSaving(false);};
   return(<div style={{marginBottom:10,padding:'8px 10px',borderRadius:8,background:'rgba(127,182,201,0.05)',border:'1px solid rgba(127,182,201,0.14)'}}>
     <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-      <span title="Ed25519-signed Content Credential" style={{fontSize:10,fontFamily:'JetBrains Mono',color:verified?'#22c55e':sig===false?'#ff0080':'#7fb6c9'}}>{verified?'🔏 Signed & verified':sig===false?'⚠ signature mismatch':'🔏 Signed'}</span>
+      <span title="Ed25519-signed Content Credential" style={{fontSize:10,fontFamily:'JetBrains Mono',color:verified?'#00ff80':sig===false?'#ff0080':'#7fb6c9'}}>{verified?'🔏 Signed & verified':sig===false?'⚠ signature mismatch':'🔏 Signed'}</span>
       <LicenseChip terms={L.terms} price={L.market&&L.market.price}/>
       {(m.media_type)&&<span style={{fontSize:9,color:'#6a8b98'}}>{m.media_type}</span>}
       <button className="btn btn-magenta" style={{fontSize:9,padding:'1px 7px',marginLeft:'auto'}} onClick={()=>setEdit(!edit)}>{edit?'Close':'Change license'}</button>
@@ -5796,7 +5796,7 @@ function GeneratePanel({onCreated}){
       <Lbl>Result — saved to creations</Lbl>
       <div style={{display:'grid',gridTemplateColumns:result.kind==='video'?'1fr':'1fr 1fr',gap:8}}>
         {result.files.map((f,i)=>result.kind==='video'
-          ?<video key={i} controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>
+          ?<video key={i} controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0e1a'}}/>
           :<img key={i} src={f.url} alt={f.filename} style={{width:'100%',borderRadius:8}}/>)}
       </div>
     </div>}
@@ -5908,7 +5908,7 @@ function TimelinePanel({onCreated}){
       {clips.length===0?<span style={{fontSize:11,color:'#7a8a90'}}>Add clips below ↓</span>:
        clips.map((n,i)=>{const fr=videoFiles.find(x=>x.name===n);const u='/api/creations/'+n;return(
         <div key={n} draggable onDragStart={()=>setDrag(i)} onDragOver={e=>e.preventDefault()} onDrop={()=>{if(drag!=null&&drag!==i)reorder(drag,i);setDrag(null);}}
-          style={{flexShrink:0,width:88,borderRadius:6,overflow:'hidden',cursor:'grab',border:'1px solid '+(drag===i?'#00d4ff':'rgba(127,182,201,0.25)'),background:'#0a0a0f',position:'relative'}}>
+          style={{flexShrink:0,width:88,borderRadius:6,overflow:'hidden',cursor:'grab',border:'1px solid '+(drag===i?'#00d4ff':'rgba(127,182,201,0.25)'),background:'#0a0e1a',position:'relative'}}>
           <video src={u} muted style={{width:88,height:50,objectFit:'cover',display:'block',pointerEvents:'none'}}/>
           <div style={{position:'absolute',top:2,left:3,fontSize:9,fontFamily:'Orbitron, sans-serif',color:'#00d4ff',background:'rgba(0,0,0,0.6)',borderRadius:3,padding:'0 4px'}}>{i+1}</div>
           <div onClick={()=>removeClip(n)} title="remove" style={{position:'absolute',top:2,right:3,fontSize:11,color:'#ff7ab8',background:'rgba(0,0,0,0.6)',borderRadius:3,cursor:'pointer',width:14,textAlign:'center',lineHeight:'14px'}}>×</div>
@@ -5944,7 +5944,7 @@ function TimelinePanel({onCreated}){
     {err&&<div style={{marginTop:10,padding:'8px 10px',borderRadius:6,background:'rgba(255,0,128,0.08)',border:'1px solid rgba(255,0,128,0.25)',color:'#ff7ab8',fontSize:11}}>{err}</div>}
     {result&&f&&<div style={{marginTop:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}><Lbl>{result.status==='demo'?'Demo (no ffmpeg) — signed timeline saved':'Result — '+(result.files.length)+' export'+(result.files.length!==1?'s':'')}</Lbl><LicenseChip terms={lic.terms} price={lic.market&&lic.market.price}/></div>
-      {['mp4','webm','mov'].includes(fx)?<video controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>:<div style={{fontSize:11,color:'#aaa'}}>{result.message||f.filename} — <a href={'/creation/'+f.filename} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>open</a></div>}
+      {['mp4','webm','mov'].includes(fx)?<video controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0e1a'}}/>:<div style={{fontSize:11,color:'#aaa'}}>{result.message||f.filename} — <a href={'/creation/'+f.filename} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>open</a></div>}
       {result.files.length>1&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>{result.files.map((x,i)=><a key={i} href={'/creation/'+x.filename} target="_blank" rel="noopener" className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px'}}>{x.profile||x.filename}</a>)}</div>}
     </div>}
   </div>);
@@ -5953,7 +5953,7 @@ function TimelinePanel({onCreated}){
 // Starts the built-in 'full-production' pipeline (script→sceneDNA→keyframe→clip
 // →music→cut) and shows a VISUAL stage tracker polling the run — milestones, the
 // active stage, and Approve-&-Continue at cost-gate checkpoints.
-const PIPE_STATE_COL={completed:'#22c55e',running:'#00d4ff',awaiting_checkpoint:'#f59e0b',failed:'#ff0080',pending:'#6a8b98'};
+const PIPE_STATE_COL={completed:'#00ff80',running:'#00d4ff',awaiting_checkpoint:'#f59e0b',failed:'#ff0080',pending:'#6a8b98'};
 function ProductionPanel({onCreated}){
   const[logline,setLogline]=useState('');const[runId,setRunId]=useState('');const[run,setRun]=useState(null);
   const[busy,setBusy]=useState(false);const[err,setErr]=useState('');
@@ -5982,11 +5982,11 @@ function ProductionPanel({onCreated}){
       {/* horizontal stage stepper */}
       <div style={{display:'flex',alignItems:'stretch',gap:0,marginBottom:12,flexWrap:'wrap'}}>
         {stages.map((s,i)=>{const done=i<idx||state==='completed';const active=i===idx&&state!=='completed';const checkpoint=active&&state==='awaiting_checkpoint';
-          const col=state==='failed'&&active?'#ff0080':done?'#22c55e':checkpoint?'#f59e0b':active?'#00d4ff':'#6a8b98';
+          const col=state==='failed'&&active?'#ff0080':done?'#00ff80':checkpoint?'#f59e0b':active?'#00d4ff':'#6a8b98';
           return(<div key={i} style={{flex:'1 1 90px',minWidth:80}}>
             <div style={{display:'flex',alignItems:'center',gap:4}}>
               <div style={{width:22,height:22,borderRadius:'50%',flexShrink:0,border:'2px solid '+col,color:col,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,boxShadow:active?'0 0 10px '+col+'88':'none',background:done?col+'22':'transparent'}}>{done?'✓':i+1}</div>
-              {i<stages.length-1&&<div style={{flex:1,height:2,background:done?'#22c55e':'rgba(127,182,201,0.2)'}}/>}
+              {i<stages.length-1&&<div style={{flex:1,height:2,background:done?'#00ff80':'rgba(127,182,201,0.2)'}}/>}
             </div>
             <div style={{fontSize:9,color:col,marginTop:4,fontFamily:'JetBrains Mono',lineHeight:1.2}}>{s.name}{checkpoint&&' ⏸'}</div>
           </div>);})}
@@ -6001,7 +6001,7 @@ function ProductionPanel({onCreated}){
         {run.milestones.slice(-8).map((m,i)=><div key={i} style={{fontSize:10,color:'#9fb4bd',fontFamily:'JetBrains Mono',lineHeight:1.5}}>{m}</div>)}
       </div>}
       {prodFile&&prodFile.url&&['mp4','webm','mov'].includes((prodFile.filename||'').split('.').pop().toLowerCase())&&
-        <video controls src={prodFile.url} style={{width:'100%',borderRadius:8,background:'#0a0a0f',marginTop:4}}/>}
+        <video controls src={prodFile.url} style={{width:'100%',borderRadius:8,background:'#0a0e1a',marginTop:4}}/>}
     </div>}
   </div>);
 }
@@ -6027,7 +6027,7 @@ function ProjectsPanel(){
   const rmChar=async(nm)=>{await fetch('/api/creative/projects/'+activeId+'/characters/'+encodeURIComponent(nm),{method:'DELETE'});loadActive();};
   const runPipeline=async()=>{if(!topic.trim())return;setBusy(true);try{await fetch('/api/pipelines/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pipeline_id:pipeId,input:{topic,logline:topic},project_id:activeId,start:true})});setTopic('');setTimeout(loadRuns,400);}finally{setBusy(false);}};
   const resumeRun=async(rid)=>{await fetch('/api/pipelines/runs/'+rid+'/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_to_end:false})});setTimeout(loadRuns,400);};
-  const stateColor={completed:'#22c55e',awaiting_checkpoint:'#f59e0b',running:'#00d4ff',failed:'#ff0080',pending:'#888'};
+  const stateColor={completed:'#00ff80',awaiting_checkpoint:'#f59e0b',running:'#00d4ff',failed:'#ff0080',pending:'#888'};
   return(<div>
     <FridaySays text="Creative projects keep a Series Bible — cast, locations, continuity, style — so every generation stays consistent. Chain workspaces into pipelines that pause for your review."/>
     <div className="card" style={{marginBottom:8}}>
@@ -6237,10 +6237,10 @@ function StudioPromptBar({onCreated}){
       {files.length>0&&<div style={{display:'grid',gridTemplateColumns:files.length>1?'1fr 1fr':'1fr',gap:8}}>
         {files.map((f,i)=>{const fn=dlName(f);const fx=(fn.split('.').pop()||'').toLowerCase();return(
           <div key={i}>
-            {['png','jpg','jpeg','webp','svg','gif'].includes(fx)&&<img src={f.url} alt={fn} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>}
-            {['mp4','webm','mov'].includes(fx)&&<video controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>}
+            {['png','jpg','jpeg','webp','svg','gif'].includes(fx)&&<img src={f.url} alt={fn} style={{width:'100%',borderRadius:8,background:'#0a0e1a'}}/>}
+            {['mp4','webm','mov'].includes(fx)&&<video controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0e1a'}}/>}
             {['mp3','wav','ogg','m4a'].includes(fx)&&<AlbumArtPlayer name={fn} url={f.url}/>}
-            {fx==='html'&&<iframe src={f.url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" title={fn} style={{width:'100%',height:320,border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
+            {fx==='html'&&<iframe src={f.url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" title={fn} style={{width:'100%',height:320,border:'none',borderRadius:8,background:'#0a0e1a'}}/>}
             {fx==='md'&&!(result&&result.text)&&<StudioMdPeek url={f.url}/>}
           </div>);})}
       </div>}
@@ -6320,9 +6320,9 @@ function StudioWS(){
         </div>
       </div>
       <ProvenanceBar filename={selected.name}/>
-      {ext==='html'&&<iframe src={url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" style={{width:'100%',height:'calc(100vh - 240px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
+      {ext==='html'&&<iframe src={url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" style={{width:'100%',height:'calc(100vh - 240px)',border:'none',borderRadius:8,background:'#0a0e1a'}}/>}
       {(ext==='png'||ext==='jpg'||ext==='jpeg'||ext==='webp'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
-      {(ext==='mp4'||ext==='webm'||ext==='mov')&&<video controls src={url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>}
+      {(ext==='mp4'||ext==='webm'||ext==='mov')&&<video controls src={url} style={{width:'100%',borderRadius:8,background:'#0a0e1a'}}/>}
       {(ext==='mp3'||ext==='wav'||ext==='ogg'||ext==='m4a')&&<AlbumArtPlayer name={selected.name} url={url} big/>}
       {ext==='md'&&(preview?<FridayDoc text={preview} style={{padding:'4px 8px'}}/>:<div style={{color:'#888',fontSize:12,textAlign:'center',padding:20}}>Loading…</div>)}
       {!['html','png','jpg','jpeg','webp','svg','mp4','webm','mov','mp3','wav','ogg','m4a','md'].includes(ext)&&<div style={{color:'#999',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={'/creation/'+selected.name} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file →</a></div>}
@@ -6387,18 +6387,18 @@ function StudioWS(){
         /* Inline preview content — shown collapsed (thumbnail) or expanded (full) */
         const collapsedPreview=hasImgErr?
           <div style={{width:'100%',padding:'18px 0',background:'rgba(255,84,112,0.06)',borderRadius:8,textAlign:'center',fontSize:11,color:'#ff5470'}}>⚠ File not found — may have moved to ~/.friday/friday-creations</div>:
-          isImg?<img src={url} alt={f.name} loading="lazy" onError={()=>setImgErrors(e=>({...e,[f.name]:true}))} style={{width:'100%',maxHeight:260,objectFit:'cover',borderRadius:8,background:'#0a0a0f',display:'block'}}/>:
-          isVid?<div style={{position:'relative',cursor:'pointer'}} onClick={e=>{e.stopPropagation();setExpandedCard(isExpanded?null:f.name)}}><video src={url} muted preload="metadata" style={{width:'100%',maxHeight:200,objectFit:'cover',borderRadius:8,background:'#0a0a0f',display:'block'}}/><div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:32,color:'rgba(255,255,255,0.9)',textShadow:'0 2px 8px #000',pointerEvents:'none',background:'rgba(0,0,0,0.25)',borderRadius:8}}>▶</div></div>:
+          isImg?<img src={url} alt={f.name} loading="lazy" onError={()=>setImgErrors(e=>({...e,[f.name]:true}))} style={{width:'100%',maxHeight:260,objectFit:'cover',borderRadius:8,background:'#0a0e1a',display:'block'}}/>:
+          isVid?<div style={{position:'relative',cursor:'pointer'}} onClick={e=>{e.stopPropagation();setExpandedCard(isExpanded?null:f.name)}}><video src={url} muted preload="metadata" style={{width:'100%',maxHeight:200,objectFit:'cover',borderRadius:8,background:'#0a0e1a',display:'block'}}/><div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:32,color:'rgba(255,255,255,0.9)',textShadow:'0 2px 8px #000',pointerEvents:'none',background:'rgba(0,0,0,0.25)',borderRadius:8}}>▶</div></div>:
           isAud?<div style={{width:'100%',padding:'20px 0',borderRadius:8,background:'linear-gradient(135deg,hsl('+hue+',60%,20%),hsl('+((hue+60)%360)+',55%,12%))',display:'flex',alignItems:'center',justifyContent:'center',gap:12,fontSize:28}}>🎵<span style={{fontSize:13,color:'rgba(255,255,255,0.6)',fontFamily:'Orbitron, sans-serif'}}>Audio</span></div>:
           isMd||isHtml?<div style={{padding:'10px 14px',background:'rgba(255,255,255,0.02)',borderRadius:8,fontSize:11,color:'#aab',lineHeight:1.5,maxHeight:80,overflow:'hidden',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{summary||f.name}</div>:
           <div style={{padding:'18px 0',borderRadius:8,background:'rgba(255,255,255,0.02)',textAlign:'center',fontSize:28}}>{icon}</div>;
-        const expandedContent=isImg?<img src={url} alt={f.name} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>:
-          isVid?<video controls src={url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>:
+        const expandedContent=isImg?<img src={url} alt={f.name} style={{width:'100%',borderRadius:8,background:'#0a0e1a'}}/>:
+          isVid?<video controls src={url} style={{width:'100%',borderRadius:8,background:'#0a0e1a'}}/>:
           isAud?<AlbumArtPlayer name={f.name} url={url} big/>:
-          isHtml?<iframe src={url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" style={{width:'100%',height:400,border:'none',borderRadius:8,background:'#0a0a0f'}}/>:
+          isHtml?<iframe src={url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" style={{width:'100%',height:400,border:'none',borderRadius:8,background:'#0a0e1a'}}/>:
           <ProvenanceBar filename={f.name}/>;
         return(<div key={f.name||i} className="card" style={{padding:0,overflow:'hidden',cursor:'default',border:'1px solid rgba(255,255,255,0.06)',borderRadius:12,background:'rgba(10,10,18,0.6)',backdropFilter:'blur(10px)',transition:'border-color .2s'}}
-          onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(124,58,237,0.3)'}
+          onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(123,97,255,0.3)'}
           onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.06)'}>
           {/* Preview area */}
           <div style={{padding:'12px 12px 0'}} onClick={()=>!isVid&&setExpandedCard(isExpanded?null:f.name)}>
@@ -6415,7 +6415,7 @@ function StudioWS(){
             <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
               <span style={{fontSize:9,color:'#666'}}>{dateStr}</span>
               <span style={{fontSize:9,padding:'1px 6px',borderRadius:4,background:modBadge.col,color:modBadge.tc}}>{modBadge.lbl}</span>
-              {license&&<span style={{fontSize:9,padding:'1px 6px',borderRadius:4,background:'rgba(124,58,237,0.08)',color:'#9d7dff',border:'1px solid rgba(124,58,237,0.2)'}}>{license}</span>}
+              {license&&<span style={{fontSize:9,padding:'1px 6px',borderRadius:4,background:'rgba(123,97,255,0.08)',color:'#9d7dff',border:'1px solid rgba(123,97,255,0.2)'}}>{license}</span>}
               {provSigned&&<span style={{fontSize:9,padding:'1px 6px',borderRadius:4,background:'rgba(0,232,122,0.08)',color:'#00e87a',border:'1px solid rgba(0,232,122,0.2)'}}>🔏 Signed</span>}
             </div>
             {/* Action buttons */}
@@ -6643,7 +6643,7 @@ function FederationPanel(){
       </div>
       <div style={{fontSize:11,color:'#a8a8b4',marginBottom:6}}>Federation v{identity.federation_version||'1.0'}</div>
       {identity.capabilities&&identity.capabilities.length>0&&<div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-        {identity.capabilities.map((c,i)=><span key={i} style={{fontSize:9,padding:'1px 6px',borderRadius:10,background:'rgba(124,58,237,0.15)',border:'1px solid rgba(124,58,237,0.35)',color:'#b794f6',fontFamily:'JetBrains Mono'}}>{c}</span>)}
+        {identity.capabilities.map((c,i)=><span key={i} style={{fontSize:9,padding:'1px 6px',borderRadius:10,background:'rgba(123,97,255,0.15)',border:'1px solid rgba(123,97,255,0.35)',color:'#b794f6',fontFamily:'JetBrains Mono'}}>{c}</span>)}
       </div>}
     </div>:<div style={{fontSize:11,color:'#888',marginBottom:12}}>No identity data — federation not configured.</div>}
     {/* Peer Discovery */}
@@ -6715,7 +6715,7 @@ function MarketplaceWS(){
     setPublishing(false);
   };
   const psiDisplay=mpsi=>mpsi===0?'Free':`${(mpsi/1000).toFixed(3)}ψ`;
-  const licBadge=lic=>{const map={'CC0':['#00c48c','#003d2d'],'CC-BY':['#2563eb','#0d1f4a'],'CC-BY-SA':['#d97706','#3d2600'],'all-rights-reserved':['#6b7280','#1f2937']};const c=map[lic]||['#7c3aed','#1e0a3c'];return<span style={{display:'inline-block',fontSize:9,padding:'1px 5px',borderRadius:4,background:c[1],color:c[0],border:'1px solid '+c[0],fontFamily:'JetBrains Mono',letterSpacing:'.03em'}}>{lic}</span>};
+  const licBadge=lic=>{const map={'CC0':['#00c48c','#003d2d'],'CC-BY':['#2563eb','#0d1f4a'],'CC-BY-SA':['#d97706','#3d2600'],'all-rights-reserved':['#6b7280','#1f2937']};const c=map[lic]||['#7b61ff','#1e0a3c'];return<span style={{display:'inline-block',fontSize:9,padding:'1px 5px',borderRadius:4,background:c[1],color:c[0],border:'1px solid '+c[0],fontFamily:'JetBrains Mono',letterSpacing:'.03em'}}>{lic}</span>};
   const mediaIcon=t=>({image:'🖼',video:'🎬',music:'🎵',html:'💻',text:'📝'}[t]||'📦');
   return(<div>
     <FridaySays text="Buy, sell, and share creations with other Friday agents. Prices are in ψ (psi) — Friday's internal economy currency."/>
@@ -7546,7 +7546,7 @@ function SystemWS(){
 
   const fmtBytes=(n)=>{if(!n)return'0 B';if(n<1024)return n+' B';if(n<1048576)return(n/1024).toFixed(1)+' KB';return(n/1048576).toFixed(2)+' MB'};
   const fmtTs=(s)=>{try{return new Date(s).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return s}};
-  const typeColor=(t)=>({chat_user:'#7c3aed',chat_agent:'#00d4ff',tool_call:'#f59e0b',wiki_edit:'#00ff80',wiki_delete:'#ff0080',file_read:'#a8a8b4',task_spawn:'#ff6dd9'}[t]||'#888');
+  const typeColor=(t)=>({chat_user:'#7b61ff',chat_agent:'#00d4ff',tool_call:'#f59e0b',wiki_edit:'#00ff80',wiki_delete:'#ff0080',file_read:'#a8a8b4',task_spawn:'#ff6dd9'}[t]||'#888');
 
   if(loading)return <div style={{color:'#bbb',textAlign:'center',padding:40,fontFamily:'JetBrains Mono',fontSize:12}}>Scanning system...</div>;
   const disks=(sys?.disk||sys?.disks||[]);
@@ -8494,12 +8494,12 @@ function NewsWS(){
     </div>
     <div style={{display:'flex',gap:12}}>
       <div style={{flex:1,overflowY:'auto'}}>
-        {selected.isHtml?<iframe srcDoc={fridayFrameScrollbars(htmlContent)} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" ref={window.fridayAttachFrame} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>:
+        {selected.isHtml?<iframe srcDoc={fridayFrameScrollbars(htmlContent)} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" ref={window.fridayAttachFrame} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0e1a'}}/>:
         <FridayDoc text={htmlContent} style={{padding:'4px 8px'}}/>}
       </div>
       {chatOpen&&<div style={{width:280,borderLeft:'1px solid rgba(255,255,255,0.04)',paddingLeft:10,display:'flex',flexDirection:'column'}}>
         <div style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff',marginBottom:8}}>DISCUSS BRIEFING</div>
-        <div style={{flex:1,overflowY:'auto',marginBottom:8}}>{chatMsgs.map((m,i)=><div key={i} style={{marginBottom:6,textAlign:m.role==='user'?'right':'left'}}><div style={{display:'inline-block',maxWidth:'90%',padding:'5px 8px',borderRadius:6,fontSize:11,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div></div>)}{chatLoad&&<div style={{fontSize:11,color:'#00d4ff'}}>Thinking...</div>}</div>
+        <div style={{flex:1,overflowY:'auto',marginBottom:8}}>{chatMsgs.map((m,i)=><div key={i} style={{marginBottom:6,textAlign:m.role==='user'?'right':'left'}}><div style={{display:'inline-block',maxWidth:'90%',padding:'5px 8px',borderRadius:6,fontSize:11,background:m.role==='user'?'rgba(123,97,255,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div></div>)}{chatLoad&&<div style={{fontSize:11,color:'#00d4ff'}}>Thinking...</div>}</div>
         <div style={{display:'flex',gap:4,alignItems:'flex-end'}}><FridayChatInput className="input" style={{flex:1,fontSize:11}} maxHeight={110} value={chatIn} onChange={setChatIn} onSend={sendBriefingChat} placeholder="Ask about this briefing..."/><button className="btn" style={{fontSize:11}} onClick={sendBriefingChat}>Send</button></div>
       </div>}
     </div>
@@ -9504,11 +9504,11 @@ function buildDraftHtml(text,mode,promptText){
     "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }",
     '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }',
     '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }',
-    ".header h1 { font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }",
+    ".header h1 { font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7b61ff 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }",
     '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }',
     ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }",
-    '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }',
-    ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7c3aed; border: 1px solid rgba(124,58,237,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }",
+    '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7b61ff, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }',
+    ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7b61ff; border: 1px solid rgba(123,97,255,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }",
     ".prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }",
     '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }',
     ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }",
@@ -10153,7 +10153,7 @@ function ContentIdeasTab({onGraduate}){
   const[savedDrafts,setSavedDrafts]=useState([]);const[view,setView]=useState('pipeline');
   const[templates,setTemplates]=useState([]);const[editing,setEditing]=useState(false);
   const STAGES=['idea','drafting','review','scheduled','published'];
-  const STAGE_COLORS={idea:'#888',drafting:'#f59e0b',review:'#00d4ff',scheduled:'#7c3aed',published:'#00ff80'};
+  const STAGE_COLORS={idea:'#888',drafting:'#f59e0b',review:'#00d4ff',scheduled:'#7b61ff',published:'#00ff80'};
   const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2000)};
   const load=()=>{setLoading(true);fetch('/api/content/pipeline').then(r=>r.json()).then(d=>{setPipe(d);setLoading(false)}).catch(()=>setLoading(false))};
   const loadDrafts=()=>fetch('/api/content/drafts').then(r=>r.json()).then(d=>setSavedDrafts(d.drafts||[])).catch(()=>{});
@@ -10309,7 +10309,7 @@ const CONTENT_PLATFORMS={
   substack:{ico:'📬',label:'Substack',color:'#ff6719',limit:0,formats:['article'],manual:true},
   medium:{ico:'📖',label:'Medium',color:'#00ab6c',limit:0,formats:['article'],manual:true},
   tiktok:{ico:'🎵',label:'TikTok',color:'#69c9d0',limit:2200,formats:['short']},
-  federation:{ico:'🛰️',label:'Federation',color:'#7c3aed',limit:0,formats:['listing']},
+  federation:{ico:'🛰️',label:'Federation',color:'#7b61ff',limit:0,formats:['listing']},
   discord:{ico:'🎮',label:'Discord',color:'#5865f2',limit:2000,formats:['announce']},
   telegram:{ico:'✈️',label:'Telegram',color:'#229ed9',limit:4096,formats:['announce']},
 };
@@ -10334,7 +10334,7 @@ const cpPad=n=>String(n).padStart(2,'0');
 const cpLocalInput=iso=>{try{const d=new Date(iso);if(isNaN(d))return'';return d.getFullYear()+'-'+cpPad(d.getMonth()+1)+'-'+cpPad(d.getDate())+'T'+cpPad(d.getHours())+':'+cpPad(d.getMinutes())}catch(_){return''}};
 const cpTime=iso=>{try{const d=new Date(iso);if(isNaN(d))return iso||'';return d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}catch(_){return iso||''}};
 const cpNextSlot=s=>{const now=new Date();const d=new Date(now);const wd=s.weekday!=null?s.weekday:now.getDay();d.setDate(now.getDate()+((wd-now.getDay()+7)%7));d.setHours(s.hour!=null?s.hour:9,0,0,0);if(d<=now)d.setDate(d.getDate()+7);return cpLocalInput(d.toISOString())};
-const cpStatusCol={PENDING:'#7fb6c9',PREPARING:'#f59e0b',SENT:'#00d4ff',CONFIRMED:'#00ff80',HELD:'#f59e0b',FAILED:'#ff5470',SKIPPED:'#888',CANCELLED:'#888',DRAFT:'#888',SCHEDULED:'#7c3aed',PUBLISHING:'#00d4ff',PUBLISHED:'#00ff80',PARTIAL:'#f59e0b'};
+const cpStatusCol={PENDING:'#7fb6c9',PREPARING:'#f59e0b',SENT:'#00d4ff',CONFIRMED:'#00ff80',HELD:'#f59e0b',FAILED:'#ff5470',SKIPPED:'#888',CANCELLED:'#888',DRAFT:'#888',SCHEDULED:'#7b61ff',PUBLISHING:'#00d4ff',PUBLISHED:'#00ff80',PARTIAL:'#f59e0b'};
 
 // Platform-styled preview mockup — renders the exact composer payload (D6):
 // avatar, adapted text (thread cards for segments), media, grapheme meter,
@@ -10359,7 +10359,7 @@ function CpPreviewCard({platform,preview,account,assets,altMissing,tagsOn,allTag
     {segs
       ?<div style={{display:'flex',flexDirection:'column',gap:5}}>{segs.map((s,i)=><div key={i} style={{fontSize:11.5,color:'#ddd',lineHeight:1.5,whiteSpace:'pre-wrap',background:'rgba(255,255,255,0.03)',borderLeft:'2px solid '+m.color+'66',borderRadius:6,padding:'6px 8px'}}><span style={{fontSize:9,color:m.color,fontFamily:'JetBrains Mono'}}>{(i+1)+'/'+segs.length}</span><br/>{s}</div>)}</div>
       :<div style={{fontSize:11.5,color:'#ddd',lineHeight:1.55,whiteSpace:'pre-wrap',minHeight:32}}>{bodyTxt||(preview?'':'…adapting preview…')}</div>}
-    {img&&<img src={'/api/creations/'+img.filename} alt={img.alt_text||img.filename} style={{width:'100%',maxHeight:120,objectFit:'cover',borderRadius:6,marginTop:6,background:'#0a0a0f'}}/>}
+    {img&&<img src={'/api/creations/'+img.filename} alt={img.alt_text||img.filename} style={{width:'100%',maxHeight:120,objectFit:'cover',borderRadius:6,marginTop:6,background:'#0a0e1a'}}/>}
     {lim>0&&<div style={{marginTop:6}}>
       <div className="progress-bar" style={{height:3}}><div className="progress-fill" style={{width:Math.min(100,Math.round(used/lim*100))+'%',background:over?'#ff5470':m.color}}/></div>
       <div style={{fontSize:9.5,color:over?'#ff5470':'#8891a8',fontFamily:'JetBrains Mono',marginTop:2}}>{used} / {lim}{over?' — over the limit':''}</div>
@@ -10732,7 +10732,7 @@ function ContentAnalyticsTab(){
       </table>
     </div>}
     {ins.length>0&&<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:8,marginBottom:10}}>
-      {ins.map((c,i)=><div key={i} className="card" style={{padding:'8px 10px',borderLeft:'2px solid #7c3aed'}}>
+      {ins.map((c,i)=><div key={i} className="card" style={{padding:'8px 10px',borderLeft:'2px solid #7b61ff'}}>
         <div style={{fontSize:11.5,fontWeight:600,color:'#c4b5fd',marginBottom:3}}>💡 {c.title||c.headline||'Insight'}</div>
         <div style={{fontSize:10.5,color:'#a8a8b4',lineHeight:1.5}}>{c.body||c.detail||c.text||''}{c.n!=null&&<span style={{color:'#666'}}> (n={c.n})</span>}</div>
         {c.action&&<button className="btn" style={{fontSize:10,marginTop:5}} onClick={()=>fridayNavigate({workspace:'content',tab:'compose'})}>{typeof c.action==='string'?c.action:'Act on this'}</button>}
@@ -16195,7 +16195,7 @@ function GoogleAccountsPanel(){
           <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
             {!h.healthy&&<button className="settings-btn" style={{fontSize:11,padding:'4px 12px',color:'#ff8c42',borderColor:'#ff8c42',whiteSpace:'nowrap'}} onClick={()=>reconnectAccount(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect'}</button>}
             {!(acc.mail&&acc.mail.send&&acc.mail.modify)&&<button className="settings-btn" data-testid="ga-reconnect-sending" title="Sign in again and allow Friday to send mail (each message waits for your approval) and to change this mailbox (labels, archive, star, read). One Google screen; it shows you the exact permissions first." style={{fontSize:11,padding:'4px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.5)',whiteSpace:'nowrap'}} onClick={()=>reconnectWithSending(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect with sending'}</button>}
-            {acc.mail&&acc.mail.send&&acc.mail.modify&&<span data-testid="ga-mail-full" style={{fontSize:10,color:'#22c55e',whiteSpace:'nowrap'}}>✓ can send + update mailbox</span>}
+            {acc.mail&&acc.mail.send&&acc.mail.modify&&<span data-testid="ga-mail-full" style={{fontSize:10,color:'#00ff80',whiteSpace:'nowrap'}}>✓ can send + update mailbox</span>}
             <button className="settings-btn" style={{fontSize:11,color:'#ff6060'}} onClick={()=>removeAccount(acc.id,acc.email||acc.label||'account')}>Remove</button>
           </div>
         </div>
@@ -17438,7 +17438,7 @@ function SettingsTabAbout(){
     </div>
     <StSection title="System">
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-        {[{l:'Evolution day',v:evo?.day??'—',c:'#00d4ff'},{l:'Uptime',v:fmtUp(h?.uptime_seconds),c:'#00ff80'},{l:'Mood',v:h?.mood||'—',c:'#a855f7'},{l:'Creations today',v:h?.creations_today??'—',c:'#f59e0b'},{l:'Memory entries',v:h?.memory_entries??'—',c:'#00d4ff'},{l:'Vault entries',v:h?.vault_count??'—',c:'#22c55e'}].map(x=>(
+        {[{l:'Evolution day',v:evo?.day??'—',c:'#00d4ff'},{l:'Uptime',v:fmtUp(h?.uptime_seconds),c:'#00ff80'},{l:'Mood',v:h?.mood||'—',c:'#a855f7'},{l:'Creations today',v:h?.creations_today??'—',c:'#f59e0b'},{l:'Memory entries',v:h?.memory_entries??'—',c:'#00d4ff'},{l:'Vault entries',v:h?.vault_count??'—',c:'#00ff80'}].map(x=>(
           <div key={x.l} style={{padding:'10px 12px',background:'rgba(255,255,255,0.02)',borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}>
             <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:4}}>{x.l}</div>
             <div style={{fontFamily:'Orbitron, sans-serif',fontSize:14,color:x.c}}>{x.v}</div>
@@ -18765,7 +18765,7 @@ function StandaloneApprovals(){
         <ApprovalPagePreview a={a}/>
         <ApprovalProvenance p={a.provenance}/>
         <div style={{display:'flex',gap:8,marginTop:8}}>
-          <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#22c55e',color:'#86efac'}} onClick={()=>decide(a.approval_id,'approve')}>{busy===a.approval_id?'…':'Approve'}</button>
+          <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#00ff80',color:'#86efac'}} onClick={()=>decide(a.approval_id,'approve')}>{busy===a.approval_id?'…':'Approve'}</button>
           <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#ef4444',color:'#fca5a5'}} onClick={()=>decide(a.approval_id,'deny')}>Deny</button>
         </div></div>)}
     </div>}
@@ -21694,7 +21694,7 @@ function App(){
           aria-label={runningTaskCount>0?`${runningTaskCount} tasks running, open notifications`:'Open notifications'}>
           <span style={{fontSize:13}}>&#x1F514;</span>
           {bellBadgeCount>0&&<span className={runningTaskCount>0?'bell-badge-pulse':''}
-            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0a0f',fontWeight:700,fontFamily:'Orbitron, sans-serif'}}>{bellBadgeCount}</span>}
+            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0e1a',fontWeight:700,fontFamily:'Orbitron, sans-serif'}}>{bellBadgeCount}</span>}
         </button>
         <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}}
           style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
@@ -22160,9 +22160,9 @@ function App(){
           <div className="dock-group-btns">
             {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
-              {w.id==='knowledge'&&wikiPending>0&&<span title={wikiPending+' wiki update'+(wikiPending===1?'':'s')+' waiting for your approval'} style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
+              {w.id==='knowledge'&&wikiPending>0&&<span title={wikiPending+' wiki update'+(wikiPending===1?'':'s')+' waiting for your approval'} style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0e1a',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
               {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
-              {w.id==='content'&&contentAlerts>0&&<span title="Held or failed posts need your attention — Content → Queue" style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{contentAlerts}</span>}
+              {w.id==='content'&&contentAlerts>0&&<span title="Held or failed posts need your attention — Content → Queue" style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0e1a',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{contentAlerts}</span>}
             </button>)}
           </div>
           {g.name&&<div className="dock-group-label">{g.name}</div>}

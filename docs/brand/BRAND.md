@@ -30,6 +30,8 @@ carries a fixed meaning.
 | `--fr-violet-soft` | `#a78bfa` | Category accents beside the triad (business news, the FutureSpeak lane, the career calendar). |
 | `--fr-cat-teal` | `#2dd4bf` | Science news. |
 | `--fr-cat-pink` | `#f472b6` | Media news, the family lane. |
+| `--fr-cat-blue` | `#60a5fa` | Politics news. |
+| `--fr-cat-sand` | `#d6c7a1` | Local news, the finance lane. A warm neutral, deliberately not amber. |
 
 The triad is a gradient: cyan, then violet, then magenta. It is the fill for
 icons, the dock and the window sweep. `#00ffff` remains only in the HUD arcs
@@ -202,16 +204,16 @@ tokens.
 
 Where the shipped UI had several values for one role, they now share one token.
 Each visible change is a brand decision, recorded in
-`docs/decisions/2026-09-29-program-delegated-decisions.md` as B7 to B14.
+`docs/decisions/2026-09-29-program-delegated-decisions.md` as B7 to B15.
 
 | Decision | Surface | Before | After |
 |---|---|---|---|
-| B7 | Status dots (`.status-dot`, defined twice) | 6px and 8px; green `#00ff66`, red `#ff0033`, yellow `#ffcc00`; disconnected `#666`; connecting, error, needs-setup, blocked and unknown states had no colour at all | one 8px dot; ok `#00ff80`, error `#ef4444`, warn `#f59e0b`, disconnected and unknown `#7a8699` with no glow, connecting `#7b61ff`, needs-setup `#00d4ff`, blocked `#ff0080` |
+| B7 | Status dots (`.status-dot`, defined twice) | 6px and 8px; green `#00ff66`, red `#ff0033`, yellow `#ffcc00`; disconnected `#666`; connecting, error, needs-setup, blocked and unknown states had no colour at all | one 8px dot; ok `#00ff80`, error `#ef4444`, warn `#f59e0b`, disconnected and unknown `#7a8699` with no glow, connecting `#7b61ff`, needs-setup `#f59e0b`, blocked `#ff0080` |
 | B8 | Settings danger (failure text, danger button) | `#ff6b8a` | `#ef4444` |
 | B9 | Connector states (Python) | error `#ff5470`, blocked `#ff8c42`, connecting `#f59e0b`, unknown `#888888` | error `#ef4444`, blocked `#ff0080`, connecting `#7b61ff`, unknown `#7a8699` |
-| B10 | Notification priority colours (Python) | critical `#ff3366`, high `#ff8a00`, medium `#ffd23f`, low `#00d4ff` | critical `#ef4444`, high `#f59e0b`, medium `#00d4ff`, low `#7a8699` |
-| B11 | Push-to-talk indicator (Python) | arming `#64748b`, thinking `#e0a030`, done `#22c55e`, clipboard `#e0a030`, idle `#94a3b8` | arming and idle `#7a8699`, thinking `#7b61ff`, done `#00ff80`, clipboard `#f59e0b` |
-| B12 | Connected-account palette (Python) | third account `#22c55e` | `#00ff80` (new accounts only) |
+| B10 | Notification priority colours (Python) | critical `#ff3366`, high `#ff8a00`, medium `#ffd23f`, low `#00d4ff` | critical `#f59e0b` (needs you; nothing failed), high `#00d4ff`, medium `#a78bfa`, low `#7a8699` |
+| B11 | Push-to-talk indicator (Python) | arming `#64748b`, recording `#ef4444`, thinking `#e0a030`, done `#22c55e`, clipboard `#e0a030`, idle `#94a3b8` | arming and idle `#7a8699`, recording `#00d4ff`, thinking `#7b61ff`, done `#00ff80`, clipboard `#f59e0b` |
+| B12 | Connected-account palette (Python) | cyan, purple, `#22c55e`, amber, pink, teal, red | cyan, purple, teal, pink, blue, sand, soft violet: no status hue (new accounts only) |
 | B13 | Type | body `Helvetica Neue`; Orbitron falling back to `monospace`; the login page in Orbitron throughout | body Inter; Orbitron falls back to `sans-serif` everywhere; the login page is Inter with an Orbitron heading |
 | B14 | The mark | a dark box baked into the PNG and the icon | a real alpha channel; `assets/friday.ico` added for the installer |
 
@@ -229,8 +231,6 @@ occurrences in `index.html`.
 - **Failure that is not error red.** Failure and error text is spelled in other reds and pinks: `#ff6b8a` (11), `#ff5470` (13), `#f87171` (16), `#ff3c5a` (7), `#ff8fae` (3), `#ff8fb0` (1). The connector dot in a workspace title bar (`ConnectorDot`) uses `#ff5470` for its failing state.
 - **Failure that is deny magenta.** Task cards mark `failed` and `stalled` in `#ff0080`, and workflow runs mark `failed` the same way. A failure is error red; magenta is for a refusal.
 - **Amber that means running.** `.task-card.running`, `.thread-status-badge.running`, the `connecting` state of `ConnectorDot` and the `EXECUTING` mood all use amber for work that needs nothing from you. Working is violet.
-- **Green that is not ok.** `#22c55e` (13), `#3effa1` (11) and the camera indicator's `#00ff66` (2) stand in for ok green. The finance message lane also uses `#22c55e`.
-- **Decoration that borrows a status hue.** The politics news category is amber, the local news category is ok green, and the connected-account palette contains the ok, warn and error hues. Decoration must not carry a status colour.
-- **Recording is red.** The push-to-talk recording state uses error red, so a live microphone and a failure look alike.
-- **Other one-offs.** Decorative ambers `#ffae5b` (4) and `#e0a030` (1), the knowledge workspace's `kw-danger` pink, and the login page's own violet palette (`#7c3aed`) sit outside the token set.
+- **Green that is not ok.** `#3effa1` (11) and the camera indicator's `#00ff66` (2) stand in for ok green.
+- **Other one-offs.** The decorative amber `#e0a030` (1) and the knowledge workspace's `kw-danger` pink sit outside the token set.
 - **Literals in general.** `#00d4ff`, `rgba(0,212,255,…)`, `#f59e0b`, `#00ff80` and `#ff0080` are still spelled as literals throughout `index.html` and `ui_parts/app.html`. The tokens exist so those can move to `var(--fr-*)` without a value changing.

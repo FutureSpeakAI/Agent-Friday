@@ -31,9 +31,9 @@ TRIGGER_STATE_FILE = FRIDAY_DIR / "notif_trigger_state.json"
 
 PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 PRIORITY_COLORS = {
-    "critical": brand.ERROR,
-    "high":     brand.WARN,
-    "medium":   brand.CYAN,
+    "critical": brand.WARN,
+    "high":     brand.CYAN,
+    "medium":   brand.VIOLET_SOFT,
     "low":      brand.NEUTRAL,
 }
 

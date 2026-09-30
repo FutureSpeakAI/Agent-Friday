@@ -637,7 +637,7 @@
                 });
             }
             _catColor(cat) {
-                return {search:0x8b5cf6,communication:0xec4899,monitoring:0x06b6d4,completed:0x22c55e}[cat] || 0x00d4ff;
+                return {search:0x8b5cf6,communication:0xec4899,monitoring:0x06b6d4,completed:0x00ff80}[cat] || 0x00d4ff;
             }
             addOrb({id, label, category, icon, model, color: explicitColor}) {
                 if (this.orbs.has(id)) return;
@@ -688,13 +688,13 @@
                 if (upd.progress !== undefined) o.progress = (upd.progress === null) ? null : Math.max(0,Math.min(1,upd.progress));
                 if (upd.status !== undefined) o.status = upd.status;
                 if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
-                if (upd.status === 'completed') { o.sphere.material.color.setHex(0x22c55e); o.glow.material.color.setHex(0x22c55e); }
+                if (upd.status === 'completed') { o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80); }
                 else if (upd.status === 'error') { o.sphere.material.color.setHex(0xff0080); o.glow.material.color.setHex(0xff0080); }
             }
             removeOrb(id) {
                 const o = this.orbs.get(id); if (!o || o.dying) return;
                 o.dying = true; o.deathTime = 0;
-                o.sphere.material.color.setHex(0x22c55e); o.glow.material.color.setHex(0x22c55e);
+                o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80);
             }
             getOrbs() {
                 const out = [];

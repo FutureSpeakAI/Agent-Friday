@@ -13,6 +13,10 @@ What it enforces:
 4. Orbitron never falls back to a monospace face in a UI source, and every
    Orbitron `font-family` names a fallback.
 5. `.status-dot` has one base definition per UI file.
+6. Decoration never carries a status hue: no `--c-*`, `--lane-*` or `--cat-*`
+   custom property points at a status token or hex, `ACCOUNT_PALETTE` holds no
+   status hue, and the off-brand values earlier surfaces spelled for
+   themselves do not come back.
 
 It does not migrate the literals scattered through `index.html`; those are the
 tracked debt in `docs/brand/BRAND.md`.
@@ -55,6 +59,18 @@ LEGACY_STATUS_HEXES = (
     "#ff0033", "#ff6b8a", "#ff5470", "#ff3366", "#f87171", "#ff3c5a",
     "#64748b", "#94a3b8", "#888888",
 )
+
+#: Status tokens a decoration property may not reference.
+STATUS_TOKENS = ("--fr-ok", "--fr-warn", "--fr-deny", "--fr-error")
+#: Off-brand values (lower case) no source may carry.
+OFF_BRAND = ("#7c3aed", "124,58,237", "#ff4466", "#ffae5b", "255,174,91", "#22c55e",
+             "#e0e0ff", "#0a0a0f")
+OFF_BRAND_SOURCES = UI_FILES + (
+    "ui_parts/app.html", "ui_parts/styles_and_scene.html", "static/js/friday_push_to_transcribe.js",
+    "src/agent_friday/core/__init__.py", "src/agent_friday/routes/creations.py",
+    "src/agent_friday/services/misc_engine.py",
+)
+_DECORATION_PROP = re.compile(r"(--(?:c|lane|cat)-[\w-]+)\s*:\s*([^;}]+)")
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -175,11 +191,37 @@ def _status_dot_problems(root: Path) -> list:
     return problems
 
 
+def _decoration_problems(root: Path, brand) -> list:
+    status = {getattr(brand, n).lower() for n in ("OK", "WARN", "DENY", "ERROR")}
+    problems = []
+    for hue in brand.ACCOUNT_PALETTE:
+        if hue.lower() in status:
+            problems.append(f"brand.py: ACCOUNT_PALETTE holds the status hue {hue}; "
+                            "decoration must not carry a status colour")
+    for rel in OFF_BRAND_SOURCES:
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        low = text.lower()
+        for value in OFF_BRAND:
+            if value in low:
+                problems.append(f"{rel}: off-brand value {value}; use a token from brand.py")
+        if rel in UI_FILES or rel.startswith("ui_parts/"):
+            for name, value in _DECORATION_PROP.findall(text):
+                v = value.lower()
+                if any(t in v for t in STATUS_TOKENS) or any(h in v for h in status):
+                    problems.append(f"{rel}: {name} points at a status colour ({value.strip()}); "
+                                    "decoration must not carry a status colour")
+    return problems
+
+
 def find_problems(root: Path = REPO_ROOT) -> list:
     root = Path(root)
     brand = load_brand(root)
     return (_token_problems(root, brand) + _python_problems(root, brand)
-            + _font_problems(root) + _status_dot_problems(root))
+            + _font_problems(root) + _status_dot_problems(root)
+            + _decoration_problems(root, brand))
 
 
 def main(argv=None) -> int:

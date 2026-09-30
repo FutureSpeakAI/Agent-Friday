@@ -50,7 +50,7 @@ def test_reserved_status_hues_are_the_shipped_values(brand):
 
 def test_no_category_colour_is_invented(brand):
     """Scoped colours already in the UI are the only non-status hues tokenised."""
-    shipped = {"#a78bfa", "#2dd4bf", "#f472b6", "#7a8699"}
+    shipped = {"#a78bfa", "#2dd4bf", "#f472b6", "#7a8699", "#60a5fa", "#d6c7a1"}
     hexes = {v.lower() for v in brand.TOKENS.values() if re.fullmatch(r"#[0-9a-fA-F]{6}", v)}
     known = {brand.CYAN, brand.VIOLET, brand.MAGENTA, brand.OK, brand.WARN, brand.DENY,
              brand.ERROR, brand.SURFACE}
@@ -142,15 +142,15 @@ def test_connector_status_colours_follow_the_meaning(brand):
     assert m["connecting"] != brand.WARN         # amber only means "needs you"
     assert m["degraded"] == brand.WARN
     assert m["disconnected"] == brand.NEUTRAL == m["unknown"]
-    assert m["needs_setup"] == brand.CYAN
+    assert m["needs_setup"] == brand.WARN
 
 
 def test_notification_priority_colours_follow_the_meaning(brand):
     from agent_friday import notifications_engine as n
     p = n.PRIORITY_COLORS
-    assert p["critical"] == brand.ERROR
-    assert p["high"] == brand.WARN
-    assert p["medium"] == brand.CYAN
+    assert p["critical"] == brand.WARN
+    assert p["high"] == brand.CYAN
+    assert p["medium"] == brand.VIOLET_SOFT
     assert p["low"] == brand.NEUTRAL
 
 
@@ -158,6 +158,7 @@ def test_push_to_talk_colours_follow_the_meaning(brand):
     from agent_friday.services import ptt_indicator as p
     c = p._COLOR
     assert c["error"] == brand.ERROR
+    assert c["recording"] == brand.CYAN
     assert c["done"] == brand.OK
     assert c["thinking"] == brand.VIOLET
     assert c["clipboard"] == brand.WARN
@@ -189,7 +190,7 @@ def test_scoped_sets_point_at_tokens_with_their_shipped_values(brand, rel):
     text = _read(rel)
     t = brand.TOKENS
     news = _decls(text, r"\.news-ws")
-    shipped = {"--c-tech": "#00d4ff", "--c-politics": "#f59e0b", "--c-local": "#00ff80",
+    shipped = {"--c-tech": "#00d4ff", "--c-politics": "#60a5fa", "--c-local": "#d6c7a1",
                "--c-business": "#a78bfa", "--c-science": "#2dd4bf", "--c-media": "#f472b6"}
     assert {k: _resolve(news[k], t) for k in shipped} == shipped
     assert all(news[k].startswith("var(--fr-") for k in shipped)
@@ -233,8 +234,8 @@ def test_login_page_is_inter_and_orbitron_falls_back_to_sans_serif():
     from agent_friday.core import LOGIN_HTML
     assert "Orbitron',monospace" not in LOGIN_HTML and "Orbitron\",monospace" not in LOGIN_HTML
     body = re.search(r"body\{[^}]*\}", LOGIN_HTML).group(0)
-    assert "'Inter'" in body
-    assert re.search(r"h1\{[^}]*Orbitron', *sans-serif", LOGIN_HTML)
+    assert "font-family:var(--fr-font-body)" in body
+    assert re.search(r"h1\{[^}]*var\(--fr-font-display\)", LOGIN_HTML)
 
 
 def test_no_orbitron_stack_falls_back_to_monospace_anywhere_in_the_ui_sources():

@@ -1333,7 +1333,7 @@ def chat():
             _vpid = f"vault-{uuid.uuid4().hex[:8]}"
             try:
                 process_register(_vpid, name="Vault Access", label=label,
-                                 category="monitoring", icon="🔒", color=0x22c55e)
+                                 category="monitoring", icon="🔒", color=0x00ff80)
                 threading.Timer(3.0, process_remove, args=(_vpid,)).start()
             except Exception:
                 pass

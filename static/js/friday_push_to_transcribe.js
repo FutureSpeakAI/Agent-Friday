@@ -135,7 +135,7 @@
       document.body.appendChild(card);
     }
     var colour = { recording: '#ef4444', arming: '#94a3b8', thinking: '#e0a030',
-                   error: '#ef4444', done: '#22c55e' }[state] || '#94a3b8';
+                   error: '#ef4444', done: '#00ff80' }[state] || '#94a3b8';
     cardText.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;' +
       'background:' + colour + ';margin-right:8px"></span>' +
       String(message || '').replace(/[<>&]/g, function (c) {

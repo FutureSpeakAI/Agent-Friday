@@ -204,12 +204,12 @@ def serve_creation_framed(filename):
     font-family:Inter,-apple-system,Segoe UI,Roboto,sans-serif;}}
   .fc-bar{{position:sticky;top:0;z-index:10;display:flex;align-items:center;
     justify-content:space-between;gap:12px;padding:10px 18px;
-    background:linear-gradient(90deg,rgba(0,212,255,0.10),rgba(124,58,237,0.10));
+    background:linear-gradient(90deg,rgba(0,212,255,0.10),rgba(123,97,255,0.10));
     border-bottom:1px solid rgba(0,212,255,0.25);
     backdrop-filter:blur(10px);box-shadow:0 2px 24px rgba(0,212,255,0.08);}}
   .fc-brand{{display:flex;align-items:center;gap:10px;font-family:Orbitron, sans-serif;font-weight:700;letter-spacing:0.08em;font-size:14px;}}
   .fc-logo{{width:22px;height:22px;border-radius:50%;
-    background:radial-gradient(circle at 35% 30%,#7cf6ff,#00d4ff 45%,#7c3aed);
+    background:radial-gradient(circle at 35% 30%,#7cf6ff,#00d4ff 45%,#7b61ff);
     box-shadow:0 0 14px rgba(0,212,255,0.7);}}
   .fc-sub{{color:#7fb6c9;font-size:11px;font-family:'JetBrains Mono',monospace;
     letter-spacing:0.04em;opacity:0.85;}}
@@ -220,7 +220,7 @@ def serve_creation_framed(filename):
     box-shadow:0 0 18px rgba(0,212,255,0.45);transition:transform .12s ease;}}
   .fc-return:hover{{transform:translateY(-1px);}}
   .fc-body{{height:calc(100vh - 45px);}}
-  .fc-frame{{width:100%;height:100%;border:none;background:#0a0a0f;}}
+  .fc-frame{{width:100%;height:100%;border:none;background:#0a0e1a;}}
   .fc-pad{{padding:28px;display:flex;flex-direction:column;align-items:center;
     gap:14px;text-align:center;}}
   .fc-pad img,.fc-pad video{{max-width:100%;border-radius:10px;

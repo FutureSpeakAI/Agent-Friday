@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 _COLOR = {
     "arming": brand.NEUTRAL,
-    "recording": brand.ERROR,
+    "recording": brand.CYAN,
     "thinking": brand.VIOLET,
     "done": brand.OK,
     "clipboard": brand.WARN,

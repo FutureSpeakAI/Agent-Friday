@@ -351,7 +351,7 @@ def _has_required_tokens(defn: dict, server_cfg: dict | None) -> bool:
 #   connecting       — handshake in progress     (violet, pulsing: working, needs nothing from you)
 #   error            — configured but failing    (red)
 #   disconnected     — configured + token, off   (grey)
-#   needs_setup      — missing token/OAuth client (blue — "Connect")
+#   needs_setup      — missing token/OAuth client (amber: it needs you)
 #   blocked_by_policy— disabled by extension security, not a runtime failure
 #                      (deny magenta - a rule refused it; distinct from "error" so the real cause,
 #                      carried in `detail`, is legible rather than reading as
@@ -365,7 +365,7 @@ _STATUS_COLORS = {
     "connecting": brand.VIOLET,
     "error": brand.ERROR,
     "disconnected": brand.NEUTRAL,
-    "needs_setup": brand.CYAN,
+    "needs_setup": brand.WARN,
     "blocked_by_policy": brand.DENY,
     "unknown": brand.NEUTRAL,
 }
