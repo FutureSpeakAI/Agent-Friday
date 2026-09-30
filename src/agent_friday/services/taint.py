@@ -469,6 +469,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     # Opening an item on the owner's own screen, and reading Friday's state.
     "navigate_to": {},
     "check_situation": {},
+    "set_workspace_layout": {},
     # Organizing (services/item_actions). Mail always goes on a card, which
     # shows where each detail came from.
     "organize_email": {"query": "detail", "thread_ids": "detail", "label": "detail",

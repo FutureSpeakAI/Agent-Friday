@@ -182,3 +182,109 @@ def test_the_desktop_keeps_its_scene_menu_and_one_bar(browser_page):
     assert bar.count() == 1
     assert bar.locator('[aria-label="Scene selection"]').count() == 1
     assert bar.locator('[data-testid="ws-tab-name"]').count() == 0
+
+
+# ── fullscreen with chat (§5) ────────────────────────────────────────────────
+
+@pytest.mark.parametrize("rel", ("index.html", "ui_parts/app.html"))
+def test_both_pages_carry_the_layout(rel):
+    body = _app_body(_read(rel))
+    bar = body[body.index("const shellTopBar"):body.index("const shellKillSwitch")]
+    assert "fs-chat-toggle" in bar, rel + ": the button is in the shared bar"
+    assert re.search(r"id: ?'fs-chat'", body), rel + ": the palette's action"
+    assert re.search(r"e\.shiftKey ?&& ?\(e\.key ?=== ?'F'", body), rel + ": the keystroke"
+    assert re.search(r"addEventListener\('friday:layout', ?on\)", body), rel + ": Friday's change"
+    assert re.search(r"saveAgentSettings\(\{ ?workspace_layouts: ?next ?\}\)", body), rel + ": remembered"
+
+
+class _Api:
+    """/api/settings and /api/desktop/ack as the page sees them, recorded."""
+
+    def __init__(self, page, settings=None):
+        self.page, self.settings, self.saved, self.acks = page, dict(settings or {}), [], []
+
+    def _settings(self, route):
+        if route.request.method == "POST":
+            body = (route.request.post_data_json or {}).get("settings") or {}
+            self.saved.append(body)
+            self.settings.update(body)
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"status": "ok", "settings": self.settings}))
+
+    def _ack(self, route):
+        self.acks.append(route.request.post_data_json or {})
+        route.fulfill(status=200, content_type="application/json", body='{"status":"ok"}')
+
+    def __enter__(self):
+        self.page.route("**/api/settings", self._settings)
+        self.page.route("**/api/desktop/ack", self._ack)
+        return self
+
+    def __exit__(self, *a):
+        self.page.unroute("**/api/settings", self._settings)
+        self.page.unroute("**/api/desktop/ack", self._ack)
+
+
+def _boxes(page):
+    return page.evaluate("""() => {
+      const r = s => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
+      const w = r('.fwin.maxed'), tray = r('.chat-panel.open');
+      return {maxed: !!w, trayOpen: !!tray, winRight: w && w.right, trayLeft: tray && tray.left,
+              dockHidden: !!document.querySelector('.dock.hidden'),
+              body: document.body.classList.contains('fr-fs-chat')};
+    }""")
+
+
+def test_the_keystroke_lays_the_front_workspace_out_and_back(browser_page):
+    page, base = browser_page
+    with _Api(page) as api:
+        page.goto(base + "/index.html", wait_until="domcontentloaded")
+        page.wait_for_selector('.dock-btn[data-ws="news"]', timeout=60000)
+        page.click('.dock-btn[data-ws="news"]')
+        page.wait_for_selector(".fwin", timeout=15000)
+        page.wait_for_timeout(600)
+        page.keyboard.press("Control+Shift+F")
+        page.wait_for_selector(".chat-panel.open", timeout=10000)
+        page.wait_for_timeout(700)
+        on = _boxes(page)
+        assert on["maxed"] and on["trayOpen"] and on["dockHidden"] and on["body"], on
+        assert on["winRight"] <= on["trayLeft"] + 1, ("the tray covers the workspace", on)
+        assert {"workspace_layouts": {"news": "fullscreen_chat"}} in api.saved, api.saved
+        assert page.locator('[data-testid="fs-chat-toggle"]').get_attribute("aria-pressed") == "true"
+        page.keyboard.press("Control+Shift+F")
+        page.wait_for_timeout(700)
+        off = _boxes(page)
+        assert not off["maxed"] and not off["trayOpen"] and not off["dockHidden"] and not off["body"], off
+        assert api.saved[-1] == {"workspace_layouts": {}}, api.saved
+
+
+def test_the_palette_offers_it(browser_page):
+    page, base = browser_page
+    page.goto(base + "/index.html", wait_until="domcontentloaded")
+    page.wait_for_selector(".dock-btn", timeout=60000)
+    page.keyboard.press("Control+k")
+    page.keyboard.type("full")
+    page.wait_for_timeout(400)
+    assert "Fullscreen with chat" in page.locator(".cmd-palette").inner_text()
+    page.keyboard.press("Escape")
+
+
+def test_a_tab_remembers_it_and_applies_fridays_change(browser_page):
+    page, base = browser_page
+    with _Api(page, {"workspace_layouts": {"news": "fullscreen_chat"}}) as api:
+        page.goto(base + "/w/news", wait_until="domcontentloaded")
+        page.wait_for_selector(".chat-panel.open", timeout=30000)
+        page.wait_for_timeout(600)
+        pad = page.evaluate("getComputedStyle(document.querySelector('.ws-tab')).paddingRight")
+        assert pad not in ("0px", ""), "the tray is docked beside the workspace"
+        # Friday turns it off (set_workspace_layout), and the tab says it applied it.
+        page.evaluate("""() => window.dispatchEvent(new CustomEvent('friday:layout',
+            {detail: {type: 'layout', id: 'layout-1-abc123', workspace: 'news', fullscreen_chat: false}}))""")
+        page.wait_for_timeout(600)
+        assert page.locator(".chat-panel.open").count() == 0
+        assert {"id": "layout-1-abc123", "result": {"applied": True, "workspace": "news", "page": "tab"}} in api.acks
+        # One for another workspace is not this tab's to apply.
+        page.evaluate("""() => window.dispatchEvent(new CustomEvent('friday:layout',
+            {detail: {type: 'layout', id: 'layout-2-abc123', workspace: 'calendar', fullscreen_chat: true}}))""")
+        page.wait_for_timeout(400)
+        assert not any(a.get("id") == "layout-2-abc123" for a in api.acks)

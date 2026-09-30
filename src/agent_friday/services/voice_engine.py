@@ -374,6 +374,17 @@ _VOICE_LIVE_TOOLS = [
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
+    ("set_workspace_layout",
+     "Show a workspace fullscreen with the chat tray docked beside it ('make this "
+     "fullscreen with chat'), or back to normal. It is their own screen, so no "
+     "approval is needed, and the choice is remembered for that workspace. Leave "
+     "workspace empty for the one in front. LAYOUT_OK means the screen did it: say "
+     "so in a few words. LAYOUT_SAVED means it is remembered and applies when that "
+     "workspace is open: say that, not that it changed. On LAYOUT_FAIL, ask which "
+     "workspace.",
+     {"workspace": ("string", "Workspace id or name; empty for the one in front."),
+      "fullscreen_chat": ("boolean", "true: fullscreen with the chat beside it; false: normal.")},
+     ["fullscreen_chat"]),
     # Organizing mail, files and wiki pages (services/item_actions). A result
     # meant for this cloud session names counts, never a subject, sender,
     # account, file or page Friday found (voice-tool-contract.md §5).
@@ -1260,6 +1271,9 @@ def _voice_tool_run(name, args, send_client, session=None):
         if name == "ask_local_for_context":
             return _governed("ask_local_for_context",
                              lambda a: _tool_ask_local_for_context(a, session), args)
+        if name == "set_workspace_layout":
+            from agent_friday.services import agent as _ag
+            return _governed(name, _ag._tool_set_workspace_layout, args)
         if name in ("navigate_to", "check_situation"):
             from agent_friday.services import agent as _ag
             _fn = (_ag._tool_navigate_to if name == "navigate_to"

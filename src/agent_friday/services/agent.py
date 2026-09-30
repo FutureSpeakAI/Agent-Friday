@@ -720,6 +720,11 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "pin": {"type": "boolean"}}}},
+    {"name": "set_workspace_layout", "description": "Show a workspace fullscreen with the chat tray docked beside it, or back to its normal layout. It is the owner's own screen, so no approval is needed, and the choice is remembered for that workspace. Leave workspace empty for the one in front. LAYOUT_OK means the screen applied it; LAYOUT_SAVED means it is remembered and applies when that workspace is next open.",
+     "input_schema": {"type": "object", "properties": {
+         "workspace": {"type": "string", "description": "Workspace id or name; empty for the one in front."},
+         "fullscreen_chat": {"type": "boolean", "description": "true: fullscreen with the chat beside it; false: the normal layout."}},
+      "required": ["fullscreen_chat"]}},
     {"name": "organize_email", "description": "Archive, label, move, star, mark read or unread, Trash, restore or report spam on the user's Gmail. Pick the mail with a Gmail search in query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or thread_ids from search_email. Nothing changes yet: it raises ONE approval card for the whole batch and returns a readback; say it to the user in one sentence and ask: yes, no, or change it (call again with replaces=the card_id). They approve on the card, or by saying yes (then call answer_card). Every change can be undone (undo_action).",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["archive", "inbox", "read", "unread", "star", "unstar", "label", "unlabel", "move", "trash", "restore", "spam", "not_spam"]},
@@ -2872,6 +2877,55 @@ def _tool_check_situation(inp):
     if (inp.get('detail') or 'brief') == 'full':
         return json.dumps(situation.compact(snap), default=str) + note
     return situation.brief(snap) + note
+
+
+#: How long set_workspace_layout waits for a page to say it applied the layout.
+LAYOUT_ACK_S = 5.0
+
+
+def _tool_set_workspace_layout(inp):
+    """Tool handler: a workspace fullscreen with the chat tray docked beside it,
+    or back to normal, remembered per workspace (settings.workspace_layouts).
+
+    The choice is saved first, then sent to the open pages; the page that shows
+    the workspace applies it and says so, and only that earns LAYOUT_OK.
+    Otherwise the choice is remembered and applies when the workspace is next
+    open (LAYOUT_SAVED)."""
+    import secrets
+    import time as _t
+    from agent_friday.core import _save_settings
+    from agent_friday.services import desktop_bus, workspace_registry
+    inp = inp or {}
+    on = bool(inp.get("fullscreen_chat"))
+    words = str(inp.get("workspace") or "").strip()
+    if words:
+        ws = workspace_registry.resolve(words)
+        if not ws:
+            return "LAYOUT_FAIL: no workspace is called %r. Workspaces: %s." % (
+                words, workspace_registry.tool_list())
+    else:
+        ws = desktop_bus.focused_workspace()
+        if not ws:
+            return "LAYOUT_FAIL: no workspace is open in front. Ask which one."
+    if ws == "settings":
+        return "LAYOUT_FAIL: Settings opens as a panel; it has no fullscreen layout."
+    layouts = dict((_load_settings() or {}).get("workspace_layouts") or {})
+    if on:
+        layouts[ws] = "fullscreen_chat"
+    else:
+        layouts.pop(ws, None)
+    _save_settings({"workspace_layouts": layouts})
+    label = workspace_registry.label(ws)
+    how = "fills the screen with the chat beside it" if on else "is back to its normal layout"
+    cid = "layout-%d-%s" % (int(_t.time()), secrets.token_hex(3))
+    waiter = desktop_bus.expect(cid)
+    sent = desktop_bus.broadcast({"type": "layout", "id": cid, "workspace": ws,
+                                  "fullscreen_chat": on}, kind="chat")
+    got = desktop_bus.wait(cid, waiter, LAYOUT_ACK_S if sent else 0)
+    if got.get("acked") and (got.get("ack") or {}).get("applied"):
+        return "LAYOUT_OK:%s — %s %s." % (ws, label, how)
+    return "LAYOUT_SAVED:%s — remembered: %s %s whenever it is open%s." % (
+        ws, label, how, "" if sent else "; no Friday page is showing it now")
 
 
 def _organize_result(out):
@@ -5909,6 +5963,7 @@ CLAUDE_TOOL_HANDLERS = {
     "navigate": _tool_navigate,
     "navigate_to": _tool_navigate_to,
     "check_situation": _tool_check_situation,
+    "set_workspace_layout": _tool_set_workspace_layout,
     "organize_email": _tool_organize_email,
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
@@ -6314,6 +6369,8 @@ TOOL_RINGS: dict[str, int] = {
     # phone-origin turn (ring 0 only) cannot drive the screen at home.
     "navigate_to":          1,
     "check_situation":      0,   # reads state the server already holds
+    # Lays out the owner's own screen and remembers it; ring 1 like navigate_to.
+    "set_workspace_layout": 1,
     # Organizing the owner's things (services/item_actions). Files and wiki
     # pages are local changes with an undo; mail only raises a card, like
     # draft_email, and a card is decided by the owner's own words.

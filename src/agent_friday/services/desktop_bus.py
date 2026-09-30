@@ -236,6 +236,23 @@ def state(now: float | None = None) -> dict:
     return out
 
 
+def focused_workspace(now: float | None = None) -> str | None:
+    """The workspace the owner is looking at: the one in front on the page that
+    has the focus (a workspace tab or the desktop), else the front window of the
+    page that reported last. None when no page shows a workspace in front."""
+    now = now or time.time()
+    with _LOCK:
+        live = [dict(r, state=dict(r.get("state") or {})) for r in _CLIENTS.values()
+                if r.get("state_at") and _fresh(r, now)]
+    live.sort(key=lambda r: (bool(r["state"].get("focused")), r.get("kind") == "desktop",
+                             r.get("state_at") or 0.0), reverse=True)
+    for r in live:
+        ws = (r["state"].get("focused_window") or {}).get("workspace")
+        if ws and ws != "chat":
+            return str(ws)
+    return None
+
+
 def reset() -> None:
     """Forget every page (tests)."""
     with _LOCK:

@@ -653,6 +653,13 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
+        /* Fullscreen with chat: the dock is away, so the tray runs to the bottom. */
+        body.fr-fs-chat .chat-panel { bottom: 0; }
+        /* A narrow bar keeps its controls and drops the clock and the resource
+           readings (System shows them); a GPU held by something else still shows. */
+        @media (max-width: 900px) {
+            .top-bar .top-bar-clock, .top-bar .arbiter-strip .arb-res { display: none; }
+        }
         /* A CLOSED panel must not paint outside itself. Parked off-screen its
            box is out of view, but its header row is wider than the panel and
            overflowed back across the edge: at 360px a stray "New tab / Window"
@@ -8825,7 +8832,7 @@ function FWin({
     const on = e => {
       if (e && e.detail && e.detail.workspace === id) {
         delete window.__fridayMaxFor;
-        setMaxed(true);
+        setMaxed(e.detail.max !== false);
       }
     };
     window.addEventListener('friday:fwin-max', on);
@@ -8837,11 +8844,17 @@ function FWin({
       const dock = document.querySelector('.dock:not(.hidden)');
       const dr = dock && dock.getBoundingClientRect();
       const floor = (dr && dr.height ? dr.top : vh()) - 6;
-      setMaxBox({ x: 6, y: 34, w: vw() - 12, h: Math.max(280, floor - 34) });
+      // A docked chat tray (fullscreen with chat) takes its width off the right.
+      const tray = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fr-chat-dock')) || 0;
+      setMaxBox({ x: 6, y: 34, w: vw() - 12 - tray, h: Math.max(280, floor - 34) });
     };
     fit();
     addEventListener('resize', fit);
-    return () => removeEventListener('resize', fit);
+    addEventListener('friday:chat-dock', fit);
+    return () => {
+      removeEventListener('resize', fit);
+      removeEventListener('friday:chat-dock', fit);
+    };
   }, [maxed]);
   const box = maxed && maxBox ? maxBox : { x: pos.x, y: pos.y, w: size.w, h: size.h };
   const [histOpen, setHistOpen] = useState(false);
@@ -11260,7 +11273,8 @@ function FridaySays({
 function CommandPalette({
   onClose,
   onOpenWs,
-  openWins
+  openWins,
+  commands
 }) {
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
@@ -11298,9 +11312,21 @@ function CommandPalette({
     label: r.label || r.name,
     meta: r.schedule || r.category || 'routine'
   }));
+  // Things to do rather than places to go (fullscreen with chat).
+  const cmdResults = (commands || []).filter(c => !query || c.label.toLowerCase().includes(query) || (c.aka || []).some(a => a.includes(query))).map(c => ({
+    kind: 'cmd',
+    id: c.id,
+    ico: c.ico,
+    label: c.label,
+    meta: c.meta,
+    run: c.run
+  }));
   const sections = [{
     title: 'Workspaces',
     items: wsResults
+  }, {
+    title: 'Actions',
+    items: cmdResults
   }, {
     title: 'Contacts',
     items: contactResults
@@ -11314,7 +11340,10 @@ function CommandPalette({
   }, [q]);
   const activate = item => {
     if (!item) return;
-    if (item.kind === 'ws') onOpenWs(item.id);else if (item.kind === 'routine') {
+    if (item.kind === 'cmd') {
+      onClose();
+      item.run();
+    } else if (item.kind === 'ws') onOpenWs(item.id);else if (item.kind === 'routine') {
       // apiFetch, and the answer is READ. This used to discard the response, so
       // a refusal and a success were both silence.
       apiFetch(`/api/routines/${item.id}/run`, {
@@ -53125,6 +53154,7 @@ function ArbiterStrip() {
   const excl = arb.gpu_exclusive_held_by;
   const SHORT = { 'GPU VRAM': 'VRAM', 'System RAM': 'RAM', 'CPU cores': 'CPU', 'Disk': 'DISK' };
   return /*#__PURE__*/React.createElement("span", {
+    className: "arbiter-strip",
     style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: 'JetBrains Mono', fontSize: 10, letterSpacing: '0.04em' }
   }, excl && /*#__PURE__*/React.createElement("span", {
     title: 'The GPU is held exclusively by ' + excl + '. Friday will refuse GPU work rather than add contention, and cannot preempt a process it did not start.',
@@ -53136,6 +53166,7 @@ function ArbiterStrip() {
     const claimed = r.claimed_units > 0;
     return /*#__PURE__*/React.createElement("span", {
       key: r.resource,
+      className: "arb-res",
       title: tip,
       style: {
         padding: '3px 7px', borderRadius: 9, whiteSpace: 'nowrap',
@@ -54287,6 +54318,12 @@ function App() {
       if (stopped) return;
       let ev = null;
       try { ev = JSON.parse(e.data); } catch (_) { return; }
+      if (ev && ev.type === 'layout') {
+        try {
+          window.dispatchEvent(new CustomEvent('friday:layout', { detail: ev }));
+        } catch (_) {}
+        return;
+      }
       if (!ev || ev.type !== 'approval_result') return;
       if (ev.conversation_id && ev.conversation_id !== convId) return;
       apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
@@ -58051,6 +58088,117 @@ function App() {
     mainMsgCount: chatMsgs.length
   };
   const moods = window.fridayVibe?.getMoods?.() ?? ['LISTENING', 'REASONING', 'EXECUTING', 'EXCITED', 'CALM'];
+  // Fullscreen with chat (docs/design/active/unified-shell.md §5): a workspace
+  // fills the screen with the chat tray docked beside it. Remembered per
+  // workspace (settings.workspace_layouts); the keystroke (Ctrl+Shift+F), the
+  // bar, the palette and set_workspace_layout (voice and chat) all come here.
+  const layoutTab = STANDALONE_WS && STANDALONE_WS !== 'settings' ? STANDALONE_WS : null;
+  const layouts = agentSettings.workspace_layouts || {};
+  const [fsOn, setFsOn] = useState(null); // the workspace shown that way now
+  const fsOpenedChat = useRef(false);
+  const frontWs = () => layoutTab || (focusWin && WS.some(w => w.id === focusWin) && openWinsRef.current.has(focusWin) ? focusWin : null);
+  const applyLayout = (ws, on) => {
+    if (!on && fsOn !== ws) return;
+    if (on) {
+      if (!chatOpen) {
+        setChatOpen(true);
+        fsOpenedChat.current = true;
+      }
+      if (!layoutTab) {
+        setDockHidden(true);
+        if (!openWinsRef.current.has(ws)) {
+          window.__fridayMaxFor = ws;
+          openWs(ws);
+        }
+        try {
+          window.dispatchEvent(new CustomEvent('friday:fwin-max', { detail: { workspace: ws, max: true } }));
+        } catch (_) {}
+      }
+      setFsOn(ws);
+    } else {
+      if (fsOpenedChat.current) {
+        setChatOpen(false);
+        fsOpenedChat.current = false;
+      }
+      if (!layoutTab) {
+        setDockHidden(false);
+        try {
+          window.dispatchEvent(new CustomEvent('friday:fwin-max', { detail: { workspace: ws, max: false } }));
+        } catch (_) {}
+      }
+      setFsOn(null);
+    }
+  };
+  const setLayout = (ws, on) => {
+    const next = Object.assign({}, agentSettings.workspace_layouts || {});
+    if (on) next[ws] = 'fullscreen_chat';else delete next[ws];
+    saveAgentSettings({ workspace_layouts: next });
+    applyLayout(ws, on);
+  };
+  const toggleLayout = () => {
+    const ws = frontWs();
+    if (!ws) {
+      fridayToast('Open a workspace first: fullscreen with chat is set per workspace.');
+      return;
+    }
+    setLayout(ws, fsOn !== ws);
+  };
+  const layoutRef = useRef({});
+  layoutRef.current = { applyLayout, toggleLayout };
+  const layoutCommands = [{
+    id: 'fs-chat',
+    ico: '⤢',
+    label: fsOn ? 'Leave fullscreen with chat' : 'Fullscreen with chat',
+    meta: 'Ctrl+Shift+F',
+    aka: ['full screen', 'fullscreen', 'chat tray', 'layout'],
+    run: () => layoutRef.current.toggleLayout()
+  }];
+  // A workspace that remembers the layout opens that way: in its tab, and on
+  // the desktop when its window comes to the front.
+  useEffect(() => {
+    const ws = frontWs();
+    if (ws && layouts[ws] === 'fullscreen_chat' && fsOn !== ws) applyLayout(ws, true);
+  }, [focusWin, layoutTab, agentSettings.workspace_layouts]);
+  // Its window closed: the dock, and the chat as it was, come back.
+  useEffect(() => {
+    if (fsOn && !layoutTab && !openWins.has(fsOn)) applyLayout(fsOn, false);
+  }, [openWins]);
+  useEffect(() => {
+    document.body.classList.toggle('fr-fs-chat', !!fsOn);
+  }, [fsOn]);
+  useEffect(() => {
+    const h = e => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault();
+        layoutRef.current.toggleLayout();
+      }
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, []);
+  // A change Friday made (set_workspace_layout): the choice is kept, and the
+  // page that shows the workspace applies it and says so.
+  useEffect(() => {
+    const on = e => {
+      const d = e && e.detail || {};
+      if (!d.workspace) return;
+      setAgentSettings(a => {
+        const n = Object.assign({}, a.workspace_layouts || {});
+        if (d.fullscreen_chat) n[d.workspace] = 'fullscreen_chat';else delete n[d.workspace];
+        return Object.assign({}, a, { workspace_layouts: n });
+      });
+      const mine = layoutTab ? layoutTab === d.workspace : openWinsRef.current.has(d.workspace) || document.visibilityState === 'visible';
+      if (!mine) return;
+      layoutRef.current.applyLayout(d.workspace, !!d.fullscreen_chat);
+      if (d.id) apiFetch('/api/desktop/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: d.id, result: { applied: true, workspace: d.workspace, page: layoutTab ? 'tab' : 'desktop' } })
+      }).catch(() => {});
+    };
+    window.addEventListener('friday:layout', on);
+    return () => window.removeEventListener('friday:layout', on);
+  }, []);
   // The shell every page shares, the desktop and a workspace tab alike: the top
   // bar, the chat tray, notifications, settings, Quick Draft, the command palette
   // and the modals they open (docs/design/active/unified-shell.md). Defined
@@ -58380,6 +58528,7 @@ function App() {
       gap: 10
     }
   }, /*#__PURE__*/React.createElement(StandaloneApprovals, null), /*#__PURE__*/React.createElement("span", {
+    className: "top-bar-clock",
     style: {
       fontFamily: 'JetBrains Mono',
       fontSize: 11,
@@ -58472,7 +58621,20 @@ function App() {
     style: {
       fontSize: 13
     }
-  }, "\uD83D\uDCAC")), !shellTab && /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCAC")), /*#__PURE__*/React.createElement("button", {
+    onClick: () => layoutRef.current.toggleLayout(),
+    style: {
+      background: 'none',
+      border: 'none',
+      color: fsOn ? '#00d4ff' : '#bbb',
+      cursor: 'pointer',
+      fontSize: 14
+    },
+    title: fsOn ? 'Back to the normal layout (Ctrl+Shift+F)' : 'Fullscreen with the chat beside it (Ctrl+Shift+F)',
+    "aria-label": fsOn ? 'Leave fullscreen with chat' : 'Fullscreen with chat',
+    "aria-pressed": !!fsOn,
+    "data-testid": "fs-chat-toggle"
+  }, '⤢'), !shellTab && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       if (cameraOn) {
         setCameraControlsOpen(o => !o);
@@ -59580,6 +59742,7 @@ function App() {
     }
   }, p))));
   const shellPalette = paletteOpen && /*#__PURE__*/React.createElement(CommandPalette, {
+    commands: layoutCommands,
     onClose: () => setPaletteOpen(false),
     onOpenWs: id => {
       toggle(id);
@@ -59691,11 +59854,14 @@ function App() {
       padding: '1px 0'
     }
   }, "\u2192 ", l))))));
-  // A docked chat tray takes its width from a workspace tab rather than
-  // covering it.
+  // A docked chat tray takes its width from a workspace tab, and from the
+  // desktop's window fullscreen with chat, rather than covering it.
   useEffect(() => {
-    document.documentElement.style.setProperty('--fr-chat-dock', shellTab && chatOpen ? chatW + 'px' : '0px');
-  }, [shellTab, chatOpen, chatW]);
+    document.documentElement.style.setProperty('--fr-chat-dock', (shellTab || fsOn) && chatOpen ? chatW + 'px' : '0px');
+    try {
+      window.dispatchEvent(new Event('friday:chat-dock'));
+    } catch (_) {}
+  }, [shellTab, fsOn, chatOpen, chatW, dockHidden]);
   // A workspace in its own tab: that workspace, full-tab, under the same shell
   // as the desktop (top bar, chat tray, notifications, settings, palette); no
   // dock, windows, HUD or scene. Settings never gets here (the server sends

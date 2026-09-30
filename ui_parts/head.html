@@ -513,6 +513,13 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
+        /* Fullscreen with chat: the dock is away, so the tray runs to the bottom. */
+        body.fr-fs-chat .chat-panel { bottom: 0; }
+        /* A narrow bar keeps its controls and drops the clock and the resource
+           readings (System shows them); a GPU held by something else still shows. */
+        @media (max-width: 900px) {
+            .top-bar .top-bar-clock, .top-bar .arbiter-strip .arb-res { display: none; }
+        }
         /* Chat panel resize handles — left edge (width) + top edge (height). */
         .chat-resize-w {
             position: absolute; top: 0; left: -3px; width: 8px; height: 100%;
