@@ -3681,6 +3681,7 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_artifacts.js"></script>
     <!-- Publish to web: the card body and the Settings section (defines window.FridayPublishCard). -->
     <script src="/static/friday_publish.js"></script>
+    <script src="/static/friday_bundles.js"></script>
 
     <script>
         // --- UI INTERACTION LOGIC ---
@@ -8585,7 +8586,18 @@ function fridayDockGroups(reg) {
       accent: w.accent || 'cyan',
       held: w.held || ''
     }))
-  })).filter(g => g.items.length);
+  })).filter(g => g.items.length).concat(fridayMineGroup());
+}
+// The bundle workspaces the owner built in the salon (services/workspace_bundles),
+// injected by the server as window.FRIDAY_INSTALLED_BUNDLES so the dock, the
+// windows and the standalone tab know them at load. They form the "Mine" group;
+// `bundle: true` is what sends their body to the sandboxed bundle frame.
+function fridayMineGroup() {
+  const items = (window.FRIDAY_INSTALLED_BUNDLES || []).map(w => ({
+    id: w.id, ico: w.glyph || '\u{1F9E9}', icon: w.icon || 'code', label: w.label, core: true,
+    aka: w.aliases || [], blurb: w.blurb || '', accent: w.accent || 'cyan', bundle: true
+  }));
+  return items.length ? [{ name: 'Mine', items }] : [];
 }
 // ═══ HELD FEATURES ═══
 // Features held back from this release. Each keeps its code, panels and data;
@@ -10338,7 +10350,8 @@ function WsTools({
   title,
   emoji,
   histOpen,
-  onHistory
+  onHistory,
+  onImproveNote
 }) {
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
     title: `Chat with ${fridayName()} about ${title} \u2014 tweak the layout, add features, undo changes`,
@@ -10361,6 +10374,25 @@ function WsTools({
       fontSize: 12
     }
   }, "\uD83C\uDFA4"), /*#__PURE__*/React.createElement("button", {
+    /* "Improve this workspace" (salon spec §4.9.1): a bundle workspace opens
+       its codebase chat in the salon; a native one is told plainly that
+       improving it means Friday's own source, which is not built
+       (static/friday_bundles.js). The answer goes to the window's own line
+       when it has one (FWin), else to a toast (the tab's bar). */
+    title: `Improve ${title} in the salon`,
+    "aria-label": `Improve ${title}`,
+    "data-ws-improve": id,
+    onClick: e => {
+      e.stopPropagation();
+      if (!window.fridayImproveWorkspace) return;
+      window.fridayImproveWorkspace(id, title).then(msg => {
+        if (onImproveNote) onImproveNote(msg || '');else if (msg && window.fridayToast) window.fridayToast(msg);
+      });
+    },
+    style: {
+      fontSize: 12
+    }
+  }, "\uD83D\uDEE0\uFE0F"), /*#__PURE__*/React.createElement("button", {
     /* The 40 snapshots workspace_studio keeps, reachable without asking
        Friday out loud. Beside \uD83D\uDCAC because that is where the changes it
        lists come from. */
@@ -10700,6 +10732,7 @@ function FWin({
   // The browser refused the tab (pop-ups blocked for this site): the window
   // stays, with a line under its title bar saying how to allow it.
   const [tabBlocked, setTabBlocked] = useState(false);
+  const [improveNote, setImproveNote] = useState('');
   // Two arrival paths, because the window may or may not already exist. A flag
   // read on mount covers "Settings opened this workspace just now"; an event
   // covers "the window was already open, so nothing is going to mount." Both
@@ -10766,7 +10799,8 @@ function FWin({
     title: title,
     emoji: emoji,
     histOpen: histOpen,
-    onHistory: () => setHistOpen(v => !v)
+    onHistory: () => setHistOpen(v => !v),
+    onImproveNote: setImproveNote
   }), /*#__PURE__*/React.createElement("button", Object.assign({}, menu.bind, {
     // Resting here opens the snap layouts (unified-shell.md §11.3).
     title: maxed ? `Restore ${title} to its own size` : `Maximize ${title}`,
@@ -10816,7 +10850,12 @@ function FWin({
     }
   }, "\u2197"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close ' + title, title: 'Close ' + title, 
     onClick: onClose
-  }, "\xD7"))), tabBlocked && /*#__PURE__*/React.createElement("div", {
+  }, "\xD7"))), improveNote && /*#__PURE__*/React.createElement("div", {
+    className: "fwin-tab-blocked",
+    role: "alert",
+    "data-ws-improve-note": id,
+    onClick: () => setImproveNote('')
+  }, improveNote), tabBlocked && /*#__PURE__*/React.createElement("div", {
     className: "fwin-tab-blocked",
     role: "alert"
   }, /*#__PURE__*/React.createElement("span", null, "The browser blocked the new tab. Allow pop-ups for ", /*#__PURE__*/React.createElement("b", null, window.location.host), " (the blocked pop-up icon at the right end of the address bar), then click \u2197 again. This window stays open until then."), /*#__PURE__*/React.createElement("button", {
@@ -51195,6 +51234,10 @@ function WorkspaceHistory({ wsId, label, onClose, top }) {
       /*#__PURE__*/React.createElement("span", { className: 'card-title' }, "History — " + (label || wsId)),
       /*#__PURE__*/React.createElement("span", { style: { flex: 1 } }),
       /*#__PURE__*/React.createElement("button", { style: _btn, onClick: onClose }, "Close")),
+    // A bundle workspace also has installed versions with one-click rollback
+    // (static/friday_bundles.js); the studio's own snapshots follow below.
+    window.FridayBundleHistory && WS_BY_ID[wsId] && WS_BY_ID[wsId].bundle
+      ? /*#__PURE__*/React.createElement(window.FridayBundleHistory, { wsId: wsId, label: label }) : null,
     /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginBottom: 10 } },
       currentKeys.length
         ? (fridayName() + " has customized this workspace: ") + currentKeys.join(", ") + ". Every step below is reversible — reverting is snapshotted too."
@@ -56019,6 +56062,13 @@ function ApprovalCardBody({
     busy: busy,
     onDecide: onDecide
   });
+  // A workspace swap card shows what would change, the checks it passed and a
+  // sandboxed preview of the improved page (static/friday_bundles.js).
+  if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return /*#__PURE__*/React.createElement(window.FridayWorkspaceSwapCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
   // A publish card shows what would go public, the scan, the licences and a
   // sandboxed preview (static/friday_publish.js).
   if (a && a.kind === 'publish_web' && window.FridayPublishCard) return /*#__PURE__*/React.createElement(window.FridayPublishCard, {
@@ -60316,6 +60366,11 @@ function App() {
     workflows: /*#__PURE__*/React.createElement(WorkflowsWS, null),
     settings: /*#__PURE__*/React.createElement(SettingsWS, null)
   };
+  // A bundle workspace (installed from the salon) has no React component of
+  // its own: its body is the sandboxed bundle frame (static/friday_bundles.js).
+  const fridayBundleBody = id => (window.FridayBundleFrame && WS_BY_ID[id] && WS_BY_ID[id].bundle)
+    ? /*#__PURE__*/React.createElement(window.FridayBundleFrame, { wsId: id })
+    : /*#__PURE__*/React.createElement("div", null, "Coming soon");
   const wsInfo = WS.reduce((a, w) => {
     a[w.id] = w;
     return a;
@@ -62516,7 +62571,7 @@ function App() {
     return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
       value: { map: wsCustMap, setCust }
     }, /*#__PURE__*/React.createElement(ApprovalPopups, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw, histOpen: tabHistOpen, onCloseHistory: () => setTabHistOpen(false) },
-      /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")))
+      /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || fridayBundleBody(sw.id)))
       : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
         'There is no workspace called “' + STANDALONE_WS + '”. ',
         /*#__PURE__*/React.createElement("a", { href: '/', style: { color: '#00d4ff' } }, ('Back to the ' + fridayName() + ' desktop'))), shellWsChat, shellChatPanel, shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, shellPalette, shellShortcuts, shellQuickPost, shellPodcast, shellTaskModal);
@@ -62802,7 +62857,7 @@ function App() {
       onFocus: () => bringFront(id)
     }, /*#__PURE__*/React.createElement(Safe, {
       name: w.label
-    }, wsMap[id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")));
+    }, wsMap[id] || fridayBundleBody(id)));
   }), convWins.map((cw, i) => /*#__PURE__*/React.createElement(ConversationWindow, {
     key: cw.cid,
     convId: cw.cid,

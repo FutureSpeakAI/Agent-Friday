@@ -126,7 +126,7 @@
       if (bus.es) {
         bus.es.onmessage = e => {
           let m = null; try { m = JSON.parse(e.data); } catch (_) { return; }
-          if (m && (m.type === 'artifact_put' || m.type === 'codebase_step')) bus.subs.forEach(f => { try { f(m); } catch (_) {} });
+          if (m && (m.type === 'artifact_put' || m.type === 'codebase_step' || m.type === 'workspace_bundle_changed' || m.type === 'open_conversation')) bus.subs.forEach(f => { try { f(m); } catch (_) {} });
         };
         // The stream reconnects by itself; while it is down, a slow poll keeps
         // the panel honest.
@@ -138,6 +138,17 @@
     }
     return () => { bus.subs.delete(fn); };
   }
+  window.fridayBusSubscribe = busSubscribe;
+  // A tool that opens a chat (improve_workspace by voice or in another chat)
+  // says so on the bus once; this page opens the window. Each event opens once.
+  const openedConvs = new Set();
+  busSubscribe(m => {
+    if (!m || m.type !== 'open_conversation' || !m.conversation_id) return;
+    const key = m.conversation_id + ':' + (m.ts || m.reason || '');
+    if (openedConvs.has(key)) return;
+    openedConvs.add(key);
+    if (window.fridayOpenChatWindow) window.fridayOpenChatWindow(m.conversation_id, m.title || 'Chat');
+  });
 
   // ── Look ──────────────────────────────────────────────────────────────
   const ACCENT = '#00d4ff';
@@ -516,6 +527,7 @@
   const TIER_LABEL = { B0: 'frame', B1: 'this PC', B2: 'box' };
   const WIDTHS = [['phone', 390], ['tablet', 768], ['desktop', 0]];
 
+  const stepKeyOf = cb => (cb && cb.updated_at) || '';
   function CodebasePanel({ convId, codebase, artifactsTab, onCollapse, tab, width, refreshKey }) {
     const [view, setView] = useState('preview');
     const [html, setHtml] = useState(null);
@@ -531,6 +543,26 @@
     const [reload, setReload] = useState(0);
     const [pointing, setPointing] = useState(false);
     const [pick, setPick] = useState(codebase.pick || null);
+    // A codebase that improves a bundle workspace (spec §4.9.1): Compare shows
+    // the live version beside the improved one; Swap in raises the ONE card.
+    const wsId = codebase.workspace_id || null;
+    const isBundle = codebase.template === 'bundle';
+    const [compare, setCompare] = useState(false);
+    const [liveDoc, setLiveDoc] = useState(null);
+    useEffect(() => {
+      if (!compare || !wsId) return;
+      api('/api/workspaces/' + encodeURIComponent(wsId) + '/bundle').then(r => r.text())
+        .then(t => setLiveDoc(window.fridayArtifactFrameDoc(t))).catch(() => setLiveDoc(window.fridayArtifactFrameDoc('<p>The live version could not be read.</p>')));
+    }, [compare, wsId, stepKeyOf(codebase)]);
+    const swapIn = () => {
+      if (busy) return;
+      setBusy(true);
+      postJ('/api/workspaces/swap', { codebase_id: codebase.id }).then(({ ok, j }) => {
+        if (!ok) { setNote({ text: (j && j.error) || 'Refused.' }); return; }
+        const p = (j.approval && j.approval.payload) || {};
+        setNote({ text: (p.is_new ? 'Card raised: install it as a workspace. ' : 'Card raised: swap it in. ') + (p.spoken || 'Decide on the card.'), ok: true });
+      }).catch(e => setNote({ text: 'Could not raise the card: ' + e })).then(() => setBusy(false));
+    };
     const frameRef = useRef(null);
     const base = '/api/codebases/' + encodeURIComponent(codebase.id);
     // The picker's one message, from this panel's own frame only.
@@ -594,6 +626,7 @@
           h('span', { style: { display: 'flex', gap: 2 } },
             view === 'preview' ? h('button', { className: 'fa-icon', title: 'Reload the preview', 'aria-label': 'Reload', onClick: () => { setReload(k => k + 1); loadPreview(); } }, '↻') : null,
             h('button', { className: 'fa-icon', title: 'Export as a plain project (zip, nothing of Friday\'s inside)', 'aria-label': 'Export', onClick: () => exportZip(base, codebase.slug) }, '⤓'),
+            wsId ? h('span', { className: 'fa-chip', 'data-improves': wsId, title: 'This codebase improves a workspace in your dock; nothing goes live until you approve a swap' }, 'improves ' + wsId) : null,
             h('button', { className: 'fa-icon', title: tab ? 'Back to the chat' : 'Collapse the panel', 'aria-label': 'Collapse', onClick: onCollapse }, tab ? '✕' : '⟩'))),
         h('div', { className: 'fa-title-row' },
           h('span', { className: 'fa-title', title: codebase.title }, codebase.title),
@@ -603,6 +636,8 @@
           tabBtn('preview', 'Preview'), tabBtn('files', 'Files'), tabBtn('changes', 'Changes' + (steps.length > 1 ? ' · ' + (steps.length - 1) : '')),
           artifactsTab ? tabBtn('artifacts', 'Artifacts') : null,
           view === 'preview' ? h('button', { className: 'fa-btn' + (pointing ? ' fa-primary' : ' fa-quiet'), 'data-point-mode': pointing ? 'on' : 'off', onClick: () => setPointing(v => !v), title: 'Point at something in the preview, then say what to change' }, '\u2316 Point') : null,
+          view === 'preview' && wsId ? h('button', { className: 'fa-btn' + (compare ? ' fa-primary' : ' fa-quiet'), 'data-compare': compare ? 'on' : 'off', onClick: () => setCompare(v => !v), title: 'The version in your dock beside the improved one' }, 'Compare') : null,
+          view === 'preview' && isBundle ? h('button', { className: 'fa-btn fa-amber', 'data-swap': wsId ? 'swap' : 'install', disabled: busy, onClick: swapIn, title: wsId ? 'Raise the one card that swaps this in as the live version' : 'Raise the one card that installs this as a new workspace in your dock' }, wsId ? 'Swap in' : 'Install as workspace') : null,
           view === 'preview' ? h('span', { style: { marginLeft: 'auto', display: 'flex', gap: 4 } }, WIDTHS.map(([name, w]) => h('button', { key: name, className: 'fa-btn fa-quiet', style: frameW === w ? { color: ACCENT, borderColor: ACCENT } : undefined, onClick: () => setFrameW(w), title: name }, name))) : null,
           view === 'changes' ? h('button', { className: 'fa-btn fa-amber', style: { marginLeft: 'auto' }, onClick: undo, disabled: busy || steps.filter(s => s.kind === 'step').length === 0 }, 'Undo last step') : null)),
       note ? h('div', { className: 'fa-note' + (note.ok ? ' fa-ok' : ''), role: 'status' }, note.text) : null,
@@ -617,7 +652,16 @@
             h('span', { style: { flexBasis: '100%' } }, 'Point mode: click anything in the preview to select it, then say what to change, here or by voice, or:'),
             ['bigger', 'smaller', 'bolder', 'center', 'hide'].map(a => h('button', { key: a, className: 'fa-btn fa-amber', disabled: true }, a)),
             h('button', { className: 'fa-btn fa-quiet', onClick: () => setPointing(false), title: 'Leave point mode' }, 'done'))) : null,
-      view === 'preview' ? h('div', { className: 'fa-body fa-flush', style: { display: 'flex', justifyContent: 'center', background: frameW ? 'rgba(0,0,0,0.35)' : undefined } },
+      view === 'preview' && compare && wsId ? h('div', { className: 'fa-body fa-flush', 'data-compare-view': '1', style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, background: 'rgba(0,0,0,0.35)' } },
+        h('div', { style: { display: 'flex', flexDirection: 'column', minWidth: 0 } },
+          h('div', { style: { fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', color: 'rgba(255,255,255,0.5)', padding: '3px 8px' } }, 'IN YOUR DOCK NOW'),
+          liveDoc == null ? h('div', { className: 'fa-empty' }, 'Loading the live version…')
+            : h('iframe', { className: 'fa-frame', sandbox: SANDBOX, srcDoc: liveDoc, referrerPolicy: 'no-referrer', title: 'The live workspace (sandboxed)' })),
+        h('div', { style: { display: 'flex', flexDirection: 'column', minWidth: 0, borderLeft: '1px solid rgba(0,212,255,0.2)' } },
+          h('div', { style: { fontFamily: MONO, fontSize: 9, letterSpacing: '.08em', color: ACCENT, padding: '3px 8px' } }, 'IMPROVED (THIS CHAT)'),
+          doc == null ? h('div', { className: 'fa-empty' }, 'Loading the preview…')
+            : h('iframe', { key: reload + ':cmp:' + codebase.id, className: 'fa-frame', sandbox: SANDBOX, srcDoc: doc, referrerPolicy: 'no-referrer', title: 'The improved workspace (sandboxed)' })))
+      : view === 'preview' ? h('div', { className: 'fa-body fa-flush', style: { display: 'flex', justifyContent: 'center', background: frameW ? 'rgba(0,0,0,0.35)' : undefined } },
         doc == null ? h('div', { className: 'fa-empty' }, 'Loading the preview…')
           : h('iframe', { key: reload + ':' + codebase.id + ':' + (pointing ? 'p' : 'v'), ref: frameRef, className: 'fa-frame', sandbox: SANDBOX, srcDoc: doc, referrerPolicy: 'no-referrer', title: 'Preview (sandboxed)', style: frameW ? { width: frameW, maxWidth: '100%', borderLeft: '1px solid rgba(0,212,255,0.15)', borderRight: '1px solid rgba(0,212,255,0.15)' } : undefined })) : null,
       view === 'files' ? h('div', { className: 'fa-body', style: { display: 'flex', gap: 10, padding: 0 } },

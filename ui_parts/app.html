@@ -400,7 +400,7 @@ if (typeof document !== 'undefined') {
 // always holds every workspace so a deep link resolves whichever subset the
 // dock renders.
 function fridayDockGroups(reg){const R=reg||{};
-  return(R.groups||[]).map(g=>({name:g.label,items:(R.workspaces||[]).filter(w=>w.group===g.id).map(w=>({id:w.id,ico:w.glyph,icon:w.icon||w.id,label:w.label,core:!!w.core,aka:w.aliases||[],blurb:w.blurb||'',accent:w.accent||'cyan',held:w.held||''}))})).filter(g=>g.items.length)}
+  return(R.groups||[]).map(g=>({name:g.label,items:(R.workspaces||[]).filter(w=>w.group===g.id).map(w=>({id:w.id,ico:w.glyph,icon:w.icon||w.id,label:w.label,core:!!w.core,aka:w.aliases||[],blurb:w.blurb||'',accent:w.accent||'cyan',held:w.held||''}))})).filter(g=>g.items.length).concat(fridayMineGroup())}
 // ═══ HELD FEATURES ═══
 // Features held back from this release. Each keeps its code, panels and data;
 // while its switch in settings.held_features is off, no surface offers it.
@@ -416,6 +416,8 @@ function fridayHeldOn(feature,settings){
 function fridayWsHeld(w){
   const ws=typeof w==='string'?WS_BY_ID[fridayWorkspaceId(w)]:w;
   return !!(ws&&ws.held&&!fridayHeldOn(ws.held))}
+// The bundle workspaces the owner built in the salon (services/workspace_bundles), injected by the server as window.FRIDAY_INSTALLED_BUNDLES; the "Mine" group. `bundle: true` sends their body to the sandboxed bundle frame.
+function fridayMineGroup(){const items=(window.FRIDAY_INSTALLED_BUNDLES||[]).map(w=>({id:w.id,ico:w.glyph||'\u{1F9E9}',icon:w.icon||'code',label:w.label,core:true,aka:w.aliases||[],blurb:w.blurb||'',accent:w.accent||'cyan',bundle:true}));return items.length?[{name:'Mine',items}]:[]}
 const DOCK_GROUPS=fridayDockGroups(window.FRIDAY_WORKSPACE_REGISTRY);
 const WS=DOCK_GROUPS.flatMap(g=>g.items);
 const WS_BY_ID=WS.reduce((m,w)=>(m[w.id]=w,m),{});
@@ -1974,10 +1976,12 @@ function WsIcon({ws,glyph}){
 // versions), the mark that Friday has customized it, and its body with that
 // customization applied. A desktop window draws the tools in its title bar; a
 // workspace tab draws them in the top bar, beside the workspace's name.
-function WsTools({id,title,emoji,histOpen,onHistory}){
+function WsTools({id,title,emoji,histOpen,onHistory,onImproveNote}){
   return(<>
     <button title={`Chat with ${fridayName()} about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji)}} style={{fontSize:12}}>💬</button>
     <button title={`Talk to ${fridayName()} about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button>
+    {/* "Improve this workspace" (salon spec §4.9.1): a bundle workspace opens its codebase chat in the salon; a native one is told plainly that improving it means Friday's own source, which is not built (static/friday_bundles.js). The answer goes to the window's own line when it has one (FWin), else to a toast (the tab's bar). */}
+    <button title={`Improve ${title} in the salon`} aria-label={`Improve ${title}`} data-ws-improve={id} onClick={e=>{e.stopPropagation();if(!window.fridayImproveWorkspace)return;window.fridayImproveWorkspace(id,title).then(msg=>{if(onImproveNote)onImproveNote(msg||'');else if(msg&&window.fridayToast)window.fridayToast(msg)})}} style={{fontSize:12}}>🛠️</button>
     {/* The 40 snapshots workspace_studio keeps, reachable without asking Friday out loud. */}
     <button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} aria-pressed={!!histOpen} onClick={e=>{e.stopPropagation();onHistory()}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>
   </>);
@@ -2081,7 +2085,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   const box=snap.box||{x:pos.x,y:pos.y,w:size.w,h:size.h};
   const[histOpen,setHistOpen]=useState(false);
   // The browser refused the tab (pop-ups blocked): the window stays and says why.
-  const[tabBlocked,setTabBlocked]=useState(false);
+  const[tabBlocked,setTabBlocked]=useState(false);const [improveNote,setImproveNote]=useState('');
   useEffect(()=>{
     if(window.__fridayOpenHistoryFor===id){delete window.__fridayOpenHistoryFor;setHistOpen(true)}
     const onOpen=e=>{if(e&&e.detail&&e.detail.workspace===id){delete window.__fridayOpenHistoryFor;setHistOpen(true)}};
@@ -2095,8 +2099,8 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
       if(snap.slot){const rel=box.w?(e.clientX-box.x)/box.w:0.5;dOff.current={x:Math.round(rel*size.w),y:e.clientY-box.y,free:true,sx:e.clientX,sy:e.clientY}}
       else dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};
       setDragging(true)}}>
-      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)}/>{/* Resting on maximise opens the snap layouts (unified-shell.md §11.3). */}<button {...menu.bind} title={maxed?`Restore ${title} to its own size`:`Maximize ${title}`} aria-label={maxed?`Restore ${title}`:`Maximize ${title}`} aria-pressed={maxed} aria-haspopup="menu" data-fwin-max={id} onClick={e=>{e.stopPropagation();toggleMax()}} style={{fontSize:12}}>{maxed?'⤡':'⤢'}</button>{menu.open&&<SnapMenu {...menu.menu} anchor={menu.anchor.current} kind="workspace" current={snap.slot} onPick={s=>snap.setSlot(s,'owner')} onChat={f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}/>}{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
-    </div>{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
+      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)} onImproveNote={setImproveNote}/>{/* Resting on maximise opens the snap layouts (unified-shell.md §11.3). */}<button {...menu.bind} title={maxed?`Restore ${title} to its own size`:`Maximize ${title}`} aria-label={maxed?`Restore ${title}`:`Maximize ${title}`} aria-pressed={maxed} aria-haspopup="menu" data-fwin-max={id} onClick={e=>{e.stopPropagation();toggleMax()}} style={{fontSize:12}}>{maxed?'⤡':'⤢'}</button>{menu.open&&<SnapMenu {...menu.menu} anchor={menu.anchor.current} kind="workspace" current={snap.slot} onPick={s=>snap.setSlot(s,'owner')} onChat={f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}/>}{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
+    </div>{improveNote&&<div className="fwin-tab-blocked" role="alert" data-ws-improve-note={id} onClick={()=>setImproveNote('')}>{improveNote}</div>}{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
     {histOpen&&<WorkspaceHistory wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
     <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();e.preventDefault();startResize(e,'se')}}/>{fridayEdgeHandles(startResize)}
     <SnapPreview box={snap.previewBox} slot={snap.preview}/>
@@ -16919,6 +16923,7 @@ function WorkspaceHistory({wsId,label,onClose,top}){
         <span style={{flex:1}}/>
         <button style={_btn} onClick={onClose}>Close</button>
       </div>
+      {window.FridayBundleHistory&&WS_BY_ID[wsId]&&WS_BY_ID[wsId].bundle?<window.FridayBundleHistory wsId={wsId} label={label}/>:null}
       <div style={{..._dim,marginBottom:10}}>{currentKeys.length
         ?(fridayName() + ' has customized this workspace: ')+currentKeys.join(', ')+'. Every step below is reversible — reverting is snapshotted too.'
         :'This workspace is at its baseline. Nothing has been customized.'}</div>
@@ -20070,6 +20075,7 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   if (a && a.kind === 'local_context_share') return <LocalContextShareCard a={a} busy={busy} onDecide={onDecide}/>;
   // A publish card shows what would go public, the scan, the licences and a
   // sandboxed preview (static/friday_publish.js).
+  if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return <window.FridayWorkspaceSwapCard a={a} busy={busy} onDecide={onDecide}/>;
   if (a && a.kind === 'publish_web' && window.FridayPublishCard) return <window.FridayPublishCard a={a} busy={busy} onDecide={onDecide}/>;
   return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
@@ -22462,7 +22468,9 @@ function App(){
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
   const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
-  const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
+  // A bundle workspace (installed from the salon) has no React component of its own: its body is the sandboxed bundle frame (static/friday_bundles.js).
+const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id].bundle)?<window.FridayBundleFrame wsId={id}/>:<div>Coming soon</div>;
+const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
   const bellBadgeCount=runningTaskCount>0?runningTaskCount:unread;
@@ -23467,7 +23475,7 @@ function App(){
     return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
       <ApprovalPopups/>
       {shellMeeting}{shellTopBar}{shellKillSwitch}
-      {sw?<StandaloneShell ws={sw} histOpen={tabHistOpen} onCloseHistory={()=>setTabHistOpen(false)}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
+      {sw?<StandaloneShell ws={sw} histOpen={tabHistOpen} onCloseHistory={()=>setTabHistOpen(false)}><Safe name={sw.label}>{wsMap[sw.id]||fridayBundleBody(sw.id)}</Safe></StandaloneShell>
         :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the {fridayName()} desktop</a></div>}
       {shellWsChat}{shellChatPanel}{shellTrace}{shellActivity}{shellNotifs}{shellSettings}{shellQuickDraft}{shellPalette}{shellShortcuts}{shellQuickPost}{shellPodcast}{shellTaskModal}
     </WsCustomCtx.Provider>);
@@ -23552,7 +23560,7 @@ function App(){
     </div>}
 
     {/* Floating Windows */}
-    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} closing={closingWins.has(id)} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
+    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} closing={closingWins.has(id)} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||fridayBundleBody(id)}</Safe></FWin>)})}
 
     {/* Workspace Studio — contextual per-workspace chat (💬 button on each window) */}
     {shellWsChat}
