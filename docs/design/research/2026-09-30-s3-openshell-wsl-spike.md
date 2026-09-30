@@ -115,6 +115,17 @@ package (grep).
   interface, so that side is covered by the Windows per-process connection
   log, not a packet capture. It shows no NVIDIA telemetry address either. A
   Windows packet capture (`pktmon`) needs admin: the owner's hands.
+- **Docker Desktop's crash reporter cannot be switched off below the Business
+  tier, and it phones home.** The only switches a personal licence has are
+  `AnalyticsEnabled` (usage statistics) and the update checks. Crash and
+  session reporting goes to Bugsnag: `sessions.bugsnag.com` was contacted at
+  the 07:30 start by the backend, the build helper and the Docker CLI inside
+  Ubuntu, with analytics already off; `notify.bugsnag.com` is compiled into
+  the backend; the reports file under Docker's roaming folder gained an entry
+  the moment Docker was force-quit. The keys that would turn this off live in
+  `admin-settings.json`, which Docker honours only under a Business
+  subscription. **This counts against Docker Desktop as a required dependency
+  for ordinary users under the no-telemetry rule (§12 A3).**
 - **Docker Desktop calls home regardless.** With `AnalyticsEnabled=false`
   (the log confirms "system telemetry disabled"), `DisableUpdate=true`,
   `AutoDownloadUpdates=false`, `ShowSurveyNotifications=false`, the backend
@@ -153,7 +164,28 @@ system") and shows an error dialog. Deleting the file fixes it;
 | Windows support stable, or shown stable here | **not out of the box**: the two fixes are exactly the experimental part; with them the run was stable until WSL was shut down from outside |
 | network policy driven live from the ledger | **CLI yes** (98 ms, no restart); **SDK unverified** |
 
-B2-OS stays behind the gate; the recipe to pass it is now written down. The
+B2-OS stays behind the gate; the recipe to pass it is now written down.
+
+## What this means for the box tier
+
+Docker Desktop is the piece an ordinary Windows user would be asked to
+install, and it is the piece that phones home with no switch. The
+alternatives, weighed:
+
+| Backend for B2 on Windows | Phones home? | Needs admin / reboot? | Runs OpenShell? | Verdict |
+|---|---|---|---|---|
+| Docker Desktop | yes: Docker hosts and Bugsnag at every start, no switch below Business | install needs admin once; WSL 2 feature | yes (this spike) | **not a required dependency**; supported only when the user already has it and accepts it |
+| Podman inside the WSL distro (`apt install podman`, no Podman Desktop) | no known telemetry in the engine; verify by capture | no admin beyond WSL itself | yes: OpenShell has a Podman driver | **first candidate** for Friday's own WSL 2 backend and for B2-OS |
+| containerd + nerdctl inside the distro | none | none beyond WSL | no (OpenShell drives Docker, Podman, Kubernetes, VM) | fine for Friday's own backend, not for B2-OS |
+| WHP microVM (microsandbox) | none | WHP feature, admin to check | no | Phase 5 territory; unmeasured |
+| No container at all: B1 host processes | none | none | no | the floor every user gets |
+
+So: Friday's own B2 backend targets Podman inside the distro, proven by the
+same capture method, with Docker Desktop as an accepted-if-present option;
+B2-OS follows Podman too, which removes the callback and certificate fixes
+above, because the supervisor then shares the distro's network. The WSL
+memory cap stays the user's setting, with a documented recommendation; the
+spike's 26 GB / 16 GB swap on a 32 GB machine is what let the disk fill. The
 one open check is the HTTP-level allow/refuse/revoke with a curl-bearing
 image, plus an admin packet capture on the Windows side if the owner wants
 the sandbox path proven the same way.

@@ -465,7 +465,13 @@ repository and its verdict is in §4.6.1 and
    Docker's hosts and Bugsnag at every start with analytics off, so any B2
    backend that must not phone home uses Podman or plain containerd inside
    the distro, not Docker Desktop. Details in
-   `docs/design/research/2026-09-30-s3-openshell-wsl-spike.md`.
+   `docs/design/research/2026-09-30-s3-openshell-wsl-spike.md`. **Ruling from
+   the spike (2026-09-30):** Docker Desktop's crash reporter cannot be
+   switched off below the Business tier and contacted Bugsnag at start, so
+   Docker Desktop is not a required dependency for ordinary users under A3;
+   Friday's own B2 backend and B2-OS target Podman inside the WSL distro,
+   proven by capture, with Docker Desktop accepted only when the user already
+   has it.
 
 ---
 
@@ -764,7 +770,7 @@ picked.
 |---|---|---|---|---|---|
 | **B0: frame** | the app runs in the sandboxed iframe | the browser | no | yes, by CSP | nothing |
 | **B1: host** | build tools and dev servers as Low-integrity processes in a Job Object, with a scrubbed environment and a Low-labelled folder | Windows (writes only) | **yes** | **no** (proxy variables only) | nothing |
-| **B2: VM** | a container in WSL 2 (Docker or Podman), or Windows Sandbox, or a WHP microVM (microsandbox, Apache-2.0) | the hypervisor | no, only the codebase folder is mapped | yes, the only route out is Friday's proxy | one of: WSL 2, Windows Sandbox, WHP. **Friday never turns a Windows feature on** |
+| **B2: VM** | a container in WSL 2 (Podman inside the distro first; Docker Desktop only if the user already has it, since it phones home with no switch below Business, S3), or Windows Sandbox, or a WHP microVM (microsandbox, Apache-2.0) | the hypervisor | no, only the codebase folder is mapped | yes, the only route out is Friday's proxy | one of: WSL 2, Windows Sandbox, WHP. **Friday never turns a Windows feature on** |
 | **B2-OS: OpenShell** | OpenShell on WSL 2 + Docker, fed the salon policy | OpenShell plus the hypervisor | no | yes | past the §2.2 gate |
 
 **How Friday picks a tier** (an engineering call):
