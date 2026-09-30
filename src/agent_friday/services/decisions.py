@@ -47,6 +47,8 @@ None of that is built here, deliberately, because the measurement comes first.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -159,6 +161,57 @@ def log_path():
     return FRIDAY_DIR / LOG_NAME
 
 
+PROBE_LOG_NAME = "decisions-probes.jsonl"
+
+
+def probe_log_path():
+    from agent_friday.core import FRIDAY_DIR
+    return FRIDAY_DIR / PROBE_LOG_NAME
+
+
+# ---------------------------------------------------------------------------
+#  WHY A QUESTION WAS ASKED
+# ---------------------------------------------------------------------------
+#
+# Not every decision is an action. The Grants screen asks the gate about every
+# connector tool, with empty arguments, to list what a grant could cover; no
+# action is attempted. The week-one review found all 125 disagreements came
+# from those checks. A caller that is only probing says so, and its rows (and
+# their shadows) go to decisions-probes.jsonl, so decisions.jsonl stays real
+# traffic: the evidence a promotion decision is made on.
+#
+# A caller that knows which tool a question is about says so too. The log
+# blanks long identifiers for privacy, which also blanks long tool names; a
+# tool name is not a secret, and the owner's labels are per tool.
+
+_PURPOSE: contextvars.ContextVar = contextvars.ContextVar("decision_purpose", default=None)
+_TOOL: contextvars.ContextVar = contextvars.ContextVar("decision_tool", default=None)
+
+
+@contextlib.contextmanager
+def purpose(name: str):
+    """Mark decisions made inside this block, e.g. "probe:grants_screen"."""
+    token = _PURPOSE.set(str(name or "") or None)
+    try:
+        yield
+    finally:
+        _PURPOSE.reset(token)
+
+
+@contextlib.contextmanager
+def about_tool(name: str):
+    """Name the tool the decisions inside this block are about."""
+    token = _TOOL.set(str(name or "") or None)
+    try:
+        yield
+    finally:
+        _TOOL.reset(token)
+
+
+def _is_probe(row: dict) -> bool:
+    return str(((row or {}).get("context") or {}).get("purpose") or "").startswith("probe")
+
+
 def _record(row: dict) -> None:
     """Append one decision. Never raises, never blocks a verdict.
 
@@ -176,7 +229,7 @@ def _record(row: dict) -> None:
     except Exception:
         pass
     try:
-        p = log_path()
+        p = probe_log_path() if _is_probe(row) else log_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
@@ -563,6 +616,12 @@ def decide(question: str, state: str, *, backend: Optional[str] = None,
     name = backend or active_backend()
     started = time.time()
     fell_back = None
+    if _PURPOSE.get() or _TOOL.get():
+        context = dict(context or {})
+        if _PURPOSE.get():
+            context["purpose"] = _PURPOSE.get()
+        if _TOOL.get():
+            context["tool"] = _TOOL.get()
 
     with _LOCK:
         fn = _BACKENDS.get(name)

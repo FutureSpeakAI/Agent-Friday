@@ -305,6 +305,38 @@ def laya_pilot_status():
         return api_error(e, "Couldn't read the Laya chat pilot")
 
 
+@core_bp.route('/api/decisions/label_queue')
+def decisions_label_queue():
+    """What to ask the owner next: "does this reach outside my machine?"."""
+    try:
+        from agent_friday.services import laya_labels
+        return jsonify({"status": "ok", "items": laya_labels.queue(),
+                        "question": "Does this reach outside your machine?"})
+    except Exception as e:
+        return api_error(e, "Couldn't read the labelling queue")
+
+
+@core_bp.route('/api/decisions/labels', methods=['GET', 'POST'])
+def decisions_labels():
+    """The owner's answers. POST {subject, reaches_outside[, note]}."""
+    from agent_friday.services import laya_labels
+    if request.method == 'GET':
+        return jsonify({"status": "ok", "labels": laya_labels.labels()})
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data.get("reaches_outside"), bool):
+        return jsonify({"status": "error",
+                        "message": "reaches_outside must be true or false"}), 400
+    try:
+        row = laya_labels.label(subject=data.get("subject"),
+                                reaches_outside=data["reaches_outside"],
+                                by="owner", note=str(data.get("note") or ""))
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    except Exception as e:
+        return api_error(e, "Couldn't save the label")
+    return jsonify({"status": "ok", "label": row})
+
+
 #: How recent a missed Laya answer must be to mark the gate degraded. Long
 #: enough to survive a Settings visit after the action, short enough that one
 #: busy burst at boot does not colour the panel all day.
@@ -417,6 +449,13 @@ def decisions_gate_status():
                 % (slow, "" if slow == 1 else "s"))
     else:
         out["explain"] = "The keyword scan alone is deciding."
+    # Each scanner scored against the owner's own labels: the evidence a
+    # promotion from shadow to on is decided by.
+    try:
+        from agent_friday.services import laya_labels
+        out["evidence"] = laya_labels.evidence()
+    except Exception as e:
+        out["evidence"] = {"error": error_text(e, "Could not read the labels")}
     return jsonify(public_result(out, "Couldn't read the decision gate"))
 
 

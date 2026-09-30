@@ -499,8 +499,10 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
             return OUTWARD, "the Laya classifier is configured but unavailable"
         try:
             from agent_friday.services import approvals as _ap
+            from agent_friday.services import decisions as _dec
             desc = f"{tool_name} {json.dumps(a, default=str)[:300]}"
-            verdict = _ap.classify(desc)
+            with _dec.about_tool(tool_name):
+                verdict = _ap.classify(desc)
             if verdict.get("gated"):
                 return OUTWARD, "the action classifier judged it outward"
             # Loaded but busy or too slow is the union unable to answer too:

@@ -358,6 +358,7 @@ def list_outward_tools():
     exactly what the gate would otherwise hold."""
     from agent_friday.governance import action_gate
     from agent_friday.services import agent as _agent
+    from agent_friday.services import decisions as _dec
     from agent_friday.services import desktop_grants as _dg
     out = []
     for name in sorted(_agent.CLAUDE_TOOL_HANDLERS):
@@ -368,7 +369,10 @@ def list_outward_tools():
         probe = {"publish_at": "x"} if name == "content_create_post" else \
                 {"command": "Remove-Item x"} if name == "run_command" else {}
         try:
-            klass, why = action_gate.classify(name, probe)
+            # A listing, not an action: logged as a probe, apart from the real
+            # traffic a promotion of the gate is judged on.
+            with _dec.purpose("probe:grants_screen"):
+                klass, why = action_gate.classify(name, probe)
         except Exception:
             klass, why = action_gate.OUTWARD, "unclassified"
         if klass == action_gate.OUTWARD and name not in action_gate.SELF_GATED:

@@ -14689,6 +14689,62 @@ function LayaPilotPanel({s, save}) {
 }
 // End Laya chat pilot panel
 
+function LayaLabelQueue({st, reload}) {
+  // The owner's answer key for the approval scanner: one yes/no question per
+  // action or tool, scored against both scanners in /api/decisions/gate_status.
+  const E = React.createElement;
+  const [items, setItems] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const load = useCallback(() => {
+    apiFetch('/api/decisions/label_queue')
+      .then(r => r.json())
+      .then(d => { if (d.status !== 'ok') throw new Error(d.message || 'Could not load the questions.'); setItems(d.items || []); })
+      .catch(e => setError(e.message || 'Could not load the questions.'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const answer = (subject, yes) => {
+    setBusy(subject); setError('');
+    apiFetch('/api/decisions/labels', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({subject: subject, reaches_outside: yes})})
+      .then(r => r.json())
+      .then(d => { if (d.status !== 'ok') throw new Error(d.message || 'Could not save that answer.'); load(); if (reload) reload(); })
+      .catch(e => setError(e.message || 'Could not save that answer.'))
+      .finally(() => setBusy(''));
+  };
+  const ev = (st && st.evidence) || {};
+  const score = (group, who) => {
+    const x = (group || {})[who] || {};
+    const n = (x.right || 0) + (x.wrong || 0);
+    return n ? (x.right + ' of ' + n) : 'no labelled cases yet';
+  };
+  const side = v => v === true ? 'outside' : v === false ? 'stays on this PC' : 'no answer';
+  const name = it => String(it.subject || '').startsWith('tool:') ? String(it.subject).slice(5) : (it.preview || it.subject);
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  return E('div', {style:{marginTop:12}},
+    E('div', {style:{fontSize:11.5, color:'rgba(255,255,255,0.7)', marginBottom:4}}, 'Teach the scanner'),
+    E('div', {style:dim},
+      'Your answers are the answer key. Real actions: keyword scan agreed with you ' + score(ev, 'keyword') +
+      ', Laya ' + score(ev, 'laya') + '. Grants-screen checks: keyword ' + score(ev.probes, 'keyword') +
+      ', Laya ' + score(ev.probes, 'laya') + '.'),
+    error && E('div', {role:'status', style:{fontSize:11, color:'#f59e0b', marginTop:6}}, error),
+    items && items.length === 0 && E('div', {style:{...dim, marginTop:6}}, 'Nothing waiting for an answer.'),
+    items && items.length > 0 && E('div', {style:{marginTop:6}},
+      items.slice(0, 5).map(it => E('div', {key: it.subject, style:{padding:'6px 8px', marginBottom:6, borderRadius:6,
+          background:'rgba(255,255,255,0.03)', border:'1px solid ' + (it.disagree ? 'rgba(255,179,71,0.25)' : 'rgba(255,255,255,0.06)')}},
+        E('div', {style:{fontSize:11, fontFamily:'JetBrains Mono', color:'rgba(255,255,255,0.7)', wordBreak:'break-all'}}, name(it)),
+        E('div', {style:dim}, 'Keyword scan: ' + side(it.keyword_says_outside) + ' · Laya: ' + side(it.laya_says_outside) +
+          (it.probe ? ' · a Grants-screen check, not an action' : '')),
+        E('div', {style:{display:'flex', gap:6, alignItems:'center', marginTop:4, flexWrap:'wrap'}},
+          E('span', {style:{fontSize:11, color:'rgba(255,255,255,0.55)'}}, 'Does this reach outside your machine?'),
+          E('button', {className:'settings-btn', style:{fontSize:11}, disabled: busy === it.subject,
+            onClick: () => answer(it.subject, true)}, 'Yes'),
+          E('button', {className:'settings-btn', style:{fontSize:11}, disabled: busy === it.subject,
+            onClick: () => answer(it.subject, false)}, 'No')))))
+  );
+}
+// End Laya label queue
+
 function ApprovalScannerPanel({s,save}){
   const [st,setSt]=useState(null);
   const load=()=>apiFetch('/api/decisions/gate_status').then(r=>r.json()).then(setSt).catch(()=>setSt(null));
@@ -14734,6 +14790,7 @@ function ApprovalScannerPanel({s,save}){
       {st&&st.explain&&<div style={{color:'rgba(255,255,255,0.42)',marginTop:4}}>{st.explain}</div>}
       {laya.error&&!laya.ready&&<div style={{color:'rgba(255,255,255,0.3)',marginTop:4}}>{String(laya.error).slice(0,160)}</div>}
     </div>
+    <LayaLabelQueue st={st} reload={load}/>
   </div>;
 }
 // ── TRACKING SETTINGS ───────────────────────────────────────────────────
