@@ -297,7 +297,7 @@ TOOLS = [
     {"name": "podcast_list",
      "description": "List podcast episodes, newest first: title, status, length, chapters, privacy. Filter by routine (front_page, briefing, weekly, editorial). Read them back as sentences, not a table.",
      "input_schema": {"type": "object", "properties": {
-         "routine": {"type": "string", "enum": ["", "front_page", "briefing", "weekly", "editorial"]},
+         "routine": {"type": "string", "enum": ["front_page", "briefing", "weekly", "editorial"]},
          "limit": {"type": "integer"}}}},
     {"name": "podcast_play",
      "description": (
@@ -307,7 +307,7 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(PLAY_OPS)},
          "episode_id": {"type": "string"},
-         "routine": {"type": "string", "enum": ["", "front_page", "briefing", "weekly", "editorial"]},
+         "routine": {"type": "string", "enum": ["front_page", "briefing", "weekly", "editorial"]},
          "seconds": {"type": "number"}}, "required": ["action"]}},
     {"name": "podcast_source",
      "description": (

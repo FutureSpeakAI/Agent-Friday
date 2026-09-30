@@ -737,7 +737,7 @@ def _build_voice_live_tools(types, behavior=None):
     # tool the model then calls with arguments the handler does not understand.
     for name, desc, schema in _voice_shared_tool_specs():
         try:
-            rendered = _json_schema_to_genai(types, schema, _type_map)
+            rendered = _json_schema_to_genai(types, schema, _type_map, name)
         except Exception as e:
             _log.error("voice shared tool %r: schema could not be rendered for "
                        "the Live API (%s) - NOT declaring it", name, e)
@@ -747,7 +747,7 @@ def _build_voice_live_tools(types, behavior=None):
     return [types.Tool(function_declarations=decls)] if decls else []
 
 
-def _json_schema_to_genai(types, schema, type_map):
+def _json_schema_to_genai(types, schema, type_map, tool=""):
     """Render one JSON-Schema object as a google.genai Schema.
 
     Deliberately narrow: object / string / integer / number / boolean / array
@@ -758,7 +758,7 @@ def _json_schema_to_genai(types, schema, type_map):
         raise ValueError("top-level schema must be an object")
     props = {}
     for pname, pspec in ((schema or {}).get("properties") or {}).items():
-        props[pname] = _json_schema_leaf(types, pspec, type_map, pname)
+        props[pname] = _json_schema_leaf(types, pspec, type_map, pname, tool)
     return types.Schema(
         type=types.Type.OBJECT,
         properties=props or None,
@@ -766,19 +766,32 @@ def _json_schema_to_genai(types, schema, type_map):
     )
 
 
-def _json_schema_leaf(types, spec, type_map, pname):
+def _json_schema_leaf(types, spec, type_map, pname, tool=""):
     spec = spec or {}
     jtype = spec.get("type") or "string"
     kwargs = {}
     if spec.get("description"):
         kwargs["description"] = spec["description"]
     if spec.get("enum"):
-        kwargs["enum"] = [str(v) for v in spec["enum"]]
+        # The Live API refuses the WHOLE setup over one empty enum value --
+        # "enum[0]: cannot be empty", close code 1007 -- so a tool that means
+        # "any" by offering "" takes voice down entirely, and takes down every
+        # other tool with it. The handlers already read a missing value as ""
+        # (inp.get(...) or ""), so dropping it costs nothing; an enum left
+        # empty is dropped too, which leaves a plain string.
+        vals = [str(v) for v in spec["enum"]]
+        kept = [v for v in vals if v != ""]
+        if len(kept) != len(vals):
+            _log.warning("voice live tools: %s.%s declared an empty-string "
+                         "enum value; dropped it (the Live API rejects the "
+                         "whole setup over one)", tool or "?", pname)
+        if kept:
+            kwargs["enum"] = kept
     if jtype == "array":
         return types.Schema(
             type=types.Type.ARRAY,
             items=_json_schema_leaf(types, spec.get("items") or {}, type_map,
-                                    pname + "[]"),
+                                    pname + "[]", tool),
             **kwargs)
     if jtype == "object":
         # Nested free-form objects have no faithful rendering here; refuse
