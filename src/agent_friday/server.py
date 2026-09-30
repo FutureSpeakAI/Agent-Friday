@@ -270,8 +270,8 @@ def _register_decision_backends():
 
     WARMING costs ~45 s of CPU and ~800 MB resident, so it happens only when
     something actually asked for Laya - as the deciding backend or as the
-    shadow. Loading a model nobody selected would be a tax on every start for
-    a feature that is off by default.
+    shadow, or for the optional chat preparation pilot. Loading a model nobody
+    selected would be a tax on every start.
 
     Neither of these changes a verdict. `decisions.DEFAULT_BACKEND` stays
     `keyword`, and an unrecognised name in settings already falls back to it
@@ -290,7 +290,8 @@ def _register_decision_backends():
     try:
         from agent_friday.services import decisions
         wanted = {decisions.active_backend(), decisions.shadow_backend()}
-        if wanted & {"laya", "laya-union"}:
+        pilot_enabled = (_load_settings() or {}).get("laya_pilot_enabled") is True
+        if wanted & {"laya", "laya-union"} or pilot_enabled:
             laya_backend.start_warming()
     except Exception as _e:
         _log.warning("could not decide whether to warm laya: %s", _e)

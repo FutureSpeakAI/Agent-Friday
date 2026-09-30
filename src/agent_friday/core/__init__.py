@@ -2514,6 +2514,9 @@ DEFAULT_SETTINGS = {
     # to ~/.friday/decisions.jsonl, changing no verdict. "" is off. This is how
     # a candidate earns the seat above; it is not itself a gate.
     "decision_shadow": "",
+    # Optional chat preparation experiment. Alternate ordinary and assisted
+    # turns; Laya only prepares read schemas/context and never grants actions.
+    "laya_pilot_enabled": False,
     # ── Creative policy (services/creative_policy.py) ──
     # What Friday refuses to generate, written down where the user can read
     # and set it. Before this existed there was nothing legible for a seat to

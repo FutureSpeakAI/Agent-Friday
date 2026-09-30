@@ -137,9 +137,44 @@ def resident(tools: list) -> list:
     return [t for t in (tools or []) if _name_of(t) in keep]
 
 
-def opening_set(tools: list) -> list:
-    """What to send on round one: the loader plus the resident few."""
-    return resident(tools) + [loader_spec(tools)]
+_PILOT_READ_TOOLS = {
+    "apps": ("query_calendar", "search_email", "list_tasks", "find_calendar_events"),
+    "knowledge": ("search_wiki", "read_wiki", "knowledge_query"),
+    "files": ("search_files", "read_file"),
+}
+_PILOT_SCHEMA_CHARS = 6000
+
+
+def opening_set(tools: list, pilot=None) -> list:
+    """Resident schemas plus bounded advisory reads and the complete loader.
+
+    Preparation grants no authority and executes nothing. A missing, late or
+    invalid prediction leaves the original opening unchanged; every tool stays
+    reachable through the same loader and ordinary execution gates.
+    """
+    opening = resident(tools)
+    if pilot is not None and getattr(pilot, "arm", None) == "assisted":
+        try:
+            wanted = _PILOT_READ_TOOLS.get(pilot.plan(), ())
+            have = {_name_of(t) for t in opening}
+            by_name = {_name_of(t): t for t in (tools or [])}
+            added, size = [], 0
+            for name in wanted:
+                if name in have or name not in by_name:
+                    continue
+                tool = by_name[name]
+                cost = len(json.dumps(tool, ensure_ascii=False))
+                if size + cost > _PILOT_SCHEMA_CHARS:
+                    continue
+                added.append(tool)
+                have.add(name)
+                size += cost
+            if added:
+                opening.extend(added)
+                pilot.increment("added_tools", len(added))
+        except Exception:
+            pass
+    return opening + [loader_spec(tools)]
 
 
 def expand(all_tools: list, names, already: list) -> tuple:
@@ -185,14 +220,14 @@ def expand(all_tools: list, names, already: list) -> tuple:
     return new, " ".join(bits)
 
 
-def savings(tools: list) -> dict:
+def savings(tools: list, opening=None) -> dict:
     """What this costs and saves, in tokens. For the harness and the logs."""
     def toks(o):
         s = o if isinstance(o, str) else json.dumps(o, default=str)
         return int(len(s) / 3.9)
 
     full = toks(tools)
-    opening = toks(opening_set(tools))
+    opening = toks(opening_set(tools) if opening is None else opening)
     return {
         "tools": len(tools or []),
         "full_tokens": full,

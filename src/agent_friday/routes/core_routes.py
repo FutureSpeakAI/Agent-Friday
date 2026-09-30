@@ -291,6 +291,20 @@ def _laya_calibration() -> dict:
                 "detail": exception_text(e, "calibration unavailable: %s")}
 
 
+@core_bp.route('/api/decisions/laya_pilot')
+def laya_pilot_status():
+    """Bounded in-memory chat-preparation measurements; no model loading."""
+    try:
+        from agent_friday.services import laya_pilot, laya_backend
+        settings = _load_settings()
+        return jsonify({"status": "ok", **laya_pilot.snapshot(),
+                        "enabled": settings.get("laya_pilot_enabled") is True,
+                        "ready": laya_backend.is_ready(),
+                        "off_record": settings.get("off_record") is True})
+    except Exception as e:
+        return api_error(e, "Couldn't read the Laya chat pilot")
+
+
 @core_bp.route('/api/decisions/gate_status')
 def decisions_gate_status():
     """What is actually deciding which actions need the owner's sign-off.

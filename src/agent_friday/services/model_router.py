@@ -3420,7 +3420,7 @@ def _payload_dump_dir():
 
 def _build_context_prompt(message, workspace='', workspace_context=None,
                           vision_description=None, provider='cloud',
-                          vault_control=None, vault_fallback='redact'):
+                          vault_control=None, vault_fallback='redact', pilot=None):
     """Build an enriched system prompt with all relevant context layers.
 
     When `vault_control` is provided, each context section is tagged with a
@@ -3678,6 +3678,37 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
             sources_consulted.append('wiki_smart')
     except Exception as _e:
         add(f"\n== PERSONAL CONTEXT ==\n(smart-context load failed: {_e})", _T1)
+
+    # Consume only a prediction already available after ordinary preparation.
+    # Source guidance adds no retrieval or factual claims. In particular the
+    # graph helper can rebuild its index, so it is not a free preparation step.
+    if pilot is not None and getattr(pilot, "arm", None) == "assisted":
+        try:
+            family = pilot.plan()
+            if family == "knowledge":
+                add("\n== POSSIBLE SOURCE: PERSONAL KNOWLEDGE ==\n"
+                    "The existing personal context may be relevant. For missing "
+                    "facts about the owner, consider search_wiki, read_wiki, or "
+                    "knowledge_query. This suggestion is not evidence and does "
+                    "not imply that a search ran. The user's requested sources "
+                    "and restrictions take precedence.", _T1)
+                pilot.increment("context_blocks")
+            elif family == "apps":
+                add("\n== POSSIBLE INFORMATION SOURCES ==\n"
+                    "Connected calendar, email, or task read tools may be relevant. "
+                    "Use only sources needed for the user's request; follow any "
+                    "source restrictions they gave. This suggestion does not "
+                    "mean a lookup ran or authorize an action.", _T1)
+                pilot.increment("context_blocks")
+            elif family == "files":
+                add("\n== POSSIBLE SOURCE: WORKSPACE FILES ==\n"
+                    "Workspace files may contain the answer; consider search_files "
+                    "or read_file within the user's request. This suggestion is "
+                    "not evidence that a file exists or was read. The user's "
+                    "requested sources and restrictions take precedence.", _T1)
+                pilot.increment("context_blocks")
+        except Exception:
+            pass
 
     # ── A6: authoritative clock. TIER_1 BY CONTRACT — a date injection that
     # lives in a TIER_2 section is redacted by vault gating for cloud seats,

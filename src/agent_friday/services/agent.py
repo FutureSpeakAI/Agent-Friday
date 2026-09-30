@@ -101,6 +101,29 @@ from agent_friday.services.wiki_engine import (
 from agent_friday.user_errors import ExceptionText, UserFacingValueError, clip
 
 
+def _pilot_call(ticket, method, *args, **kwargs):
+    """Advisory preparation and its measurements cannot fail a chat turn."""
+    if ticket is not None:
+        try:
+            return getattr(ticket, method)(*args, **kwargs)
+        except Exception:
+            pass
+    return None
+
+
+def _pilot_model_round(session_ctx, execution):
+    ticket = (session_ctx or {}).get("_laya_pilot")
+    _pilot_outcome(session_ctx, "ok")
+    _pilot_call(ticket, "mark_prepared")
+    _pilot_call(ticket, "observe_execution", execution)
+    _pilot_call(ticket, "increment", "model_rounds")
+
+
+def _pilot_outcome(session_ctx, outcome):
+    if (session_ctx or {}).get("_laya_pilot") is not None:
+        session_ctx["_laya_pilot_outcome"] = outcome
+
+
 
 def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
@@ -261,6 +284,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     # refuse=True means vault access was required and the configured fallback
     # is deny/warn — no model call is permitted at all.
     if route.get('refuse'):
+        _pilot_outcome(session_ctx, "refused")
         return (route.get('warning')
                 or "This request needs vault access, which requires a local "
                    "model. Load one in Settings → Models (or adjust "
@@ -332,9 +356,10 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # nothing left for it to drop, which is the point.
         from agent_friday.services import tool_catalogue as _TCat
         if _TCat.enabled() and CLAUDE_TOOLS:
-            _open = _TCat.opening_set(CLAUDE_TOOLS)
+            _open = _TCat.opening_set(
+                CLAUDE_TOOLS, pilot=(session_ctx or {}).get("_laya_pilot"))
             try:
-                _s = _TCat.savings(CLAUDE_TOOLS)
+                _s = _TCat.savings(CLAUDE_TOOLS, opening=_open)
                 print("  [tools] catalogue on: %d tools -> %d opening tokens "
                       "(saved %d, %.0f%%)"
                       % (_s["tools"], _s["opening_tokens"],
@@ -442,6 +467,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         except Exception:
             pass
     if vault_access:
+        _pilot_outcome(session_ctx, "error")
         # Refuse rather than raise: the caller surfaces this as the reply, and
         # the request was deliberately kept off every cloud provider.
         #
@@ -8533,6 +8559,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
             else str(_sc.get("owner_text") or ""))
         try:
+            _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
             result = handler(ctx.input)
         finally:
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
@@ -10240,12 +10267,14 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 except Exception:
                     pass
                 _orb_safe(process_update, orb_id, status='error', label='Stopped', progress=1.0)
+                _pilot_outcome(session_ctx, "refused")
                 return ("[Agent stopped by operator control: AGENT_STOP file detected.]", tool_trace)
 
             # The user's Stop, on the turn they are watching. A kill file is an
             # operator control, not a button; this is the button.
             if core.turn_stop_requested():
                 from agent_friday.services import turn_budget as _tbs
+                _pilot_outcome(session_ctx, "refused")
                 _orb_safe(process_update, orb_id, status='completed',
                           label='Stopped', progress=1.0)
                 return (_tbs.stopped_message(used=iter_count,
@@ -10282,6 +10311,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             # step that was running completed and the next never starts. The
             # record ends with a halt that names the step; nothing is torn.
             if _tj_loop.stop_requested(_tj_loop.resolve_task_id(session_ctx)) and iter_count > 1:
+                _pilot_outcome(session_ctx, "refused")
                 _tj_loop.append(_tj_loop.resolve_task_id(session_ctx), "halt", cause="cancelled",
                                 detail=f"stopped after step {iter_count - 1} at the user's request",
                                 resume_hint="Re-run the task to continue from its prompt.")
@@ -10359,6 +10389,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             except Exception:
                 pass
             _t0 = _time.time()
+            _pilot_model_round(session_ctx, "cloud")
             resp = client.messages.create(**kwargs)
             _rtrace.after_anthropic_response(resp, model=kwargs.get("model"), seat="cloud",
                                              thinking_requested=bool(_thinking_cfg))
@@ -10446,7 +10477,10 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                         provider="anthropic", seat="cloud")
                 except Exception:
                     pass
-                return ("".join(text_parts).strip(), tool_trace)
+                _final_text = "".join(text_parts).strip()
+                if not _final_text:
+                    _pilot_outcome(session_ctx, "error")
+                return (_final_text, tool_trace)
 
             # Promote orb category to whatever tool family is most active this round.
             try:
@@ -10484,6 +10518,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 for _tu in tool_uses:
                     _hit = _loop_guard.observe(_tu.name, _tu.input)
                     if _hit:
+                        _pilot_outcome(session_ctx, "error")
                         _orb_safe(process_update, orb_id, status='error',
                                   label='Loop detected', progress=1.0)
                         # The same wording the local loop uses, so a stuck turn
@@ -10588,6 +10623,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                                orb_icon=orb_icon)
 
         _orb_safe(process_update, orb_id, status='error', label='Max iters', progress=1.0)
+        _pilot_outcome(session_ctx, "error")
         return ("[Agent hit max tool iterations without completing.]", tool_trace)
     except Exception:
         _orb_safe(process_update, orb_id, status='error', label='Error', progress=1.0)
@@ -10725,6 +10761,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         _schema_tokens[0] = _compaction.schema_tokens(_tools)
         _est = _compaction.estimate_tokens(_c) + _schema_tokens[0]
         try:
+            _pilot_model_round(session_ctx, _compact_seat)
             _r = _raw_send(_c, _tools, **_kw)
         except Exception as _se:
             if not _compaction.is_context_overflow(_se):
@@ -10732,6 +10769,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             _compaction.observe_overflow(model, _est, _se)
             _compact_convo(force=True)
             _est = _compaction.estimate_tokens(_c) + _schema_tokens[0]
+            _pilot_model_round(session_ctx, _compact_seat)
             _r = _raw_send(_c, _tools, **_kw)
         try:
             _compaction.observe(model, _est, ((_r or {}).get("usage") or {}).get("prompt_tokens"))
@@ -10799,6 +10837,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         _round += 1
         # Stop-after-step (TV10), same contract as the Anthropic loop.
         if _tj_loop.stop_requested(_tj_loop.resolve_task_id(session_ctx)) and _round > 1:
+            _pilot_outcome(session_ctx, "refused")
             _tj_loop.append(_tj_loop.resolve_task_id(session_ctx), "halt", cause="cancelled",
                             detail=f"stopped after step {_round - 1} at the user's request",
                             resume_hint="Re-run the task to continue from its prompt.")
@@ -10824,6 +10863,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # raising, and `Path.exists()` answers False for an unreadable path.
         _stop_file = FRIDAY_DIR / "AGENT_STOP"
         if core.turn_stop_requested() or _stop_file.exists():
+            _pilot_outcome(session_ctx, "refused")
             if _stop_file.exists():
                 try:
                     _stop_file.unlink()
@@ -10837,6 +10877,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # run long legitimately, so SOMETHING has to bound it in time -- a round
         # count never did, since one round can take minutes on a busy card.
         if _wall is not None and _wall.expired():
+            _pilot_outcome(session_ctx, "error")
             _orb(status='error', label='Time limit', progress=1.0)
             _led_done()
             return _tb.limit_message("clock", detail=_wall.reason(),
@@ -10875,6 +10916,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             _tokens.add(usage.get("prompt_tokens", 0),
                         usage.get("completion_tokens", 0))
         if _tokens is not None and _tokens.exceeded():
+            _pilot_outcome(session_ctx, "error")
             _orb(status='error', label='Token budget', progress=1.0)
             _led_done()
             return _tb.limit_message("tokens", detail=_tokens.reason(),
@@ -10992,6 +11034,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 convo.append({"role": "user", "content": _nudge})
                 continue
             if not text:
+                _pilot_outcome(session_ctx, "error")
                 # Name the seat and the provider's stop reason. A caller that
                 # parses this reply (the Front Page editorial does) can then
                 # log something a person can act on instead of "not JSON".
@@ -11078,6 +11121,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             # of schema, 41% of a 32,768 window, to answer questions that call
             # two tools.
             if tname == _TC.LOADER_NAME:
+                _pilot_call((session_ctx or {}).get("_laya_pilot"),
+                            "increment", "loader_calls")
                 try:
                     _raw0 = fn.get("arguments")
                     _a = (json.loads(_raw0) if isinstance(_raw0, str)
@@ -11197,6 +11242,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             _loop_hit = (_loop_guard.observe(tname, targs)
                          if _loop_guard is not None else None)
             if _loop_hit:
+                _pilot_outcome(session_ctx, "error")
                 _orb(status='error', label='Loop detected', progress=1.0)
                 _led_done()
                 return _tb.limit_message("loop", detail=_loop_hit,
@@ -11234,6 +11280,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # Reachable only when the OWNER set a round limit; with none set the loop
     # above never leaves by this door.
     _orb(status='error', label=f'Round limit ({_round})', progress=1.0)
+    _pilot_outcome(session_ctx, "error")
     _led_done()
     # Name the real limit and offer to continue. The old text named `max_iters`,
     # an internal knob the user cannot see, and read like their fault.

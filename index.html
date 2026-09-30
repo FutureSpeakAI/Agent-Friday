@@ -45514,6 +45514,8 @@ function SettingsTabPrivacy({
     s: s,
     save: save
   })), /*#__PURE__*/React.createElement(StSection, {
+    title: "Laya chat pilot"
+  }, /*#__PURE__*/React.createElement(LayaPilotPanel, {s:s, save:save})), /*#__PURE__*/React.createElement(StSection, {
     title: "Scheduled jobs: what they may do on their own"
   }, /*#__PURE__*/React.createElement(GovernanceGrantsPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Friday’s rules on this PC"
@@ -45740,6 +45742,63 @@ function GovernanceGrantsPanel() {
       /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: create }, "Grant")),
     msg && /*#__PURE__*/React.createElement("div", { role: "status", style: Object.assign({}, muted, { marginTop: 6, color: '#9fd' }) }, msg));
 }
+function LayaPilotPanel({s, save}) {
+  const E = React.createElement;
+  const [st, setSt] = useState(null);
+  const [error, setError] = useState('');
+  const pending = useRef(null);
+  const load = useCallback(() => {
+    if (pending.current) pending.current.abort();
+    const controller = new AbortController();
+    pending.current = controller;
+    setError('');
+    apiFetch('/api/decisions/laya_pilot', {signal:controller.signal})
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok || data.status !== 'ok') throw new Error(data.message || 'Could not read pilot measurements.');
+        if (!controller.signal.aborted) setSt(data);
+      }).catch(err => {
+        if (!controller.signal.aborted) setError(err.message || 'Could not read pilot measurements.');
+      }).finally(() => {
+        if (pending.current === controller) pending.current = null;
+      });
+  }, []);
+  useEffect(() => {
+    load();
+    return () => { if (pending.current) pending.current.abort(); };
+  }, [load, s.laya_pilot_enabled, s.off_record]);
+  const groups = (st && st.groups) || [];
+  const modeName = value => ({local_only:'Local only',local_preferred:'Local preferred',cloud_only:'Cloud only',smart:'Smart'})[value] || 'Other';
+  const seconds = value => typeof value === 'number' ? (value / 1000).toFixed(1) + 's' : '—';
+  const cell = {padding:'5px 8px',textAlign:'left',borderBottom:'1px solid rgba(255,255,255,0.07)',whiteSpace:'nowrap'};
+  const enabled = !!s.laya_pilot_enabled;
+  return E('div', null,
+    E(StToggle, {
+      label:'Try Laya chat preparation', value:enabled,
+      onChange:() => save({laya_pilot_enabled:!s.laya_pilot_enabled}),
+      desc:'Alternate ordinary turns with Laya-assisted preparation. Laya suggests sources and prepares read tools; it executes no actions. Routing, privacy, and approval rules stay in force.',
+    }),
+    E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',margin:'8px 0'}},
+      !enabled ? 'Pilot is off.' : (st && st.off_record) ? 'Paused while off the record.'
+        : (st && st.ready) ? 'Laya is ready. Late or busy predictions are skipped without holding the chat.'
+        : 'Waiting for Laya to be ready. Chats continue with ordinary preparation. If Laya stays unavailable, restart Friday to warm it.'),
+    E('button', {className:'settings-btn',onClick:load,style:{fontSize:11}}, 'Refresh measurements'),
+    error && E('div', {role:'status',style:{fontSize:11,color:'#f59e0b',marginTop:6}}, error),
+    st && E('div', {style:{fontSize:11,color:'var(--st-dim)',marginTop:8}},
+      'Latest ' + (st.count || 0) + ' measured turns since restart (up to ' + (st.capacity || 256) + '). Counts and timings stay in memory; chat text is not stored by this pilot.'),
+    groups.length > 0 && E('div', {style:{overflowX:'auto',marginTop:8}},
+      E('table', {style:{width:'100%',borderCollapse:'collapse',fontSize:11}},
+        E('thead', null, E('tr', null, ['Mode','Answering','Preparation','Turns','Used','Median reply','Agent rounds','Tool loads'].map(label => E('th',{key:label,style:cell},label)))),
+        E('tbody', null, groups.map((row, i) => E('tr', {key:i},
+          [modeName(row.routing_mode), row.execution || 'unknown', row.arm === 'assisted' ? 'Laya' : 'Ordinary',
+            row.count || 0, row.applied || 0, seconds(row.median_total_ms), row.model_rounds || 0, row.loader_calls || 0]
+            .map((value, n) => E('td',{key:n,style:cell},value))))))),
+    E('div', {style:{fontSize:10.5,lineHeight:1.6,color:'var(--st-dim)',marginTop:8}},
+      'Used counts turns where preparation changed. Reply times include successful turns with agent generation. Agent rounds exclude separate vision and summarization calls. Different requests, models, and fallbacks can affect these observations; they are not a measured speedup yet.')
+  );
+}
+// End Laya chat pilot panel
+
 function ApprovalScannerPanel({
   s,
   save

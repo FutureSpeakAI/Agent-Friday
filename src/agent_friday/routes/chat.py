@@ -54,6 +54,7 @@ from agent_friday.services.agent import (
     _generate_agent,
     _maybe_handle_navigate_intent,
     _maybe_handle_open_intent,
+    _pilot_call,
     _resolve_workspace,
 )  # noqa: E501
 from agent_friday.services.model_router import (
@@ -631,6 +632,19 @@ def _attach_trace(rv, tid):
 
 
 _PRESET_TRACE_ID = _contextvars.ContextVar("friday_preset_trace_id", default=None)
+_PILOT_OFF_RECORD = _contextvars.ContextVar("friday_pilot_off_record", default=False)
+
+
+def _start_pilot(message, settings):
+    # A streaming worker can start after the owner changes the toggle. An
+    # off-record request remains excluded for its whole lifetime.
+    if _PILOT_OFF_RECORD.get():
+        return None
+    try:
+        from agent_friday.services import laya_pilot
+        return laya_pilot.start(message, settings)
+    except Exception:
+        return None
 
 
 @chat_bp.route('/api/chat/stream', methods=['POST'])
@@ -671,10 +685,15 @@ def chat_stream():
 
     _tid = "tr_" + uuid.uuid4().hex[:16]
     q.put(("trace", _tid))
+    try:
+        _pilot_off_record = bool(_load_settings().get("off_record"))
+    except Exception:
+        _pilot_off_record = True
 
     @copy_current_request_context
     def _run_turn():
         _PRESET_TRACE_ID.set(_tid)
+        _pilot_privacy_token = _PILOT_OFF_RECORD.set(_pilot_off_record)
         token = _mr.DELTA_SINK.set(lambda piece: q.put(("delta", piece)))
         tool_token = None
         try:
@@ -690,6 +709,7 @@ def chat_stream():
             traceback.print_exc()
             box["error"] = error_text(e, "The chat turn failed")
         finally:
+            _PILOT_OFF_RECORD.reset(_pilot_privacy_token)
             try:
                 _mr.DELTA_SINK.reset(token)
             except Exception:
@@ -762,6 +782,10 @@ def chat():
     Vision (screenshot description) still routes through Gemini Flash, since vision
     is a designer/perception task. Reasoning stays on Claude.
     """
+    _pilot = None
+    _pilot_error = None
+    _pilot_outcome = "ok"
+    _sess_ctx = {}
     try:
         # Fresh receipt book for this turn. Everything _execute_tool actually
         # runs gets recorded against it, so the reply can be checked against
@@ -813,6 +837,7 @@ def chat():
         # inline. Falls back to the persisted settings toggle so the preference
         # survives across turns even if the client omits the flag.
         settings_early = _load_settings()
+        _pilot = _start_pilot(message, settings_early)
         cite_sources = bool(data.get('cite_sources',
                                      settings_early.get('cite_sources', False)))
         session_id = _current_session_id()
@@ -1284,6 +1309,7 @@ def chat():
         # one case: the user always knows what is happening to their data
         # and which model is serving them.
         if _route_info.get('refuse'):
+            _pilot_outcome = "refused"
             _warn = _route_info.get('warning') or (
                 "This request needs vault access which requires a local model. "
                 "Please install Ollama or switch to local routing mode."
@@ -1387,6 +1413,7 @@ def chat():
                 message, workspace, workspace_context, vision_description,
                 provider=provider, vault_control=vc,
                 vault_fallback=_vault_cloud_fallback(),
+                **({"pilot": _pilot} if _pilot is not None else {}),
             )
             sp = _settings_system_prefix(settings, personality) + (sp or '')
             # v5 personalization: fold in the LOCAL user model + learned heuristics
@@ -1446,6 +1473,7 @@ def chat():
         system_prompt, sources, pii_lookup = _prep_for(_provider)
 
         _sess_ctx = {
+            "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "provider": _provider,
             # Which conversation this turn belongs to. An approval card raised
@@ -1615,7 +1643,7 @@ def chat():
             try:
                 from agent_friday.services import tool_catalogue as _TCat
                 if _TCat.enabled() and CLAUDE_TOOLS:
-                    _local_tools = _TCat.opening_set(CLAUDE_TOOLS)
+                    _local_tools = _TCat.opening_set(CLAUDE_TOOLS, pilot=_pilot)
                     _catalogue_all = CLAUDE_TOOLS
                     _tool_note = ''
             except Exception:
@@ -1681,6 +1709,7 @@ def chat():
                 # one from a model they rejected.
                 _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
                 if _mode == 'local_only':
+                    _pilot_error = True
                     print(f"  [ROUTER] local inference failed and mode is "
                           f"local_only — refusing the cloud: {_ole}")
                     _local_only_msg = (
@@ -1849,6 +1878,8 @@ def chat():
         if _integrity_meta.get('blocked'):
             _resolved = not (_integrity_meta['final_leaks']
                              or _integrity_meta.get('final_claims'))
+            if not _resolved:
+                _pilot_error = True
             print(f"  [INTEGRITY] fabrication caught "
                   f"(retries={_integrity_meta['retries']}, "
                   f"tools_stripped={_integrity_meta.get('tools_stripped_retry')}, "
@@ -2210,10 +2241,13 @@ def chat():
             "tool_surface": _tool_surface,
         }, "Couldn't answer that message"))
     except Exception as e:
+        _pilot_error = True
         traceback.print_exc()  # console launches; a no-op loss under pythonw
         _LOG.exception("chat turn failed")
         return jsonify({"response": "[Friday offline] " + error_text(e, "Couldn't answer that message")})
     finally:
+        _pilot_call(_pilot, "finish", error=_pilot_error,
+                    outcome=_sess_ctx.get("_laya_pilot_outcome", _pilot_outcome))
         try:
             core.turn_end()
         except Exception:
@@ -2335,6 +2369,9 @@ def chat_send():
     Accepts context-aware payload: {message, workspace, workspaceContext, includeVision, screenshot}.
     Text reasoning is Claude; vision (screenshot description) stays on Gemini.
     """
+    _pilot = None
+    _pilot_error = None
+    _sess_ctx = {}
     try:
         data = request.get_json(silent=True) or {}
         # Same addressing rule as /api/chat: unaddressed callers reach Main.
@@ -2364,6 +2401,8 @@ def chat_send():
 
         if not message.strip():
             return jsonify({"status": "error", "message": "Empty message"}), 400
+
+        _pilot = _start_pilot(message, _load_settings())
 
         # Vision capture (Gemini, designer role). Accept either `screenshot`
         # (legacy) or `image` (Camera Mode frames).
@@ -2438,6 +2477,7 @@ def chat_send():
                 provider=provider_name,
                 vault_control=(_get_vault_control() if _vault_local_only() else None),
                 vault_fallback=_vault_cloud_fallback(),
+                **({"pilot": _pilot} if _pilot is not None else {}),
             )
             _send_sources[:] = sources or []
             # Prepend user-configured agent personality + response prefs + cLaws
@@ -2522,6 +2562,7 @@ def chat_send():
         messages.append({"role": "user", "content": _final_user})
 
         _sess_ctx = {
+            "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
         }
         # Same ask-first action flow as /api/chat: enforce confirmation and honor
@@ -2563,6 +2604,8 @@ def chat_send():
             reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
             redispatch=_send_redispatch,
         )
+        if _send_integrity.get('final_leaks') or _send_integrity.get('final_claims'):
+            _pilot_error = True
         sources = _send_sources
 
         # ── B2: seat-change visibility on this endpoint too. ──
@@ -2660,9 +2703,12 @@ def chat_send():
                         "seat_notice": _send_seat_notice,
                         "fallback_chain": _fallback_chain}, "Couldn't send the message"))
     except Exception as e:
+        _pilot_error = True
         traceback.print_exc()
         return api_error(e, "Couldn't send the message")
     finally:
+        _pilot_call(_pilot, "finish", error=_pilot_error,
+                    outcome=_sess_ctx.get("_laya_pilot_outcome", "ok"))
         try:
             core.turn_end()
         except Exception:

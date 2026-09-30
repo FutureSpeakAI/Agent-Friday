@@ -50,6 +50,7 @@ import logging
 import os
 import threading
 import time
+import weakref
 from typing import Any, Dict, Optional
 
 _log = logging.getLogger("friday.laya")
@@ -127,6 +128,8 @@ _SCORE_TIMEOUT_S = 2.5
 #: them; it takes the keyword half at once.
 _MAX_SCORING = 2
 _scoring = threading.BoundedSemaphore(_MAX_SCORING)
+_SCORING_ADMISSION_LOCK = threading.Lock()
+_SCORING_ADMISSIONS = weakref.WeakKeyDictionary()
 _slow_answers = 0
 _last_slow_ts: Optional[float] = None
 
@@ -450,7 +453,76 @@ def start_warming(force: bool = False) -> None:
 #  THE BACKEND
 # ---------------------------------------------------------------------------
 
-def _answer(state: str) -> tuple:
+def _reserve_scoring(*, pilot: bool):
+    """Return an idempotent release callback, or None; never queue.
+
+    A pilot starts only on an idle scorer and occupies at most one of the two
+    slots. Approval work can still enter the other slot. Each lease retains
+    its own semaphore so a replaced scorer cannot release another pool.
+    """
+    slot = _scoring
+    with _SCORING_ADMISSION_LOCK:
+        counts = _SCORING_ADMISSIONS.setdefault(slot, {"approval": 0, "pilot": 0})
+        if pilot and (counts["approval"] or counts["pilot"] or _MAX_SCORING < 2):
+            return None
+        if not slot.acquire(blocking=False):
+            return None
+        kind = "pilot" if pilot else "approval"
+        counts[kind] += 1
+    released = False
+
+    def release():
+        nonlocal released
+        with _SCORING_ADMISSION_LOCK:
+            if not released:
+                released = True
+                counts[kind] -= 1
+                slot.release()
+
+    return release
+
+
+def try_start_pilot_score(state: str, questions: dict, callback) -> str:
+    """Warm-only opportunistic prediction; callback receives result or None.
+
+    Admission and thread creation never wait for inference. The worker owns
+    its slot until inference ends, even after a caller has stopped waiting.
+    Input and provider errors are never logged or retained by this helper.
+    """
+    agent = _agent
+    if agent is None or _loading:
+        return "cold"
+    release = _reserve_scoring(pilot=True)
+    if release is None:
+        return "busy"
+
+    def run():
+        nonlocal state
+        result = None
+        started = time.monotonic()
+        try:
+            result = agent.predict(state, questions)
+        except Exception:
+            pass
+        finally:
+            state = ""
+            release()
+        try:
+            callback(result, (time.monotonic() - started) * 1000)
+        except Exception:
+            pass
+        finally:
+            result = None
+
+    try:
+        threading.Thread(target=run, name="laya-pilot", daemon=True).start()
+    except Exception:
+        release()
+        return "error"
+    return "started"
+
+
+def _answer_unreserved(state: str) -> tuple:
     agent = _agent
     if agent is None:
         raise RuntimeError("laya not loaded yet")
@@ -470,6 +542,17 @@ class LayaTooSlow(TimeoutError):
     """Laya did not answer within `_SCORE_TIMEOUT_S`."""
 
 
+def _answer(state: str) -> tuple:
+    """Direct and shadow scoring share admission with bounded approvals."""
+    release = _reserve_scoring(pilot=False)
+    if release is None:
+        raise LayaTooSlow("laya is still busy with earlier actions")
+    try:
+        return _answer_unreserved(state)
+    finally:
+        release()
+
+
 def _answer_bounded(state: str) -> tuple:
     """`_answer`, waiting at most `_SCORE_TIMEOUT_S`.
 
@@ -479,8 +562,8 @@ def _answer_bounded(state: str) -> tuple:
     ever-growing backlog.
     """
     global _slow_answers, _last_slow_ts
-    slot = _scoring
-    if not slot.acquire(blocking=False):
+    release = _reserve_scoring(pilot=False)
+    if release is None:
         _slow_answers += 1
         _last_slow_ts = time.time()
         raise LayaTooSlow("laya is still busy with earlier actions (too slow on this PC)")
@@ -489,14 +572,18 @@ def _answer_bounded(state: str) -> tuple:
 
     def _run():
         try:
-            box["result"] = _answer(state)
+            box["result"] = _answer_unreserved(state)
         except BaseException as e:  # noqa: BLE001 - re-raised on the caller's thread
             box["error"] = e
         finally:
-            slot.release()
+            release()
             done.set()
 
-    threading.Thread(target=_run, name="laya-score", daemon=True).start()
+    try:
+        threading.Thread(target=_run, name="laya-score", daemon=True).start()
+    except Exception:
+        release()
+        raise
     if not done.wait(_SCORE_TIMEOUT_S):
         _slow_answers += 1
         _last_slow_ts = time.time()
