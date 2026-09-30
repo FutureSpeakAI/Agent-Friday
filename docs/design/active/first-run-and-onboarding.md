@@ -308,11 +308,71 @@ The largest, safest source is an archive the person already owns. The import pat
 
 The archive itself is deleted after import unless the person asks to keep it. Nothing from an import becomes truth silently (NS-8.10-3 ends the 0.6-confidence auto-promotion for imported material).
 
+### 6.5 Connectors: legitimate first, and borrowing only what is the person's to lend
+
+The owner's brief, verbatim: "we're going to need to have as much of a legitimate connector ecosystem as possible, and where impossible we will just reach into the codex and Muse and Claude installations to borrow those connectors, with permission of course."
+
+**The legitimate ecosystem, as big as it can be.** Three kinds, all under the card contract of §6.1: Friday's own OAuth connectors (the Google reference implementation and the unified registry of `connector-ecosystem.md`); standard MCP servers, including vendors' official ones, each shown with its declared tools, a domain allowlist and a size cap (NS-23.10); and archive imports (§6.4, §6.6). Where a vendor publishes an MCP server, Friday lists it before anything home-made.
+
+**"Borrow from other AI apps, with permission" means importing their MCP server configurations, nothing else.** Other AI apps on the PC keep lists of MCP servers the person already set up. Those lists are the person's own work, and Friday can save them the trouble of doing it twice:
+
+| App | Where its list lives (verified on the reference machine, 2026-09-30) | Shape |
+|---|---|---|
+| Claude Desktop | `claude_desktop_config.json` in the app's roaming folder | JSON, `mcpServers` map (empty on the reference machine) |
+| Claude Code | the user-level `~/.claude.json` (`mcpServers`, three servers on the reference machine), `~/.claude/settings.json`, and any project `.mcp.json` (two found under the person's projects) | JSON, `mcpServers` map |
+| Codex | `~/.codex/config.toml` | TOML, `[mcp_servers.<name>]` tables (one on the reference machine) |
+| Cursor | `~/.cursor/mcp.json` | JSON, `mcpServers` map (not installed on the reference machine) |
+| Gemini CLI | `~/.gemini/settings.json` | JSON, `mcpServers` map (not installed on the reference machine) |
+| Grok, "Muse", any other MCP-capable app | no application named Muse and no Grok desktop app exists on the reference machine; Friday's discovery is by shape, not by name: any readable file matching the `mcpServers` JSON schema or the `[mcp_servers]` TOML schema in a known app folder is a candidate | as above |
+
+The flow: with consent, Friday scans those files, shows each server it found (name, command or URL, the app it came from, the environment variable names it expects, never their values), and the person picks what to bring over. Friday then runs or connects those same user-owned servers herself, under her own registry, her own allowlist and her own size cap, **re-authenticating where a server needs it**: a stdio server is started fresh; a remote server goes through Friday's own OAuth flow with PKCE and gets its own token.
+
+**The hard line, written plainly.** Friday never extracts other apps' stored OAuth tokens, API keys, cookies or session secrets. Those credentials were issued to those apps' clients. Reusing them violates the providers' terms, risks getting the person's accounts flagged, and is exactly the behaviour Friday's own defences (the egress gate, the credential store's ownership metadata, the behavioural monitor) must treat as malware. The scanner reads server *definitions* and stops at the first field that looks like a secret; a definition whose value is a secret is shown as "needs your key" with a secure field. Friday's own credential inventory never gains an entry it did not mint.
+
+**What cannot be borrowed, said on the card.** Connectors that exist only on a vendor's servers, the cloud connectors inside claude.ai, ChatGPT or Grok, are not on the person's PC and cannot be brought over. For each, the card offers the vendor's public MCP server if one exists, Friday's own OAuth connector to the same service, or an archive import, and says which of the three it is offering and why.
+
+### 6.6 Import AI histories and memories from the big providers, all of them
+
+The owner's brief, verbatim: "grokbot as well. We should also be able to import context and chat histories and memories, all of them, from the Big AI providers."
+
+These histories are some of the richest context for the first major task: years of the person's own questions, plans, drafts and corrections, already in their words. The card sits **early in Connect your life, right after email and calendar**, with a guided "download your export" walkthrough per provider. Export paths change; the table below was verified on 2026-09-30 and the build keeps it in a data file the guided steps read, so a change is a data update, not a release.
+
+| Provider | Official export path today | What arrives | What does not, and what Friday does about it |
+|---|---|---|---|
+| ChatGPT | Settings → Data controls → Export data; a zip arrives by email | `conversations.json` (every message, timestamps, model), `chat.html`, account info, shared links, uploaded files | saved memories are not reliably in the zip; the guided step has the person open Settings → Personalization → Manage memories and paste the list into a secure text field, which Friday stores as `import` memories with that provenance |
+| Claude.ai | Settings → Privacy → Export data; the link arrives by email and expires after 24 hours | `conversations.json` (messages, content blocks, citations, tool activity, attachment metadata), `users.json`, usage logs | projects, project knowledge and memory are not separated out; the guided step covers copying project instructions and memory text by hand |
+| Gemini | Google Takeout → **My Activity → Gemini Apps** (the "Gemini" product entry exports Gems, not chats); choose JSON | `MyActivity.json`, one record per prompt with the response and a timestamp | "Saved info" has no export; the guided step has the person copy it; Friday warns that some Takeout Gemini exports arrive thin |
+| Grok / xAI | grok.com Settings → Data controls → Export account data, or the account data download at the xAI accounts site | a whole-account archive | no per-conversation export; Friday imports the whole archive and lets the person exclude by date |
+| Microsoft Copilot | the Microsoft account privacy dashboard → Copilot activity history → Export all activity history | a CSV | thin; Friday extracts what is there and says so |
+| Perplexity | no native bulk export; a data-access request under privacy law returns the person's threads; per-thread export from the app | JSON or text per thread | Friday accepts both and the folder a browser extension produced, with the extension named as the source |
+| Meta AI | meta.ai → Download your information; in WhatsApp, `/download-all-ai-info` in a chat with the AI; Instagram and Facebook through their privacy centre | per-surface archives | each surface is a separate source with its own provenance |
+
+**The person's own local agent logs, with permission.** These are on the PC already and need no export: Claude Code session logs (`~/.claude/projects/<project>/*.jsonl`; 49 project folders and 1,037 files on the reference machine), Codex sessions (`~/.codex/sessions/<year>/<month>/<day>/rollout-*.jsonl`; 108 on the reference machine), Cursor's workspace state, Gemini CLI's history. Friday lists what she found by count and date range, and the person ticks folders. Code and tool output inside these logs is classified before anything else, because it can carry secrets; anything that looks like a key is dropped at the scanner, never staged.
+
+**The import, the same seven steps as every archive (§6.4), with these specifics:**
+
+- **Provenance per conversation:** every fact carries the provider, the conversation title and the date, so the wiki can say "learned from your ChatGPT history, March 2024" and the fact browser can filter by it.
+- **Dedup across sources:** the same plan told to three assistants becomes one fact with three sources, not three facts; contradictions between assistants (a project called finished in one and ongoing in another) become a `disputed` pair for the review queue (§7.8).
+- **Sensitive zones:** health, money, legal and family go to the vault zone unread by any cloud model, exactly as for mail.
+- **The review queue by voice** promotes what becomes durable.
+- **"What the other AIs knew about you":** a page per provider listing the durable facts, preferences and memories drawn from it, with the provider's own saved-memory list shown beside Friday's reading of it, and every line correctable or forgettable. It is the first thing shown when the import finishes, because it is the fastest way for the person to see what Friday thinks she has learned and where she is wrong.
+
+### 6.7 The self-knowledge base is entirely optional
+
+The owner's framing: the self-knowledge-base step is offered as an opportunity, never a requirement. The connect screen, the import flow and the Getting to know you surface (§7A) say so in these words, and the code keeps them true:
+
+- **Opt-in.** Nothing is imported, read or extracted until the person says yes to a named source. Declining leaves Friday fully usable for chat, voice and everything that needs no history.
+- **Guided.** Each provider and platform has plain step-by-step instructions for its official export, shown in place, and Friday imports the files the person downloads.
+- **Local and encrypted.** Processing is on this PC; Tier 2 and Tier 3 facts and every page in a sensitive section are encrypted at rest in the vault (`vault_crypto.py`, `wiki_encrypted_sections`); the raw archives are deleted after import unless the person keeps them.
+- **Reviewed.** The review queue stands before anything durable.
+- **Visible.** "How complete is my picture" (the density and coverage meter, §7.8) shows what is covered and what is left, per source.
+- **One step out.** Opting out, pausing or deleting any source is one control on its card, and deletion writes a deletion receipt that traverses the graph, indexes, summaries, caches and proposals (NS-15.7).
+
 ## 7. The first major task: the biggest, most accurate knowledge graph and wiki of the user
 
 ### 7.1 What "biggest and most accurate" means here
 
-Biggest: every person, project, organisation, place and topic that the connected sources support, with every dated event on a timeline and every promise found. Accurate: nothing durable without provenance, nothing merged without evidence, nothing sensitive outside the vault zone, nothing published without the person's eyes on it, and a correction path from every fact back to its source. The two pull against each other; the review queue is where they meet.
+This task is optional from the first word (§6.7): Friday offers it, the person chooses each source, and every source can be paused or deleted in one step. Biggest: every person, project, organisation, place and topic that the connected sources support, with every dated event on a timeline and every promise found. Accurate: nothing durable without provenance, nothing merged without evidence, nothing sensitive outside the vault zone, nothing published without the person's eyes on it, and a correction path from every fact back to its source. The two pull against each other; the review queue is where they meet.
 
 ### 7.2 Pipeline
 
@@ -362,6 +422,92 @@ Today's resolution is a hash of the upper-cased title (`indexer.py:418-419`). Th
 While the long job runs, a short pass produces **"What I see so far"**: at most five items (NS-9.2-1), each with observation, why it may matter, source, freshness, confidence, related commitment, and a next step (NS-9.2-2). It prefers one modest correct insight over a dramatic one (NS-9.2-3). The person marks each useful / wrong / not important / sensitive / remember / forget / don't surface this kind (NS-9.3-1). The prototype's five items are the target register: an outlet that sends most deadline mail; an editor and an open promise; a triage rule; a project with no page; a sensitive cluster the scanner held back.
 
 The fifteen minutes is measured from the second source coming on, on the local path, and only counts once the person has marked at least one item; the number is written to the local onboarding receipt and nowhere else.
+
+### 7.8 The local model builds it, as dense as the person permits, on every Bonsai2 tier
+
+A binding rule from the owner: on the new user's machine, the local model, the Bonsai2 the installer picked for their hardware, builds the knowledge graph and wiki, as dense as the user permits.
+
+- **All of it, locally:** entity and relationship extraction, cross-source resolution, wiki pages with citations, the timeline, commitments, the "what the other AIs knew" pages. Laya does the cheap classification on the CPU first (§7.2). No cloud model takes part unless the person explicitly chooses a cloud path for a specific source, per rule 2, and then only scrubbed Tier 1 text goes, with the egress ledger showing it.
+- **Density goes as far as permissions allow.** Every permission scope is a line on the source card and in the Getting to know you surface, visible and adjustable: which folders, which mailboxes, which years, which people are excluded, whether third-party facts beyond role are kept, whether the vault zone is extracted at all (default: flagged and held, not read). Widening a scope re-queues only the newly permitted items.
+
+**Scaling across the tiers.** Tier figures come from `bonsai2-tiers.json` (session local_6f0b72ec); this section states the policy in terms of the table's fields, not numbers. The build reads, per tier: measured tokens per second, context length, VRAM and RAM.
+
+| Policy | How it uses the tier row |
+|---|---|
+| Chunk size | context length minus the prompt overhead, never more than the tier's context; smaller chunks on the floor tier, more of them |
+| Batch and concurrency | one extraction stream on the floor tier; more only when the residency arbiter reports free VRAM after the seat is resident |
+| Estimates | items remaining × the measured seconds per item on this machine; "measured" after ten items, "estimated" before; recomputed every ten minutes and after every pause |
+| Idle windows | floor-tier machines run slower and only in idle windows (§7.5); the estimate says "about N hours of idle time" and shows how much idle time the machine has had per day this week, so the person can see why it will take a fortnight |
+| Early partial value | the first pass over every source is a shallow one (headers, people, dates, commitments) before any deep pass, so "What I see so far" arrives within the fifteen-minute target on every tier; the deep pass fills in over days |
+| Resumable | every item is a checkpoint; a restart, a model swap or a tier change resumes at the next unprocessed item, with the model name recorded on every fact it produced |
+
+**Quality checks, all of them measurable in the surface (§7A.4):**
+
+- **Provenance on every fact:** source, span, date, the model that extracted it, and the review answer that promoted it. A fact without a source is refused at the store (`integration.py:82-146` already refuses research facts without a URL; the rule becomes universal).
+- **Dedup:** content-hash identity for exact repeats; for near-repeats, embedding similarity above a threshold plus the same entity set proposes a merge, which merges automatically when the sources agree and otherwise queues a question.
+- **Contradiction flags:** two facts about the same entity and attribute with different values become a `disputed` pair; neither is durable until the person picks, unless one is dated later and the earlier one carries a `valid_until`, in which case the later supersedes with history (NS-15.6). Disputed pairs are the highest-ranked questions in the daily set (§7A.3).
+- **Density and coverage, one meter the person can read:** per source, the fraction of items processed and the fraction reviewed; per entity type, how many people, projects, organisations, places and topics have a page and how many are still stubs; per page, how many claims are cited versus uncited; overall, a single "how complete is my picture" number that is the coverage-weighted mean, shown with what would raise it most ("your 2021 mail is unread; that would add about 40 people"). The number is honest about what it cannot see: sources not connected count as unknown, not as zero.
+
+## 7A. Getting to know you: the long-running goal, its clearance, its questions, and its surface
+
+The owner's brief, verbatim: "there should be special UI support for this new user onboarding and knowledge building process. This is going to take a long time, particularly for a local model, and it's going to need to chain workflows over days and weeks to make this full and complete. It will probably even need to ask the user questions. So we need to give this special clearance."
+
+### 7A.1 The durable goal
+
+"Getting to know you" is a durable goal in the sense of [`goals-and-delivery-receipts.md`](goals-and-delivery-receipts.md): a chained, checkpointed pipeline with typed blockers and a signed receipt per run. Its stages, each a workflow step with its own receipt: **import → classify (Laya) → extract → resolve entities → write pages → find gaps → ask questions → re-extract**, looping per source until that source's coverage target is met. It runs across days and weeks.
+
+- **Survives everything.** State is a per-source checkpoint (last item processed, last question asked, coverage counters) in `~/.friday/goals/getting-to-know-you/`, written atomically. A restart, a model swap, a tier change or a crash resumes at the next unprocessed item. The brain seat's persistence across restarts is a dependency (§7A.6).
+- **Never "done" on a model's say-so.** The evaluator's "Met" is computed, not asked: per source, processed and reviewed fractions reach their targets; per coverage target (people with pages, commitments resolved, disputed pairs settled), the counters reach the numbers the person set or accepted. "Not yet" carries one of the five typed blockers: **needs you** (a question), **waiting outside** (an export the person has not downloaded yet), **run failed** (with the Doctor's line), **insufficient evidence** (a source too thin to reach its target, which lowers the target with a note), **more work**. Only "more work" auto-continues.
+
+### 7A.2 Special clearance: one signed, scoped standing grant
+
+Shown to the person once, right after "What I see so far", and approved once. It is a `create_grant` of a new kind, `standing_local`, signed with the governance key and stored with the goal.
+
+| It covers | It grants nothing outward |
+|---|---|
+| local reads of the sources the person approved, by name | any new source asks |
+| local writes to the knowledge graph, the wiki and the vault zone | anything leaving the machine asks: a cloud path for a source is its own card, every time |
+| local-model compute on the resident seat, and the seat's loading and unloading | any send, post, spend or delete asks, as always |
+| running outside the normal idle window, during hours the person sets (overnight, say), on mains power | |
+| lifting the round and token ceilings that protect interactive turns, for this goal only, because local compute is free (the ceilings and their call sites: `gotcha: caps live at the call site`; `project: no built-in caps`) | |
+
+- **Expiry:** when the coverage targets are met, or after a user-set number of weeks (default four), whichever is first. Renewal is a new card.
+- **Revocable from the Ledger** in one click; revocation stops the run at the next checkpoint and leaves the checkpoint intact.
+- **Receipts:** every run leaves a receipt (items processed, facts staged, pages drafted, questions queued, model used, minutes of compute, watts if the platform reports them), signed into the decision BOM. The daily digest is built from them.
+- **No pestering, enforced:** zero cards during the run. The only card that can appear is one for something outside the clearance (a new source, a cloud path, a send), and even that waits for the daily question set unless the person opened the surface.
+- **The dissent gate still reads it.** A run that starts drifting into a source not named in the grant is a scope-drift event for the behavioural monitor and stops the run.
+
+### 7A.3 Questions: a typed blocker that never stalls the whole run
+
+When Friday needs the person, the item raises a **needs user input** blocker on that item only; every other item, source and stage keeps running. Questions collect in an inbox and are served as **one short daily set of about five minutes**, ranked by expected improvement to the picture: how many facts, pages or merges the answer would settle, with disputed pairs and entity merges first and taste questions last. Voice or text; each can be answered, skipped (it returns after the next pass with new evidence, at most twice), or turned off with "don't ask me about this", which suppresses the kind for that source or entity. Examples, in the register the surface uses: "Is D. Ruiz in your 2019 email the same person as Dana Ruiz, your editor?" and "Which of these three projects is still active?" Every answer is a receipt and a fact with authority `user-confirmed`.
+
+### 7A.4 The surface: "Getting to know you", plus a Home card
+
+A dedicated workspace, reachable from Home's card, the control room, and by voice ("how's the picture coming?"). The prototype `knowledge.html` is its first draft.
+
+- **Source map:** one row per source with four states, **connected → imported → processed → reviewed**, each a fraction, plus the permission scopes as editable chips, and pause, delete-with-receipt and "work only while I'm away" per source.
+- **The live-growing graph:** the Knowledge galaxy, fed by `node_ignited`, `page_drafted`, `entity_merged`, `commitment_found`; counts by type.
+- **The question inbox and the review queue**, side by side: questions are what Friday needs; the queue is what she proposes.
+- **Time estimates** per source and overall, honest on floor-tier machines (§7.8): idle hours needed, idle hours the machine actually gives per day, and the date that implies.
+- **Pause, resume, "work only while I'm away"**, and the clearance's hours.
+- **The density and coverage meter** (§7.8) and a daily **"what I learned today"** digest built from the run receipts, spoken on request.
+- **The hologram tells the truth:** the processing states of the genome spec (`avatar-visual-genome.md` §13) drive the mark: memory cubes drift into the core per `memory_saved`, one per fact; a still mark when paused; never a fake busy loop.
+- **Notifications:** bundled into the daily digest, at most once a day, inside quiet hours never. **Fully by voice:** every control above is a voice tool under the contract (appendix C).
+- **Home card:** the meter, the next question count, and the estimated finish date, in three lines.
+
+### 7A.5 Resources
+
+The run yields instantly on user input (keyboard, mouse, voice, a chat turn), pauses on battery and above a thermal threshold the platform reports, shares the GPU through the residency arbiter (it holds a lease that any interactive seat displaces), and never degrades interactive Friday: the interactive path keeps its own seat priority and its own token ceiling, and the goal's lifted ceiling applies only to its own calls.
+
+### 7A.6 Dependencies
+
+- `goals-and-delivery-receipts.md` (typed blockers, run receipts, the evaluator);
+- batch and standing grants (the `standing_local` kind on `create_grant`; today's grants are per tool and schedule, `governance/action_gate.py:603-677`);
+- the scheduler's idle-window policy and its override hours;
+- the token-ceiling work (call-site caps become per-goal caps);
+- brain-seat persistence across restarts (the resident Bonsai2 seat reloads without a person present);
+- the processing-states build (PS1 to PS5) for the hologram and the `memory_saved` emit;
+- `bonsai2-tiers.json` for the scaling policy of §7.8.
 
 ## 8. The first thirty days: an apprenticeship
 
@@ -469,10 +615,10 @@ Maya is a journalist. She is not technical. She has a laptop with a 12 GB GPU an
 - **Minute 8.** Where thinking happens. Nothing preselected. She picks Local preferred; Bonsai2 27B, this PC's tier, starts downloading in the background with its size from the tier table, "time measured after the first 100 MB". No other model is mentioned.
 - **Minute 11.5.** The setup summary, the setup receipt, and one card: the Model Soup. She says not now; it waits in Models and seats.
 - **Minute 10.** Sliders, a preview sentence, a local voice sample. Proactivity: Quiet. Autonomy: Ask before every action. Quiet hours read from Windows.
-- **Minute 12.** Connect your life. The Gmail card tells her the truth and recommends a Takeout import today; she already has one from last year, drops it in. She adds IMAP with an app password in three minutes for live mail. Two sources. "That's enough."
+- **Minute 12.** Connect your life. Every card says the self-knowledge base is optional and that whatever she connects stays on this PC, encrypted where it is sensitive. The Gmail card tells her the truth and recommends a Takeout import today; she already has one from last year, drops it in. She adds IMAP with an app password in three minutes for live mail. The "your other AIs" card finds her Claude Code logs on disk and walks her through the ChatGPT export; she requests it and moves on. Two sources. "That's enough."
 - **Minute 14.** The scan reports 41,208 messages, 2019 to now, 6 h 20 min of idle extraction on the local model, "or about 40 minutes and about $6 in the cloud; I won't unless you say so." She leaves it local. The galaxy starts to grow.
 - **Minute 20 to 27.** "What I see so far": five modest things, one of them an open promise to her editor. She marks four useful, one wrong. The review queue runs four minutes by voice: a merge, a commitment, a health message to the vault, a page to publish. She stops. Home shows what's waiting: 41.
-- **Day 1.** Friday offers one governed action: draft the reply to the editor. Preview, permission class, approval, execution, verification, receipt, read aloud once.
+- **Day 1.** The ChatGPT export arrived by email overnight; she drops the zip in. Friday shows "what ChatGPT knew about you" and she corrects two lines. Then the special clearance card, once: local reads of the four sources she named, local writes, overnight hours, nothing outward, four weeks, revocable. She approves it by voice. Friday offers one governed action: draft the reply to the editor. Preview, permission class, approval, execution, verification, receipt, read aloud once.
 - **Day 2.** One goal for the month, written together, created when she approves the wording.
 - **Day 4.** "You read mail at 07:40 most days. Want a two-minute briefing then?" She says yes.
 - **Day 6.** The first grant: file newsletters and receipts, 30 days, 400 uses. The card shows the two rules.
@@ -481,6 +627,7 @@ Maya is a journalist. She is not technical. She has a laptop with a 12 GB GPU an
 - **Day 12.** "Want me to look at which tools you lean on?" She says yes. The ranked list appears first. In the next weekly review, one card: her note-taking app, an open alternative with no telemetry, what she gains, what she loses, about two hours to migrate, her notes importable. She dismisses a second suggestion forever.
 - **Day 16.** Her phone, through her own Tailscale account. Approval cards work from the couch.
 - **Day 19.** Her partner gets a principal with a lock screen. The kids get minor mode, with the guardian rules read aloud to both of them.
+- **Day 3.** The daily question set, five minutes: two merges, one "which project is still active". The Home card reads 31% complete, 2,140 facts, finish about 14 October.
 - **Day 21.** Friday's first weekly look change is announced, with undo. The sigil is unchanged.
 - **Day 30.** The thirty-day review: 2,140 facts, 312 confirmed by her, 61 receipts, 41 cloud calls with every scrubbed line listed, nothing to FutureSpeak, and a re-run link beside every setup step.
 
@@ -493,7 +640,9 @@ Maya is a journalist. She is not technical. She has a laptop with a 12 GB GPU an
 | P1s App shell | Electron shell over the Python server: window, tray, hotkey, notifications, deep links, permission handler, telemetry hardening, packet-capture egress test in CI; adblock-rust in the fetcher | 11 to 17 days | P0, decision D1, `bonsai2-tiers.json` |
 | P2 Birth | voice-first setup on today's `setup_chat`, naming with the address card at setup, seed and sigil at birth, Windows Hello wrap, recovery kit, restore drill, five routing profiles, four extra persona axes, quiet hours and autonomy profiles, setup receipt | 15 to 20 days | avatar genome §3 |
 | P3 Connect | card contract and single Health verdict, outcome groups, read and write split, Takeout / mbox / PST / bookmarks / chat importers with scan and staging, IMAP app-password connector, BYO Google walkthrough, expiry countdown | 20 to 25 days | connector-ecosystem phases 1 and 2 |
-| P4 First major task | staging store, Laya pre-classification, local extraction with commitment and role types, entity resolution with evidence, timeline store, sensitive zoning, cited page drafting, idle scheduler with measured estimates, growth events and processing states, review queue with voice tools, first synthesis | 30 to 40 days | P3, processing states PS1 to PS5 |
+| P4 First major task | staging store, Laya pre-classification, local extraction with commitment and role types, entity resolution with evidence, timeline store, sensitive zoning, cited page drafting, idle scheduler with measured estimates, growth events and processing states, review queue with voice tools, first synthesis, tier scaling and the quality checks of §7.8 | 30 to 40 days | P3, processing states PS1 to PS5, `bonsai2-tiers.json` |
+| P4a Getting to know you | the durable goal on goals-and-receipts, the `standing_local` clearance grant with expiry and Ledger revocation, the question inbox with daily ranking, the surface and Home card, resource yielding through the arbiter | 18 to 25 days | P4, goals-and-delivery-receipts, standing grants, idle-window policy, per-goal token ceilings, seat persistence |
+| P3a AI histories and borrowed servers | provider export guides as a data file, importers for ChatGPT, Claude.ai, Gemini Takeout, Grok, Copilot CSV, Perplexity, Meta; local Claude Code, Codex, Cursor and Gemini CLI log readers with secret dropping; MCP-configuration discovery and re-authenticated adoption; "what the other AIs knew about you" pages | 15 to 20 days | P3 |
 | P5 Apprenticeship | Home progress strip, first governed action flow, first goal UI on `goals.py`, pattern-based routine offers, per-workflow grants UI, weekly review with the Doctor ask, Friday Bundle backups and restore rehearsal, device pairing, principals and minor mode | 20 to 25 days | P4; multi-user is v6 P9 |
 | P5b Own your tools | consent card, local usage signals, public-catalog fetch and local solver with licence and telemetry facts, three-path suggestion cards with gain, loss, migration and import path, per-app dismissal, salon template seeding, the federation manifest seam (not the federation) | 12 to 15 days | P4, model-soup solver, salon templates |
 | P6 Control room and privacy map | sections, four lines per setting, voice-to-diff, modes, "why did you do that", memory browser, privacy map and ledger UI over the existing routes | 20 to 25 days | P2 |
@@ -510,11 +659,11 @@ The owner made the first install run the priority. Phase 1 is the smallest thing
 | 3 | **Bonsai2 selection**: tier lookup from `bonsai2-tiers.json`, the published floor, download in the app with pause and checksum, no other model named | preflight prints the tier row; below-floor machines are told before install |
 | 4 | **Birth and naming**: voice-first conversation, seed and sigil at birth, the address card with its one explained prompt, five routing profiles, persona, quiet hours, setup receipt | every step keyboard-complete and captioned; the setup receipt written |
 | 5 | **Vault**: Windows Hello or passphrase, the 24-word kit, the restore drill, honest "no recovery" | the drill gates "protected"; the passphrase invariant of §3.4 tested |
-| 6 | **Connect your life**: the card contract, outcome groups, read and write split, the Gmail truth card, Takeout and mbox import with scan and staging, IMAP with app password | two sources connectable with no OAuth at all; nothing from an import is durable before review |
-| 7 | **First knowledge-graph pass**: staging, Laya pre-classification, local Bonsai2 extraction with provenance, hard-key merges plus queued "same person?" questions, sensitive zoning, growth visible in the Knowledge workspace | facts carry citations; Tier 3 never reaches a cloud model; the galaxy grows on `node_ignited` |
+| 6 | **Connect your life**: the card contract, outcome groups, read and write split, the Gmail truth card, Takeout and mbox import with scan and staging, IMAP with app password, the AI-history imports for ChatGPT, Claude.ai and Gemini plus the local Claude Code and Codex logs (§6.6), MCP-configuration borrowing from installed AI apps (§6.5), the opt-in framing of §6.7 on every card | two sources connectable with no OAuth at all; nothing from an import is durable before review; no token or secret from another app is ever read |
+| 7 | **First knowledge-graph pass**: staging, Laya pre-classification, local Bonsai2 extraction with provenance, the shallow-first pass of §7.8, hard-key merges plus queued "same person?" questions, sensitive zoning, the first cut of the Getting to know you surface (source map, growth, question inbox, coverage meter, pause and delete-with-receipt) | facts carry citations; Tier 3 never reaches a cloud model; the galaxy grows on `node_ignited`; the meter reads from real counters |
 | 8 | **First value**: "What I see so far" with at most five items and the seven marks, the four-minute voice review queue | reached within fifteen minutes of the second source on the local path, measured on the reference machine and recorded locally |
 
-**Out of Phase 1, on purpose:** delta updates and rollback (Phase 1b, right after), the Model Soup advisor (offered as a card that says "coming"), Own your tools, the first governed action, goals, routines, grants, backups, devices, principals, the control room and privacy map beyond today's Settings, Mac and Friday Linux. Phase 1 ships behind the owner's release conversation (A7).
+**Out of Phase 1, on purpose:** the durable goal and the special clearance of §7A (Phase 2, right after, because they depend on goals-and-receipts and standing grants; Phase 1's pass runs in ordinary idle windows under the normal ceilings), delta updates and rollback (Phase 1b), the Model Soup advisor (offered as a card that says "coming"), Own your tools, the first governed action, goals, routines, grants, backups, devices, principals, the control room and privacy map beyond today's Settings, Mac and Friday Linux. Phase 1 ships behind the owner's release conversation (A7).
 
 About 130 to 165 engineer-days for Windows, or roughly three months with the program's parallel pieces. Each phase ends with its rows of NS-34.4 green on the clean-machine matrix.
 
@@ -547,7 +696,7 @@ NS-8.1-1, -3, -8, -12, -13, -14; NS-8.2-1, -2; NS-8.3-1, -2; NS-8.4-2, -3, -4; N
 
 ## Appendix C. Voice tools this spec introduces
 
-Each follows the five steps of the voice contract: `setup_step(step)`, `review_answer(kind, item, answer)`, `review_why(item)`, `control_room_change(sentence)` (returns the diff; applying is a second, spoken yes), `set_mode(mode)`, `pause_learning()`, `resume_learning()`, `what_left_today()`, `model_soup()` (returns the recommended stack; installing is a card per item), `own_your_tools()` (returns the ranked tools and the next suggestion; nothing is installed or built without its own card). None reaches outside the machine; all are ring-1 candidates with a comment saying so. `control_room_change` never applies without the second yes.
+Each follows the five steps of the voice contract: `setup_step(step)`, `review_answer(kind, item, answer)`, `review_why(item)`, `control_room_change(sentence)` (returns the diff; applying is a second, spoken yes), `set_mode(mode)`, `pause_learning()`, `resume_learning()`, `what_left_today()`, `model_soup()` (returns the recommended stack; installing is a card per item), `own_your_tools()` (returns the ranked tools and the next suggestion; nothing is installed or built without its own card), `picture_status()` (the coverage meter, the next question count and the finish estimate, spoken), `answer_question(id, answer)`, `pause_learning(source?)`, `delete_source(source)` (raises the deletion card and returns the receipt), `import_ai_history(provider)` (starts the guided export steps aloud). None reaches outside the machine; all are ring-1 candidates with a comment saying so. `control_room_change` never applies without the second yes.
 
 ## Appendix D. Prototype index
 

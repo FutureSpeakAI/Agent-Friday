@@ -35,6 +35,7 @@
   <div class="eyebrow">Setup · 07 · about 5 minutes, or come back later</div>
   <h1>Connect your life</h1>
   <p class="lede">Each card says what Friday will see, where it is processed, and how to take it back. Reading and writing are separate switches. Two sources are enough for her to show you something real in about fifteen minutes.</p>
+  <div class="card accent" style="margin-top:12px"><div class="row"><span class="pill ok">Optional, all of it</span><span class="pill ok">On this PC</span><span class="pill warn">Sensitive parts encrypted in the vault</span><span class="pill dim">Nothing durable before you review it</span></div><p class="small" style="margin:8px 0 0">Building a picture of yourself is an opportunity, not a requirement. Pick nothing, some, or everything. Any source can be paused or deleted in one step later, and deleting leaves a receipt that shows what was removed.</p></div>
 
   <div class="friday-says">
     <div class="holo" data-voice></div>
@@ -83,6 +84,33 @@
       <div class="opt"><div><b>IMAP with an app password</b> · live mail, read-only if you like, needs 2-step verification on your Google account.</div><div class="cost">free · 3 min</div></div>
       <div class="opt"><div><b>Your own Google sign-in project</b> · you create a "desktop app" in Google Cloud, paste two strings here. Friday walks you through it. Verified by nobody, so Google shows a warning you click past, and the 100-user cap is yours alone.</div><div class="cost">free · 10 min · fiddly</div></div>
       <div class="opt"><div><b>FutureSpeak's verified sign-in</b> · one tap, when it exists. Needs Google's review and, for reading mail, a yearly security assessment paid by FutureSpeak.</div><div class="cost">FutureSpeak's cost · not yet · <span class="pill dim">decision D2</span></div></div>
+    </div>
+  </section>
+
+  <!-- Other AIs -->
+  <section class="group" aria-labelledby="g1b">
+    <h2 id="g1b">Your other AIs <small>years of your own questions and plans, in your words: the richest source for the picture</small></h2>
+    <div class="grid-cards">
+      <div class="card conn">
+        <div class="card-head"><h3>Chat histories and memories</h3><span class="where local">on this PC</span></div>
+        <div class="what">Import the official export from each provider. Friday walks you through the download, then reads the file here.</div>
+        <div class="sees"><b>ChatGPT</b><span>Settings → Data controls → Export data (zip by email); paste your saved memories from Manage memories</span><b>Claude.ai</b><span>Settings → Privacy → Export data (link by email, 24 h)</span><b>Gemini</b><span>Google Takeout → My Activity → Gemini Apps, JSON</span><b>Grok</b><span>Settings → Data controls → Export account data</span><b>Copilot</b><span>privacy dashboard → Copilot activity → Export (CSV)</span><b>Perplexity, Meta AI</b><span>per-thread export, or Download your information</span></div>
+        <div class="rw"><label class="toggle"><input type="checkbox" data-src="ChatGPT history" onchange="recount()"><span class="track"></span><span>ChatGPT</span></label><label class="toggle"><input type="checkbox" data-src="Claude history" onchange="recount()"><span class="track"></span><span>Claude.ai</span></label><label class="toggle"><input type="checkbox" data-src="Gemini history" onchange="recount()"><span class="track"></span><span>Gemini</span></label></div>
+        <div class="foot"><button class="btn sm" onclick="toast('Step 1 of 3 for ChatGPT: open Settings → Data controls → Export data. Friday waits here and reads the zip when it arrives.')">Guide me through an export</button><span class="muted small">then: "what the other AIs knew about you", correctable</span></div>
+      </div>
+      <div class="card conn">
+        <div class="card-head"><h3>Agent logs already on this PC</h3><span class="where local">on this PC</span></div>
+        <div class="what">Session logs from coding agents you run locally. Found by folder, never opened until you tick them.</div>
+        <div class="sees"><b>Found</b><span>Claude Code: 49 projects, 1,037 sessions · Codex: 108 sessions · Cursor: none · Gemini CLI: none</span><b>Secrets</b><span>anything key-shaped is dropped by the scanner before staging</span></div>
+        <div class="rw"><label class="toggle"><input type="checkbox" data-src="Claude Code logs" onchange="recount()"><span class="track"></span><span>Claude Code</span></label><label class="toggle"><input type="checkbox" data-src="Codex logs" onchange="recount()"><span class="track"></span><span>Codex</span></label></div>
+        <div class="foot"><button class="btn sm secondary">Pick projects</button></div>
+      </div>
+      <div class="card conn">
+        <div class="card-head"><h3>Servers your other AI apps already use</h3><span class="pill accent">configs only, never keys</span></div>
+        <div class="what">Friday can read the MCP server lists in Claude Desktop, Claude Code, Codex, Cursor and similar apps, and run or connect the same servers herself, signing in again where a server needs it.</div>
+        <div class="sees"><b>Found</b><span>Claude Code: 3 servers · Codex: 1 server · Claude Desktop: none</span><b>Never</b><span>their stored tokens, API keys, cookies or sessions; those belong to those apps' clients</span><b>Can't borrow</b><span>connectors that live only inside claude.ai, ChatGPT or Grok; Friday offers the vendor's public server, her own sign-in, or an import instead</span></div>
+        <div class="foot"><button class="btn sm secondary" onclick="toast('Showing 4 servers by name and command. Tick the ones to bring over; each re-authenticates on first use.')">Show what she found</button></div>
+      </div>
     </div>
   </section>
 

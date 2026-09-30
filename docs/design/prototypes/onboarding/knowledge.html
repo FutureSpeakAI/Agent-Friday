@@ -34,10 +34,12 @@
 <body>
 <main id="main" class="stage">
   <div class="row between">
-    <div><div class="eyebrow">Knowledge workspace · getting to know you</div><h1>What Friday is learning</h1></div>
+    <div><div class="eyebrow">Getting to know you · a durable goal, under your clearance</div><h1>What Friday is learning</h1></div>
     <div class="state"><div class="holo" data-voice data-state="busy"></div><div><div class="holo-state" data-holo-state style="text-align:left">Saving to memory</div><div class="cube-stream" aria-hidden="true" id="cubes"><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
   </div>
-  <p class="lede">Everything here was extracted on this PC by the local model and the scanner. Every fact points back to where it came from. Nothing is permanent until you have seen it in the review queue.</p>
+  <p class="lede">Optional, and yours to stop. Everything here was extracted on this PC by Bonsai2 and the scanner, encrypted where it is sensitive. Every fact points back to where it came from. Nothing is permanent until you have seen it in the review queue.</p>
+  <div class="card" style="margin:0 0 14px"><div class="row between"><div><b>How complete is my picture</b> <span class="muted small">coverage-weighted; unconnected sources count as unknown, not zero</span></div><span class="pill accent">31%</span></div><div class="progress" style="margin:8px 0"><span style="width:31%"></span></div><div class="row small muted"><span>People with pages 84 / ~210</span><span>Projects 9 / ~14</span><span>Commitments settled 12 / 31</span><span>Disputed pairs 3</span><span>Uncited claims 0</span><span class="spacer"></span><span>Would raise it most: your 2021 mail (about 40 people)</span></div></div>
+  <div class="card accent" style="margin:0 0 14px"><div class="row between"><div><b>Clearance</b> <span class="small muted">local reads of 4 named sources · local writes · overnight 23:00–07:00 · nothing outward · expires 28 Oct or at target</span></div><div class="row"><span class="pill ok">active</span><a href="#" class="small">receipts (12)</a><a href="#" class="small">revoke</a></div></div></div>
 
   <div class="layout">
     <div>
@@ -55,14 +57,14 @@
         <div class="count"><b id="n-commit">0</b><span>commitments found</span></div>
       </div>
       <div class="card" style="margin-top:12px">
-        <div class="card-head"><h3>Sources being read</h3><span class="muted small">runs when the PC is idle · resumes after sleep</span></div>
-        <div class="src"><span>Google Takeout (mail 2019–2026, 41,208 messages)</span><div class="progress thin"><span id="p1" style="width:0%"></span></div><span class="eta" id="e1">estimating…</span></div>
-        <div class="src"><span>Calendar (3 years, 2,914 events)</span><div class="progress thin"><span id="p2" style="width:0%"></span></div><span class="eta" id="e2">queued</span></div>
+        <div class="card-head"><h3>Source map</h3><span class="muted small">connected → imported → processed → reviewed · runs when the PC is idle · resumes after sleep</span></div>
+        <div class="src"><span>Google Takeout (mail 2019–2026, 41,208 messages) <span class="pill dim">reviewed 22%</span> <a href="#" class="small">scopes</a> · <a href="#" class="small">pause</a> · <a href="#" class="small">delete, with receipt</a></span><div class="progress thin"><span id="p1" style="width:0%"></span></div><span class="eta" id="e1">estimating…</span></div>
+        <div class="src"><span>Calendar (3 years, 2,914 events) <span class="pill dim">reviewed 0%</span> <a href="#" class="small">scopes</a> · <a href="#" class="small">pause</a> · <a href="#" class="small">delete, with receipt</a></span><div class="progress thin"><span id="p2" style="width:0%"></span></div><span class="eta" id="e2">queued</span></div>
         <div class="src"><span>Documents folder (1,140 files, 380 MB)</span><div class="progress thin"><span id="p3" style="width:0%"></span></div><span class="eta" id="e3">queued</span></div>
         <div class="src"><span>Published work (26 pages)</span><div class="progress thin"><span id="p4" style="width:100%"></span></div><span class="eta">done · 4 min</span></div>
         <div class="row" style="margin-top:12px">
-          <button class="btn sm secondary" id="pause" onclick="togglePause()">Pause</button>
-          <span class="small muted" id="honest">Estimate: about 6 h 20 min of idle time for everything. Bonsai2 27B on this PC, speed measured after the first ten items. Cloud would take about 40 min and cost about $6; Friday will not use it unless you say so.</span>
+          <button class="btn sm secondary" id="pause" onclick="togglePause()">Pause</button><label class="toggle"><input type="checkbox" checked><span class="track"></span><span class="small">Work only while I'm away</span></label>
+          <span class="small muted" id="honest">Estimate: about 6 h 20 min of idle time for everything; this PC gave about 4 h of idle time a day this week, so about Thursday. Bonsai2 27B on this PC, speed measured after the first ten items. Cloud would take about 40 min and cost about $6; Friday will not use it unless you say so.</span>
         </div>
       </div>
     </div>
@@ -79,6 +81,15 @@
           <li><div class="obs">Some messages look like health matters. Friday put them in the vault zone without reading further.</div><div class="meta">flagged by the scanner · not extracted · confidence n/a</div><div class="acts"><button class="btn sm secondary">Keep in the vault</button><button class="btn sm secondary">These aren't health</button><button class="btn sm secondary">Never read that sender</button></div></li>
         </ul>
         <div class="actions"><button class="btn" onclick="location.href='review.html'">Review the rest by voice (4 min)</button></div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="card-head"><h3>Questions for you</h3><span class="muted small">today's set · about 5 minutes · by voice or here</span></div>
+        <ul class="clean small">
+          <li><b>Is D. Ruiz in your 2019 email the same person as Dana Ruiz, your editor?</b><div class="muted">settles 14 facts and 1 page</div><div class="row" style="margin-top:4px"><button class="btn sm">Yes</button><button class="btn sm secondary">No</button><button class="btn sm secondary">Skip</button><button class="btn ghost sm">Don't ask about this</button></div></li>
+          <li><b>Which of these three projects is still active: Harbor, Northwind redesign, the book?</b><div class="muted">settles 3 pages and 6 commitments</div></li>
+          <li><b>Your Claude history calls the book "finished" in May; your mail in July says "still drafting". Which is right?</b><div class="muted">a contradiction · settles 2 facts</div></li>
+        </ul>
+        <p class="small muted" style="margin-top:6px">Work continues on everything else while these wait. Bundled once a day, never during quiet hours.</p>
       </div>
       <div class="card" style="margin-top:12px">
         <h3>How the wiki is being written</h3>
