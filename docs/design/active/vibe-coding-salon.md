@@ -1048,6 +1048,25 @@ size. The route taken is shown on each step ("edited by Bonsai2").
 seat is the heavy seat. The header says so. It does not pretend a local model
 is working.
 
+*As built (Phase 3, first increment):* the routing record lives on the
+codebase (`seats.small_edit_seat`, default the resident brain;
+`seats.heavy_seat`, none until chosen; `seats.engine`, `friday`) with a
+`key_profile` of `mine` or a guest key's label. Small or big is a rule Friday
+can explain: a message over 400 characters, the words that name a feature or
+a rewrite, an approved plan with an open milestone, or a last step that
+touched more than three files or 200 lines. The chat routes each turn by the
+record, and when no local model is resident the heavy seat takes everything.
+The header line is computed on the server from the record, the arbiter's
+residency (no probes, cached 15 s) and the meter, with a spoken form; every
+seat or key change is a system line in the chat and a `codebase_header` bus
+event, and the panel re-reads the line after each step. `cost_calls` carries
+`key_profile` and `codebase`; the chat's session context sets both, and
+Costs splits by either. The agent loops set the current model before a tool
+runs, so each step and receipt names the seat that made it. Tools
+`codebase_seat`, `codebase_key` and `codebase_costs` work in chat and by
+voice. Guest keys, the per-call key, the Costs view and the `claude_agent`
+engine follow in the next increments.
+
 ### 4.8 Every change is a step
 
 - A codebase is a git repository at `~/.friday/codebases/<id>/repo/`, or an
