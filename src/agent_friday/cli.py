@@ -1568,7 +1568,8 @@ def _write_export_zip(dest, full: bool) -> dict:
     """Zip ~/.friday into `dest` (a path or file object). Returns counts by reason."""
     import zipfile
     from agent_friday.services.data_export import skip_reason
-    counts = {"files": 0, "transient": 0, "download": 0, "secret": 0, "error": 0}
+    counts = {"files": 0, "transient": 0, "download": 0, "secret": 0,
+              "backup": 0, "error": 0}
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(FRIDAY_DIR.rglob("*")):
             if not path.is_file():
@@ -1651,9 +1652,9 @@ def cmd_export(full: bool = False, out: str | None = None,
                       "Stored API keys and account sign-ins are not in this export; "
                       "use `friday export --full` for a passphrase-protected backup "
                       "that includes them.[/dim]")
-    if counts["download"] or counts["transient"]:
-        console.print(f"[dim]Left out {counts['download'] + counts['transient']} "
-                      "downloaded model and cache files.[/dim]")
+    if counts["download"] or counts["transient"] or counts["backup"]:
+        console.print(f"[dim]Left out {counts['download'] + counts['transient'] + counts['backup']} "
+                      "downloaded model, cache and backup files.[/dim]")
     console.print("[dim]Encrypted vault files are exported as they are; they need "
                   "your vault passphrase to read.[/dim]")
     return 0
