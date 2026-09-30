@@ -125,9 +125,19 @@ From the September 18 context sweep in `~/.friday/runtime/llama.cpp-bonsai/*.log
 
 The `start-bonsai.bat` header records why 49K: at 64K the card had 495 MiB free "that Chrome, Claude, ChatGPT, Wallpaper Engine and the NVIDIA overlay also draw from", and at `-np 1` a 4-token background probe queued behind a chat turn for 7 to 20 s. Both are the desktop's problem, not the model's, and both are what the tier table's "headroom for the desktop" column pays for.
 
-### 2.2 CPU-only: attempted and not obtained
+### 2.2 CPU-only: two attempts, one provisional number, the 27B not obtained
 
-On 2026-09-30 a CPU-only `llama-bench` of the Ternary Bonsai 4B (`-dev none -ngl 0`, GPU hidden with `CUDA_VISIBLE_DEVICES=""`) ran for more than ten minutes without producing a row, holding 3.6 GB of working set, while the machine had 2 to 5 GB of RAM available because other sessions' test processes held the rest. It was killed. The 27B was not attempted under those conditions: its 5.7 GB of weights would have paged, and a paged number is worse than no number. **Every CPU-only figure in §3 is therefore ESTIMATE or PUBLISHED, and the row says so.** The measurement recipe is in §9 so it can be run on a quiet machine, and the installer runs its own on every install (§7.4), which is the number that actually matters.
+Both attempts were made on a busy machine, with other sessions building, and no suite lock held. Free RAM and CPU load were sampled every five seconds by the driver script; the raw rows are in the JSON under `measurements.cpu_only_2026-09-30`.
+
+| Run | Conditions | Result | Status |
+|---|---|---|---|
+| Ternary Bonsai **4B** `PQ2_0` (Bonsai 1 generation), `llama-completion -ngl 0 -t 8 --no-repack`, 561-token prompt, 128 generated | 3,450 MiB RAM free before, 2,262 minimum during; CPU 21% busy before, 65% during; peak RSS 1,697 MiB | **2.70 tok/s decode, 904 tok/s prompt**, 3.0 s load, 54 s wall | **PROVISIONAL** (loaded machine; `--no-repack` was required for `PQ2_0` on CPU, which selects the generic kernel) |
+| Bonsai 2 **27B** `PTQ1_0`, `llama-bench -dev none -ngl 0 -t 8 -p 512 -n 128` | 4,357 MiB free before, **251 MiB minimum** during; CPU 14% before, 87% during; peak RSS 3,680 of 5,671 MiB of weights | no result row in 1,505 s; killed at the cap | **NOT OBTAINED**: the weights paged. A paged number is not a number. |
+| 27B at 4 threads | | not started | stopped: the 8-thread run had shown the weights do not fit in the free RAM, and holding the machine at 251 MiB free was starving the other sessions |
+
+The first attempt on the same day, a `llama-bench` of the 4B without `--no-repack`, ran ten minutes without a row at 3.6 GB of working set and was killed; the `PQ2_0` CPU repack path (§1.3) is the likely cause, which is why the second attempt used `llama-completion` with repacking off.
+
+What this establishes: the 27B on CPU needs its 5.7 GB of weights resident, and a machine with less than that actually free pages rather than runs slowly. The floor's 16 GB line (§5) assumes the OS reserve and Friday are the only other tenants; the installer must check *available* RAM at plan time, not total, and treat a shortfall as "below the floor for now" with the numbers shown. **Every 27B CPU-only figure in §3 remains ESTIMATE or PUBLISHED.** The quiet-machine rerun in §9 is still owed, and the installer's own benchmark at install time is the number that ships.
 
 ---
 
