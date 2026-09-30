@@ -379,6 +379,11 @@ REVIEWED_BUILTINS = {
     "content_insights": "summarises local post metrics",
     "relationship_sync": "reads the owner's mail and calendar headers, writes the "
                          "local timeline, and raises local notifications only",
+    "avatar_growth_check": "asks the owner's chosen model for a look change (numbers "
+                           "and enums only, through the spend guard and egress gate) "
+                           "and writes a signed step locally; reaches no one",
+    "avatar_signals_nightly": "counts the day's on-record activity from the local "
+                              "ledger into a local file",
 }
 
 

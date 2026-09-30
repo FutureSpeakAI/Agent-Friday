@@ -1407,6 +1407,15 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] approvals_expiry_sweep unavailable: {e}")
 
+    # the avatar's weekly look (avatar-visual-genome.md §4): an hourly check
+    # that steps once a week has passed, and the nightly count of the day.
+    # Silent: no orb, so a check that does nothing puts nothing on the lattice.
+    try:
+        from agent_friday.services.avatar_growth import register_jobs as _avatar_jobs
+        _avatar_jobs()
+    except Exception as e:
+        print(f"  [scheduler] avatar growth unavailable: {e}")
+
     # update-check — the ONLY outbound call in this roster that is not about
     # the user's own work: one unauthenticated GET of Friday's public GitHub
     # releases list, at most weekly, whose entire result is a dismissible

@@ -187,8 +187,14 @@ def _seal_or_block(payload, provider):
     return sealed
 
 
-def _call_claude(messages, system=None, model=None, max_tokens=16384, temperature=None):
+def _call_claude(messages, system=None, model=None, max_tokens=16384, temperature=None,
+                 report=None):
     """Call Claude with structured messages. Returns the text response.
+
+    report: an optional dict the call fills with "model", the model the
+        provider says answered, and "via" when OpenRouter served it. Credit
+        (the avatar step's author line) uses what the provider reports, not
+        what was asked for.
 
     messages: list of {"role": "user"|"assistant", "content": "..."}
     system: optional system prompt (string)
@@ -218,6 +224,8 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
         _alt = _one_key.openrouter_instead(
             model or _load_settings().get("orchestrator_model"))
         if _alt:
+            if isinstance(report, dict):
+                report.update({"model": _alt, "via": "openrouter"})
             return _call_openai(messages, system=system, model=_alt,
                                 max_tokens=max_tokens, provider=_one_key.OPENROUTER)[0]
         raise RuntimeError(
@@ -290,6 +298,8 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
         pass
     _rt.after_anthropic_response(resp, model=model, seat="cloud",
                                  thinking_requested=bool(_thinking_cfg))
+    if isinstance(report, dict):
+        report["model"] = getattr(resp, "model", None) or model
     parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
     # Badge truth: text-only Claude calls (validator's
     # tools-stripped retry, briefings) attribute like every other primitive.

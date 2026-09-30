@@ -437,16 +437,16 @@ or time-lapse.
 
 | Gene | Kind | Range | Max per step | Notes |
 |---|---|---|---|---|
-| `palette.anchor_hue` | fixed | 180° | never | v1 cyan; brand anchor (decision 3) |
-| `palette.base_offset` | continuous | −30° … +30° from the anchor, lifetime (decided) | 4° | applies to *identity moods* only (§6.2); never reaches green, amber or pink |
-| `palette.scheme` | discrete | analogous / split-complementary / triadic | change ≤ once per 8 steps | the accents derive from the base |
+| `palette.anchor_hue` | fixed | 221° | never | today's resting colour, IDLE's `#1e54c7` (decision 3; see note below the table) |
+| `palette.base_offset` | continuous | −30° … +30° from today's colours, lifetime (decided) | 4° | turns the cool identity moods (§6.2) at constant brightness; the validators keep them out of green, amber and pink, which in practice stops the teal end near −8° (−16° with a turned accent) |
+| `palette.scheme` | discrete | v1 / cool / violet (accents turned a further 0°, 20° or 40°) | change ≤ once per 8 steps | complementary and triadic schemes were dropped: they put an accent on amber or pink |
 | `palette.accent_share` | continuous | 0.20 … 0.35 | 0.03 | the share of elements drawn in the accent |
 | `palette.saturation` | multiplier | 0.85 … 1.10 | 0.03 | the floor keeps net-offline desaturation visible |
 | `luma.bloom` | multiplier | 0.85 … 1.10 | 0.03 | on the mood's bloom; never above the v1 maximum |
 | `luma.grain` | multiplier | 0.6 … 1.1 | 0.05 | |
 | `form.density` | multiplier | 0.85 … 1.10 | 0.04 | per-structure element counts, capped at v1 +10%; MANDELBROT ≤ 1.0 |
 | `form.coherence` | continuous | 0 … 1 | 0.08 | ordered orbits versus free drift: jitter and tilt spread |
-| `form.symmetry` | discrete | 3 … 8 | ±1, ≤ once per 4 steps | ring counts, pillar counts, sigil arms |
+| `form.symmetry` | discrete | 5 … 8 (v1 is 8) | ±1, ≤ once per 4 steps | ring counts, pillar counts, sigil arms |
 | `speech.tempo` | multiplier | 0.85 … 1.15 | 0.05 | scales **speaking** motion only |
 | `speech.amplitude` | multiplier | 0.85 … 1.10 | 0.05 | scales **speaking** displacement only; reduced motion caps it at 0.5 |
 | `sigil` | fixed at birth | derived from the seed | never | a small mark (arm count, tilt, accent placement) every structure draws identically |
@@ -471,6 +471,11 @@ colours. Two v1 exceptions are resolved in the genome's favour:
 EDEN's white player figure stays white, because it stands for the user, not
 Friday. With an empty genome (v1), both exceptions draw as they do today.
 
+**Note on the anchor (2026-09-30).** At rest the scene is not cyan: it is
+IDLE's `#1e54c7` (221°); cyan appears in CURIOUS and some state moods. The
+decided "±30° from today's cyan" is implemented as ±30° from today's colours,
+so every Friday starts exactly as she looks now and stays recognisably her.
+
 The 2026-09-22 `structure` gene (an index into `EVOLUTION_PATH`) is
 **dropped**. Which structure is shown is the user's choice, and "whichever the
 user is running" is what evolves.
@@ -482,7 +487,7 @@ exist today. A structure with no section draws exactly as v1.
 
 | Structure | Local genes (v1 value → bounds) |
 |---|---|
-| CUBES | `grid` 3 → 3…4; `spacing` 1.6 → 1.4…1.9; `sparsity` 0.15 → 0.05…0.30 (seeded dropout) |
+| CUBES | `spacing` 1.6 → 1.4…1.9; `sparsity` 0.15 → 0.05…0.30 (seeded dropout). The grid stays 3×3×3: a 4×4×4 lattice is 64 cubes against today's 27, which no sparsity brings inside the +10% budget |
 | ICOSAHEDRON | `shells` 3 → 2…4; `detail` 3/2/1 → ±1 each, total ≤ v1 |
 | NETWORK | `nodes` 120 → 100…132; `link_distance` 6 → 5…7 |
 | DOME | `pillars` 8 → `symmetry`-linked 6…10; `crystals` 6 → 4…7 |
@@ -490,7 +495,7 @@ exist today. A structure with no section draws exactly as v1.
 | TESSERACT | `w_ratio` 0.5/0.3 → 0.3…0.7 (speaking only) |
 | QUANTUM | `wave` 10 → 8…12 (colour comes from the shared palette, never its own band) |
 | MANDELBROT | `max_iter` 40 → 32…40 (down only); `step` 0.012 → 0.012…0.015 |
-| MOBIUS | `twists` 1 → 1…3 (odd); `width` 1.5 → 1.2…1.8 |
+| MOBIUS | `twists` 1 → 1…3 (odd); `width` 1.5 → 1.35…1.65 (wider breaks the budget) |
 | GRID | `wave_scale` → 0.8…1.2 |
 | CABLES | `tubes` 80 → 64…88 |
 | NONE | `lines` 100 → 80…110 |
@@ -791,11 +796,22 @@ simply never grows, and everything else works.
    Approval cards, gate chips, status dots and process orbs keep their
    hardcoded colours. A test greps the genome loader's output sinks.
 2. **State moods keep their hue.** The genome's `base_offset` and `scheme` apply
-   to the **identity moods**: IDLE, CALM, CURIOUS, CREATIVE, CREATING, EXCITED,
-   PROTECTIVE, FOCUSED, SOCIAL, REFLECTIVE. They do **not** apply to the
-   **state moods** SPEAKING, EXECUTING, REASONING and LISTENING, which may take
-   only the `saturation` and `luma` multipliers. Executing stays amber and
-   speaking stays green, as the owner's rule requires.
+   to the **cool identity moods**: IDLE, CALM, CURIOUS, FOCUSED and REFLECTIVE
+   (`avatar_genome.IDENTITY_MOODS`). They do **not** apply to the **state
+   moods** SPEAKING, EXECUTING, REASONING and LISTENING, which may take only
+   the `saturation` and `luma` multipliers. Executing stays amber and speaking
+   stays green, as the owner's rule requires.
+   - **Found while building (2026-09-30).** Several v1 ambient moods already
+     use status colours: PROTECTIVE's accent is the approve green `#00ff80`,
+     SOCIAL is amber, CREATING and CREATIVE are pink and magenta. The genome
+     leaves those five at their v1 colours rather than turn them further; whether
+     they should change is a separate, owner-facing question.
+   - **Turning keeps brightness.** A hue turn re-solves lightness so relative
+     luminance is unchanged; blue at a fixed HSL lightness is far darker than
+     cyan, and the lattice would dim as it turned.
+   - **Checks are relative to v1.** Each colour must clear the reserved
+     distance, contrast and colour-blind thresholds, or be no worse than its
+     v1 colour already is.
 3. **Reserved-hue distance.** No identity-mood base or accent may come within
    ΔE2000 20 of a reserved colour. The reserved colours are amber `#f59e0b`,
    approve `#00ff80`, deny `#ff0080`, and error red `#ff0033`/`#ef4444`. A
