@@ -163,7 +163,7 @@ def _notify_seat_refusal(reason: str) -> None:
         pass
 
 
-def _is_local(provider: str) -> bool:
+def _is_local(provider: str, model: str = "") -> bool:
     """Delegates to `seat_policy`, which is where the local-only rule lives.
 
     This used to carry its own copy of the provider set. Two copies of one fact
@@ -171,11 +171,10 @@ def _is_local(provider: str) -> bool:
     about what "local" means.
     """
     try:
-        from agent_friday.services.seat_policy import is_local_provider_name
-        return is_local_provider_name(provider)
+        from agent_friday.services.seat_policy import is_local_seat
+        return is_local_seat(provider, model)
     except Exception:
-        return provider in {"ollama-local", "arbiter-local", "llama-cpp-local",
-                            "local"}
+        return False
 
 
 # ── Pinned call ──────────────────────────────────────────────────────────────
@@ -191,23 +190,36 @@ def _ask_seat(prompt: str, model: str, provider: str, *,
     private conversation history, and shipping that to a paid API on a job they
     have not yet chosen to trust is not a default anyone should get by accident.
     """
-    if not _is_local(provider):
+    if not _is_local(provider, model):
         raise SeatUnavailable(
-            f"the memory_manager seat is assigned to a non-local provider "
-            f"({provider!r}). This path is local-only for now: it reads your "
+            f"the memory_manager seat cannot verify this model and provider "
+            f"as local ({provider!r}/{model!r}). This path is local-only for now: it reads your "
             f"full conversation history, and sending that to a paid API is not "
             f"something to enable by default. Assign a local model, or say so "
             f"explicitly and this restriction can be lifted.")
     try:
         from agent_friday.services.model_router import _call_ollama
+        from agent_friday.services.provider_registry import get_provider_registry
+        registry = get_provider_registry()
+        name = str(provider or "").strip()
+        descriptor = registry.get_provider(name) or registry.get_provider(name.lower())
+        resolved_name = (descriptor or {}).get("name") or name
+        origin = getattr(registry, "provider_origin", lambda _: "unknown")(resolved_name)
+        # The shipped daemon name is also the legacy local-discovery alias:
+        # its settings URL or owned model seat may differ from the default.
+        # A file/UI override is an explicit assignment and remains pinned.
+        if name.lower() == "ollama-local" and origin == "builtin":
+            descriptor = None
     except Exception as exc:                                # noqa: BLE001
         raise SeatUnavailable(f"local transport unavailable: {exc}") from exc
 
     try:
-        text, _trace = _call_ollama(
-            [{"role": "user", "content": prompt}],
-            model=model, max_tokens=max_tokens, temperature=0.1,
-            orb_label="🧠 Reading the day", tools=None)
+        from agent_friday.services.local_only_guard import local_only
+        with local_only("Memory keeper"):
+            text, _trace = _call_ollama(
+                [{"role": "user", "content": prompt}],
+                model=model, max_tokens=max_tokens, temperature=0.1,
+                orb_label="🧠 Reading the day", tools=None, provider=descriptor)
     except Exception as exc:                                # noqa: BLE001
         # No fallback chain. This is the point of the module.
         raise SeatUnavailable(

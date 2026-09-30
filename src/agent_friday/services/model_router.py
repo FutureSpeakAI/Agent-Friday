@@ -692,12 +692,16 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                  temperature=None, orb_label=None, orb_icon='⚡',
                  tools=None, pii_lookup=None, session_ctx=None,
                  max_iters=None,
-                 catalogue_all=None):
+                 catalogue_all=None, provider=None):
     """Call a local Ollama model. Returns (text, tool_trace).
 
     `catalogue_all` is the FULL tool registry when `tools` is only a catalogue
     (services/tool_catalogue.py). The loop needs it to satisfy `load_tools`.
     None means progressive disclosure is off and nothing here changes.
+
+    An explicit `provider` descriptor pins the assigned local endpoint. It
+    bypasses model-name discovery, which may find a different provider offering
+    the same model. Omitting it retains ordinary local seat discovery.
 
     When ``tools`` (the unified CLAUDE_TOOLS list) is supplied, runs a FULL
     agentic tool loop via Ollama's native OpenAI-compatible tool calling — the
@@ -708,7 +712,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
     agent. Without ``tools`` it stays single-shot text (briefings, front page,
     trajectory compression) and returns (text, []).
     """
-    from agent_friday.routing.ollama_manager import get_manager
+    from agent_friday.routing.ollama_manager import get_manager, OllamaManager
     # _oai_agentic_loop lives in services/agent.py — an upper layer of the
     # import chain — so it is NOT in this module's globals. Import lazily at
     # call time (agent.py is fully initialised by the first request); a
@@ -717,19 +721,47 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
 
     settings = _load_settings()
     routing_cfg = settings.get('model_routing') or {}
-    ollama = get_manager(routing_cfg.get('ollama_url', 'http://localhost:11434'))
+    pinned = None
+    pinned_adapter = None
+    if provider is not None:
+        from agent_friday.routing.provider_descriptors import adapter_of
+        from agent_friday.services.seat_policy import is_local_descriptor
+        from agent_friday.services.provider_registry import get_provider_registry
+        pinned = (provider if isinstance(provider, dict) else
+                  get_provider_registry().get_provider(str(provider)))
+        if not pinned or not is_local_descriptor(pinned):
+            raise RuntimeError("The assigned provider is not verified as local")
+        if not pinned.get("enabled", True):
+            raise RuntimeError("The assigned local provider is disabled")
+        pinned_adapter = adapter_of(pinned)
+        if pinned_adapter not in ("ollama", "openai-compatible"):
+            raise RuntimeError("The assigned provider cannot run a text model")
+    if pinned_adapter == "ollama":
+        base_url = str(pinned.get("base_url") or "").strip()
+        if not base_url:
+            raise RuntimeError("The assigned Ollama provider has no endpoint")
+        # The default manager is a singleton: passing another URL to
+        # get_manager would keep using whichever daemon was selected first.
+        ollama = OllamaManager(base_url)
+    elif pinned_adapter == "openai-compatible":
+        ollama = None
+    else:
+        ollama = get_manager(routing_cfg.get('ollama_url', 'http://localhost:11434'))
 
     # Resolve the model: explicit arg → configured default → leave to Ollama.
     # (The daemon-availability check moved BELOW the seat gate + descriptor
     # dispatch: a brain served by llama-server must not require the Ollama
     # daemon to be up, and the seat gate must run for it either way.)
     if not model:
-        model = routing_cfg.get('local_model') or model
+        model = ((pinned.get("models") or [None])[0] if pinned else
+                 routing_cfg.get('local_model') or model)
+        if pinned and not model:
+            raise RuntimeError("The assigned local provider has no model")
 
     # An Ollama "-cloud" tag is relayed to ollama.com by the local daemon: a
     # cloud call, refused inside a local-only run before anything is sent.
     from agent_friday.services.local_only_guard import refuse_if_active as _refuse_cloud
-    _refuse_cloud("ollama-local", str(model or ""))
+    _refuse_cloud(pinned or "ollama-local", str(model or ""))
 
     # There is deliberately NO seat gate here. A gate that re-checks every
     # tool-using dispatch and, on a red/ungated model, silently substitutes a
@@ -763,7 +795,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
     # same tool loop, same governance, still on-device — and the gate above
     # has already ruled on this exact id. ──
     if model:
-        _oai_local = None
+        _oai_local = pinned if pinned_adapter == "openai-compatible" else None
         # The Arbiter is asked FIRST, because it is the only authority that
         # knows a seat's live port. Once a model's GGUF is extracted and the
         # Arbiter runs it as an owned process, the Ollama daemon no longer has
@@ -773,12 +805,13 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
         # cloud against 16s locally. A registered descriptor cannot cover this: the port is
         # assigned at process start, so anything static would be stale.
         try:
-            from agent_friday.services.residency_arbiter import owned_provider
-            _oai_local = owned_provider(model)
+            if pinned is None:
+                from agent_friday.services.residency_arbiter import owned_provider
+                _oai_local = owned_provider(model)
         except Exception:
             _oai_local = None
         try:
-            if _oai_local is None:
+            if pinned is None and _oai_local is None:
                 from agent_friday.services.model_seat_gate import (
                     _local_openai_descriptor)
                 _oai_local = _local_openai_descriptor(model)
@@ -794,6 +827,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                 orb_label=orb_label or "Local brain…", orb_icon='🧠',
                 tools=tools, pii_lookup=pii_lookup, session_ctx=session_ctx,
                 provider=_oai_local, max_iters=max_iters,
+                pin_provider_endpoint=pinned is not None,
                 # A llama-server seat is served through the OpenAI dialect, so
                 # this forward is the REAL local path. Dropping catalogue_all
                 # here left `load_tools` with an empty registry and every name
@@ -1282,7 +1316,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                  tools=None, pii_lookup=None, session_ctx=None,
                  max_iters=None,
                  provider=None, fallback_models=None, stream=None,
-                 on_delta=None, catalogue_all=None):
+                 on_delta=None, catalogue_all=None, pin_provider_endpoint=False):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
 
     Two configuration paths:
@@ -1305,6 +1339,9 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
     * ``provider=None`` — the legacy single-slot path, unchanged: settings
       ``model_routing.openai_base_url / openai_model / openai_api_key`` with
       env OPENAI_API_KEY / OPENROUTER_API_KEY fallback.
+
+    `pin_provider_endpoint=True` keeps an explicit seat assignment on its
+    descriptor endpoint even when another local provider serves the same model.
 
     When `tools` (the Anthropic CLAUDE_TOOLS list) is supplied, runs a full
     agentic tool loop with parity to _call_claude_agent: tool calls are gated by
@@ -1384,7 +1421,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
         # stale by construction.
         try:
             from agent_friday.services.local_call import seat_endpoint
-            _live = seat_endpoint(model) if model else None
+            _live = seat_endpoint(model) if model and not pin_provider_endpoint else None
             if _live:
                 _live = str(_live).rstrip('/')
                 if _live != base_url:
@@ -4003,5 +4040,3 @@ def _load_latest_briefing_summary(parts):
         return
     if files:
         parts.append(f"== LATEST BRIEFING ==\nMost recent: {files[0].name} (use get_briefing tool to read it)")
-
-
