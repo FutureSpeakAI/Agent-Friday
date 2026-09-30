@@ -288,8 +288,8 @@ def _refuse_cloud_voice(private: bool) -> None:
         raise PodcastRefused("Local-only mode is on, so cloud voices are refused.")
     if not settings().get("cloud_voice"):
         raise PodcastRefused(
-            "Cloud voices are off. Switch them on in Settings → Podcasts first; "
-            "local voices are the default.")
+            "Cloud voices are off for podcasts, so this episode uses the voices on "
+            "this computer. Ask me to switch cloud voices on if you want them.")
 
 
 def cancel(eid: str) -> dict | None:

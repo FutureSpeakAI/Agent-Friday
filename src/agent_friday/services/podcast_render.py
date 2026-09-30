@@ -161,8 +161,8 @@ class CpuKokoro:
             raise RenderError(
                 "voice_not_installed",
                 "The voice %r is not installed on this computer. Pick an "
-                "installed voice (%s) in Settings → Podcasts; nothing is "
-                "downloaded during a render." % (voice, ", ".join(installed_voices()) or "none"))
+                "installed voice (%s) for the hosts; nothing is downloaded "
+                "during a render." % (voice, ", ".join(installed_voices()) or "none"))
         self.load()
         stuck = self._stuck
         if stuck is not None and stuck.is_alive():

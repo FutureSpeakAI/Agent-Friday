@@ -273,15 +273,12 @@ def _tool_podcast_source(inp):
 TOOLS = [
     {"name": "make_podcast",
      "description": (
-         "Make a podcast episode (an audio overview: two hosts talking it through, "
-         "with chapters, a transcript and a source for every claim) from ANY sources: "
-         "files (PDF, Word, text), wiki pages, knowledge-graph entries, a chat "
-         "conversation, Studio creations, datasets (CSV/XLSX: data mode computes the "
-         "numbers first and the hosts may only say computed numbers), web pages or "
-         "pasted text. Or pass `topic` to use the owner's wiki notes on it. Written by "
-         "the local model and spoken on this computer; returns at once and the episode "
-         "follows in minutes. Say one short sentence that it has started and that a "
-         "notice will come when it is ready; do NOT guess what it will say."),
+         "Make a two-host podcast episode (chapters, transcript, a source per claim) "
+         "from any sources: files, wiki pages, graph entries, a conversation, "
+         "creations, datasets (CSV/XLSX: data mode, only computed numbers), web "
+         "pages or text; or `topic` for the owner's wiki notes. Made locally; "
+         "returns at once. Say in one sentence that it started and a notice will "
+         "follow; do NOT guess its content."),
      "input_schema": {"type": "object", "properties": {
          "sources": {"type": "array", "description": (
              "Each item: {kind: file|wiki|kg_node|conversation|creation|dataset|text|url|news_run, "
@@ -304,10 +301,9 @@ TOOLS = [
          "limit": {"type": "integer"}}}},
     {"name": "podcast_play",
      "description": (
-         "Play or control a podcast episode on the owner's screen: play (an episode id, or the "
-         "latest episode of a routine such as today's briefing), pause, resume, stop, "
-         "next_chapter, previous_chapter, or seek to a second. If it says no_desktop, "
-         "tell the user to open Friday's window and it will play there."),
+         "Control a podcast on the owner's screen: play (an episode id, or a routine's "
+         "latest), pause, resume, stop, next_chapter, previous_chapter, seek. On "
+         "no_desktop, ask them to open Friday's window."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(PLAY_OPS)},
          "episode_id": {"type": "string"},
@@ -315,10 +311,9 @@ TOOLS = [
          "seconds": {"type": "number"}}, "required": ["action"]}},
     {"name": "podcast_source",
      "description": (
-         "Answer \"what's the source for that?\" while a podcast plays: the line being spoken "
-         "now and the sources (outlet and link, or the computed fact) it cites. Name "
-         "the outlet out loud; if the line cites nothing, say it was the hosts' own "
-         "talk rather than inventing a source."),
+         "\"What's the source for that?\" during a podcast: the current line and what it "
+         "cites (outlet and link, or the computed fact). Name the outlet; if it cites "
+         "nothing, say it was the hosts' own talk."),
      "input_schema": {"type": "object", "properties": {
          "episode_id": {"type": "string"},
          "seconds": {"type": "number", "description": "A position other than now."}}}},
