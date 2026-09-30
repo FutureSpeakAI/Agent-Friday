@@ -18,7 +18,7 @@ import os
 import sqlite3
 import time
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, copy_current_request_context, jsonify, request
 from agent_friday.paths import friday_home
 from agent_friday.routes._errors import error_text, exception_text, public_result
 
@@ -1016,8 +1016,48 @@ def _model_soup(settings: dict, routing: dict, costs: dict, seats: dict,
     }
 
 
+def _model_picker_payload():
+    """Selectable models without the machine plan, cost ledger or residency survey."""
+    from agent_friday.services.model_catalog import build_catalog
+
+    rows = {}
+    for entry in build_catalog(include_engines=False).get("models", []):
+        mid = entry.get("id")
+        if not mid:
+            continue
+        if mid not in rows:
+            rows[mid] = {**entry, "providers": [], "roles": [], "modalities": [],
+                         "state": "unknown" if entry.get("local") else "cloud"}
+        row = rows[mid]
+        row["available"] = bool(row.get("available") or entry.get("available"))
+        for field, values in (("providers", [entry.get("provider")]),
+                              ("roles", entry.get("roles") or []),
+                              ("modalities", entry.get("modalities") or [])):
+            row[field].extend(v for v in values if v and v not in row[field])
+    return {"models": list(rows.values())}
+
+
 @intelligence_bp.route("/api/intelligence")
 def api_intelligence():
+    if request.args.get("view") == "picker":
+        from agent_friday.services.machine_probe import snapshot
+
+        # Preserve the request's bounded-probe semantics inside the worker;
+        # ordinary offline catalogue callers may still wait for discovery.
+        @copy_current_request_context
+        def read_picker():
+            try:
+                return _model_picker_payload()
+            except Exception:
+                return {"models": [], "catalog_error":
+                        "The model catalogue could not be read. Retry in a moment."}
+
+        payload, at, reading = snapshot(
+            "intelligence:picker", read_picker, fresh_for=2.0,
+            budget=0.1, default=None, allow_blocking=False)
+        return jsonify({**(payload or {"models": []}), "status": "ok",
+                        "catalog_reading": reading, "catalog_read_at": at})
+
     from agent_friday.services.model_catalog import build_catalog
     from agent_friday.core import _load_settings
 

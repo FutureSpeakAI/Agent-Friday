@@ -9,6 +9,117 @@
      backed by src/agent_friday/routes/intelligence.py -->
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback,useContext}=React;
+function useIntelligence(pollMs, view, enabled = true) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [stalled, setStalled] = useState(false);
+  const flight = useRef(null);
+  const unreadSince = useRef(null);
+  const load = React.useCallback(() => {
+    if (!enabled) return Promise.resolve();
+    if (flight.current) return flight.current.promise;
+    const run = { ctrl: new AbortController(), promise: null };
+    flight.current = run;
+    const current = () => flight.current === run;
+    run.timer = setTimeout(() => run.ctrl.abort(), 30000);
+    run.stallTimer = setTimeout(() => { if (current()) setStalled(true); }, 10000);
+    const url = '/api/intelligence' + (view === 'picker' ? '?view=picker' : '');
+    run.promise = apiFetch(url, { signal: run.ctrl.signal }).then(async r => {
+      if (!r.ok) {
+        const error = new Error('Model information answered HTTP ' + r.status + '.');
+        error.status = r.status;
+        throw error;
+      }
+      return r.json();
+    }).then(j => {
+      if (!current()) return;
+      if (!j || j.status !== 'ok' || j.catalog_error) {
+        throw new Error((j && (j.catalog_error || j.message || j.error)) || 'No usable model information was returned.');
+      }
+      setD(j);
+      if (view === 'picker' && j.catalog_reading === 'unknown') {
+        if (unreadSince.current === null) unreadSince.current = Date.now();
+        if (Date.now() - unreadSince.current >= 10000) {
+          setErr({ kind: 'discovery', what: 'Model discovery is still busy.',
+            fix: 'The list will update when discovery finishes. You can retry or close this menu and keep chatting.' });
+          return;
+        }
+      } else unreadSince.current = null;
+      setErr(null);
+    }).catch(e => {
+      if (!current()) return;
+      const stale = e.status === 401 || e.status === 403;
+      setErr({ kind: stale ? 'stale-tab' : e.name === 'AbortError' ? 'timeout' : 'unreachable',
+        what: stale ? 'This page can no longer authenticate with the server.'
+          : e.name === 'AbortError' ? 'Model information did not answer within 30 seconds.' : e.message,
+        fix: stale ? 'Reload the page (Ctrl+Shift+R).' : 'Retry, or check that Friday is still running.' });
+    }).finally(() => {
+      clearTimeout(run.timer); clearTimeout(run.stallTimer);
+      if (current()) { flight.current = null; setStalled(false); }
+    });
+    return run.promise;
+  }, [view, enabled]);
+  useEffect(() => {
+    load();
+    const timer = enabled && pollMs ? setInterval(load, pollMs) : null;
+    return () => {
+      clearInterval(timer);
+      const run = flight.current;
+      flight.current = null;
+      if (run) { clearTimeout(run.timer); clearTimeout(run.stallTimer); run.ctrl.abort(); }
+    };
+  }, [load, pollMs, enabled]);
+  return { d, err, reload: load, stalled };
+}
+
+const fridaySeatSaves = new Map();
+async function fridaySaveConversationSeat(cid, seat, onSaved, onError, onPending) {
+  const run = {};
+  fridaySeatSaves.set(cid, run);
+  const current = () => fridaySeatSaves.get(cid) === run;
+  let timer = null;
+  const deadline = Date.now() + 45000;
+  let notified = false;
+  let changeId = null;
+  try {
+    let data;
+    while (current()) {
+      const ctrl = new AbortController();
+      timer = setTimeout(() => ctrl.abort(), 10000);
+      const r = await apiFetch('/api/conversations/' + encodeURIComponent(cid), {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seat, ...(changeId ? { seat_change_id: changeId } : {}) }), signal: ctrl.signal,
+      });
+      data = await r.json();
+      clearTimeout(timer); timer = null;
+      if (!current()) return;
+      if (!r.ok || !data || data.status === 'error') {
+        throw new Error((data && (data.note || data.detail || data.error)) || 'Could not save the model choice (HTTP ' + r.status + ').');
+      }
+      if (data.superseded) throw new Error('A newer model choice was saved in another window. Reopen this chat to see its saved model.');
+      if (!data.seat_pending) break;
+      changeId = data.seat_change_id;
+      if (Date.now() >= deadline) throw new Error('The local model check is still busy. Your choice has not changed. Try again shortly.');
+      if (!notified && onPending) onPending('Checking the local model before changing this chat.');
+      notified = true;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    if (!current()) return;
+    const saved = (data.conversation || {}).seat || null;
+    if (!data.conversation || (saved && saved.model || null) !== (seat && seat.model || null)) {
+      throw new Error(data.note || 'The server did not accept this model choice.');
+    }
+    onSaved(saved);
+  } catch (error) {
+    if (current()) onError(error.name === 'AbortError'
+      ? new Error('Could not confirm the model change in time. Reopen this chat to check its saved model, or choose again.') : error);
+  } finally {
+    clearTimeout(timer);
+    if (current()) fridaySeatSaves.delete(cid);
+  }
+}
+// End conversation seat saves
+
 // Per-workspace live customizations Friday applies through the Workspace Studio
 // chat (the 💬 button on every window). map: wsId -> customization patch.
 // setCust(wsId, patch) hot-reloads one workspace's look with no rebuild/restart.

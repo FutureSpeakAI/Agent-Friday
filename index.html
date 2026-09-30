@@ -9054,26 +9054,22 @@ function ConversationWindow({
   /** Bind a model to THIS conversation, the same way the docked chat does. */
   const bindSeat = m => {
     const s = m ? { model: m.id, provider: (m.providers || [])[0] } : null;
-    setSeat(s);
+    const selectionEpoch = epoch.current;
     setPickerOpen(false);
-    apiFetch('/api/conversations/' + encodeURIComponent(cid), {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seat: s })
-    }).then(r => r.json()).then(d => {
-      const got = ((d.conversation || {}).seat || {}).model || null;
-      if ((s && got !== s.model) || (!s && got)) {
-        fridayToast('That binding did not stick — this chat still has ' + (got || 'no model') + '.');
-        setSeat((d.conversation || {}).seat || null);
-        return;
-      }
+    fridaySaveConversationSeat(cid, s, saved => {
+      if (epoch.current !== selectionEpoch) return;
+      setSeat(saved);
       setMsgs(p => [...p, {
         role: 'system', kind: 'seat_change',
-        text: s ? ('This chat now uses ' + prettyModel(s.model) + '.')
-                : 'This chat now follows your default model.'
+        text: saved ? ('This chat now uses ' + prettyModel(saved.model) + ' for its next turn.')
+                    : 'This chat now follows your default model.',
       }]);
       SH.refreshConvs && SH.refreshConvs();
-    }).catch(() => {});
+    }, error => {
+      if (epoch.current === selectionEpoch) fridayToast(error.message);
+    }, message => {
+      if (epoch.current === selectionEpoch) fridayToast(message);
+    });
   };
 
   /* One turn, streamed, into this conversation. Same request and the same
@@ -42384,6 +42380,8 @@ function consequence(m, machine, serving) {
   if (m.local) {
     if (m.state === 'resident') {
       bits.push(m.seat_status === 'leased' ? 'leased — in use now' : 'resident — answers immediately');
+    } else if (m.state === 'unknown') {
+      bits.push('load state not shown in this picker');
     } else {
       bits.push('cold');
       if (m.wake_s) bits.push('~' + m.wake_s + 's to wake (est.)');
@@ -42411,75 +42409,116 @@ function consequence(m, machine, serving) {
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
-function useIntelligence(pollMs) {
+function useIntelligence(pollMs, view, enabled = true) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
-  // `stalled` is the pill's third state (model-soup.md §11.3): the request
-  // has been in flight for 10 s. Distinct from `err`, which only arrives at
-  // the 30 s abort; a wedged filesystem under /api/intelligence can hold the
-  // route for 25 s, and without this state the pill shows "bound" throughout.
   const [stalled, setStalled] = useState(false);
-  /* A fetch that fails has to SAY so. "Reading the machine..." forever is the
-     same defect as everything else here — a surface that looks like it is
-     working while producing nothing: the user opens Settings, gets the
-     spinner, and cannot tell broken from unfinished. Every async surface
-     gets a timeout and a stated failure. */
+  const flight = useRef(null);
+  const unreadSince = useRef(null);
   const load = React.useCallback(() => {
-    const ctrl = new AbortController();
-    // 30s, not 12. Measured: this route costs ~3.2s on a cold cache
-    // and ~200ms warm on a fast machine with Ollama running, so twelve looked
-    // generous. It is not, because the cold path is where the variance lives:
-    // a machine with the Ollama daemon switched off pays ~2s per refused probe
-    // (Windows retries the SYN before giving up — loopback does not fail fast),
-    // and a slower disk multiplies the catalogue build on top. The panel was
-    // reported as "failing" on an install where it was in fact still working
-    // and being cut off, which is the worst of both: no data AND a wrong cause.
-    // The probe backoff in routes/intelligence.py fixes the repeat cost; this
-    // stops the first, honest, slow render being thrown away.
-    const timer = setTimeout(() => ctrl.abort(), 30000);
-    const stallTimer = setTimeout(() => setStalled(true), 10000);
-    apiFetch('/api/intelligence', { signal: ctrl.signal }).then(r => {
+    if (!enabled) return Promise.resolve();
+    if (flight.current) return flight.current.promise;
+    const run = { ctrl: new AbortController(), promise: null };
+    flight.current = run;
+    const current = () => flight.current === run;
+    run.timer = setTimeout(() => run.ctrl.abort(), 30000);
+    run.stallTimer = setTimeout(() => { if (current()) setStalled(true); }, 10000);
+    const url = '/api/intelligence' + (view === 'picker' ? '?view=picker' : '');
+    run.promise = apiFetch(url, { signal: run.ctrl.signal }).then(async r => {
       if (!r.ok) {
-        // 401 after a restart is the commonest cause by far: the API token is
-        // minted per process and baked into the page, so a tab opened before
-        // the restart carries a dead one. Say that, rather than making the
-        // user guess whether the app is broken or half-built.
-        setErr(r.status === 401 || r.status === 403
-          ? { kind: 'stale-tab',
-              what: 'This tab was loaded before the server restarted, so its access token is no longer valid.',
-              fix: 'Reload the page (Ctrl+Shift+R) and this will come straight back.' }
-          : { kind: 'http',
-              what: 'GET /api/intelligence answered HTTP ' + r.status + '.',
-              fix: r.status === 404
-                ? 'The server is running an older build that does not have this endpoint yet. Restart Friday.'
-                : 'Retry, and check the server log if it persists.' });
-        return null;
+        const error = new Error('Model information answered HTTP ' + r.status + '.');
+        error.status = r.status;
+        throw error;
       }
       return r.json();
     }).then(j => {
-      if (!j) return;
-      if (j.status === 'ok') { setD(j); setErr(null); }
-      else setErr({ kind: 'payload',
-                    what: 'The server answered, but not with a usable payload.',
-                    fix: String(j.message || j.error || 'No detail was given.') });
+      if (!current()) return;
+      if (!j || j.status !== 'ok' || j.catalog_error) {
+        throw new Error((j && (j.catalog_error || j.message || j.error)) || 'No usable model information was returned.');
+      }
+      setD(j);
+      if (view === 'picker' && j.catalog_reading === 'unknown') {
+        if (unreadSince.current === null) unreadSince.current = Date.now();
+        if (Date.now() - unreadSince.current >= 10000) {
+          setErr({ kind: 'discovery', what: 'Model discovery is still busy.',
+            fix: 'The list will update when discovery finishes. You can retry or close this menu and keep chatting.' });
+          return;
+        }
+      } else unreadSince.current = null;
+      setErr(null);
     }).catch(e => {
-      setErr(e && e.name === 'AbortError'
-        ? { kind: 'timeout',
-            what: '/api/intelligence did not answer within 30 seconds.',
-            fix: 'The server may be busy loading a model. Retry in a moment.' }
-        : { kind: 'unreachable',
-            what: 'Could not reach the Friday server at all.',
-            fix: 'Check that it is still running, then retry.' });
-    }).finally(() => { clearTimeout(timer); clearTimeout(stallTimer); setStalled(false); });
-  }, []);
+      if (!current()) return;
+      const stale = e.status === 401 || e.status === 403;
+      setErr({ kind: stale ? 'stale-tab' : e.name === 'AbortError' ? 'timeout' : 'unreachable',
+        what: stale ? 'This page can no longer authenticate with the server.'
+          : e.name === 'AbortError' ? 'Model information did not answer within 30 seconds.' : e.message,
+        fix: stale ? 'Reload the page (Ctrl+Shift+R).' : 'Retry, or check that Friday is still running.' });
+    }).finally(() => {
+      clearTimeout(run.timer); clearTimeout(run.stallTimer);
+      if (current()) { flight.current = null; setStalled(false); }
+    });
+    return run.promise;
+  }, [view, enabled]);
   useEffect(() => {
     load();
-    if (!pollMs) return;
-    const t = setInterval(load, pollMs);
-    return () => clearInterval(t);
-  }, [load, pollMs]);
-  return { d: d, err: err, reload: load, stalled: stalled };
+    const timer = enabled && pollMs ? setInterval(load, pollMs) : null;
+    return () => {
+      clearInterval(timer);
+      const run = flight.current;
+      flight.current = null;
+      if (run) { clearTimeout(run.timer); clearTimeout(run.stallTimer); run.ctrl.abort(); }
+    };
+  }, [load, pollMs, enabled]);
+  return { d, err, reload: load, stalled };
 }
+
+const fridaySeatSaves = new Map();
+async function fridaySaveConversationSeat(cid, seat, onSaved, onError, onPending) {
+  const run = {};
+  fridaySeatSaves.set(cid, run);
+  const current = () => fridaySeatSaves.get(cid) === run;
+  let timer = null;
+  const deadline = Date.now() + 45000;
+  let notified = false;
+  let changeId = null;
+  try {
+    let data;
+    while (current()) {
+      const ctrl = new AbortController();
+      timer = setTimeout(() => ctrl.abort(), 10000);
+      const r = await apiFetch('/api/conversations/' + encodeURIComponent(cid), {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seat, ...(changeId ? { seat_change_id: changeId } : {}) }), signal: ctrl.signal,
+      });
+      data = await r.json();
+      clearTimeout(timer); timer = null;
+      if (!current()) return;
+      if (!r.ok || !data || data.status === 'error') {
+        throw new Error((data && (data.note || data.detail || data.error)) || 'Could not save the model choice (HTTP ' + r.status + ').');
+      }
+      if (data.superseded) throw new Error('A newer model choice was saved in another window. Reopen this chat to see its saved model.');
+      if (!data.seat_pending) break;
+      changeId = data.seat_change_id;
+      if (Date.now() >= deadline) throw new Error('The local model check is still busy. Your choice has not changed. Try again shortly.');
+      if (!notified && onPending) onPending('Checking the local model before changing this chat.');
+      notified = true;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    if (!current()) return;
+    const saved = (data.conversation || {}).seat || null;
+    if (!data.conversation || (saved && saved.model || null) !== (seat && seat.model || null)) {
+      throw new Error(data.note || 'The server did not accept this model choice.');
+    }
+    onSaved(saved);
+  } catch (error) {
+    if (current()) onError(error.name === 'AbortError'
+      ? new Error('Could not confirm the model change in time. Reopen this chat to check its saved model, or choose again.') : error);
+  } finally {
+    clearTimeout(timer);
+    if (current()) fridaySeatSaves.delete(cid);
+  }
+}
+// End conversation seat saves
 
 // ── Shared pieces ────────────────────────────────────────────────────────────
 
@@ -42530,6 +42569,7 @@ function StateChip({ m, serving }) {
   const map = {
     resident: { t: 'loaded', c: '#00ff80' },
     cold: { t: 'not loaded', c: 'rgba(255,255,255,0.45)' },
+    unknown: { t: 'load state unknown', c: 'rgba(255,255,255,0.45)' },
     cloud: { t: 'cloud', c: '#7b61ff' },
   };
   const s = m.seat_status === 'leased' ? { t: 'in use', c: '#f59e0b' } : (map[m.state] || map.cloud);
@@ -42699,7 +42739,8 @@ function ModelPicker({ intel, need, current, onPick, onClose, note, err, onRetry
 function QuickSwitch({ current, onPick, switching }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  const { d, err, reload, stalled } = useIntelligence(open ? 4000 : 20000);
+  const { d, stalled } = useIntelligence(20000);
+  const picker = useIntelligence(2000, 'picker', open);
   useEffect(() => {
     if (!open) return;
     const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
@@ -42757,13 +42798,13 @@ function QuickSwitch({ current, onPick, switching }) {
     open && E('div', { style: { display: 'flex', justifyContent: 'flex-end', height: 0 } },
       E('div', { style: { position: 'absolute', marginTop: 6, zIndex: 2200 } },
         E(ModelPicker, {
-          intel: d, err: err, onRetry: reload,
+          intel: picker.d, err: picker.err, onRetry: picker.reload,
           need: { role: 'orchestrator', modality: 'tools' }, current: current,
           onPick: onPick, onClose: () => setOpen(false),
-          note: serving
+          note: serving && !serving.stale
             ? 'Answering you now: ' + prettyModel(serving.model) + ' · ' + (fmtAgo(serving.at) || 'recently') +
               '. Pick another and the pill changes once it has actually served a turn.'
-            : 'Nothing has served a turn yet.',
+            : 'Pick the default model for future turns. Current running turns keep their model.',
         }))));
 }
 
@@ -42775,7 +42816,7 @@ function QuickSwitch({ current, onPick, switching }) {
  * layer exists to end.
  */
 function ConversationSeatPicker({ current, onPick, onClear, onClose }) {
-  const { d, err, reload } = useIntelligence(8000);
+  const { d, err, reload } = useIntelligence(2000, 'picker');
   return E('div', null,
     E(ModelPicker, {
       intel: d, err: err, onRetry: reload,
@@ -51424,26 +51465,22 @@ function App() {
   /** Bind a model to THIS conversation — never the global default. */
   const bindConvSeat = (m) => {
     const seat = m ? { model: m.id, provider: (m.providers || [])[0] } : null;
-    setConvSeat(seat);
+    const selectionEpoch = chatEpoch.current;
     setConvPickerOpen(false);
-    apiFetch('/api/conversations/' + encodeURIComponent(convId), {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seat: seat }),
-    }).then(r => r.json()).then(d => {
-      const got = ((d.conversation || {}).seat || {}).model || null;
-      if ((seat && got !== seat.model) || (!seat && got)) {
-        fridayToast('That binding did not stick — this chat still has ' + (got || 'no model') + '.');
-        setConvSeat((d.conversation || {}).seat || null);
-        return;
-      }
+    fridaySaveConversationSeat(convId, seat, saved => {
+      if (chatEpoch.current !== selectionEpoch) return;
+      setConvSeat(saved);
       setChatMsgs(p => [...p, {
         role: 'system', kind: 'seat_change',
-        text: seat ? ('This chat now uses ' + prettyModel(seat.model) + '.')
-                   : 'This chat now follows your default model.',
+        text: saved ? ('This chat now uses ' + prettyModel(saved.model) + ' for its next turn.')
+                    : 'This chat now follows your default model.',
       }]);
       refreshConvs();
-    }).catch(() => {});
+    }, error => {
+      if (chatEpoch.current === selectionEpoch) fridayToast(error.message);
+    }, message => {
+      if (chatEpoch.current === selectionEpoch) fridayToast(message);
+    });
   };
 
   const chatEpoch = useRef(0);
