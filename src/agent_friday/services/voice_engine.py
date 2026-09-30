@@ -783,6 +783,16 @@ def voice_restrictions(settings=None) -> list:
     full agent). These are the limits that remain: the user's own settings,
     and the governance and privacy rules that apply to chat as well. The Voice
     settings tab shows this list; docs/reference/voice-capability.md explains it.
+
+    Policy (2026-09-29): a limit that exists ONLY in voice is the owner's to
+    set and ships off, unless it protects something the constitution requires.
+    Approval cards and the never-send floor are not voice limits — they apply
+    identically to a typed request — so they carry kind "governance" and
+    "privacy" and have no setting. The room-mode naming rule carries kind
+    "identity" and is the one left on by default: see its own `why`.
+    `tests/unit/test_voice_parity.py` fails if a new entry is neither the
+    owner's setting nor one of those kinds. Adding a voice tool:
+    docs/reference/voice-tool-contract.md.
     """
     s = settings if isinstance(settings, dict) else (_load_settings() or {})
     mr = s.get("model_routing") or {}

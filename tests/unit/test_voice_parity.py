@@ -165,3 +165,63 @@ def test_voice_is_documented_as_reaching_everything_chat_does():
     import inspect
     doc = inspect.getdoc(ve.voice_restrictions) or ""
     assert "anything chat can" in doc
+
+
+# ── The contract doc stays true ────────────────────────────────────────────
+
+CONTRACT = "docs/reference/voice-tool-contract.md"
+
+
+def _contract_text():
+    import pathlib
+    p = pathlib.Path(__file__).resolve().parents[2] / CONTRACT
+    assert p.exists(), "%s is the contract other sessions follow" % CONTRACT
+    return p.read_text(encoding="utf-8")
+
+
+def test_every_symbol_the_contract_names_still_exists():
+    """A contract that names a moved function sends the next session wrong.
+
+    Checked by import rather than by grep, so a rename fails here instead of
+    being discovered by whoever follows the instructions.
+    """
+    text = _contract_text()
+    from agent_friday.core import DEFAULT_SETTINGS, _scrub_pii  # noqa: F401
+    from agent_friday.services import agent as ag
+    from agent_friday.services import judgment_gate as jg
+    from agent_friday.services import local_context as lc
+    from agent_friday.routes import voice as vr
+
+    named = {
+        "_VOICE_LIVE_TOOLS": lambda: ve._VOICE_LIVE_TOOLS,
+        "_voice_tool_run": lambda: ve._voice_tool_run,
+        "voice_restrictions": lambda: ve.voice_restrictions,
+        "_execute_tool": lambda: ag._execute_tool,
+        "_CURRENT_CONVERSATION": lambda: ag._CURRENT_CONVERSATION,
+        "spoken_decision": lambda: lc.spoken_decision,
+        "decide_by_voice": lambda: lc.decide_by_voice,
+        "never_send_hits": lambda: jg.never_send_hits,
+        "hard_identifier_hits": lambda: jg.hard_identifier_hits,
+        "voice_tool_hard_limit_s": lambda: DEFAULT_SETTINGS["voice_tool_hard_limit_s"],
+        "voice_room_approvals_require_name":
+            lambda: DEFAULT_SETTINGS["voice_room_approvals_require_name"],
+    }
+    for symbol, get in named.items():
+        if symbol in text:
+            assert get() is not None, (
+                "the contract names %r, which no longer resolves" % symbol)
+
+
+def test_the_contract_states_the_private_data_rule():
+    """The one rule in it that is not a convenience."""
+    text = _contract_text()
+    assert "ask_local_for_context" in text
+    assert "Never pass raw private data" in text
+    assert "fails" in text and "closed" in text
+
+
+def test_the_contract_does_not_present_the_unbuilt_spec_as_built():
+    """Owner rules are specified, not implemented. Saying otherwise would
+    have the next session rely on a rule nothing enforces."""
+    text = _contract_text()
+    assert "not yet built" in text
