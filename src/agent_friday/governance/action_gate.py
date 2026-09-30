@@ -192,6 +192,9 @@ INTERNAL_TOOLS = frozenset({
     "content_repurpose", "knowledge_query", "knowledge_related",
     "knowledge_communities", "inspect_image", "inspect_audio", "save_output",
     "speak_text", "list_voices", "read_session_output", "load_tools",
+    # Podcasts: an episode is written and spoken on this computer and saved in
+    # Friday's own folder; playing it steers the owner's own screen.
+    "make_podcast", "podcast_list", "podcast_play", "podcast_source",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
     # find_free_slots reads free/busy only. release_holds deletes nothing but

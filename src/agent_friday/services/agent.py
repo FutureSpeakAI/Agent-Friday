@@ -7688,6 +7688,15 @@ try:
 except Exception as _mte:  # never let optional deps break the agent import
     print(f"  [MEDIA-TOOLS] registration skipped: {_mte}")
 
+# Podcasts (make_podcast / podcast_list / podcast_play / podcast_source): any
+# sources into a two-host episode, written by the local model and spoken on
+# this computer. See services/podcast_tools.py.
+try:
+    from agent_friday.services import podcast_tools as _podcast_tools
+    _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _pte:  # never let optional deps break the agent import
+    print(f"  [PODCASTS] registration skipped: {_pte}")
+
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
 # hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.

@@ -528,6 +528,14 @@ _VOICE_SHARED_TOOLS = (
     # own budgets and check_situation reads memory.
     "navigate_to",
     "check_situation",
+    # Podcasts, by voice: make one ("from my notes on X"), play and steer it,
+    # and "what's the source for that?". make_podcast only queues, so it
+    # answers inside the bridge's limit; private episodes are described to a
+    # cloud voice only through podcast_tools._private_summary.
+    "make_podcast",
+    "podcast_list",
+    "podcast_play",
+    "podcast_source",
 )
 
 
