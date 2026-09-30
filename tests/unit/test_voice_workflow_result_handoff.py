@@ -21,8 +21,9 @@ vr = pytest.importorskip("agent_friday.routes.voice")
 lc = pytest.importorskip("agent_friday.services.local_context")
 
 PHONE = "(512) 555-0147"
+MARKER = "custody hearing"
 RESULT = ('Background task "Summarise my private mail" finished.\n\n'
-          "Her custody hearing is on the 14th; her lawyer wants the medical "
+          "Her " + MARKER + " is on the 14th; her lawyer wants the medical "
           "records from the clinic before then. Reach her on " + PHONE + ".")
 
 
@@ -67,14 +68,20 @@ def test_the_real_path_puts_a_scrubbed_summary_on_the_card():
     from agent_friday.services import approvals
     handed = vr._injection_or_card(RESULT, "task_result", "conv-wf-real")
     assert PHONE not in handed
-    cards = [a for a in (approvals.list_approvals() or [])
-             if a.get("kind") == lc.KIND]
-    assert cards, "a card should be waiting"
-    text = ((cards[-1].get("payload") or {}).get("text")
-            or cards[-1].get("description") or "")
-    assert text, "the card must carry something to read"
+    # By content, not by position: other tests in this session raise cards
+    # of their own into the same store, so "the newest card" is whichever
+    # test happened to run last.
+    mine = []
+    for a in (approvals.list_approvals() or []):
+        if a.get("kind") != lc.KIND:
+            continue
+        t = (a.get("payload") or {}).get("text") or a.get("description") or ""
+        if MARKER in t:
+            mine.append(t)
+    assert mine, "the card this test raised should be waiting"
+    text = mine[-1]
     assert PHONE not in text, "the card's own text must be scrubbed"
-    assert "custody hearing" in text, (
+    assert MARKER in text, (
         "scrubbing replaces identifiers; it does not delete the answer")
 
 
