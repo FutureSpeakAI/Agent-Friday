@@ -103,6 +103,17 @@ def desktop_open():
                     "ack": (r.get("sent") or {}).get("ack")})
 
 
+@desktop_bp.route("/api/camera/holders", methods=["GET"])
+@login_required
+def camera_holders():
+    """Which app holds the webcam: what the page shows when its own open
+    fails with a bare 'not readable' (services/camera_holders)."""
+    from agent_friday.services import camera_holders
+    snap = camera_holders.snapshot()
+    return jsonify({"status": "ok", "holders": snap["holders"],
+                    "candidates": snap["candidates"]})
+
+
 @desktop_bp.route("/api/situation", methods=["GET"])
 @login_required
 def situation_read():

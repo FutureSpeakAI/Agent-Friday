@@ -300,6 +300,22 @@ window.addEventListener('DOMContentLoaded',function(){
             position: fixed; bottom: 20px; right: 20px; width: 6px; height: 6px;
             border-radius: 50%; background: #666; z-index: 200; transition: background 0.3s, box-shadow 0.3s;
         }
+        /* Camera open but no face in it yet: a dim teal, so "camera on" can be
+           told from "camera off" without a face. Green (holo-active) still
+           means a face is being tracked. */
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: #1f6f7f; }
+        /* What the camera is doing when it is not simply working: busy in
+           another app, stopped and reconnecting, released while hidden. Empty
+           and invisible while the camera is live or off. */
+        #camera-status {
+            /* Under the top bar's status chips, clear of the dock, which
+               wraps to two rows on a narrow window and would cover it. */
+            position: fixed; top: 44px; right: 16px; z-index: 200; max-width: 46vw;
+            font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: .04em;
+            color: rgba(0, 212, 255, 0.78); text-align: right; pointer-events: none;
+            opacity: 0; transition: opacity 0.3s;
+        }
+        #camera-status.shown { opacity: 1; }
 
         /* --- REACT UI LAYER STYLES --- */
 
@@ -779,6 +795,7 @@ window.addEventListener('DOMContentLoaded',function(){
         html.ws-standalone #friday-scene-canvas,
         html.ws-standalone #hud-overlay,
         html.ws-standalone #camera-indicator,
+        html.ws-standalone #camera-status,
         html.ws-standalone #hand-cursor,
         html.ws-standalone #state-indicator,
         html.ws-standalone #chrome-orb-exit { display: none !important; }
@@ -842,6 +859,7 @@ window.addEventListener('DOMContentLoaded',function(){
         body.chrome-chat #friday-scene-canvas,
         body.chrome-chat #hud-overlay,
         body.chrome-chat #camera-indicator,
+        body.chrome-chat #camera-status,
         body.chrome-chat #hand-cursor,
         body.chrome-chat #state-indicator { display: none !important; }
         body.chrome-chat { background: #070b14; }
@@ -960,6 +978,7 @@ window.addEventListener('DOMContentLoaded',function(){
         body.chrome-orb #ui-root { opacity: 0 !important; pointer-events: none !important; }
         body.chrome-orb .hud-corner { display: none !important; }
         body.chrome-orb #camera-indicator,
+        body.chrome-orb #camera-status,
         body.chrome-orb #hand-cursor { display: none !important; }
         body.chrome-orb #state-indicator {
             left: 50% !important;
@@ -3550,6 +3569,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
     <!-- Parallax Tracker Dot -->
     <div id="camera-indicator"></div>
+    <div id="camera-status" role="status" aria-live="polite"></div>
 
     <div id="hud-overlay">
         <!-- Minimalist Optical Arcs -->
@@ -3611,7 +3631,6 @@ window.addEventListener('DOMContentLoaded',function(){
          vision engine), so a page load contacts no CDN for it. -->
     <script>
       window.__FRIDAY_MEDIAPIPE_SCRIPTS__ = [
-        ['https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js', 'sha384-q1KhAZhJcJXr3zfC3Tz07pBqQSabwFIZhXlmlUAB8s0zk4ETWERkIKGBCFQ5Jc3e'],
         ['https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/face_detection.js', 'sha384-oO3wOXOXIGBvHXjKwoF69nDtnGjqWIBuT+yCjjIAZmDek7qgjztCwK+WjCuL9O0a'],
         ['https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js', 'sha384-oHwoZ9HyKv5ark5VOH+XWdbNfmhYtptAOBuV8plz6mAfXvTA6d8fULuYllWouEK2']
       ];
@@ -4266,7 +4285,6 @@ window.addEventListener('DOMContentLoaded',function(){
         })();
 
         // --- COMPUTER VISION ENGINE (MediaPipe Shared Camera) ---
-        let cameraMP = null;
         let videoElement = document.createElement('video');
         videoElement.setAttribute('autoplay', ''); videoElement.setAttribute('playsinline', '');
         
@@ -4297,8 +4315,7 @@ window.addEventListener('DOMContentLoaded',function(){
         // it so the next attempt can retry.
         let mediaPipeLoading = null;
         function loadMediaPipe() {
-            if (typeof Camera !== 'undefined' && typeof Hands !== 'undefined' &&
-                typeof FaceDetection !== 'undefined') return Promise.resolve();
+            if (typeof Hands !== 'undefined' && typeof FaceDetection !== 'undefined') return Promise.resolve();
             if (mediaPipeLoading) return mediaPipeLoading;
             const list = window.__FRIDAY_MEDIAPIPE_SCRIPTS__ || [];
             mediaPipeLoading = Promise.all(list.map(([src, sri]) => new Promise((resolve, reject) => {
@@ -4311,17 +4328,201 @@ window.addEventListener('DOMContentLoaded',function(){
             return mediaPipeLoading;
         }
 
-        async function startSharedCamera() {
-            if (!cameraMP) {
-                cameraMP = new Camera(videoElement, {
-                    onFrame: async () => { 
-                        if (isHologramMode && faceDetectionMP) await faceDetectionMP.send({image: videoElement}); 
-                        if (isHandTrackingMode && handsMP) await handsMP.send({image: videoElement});
-                    },
-                    width: 320, height: 240
-                });
-                await cameraMP.start();
+        // ── THE CAMERA ──────────────────────────────────────────────────
+        // One owner for the webcam, in place of MediaPipe's camera helper.
+        // That helper had no answer to a track ending or muting, its frame
+        // loop stopped for good on the first frame whose promise rejected,
+        // and a failed open raised a browser alert and threw while the mode
+        // stayed on. So any interruption at all (the browser's capture
+        // process crashing, another app taking the device, a GPU context
+        // lost under memory pressure) lost the camera silently. This owner
+        // says what happened, re-acquires with backoff for as long as
+        // tracking is wanted, releases the device when it is not (both modes
+        // off, or the tab hidden), and never lets one bad frame end the loop.
+        const FridayCamera = (function () {
+            const CONSTRAINTS = { video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } } };
+            const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 30000];
+            const MUTE_GRACE_MS = 3000;   // muted this long is lost, not paused
+            const BAD_FRAMES = 30;        // consecutive failed frames: re-acquire
+            const state = { status: 'off', detail: '', wanted: false, attempt: 0, nextAt: 0,
+                            frames: 0, badFrames: 0, opens: 0, holder: '' };
+            let stream = null, track = null, onFrame = null, onLost = null;
+            let raf = 0, timer = null, muteTimer = null, feeding = false, lastT = -1;
+
+            function render() {
+                const ind = document.getElementById('camera-indicator');
+                if (ind) ind.dataset.status = state.status;
+                const s = document.getElementById('camera-status');
+                if (!s) return;
+                const show = state.wanted && state.status !== 'live' && state.status !== 'off';
+                let text = state.detail;
+                if (show && timer && state.nextAt) {
+                    const secs = Math.max(1, Math.round((state.nextAt - performance.now()) / 1000));
+                    text += ' \u00b7 retrying in ' + secs + ' s';
+                }
+                s.textContent = show ? text : '';
+                s.classList.toggle('shown', show);
             }
+            function set(status, detail) { state.status = status; state.detail = detail || ''; render(); }
+
+            // What a failed open means, in words a person can act on.
+            function classify(err) {
+                const name = (err && err.name) || '';
+                if (/NotReadable|TrackStart|AbortError|SourceUnavailable/i.test(name))
+                    return ['busy', 'camera busy in another app'];
+                if (/NotAllowed|PermissionDenied|SecurityError/i.test(name))
+                    return ['denied', 'camera blocked for this site in the browser'];
+                if (/NotFound|DevicesNotFound|Overconstrained/i.test(name))
+                    return ['missing', 'no camera found'];
+                return ['error', 'camera failed: ' + (name || err)];
+            }
+            // The page cannot see which app holds the device; the server can
+            // (routes/desktop.py, /api/camera/holders).
+            function askHolder() {
+                const f = window.apiFetch || fetch;
+                f('/api/camera/holders').then(r => r.json()).then(d => {
+                    if (state.status !== 'busy' || !d) return;
+                    const sure = Array.isArray(d.holders) && d.holders.length > 0;
+                    const who = sure ? d.holders[0] : (Array.isArray(d.candidates) ? d.candidates[0] : '');
+                    if (!who) return;
+                    state.holder = who;
+                    set('busy', 'camera busy in another app' + (sure ? ': ' : ', maybe ') + who);
+                }).catch(() => {});
+            }
+            function schedule() {
+                clearTimeout(timer); timer = null;
+                if (!state.wanted) return;
+                const ms = BACKOFF_MS[Math.min(state.attempt, BACKOFF_MS.length - 1)];
+                state.attempt += 1;
+                state.nextAt = performance.now() + ms;
+                timer = setTimeout(() => { timer = null; acquire(); }, ms);
+                render();
+            }
+            async function acquire() {
+                clearTimeout(timer); timer = null;
+                if (!state.wanted || stream) return;
+                if (document.visibilityState === 'hidden') {
+                    set('paused', 'camera released while the tab is hidden'); return;
+                }
+                if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+                    set('missing', 'this browser has no camera access'); return;
+                }
+                let s;
+                try {
+                    s = await navigator.mediaDevices.getUserMedia(CONSTRAINTS);
+                } catch (err) {
+                    const [status, text] = classify(err);
+                    console.warn('[camera] could not open:', err && err.name, err && err.message);
+                    set(status, text);
+                    if (status === 'busy') askHolder();
+                    // A block in site settings will not clear by itself.
+                    if (status !== 'denied') schedule();
+                    return;
+                }
+                if (!state.wanted || stream) { s.getTracks().forEach(t => t.stop()); return; }
+                attach(s);
+            }
+            function attach(s) {
+                stream = s; track = s.getVideoTracks()[0] || null;
+                state.opens += 1; state.attempt = 0; state.badFrames = 0; state.nextAt = 0;
+                if (track) {
+                    track.addEventListener('ended', onEnded);
+                    track.addEventListener('mute', onMute);
+                    track.addEventListener('unmute', onUnmute);
+                }
+                videoElement.srcObject = s;
+                const p = videoElement.play(); if (p && p.catch) p.catch(() => {});
+                lastT = -1;
+                if (!raf) raf = requestAnimationFrame(loop);
+                set('live', '');
+            }
+            function onEnded() { drop(); set('lost', 'camera stopped'); schedule(); }
+            function onMute() {
+                set('muted', 'camera paused by the system');
+                if (onLost) onLost();
+                clearTimeout(muteTimer);
+                muteTimer = setTimeout(() => {
+                    if (track && track.muted) { drop(); set('lost', 'camera stopped'); schedule(); }
+                }, MUTE_GRACE_MS);
+            }
+            function onUnmute() { clearTimeout(muteTimer); if (stream) set('live', ''); }
+            // One tracking pass per new video frame. A pass that fails is
+            // counted and logged, never fatal; a run of failures means the
+            // engine underneath is gone (a lost GPU context, say), and the
+            // stream is dropped and re-acquired.
+            function loop() {
+                raf = stream ? requestAnimationFrame(loop) : 0;
+                if (!stream || feeding || !onFrame) return;
+                if (videoElement.readyState < 2 || videoElement.currentTime === lastT) return;
+                lastT = videoElement.currentTime;
+                feeding = true;
+                Promise.resolve().then(onFrame).then(
+                    () => { state.badFrames = 0; state.frames += 1; },
+                    err => {
+                        state.badFrames += 1;
+                        if (state.badFrames === 1) console.warn('[camera] a tracking pass failed:', err);
+                        if (state.badFrames >= BAD_FRAMES) { drop(); set('lost', 'tracking stopped answering'); schedule(); }
+                    }).then(() => { feeding = false; });
+            }
+            function drop() {
+                clearTimeout(muteTimer);
+                if (raf) { cancelAnimationFrame(raf); raf = 0; }
+                if (track) {
+                    track.removeEventListener('ended', onEnded);
+                    track.removeEventListener('mute', onMute);
+                    track.removeEventListener('unmute', onUnmute);
+                }
+                if (stream) stream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+                stream = null; track = null; feeding = false;
+                try { videoElement.srcObject = null; } catch (e) {}
+                if (onLost) onLost();
+            }
+            function start(frameFn, lostFn) {
+                onFrame = frameFn; onLost = lostFn;
+                state.wanted = true;
+                if (!stream && !timer) acquire();
+            }
+            function stop() {
+                state.wanted = false;
+                clearTimeout(timer); timer = null;
+                state.attempt = 0; state.nextAt = 0;
+                drop();
+                set('off', '');
+            }
+            // A hidden tab holds no camera: released, and taken back on return.
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') {
+                    if (stream) { drop(); set('paused', 'camera released while the tab is hidden'); }
+                    clearTimeout(timer); timer = null;
+                } else if (state.wanted && !stream) {
+                    state.attempt = 0; acquire();
+                }
+            });
+            window.addEventListener('pagehide', () => { if (stream) drop(); });
+            setInterval(() => { if (timer) render(); }, 1000);   // the countdown
+            return { start, stop, state,
+                     get stream() { return stream; }, get track() { return track; } };
+        })();
+        window.FridayCamera = FridayCamera;
+
+        async function trackingFrame() {
+            if (isHologramMode && faceDetectionMP) await faceDetectionMP.send({ image: videoElement });
+            if (isHandTrackingMode && handsMP) await handsMP.send({ image: videoElement });
+        }
+        // The head eases back to neutral through the filter (the render loop
+        // relaxes whenever no face is visible); the hand cursor hides.
+        function trackingLost() {
+            clearTimeout(faceLostTimeout);
+            isFaceVisible = false; updateCameraIndicator(false);
+            handVisible = false; isPinching = false;
+            window.FridayTracking.handLost();
+            const cursor = document.getElementById('hand-cursor');
+            if (cursor) cursor.classList.add('hidden');
+        }
+        function startSharedCamera() { FridayCamera.start(trackingFrame, trackingLost); }
+        // A camera nobody is reading is a camera another app cannot open.
+        function releaseCameraIfUnused() {
+            if (!isHologramMode && !isHandTrackingMode) FridayCamera.stop();
         }
 
         // --- HAND TRACKING (Minority Report) ---
@@ -4340,6 +4541,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 await startSharedCamera();
             } else {
                 if (cursor) cursor.classList.remove('active');
+                releaseCameraIfUnused();
             }
         }
 
@@ -4389,6 +4591,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 await startSharedCamera();
             } else {
                 isFaceVisible = false; updateCameraIndicator(false);
+                releaseCameraIfUnused();
             }
             updateCameraIndicator(isHologramMode && isFaceVisible);
         }
