@@ -4,7 +4,8 @@
 > owner decided all three open questions on 2026-09-29 (§12): on by default;
 > a frontier model authors by default, and the user may choose any model; one
 > shared palette within ±30° of cyan. This is
-> the converged design. It replaces the 2026-09-22 version of this file and the
+> the converged design. §13 adds the processing-state vocabulary (owner
+> approved 2026-09-29), and §14 maps the spec onto the north star. It replaces the 2026-09-22 version of this file and the
 > uncommitted `docs/design/evolve-genome.md` (2026-09-28). That draft is
 > preserved verbatim in Appendix B so it is in git.
 > **Last verified:** 2026-09-29 against main `41ef21fd`
@@ -78,6 +79,14 @@ authoritative.
    - **She never switches on her own.** If the default cloud model isn't
      available, she waits and tells you. The notice offers both fixes: connect
      a cloud model, or use your local model instead.
+7. **She shows what she's doing (§13).** The lattice becomes an instrument:
+   - a cube steps forward when she needs your OK;
+   - a wave rolls once per reasoning round;
+   - a block twists once per tool call;
+   - a vent opens only when something actually goes to the cloud.
+
+   Every movement comes from something really happening, with the same words
+   on screen and in voice. Nothing moves for show.
 5. **Her colours are the same on every structure.** All 13 share one palette,
    so switching from the lattice to the Möbius strip never changes her colours.
    Over her lifetime she drifts at most 30° either way from today's cyan (teal
@@ -792,6 +801,9 @@ simply never grows, and everything else works.
    approve `#00ff80`, deny `#ff0080`, and error red `#ff0033`/`#ef4444`. A
    candidate that fails is rejected like a frame-budget failure. So an idle
    Friday never looks like a pending approval.
+   - **The one exception is the approval cube (§13.3).** It is drawn in the
+     approval hue because it *is* the pending-approval signal. It appears
+     only while a card is actually pending.
 4. **Offline stays visible.** The saturation floor (0.85) keeps the
    `net-offline` filter visibly distinct. §10.4 checks it by screenshot.
 5. **Process orbs are untouched.** Their category colours are status.
@@ -1240,6 +1252,354 @@ voice-only limits (§8.4).
 - the default licence for shared cards, and whether the rationale is included
   by default (2026-09-22 decision 8);
 - the dream-rsi night window hours (§5.4).
+
+---
+
+## 13. Processing states: the lattice as an instrument
+
+Approved by the owner on 2026-09-29, verbatim: *"I love it. approved."* This
+is the processing-state vocabulary for the Genesis lattice and the other 12
+structures. Code citations in this chapter are on main `2656aeca`.
+
+### 13.1 The rule
+
+**Every state is driven by a real event from Friday's own loop, and the same
+event always makes the same move.** The lattice is an instrument the owner
+learns to read. It is never decoration and never faked.
+
+- **No event, no motion.** A gesture starts only when its event arrives, and
+  ends when that event's end arrives, or when a stated timeout expires. The
+  gesture engine has no timers of its own that invent activity. At rest the
+  lattice is still.
+- **Counts are counts.**
+  - One cube per source actually retrieved.
+  - One wave layer per agent round, the same round number the status line
+    prints.
+  - One twist per tool call.
+  - One orbiter per background job.
+  - Build progress is the job's reported fraction.
+
+  Where the loop reports no fraction, there is no build (§13.3).
+- **The owner's motion rule, restated.** The standing rule was that motion
+  means Friday is talking (§1.4, `index.html:5133-5153`). With this approval
+  it becomes: **motion means a real event is happening.** Speaking is one
+  such event. Idle breathing, ambient drift and a faked "busy" pulse stay
+  refused (§3.2). The EXECUTING colour shift stays as it is.
+- **Dormant until real.** Some states have no event today (§13.5). Those
+  gestures are built, but wired to nothing. They stay dormant until the event
+  exists. Nothing borrows a nearby signal to look busy.
+
+This is north-star §6.8 (line 385): *"MUST NOT imply that a graph, orb,
+avatar state, or reasoning path is evidence unless it is derived from actual
+trace data"*. It is also amendment A1: "Motion never poses as evidence."
+
+### 13.2 Anatomy: one language, thirteen bodies
+
+Every gesture is written against five anatomy slots. Each structure maps
+the slots onto its own geometry, so switching structures never changes the
+language (the owner's guardrail). Only the rendering changes.
+
+| Slot | Meaning | CUBES (richest) | Other structures |
+|---|---|---|---|
+| **unit** | the smallest movable piece | one cube of the 3×3×3 grid (`coreCubes`, `index.html:4739-4752`) | ICOSAHEDRON: a vertex cluster on a shell. NETWORK: a node. DOME: a crystal. ASTROLABE: a ring. TESSERACT: a vertex. QUANTUM: a loop. MANDELBROT: a band of points. MOBIUS: a strip segment. GRID: a row of the ocean. CABLES: a tube. NONE: a line. EDEN: a spine |
+| **block** | a group of units that turns together | a 2×2 block of cubes | a pair of adjacent units, or one ring (ASTROLABE) |
+| **layer** | an ordered slice that a wave passes through | one of the 3 grid layers (a 4th after growth) | shells, ring index, band index, or depth rows. Each structure lists its layers front to back |
+| **core** | where things arrive and settle | the centre cube position | the innermost shell, hub or centre point |
+| **face** | the side toward the user, or the side that opens | the grid face nearest the camera | the camera-facing hemisphere, ring arc or segment |
+
+The shell is the outer layer. The 800-point background particle field is
+**not** part of the anatomy. It never carries meaning, so it can't be
+mistaken for a signal.
+
+Each structure implements the slots in one adapter:
+`structureAnatomy[id] = {units(), blocks(), layers(), core(), face()}`. The
+gesture engine never names a structure. A structure with no adapter shows
+only the status line and colour; that is the flat equivalent (north-star
+§21.22, line 3219).
+
+### 13.3 The vocabulary
+
+"Event" names the real signal. §13.5 says where each one comes from today, or
+that it doesn't exist yet. "Reduced motion" is the swap required by §13.7.
+
+| State | Gesture (on CUBES) | Event | Count or measure | Reduced motion |
+|---|---|---|---|---|
+| **Listening** | Rings ripple across the facing side toward the user, timed to the user's voice amplitude | Mic level during a voice session or push-to-talk | Ripple amplitude = mic level. No voice, no ripple | The face brightens with the mic level (smoothed, ≤ 2 Hz) |
+| **Memory or KG search** | Inner cubes light up and drift to the core, **one per source actually retrieved** | Retrieval finished, with a count per layer | n cubes = n sources (capped at the unit count; the status line gives the true n) | Those n cubes brighten in place |
+| **Reasoning** | A slow wave rolls through the lattice, **one layer per round** | Agent round n started | Wave index = round number = the status line's "round N" | The layer for round n brightens, and the previous one fades |
+| **Where the thinking happens** | **Local:** the wave stays inside. **Cloud:** one face opens like a vent, and a thread of light leaves the edge | The round's routing decision (local seat or cloud provider), **and** the egress gate actually sealing an outbound call | Vent opens on the egress event, never on the routing guess alone | The face brightens and a static thin line appears; no opening motion |
+| **Tool call** | A 2×2 block twists 90° like a Rubik's move and snaps back when the tool returns. **One twist per call** | Tool call started, then tool call returned (same `call_id`) | One block per in-flight call. Up to 4 twist at once; more calls queue visibly (§13.6) | The block brightens until return |
+| **Laya reflex or instant command** | A tiny, fast snap twist of one cube | A reflex-class decision, or an instant command fast path, ran | One per command | One cube pulses once (brightness, no motion) |
+| **Waiting for approval** | One cube steps forward out of the grid and holds, gently breathing, until the user decides. It uses the **approval hue** | An approval card is pending, then resolved | One stepped-out cube per pending card, up to 3; the status line gives the count | The cube lights in the approval hue and holds, with slow brightness breathing (≤ 0.3 Hz, ≤ 15% amplitude) |
+| **Blocked or needs input** | The lattice freezes mid-twist with one face turned | A typed blocker was raised, then cleared | One frozen turn | All units dim to 60%, except one face |
+| **Verifying** | A scan plane sweeps through, and each cube it passes locks with a tiny settle | Verification started, then finished, with a result | One sweep per verification pass | A slow brightness sweep (≤ 1 pass per 2 s) |
+| **Long generation** | The lattice builds layer by layer, filled in proportion to **true** progress | A process registered with a real `progress` fraction | Filled units = round(progress × units). No fraction, no build: the status line shows stages instead (north-star §29.3) | Filled units lit, the rest dim |
+| **Saving to memory** | A cube drifts into the core and dims into place | A memory fact was written (`ingest_fact` succeeded) | One per fact | A cube at the core brightens, then dims |
+| **Private handoff** | The outer shell frosts while the core works, then one small cube floats out. That cube is the scrubbed summary, the only thing that leaves | Local-context request started; later, the scrubbed text was actually sent | Frost on request, and the float-out only on the send event | Shell opacity up during the work; one small static cube at the edge on send |
+| **Error** | A cube knocks out of alignment and slowly corrects. **No red, no flash** | A turn, tool or process ended in error | One knock per error | A cube dims to 40%, then recovers over 2 s |
+| **Background or scheduled work** | One faint cube orbits the lattice | A scheduled or background process is registered, then ends | One orbiter per process, up to 4 (a count after that) | A faint static satellite, one per process |
+| **Subagents or helpers** | Small clusters split off and return | A subagent task started, then ended, with a parent in this turn | One cluster per live subagent, up to 4 | Clusters shown as dimmed satellite groups |
+
+**Speaking** keeps its existing behaviour (§1.4). It layers on top of
+whatever else is showing.
+
+### 13.4 How the other 12 structures say it
+
+The gestures are defined on slots (§13.2), so every structure expresses them
+automatically. Four need explicit renderings, because their slots have no
+natural twist or step:
+
+- **ASTROLABE.** A tool call tilts one ring 90° about its own axis and back.
+  Waiting for approval pushes one ring toward the user.
+- **NETWORK.** A tool call swaps the positions of two linked nodes and swaps
+  them back. Waiting for approval brings one node forward, with its links
+  held.
+- **QUANTUM.** A tool call rotates one loop's phase a quarter turn. The
+  build fills loops.
+- **GRID** (the ocean). A reasoning wave is one swell per round, rolling
+  away from the user. The vent is a gap in the far edge, with a thread rising
+  from it.
+
+The per-structure tables go in the adapter's code comments. Each structure
+has a test that every gesture yields some change on it (§13.10).
+
+### 13.5 Where each event comes from
+
+Reuse, don't add. The page already has one cross-tab stream: the approvals
+feed.
+
+- **Server:** `GET /api/approvals/events` (`routes/goals.py:239`) streams
+  whatever `approval_feed.publish()` (`services/approval_feed.py:69`) sends.
+- **Client:** `fridayApprovalFeed` (`index.html:50709`). One tab holds the
+  Web Lock `friday-approvals-feed` and the EventSource, and relays every frame
+  to other tabs on `BroadcastChannel('friday-approvals')`.
+
+Processing events ride **the same connection** as a new frame type,
+`{"type":"presence", ...}`.
+
+- **Server.** A small `services/presence.py` validates each event against an
+  allowlist, then calls `approval_feed.publish`.
+- **Client.** `apply()` ignores unknown types today. It gains a second
+  listener set, `onPresence(fn)`, which the scene subscribes to.
+
+No tab opens a new connection. Presence frames are **not** added to the
+approvals snapshot; they are momentary.
+
+**The presence frame:**
+
+```json
+{"type": "presence", "state": "tool", "phase": "start",
+ "turn": "<turn id>", "call": "<call id>", "n": 1, "of": null,
+ "route": "local|cloud|null", "at": 1727640000.123}
+```
+
+- It carries **no text**: no tool arguments, titles, queries, model output,
+  or names.
+- `state` and `phase` come from fixed enums. `n`/`of` are integers; `route`
+  is an enum.
+- A test pins the allowlist, the same pattern as the §5.3 payload.
+- Frames are never written to disk, so off the record writes nothing
+  (main `0597f9e2`).
+
+| State | Real event today | Where it is raised (server) | Reaches the page today | Status |
+|---|---|---|---|---|
+| Listening | Mic peak during live voice | Browser only: `v.micPeakRecent` → `setMicLevel` (`index.html:52578-52631`) | React state only; no window signal | **Wire:** publish `window._fridayMicLevel` next to `setMicLevel`. It is the same tab, so no server frame is needed |
+| Memory or KG search | Retrieval inside `_build_context_prompt` (`services/model_router.py:3458`), plus `search_wiki` and memory tool calls | Only layer names in the end-of-turn `sources` | No count anywhere | **Instrument:** count the results per layer there, and emit `retrieval` with `n`. Dormant until then |
+| Reasoning | Round n: `process_update(step_n=…)` (`agent.py:10360`, `10910`, `11153`) → `turn_pet` (`core/__init__.py:1757-1790`) | `turn_liveness` (`core/__init__.py:1833`), polled only after 90 s | Only on long turns | **Emit** `round` from `process_update` when `step_n` changes. It is the same number `fridayTurnStatusText` (`index.html:8738`) prints |
+| Where the thinking happens | Route: the trace `model_call` (`services/reasoning_trace.py:364`, with seat and model). Egress: `egress_gate.seal_outbound` (`services/egress_gate.py:1521`) sealing a real outbound call | Chat `done` payload `served_by` (unused client-side). Voice `egress_notice`/`egress_receipt` (`routes/voice.py:3875`, `4045`) | Route after the fact; egress only in voice | **Emit** `route` per round from the `model_call` site, and `egress` from `seal_outbound` on an actual send (not on local, not on a blocked call). **This touches `egress_gate.py`, a sensitive subsystem: extra review.** The vent opens only on `egress` |
+| Tool call | `announce_tool` (`services/model_router.py:1065`), `_orb_tool_trace` (`services/agent.py:9991`) | Chat stream `{tool}` (start only, sending tab only). Trace feed polled | Partial | **Emit** `tool` start and end with `call_id` at those two sites |
+| Reflex or instant | Chat fast paths: nav intent and open-path (`routes/chat.py:870-894`). Laya is a shadow scorer (`services/laya_backend.py`) | Nothing | None | **Emit** `reflex` from the fast paths. Laya stays dormant until it decides anything live |
+| Waiting for approval | `card_pending` / `card_resolved` (`services/approval_feed.py:80-84`) | The same feed; `window.__fridayPendingApprovals` | **Yes, today** | Use as is |
+| Blocked | Typed blockers (`goals-and-delivery-receipts.md`; not built) | — | None | **Dormant** until typed blockers ship |
+| Verifying | Task evidence gate (`services/agent.py:3875-3878`); delivery receipts (not built) | Task status via `/api/tasks` | After the fact | **Emit** `verify` start and end at the evidence gate. It widens when receipts ship |
+| Long generation | `process_update(progress=)` from `local_image.py:1067`, `local_video.py:684`, `creative_pipeline.py:806` | `/api/processes` poll, 2 s | Yes, polled | **Emit** `progress` on change. Podcast and report have no progress today, so they stay dormant (stages only) |
+| Saving to memory | `ingest_fact` (`services/knowledge_graph/integration.py:89`) → `node_ignited` | KG SSE; only the Knowledge view listens | Not to the scene | **Emit** `memory_saved` at `ingest_fact` success |
+| Private handoff | `local_context.request` (`services/local_context.py:247`) and `_send` (`:224`) | The card via the feed; the send emits nothing | Card only | **Emit** `handoff` start at `request`, and `handoff` sent at `_send` success |
+| Error | Chat stream `{error}` (`routes/chat.py:771`); process error; voice `error` | Various, sending tab only | Partial | **Emit** `error` at turn end with failure, and at process error |
+| Background or scheduled | `scheduler.dispatch` (`services/scheduler.py:1000`) → `sched-*` process | `/api/processes` poll | Yes, polled | **Emit** `background` start and end at `process_register` for background categories |
+| Subagents | `_spawn_task` (`services/agent.py:4225`); the worker end | `/api/tasks` poll; trace parents | Polled | **Emit** `subagent` start and end with the parent turn |
+
+### 13.6 Precedence and blending
+
+States overlap; for example, a tool twist during reasoning. The engine
+treats the body as **four channels**. Each gesture claims one:
+
+| Channel | Gestures | Rule |
+|---|---|---|
+| **Whole body** | blocked freeze; long-generation build; verifying scan; reasoning wave | One at a time, by priority: **blocked > build > verify > wave**. A lower one resumes where it was when the higher one ends. A freeze holds every channel except approval |
+| **Units** | tool twist; reflex snap; memory gather; saving; error knock | Additive on **disjoint** units. The allocator never gives one unit two gestures. Twists take blocks away from the facing side; the gather takes inner units. Excess tool calls wait in a visible queue, shown by a small count in the status line, and twist in order, so it stays one twist per call |
+| **Shell and face** | listening ripple; cloud vent and thread; handoff frost | Listening owns the facing side while the mic is live. The vent uses the face opposite the user when listening is live. Frost overrides the vent: during a handoff nothing else leaves |
+| **Satellites** | background orbiter; subagent clusters; the approval cube | Always additive. The approval cube is in front and outranks everything for attention. It keeps breathing during a freeze, because the user's decision is what unfreezes |
+
+- **Speaking** multiplies the existing speech energy on top of all channels.
+- **Tempo under load.** When more than 3 unit gestures start within a
+  second, their durations compress, down to 40% at most, so bursts stay
+  readable. The count is never merged: every event gets its gesture.
+
+### 13.7 Guardrails
+
+- **Status line and spoken equivalent.** Every state has both (§13.8). The
+  lattice never carries information that the words don't (north-star §33.3,
+  line 5077; §21.22, line 3219).
+- **Reduced motion.** Each gesture has the §13.3 swap: brightness or opacity
+  only, with no translation or rotation. It uses the `SceneMotion.reduced()`
+  switch from phase A0 (`<scene-motion>` block), and follows it live.
+- **Palette.**
+  - Every gesture uses the genome's identity palette (§3.2, §6.2).
+  - **The approval cube is the one sanctioned exception:** it uses the
+    approval hue (amber `#f59e0b`, §1.3). Nothing else may.
+  - Error uses no red, and the cloud thread uses the palette accent, not a
+    warning colour.
+  - The reserved-hue rule in §6.2 is amended to say: *except the approval
+    cube, which is the reserved signal itself.*
+- **No flashes.**
+  - A gesture's brightness change is capped per frame, by the same luminance
+    step limit as §6.3.
+  - Repeated events coalesce their *brightness* so the scene never
+    oscillates above 3 Hz. Their *count* still shows.
+  - Snaps and knocks move geometry; they don't brighten it.
+- **Budget.**
+  - Gestures move existing meshes: twists, steps and orbits are transforms
+    on `coreCubes`. They add no geometry except:
+    - one thread line (≤ 64 vertices);
+    - one scan quad;
+    - an orbiter and cluster pool (≤ 16 small meshes).
+
+    That is well inside §6.4's +10%.
+  - The engine's target is ≤ 0.3 ms of CPU per frame for 20 simultaneous
+    gestures (UNMEASURED; §13.10 measures it).
+- **All 13 structures** speak the language through the adapters (§13.2,
+  §13.4).
+- **Evolution changes style, never meaning.** The genome may set three style
+  genes, clamped like the others (§3.2):
+  - `gesture.tempo`, 0.85-1.15;
+  - `gesture.ease`, one of spring, snap or glide;
+  - `gesture.trail`, 0-0.5.
+
+  It may **not** change which event makes which gesture, the counts, the
+  direction of the vent (outward means leaving), or the approval cube's
+  step-forward. A test runs every gesture under the genome extremes and
+  checks that the meaning (units moved, count, direction) is unchanged.
+
+### 13.8 Status lines and spoken equivalents
+
+- **Where the status line appears.** In the scene's HUD (`#mood-text`,
+  `index.html:4556-4562`), and in the chat status where one exists.
+- **The spoken form.** It goes through `check_situation` (`voice_engine.py`,
+  voice shared tools `:469-481`), the path the voice contract names for "what
+  are you doing". It follows the contract's manners: short, concrete, a
+  sentence and not a table, and never claiming an outcome before it is
+  verified (north-star §22.3, line 3273; §6.5).
+- **Content.** Neither form carries sensitive content (north-star §22.5,
+  line 3292): tool names are allowed, arguments are not.
+
+| State | Status line | Spoken (on "what are you doing?") |
+|---|---|---|
+| Listening | "Listening" | (not spoken; she is listening) |
+| Memory search | "Found 4 sources" | "I pulled four things from memory." |
+| Reasoning | "Thinking, round 3" | "I'm on my third pass." |
+| Local vs cloud | "Round 3 on this computer" / "Round 3 sent to <provider>" | "This part's staying on your computer." / "I've sent this part to <provider>." |
+| Tool call | "Using search_files (2 waiting)" | "I'm searching your files, then two more steps." |
+| Reflex | "Opened Settings" | (the command's own confirmation) |
+| Approval | "Waiting for your OK (1)" | Per the contract's four-part card read-back |
+| Blocked | "Blocked: needs your input" | "I'm stuck until you tell me <blocker type, in plain words>." |
+| Verifying | "Checking the result" | "I'm checking it worked before I say it did." |
+| Long generation | "Rendering 42%" / "Rendering: stage 2 of 4" | "About forty percent through." / "On stage two of four." |
+| Saving to memory | "Saved to memory" | "I've saved that." |
+| Private handoff | "Working privately on this computer" → "Sent a scrubbed summary" | "I'm doing that part on your computer; only a scrubbed summary will go out." |
+| Error | "That step failed; retrying" / "…; stopped" | "That step failed. <what next>." |
+| Background | "2 jobs in the background" | "Two things are running in the background." |
+| Subagents | "3 helpers working" | "Three helpers are on it." |
+
+### 13.9 Build plan for processing states
+
+It starts only after phase A0 is on main, because it reuses A0's
+`SceneMotion` and flash limits.
+
+| Phase | What | Effort |
+|---|---|---|
+| **PS1** | Presence frames: `services/presence.py` (allowlist, enums, no text), the `approval_feed` relay, and client `onPresence`. The emit points that exist today: round, route, egress, tool start and end, approval (already there), progress, memory saved, handoff, error, background, subagent, reflex. Tests pin each emit point to its event (§13.10) | 3 days |
+| **PS2** | The gesture engine: slots, the four channels, precedence, the allocator, the reduced-motion swaps and flash limits. The CUBES adapter, the richest one. The HUD status line | 4 days |
+| **PS3** | Adapters for the other 12 structures, including the §13.4 four. Frame captures on at least three structures | 3 days |
+| **PS4** | Spoken equivalents through `check_situation`. Voice parity tests. Mic level for listening | 1-2 days |
+| **PS5** | The instrumentation that doesn't exist yet: retrieval counts in `_build_context_prompt`, verify events, and the podcast/report stages. Blocked stays dormant until typed blockers ship | 2 days, plus waiting on goals |
+
+About 13-14 days.
+
+### 13.10 Verification
+
+- **Each state fires only on its real event (server).** For every emit point,
+  one test drives the real code path and asserts exactly one frame of the
+  right state. For example: `_orb_tool_trace` with a finished call emits one
+  `tool/end` with the same `call_id`. A second test drives the neighbouring
+  path that must **not** emit. Examples:
+  - a local seat emits no `egress`;
+  - a blocked `seal_outbound` emits no `egress`;
+  - a process with no progress emits no `progress`;
+  - `ingest_fact` failing emits no `memory_saved`;
+  - an off-record turn's frames carry no text (the allowlist test).
+- **Each gesture happens only on its event (client).** Under node, the engine
+  runs 600 frames with no events: every unit's transform is unchanged
+  (motion needs an event). Then each event type runs alone: exactly the
+  expected units move, the expected number of times. For example, 3
+  `tool/start` frames give 3 twists, and 3 `tool/end` frames bring all 3
+  blocks home. Both UI files are run, as in `tests/unit/test_scene_motion_safety.py`.
+- **Meaning under evolution.** Every gesture is run at the genome's style
+  extremes. Units moved, count and vent direction are identical.
+- **Frames you look at.**
+  - **How it's driven.** Playwright uses the tree-swapped page (the §10.3
+    recipe) and feeds the real client a scripted
+    `/api/approvals/events` stream of presence frames by routing the SSE
+    endpoint. There is no inject hook in the page.
+  - **What's captured.** For each of the 15 states, on CUBES, ICOSAHEDRON and
+    ASTROLABE: a 3-frame strip (start, middle, end) and the per-frame
+    luminance record. With reduced motion on, the same strips.
+  - **Reviewed.** A person looks at every strip. That review, and the program
+    lead's visionOS and "unmistakably Friday" critique, gate the merge.
+  - **Measured.** The flash check (§10.3) runs over the whole sequence.
+- **Budget.** CPU per frame for 20 simultaneous gestures, and fps, on the
+  owner's machine with the resident model loaded. Recorded here with the
+  date.
+
+---
+
+## 14. North-star mapping
+
+The target is `docs/design/north-star/agent-friday-ideal-product-spec.md`.
+The owner's rulings on it are in `AMENDMENTS.md`, and the requirement IDs are
+`GAP-MATRIX.md` rows. Where a ruling and the spec differ, the ruling wins.
+This spec's build phases (A0-A5, PS1-PS5) are not amendments; amendments
+below are written "amendment A<n>".
+
+### 14.1 What this spec implements
+
+| North star | Requirement | Where this spec meets it |
+|---|---|---|
+| §6.8, NS-6.8-1/2; amendment A1; NS-21.22-4 | Avatar states only from trace data; motion never poses as evidence | §13.1 (no event, no motion; dormant until real); §13.5 (the event for each state); §3.2 (idle-motion genes refused) |
+| §29.1, NS-29.1-1; §29.4 | The owner can always answer "what is Friday doing, which model, did anything leave" | §13.3 vocabulary; §13.8 status lines; the task-journal events §29.4 lists map onto §13.5 |
+| §12.3, NS-12.3-2; §12.5; §6.4, NS-6.4-6; §33.6 | Route shown; fail-closed egress; fallbacks visible; zero unannounced egress | §13.3 "where the thinking happens": the vent opens only on a real `seal_outbound` send; §5.3 the author never switches silently |
+| Amendment A4, NS-22.2-2 | No raw private data to a cloud voice model | §13.3 private handoff: frost while local, one cube out only on the scrubbed send |
+| §29.3, NS-29.3-1 | No invented percentages | §13.3 long generation: a fraction or stages, never a guess |
+| §6.5; §22.3, NS-22.3-1/2; §21.23 | "Done" is verified; honest, specific copy | §13.3 verifying; §13.8 lines never claim before verification |
+| Amendment A4; §22.1; §22.2; §33.3, NS-33.3-6 | Voice parity; critical information visual and audible | §8.4; §13.8 spoken equivalents through `check_situation` |
+| §33.1, NS-33.1-9; §33.2, NS-33.2-1; §21.22, line 3219 | WCAG 2.2 AA; reduced motion for avatar motion; a flat equivalent | Phase A0 (`SceneMotion`); §6.3; §13.7 swaps; the status line as the flat equivalent |
+| §18.4, §22.5, NS-22.5-1/2; §33.4 | Approval cards; nothing sensitive spoken | §13.3 approval cube (the only approval-hue element); §13.8 contract read-back |
+| §17.14, NS-17.14-2; §29.2; §11.4 | Subagents and background work visible | §13.3 subagent clusters and orbiters from real process and task events |
+| §17.8 | Typed blockers | §13.3 blocked (dormant until goals ship) |
+| Amendment A1; amendment A2; amendment A5; LEDGER check 3 | The scene is how Friday is recognised; weekly evolution; one brand; "unmistakably Friday" | §3 one genome; §13.2 one language on every body; §13.7 evolution changes style, never meaning |
+| §33.4, §33.7, §34.15 | Responsive UI; budgets; GPU contention tests | §6.4; §13.7 budget; §10.3, §13.10 measured |
+| §15.8 | Off the record indicates what is still recorded | §5.1; §13.5 presence frames carry no text and are never written |
+
+### 14.2 Where this spec amends it
+
+Nothing here departs from the north star, so no new amendment is recorded.
+Two notes:
+
+- **§6.8's "decorative animation clearly decorative".** This spec keeps no
+  decorative gesture. The existing ambient MOODS (NS-6.8-2) are outside this
+  spec.
+- **No flash rule.** The north star has no explicit flash rule. This spec
+  anchors its rule on §33.1 (WCAG 2.2 AA, which includes 2.3.1).
 
 ---
 
