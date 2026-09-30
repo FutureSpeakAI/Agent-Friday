@@ -276,6 +276,14 @@ def calibration_report(agent=None):
     return out
 
 
+def _fast_path_stats() -> dict:
+    try:
+        from agent_friday.services import laya_runtime
+        return laya_runtime.stats()
+    except Exception:
+        return {}
+
+
 def status() -> dict:
     """Honest state, for the settings UI and for `friday doctor`.
 
@@ -291,6 +299,9 @@ def status() -> dict:
         "device": "cpu",
         "engine": getattr(_agent, "_friday_engine", None),
         "threads": getattr(_agent, "_friday_threads", None),
+        # The budgeted multi-question path (laya_runtime.ask): asks, answers
+        # served from memory, misses, and recent latency.
+        "fast_path": _fast_path_stats(),
         # Decisions Laya did not answer within _SCORE_TIMEOUT_S; each was
         # decided by the keyword scan alone.
         "slow_answers": int(_slow_answers),
@@ -782,7 +793,7 @@ def laya_backend(question: str, state: str, **kw):
     wait_s = _BACKGROUND_WAIT_S if background else 0.0
     # A background (shadow) scoring asks the gate's finer questions too, in
     # the same pass: evidence for a later two-answer gate, no verdict change.
-    also = ("leaves_machine", "changes_outside") if background else ()
+    also = ("changes_outside",) if background else ()
     if question == "action_severity":
         return _answer(state, wait_s=wait_s, also=also)
     if question == "policy_class":

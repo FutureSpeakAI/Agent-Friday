@@ -152,20 +152,10 @@ class _ThreeAnswers:
         return {"answers": out}
 
 
-def test_the_shadow_asks_all_three_gate_questions_in_one_pass(_isolate, monkeypatch):
+def test_the_shadow_asks_both_gate_questions_in_one_pass(_isolate, monkeypatch):
     agent = _ThreeAnswers()
     monkeypatch.setattr(laya_backend, "_agent", agent)
     approvals.classify("mcp_github_search_users {}")
-    assert agent.calls == [["changes_outside", "leaves_machine", "severity"]]
+    assert agent.calls == [["changes_outside", "severity"]]
     shadows = [r for r in _rows(_isolate / "decisions.jsonl") if r.get("shadow")]
-    assert shadows[0]["detail"]["also"] == {"leaves_machine": "yes", "changes_outside": "no"}
-
-
-def test_evidence_scores_leaves_machine_against_the_owner(_isolate, monkeypatch):
-    monkeypatch.setattr(laya_backend, "_agent", _ThreeAnswers())
-    approvals.classify("mcp_github_search_users {}")
-    laya_labels.label(tool="mcp_github_search_users", reaches_outside=True, by="owner")
-    ev = laya_labels.evidence()
-    # severity said soft (wrong), leaves_machine said yes (right).
-    assert ev["laya"] == {"right": 0, "wrong": 1}
-    assert ev["laya_leaves_machine"] == {"right": 1, "wrong": 0}
+    assert shadows[0]["detail"]["also"] == {"changes_outside": "no"}

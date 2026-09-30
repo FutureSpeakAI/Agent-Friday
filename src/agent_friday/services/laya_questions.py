@@ -8,16 +8,20 @@ exactly the questions it will act on, and every question is defined here,
 once, where a change to its wording is visible and its answers stay
 comparable across the decision log.
 
-Two-option choices only, deliberately. They land in the `choice:2`
-calibration bucket, whose shipped temperature is inside laya's clamp range
-(see laya_backend.calibration_report); a question that grew past ten options
-would land in the bucket that is distorted on every build of this checkpoint.
+Two-option choices or single statements (`noul`), deliberately: neither lands
+in the `choice:11+` bucket that is distorted on every build of this
+checkpoint (see laya_backend.calibration_report).
+
+WORDING IS MEASURED, NOT WRITTEN. Laya answers whatever it is asked,
+confidently; a badly worded question fails quietly. Every wording here was
+scored by tools/laya_question_eval.py against clear-cut cases before use.
 
 WHO ASKS WHAT
 
   gate      severity                 the approval gate's question today
-  gate      leaves_machine           does data leave this PC? (shadow only)
   gate      changes_outside          does it change anything outside? (shadow)
+  (spare)   leaves_machine           does data leave this PC? Defined, not asked:
+                                     this checkpoint answers it near chance
   voice     touches_private          does the request touch private data?
                                      -> the local private-summary hand-off,
                                         owned by the voice session
@@ -70,26 +74,22 @@ CHANGES_OUTSIDE = {
     },
 }
 
+# The two voice questions are STATEMENTS (`noul`: the probability that the
+# statement holds), because that is the wording this checkpoint answers well.
+# Measured by tools/laya_question_eval.py, fp32, on clear-cut cases:
+#   touches_private   as a yes/no choice 6/11, as this statement 10/11
+#   direct_command    as a yes/no choice 10/15, as this statement 14/15
+# A consumer treats noul >= 0.5 as "holds".
 TOUCHES_PRIVATE = {
-    "type": "choice",
-    "instructions": ("Does answering this request need the owner's private "
-                     "data: health, family, finances, messages, contacts, "
-                     "location, or personal notes?"),
-    "criteria": {
-        "yes": "it needs private or personal information about the owner or people close to them",
-        "no": "it needs only public information, general knowledge, or nothing personal",
-    },
+    "type": "noul",
+    "instructions": ("Answering this needs the user's own personal records: "
+                     "messages, calendar, health, money or family."),
 }
 
 DIRECT_COMMAND = {
-    "type": "choice",
-    "instructions": ("Is this a short direct command to operate something "
-                     "(open, play, pause, set, turn on or off, go to, call) "
-                     "rather than a question or a request for writing or reasoning?"),
-    "criteria": {
-        "yes": "a direct command that can be carried out at once",
-        "no": "a question, a conversation, or work that needs thought",
-    },
+    "type": "noul",
+    "instructions": ("This is a short control command for a device or app "
+                     "(play, pause, mute, volume, open, go to, timer)."),
 }
 
 #: The chat pilot's question (services/laya_pilot), registered here so every
@@ -118,7 +118,13 @@ QUESTIONS: Dict[str, dict] = {
 }
 
 #: Named sets a consumer asks in one pass.
-GATE_SHADOW = ("severity", "leaves_machine", "changes_outside")
+#:
+#: `leaves_machine` is NOT in the gate's set. No wording tried scored above
+#: 17/29 (tools/laya_question_eval.py): this checkpoint cannot tell a lookup
+#: on an online service from local work when asked that directly. `severity`
+#: already carries that signal (it calls every owner-labelled outside read
+#: "hard"), so the shadow asks severity and changes_outside (23/29).
+GATE_SHADOW = ("severity", "changes_outside")
 VOICE = ("touches_private", "direct_command")
 
 
@@ -127,9 +133,19 @@ def select(ids: Iterable[str]) -> Dict[str, dict]:
     return {i: QUESTIONS[i] for i in ids}
 
 
+def holds(qid: str, answer: dict) -> bool:
+    """A yes/no reading of any answer: noul >= 0.5, or the first option."""
+    q = QUESTIONS[qid]
+    if q.get("type") == "noul":
+        return float((answer or {}).get("noul") or 0.0) >= 0.5
+    return (answer or {}).get("choice") == list(q.get("criteria") or {"": 0})[0]
+
+
 def bucket(qid: str) -> str:
     """Calibration bucket, as laya_backend.question_bucket derives it."""
     q = QUESTIONS[qid]
+    if q.get("type") == "noul":
+        return "noul:2"
     k = len(q.get("criteria") or {})
     size = "2" if k <= 2 else "3-5" if k <= 5 else "6-10" if k <= 10 else "11+"
     return "%s:%s" % (q.get("type") or "choice", size)

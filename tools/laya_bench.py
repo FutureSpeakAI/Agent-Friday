@@ -2,8 +2,19 @@
 
     python tools/laya_bench.py run --engine torch-fp32 --threads 8 --out fp32.json
     python tools/laya_bench.py build-onnx
-    python tools/laya_bench.py run --engine onnx-int8 --threads 8 --out onnx.json --force
-    python tools/laya_bench.py compare fp32.json onnx.json [--record]
+    python tools/laya_bench.py ab --engines torch-fp32 onnx-fp32 --threads 4 --out ab.json
+    python tools/laya_bench.py compare ab.json ab.json --engine onnx-fp32 --record
+
+MEASURED 2026-09-29, i7-10700F, 4 threads, CPU ~74% busy with other work
+(p50 ms; engines rotated in one process):
+    workload     torch-fp32  onnx-fp32  onnx-int8
+    gate_1q          477        371        274
+    voice_1q         380        299        213
+    voice_2q         774        730        496
+    gate_3q         1471       1301        998
+    long_1q         1527       1745       1351
+    answers differing from fp32 (of 150):   0   31-58
+onnx-int8 is fastest and wrong too often; onnx-fp32 ships.
 
 One engine per process: fp32 alone is ~1.7 GB resident, and two engines in
 one process would measure the memory pressure as much as the engine.
@@ -147,13 +158,26 @@ def cmd_ab(a):
     from agent_friday.services import laya_questions, laya_runtime
     agent = laya.load("convaiinnovations/laya", device="cpu")
     fp32 = agent.model
-    models = {"torch-fp32": fp32}
+    # Each engine is (model, encoder): the ONNX engine replaces only the
+    # encoder, so it shares fp32's head and swaps the encoder in and out.
+    fp32_enc = fp32.encoder
+    models = {"torch-fp32": (fp32, fp32_enc)}
     if "torch-int8" in a.engines:
-        models["torch-int8"] = torch.ao.quantization.quantize_dynamic(
-            copy.deepcopy(fp32), {torch.nn.Linear}, dtype=torch.qint8)
-    if "onnx-int8" in a.engines:
-        models["onnx-int8"] = laya_runtime._OrtModel(
-            laya_runtime.artifacts_dir() / laya_runtime.INT8_NAME, a.threads)
+        q = copy.deepcopy(fp32)
+        q.encoder = torch.ao.quantization.quantize_dynamic(
+            q.encoder, {torch.nn.Linear}, dtype=torch.qint8)
+        models["torch-int8"] = (q, q.encoder)
+    for eng, fname in (("onnx-int8", laya_runtime.INT8_NAME),
+                       ("onnx-fp32", laya_runtime.FP32_NAME)):
+        if eng in a.engines and (laya_runtime.artifacts_dir() / fname).exists():
+            models[eng] = (fp32, laya_runtime._OrtEncoder(
+                laya_runtime.artifacts_dir() / fname, a.threads,
+                getattr(fp32_enc, "config", None)))
+
+    def use(n):
+        model, enc = models[n]
+        model.encoder = enc
+        agent.model = model
     torch.set_num_threads(a.threads)
     names = [e for e in a.engines if e in models]
     res = {"threads": a.threads, "engines": names, "rss_mb": _rss_mb(),
@@ -162,12 +186,12 @@ def cmd_ab(a):
         qs = laya_questions.select(qids)
         times = {n: [] for n in names}
         for n in names:
-            agent.model = models[n]
+            use(n)
             for _ in range(2):
                 agent.predict(state, qs)
         for _ in range(a.runs):
             for n in names:
-                agent.model = models[n]
+                use(n)
                 t = time.perf_counter()
                 agent.predict(state, qs)
                 times[n].append((time.perf_counter() - t) * 1000)
@@ -179,7 +203,7 @@ def cmd_ab(a):
                                        "min_ms": round(ms[0], 1)}
         print(wl, json.dumps(res["workloads"][wl]), flush=True)
     for n in names:
-        agent.model = models[n]
+        use(n)
         res["answers"][n] = []
         for state, qids in _cases():
             r = agent.predict(state, laya_questions.select(qids))
@@ -193,7 +217,9 @@ def cmd_ab(a):
 def cmd_build(a):
     from agent_friday.services import laya_runtime
     agent, load_s, _ = _load("torch-fp32", a.threads)
-    info = laya_runtime.build_onnx(agent)
+    info = laya_runtime.build_onnx(
+        agent, keep_fp32=True, quantize=a.int8, per_channel=a.per_channel,
+        op_types=(["MatMul"] if a.matmul_only else None))
     print(json.dumps(info, indent=2))
 
 
@@ -220,7 +246,7 @@ def cmd_compare(a):
     print(json.dumps(out, indent=2))
     if a.record:
         from agent_friday.services import laya_runtime
-        laya_runtime.record_agreement(len(differ) == 0, out)
+        laya_runtime.record_agreement(len(differ) == 0, out, engine=a.engine)
         print("recorded agreement_ok =", len(differ) == 0)
 
 
@@ -242,6 +268,10 @@ def main():
     ab.add_argument("--out", required=True)
     b = sub.add_parser("build-onnx")
     b.add_argument("--threads", type=int, default=8)
+    b.add_argument("--int8", action="store_true",
+                   help="also write an int8 copy (failed agreement on this checkpoint)")
+    b.add_argument("--per-channel", action="store_true")
+    b.add_argument("--matmul-only", action="store_true")
     c = sub.add_parser("compare")
     c.add_argument("ref")
     c.add_argument("other")

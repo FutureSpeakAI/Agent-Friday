@@ -150,3 +150,20 @@ def test_a_broken_fast_engine_falls_back_to_fp32(monkeypatch):
     laya_backend._use_engine(agent)
     assert applied == ["onnx-int8", "torch-fp32"]
     assert agent._friday_engine == "torch-fp32"
+
+
+def test_status_carries_the_fast_path_numbers(monkeypatch):
+    monkeypatch.setattr(laya_backend, "_agent", _Agent())
+    laya_runtime.ask("pause", ["direct_command"], budget_ms=1000)
+    fp = laya_backend.status()["fast_path"]
+    assert fp["asks"] >= 1 and fp["p50_ms"] is not None
+
+
+def test_auto_takes_the_engine_that_passed_and_never_a_failed_one():
+    d = laya_runtime.artifacts_dir()
+    d.mkdir(parents=True)
+    (d / laya_runtime.INT8_NAME).write_bytes(b"x")
+    (d / laya_runtime.FP32_NAME).write_bytes(b"x")
+    laya_runtime.record_agreement(False, {"choices_differ": 58}, engine="onnx-int8")
+    laya_runtime.record_agreement(True, {"choices_differ": 0}, engine="onnx-fp32")
+    assert laya_runtime.choose_engine("auto") == "onnx-fp32"

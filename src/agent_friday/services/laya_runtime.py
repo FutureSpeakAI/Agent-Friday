@@ -39,9 +39,10 @@ from typing import Any, Dict, Iterable, Optional
 
 _log = logging.getLogger("friday.laya_runtime")
 
-ENGINES = ("torch-fp32", "torch-int8", "onnx-int8")
+ENGINES = ("torch-fp32", "torch-int8", "onnx-fp32", "onnx-int8")
 ONNX_DIRNAME = "laya-onnx"
 INT8_NAME = "laya-int8.onnx"
+FP32_NAME = "laya-fp32.onnx"
 MANIFEST_NAME = "manifest.json"
 
 
@@ -75,40 +76,46 @@ def manifest() -> dict:
         return {}
 
 
-class _OrtModel:
-    """Stands in for laya's DecisionModel inside `Agent.predict`.
+class _EncoderOutput:
+    def __init__(self, hidden):
+        self.last_hidden_state = hidden
 
-    `Agent.system_one` calls `self.model(ids, att, mpos, mmask, qtype)` and
-    post-processes the two outputs itself (temperature, options, confidence).
-    Swapping only the forward keeps every one of those steps laya's own.
+
+def _OrtEncoder(path: Path, threads: int, config=None):
+    """Stands in for the ModernBERT encoder inside laya's DecisionModel.
+
+    Only the encoder runs in onnxruntime: it is 28 of the model's 30
+    transformer layers and nearly all of the arithmetic. The decision head
+    (two small layers, the option scorer and the act head) stays laya's own
+    torch code, so temperature, options and confidence are computed exactly
+    as laya computes them. The head is also the part whose attention an ONNX
+    export freezes to the example's sequence length, which is why it is not
+    exported.
+
+    A torch Module (built here so importing this file never imports torch),
+    because DecisionModel only accepts a Module as its `encoder` child.
     """
+    import onnxruntime as ort
+    import torch
 
-    def __init__(self, path: Path, threads: int):
-        import onnxruntime as ort
-        so = ort.SessionOptions()
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        so.intra_op_num_threads = max(1, int(threads))
-        so.inter_op_num_threads = 1
-        self.session = ort.InferenceSession(str(path), so,
-                                            providers=["CPUExecutionProvider"])
+    class OrtEncoder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            so = ort.SessionOptions()
+            so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            so.intra_op_num_threads = max(1, int(threads))
+            so.inter_op_num_threads = 1
+            self.session = ort.InferenceSession(str(path), so,
+                                                providers=["CPUExecutionProvider"])
+            self.config = config
 
-    def __call__(self, input_ids, attention_mask, marker_pos, marker_mask, qtype):
-        import torch
-        feeds = {
-            "input_ids": input_ids.cpu().numpy(),
-            "attention_mask": attention_mask.cpu().numpy(),
-            "marker_pos": marker_pos.cpu().numpy(),
-            "marker_mask": marker_mask.cpu().numpy(),
-            "qtype": qtype.cpu().numpy(),
-        }
-        logits, act = self.session.run(["logits", "act_logits"], feeds)
-        return torch.from_numpy(logits), torch.from_numpy(act)
+        def forward(self, input_ids=None, attention_mask=None, **_kw):
+            (hidden,) = self.session.run(["last_hidden_state"], {
+                "input_ids": input_ids.cpu().numpy(),
+                "attention_mask": attention_mask.cpu().numpy()})
+            return _EncoderOutput(torch.from_numpy(hidden))
 
-    def to(self, *_a, **_k):
-        return self
-
-    def eval(self):
-        return self
+    return OrtEncoder()
 
 
 def default_threads() -> int:
@@ -128,16 +135,21 @@ def apply_engine(agent, engine: str, *, threads: Optional[int] = None):
         torch.set_num_threads(threads)
     elif engine == "torch-int8":
         torch.set_num_threads(threads)
-        agent.model = torch.ao.quantization.quantize_dynamic(
-            agent.model, {torch.nn.Linear}, dtype=torch.qint8)
-    elif engine == "onnx-int8":
-        path = artifacts_dir() / INT8_NAME
+        # The encoder only: it is 28 of the model's 30 transformer layers, and
+        # the decision head's fused attention path cannot take quantized
+        # Linear weights.
+        agent.model.encoder = torch.ao.quantization.quantize_dynamic(
+            agent.model.encoder, {torch.nn.Linear}, dtype=torch.qint8)
+    elif engine in ("onnx-int8", "onnx-fp32"):
+        path = artifacts_dir() / (INT8_NAME if engine == "onnx-int8" else FP32_NAME)
         m = manifest()
         if not path.exists():
             raise FileNotFoundError("no ONNX artifact at %s; build it first" % path)
-        if not m.get("agreement_ok"):
-            raise RuntimeError("the ONNX artifact has not passed its agreement check")
-        agent.model = _OrtModel(path, threads)
+        if not (m.get("agreement_ok_by_engine") or {}).get(engine, m.get("agreement_ok") and engine == "onnx-int8"):
+            raise RuntimeError("the %s artifact has not passed its agreement check" % engine)
+        cfg = getattr(agent.model.encoder, "config", None)
+        agent.model.encoder = _OrtEncoder(path, threads, cfg)
+        torch.set_num_threads(threads)
     else:
         raise ValueError("unknown laya engine %r" % engine)
     agent._friday_engine = engine
@@ -145,63 +157,72 @@ def apply_engine(agent, engine: str, *, threads: Optional[int] = None):
     return agent
 
 
-def build_onnx(agent, *, out_dir: Optional[Path] = None, keep_fp32: bool = False) -> dict:
-    """Export the loaded fp32 model to ONNX and quantize its weights to int8.
+def build_onnx(agent, *, out_dir: Optional[Path] = None, keep_fp32: bool = True,
+               quantize: bool = False, per_channel: bool = False,
+               op_types: Optional[list] = None) -> dict:
+    """Export the loaded fp32 ENCODER to ONNX, and optionally an int8 copy.
 
-    Slow (minutes) and memory-hungry (~3 GB peak); never on a request path.
-    The fp32 export is temporary unless `keep_fp32`: only the int8 model,
-    about a quarter of the size, is kept.
+    Slow (about a minute) and memory-hungry (~3 GB peak); never on a request
+    path. The default is the fp32 export alone: measured on this checkpoint,
+    it answers exactly as laya's own path (0 of 150 answers differ) and runs
+    short inputs 20-25% faster, while int8 weights changed 31-58 of the same
+    150 answers and never passed the agreement check.
     """
     import torch
     out = Path(out_dir or artifacts_dir())
     out.mkdir(parents=True, exist_ok=True)
     fp32 = out / "laya-fp32.onnx"
     int8 = out / INT8_NAME
-    model = agent.model
-    model.eval()
-    try:
-        # The fused TransformerEncoderLayer fast path has no ONNX lowering.
-        torch.backends.mha.set_fastpath_enabled(False)
-    except Exception:
-        pass
-    q = {"q": {"type": "choice", "instructions": "export", "criteria": {"a": "a", "b": "b"}}}
-    from laya.common import QTYPES, build_sequence, collate_items
-    items = []
-    for qid, qdef in q.items():
-        qi = agent._to_internal(qdef)
-        seq, markers = build_sequence(agent.tok, "example state for export", qi,
-                                      agent.cfg.get("max_len", 512),
-                                      agent.cfg.get("head_max_len", 192))
-        items.append({"ids": seq, "markers": markers, "qtype": QTYPES[qi["t"]]})
-    b = collate_items([items], agent.tok.pad_token_id)
-    args = (b["input_ids"], b["attention_mask"], b["marker_pos"], b["marker_mask"], b["qtype"])
+    agent.model.eval()
+    encoder = agent.model.encoder
+
+    class _EncOnly(torch.nn.Module):
+        def __init__(self, enc):
+            super().__init__()
+            self.enc = enc
+
+        def forward(self, input_ids, attention_mask):
+            return self.enc(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+
+    # Two rows of different lengths, so nothing about the example's shape
+    # can be mistaken for a constant.
+    ids = torch.randint(5, 1000, (2, 37), dtype=torch.long)
+    att = torch.ones((2, 37), dtype=torch.long)
+    att[1, 30:] = 0
     t0 = time.time()
     with torch.no_grad():
         torch.onnx.export(
-            model, args, str(fp32), dynamo=False, opset_version=17,
-            input_names=["input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype"],
-            output_names=["logits", "act_logits"],
+            _EncOnly(encoder).eval(), (ids, att), str(fp32), dynamo=False, opset_version=17,
+            input_names=["input_ids", "attention_mask"],
+            output_names=["last_hidden_state"],
             dynamic_axes={"input_ids": {0: "n", 1: "seq"}, "attention_mask": {0: "n", 1: "seq"},
-                          "marker_pos": {0: "n", 1: "k"}, "marker_mask": {0: "n", 1: "k"},
-                          "qtype": {0: "n"}, "logits": {0: "n", 1: "k"}, "act_logits": {0: "n"}},
+                          "last_hidden_state": {0: "n", 1: "seq"}},
         )
     exported_s = time.time() - t0
-    from onnxruntime.quantization import QuantType, quantize_dynamic
-    t1 = time.time()
-    quantize_dynamic(str(fp32), str(int8), weight_type=QuantType.QInt8)
-    quantized_s = time.time() - t1
+    quantized_s = None
+    if quantize:
+        from onnxruntime.quantization import QuantType, quantize_dynamic
+        t1 = time.time()
+        quantize_dynamic(str(fp32), str(int8), weight_type=QuantType.QInt8,
+                         per_channel=per_channel,
+                         **({"op_types_to_quantize": op_types} if op_types else {}))
+        quantized_s = round(time.time() - t1, 1)
     info = {"revision": checkpoint_revision(agent), "export_s": round(exported_s, 1),
-            "quantize_s": round(quantized_s, 1), "int8_bytes": int8.stat().st_size,
-            "built_at": time.time(), "agreement_ok": False}
+            "quantize_s": quantized_s,
+            "int8_bytes": int8.stat().st_size if int8.exists() else None,
+            "fp32_bytes": fp32.stat().st_size if fp32.exists() else None,
+            "built_at": time.time(), "agreement_ok": False,
+            "per_channel": per_channel, "op_types": op_types or "default",
+            "fp32_kept": bool(keep_fp32)}
     if not keep_fp32:
-        for p in out.glob("laya-fp32.onnx*"):
+        for p in out.glob(FP32_NAME + "*"):
             try:
                 p.unlink()
             except Exception:
                 pass
         for p in out.iterdir():
             # torch writes large initializers beside the model as loose files.
-            if p.name not in (INT8_NAME, MANIFEST_NAME) and not p.name.startswith(INT8_NAME):
+            if p.name not in (INT8_NAME, MANIFEST_NAME) and not p.name.startswith(INT8_NAME)                     and not (keep_fp32 and p.name.startswith(FP32_NAME)):
                 try:
                     p.unlink()
                 except Exception:
@@ -210,10 +231,14 @@ def build_onnx(agent, *, out_dir: Optional[Path] = None, keep_fp32: bool = False
     return info
 
 
-def record_agreement(ok: bool, detail: dict) -> None:
-    """Mark the ONNX artifact usable (or not) after comparing it with fp32."""
+def record_agreement(ok: bool, detail: dict, engine: str = "onnx-int8") -> None:
+    """Mark an ONNX artifact usable (or not) after comparing it with fp32."""
     m = manifest()
-    m.update({"agreement_ok": bool(ok), "agreement": detail, "checked_at": time.time()})
+    by = dict(m.get("agreement_ok_by_engine") or {})
+    by[engine] = bool(ok)
+    m.update({"agreement_ok_by_engine": by, "agreement_ok": by.get("onnx-int8", False),
+              "agreement": dict(m.get("agreement") or {}, **{engine: detail}),
+              "checked_at": time.time()})
     artifacts_dir().mkdir(parents=True, exist_ok=True)
     (artifacts_dir() / MANIFEST_NAME).write_text(json.dumps(m, indent=2), encoding="utf-8")
 
@@ -224,8 +249,10 @@ def choose_engine(setting: Optional[str]) -> str:
     if s in ENGINES:
         return s
     m = manifest()
-    if (artifacts_dir() / INT8_NAME).exists() and m.get("agreement_ok"):
-        return "onnx-int8"
+    by = m.get("agreement_ok_by_engine") or {"onnx-int8": bool(m.get("agreement_ok"))}
+    for engine, name in (("onnx-int8", INT8_NAME), ("onnx-fp32", FP32_NAME)):
+        if (artifacts_dir() / name).exists() and by.get(engine):
+            return engine
     return "torch-fp32"
 
 

@@ -132,7 +132,7 @@ def _states(rows: list) -> Dict[str, dict]:
         q = r.get("question")
         e = out.setdefault(sha, {"sha": sha, "question": q, "tool": None,
                                  "preview": "", "keyword": None, "laya": None,
-                                 "laya_leaves_machine": None, "last_at": 0.0})
+                                 "last_at": 0.0})
         ctx = r.get("context") or {}
         state = str(r.get("state") or "")
         m = _TOOL_RE.match(state)
@@ -144,9 +144,6 @@ def _states(rows: list) -> Dict[str, dict]:
         if r.get("shadow"):
             if method in ("laya", "laya-union"):
                 e["laya"] = r.get("answer")
-                lm = (det.get("also") or {}).get("leaves_machine")
-                if lm in ("yes", "no"):
-                    e["laya_leaves_machine"] = lm
             continue
         if det.get("union") == "or":
             e["keyword"] = det.get("keyword")
@@ -173,8 +170,7 @@ def _label_for(e: dict, lab: Dict[str, dict], tool_digests: Dict[str, str]) -> O
 def _score(entries: Dict[str, dict], lab: Dict[str, dict]) -> dict:
     tool_digests = {_digest(s[5:] + " {}"): s[5:] for s in lab if s.startswith("tool:")}
     res = {"labelled": 0, "keyword": {"right": 0, "wrong": 0},
-           "laya": {"right": 0, "wrong": 0},
-           "laya_leaves_machine": {"right": 0, "wrong": 0}}
+           "laya": {"right": 0, "wrong": 0}}
     for e in entries.values():
         got = _label_for(e, lab, tool_digests)
         if got is None:
@@ -186,9 +182,6 @@ def _score(entries: Dict[str, dict], lab: Dict[str, dict]) -> dict:
             if said is None:
                 continue
             res[who]["right" if said == truth else "wrong"] += 1
-        if e.get("laya_leaves_machine") in ("yes", "no"):
-            said = e["laya_leaves_machine"] == "yes"
-            res["laya_leaves_machine"]["right" if said == truth else "wrong"] += 1
     return res
 
 
