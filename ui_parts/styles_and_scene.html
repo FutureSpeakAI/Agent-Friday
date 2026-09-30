@@ -875,6 +875,464 @@
         })();
         // </scene-motion>
 
+        // <presence-gestures>
+        // Processing states on the lattice (docs/design/active/avatar-visual-
+        // genome.md §13). Every gesture starts from a real presence frame sent
+        // where the thing happens in Friday's loop (services/presence.py),
+        // relayed to every tab by fridayApprovalFeed: no event, no motion, and
+        // the same event always makes the same move. The engine below is plain
+        // arithmetic over an "anatomy" (units, layers, blocks, the side facing
+        // the user, the top) so every structure can speak the same language;
+        // FridayGestureScene applies its output to the real meshes.
+        //
+        // Gestures (first set): listening ripples the facing side with the
+        // user's voice; each reasoning round rolls one layer; a sealed cloud
+        // send opens the top like a vent and a thread of light leaves; each tool
+        // call twists a 2x2 block 90 degrees until the tool returns; each
+        // pending approval steps one cube forward in the approval hue until it
+        // is decided; a verification sweeps a scan plane that settles each cube
+        // it passes. Under reduced motion every gesture is brightness only.
+        const FridayGestures = (function () {
+            const TWIST_IN = 0.45, TWIST_OUT = 0.35, MAX_TWISTS = 4;
+            const WAVE_S = 1.4, VENT_S = 1.8, SCAN_S = 1.6, SETTLE_S = 0.25;
+            const STEP_IN = 0.6, APPROVAL_MAX = 3, BREATH_HZ = 0.3;
+            const B_MIN = 0.6, B_MAX = 1.5, B_RATE = 0.08;     // brightness per frame
+            const G_RATE = 0.08, ALIGN_IN = 0.8, ALIGN_OUT = 1.2, LIFT = 0.35;
+            let reduced = false, now = 0;
+            let twists = [], queue = [], waves = [], vents = [], scans = [];
+            let approvals = 0, approvalEnv = [], mic = 0, micPhase = 0;
+            let route = null, round = 0, verifyOk = null, lastB = {}, lastG = {}, align = 0;
+            const ease = t => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+            const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+            const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+            const scl = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+            const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            const mag = a => Math.sqrt(dot(a, a));
+            const norm = a => scl(a, 1 / (mag(a) || 1));
+            function rotate(v, axis, th) {             // Rodrigues
+                const k = norm(axis), c = Math.cos(th), s = Math.sin(th);
+                const cr = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+                return add(add(scl(v, c), scl(cr, s)), scl(k, dot(k, v) * (1 - c)));
+            }
+
+            function frame(f) {
+                if (!f || f.type !== 'presence') return;
+                const st = f.state, ph = f.phase;
+                if (st === 'tool' && ph === 'start') {
+                    if (twists.length < MAX_TWISTS) twists.push({ ref: f.ref, t: 0, phase: 'in', block: null });
+                    else queue.push(f.ref);
+                } else if (st === 'tool' && ph === 'end') {
+                    const tw = twists.find(x => x.ref === f.ref && x.phase !== 'out');
+                    if (tw) { tw.phase = 'out'; tw.t = 0; }
+                    else queue = queue.filter(r => r !== f.ref);
+                } else if (st === 'round' && ph === 'step' && Number.isInteger(f.n)) {
+                    round = f.n;
+                    waves.push({ n: f.n, t: 0 });
+                } else if (st === 'route') {
+                    route = f.route || route;
+                } else if (st === 'egress' && ph === 'sent') {
+                    route = 'cloud';
+                    vents.push({ t: 0 });
+                } else if (st === 'verify') {
+                    verifyOk = f.ok === true;
+                    scans.push({ t: 0, ok: f.ok === true });
+                }
+            }
+            function setApprovals(n) { approvals = Math.max(0, Math.min(APPROVAL_MAX, n | 0)); }
+            function setMic(level) { mic = Math.max(0, Math.min(1, +level || 0)); }
+            function setReduced(r) { reduced = !!r; }
+
+            // Pick a block for a twist: the most camera-facing block whose units
+            // are free. Deterministic: same anatomy, same state, same choice.
+            function allocate(an, busy) {
+                const order = an.blocks.map((b, i) => [dot(b.axis, an.toward), i])
+                    .sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+                for (const [, i] of order) {
+                    if (an.blocks[i].units.every(u => !busy.has(u))) return i;
+                }
+                return null;
+            }
+
+            function step(dt, an) {
+                now += dt;
+                const out = {};
+                const unit = i => (out[i] = out[i] || { d: [0, 0, 0], r: [0, 0, 0], s: 1, b: 1, g: 0, hue: null });
+                const busy = new Set();
+                // Approvals outrank everything: pick their cubes first.
+                while (approvalEnv.length < approvals) approvalEnv.push(0);
+                // The cube nearest the middle of the side facing the user: on
+                // that side (within half a cube of it), then closest to centre.
+                const fmax = Math.max(...an.units.map(u => dot(u, an.toward)));
+                const facing = an.units.map((u, i) => [dot(u, an.toward) >= fmax - an.spacing / 2 ? 1 : 0,
+                    -Math.hypot(...sub(u, scl(an.toward, dot(u, an.toward)))), dot(u, an.toward), i])
+                    .sort((a, b) => b[0] - a[0] || b[1] - a[1] || b[2] - a[2]).map(x => x[3]);
+                const apUnits = [];
+                for (let k = 0; k < approvalEnv.length; k++) {
+                    const target = k < approvals ? 1 : 0;
+                    approvalEnv[k] += Math.sign(target - approvalEnv[k]) * Math.min(Math.abs(target - approvalEnv[k]), dt / STEP_IN);
+                    const i = facing[k];
+                    if (i === undefined) continue;
+                    apUnits.push(i); busy.add(i);
+                    const e = ease(approvalEnv[k]);
+                    if (e <= 0) continue;
+                    const u = unit(i);
+                    const breath = Math.sin(2 * Math.PI * BREATH_HZ * now);
+                    u.hue = 'approval';
+                    u.g = Math.max(u.g, e);
+                    if (reduced) u.b = 1 + 0.12 * breath * e;
+                    else { u.d = add(u.d, scl(an.toward, 0.9 * e)); u.s = 1 + 0.04 * breath * e; }
+                }
+                while (approvalEnv.length > approvals && approvalEnv[approvalEnv.length - 1] <= 0) approvalEnv.pop();
+
+                // Tool twists: one 2x2 block per call, held while it runs.
+                for (const tw of twists) {
+                    if (tw.block === null || !an.blocks[tw.block]) {
+                        tw.block = allocate(an, new Set([...busy, ...twists.filter(x => x !== tw && x.block !== null).flatMap(x => an.blocks[x.block] ? an.blocks[x.block].units : [])]));
+                    }
+                    if (tw.block !== null) an.blocks[tw.block].units.forEach(u => busy.add(u));
+                }
+                for (const tw of twists) {
+                    tw.t += dt;
+                    let a;
+                    if (tw.phase === 'in') { a = ease(tw.t / TWIST_IN); if (tw.t >= TWIST_IN) tw.phase = 'hold'; }
+                    else if (tw.phase === 'hold') a = 1;
+                    else a = 1 - ease(tw.t / TWIST_OUT);
+                    if (tw.block === null) continue;
+                    const blk = an.blocks[tw.block], th = a * Math.PI / 2;
+                    for (const i of blk.units) {
+                        const u = unit(i);
+                        u.g = Math.max(u.g, a);
+                        if (reduced) { u.b *= 1 + 0.35 * a; continue; }
+                        const p = an.units[i];
+                        const moved = add(rotate(sub(p, blk.centre), blk.axis, th), blk.centre);
+                        u.d = add(u.d, add(sub(moved, p), scl(norm(blk.axis), LIFT * a)));
+                        u.r = add(u.r, scl(norm(blk.axis), th));
+                    }
+                }
+                twists = twists.filter(tw => !(tw.phase === 'out' && tw.t >= TWIST_OUT));
+                while (queue.length && twists.length < MAX_TWISTS) twists.push({ ref: queue.shift(), t: 0, phase: 'in', block: null });
+
+                // Reasoning: one layer per round, rolling outward and back.
+                for (const w of waves) {
+                    w.t += dt;
+                    const L = an.layers.length || 1;
+                    const env = Math.sin(Math.PI * Math.min(1, w.t / WAVE_S));
+                    for (const i of (an.layers[(w.n - 1) % L] || [])) {
+                        if (busy.has(i)) continue;
+                        const u = unit(i);
+                        u.g = Math.max(u.g, 0.8 * env);
+                        if (reduced) { u.b *= 1 + 0.3 * env; continue; }
+                        u.d = add(u.d, scl(norm(sub(an.units[i], an.core)), 0.4 * env));
+                        u.b *= 1 + 0.15 * env;
+                    }
+                }
+                waves = waves.filter(w => w.t < WAVE_S);
+
+                // A sealed cloud send: the top opens and a thread leaves.
+                let thread = 0;
+                for (const v of vents) {
+                    v.t += dt;
+                    const env = Math.sin(Math.PI * Math.min(1, v.t / VENT_S));
+                    thread = Math.max(thread, env);
+                    for (const i of an.top) {
+                        if (busy.has(i)) continue;
+                        const u = unit(i);
+                        u.g = Math.max(u.g, env);
+                        if (reduced) { u.b *= 1 + 0.3 * env; continue; }
+                        const out_ = norm(sub(an.units[i], an.core));
+                        u.d = add(u.d, add(scl(an.up, 0.7 * env), scl(out_, 0.35 * env)));
+                        u.r = add(u.r, scl(an.up, 0.25 * env));
+                    }
+                }
+                vents = vents.filter(v => v.t < VENT_S);
+
+                // Verification: a plane sweeps across; each cube it passes settles.
+                let scan = null;
+                for (const sc of scans) {
+                    sc.t += dt;
+                    const f = Math.min(1, sc.t / SCAN_S);
+                    const x = -an.extent + 2 * an.extent * f;
+                    scan = { x: x, alpha: Math.sin(Math.PI * f), ok: sc.ok };
+                    an.units.forEach((p, i) => {
+                        const along = dot(p, an.across);
+                        const age = (x - along) / (2 * an.extent / SCAN_S);
+                        if (age < 0 || age > SETTLE_S || busy.has(i)) return;
+                        const u = unit(i), k = Math.sin(Math.PI * age / SETTLE_S);
+                        u.g = Math.max(u.g, 0.7 * k);
+                        if (reduced) u.b *= 1 + 0.2 * k; else u.s *= 1 - 0.06 * k;
+                    });
+                }
+                scans = scans.filter(sc => sc.t < SCAN_S);
+
+                // Listening: rings ripple across the facing side with the voice.
+                micPhase += dt * 2 * Math.PI * 1.6;
+                if (mic > 0.02) {
+                    const fdot = Math.max(...an.units.map(u => dot(u, an.toward)));
+                    an.units.forEach((p, i) => {
+                        if (dot(p, an.toward) < fdot - an.spacing / 2 || busy.has(i)) return;
+                        const u = unit(i);
+                        if (reduced) { u.b *= 1 + 0.5 * mic; u.g = Math.max(u.g, 0.5 * mic); return; }
+                        const d = mag(sub(p, scl(an.toward, dot(p, an.toward))));
+                        const ring = Math.max(0, Math.sin(micPhase - 1.8 * d));
+                        u.d = add(u.d, scl(an.toward, 0.5 * mic * ring));
+                        u.g = Math.max(u.g, 0.6 * mic * ring);
+                    });
+                }
+
+                // No flash: brightness moves at most B_RATE a frame, in bounds.
+                for (const k of Object.keys(out)) {
+                    const u = out[k], prev = lastB[k] === undefined ? 1 : lastB[k];
+                    u.b = Math.max(B_MIN, Math.min(B_MAX, Math.max(prev - B_RATE, Math.min(prev + B_RATE, u.b))));
+                }
+                const nextB = {};
+                for (const k of Object.keys(out)) nextB[k] = out[k].b;
+                for (const k of Object.keys(lastB)) if (!(k in nextB) && Math.abs(lastB[k] - 1) > 1e-3) {
+                    const b = lastB[k] > 1 ? Math.max(1, lastB[k] - B_RATE) : Math.min(1, lastB[k] + B_RATE);
+                    out[k] = { d: [0, 0, 0], r: [0, 0, 0], s: 1, b: b, hue: null };
+                    nextB[k] = b;
+                }
+                lastB = nextB;
+                const nextG = {};
+                for (const k of Object.keys(out)) {
+                    const prev = lastG[k] || 0;
+                    out[k].g = Math.max(0, Math.min(1, Math.max(prev - G_RATE, Math.min(prev + G_RATE, out[k].g))));
+                    nextG[k] = out[k].g;
+                }
+                for (const k of Object.keys(lastG)) if (!(k in nextG) && lastG[k] > 1e-3) {
+                    const g = Math.max(0, lastG[k] - G_RATE);
+                    out[k] = out[k] || { d: [0, 0, 0], r: [0, 0, 0], s: 1, b: nextB[k] || 1, g: 0, hue: null };
+                    out[k].g = g; nextG[k] = g;
+                }
+                lastG = nextG;
+                // Processing makes the lattice attentive: its cubes ease into
+                // alignment so a twist or a step reads as structure, and drift
+                // again once nothing is happening. Motion, so not when reduced.
+                const busyNow = twists.length || queue.length || waves.length || vents.length
+                    || scans.length || approvals || mic > 0.02;
+                align = Math.max(0, Math.min(1, align + (busyNow ? dt / ALIGN_IN : -dt / ALIGN_OUT)));
+                return { units: out, thread: thread, scan: scan, status: status(),
+                         align: reduced ? 0 : ease(align) };
+            }
+
+            function status() {
+                const running = twists.filter(t => t.phase !== 'out').length;
+                if (approvals) return 'Waiting for your OK' + (approvals > 1 ? ' (' + approvals + ')' : '');
+                if (running) return 'Using a tool' + (queue.length ? ' (' + queue.length + ' waiting)' : '');
+                if (vents.length) return 'Round ' + round + ' sent to the cloud';
+                if (waves.length) return 'Thinking, round ' + round + (route === 'local' ? ' on this computer' : '');
+                if (scans.length) return 'Checking the result';
+                if (mic > 0.02) return 'Listening';
+                return '';
+            }
+            function idle() {
+                return !twists.length && !queue.length && !waves.length && !vents.length
+                    && !scans.length && !approvals && !approvalEnv.length && mic <= 0.02;
+            }
+            function reset() {
+                twists = []; queue = []; waves = []; vents = []; scans = [];
+                approvals = 0; approvalEnv = []; mic = 0; lastB = {}; lastG = {}; align = 0;
+                round = 0; route = null; now = 0;
+            }
+            return { frame, setApprovals, setMic, setReduced, step, status, idle, reset,
+                     _twists: () => twists, _queue: () => queue };
+        })();
+        // </presence-gestures>
+
+        // <presence-gesture-scene>
+        // Applies FridayGestures to the running structure's meshes. Positions
+        // and scales are rebuilt by each structure's own animation every frame,
+        // so offsets are simply added after it; rotations accumulate, so the
+        // rotation a gesture added is taken back at the start of the next
+        // frame (begin) before being applied again (end). Colours are reset by
+        // updateGroupColors every frame; a gesture's brightness multiplies them
+        // afterwards. Only the approval cube may take the approval hue (§13.7).
+        const FridayGestureScene = (function () {
+            const APPROVAL_HUE = 0xf59e0b;
+            const applied = new Map();          // mesh -> [rx, ry, rz] added
+            let thread = null, scanPlane = null, statusEl = null, subscribed = false;
+            let cubesAnatomy = null;
+            const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+            function subscribe() {
+                if (subscribed) return;
+                const feed = window.fridayApprovalFeed;
+                if (!feed || typeof feed.onPresence !== 'function') return;
+                feed.onPresence(f => FridayGestures.frame(f));
+                subscribed = true;
+            }
+
+            // The lattice's grid, built once: units in their base positions,
+            // blocks (every 2x2 square on each outer face) and grid indices.
+            function cubesGrid() {
+                if (cubesAnatomy && cubesAnatomy.n === coreCubes.length) return cubesAnatomy;
+                const meshes = coreCubes.filter(c => c && c.userData && c.userData.ix !== undefined);
+                const at = {};
+                meshes.forEach((m, i) => { at[m.userData.ix + ',' + m.userData.iy + ',' + m.userData.iz] = i; });
+                const base = meshes.map(m => [m.userData.baseX, m.userData.baseY, m.userData.baseZ]);
+                const idx = meshes.map(m => [m.userData.ix, m.userData.iy, m.userData.iz]);
+                const spacing = 1.6, blocks = [];
+                for (let a = 0; a < 3; a++) for (const side of [0, 2]) {
+                    const o = [0, 1, 2].filter(k => k !== a);
+                    for (const s0 of [0, 1]) for (const s1 of [0, 1]) {
+                        const units = [], cs = [];
+                        for (const d0 of [0, 1]) for (const d1 of [0, 1]) {
+                            const g = [0, 0, 0]; g[a] = side; g[o[0]] = s0 + d0; g[o[1]] = s1 + d1;
+                            cs.push(g.map(v => (v - 1) * spacing));
+                            const i = at[g.join(',')];
+                            if (i !== undefined) units.push(i);
+                        }
+                        if (units.length < 2) continue;
+                        const axis = [0, 0, 0]; axis[a] = side === 2 ? 1 : -1;
+                        const centre = [0, 1, 2].map(k => cs.reduce((s, c) => s + c[k], 0) / cs.length);
+                        blocks.push({ units, axis, centre });
+                    }
+                }
+                cubesAnatomy = { n: coreCubes.length, meshes, base, idx, blocks, spacing };
+                return cubesAnatomy;
+            }
+
+            function localDir(group, worldPoint) {
+                const o = group.worldToLocal(group.getWorldPosition(V(0, 0, 0)).clone());
+                return group.worldToLocal(worldPoint.clone()).sub(o).normalize();
+            }
+
+            function anatomyFor(id) {
+                if (id !== 'CUBES' || !structures['CUBES'] || !coreCubes.length) return null;
+                const group = structures['CUBES'], G = cubesGrid();
+                if (!G.meshes.length) return null;
+                const wp = group.getWorldPosition(V(0, 0, 0));
+                const toward = localDir(group, camera.position.clone());
+                const up = localDir(group, wp.clone().add(V(0, 1, 0)));
+                const across = V(0, 0, 0).crossVectors(up, toward).normalize();
+                // Layers run across the view; the top is the grid face nearest "up".
+                const pick = v => { const a = [Math.abs(v.x), Math.abs(v.y), Math.abs(v.z)]; return a.indexOf(Math.max(...a)); };
+                const ax = pick(across), ux = pick(up), usign = [up.x, up.y, up.z][ux] >= 0 ? 2 : 0;
+                const layers = [[], [], []];
+                G.idx.forEach((g, i) => layers[[across.x, across.y, across.z][ax] >= 0 ? g[ax] : 2 - g[ax]].push(i));
+                const top = [];
+                G.idx.forEach((g, i) => { if (g[ux] === usign) top.push(i); });
+                return {
+                    group, meshes: G.meshes,
+                    an: { units: G.base, layers, blocks: G.blocks, top, core: [0, 0, 0],
+                          toward: [toward.x, toward.y, toward.z], up: [up.x, up.y, up.z],
+                          across: [across.x, across.y, across.z],
+                          extent: G.spacing * 1.5, spacing: G.spacing },
+                };
+            }
+
+            function begin() {
+                applied.forEach((r, m) => { m.rotation.x -= r[0]; m.rotation.y -= r[1]; m.rotation.z -= r[2]; });
+                applied.clear();
+            }
+
+            const _glowFace = new THREE.Color();
+            function tint(mesh, b, hue, g, accent) {
+                mesh.traverse(o => {
+                    const mat = o.material;
+                    if (!mat || !mat.color || !mat.userData) return;
+                    if (hue === 'approval') {
+                        mat.color.setHex(APPROVAL_HUE);
+                        if (o === mesh) mat.color.multiplyScalar(0.25 + 0.2 * g);
+                    } else if (g > 0) {
+                        // Glow toward the palette's own accent: the face fills
+                        // with it, the edges brighten. Never a colour of its own.
+                        if (o === mesh) mat.color.lerp(_glowFace.copy(accent).multiplyScalar(0.45), g);
+                        else mat.color.multiplyScalar(1 + 0.4 * g);
+                    }
+                    if (b !== 1) mat.color.multiplyScalar(b);
+                });
+            }
+            const HALF_PI = Math.PI / 2;
+            const snap = v => Math.round(v / HALF_PI) * HALF_PI;
+
+            function ensureObjects() {
+                if (!thread) {
+                    const g = new THREE.BufferGeometry().setFromPoints([V(0, 0, 0), V(0, 1, 0)]);
+                    thread = new THREE.Line(g, new THREE.LineBasicMaterial({
+                        color: 0xffffff, transparent: true, opacity: 0,
+                        blending: THREE.AdditiveBlending, depthWrite: false }));
+                    thread.visible = false;
+                    scene.add(thread);
+                }
+                if (!scanPlane) {
+                    scanPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
+                        color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide,
+                        blending: THREE.AdditiveBlending, depthWrite: false }));
+                    scanPlane.visible = false;
+                }
+                if (!statusEl && document.body) {
+                    statusEl = document.createElement('div');
+                    statusEl.id = 'presence-status';
+                    statusEl.setAttribute('aria-live', 'polite');
+                    statusEl.style.cssText = "position:fixed;bottom:100px;left:20px;z-index:80;"
+                        + "font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1.5px;"
+                        + "color:rgba(220,235,255,0.85);pointer-events:none;padding:4px 10px;"
+                        + "border-radius:8px;background:rgba(8,16,28,0.45);display:none;";
+                    document.body.appendChild(statusEl);
+                }
+            }
+
+            function end(dt) {
+                subscribe();
+                FridayGestures.setReduced(typeof SceneMotion !== 'undefined' && SceneMotion.reduced());
+                FridayGestures.setMic(window._fridayMicLevel || 0);
+                FridayGestures.setApprovals(window.__fridayPendingApprovals || 0);
+                ensureObjects();
+                const A = anatomyFor(targetStructure);
+                const r = FridayGestures.step(dt, A ? A.an : { units: [], layers: [], blocks: [], top: [],
+                    core: [0, 0, 0], toward: [0, 0, 1], up: [0, 1, 0], across: [1, 0, 0], extent: 1, spacing: 1 });
+                if (statusEl) {
+                    statusEl.textContent = r.status ? r.status.toUpperCase() : '';
+                    statusEl.style.display = r.status ? 'block' : 'none';
+                }
+                if (!A) { thread.visible = false; scanPlane.visible = false; return; }
+                const accent = moodLerpValues.accentColor;
+                if (r.align > 0) {
+                    const k = 0.18 * r.align;
+                    A.meshes.forEach(m => {
+                        m.rotation.x += (snap(m.rotation.x) - m.rotation.x) * k;
+                        m.rotation.y += (snap(m.rotation.y) - m.rotation.y) * k;
+                        m.rotation.z += (snap(m.rotation.z) - m.rotation.z) * k;
+                    });
+                }
+                Object.keys(r.units).forEach(k => {
+                    const m = A.meshes[+k], u = r.units[k];
+                    if (!m) return;
+                    m.position.x += u.d[0]; m.position.y += u.d[1]; m.position.z += u.d[2];
+                    if (u.r[0] || u.r[1] || u.r[2]) {
+                        m.rotation.x += u.r[0]; m.rotation.y += u.r[1]; m.rotation.z += u.r[2];
+                        applied.set(m, u.r.slice());
+                    }
+                    if (u.s !== 1) m.scale.multiplyScalar(u.s);
+                    tint(m, u.b, u.hue, u.g || 0, accent);
+                });
+                // The thread of light: from the top of the structure, rising away.
+                if (r.thread > 0.01) {
+                    const up = V(...A.an.up), from = A.group.localToWorld(up.clone().multiplyScalar(A.an.extent * 1.05));
+                    const to = from.clone().add(V(0, 7, -4));
+                    thread.geometry.setFromPoints([from, to]);
+                    thread.material.color.copy(accent);
+                    thread.material.opacity = 0.85 * r.thread;
+                    thread.visible = true;
+                } else thread.visible = false;
+                // The scan plane (hidden under reduced motion: the sweep is then brightness only).
+                const reduced = typeof SceneMotion !== 'undefined' && SceneMotion.reduced();
+                if (r.scan && !reduced) {
+                    if (scanPlane.parent !== A.group) A.group.add(scanPlane);
+                    const ac = V(...A.an.across);
+                    scanPlane.position.copy(ac.clone().multiplyScalar(r.scan.x));
+                    scanPlane.lookAt(A.group.localToWorld(ac.clone().multiplyScalar(r.scan.x + 1)));
+                    scanPlane.scale.setScalar(A.an.extent * 2.6);
+                    scanPlane.material.color.copy(accent);
+                    scanPlane.material.opacity = 0.32 * r.scan.alpha;
+                    scanPlane.visible = true;
+                } else scanPlane.visible = false;
+            }
+
+            return { begin, end, anatomyFor };
+        })();
+        // </presence-gesture-scene>
+
         function setEvolution(idx) {
             if (idx === currentEvolutionIdx && transitionProgress === 1.0) return;
             currentEvolutionIdx = idx;
@@ -998,13 +1456,15 @@
             const gridSize = 3; const spacing = 1.6; const offset = (gridSize * spacing) / 2 - (spacing / 2);
             for(let x=0; x<gridSize; x++) { for(let y=0; y<gridSize; y++) { for(let z=0; z<gridSize; z++) {
                 if (Math.random() > 0.85) continue;
-                const mesh = new THREE.Mesh(boxGeo, boxMat); 
-                mesh.add(new THREE.LineSegments(edgeGeo, edgeMat));
+                // One material per cube, so a gesture can light or tint one
+                // cube (the approval cube) without repainting the rest.
+                const mesh = new THREE.Mesh(boxGeo, boxMat.clone()); 
+                mesh.add(new THREE.LineSegments(edgeGeo, edgeMat.clone()));
                 const posX = (x * spacing) - offset; const posY = (y * spacing) - offset; const posZ = (z * spacing) - offset;
                 mesh.position.set(posX, posY, posZ); 
                 const dir = new THREE.Vector3(posX, posY, posZ).normalize();
                 if(dir.length() === 0) dir.set(0,1,0);
-                mesh.userData = { baseX: posX, baseY: posY, baseZ: posZ, dir: dir, rx: Math.random()*Math.PI*2, speed: 0.5+Math.random()*0.5 };
+                mesh.userData = { baseX: posX, baseY: posY, baseZ: posZ, dir: dir, rx: Math.random()*Math.PI*2, speed: 0.5+Math.random()*0.5, ix: x, iy: y, iz: z };
                 gCubes.add(mesh); coreCubes.push(mesh);
             }}}
             gCubes.scale.set(1.5, 1.5, 1.5);
@@ -1277,6 +1737,8 @@
         function animate() {
             requestAnimationFrame(animate);
             const delta = Math.min(clock.getDelta(), 0.1); 
+            // Take back last frame's gesture rotations before anything moves.
+            FridayGestureScene.begin();
             const elapsed = clock.getElapsedTime() * 0.5;
 
             // --- HAND CURSOR LOGIC (Minority Report) ---
@@ -1728,6 +2190,8 @@
                 if(holoPass.uniforms.time) holoPass.uniforms.time.value = elapsed;
             }
             
+            // Processing-state gestures, after every structure has animated.
+            FridayGestureScene.end(delta);
             if (starField && starField.rotation) starField.rotation.y += 0.0001;
             // A large foreground 3D view (Studio › Files) holds the backdrop's
             // drawing while it is on screen: both share one GPU. Everything

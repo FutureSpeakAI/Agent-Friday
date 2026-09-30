@@ -18792,6 +18792,9 @@ const FEED_SILENT_MS = 60000;
 const fridayApprovalFeed = (() => {
   let cards = new Map(), es = null, started = false, leader = false, heard = Date.now(), release = null;
   const listeners = new Set();
+  // Presence frames (services/presence.py) ride this same stream: the
+  // lattice's processing-state gestures listen here, in every tab.
+  const presenceListeners = new Set();
   let bc = null;
   try { bc = new BroadcastChannel('friday-approvals'); } catch (_) {}
   const list = () => Array.from(cards.values()).sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
@@ -18806,6 +18809,7 @@ const fridayApprovalFeed = (() => {
     if (d.type === 'snapshot') { cards = new Map((d.pending || []).map(a => [a.approval_id, a])); emit(); }
     else if (d.type === 'pending' && d.approval && d.approval.status === 'pending') { cards.set(d.approval.approval_id, d.approval); emit(); }
     else if (d.type === 'resolved') { if (cards.delete(d.approval_id)) emit(); }
+    else if (d.type === 'presence') { presenceListeners.forEach(fn => { try { fn(d); } catch (_) {} }); }
   };
   const onServer = e => {
     let d;
@@ -18868,6 +18872,11 @@ const fridayApprovalFeed = (() => {
       return () => { listeners.delete(fn); };
     },
     drop(id) { if (cards.delete(id)) emit(); },
+    onPresence(fn) {
+      presenceListeners.add(fn);
+      if (!started) { started = true; start(); }
+      return () => { presenceListeners.delete(fn); };
+    },
     isLeader() { return leader; },
   };
 })();
@@ -19899,7 +19908,7 @@ function App(){
         console.log('[voice] mic="'+(v.micLabel||'?').slice(0,30)+'" peak='+v.micPeak.toFixed(4)+' recent='+v.micPeakRecent.toFixed(4)+' chunks='+v.chunksSent+' bytes='+v.bytesSent);
       },1000);
       // UI level-meter sampler — pumps the green pulse-dot next to the mic button.
-      v.meterTimer=setInterval(()=>{setMicLevel(v.micPeakRecent||0)},120);
+      v.meterTimer=setInterval(()=>{setMicLevel(v.micPeakRecent||0);window._fridayMicLevel=v.micPeakRecent||0},120);
 
       // Silence guard #1 (~1.5s): if peak is still zero, the selected device
       // is silent. Drop it and re-acquire with the system-default mic.
