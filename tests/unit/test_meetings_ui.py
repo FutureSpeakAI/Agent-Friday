@@ -4,6 +4,7 @@ index.html is what runs; ui_parts/app.html is its JSX mirror. The indicator
 is mounted at the app root so it shows on every screen, and the consent
 statement is read from the server rather than copied into the page.
 """
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,9 +19,12 @@ def test_components_are_defined_once_in_both_files():
 
 
 def test_the_indicator_is_mounted_beside_the_top_bar():
-    anchor = "React.createElement(MeetingRecIndicator, null), /*#__PURE__*/React.createElement(\"div\", {\n    className: `top-bar"
-    assert INDEX.count(anchor) == 1
-    assert APP.count("<MeetingRecIndicator/>\n    <div className={`top-bar") == 1
+    # One element, drawn just before the one top bar by the desktop and by a
+    # workspace tab (App draws the same shell in both).
+    assert INDEX.count("const shellMeeting = /*#__PURE__*/React.createElement(MeetingRecIndicator, null);") == 1
+    assert INDEX.count("shellMeeting, shellTopBar,") == 2
+    assert APP.count("const shellMeeting = <MeetingRecIndicator/>;") == 1
+    assert len(re.findall(r"\{shellMeeting\}\s*\{shellTopBar\}", APP)) == 2
 
 
 def test_the_panel_lives_in_the_calendar():
