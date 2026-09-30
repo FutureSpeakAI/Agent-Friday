@@ -38,6 +38,12 @@ Claude Code loads this file through `CLAUDE.md`; other agents read it directly.
 - Track the plan as checkable items, tick them as they land, summarise each
   step, and close with a review: what changed, how it was verified, what is
   left.
+- Deterministic rules live in code, not in prompts. A rule a program can
+  check is enforced by one: the pytest plugin, the pre-commit hook and the
+  Claude Code guard hook (`scripts/hooks/friday_guard.py`, which blocks
+  rather than asks). A gate confirms that every required check actually ran,
+  from machine-written receipts: exit codes, never summaries. The model
+  handles only the judgement left over.
 
 ## Verify before claiming
 
@@ -59,12 +65,14 @@ Claude Code loads this file through `CLAUDE.md`; other agents read it directly.
 
 The live Friday, its local model seat and every test run share one PC.
 
-- One full test suite at a time, and only with at least 12 GB of free RAM and
-  20 GB of free disk. `pytest_resource_guard.py` refuses a broad run below
-  either floor and caps xdist at two workers; use `-n 2` at most while the
-  local model seat is loaded. Targeted test files always run.
-- No WSL or Docker start without checking free memory first; either one boots
-  a VM that takes gigabytes.
+- One full test suite at a time, through `scripts/run_suite_guarded.py` and
+  nothing else. It starts only with at least 12 GB of free RAM and 20 GB of
+  free disk, takes `SUITE_LOCK`, caps xdist at two workers while the local
+  model seat is up, and writes a receipt from pytest's real exit code. The
+  guard hook blocks a bare full-suite pytest command; named test files run
+  directly, and `pytest_resource_guard.py` enforces the same floors inside
+  pytest.
+- No WSL or Docker start below the memory floor; the guard hook blocks them.
 
 ## Lessons
 
@@ -107,7 +115,9 @@ regenerate `index.html` in a way that drops components. See
 ## Git
 
 - Work on a branch, in a worktree. A checkout that serves the live app is
-  never edited, switched or used to run servers.
+  never edited, switched, reset or used to run servers; the guard hook blocks
+  it, and the deploy lane's token file is the one bypass.
+- Force-pushes and history rewrites are blocked everywhere.
 - Do not push, tag, delete branches, or change repository settings without
   explicit instruction.
 - Commit messages describe the change and the invariant it protects, not the
