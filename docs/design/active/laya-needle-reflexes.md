@@ -1,7 +1,10 @@
 # Laya and Needle, Friday's reflexes
 
-**Status:** specification with measurements, awaiting the owner's three decisions
-(§11) and the program lead's gauntlet. No product code changes. No product code changes in this commit.
+**Status:** specification with measurements. Revised 2026-09-30 to fold in the
+item resolver built and measured on `feat/laya-item-resolver` (714b41ad, not yet
+merged) and the Needle findings from that work. Decision 1 is taken as a
+delegated engineering call (§11.1); decisions 2 and 3 are the owner's. Awaiting
+the program lead's gauntlet. No product code changes in this document. No product code changes in this commit.
 **Written:** 2026-09-29, on this PC (i7-10700F, 8 cores, RTX 4070 12 GB).
 **Question asked:** *"Let's figure out the best and most intelligent and deepest
 and highest resolution manner to integrate both needle and laya within the Friday
@@ -60,20 +63,27 @@ Needle 2 takes 4 to 9 s a call against Friday's real tool descriptions and
 gets the tool right 37% of the time; Needle 3 is fast but gets it right 29
 to 50% of the time and abstains on more than half of real commands; neither
 one's confidence tells right from wrong. So the reflex layer below is built
-from Laya plus command templates, and Needle is kept only as a candidate
-for a later fine-tune behind a warm prompt, which is your first decision.
+from Laya plus command templates. The Laya session then built exactly that
+for the item resolver, on a branch, and measured it on your own requests:
+**every one of your 13 real "open this" phrasings resolved first try, 44 of
+50 real items across wiki, news and mail opened first try, and it opened the
+wrong thing zero times**, at 0.72 s median and 4.0 s at the slow end where
+Gmail and the news archive are searched. In that work Needle 2 crashed
+outright on this PC and Needle 3 filled all of a command's arguments
+correctly one time in three. Needle is therefore out (§11.1, a delegated
+call you can overrule).
 
 **The build (§9)** is ordered by seconds saved per week of work. The first
 two phases are pure speed and ship nothing new to the gates: the reflex
 questions run in shadow beside the brain, scored against your own labels,
 and each one is promoted only when it beats what the brain did.
 
-**Three decisions that are truly yours (§11):** whether Needle is allowed in
-at all, given that it ships a closed engine binary and phones home by
-default (we turn that off); whether a spoken "yes" to a card may be
-recognised by a reflex rather than the model in the room-mode you have set;
-and which of your labels you are willing to give an hour to, because the
-shadow scoring needs an answer key and you are the only one who has it.
+**Two decisions that are truly yours (§11):** whether a spoken "yes" to a
+card may be recognised by a reflex rather than the model, in the room mode
+you have set; and which of your labels you are willing to give an hour to,
+because the shadow scoring needs an answer key and you are the only one who
+has it. The third, whether Needle is allowed in at all, was an engineering
+call once the numbers were in, and it is taken as one: no.
 
 ---
 
@@ -623,11 +633,30 @@ it as written:
    wiki search, the journalism archive, the News archive and front pages,
    Studio creations, the knowledge graph's structural query, the file
    roots, workflows and routines, podcasts. Ten or fewer, ranked by the
-   store's own relevance plus recency.
+   store's own relevance plus recency. As built (`services/laya_resolver.py`
+   on `feat/laya-item-resolver`): the index's own word ranking keeps 30,
+   the shortlist is 8, and the cosine re-rank on Laya's encoder is **off**,
+   because measured on the owner's 50 real items it cost twice the time
+   for the same accuracy (43/50 lexical at p95 3.4 s against 42/50 cosine
+   at 5.9 s).
 3. Laya picks the **item** from the shortlist (a `choice:6-10` question,
-   the items rendered as short titles, never bodies).
+   the items rendered as short titles, never bodies). As built: act at
+   probability 0.55 or more with a 0.20 margin over the runner-up; below
+   that, ask back; each Laya pass has a 1.5 s budget and a missing answer
+   is "brain", never a default.
 4. The **command is built deterministically** from the real ID, and the
    template's tool is called through the gate.
+
+One correction from the measurement: the first step is **not**
+`direct_command`. That question, worded for device commands, caught 45% of
+the owner's item requests. The resolver gates on a deterministic opening
+verb (open, show, pull up, go to, find, read me, view, launch) **and** one
+Laya pass asking `open_request` and `item_kind` together. No verb, "other",
+or an unknown kind hands the turn to the brain, and `not_found` is treated
+by callers as "brain" too. The command is `navigate_to {kind, id}` for
+wiki pages, files, mail threads, workspaces, calendar days and contacts,
+and `open_url` for a news story until the desktop registry has a news-item
+target. `POST /api/reflex/resolve` decides and never runs the command.
 
 This spec adds:
 
@@ -773,7 +802,12 @@ the reply. The VOICE question set exists with no caller.
 
 `direct_command` covers device-style commands; `wants_action` covers
 "reply to the accountant and say yes". Both are needed because the first was
-measured on device commands only.
+measured on device commands only, and the resolver work then confirmed it:
+**`direct_command` caught 45% of the owner's item requests.** Requests to
+open one thing are therefore gated by the resolver's own pair
+(`open_request` + `item_kind`, behind an opening verb, §4.3), and
+`direct_command` is kept for what it was measured on: play, pause, mute,
+volume, timer. `wants_action` ships in shadow first like everything else.
 
 **Budget.** 350 ms idle, 700 ms busy, on the partial transcript where one
 exists.
@@ -792,8 +826,19 @@ conversation between people. Private turns on cloud voice still go through
 
 **Today.** The brain, two rounds.
 
-**Reflex.** §4.3. Per workspace, the retrieval call and the ID the template
-uses:
+**Reflex.** §4.3, built on `feat/laya-item-resolver` and measured there
+(`tools/laya_resolver_eval.py`, ONNX fp32, this PC, 2026-09-30; the labelled
+sets are private under `~/.friday/bench/laya-reflexes`):
+
+| Set | n | First try | Ask-back | Wrong command | Routed right | p50 | p95 |
+|---|---|---|---|---|---|---|---|
+| The owner's own phrasing (13 opens, 75 not) | 88 | **13/13** | 0% | **0** | 93% | | 2.1 s |
+| His real items in his phrasing (25 wiki, 15 news, 10 mail) | 50 | **44/50** (wiki 22/25, news 14/15, mail 8/10) | 10% | **0** | 98% | 0.72 s | 4.0 s |
+
+Five brain-class requests came back `not_found` and one asked; callers treat
+`not_found` as "hand to the brain". The p95 is Gmail's own search and the
+news archive; the local stores are well inside the budget. Per workspace,
+the retrieval call and the ID the template uses:
 
 | Workspace | Retrieval (top 10) | ID | Templates |
 |---|---|---|---|
@@ -807,8 +852,11 @@ uses:
 | Workflows and routines | names | workflow id | run, status, stop |
 | Podcasts (branch) | episode and source titles | episode id | play, open outline |
 
-**Budget.** Retrieval 300 ms for local stores (Gmail is a network call and
-gets 1.5 s, else the brain); Laya pick 350 ms.
+**Budget.** Retrieval 300 ms for local stores (the Messages cache is tried
+first; Gmail's own search is network and gets 3.0 s as built, else the
+brain); each Laya pass 1.5 s as built, 350 ms expected. The measured whole
+turn is 0.72 s at the median; the 4.0 s p95 is mail and news retrieval, and
+news retrieval and mail latency are the resolver's named next steps.
 
 **Fallback.** Ask back at the middle band; the brain below it, with the
 shortlist as context so the brain does not repeat the search.
@@ -1252,6 +1300,7 @@ brain, from the ledger: p50 4.7-8.0 s, p90 19-26 s (§2.2).
 | E. Laya action (5) and item (10) picks, one pass each | 0.22 + 0.28 s | 0.32 + 0.40 s |
 | G. Gate, internal action, keyword path | 0.03 ms | 0.03 ms |
 | **Reflex turn, no Needle** | **about 1.1 s** | **about 1.6 s** |
+| **The resolver as built, whole turn, measured on the owner's 50 real items** (retrieval included; mail and news dominate the tail) | **0.72 s p50, 4.0 s p95** | not measured |
 | with prefetch on the partial transcript (B and D inside the 0.8 s endpointer window) | **about 0.5 s felt** | **about 0.7 s felt** |
 | Brain turn, local, warm prefix, short | 2.7-6.3 s | - |
 | Brain turn, cloud, median | 4.7-8.0 s | - |
@@ -1275,13 +1324,41 @@ fast enough (0.3-0.5 s idle) and stays silent on conversation (92-95%), but
 it is right on 29-50% of commands, abstains on more than half of them, and
 its confidence cannot be thresholded. Neither generation's confidence
 separates right from wrong, so neither can be gated the way §4.4 requires.
+The resolver session then tried Needle in the one role left for it, filling
+a command's arguments behind the resolver's gate: **Needle 2 (the 14 MB
+engine) crashed natively on this PC, and Needle 3 got every argument right
+33% of the time at 1.2 s median.** It is not used. (The 118-example set
+cannot measure filling at all: all of its reference arguments are empty.)
 
 Therefore the reflex arc is **Laya plus templates**: the resolver needs no
 Needle, text slots are filled by lifting the user's own words with the
 substring check or asked back, and Needle is at most a **fine-tuning
 candidate** for text slots behind a warm prefix, to be tried only if the
-shadow data shows text-slot ask-backs are frequent. That is decision 1 in
-§11.
+shadow data shows text-slot ask-backs are frequent. That is §11.1.
+
+### 6.6 Measured after this document was first written
+
+The Laya session built the resolver of §4.3 on `feat/laya-item-resolver`
+(714b41ad, on `feat/laya-consolidated` 468dd59e; neither merged; the handoff
+is with the program lead) and measured it on the owner's own requests.
+The numbers are in §5.2. What they settle:
+
+- The reflex arc works as specified, on this PC, on real requests: 100% of
+  the owner's opening phrasings and 88% of his real items first try, with
+  **zero wrong opens**, which is the number that matters for a reflex that
+  acts without asking.
+- `direct_command` is not the front gate for item requests (45%); an
+  opening verb plus `open_request` and `item_kind` in one Laya pass is.
+- The lexical shortlist beats the cosine shortlist on the owner's items:
+  same accuracy, half the time. The CLM ranker seam (§4.7) stays where it
+  is; nothing measured so far asks for it.
+- The end-to-end p95 (4.0 s) is retrieval, not Laya. The budgets in §9 are
+  set from the measured p50 and p95 rather than the earlier estimate, and the
+  next two engineering steps are news retrieval and mail latency.
+- Needle is out of the design: crash on one generation, 33% argument
+  accuracy on the other (§6.5).
+
+---
 
 ## 7. The rules kept
 
@@ -1325,12 +1402,12 @@ five to eight seconds. Every phase ships in shadow and is promoted by the
 | Phase | What ships | Effort | Saves per week (measured basis) | Promotion gate |
 |---|---|---|---|---|
 | **P0. Shadow the turn shape** | `laya_runtime.ask` gets its first caller: stage B (§5.1) on every chat and local-voice turn, shadow only, rows to `decisions.jsonl`; the new question ids in the label queue; the `reflex` presence frame from the two existing regex fast paths | 2 days | 0 s; it makes P1 measurable | none: shadow |
-| **P1. The resolver and templates** | §4.3 phase 1 folded in; templates `open_item`, `search_items`, `status`, `run_routine`, `calendar_window`, `briefing`, `switch_seat`; ask-back spoken and on screen; the palette shows the shortlist; §4.9 frames | 5 days | about 27 command turns x (5.5 - 1.1) s, about **2 minutes of waiting a week**, and each of those turns drops from 5-8 s to about 1 s | per workspace: precision at or above 0.98 among acted rows on at least 50 owner-labelled rows; p95 within budget idle and busy; `reflexes.resolver` on |
+| **P1. Land the resolver and wire it** | merge `feat/laya-consolidated` then `feat/laya-item-resolver` (the resolver exists and is measured: §5.2); wire `POST /api/reflex/resolve` into the chat and local-voice turn before the brain, and into the palette; ask-back spoken and on screen; the `navigate_to` news-item and single-calendar-event targets the registry lacks; §4.9 frames; the remaining templates (`search_items`, `status`, `run_routine`, `briefing`, `switch_seat`) | 3 days (was 5: the resolver is built) | about 27 command turns x (5.5 - 1.1) s, about **2 minutes of waiting a week**, and each of those turns drops from 5-8 s to about 1 s | per workspace: zero wrong commands and first-try at or above 0.85 on at least 50 owner-labelled rows (the branch already shows 0 wrong and 44/50); p95 within the budget below; `reflexes.resolver` on |
 | **P2. Prefetch and the shortlist** | §5.6 on the partial transcript; §5.3 tool shortlist from stage D's answers, `load_tools` kept; §5.5 `needs_context` | 3 days | voice: 36 turns x about 0.5 s felt; brain turns: 7 `load_tools` rounds x one brain round (about 5 s), about **35 s a week**, plus fewer tokens per turn (13.3k to at most 4k of schemas) | automatic label: the tool used was in the shortlist on at least 95% of turns |
 | **P3. Gate features and mail** | §5.7 card features and batch-grant offers, ask-count; §5.9 lane union and `needs_reply_soon` | 3 days | faster card decisions (p50 wait today 10 s, p90 229 s); the urgent flag voice already reads | mail: beats the heuristic on the owner's reclassifications; gate: no verdict changes, by test |
 | **P4. Add-only safety and goals** | §5.8 injection triage on `feat/injection-defense`; §5.10 typed blockers; §5.11 read-log precondition and relevance shadow | 4 days | no latency; it is the safety and honesty return | injection: AgentDojo replay, warnings gained against harmless cards gained; blockers: owner labels from the goal review |
 | **P5. The rest** | §5.12 podcasts, §5.13 job fit, §5.14 Doctor grouping, §5.17 salon templates, as each branch lands | 3 days | background jobs; no interactive latency | each with its own automatic or owner key |
-| **P6. Needle, only if decision 1 says yes** | a pinned, sandboxed worker (§4.8); a LoRA fine-tune on the shadow logs' text slots; stateful with a warm prefix, 3-4 short tools | 4 days | + 0.66 s per text-slot fill instead of an ask-back, only on turns with a text slot | beats the word-lift check on owner-labelled slots; p95 under 0.7 s warm; confidence separates right from wrong (it does not today) |
+| **P6. Needle: removed** | §11.1 takes Needle out. If the owner overrules: a pinned, sandboxed worker (§4.8), a LoRA fine-tune on the shadow logs' text slots, stateful with a warm prefix, 3-4 short tools | 4 days | + 0.66 s per text-slot fill instead of an ask-back, only on turns with a text slot | it would have to beat the word-lift check on owner-labelled slots, run under 0.7 s p95 warm, not crash, and report a confidence that separates right from wrong; none of the four holds today |
 
 Per-surface latency budgets (idle / busy, p95) that P1-P3 must meet, from
 §6:
@@ -1338,9 +1415,10 @@ Per-surface latency budgets (idle / busy, p95) that P1-P3 must meet, from
 | Surface | Budget |
 |---|---|
 | Turn shape (stage B) | 0.40 / 0.70 s; beyond it, the brain path |
-| Resolver pick (stage E, both picks) | 0.60 / 1.00 s; beyond it, ask back |
-| Retrieval (stage D), local stores | 0.30 s; Gmail 1.5 s |
-| Whole reflex turn, felt, with prefetch | 0.7 / 1.1 s |
+| Resolver, each Laya pass (as built) | 1.5 s budget; measured 0.2-0.4 s; beyond it, brain |
+| Retrieval (stage D), local stores | 0.30 s; the Messages cache first, Gmail's own search 3.0 s |
+| Resolver, whole turn (measured on the branch: 0.72 s p50, 4.0 s p95) | p50 1.0 s, p95 4.0 s now; p95 2.0 s once news retrieval and mail latency are done |
+| Whole reflex turn, felt, with prefetch | 0.7 / 1.1 s for local stores |
 | Card features (§5.7) | inside the union's existing 2.5 s |
 | Background questions (§5.8-5.14) | 1 s per item, never on a hot path |
 
@@ -1373,9 +1451,11 @@ Per-surface latency budgets (idle / busy, p95) that P1-P3 must meet, from
 
 ## 11. Decisions for the owner
 
-Three, and only these; everything else in this spec is an engineering call.
+Two remain yours (§11.2, §11.3). The first was an engineering call once the
+numbers were in, and under the owner's delegation it is taken here and
+recorded so it can be overruled.
 
-### 11.1 Is Needle allowed in Friday at all?
+### 11.1 Needle: taken as a delegated decision, and the answer is no
 
 **What is true.** Needle's Python is Apache 2.0, but the engine that runs
 the model is a prebuilt binary downloaded from the vendor and loaded into
@@ -1387,17 +1467,21 @@ its behaviour. And measured on this PC it does not earn that trouble:
 zero-shot it is either too slow (Needle 2) or wrong too often (both), and
 its confidence cannot be trusted (§6.5).
 
-**Recommendation: no, for now.** Build P0-P5 with Laya plus templates,
-which needs no Needle: the resolver picks from real IDs, and a free-text
-slot is lifted from your own words or asked back. If the shadow data shows
+**Decided: no.** The resolver session settled what §6.5 left open: Needle
+2 crashes natively on this PC, and Needle 3 as an argument filler gets
+every argument right 33% of the time (§6.6). Meanwhile Laya plus templates,
+with no Needle, opened 44 of your 50 real items first try and the wrong one
+never. P0-P5 are built without it: the resolver picks from real IDs, and a
+free-text slot is lifted from your own words or asked back. If the shadow data shows
 text-slot ask-backs are frequent enough to matter, the options are, in
 order: fine-tune an open small decoder on the shadow logs (Needle's own
 LoRA path, but only if you accept the binary; otherwise an open
 function-calling model of similar size with an open runtime), or keep
 asking back, which costs one spoken question and no model.
 
-**If yes:** P6, with the pin, the worker, the boot assertion and the
-promotion gate in §9. Nothing before P6 changes.
+**If you overrule:** P6 as written in §9, with the pin, the worker, the
+boot assertion and a promotion gate Needle does not meet today. Nothing
+before P6 changes either way.
 
 ### 11.2 May a reflex recognise a spoken "yes" to a card?
 
@@ -1440,6 +1524,10 @@ and can be re-run from the companion definitions:
   and `results/laya_busy.json`; the reference numbers from commit `efb7a539`
   and `tools/laya_bench.py`.
 - Code citations: main `b5389d94` unless a branch is named.
+- The resolver's numbers (§5.2, §6.6): `tools/laya_resolver_eval.py` on
+  `feat/laya-item-resolver` 714b41ad, results under
+  `~/.friday/bench/laya-reflexes/` (private), as recorded in that branch's
+  commit messages and the program lead's handoff note.
 - Surveys of the judgment sites and the tool, gate and router code: two
   read-only sweeps of `src/agent_friday/` whose findings are the rows of
   §2.3 and the citations in §2.4, §5.
