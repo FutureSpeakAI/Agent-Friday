@@ -343,7 +343,11 @@ def _host_brief(hosts: dict) -> str:
         f"check. She labels her opinion as her read and says plainly when the "
         f"evidence is thin. Speaker \"b\" is {b}: she asks what a sharp listener "
         f"would ask, pushes back on {a}'s read, and names what is missing or "
-        f"contested. Neither host praises the other or agrees just to agree.\n")
+        f"contested. Neither host praises the other or agrees just to agree.\n"
+        f"These are her character, not phrases to repeat: say what she did not "
+        f"check once, where it matters, not as a refrain, and vary the wording; "
+        f"\"my read\" is for her opinion, not every line. Once a point is made, "
+        f"move on to the next.\n")
 
 
 WRITING_RULES = (

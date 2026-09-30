@@ -537,3 +537,10 @@ def test_friday_sounds_like_friday_not_a_generic_two_host_show():
     prompt = pe._system_prompt({"show": "S", "hosts": pe.DEFAULTS["hosts"]})
     for rule in ("Answer first", "what she did not check", "\"deep dive\"", "Speak to the listener as \"you\""):
         assert rule in prompt
+
+
+def test_her_habits_are_character_not_a_refrain():
+    """A real run said "I did not check" nine times: the brief asks for it once,
+    where it matters, and for varied wording."""
+    prompt = pe._system_prompt({"show": "S", "hosts": pe.DEFAULTS["hosts"]})
+    assert "once, where it matters" in prompt and "not as a refrain" in prompt
