@@ -2122,6 +2122,23 @@ DEFAULT_SETTINGS = {
     # speaker bleed). Default speaker-safe because most users are on speakers.
     "voice_interruption_mode": "auto",     # "auto"/"headphones" (barge-in, default) | "no-barge" (open-speakers echo-safe: no native interruption)
     "voice_room_mode": "one",              # "one" person talking to Friday | "room" (several people; she answers only when addressed)
+    # ── The two limits that exist only in voice, both the owner's to set ──
+    # Policy (2026-09-29): a limit that applies only to voice is the owner's
+    # choice, not Friday's, unless it protects something the constitution
+    # requires. Approval cards and the never-send floor are NOT voice limits —
+    # they apply identically in chat — so they are not listed here.
+    #
+    # How long a DIRECT voice tool may hold the line before its work is moved
+    # to the background. It subtracts no capability: the work continues and
+    # reports back. 0 means no limit, which risks a silent conversation.
+    "voice_tool_hard_limit_s": 20,
+    # In "room" mode a spoken approval counts only when it names Friday
+    # ("Friday, send it"), because voices are not told apart until Household
+    # Identity lands. This is the ONE voice limit left ON by default, and it is
+    # an identity gap rather than a restriction: in chat an approval carries an
+    # authenticated session, and a room with several people offers no
+    # equivalent. Turning it off means anyone within earshot can approve.
+    "voice_room_approvals_require_name": True,
     # ── Voice engine selection ──
     # LOCAL is the default; cloud (Gemini Live) is the opt-in. The mic button
     # resolves this via GET /api/voice/session-info → /ws/voice-local (local) or

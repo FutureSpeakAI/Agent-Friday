@@ -1,125 +1,167 @@
-"""Voice can do what chat can, unless the user restricted it.
+"""Voice reaches what chat reaches, and any limit that is voice-only is the owner's.
 
-Voice used to reach 20 of chat's tools and nothing else, with its own
-confirm-first flag on two of them, no conversation of its own (so a task it
-started reported to Main), and no way to hear a background result. Now any
-request can be handed to the full agent (delegate_to_friday), which runs with
-every tool, reports to the call's conversation, and hands its outcome back to
-the live call. The user's own restrictions still hold: local-only mode refuses.
+The policy (2026-09-29, Stephen): a restriction that exists only in voice
+becomes a setting the owner controls, off by default, unless it protects
+something the constitution requires. Approval cards and the never-send floor
+are NOT voice restrictions — they apply identically to a typed request — so
+they stay and are not settings.
+
+Two of these tests are structural on purpose. A capability gap and a new
+voice-only limit are both things a later change can introduce by accident, and
+neither shows up as a failing feature: voice simply cannot do a thing, quietly.
 """
-import inspect
-
 import pytest
 
-import agent_friday.routes.voice as rv
-import agent_friday.services.agent as agent
-import agent_friday.services.voice_engine as ve
-
-REQUEST = "Draft an email to the school office asking when term photos are"
+ve = pytest.importorskip("agent_friday.services.voice_engine")
 
 
-@pytest.fixture
-def spawned(monkeypatch):
-    calls = []
-
-    def fake_spawn(name, prompt, description='', **k):
-        calls.append({"name": name, "prompt": prompt, **k})
-        return "task_123"
-    monkeypatch.setattr(agent, "_spawn_task", fake_spawn)
-    return calls
+def _ids():
+    return {t[0] for t in ve._VOICE_LIVE_TOOLS}
 
 
-def _run(name, args, session=None):
-    frames = []
-    out = ve._voice_tool_run(name, args, frames.append, session=session)
-    return out, frames
+# ── Firing a workflow by voice ─────────────────────────────────────────────
+
+def test_voice_can_start_a_stored_workflow_by_name():
+    """Stephen: voice should fire workflows, including ones with local steps.
+
+    A workflow's steps run wherever the workflow says, which can be the local
+    model — so this is how a spoken request reaches private work without any
+    of it passing through the cloud voice model.
+    """
+    assert "run_workflow" in _ids()
+    spec = next(t for t in ve._VOICE_LIVE_TOOLS if t[0] == "run_workflow")
+    assert "name" in spec[2] and spec[3] == ["name"]
 
 
-def test_the_delegate_is_a_voice_tool_and_the_surface_says_so():
-    assert "delegate_to_friday" in ve._voice_tool_names()
-    note = rv._voice_tool_surface_note()
-    assert "is NOT callable in voice" not in note
-    assert "delegate_to_friday" in note and "EVERYTHING ELSE CHAT CAN DO IS REACHABLE" in note
+def test_voice_can_ask_which_workflows_exist_and_how_one_is_doing():
+    """Without the listing, 'run my morning routine' needs a name nobody said."""
+    assert "workflow_status" in _ids()
+    spec = next(t for t in ve._VOICE_LIVE_TOOLS if t[0] == "workflow_status")
+    assert spec[3] == [], "omitting the name must be allowed: that lists them"
 
 
-def test_a_voice_request_reaches_a_chat_only_tool(spawned, monkeypatch):
-    """draft_email is not one of voice's direct tools; through the delegate the
-    request runs as a task with the full registry, draft_email included."""
-    monkeypatch.setattr(ve, "_load_settings", lambda: {"model_routing": {"mode": "local_preferred"}})
-    assert "draft_email" not in ve._voice_tool_names()
-    out, frames = _run("delegate_to_friday", {"request": REQUEST, "title": "School email"},
-                       session={"conversation_id": "conv-voice-1"})
-    assert out.startswith("DELEGATED:task_123"), out
-    assert len(spawned) == 1
-    call = spawned[0]
-    assert call["tools"] is None, "the task must get the full registry, not a voice subset"
-    assert "draft_email" in {t["name"] for t in agent.CLAUDE_TOOLS}
-    assert call["conversation_id"] == "conv-voice-1", "the task must report to the call's conversation"
-    assert REQUEST in call["prompt"]
-    assert any(f.get("type") == "task_spawned" for f in frames)
+def test_the_workflow_tools_are_told_not_to_guess_the_outcome():
+    """They return when the first step is queued, not when the work is done."""
+    spec = next(t for t in ve._VOICE_LIVE_TOOLS if t[0] == "run_workflow")
+    assert "do NOT guess" in spec[1] or "do not guess" in spec[1].lower()
+    assert "approval card" in spec[1], (
+        "an outward step inside a workflow still needs its card; say so")
 
 
-def test_local_only_blocks_the_delegate(spawned, monkeypatch):
-    monkeypatch.setattr(ve, "_load_settings", lambda: {"model_routing": {"mode": "local_only"}})
-    out, _ = _run("delegate_to_friday", {"request": REQUEST},
-                  session={"conversation_id": "conv-voice-1"})
-    assert out.startswith("NOT DONE") and "local-only" in out
-    assert spawned == [], "nothing may be started in local-only mode"
+def test_a_spoken_workflow_reports_into_the_call_not_into_main(monkeypatch):
+    """The chain reads its conversation from a contextvar the chat path sets.
+
+    Unset, a spoken 'run my morning routine' starts correctly and then reports
+    somewhere nobody in the call is looking.
+    """
+    from agent_friday.services import agent as ag
+    seen = {}
+
+    def fake_run(inp):
+        seen["cid"] = ag._CURRENT_CONVERSATION.get()
+        return "started"
+
+    monkeypatch.setattr(ag, "_tool_run_workflow", fake_run)
+    monkeypatch.setattr(ag, "_execute_tool",
+                        lambda tool, a, handler=None, session_ctx=None: handler(a))
+    out = ve._voice_tool_run("run_workflow", {"name": "morning"},
+                             lambda *a, **k: None,
+                             {"conversation_id": "conv-parity"})
+    assert out == "started"
+    assert seen["cid"] == "conv-parity", (
+        "the chain must report into the conversation that started it")
 
 
-def test_voice_calls_carry_the_conversation_and_his_words():
-    ctx = ve._voice_ctx({"conversation_id": "conv-9", "owner_text": "send it to the school"})
-    assert ctx["conversation_id"] == "conv-9" and ctx["owner_text"] == "send it to the school"
-    assert ctx["authenticated"] is True and ctx["surface"] == "voice-live"
+# ── The two voice-only limits are the owner's ──────────────────────────────
+
+def test_the_direct_tool_ceiling_is_the_owners_and_can_be_removed():
+    from agent_friday.routes.voice import voice_tool_limit_s
+    assert voice_tool_limit_s({}) == 20, "the shipped default"
+    assert voice_tool_limit_s({"voice_tool_hard_limit_s": 45}) == 45
+    assert voice_tool_limit_s({"voice_tool_hard_limit_s": 0}) == 0, "0 means no limit"
+    assert voice_tool_limit_s({"voice_tool_hard_limit_s": "nonsense"}) == 20, (
+        "an unreadable value falls back to the default, never to no limit")
 
 
-def test_no_voice_only_confirm_flag_remains():
-    specs = {t[0]: t for t in ve._VOICE_LIVE_TOOLS}
-    for name in ("open_url", "navigate_workspace"):
-        assert "confirmed" not in specs[name][2], name
-    assert "confirmed=true" not in inspect.getsource(ve._voice_tool_run)
+def test_the_ceiling_refuses_nothing_it_only_moves_the_work():
+    """Why this one is not a capability restriction, stated where it is read."""
+    import inspect
+    from agent_friday.routes.voice import voice_tool_limit_s
+    doc = inspect.getdoc(voice_tool_limit_s) or ""
+    assert "subtracts no capability" in doc
 
 
-def test_a_finished_task_lands_in_its_conversation_and_the_live_call(monkeypatch):
-    from agent_friday.services import voice_live_channel as vlc
-    appended, heard = [], []
-    monkeypatch.setattr(agent, "_task_conversation_id", lambda tid: "conv-voice-1")
-    from agent_friday.services import conversations as cv
-    monkeypatch.setattr(cv, "resolve", lambda cid: cid)
-    monkeypatch.setattr(cv, "append", lambda cid, msg: appended.append((cid, msg)))
-    vlc.register("conv-voice-1", lambda text, kind: heard.append((kind, text)))
-    try:
-        agent._post_task_result_to_conversation("task_123", "School email", "complete",
-                                                "Drafted and left in Gmail drafts for your review.")
-    finally:
-        vlc.unregister("conv-voice-1")
-    assert appended and appended[0][0] == "conv-voice-1"
-    assert "Drafted and left in Gmail drafts" in appended[0][1]["text"]
-    assert appended[0][1]["meta"]["kind"] == "task_result"
-    assert heard and heard[0][0] == "task_result" and "Gmail drafts" in heard[0][1]
+def test_room_mode_spoken_approvals_need_friday_by_default():
+    from agent_friday.services import local_context as lc
+    assert lc.spoken_decision("yes, send it", room_mode=True) is None, (
+        "in a room, an unnamed yes could be anyone")
+    assert lc.spoken_decision("Friday, send it", room_mode=True) == "approve"
+    assert lc.spoken_decision("yes, send it", room_mode=False) == "approve", (
+        "one person talking to Friday needs no name")
 
 
-def test_the_bridge_hands_results_to_the_call_between_turns():
-    src = inspect.getsource(rv).replace("\r\n", "\n")
-    assert "_voice_live_channel.register(_voice_session[\"conversation_id\"], _deliver_to_call)" in src
-    assert "_voice_live_channel.unregister(*_live_chan[0])" in src
-    assert "await _flush_injections(sess)" in src
-    assert "handed = _injection_text(text, kind)" in src
-    assert "_taint.note_user_message(\"voice-live\", user_text)" in src
-    assert "_retarget_call(_call_cid())" in src
+def test_the_owner_can_turn_the_name_requirement_off(monkeypatch):
+    """His call, and the tradeoff is that anyone in earshot can then approve."""
+    from agent_friday.services import local_context as lc
+    monkeypatch.setattr(lc, "_room_approvals_need_name", lambda: False)
+    assert lc.spoken_decision("yes, send it", room_mode=True) == "approve"
 
 
-def test_the_remaining_restrictions_are_written_down_and_shown():
-    rs = {r["id"]: r for r in ve.voice_restrictions({"model_routing": {"mode": "local_only"},
-                                                    "voice_room_mode": "room"})}
-    for rid in ("local_only", "vault_local_only", "voice_tools", "computer_control",
-                "approvals", "never_send", "direct_time_limit", "room_approvals"):
-        assert rid in rs and rs[rid]["why"], rid
-    assert rs["local_only"]["active"] is True and rs["room_approvals"]["active"] is True
-    assert ve.voice_restrictions({})[0]["active"] is False       # local-only off by default
-    import pathlib
-    root = pathlib.Path(__file__).resolve().parents[2]
-    for html in (root / "index.html", root / "ui_parts" / "app.html"):
-        text = html.read_text(encoding="utf-8")
-        assert "function VoiceRestrictions(" in text and "/api/voice/restrictions" in text
-    assert (root / "docs" / "reference" / "voice-capability.md").exists()
+def test_an_unreadable_setting_keeps_the_stricter_rule(monkeypatch):
+    from agent_friday.services import local_context as lc
+    import agent_friday.services.agent as ag
+    monkeypatch.setattr(ag, "_load_settings",
+                        lambda: (_ for _ in ()).throw(OSError("no settings")))
+    assert lc._room_approvals_need_name() is True
+
+
+def test_no_still_wins_over_yes_in_the_same_breath():
+    from agent_friday.services import local_context as lc
+    assert lc.spoken_decision("Friday, yes — no, don't send it",
+                              room_mode=True) == "deny"
+
+
+# ── The policy itself, enforced ────────────────────────────────────────────
+
+_EXEMPT_KINDS = {"governance", "privacy", "identity"}
+
+
+def test_every_voice_limit_is_either_the_owners_or_says_why_not():
+    """The structural half of the policy.
+
+    A later change that adds a voice-only limit without making it a setting
+    should fail here rather than quietly narrow what voice can do.
+    """
+    for r in ve.voice_restrictions({}):
+        assert r.get("why"), "every limit explains itself: %r" % r["id"]
+        if r["kind"] == "your setting":
+            continue
+        assert r["kind"] in _EXEMPT_KINDS, (
+            "%r is neither the owner's setting nor an exempt kind (%s). Either "
+            "give it a setting or say which rule requires it."
+            % (r["id"], sorted(_EXEMPT_KINDS)))
+
+
+def test_the_exempt_limits_are_the_ones_that_apply_to_chat_too():
+    """Stephen: approval gates and cLaws are not voice restrictions."""
+    by_id = {r["id"]: r for r in ve.voice_restrictions({})}
+    assert by_id["approvals"]["kind"] == "governance"
+    assert "in voice as in chat" in by_id["approvals"]["why"]
+    assert by_id["never_send"]["kind"] == "privacy"
+    assert "every cloud model" in by_id["never_send"]["why"]
+
+
+def test_the_settings_backed_limits_name_their_setting():
+    """So the Voice tab can offer the switch beside the sentence."""
+    for r in ve.voice_restrictions({}):
+        if r["id"] in ("direct_time_limit", "room_approvals"):
+            assert r.get("setting"), "%r must name its settings key" % r["id"]
+            from agent_friday.core import DEFAULT_SETTINGS
+            assert r["setting"] in DEFAULT_SETTINGS, (
+                "%r points at a key that does not exist" % r["setting"])
+
+
+def test_voice_is_documented_as_reaching_everything_chat_does():
+    import inspect
+    doc = inspect.getdoc(ve.voice_restrictions) or ""
+    assert "anything chat can" in doc

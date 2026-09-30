@@ -508,14 +508,34 @@ YES_RE = re.compile(r"(?i)\b(send it|send that|go ahead|yes|yeah|yep|approve|sha
 NO_RE = re.compile(r"(?i)\b(don'?t send|do not send|no|nope|decline|don'?t share|do not share|cancel)\b")
 
 
+def _room_approvals_need_name() -> bool:
+    """Whether a spoken approval in room mode must name Friday. Default yes.
+
+    The owner can turn this off. It is left on by default alone among the
+    voice limits because it is an identity gap, not a restriction: in chat an
+    approval arrives on an authenticated session, and a room with several
+    people offers no equivalent — "yes" from anyone present would count.
+
+    A settings read that fails keeps the requirement, which is the stricter
+    reading and matches `_voice_room_mode`'s own default.
+    """
+    try:
+        from agent_friday.services.agent import _load_settings
+        return (_load_settings() or {}).get(
+            "voice_room_approvals_require_name", True) is not False
+    except Exception:
+        return True
+
+
 def spoken_decision(owner_words: str, room_mode: bool) -> Optional[str]:
     """'approve', 'deny' or None from the user's own latest words.
 
     "no"/"don't send" wins over "yes" in the same breath. In room mode the
-    words must name Friday, because another voice could otherwise decide.
+    words must name Friday, because another voice could otherwise decide —
+    unless the owner has turned that requirement off.
     """
     words = str(owner_words or "")
-    if room_mode and "friday" not in words.lower():
+    if room_mode and _room_approvals_need_name() and "friday" not in words.lower():
         return None
     if NO_RE.search(words):
         return "deny"

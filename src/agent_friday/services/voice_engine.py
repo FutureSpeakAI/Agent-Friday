@@ -333,6 +333,23 @@ _VOICE_LIVE_TOOLS = [
      "asking his OK to share some context, then carry on. The approved context is "
      "handed to you when he decides; if he declines, carry on without it.",
      {"question": ("string", "The question for his local model, in full.")}, ["question"]),
+    ("run_workflow",
+     "Start one of the user's stored workflows (his routines) by name, spoken. "
+     "A workflow's own steps run wherever it says to run them, including on his "
+     "LOCAL model, so this is how a spoken request reaches private work without "
+     "any of it passing through you. It returns as soon as the first step is "
+     "queued: say one short sentence that it has started, keep the conversation "
+     "going, and do NOT guess what it produced — the outcome comes back to you. "
+     "If you are not sure of the exact name, call workflow_status with no name "
+     "first and read him the list. Any outward step inside it still raises an "
+     "approval card, exactly as in chat.",
+     {"name": ("string", "The workflow's name or slug, as it is stored.")}, ["name"]),
+    ("workflow_status",
+     "How one of the user's stored workflows is doing — per-step state for its "
+     "most recent run. Called with no name it LISTS his stored workflows, which "
+     "is what to use when he asks what routines he has, or when you need the "
+     "exact name before starting one. Read it back as a sentence, not a table.",
+     {"name": ("string", "The workflow to report on. Omit to list them all.")}, []),
     ("note_conversation_state",
      "Update your running picture of this conversation when you notice it shift: "
      "what the user cares about right now, how much detail he wants, and what is "
@@ -750,6 +767,15 @@ def _tool_delegate_to_friday(inp, session=None):
             f"handed back to you when it is done. Do not guess the result.")
 
 
+def _direct_limit_s(settings) -> float:
+    """The owner's ceiling on a direct voice tool, read for the list above."""
+    try:
+        from agent_friday.routes.voice import voice_tool_limit_s
+        return voice_tool_limit_s(settings)
+    except Exception:
+        return 20.0
+
+
 def voice_restrictions(settings=None) -> list:
     """What voice cannot do, why, and whether it applies right now.
 
@@ -786,16 +812,28 @@ def voice_restrictions(settings=None) -> list:
         {"id": "never_send", "active": True, "kind": "privacy",
          "title": "Never-send list",
          "why": "Anything on your never-send list is withheld from every cloud model."},
-        {"id": "direct_time_limit", "active": True, "kind": "responsiveness",
-         "title": "20-second limit on direct tools",
-         "why": "A quick voice tool that takes longer is stopped so the conversation "
-                "never goes silent; longer work goes to Friday in the background."},
-        {"id": "room_approvals", "active": room, "kind": "known limit",
+        {"id": "direct_time_limit", "active": bool(_direct_limit_s(s)),
+         "kind": "your setting", "setting": "voice_tool_hard_limit_s",
+         "title": ("%g-second limit on direct tools" % _direct_limit_s(s)
+                   if _direct_limit_s(s) else "No limit on direct tools"),
+         "why": ("A quick voice tool that takes longer hands off to Friday in the "
+                 "background instead of holding the line, so the conversation never "
+                 "goes silent. It refuses nothing — the work still runs and reports "
+                 "back. Yours to widen or remove."
+                 if _direct_limit_s(s) else
+                 "You removed the ceiling, so a slow voice tool holds the line until "
+                 "it finishes. The conversation can go quiet while it does.")},
+        {"id": "room_approvals",
+         "active": room and s.get("voice_room_approvals_require_name", True) is not False,
+         "kind": "identity", "setting": "voice_room_approvals_require_name",
          "title": "Spoken approvals in a room of several people",
          "why": "In 'Several people' mode a spoken yes to a card counts only when it "
-                "names Friday ('Friday, send it'), because another voice could "
-                "otherwise approve. Voices are not told apart until Household "
-                "Identity lands."},
+                "names Friday ('Friday, send it'). This is the one voice limit left on "
+                "by default: it is an identity gap rather than a restriction, because "
+                "in chat an approval arrives on your signed-in session and a room of "
+                "several voices offers nothing equivalent. Turn it off and anyone "
+                "within earshot can approve. Voices are not told apart until "
+                "Household Identity lands."},
     ]
 
 
@@ -1050,6 +1088,21 @@ def _voice_tool_run(name, args, send_client, session=None):
         if name == "ask_local_for_context":
             return _governed("ask_local_for_context",
                              lambda a: _tool_ask_local_for_context(a, session), args)
+        if name in ("run_workflow", "workflow_status"):
+            # The chain reports back to whatever conversation started it, and
+            # it reads that from a contextvar the chat path sets and the voice
+            # path never did. Without this a spoken "run my morning routine"
+            # would start correctly and then report into Main, where nobody in
+            # the call would ever see it.
+            from agent_friday.services import agent as _ag
+            _fn = (_ag._tool_run_workflow if name == "run_workflow"
+                   else _ag._tool_workflow_status)
+            _cid = session.get("conversation_id") if isinstance(session, dict) else None
+            _tok = _ag._CURRENT_CONVERSATION.set(_cid)
+            try:
+                return _governed(name, _fn, args)
+            finally:
+                _ag._CURRENT_CONVERSATION.reset(_tok)
         if name == "note_conversation_state":
             return _governed("note_conversation_state",
                              lambda a: _tool_note_conversation_state(a, session), args)

@@ -491,10 +491,33 @@ def _injection_text(text: str, kind: str) -> str:
 VOICE_TOOL_STALE_S = 15.0
 
 
+def voice_tool_limit_s(settings=None) -> float:
+    """The owner's ceiling on a direct voice tool, in seconds. 0 means none.
+
+    This is the one voice-only limit that subtracts no capability: the work is
+    not refused, it continues in the background and reports back. It exists so
+    the conversation never goes silent, so it stays on by default and the
+    owner can widen or remove it.
+    """
+    try:
+        if settings is None:
+            settings = _load_settings() or {}
+        raw = settings.get("voice_tool_hard_limit_s", VOICE_TOOL_HARD_LIMIT_S)
+        v = float(raw)
+        return v if v > 0 else 0.0
+    except Exception:
+        return VOICE_TOOL_HARD_LIMIT_S
+
+
 async def _voice_tool_with_limit(fname, fargs, send, session=None, limit=None, runner=None):
-    """Run one voice tool on a worker thread, bounded by VOICE_TOOL_HARD_LIMIT_S."""
+    """Run one voice tool on a worker thread, bounded by the owner's limit."""
     runner = runner or _voice_tool_run
-    limit = VOICE_TOOL_HARD_LIMIT_S if limit is None else limit
+    if limit is None:
+        limit = voice_tool_limit_s()
+    if not limit:
+        # The owner removed the ceiling. Nothing is refused either way; this
+        # only decides whether a slow tool holds the line or hands off.
+        return await asyncio.to_thread(runner, fname, fargs, send, session)
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(runner, fname, fargs, send, session), limit)
