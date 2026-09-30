@@ -36,14 +36,18 @@ def load_frame(path: Path):
     try:
         if ext in (".csv", ".tsv", ".txt"):
             return pd.read_csv(path, sep=None, engine="python", nrows=MAX_ROWS)
-        if ext in (".xlsx", ".xlsm", ".xls"):
+        if ext in (".xlsx", ".xlsm"):
+            try:
+                return pd.read_excel(path, nrows=MAX_ROWS)
+            except ImportError:
+                return read_xlsx(path)
+        if ext == ".xls":
             try:
                 return pd.read_excel(path, nrows=MAX_ROWS)
             except ImportError as e:
                 raise SourceError(
-                    "%s is a spreadsheet, and reading spreadsheets needs the "
-                    "'openpyxl' package, which is not installed. Save it as CSV, "
-                    "or install openpyxl." % path.name) from e
+                    "%s is an old-format (.xls) spreadsheet, which needs the 'xlrd' "
+                    "package. Save it as .xlsx or CSV." % path.name) from e
         if ext == ".parquet":
             return pd.read_parquet(path)
         if ext == ".json":
@@ -53,6 +57,112 @@ def load_frame(path: Path):
     except Exception as e:
         raise SourceError("could not read %s as a table (%s)" % (path.name, str(e)[:120])) from e
     raise SourceError("%s is not a table Friday can read" % path.name)
+
+
+_XNS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+_RNS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+#: Excel's built-in date formats; custom formats count as dates when they
+#: contain a day or year code.
+_DATE_FMT_IDS = set(range(14, 23)) | {45, 46, 47}
+
+
+def read_xlsx(path: Path):
+    """The first sheet of an .xlsx as a DataFrame, read from its XML here.
+
+    An .xlsx is a zip of XML parts. This reads the shared strings, the cell
+    styles (to know which numbers are dates) and the first worksheet, with no
+    extra package. The first row is the header.
+    """
+    import datetime as _dt
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    import pandas as pd
+    try:
+        z = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as e:
+        raise SourceError("could not read %s as a spreadsheet: it is not a valid .xlsx "
+                          "file" % path.name) from e
+    with z:
+        names = set(z.namelist())
+
+        def xml(name):
+            return ET.fromstring(z.read(name)) if name in names else None
+        wb, rels = xml("xl/workbook.xml"), xml("xl/_rels/workbook.xml.rels")
+        if wb is None:
+            raise SourceError("could not read %s as a spreadsheet: no workbook inside" % path.name)
+        first = wb.find(_XNS + "sheets/" + _XNS + "sheet")
+        target = "worksheets/sheet1.xml"
+        if first is not None and rels is not None:
+            rid = first.get(_RNS + "id")
+            for r in rels:
+                if r.get("Id") == rid:
+                    target = r.get("Target").lstrip("/")
+        sheet_name = target if target.startswith("xl/") else "xl/" + target
+        sheet = xml(sheet_name)
+        if sheet is None:
+            raise SourceError("could not read %s as a spreadsheet: its first sheet is missing" % path.name)
+        shared = []
+        sst = xml("xl/sharedStrings.xml")
+        if sst is not None:
+            for si in sst.findall(_XNS + "si"):
+                shared.append("".join(t.text or "" for t in si.iter(_XNS + "t")))
+        date_styles = set()
+        styles = xml("xl/styles.xml")
+        if styles is not None:
+            custom = {}
+            for nf in styles.iter(_XNS + "numFmt"):
+                code = (nf.get("formatCode") or "").lower()
+                custom[int(nf.get("numFmtId", 0))] = ("d" in code or "y" in code) and "[h" not in code
+            xfs = styles.find(_XNS + "cellXfs")
+            for i, xf in enumerate(xfs if xfs is not None else []):
+                fid = int(xf.get("numFmtId", 0))
+                if fid in _DATE_FMT_IDS or custom.get(fid):
+                    date_styles.add(i)
+
+        def col_index(ref):
+            n = 0
+            for ch in ref:
+                if ch.isalpha():
+                    n = n * 26 + (ord(ch.upper()) - 64)
+                else:
+                    break
+            return n - 1
+
+        epoch = _dt.datetime(1899, 12, 30)
+        rows = []
+        for row in sheet.iter(_XNS + "row"):
+            vals = {}
+            for c in row.findall(_XNS + "c"):
+                t, s = c.get("t"), int(c.get("s", 0))
+                v = c.find(_XNS + "v")
+                raw = v.text if v is not None else None
+                if t == "s" and raw is not None:
+                    val = shared[int(raw)]
+                elif t == "inlineStr":
+                    val = "".join(x.text or "" for x in c.iter(_XNS + "t"))
+                elif t in ("str", "e"):
+                    val = raw
+                elif t == "b":
+                    val = raw == "1"
+                elif raw is None:
+                    val = None
+                else:
+                    num = float(raw)
+                    if s in date_styles:
+                        val = epoch + _dt.timedelta(days=num)
+                    else:
+                        val = int(num) if num.is_integer() else num
+                vals[col_index(c.get("r", "A"))] = val
+            rows.append(vals)
+            if len(rows) > MAX_ROWS:
+                break
+    if not rows:
+        raise SourceError("%s has no rows" % path.name)
+    width = max((max(r) + 1 for r in rows if r), default=0)
+    header = [str(rows[0].get(i) if rows[0].get(i) is not None else "column %d" % (i + 1))
+              for i in range(width)]
+    return pd.DataFrame([[r.get(i) for i in range(width)] for r in rows[1:]], columns=header)
 
 
 def _dataset_path(ref: dict) -> Path:

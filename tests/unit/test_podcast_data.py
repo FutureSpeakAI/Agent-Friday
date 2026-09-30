@@ -119,7 +119,7 @@ def test_the_writer_sees_facts_not_rows(dataset, tmp_path, monkeypatch):
     assert ep["charts"]
 
 
-def test_a_spreadsheet_without_its_reader_says_so(tmp_path, monkeypatch):
+def test_a_file_that_is_not_really_a_spreadsheet_says_so(tmp_path, monkeypatch):
     p = tmp_path / "book.xlsx"
     p.write_bytes(b"PK\x03\x04not really")
     import pandas as pd
@@ -129,7 +129,7 @@ def test_a_spreadsheet_without_its_reader_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(pd, "read_excel", no_openpyxl)
     with pytest.raises(SourceError) as exc:
         pdm.load_frame(p)
-    assert "openpyxl" in exc.value.user_message
+    assert "book.xlsx" in exc.value.user_message and "spreadsheet" in exc.value.user_message
 
 
 WAITS = """request_id,opened,neighborhood,days_to_close
@@ -224,3 +224,54 @@ def test_charts_draw_in_the_brand_palette_when_the_brand_module_is_present(tmp_p
     c = pdm._bar_chart(tmp_path, 1, "T", [("a", 2.0), ("b", 1.0)], ["F1"])
     svg = (tmp_path / c["file"]).read_text(encoding="utf-8")
     assert 'fill="#0a0e1a"' in svg and 'fill="#00d4ff"' in svg and "#2f6feb" not in svg
+
+
+def _xlsx(path, rows, date_col=None):
+    """A minimal real .xlsx, written by hand: shared strings, numbers, and an
+    Excel-serial date column styled as a date (numFmt 14)."""
+    import zipfile
+    from xml.sax.saxutils import escape as x
+    strings, cells_xml = [], []
+
+    def col(i):
+        return "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[i]
+    for r, row in enumerate(rows, 1):
+        cs = []
+        for c, v in enumerate(row):
+            ref = "%s%d" % (col(c), r)
+            if isinstance(v, str):
+                if v not in strings:
+                    strings.append(v)
+                cs.append('<c r="%s" t="s"><v>%d</v></c>' % (ref, strings.index(v)))
+            else:
+                style = ' s="1"' if (date_col is not None and c == date_col and r > 1) else ""
+                cs.append('<c r="%s"%s><v>%s</v></c>' % (ref, style, v))
+        cells_xml.append('<row r="%d">%s</row>' % (r, "".join(cs)))
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    rns = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        z.writestr("xl/workbook.xml", '<workbook %s %s><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>' % (ns, rns))
+        z.writestr("xl/_rels/workbook.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
+        z.writestr("xl/sharedStrings.xml", '<sst %s>%s</sst>' % (ns, "".join("<si><t>%s</t></si>" % x(s) for s in strings)))
+        z.writestr("xl/styles.xml", '<styleSheet %s><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>' % ns)
+        z.writestr("xl/worksheets/sheet1.xml", '<worksheet %s><sheetData>%s</sheetData></worksheet>' % (ns, "".join(cells_xml)))
+
+
+def test_a_spreadsheet_is_read_on_this_computer_without_extra_packages(tmp_path, monkeypatch):
+    import pandas as pd
+
+    def no_openpyxl(*a, **k):
+        raise ImportError("Missing optional dependency 'openpyxl'")
+    monkeypatch.setattr(pd, "read_excel", no_openpyxl)
+    p = tmp_path / "sales.xlsx"
+    # 46023 is 2026-01-01 as an Excel serial date.
+    _xlsx(p, [["opened", "region", "sales"], [46023, "North", 100], [46054, "South", 250.5],
+              [46082, "North", 300]], date_col=0)
+    df = pdm.load_frame(p)
+    assert list(df.columns) == ["opened", "region", "sales"]
+    assert df["region"].tolist() == ["North", "South", "North"]
+    assert df["sales"].tolist() == [100, 250.5, 300]
+    assert str(df["opened"].iloc[0].date()) == "2026-01-01"
+    an = pdm.analyse_refs([{"kind": "dataset", "path": str(p)}], tmp_path / "c")
+    assert "total 650.5" in _fact(an, "sales: total")["text"]
