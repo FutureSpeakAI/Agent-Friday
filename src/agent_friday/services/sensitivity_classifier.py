@@ -86,6 +86,26 @@ _CC_RE      = re.compile(r'\b(?:\d[ -]?){13,19}\b')
 _ROUTING_RE = re.compile(r'\b\d{9}\b')
 _API_KEY_RE = re.compile(r'\b(?:sk-ant-|sk-|AQ\.|AIza)[A-Za-z0-9_\-]{16,}\b')
 
+# Credential formats the egress gate must not let past. Without these, a
+# private key or a GitHub/AWS/Slack/Twilio token read into a transcript went
+# to a cloud provider unredacted — _API_KEY_RE alone covered only the
+# Anthropic/OpenAI/Google key shapes (verified: on today's main these classify
+# PUBLIC). Each is high-precision so it does not over-redact ordinary prose.
+_SECRET_RES = (
+    re.compile(r'-----BEGIN (?:OPENSSH|RSA|DSA|EC|PGP|ENCRYPTED) PRIVATE KEY-----'),
+    re.compile(r'\bgh[posur]_[A-Za-z0-9]{20,}\b'),           # GitHub PAT / OAuth
+    re.compile(r'\bAKIA[0-9A-Z]{16}\b'),                     # AWS access key id
+    re.compile(r'\bxox[baprs]-[A-Za-z0-9-]{10,}\b'),         # Slack token
+    re.compile(r'(?i)"?root_key"?\s*[:=]'),                  # Friday keystore JSON
+    # A password assignment whose value carries a non-letter (a digit or
+    # symbol), so a prose line like "Password: Required" is not swept up but a
+    # real secret is.
+    re.compile(r'(?i)\b(?:password|passwd|pwd)\s*[:=]\s*(?=\S{6,})\S*[^\sA-Za-z]\S*'),  # pragma: allowlist secret
+    # Twilio auth token: 32 hex, keyword-gated so a bare MD5 hash elsewhere in
+    # the text does not over-redact the whole field.
+    re.compile(r'(?i)(?:twilio|auth[_\s-]?token)[^0-9a-f]{0,24}[0-9a-f]{32}\b'),
+)
+
 # ── Layer 1a (cont.): contact-shaped PII ──────────────────────────────────────
 # A phone number, a street address and a masked account tail need a detector
 # at a layer that actually ships.
@@ -448,6 +468,9 @@ def _regex_tier(text: str) -> int:
         return Tier.SENSITIVE
     if _API_KEY_RE.search(text):
         return Tier.SENSITIVE
+    for _secret_re in _SECRET_RES:
+        if _secret_re.search(text):
+            return Tier.SENSITIVE
     if _ACCT_TAIL_RE.search(text) or _ISSUED_ID_RE.search(text):
         return Tier.SENSITIVE
     if _ROUTING_RE.search(text):
