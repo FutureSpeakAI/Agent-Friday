@@ -62,6 +62,7 @@ PRICING = {
     # will not happen. 3/15 here would be a 50% overcharge on the model
     # DEFAULT_CLOUD_MODEL points at, i.e. the most-billed row in the table.
     "claude-sonnet-5":            {"in": 0.002, "out": 0.010},   # $2  / $10
+    "claude-sonnet-5-5":          {"in": 0.002, "out": 0.010},   # $2  / $10
     # `claude-haiku-4-5` is the model id. The dated form is a legacy alias;
     # keying ONLY on it would make a canonical-id call miss the table, fall
     # through the registry fallback (Haiku has no cost_per_1k there) and meter
