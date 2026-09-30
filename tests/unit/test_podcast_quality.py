@@ -193,3 +193,12 @@ def test_a_postal_address_is_not_read_out_whole(ds):
     lines[9] = dict(lines[9], text="Your 5:30 PM meetup is at 12 Harbor St, Springfield, IL 62701, "
                                    "USA, so leave a little early.")
     assert "reads_address" in _codes(_check(lines, ds))
+
+
+def test_outlets_on_a_shared_host_are_named_by_their_own_name():
+    """abcnews.go.com is ABC News, and "go" is never an alias for it."""
+    s = {"outlet": "abcnews.go.com", "title": "x"}
+    assert q.spoken_outlet(s) == "ABC News"
+    assert "go" not in q.outlet_aliases(s)
+    assert q.said_outlet("ABC News reports that the storm passed.", q.outlet_aliases(s))
+    assert not q.said_outlet("You should go early.", q.outlet_aliases(s))

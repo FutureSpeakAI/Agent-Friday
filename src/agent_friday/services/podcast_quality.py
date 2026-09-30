@@ -86,17 +86,33 @@ _PART_OF_DAY = {"morning": (0, 12 * 60), "afternoon": (12 * 60, 17 * 60),
 
 #: Outlets whose spoken name is not their domain. Anything else is matched
 #: by its domain name ("kxan.com" is said "KXAN").
+#: The first name is how the outlet is written and said; the rest are other
+#: ways it is said aloud.
 OUTLET_NAMES = {
-    "theguardian.com": ["the guardian"], "apnews.com": ["ap", "associated press", "ap news"],
-    "reuters.com": ["reuters"], "nytimes.com": ["new york times", "the times"],
-    "bloomberg.com": ["bloomberg"], "theverge.com": ["the verge"],
-    "techcrunch.com": ["techcrunch"], "wsj.com": ["wall street journal", "the journal"],
-    "washingtonpost.com": ["washington post"], "bbc.co.uk": ["bbc"], "bbc.com": ["bbc"],
-    "cnbc.com": ["cnbc"], "cnn.com": ["cnn"], "axios.com": ["axios"], "npr.org": ["npr"],
-    "arstechnica.com": ["ars technica"], "wired.com": ["wired"], "techmeme.com": ["techmeme"],
-    "ft.com": ["financial times", "the ft"], "economist.com": ["the economist"],
-    "politico.com": ["politico"], "semafor.com": ["semafor"], "404media.co": ["404 media"],
+    "theguardian.com": ["The Guardian"], "apnews.com": ["AP", "Associated Press", "AP News"],
+    "reuters.com": ["Reuters"], "nytimes.com": ["The New York Times", "The Times"],
+    "bloomberg.com": ["Bloomberg"], "theverge.com": ["The Verge"],
+    "techcrunch.com": ["TechCrunch"], "wsj.com": ["The Wall Street Journal", "The Journal"],
+    "washingtonpost.com": ["The Washington Post"], "bbc.co.uk": ["the BBC", "BBC"],
+    "bbc.com": ["the BBC", "BBC"], "cnbc.com": ["CNBC"], "cnn.com": ["CNN"],
+    "axios.com": ["Axios"], "npr.org": ["NPR"], "arstechnica.com": ["Ars Technica"],
+    "wired.com": ["Wired"], "techmeme.com": ["Techmeme"],
+    "ft.com": ["The Financial Times", "The FT"], "economist.com": ["The Economist"],
+    "politico.com": ["Politico"], "semafor.com": ["Semafor"], "404media.co": ["404 Media"],
+    "abcnews.go.com": ["ABC News"], "abcnews.com": ["ABC News"], "nbcnews.com": ["NBC News"],
+    "cbsnews.com": ["CBS News"], "foxnews.com": ["Fox News"], "salon.com": ["Salon"],
+    "theatlantic.com": ["The Atlantic"], "latimes.com": ["The Los Angeles Times"],
+    "usatoday.com": ["USA Today"], "engadget.com": ["Engadget"], "zdnet.com": ["ZDNet"],
 }
+#: Labels of a host name that are never the outlet's name.
+_HOST_NOISE = {"www", "m", "amp", "go", "news", "co", "com", "org", "net", "uk", "rss", "feeds"}
+
+
+def _site_name(dom: str) -> str:
+    """"abcnews.go.com" -> "abcnews"; "kxan.com" -> "kxan"."""
+    labels = [x for x in dom.split(".") if x]
+    named = [x for x in labels[:-1] if x not in _HOST_NOISE] or labels[:1]
+    return named[0] if named else ""
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -148,25 +164,24 @@ def outlet_aliases(story: dict) -> list[str]:
         names.append(m.group(1).strip().lower())
     dom = (story.get("outlet") or "").lower().removeprefix("www.")
     if dom:
-        names += OUTLET_NAMES.get(dom, [])
-        if "." in dom and dom not in ("news.google.com",):
-            names.append(dom.split(".")[-2] if dom.count(".") >= 1 else dom)
-        elif "." not in dom:
-            names.append(dom)
+        names += [n.lower() for n in OUTLET_NAMES.get(dom, [])]
+        if dom != "news.google.com":
+            names.append(_site_name(dom))
     return [n for n in dict.fromkeys(names) if n]
 
 
 def spoken_outlet(story: dict) -> str:
-    """The outlet as a person would say it: "The Guardian", "KXAN"."""
-    al = outlet_aliases(story)
-    if not al:
-        return ""
-    name = al[0]
+    """The outlet as it is written and said: "The Guardian", "ABC News", "KXAN"."""
     dom = (story.get("outlet") or "").lower().removeprefix("www.")
-    if name == (dom.split(".")[-2] if "." in dom else dom) and len(name) <= 5:
-        return name.upper()
-    return " ".join(w if (w in ("of", "and") and k) else w.capitalize()
-                    for k, w in enumerate(name.split()))
+    if dom in OUTLET_NAMES:
+        return OUTLET_NAMES[dom][0]
+    m = re.search(r"\s[-–—]\s([^-–—]{2,60})$", story.get("title") or "")
+    if m:
+        return m.group(1).strip()
+    name = _site_name(dom) if "." in dom else dom
+    if not name:
+        return ""
+    return name.upper() if len(name) <= 5 else name.capitalize()
 
 
 def said_outlet(text: str, aliases: list[str]) -> bool:
