@@ -691,17 +691,17 @@ LOGIN_HTML = """<!DOCTYPE html>
 <link href="/static/fonts/fonts.css" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0f;color:#e0e0ff;font-family:'Orbitron',monospace;display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden}
+body{background:#0a0a0f;color:#e0e0ff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden}
 body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 50% 50%,rgba(124,58,237,.12) 0%,transparent 70%);pointer-events:none}
 .login-box{background:rgba(15,15,30,.85);border:1px solid rgba(124,58,237,.35);border-radius:12px;padding:40px 36px;width:340px;backdrop-filter:blur(20px);box-shadow:0 0 40px rgba(124,58,237,.15),inset 0 0 30px rgba(124,58,237,.05);position:relative}
 .login-box::before{content:'';position:absolute;top:-1px;left:20%;right:20%;height:2px;background:linear-gradient(90deg,transparent,rgba(124,58,237,.8),transparent);border-radius:2px}
-h1{font-size:14px;letter-spacing:.25em;text-align:center;color:rgba(124,58,237,.9);margin-bottom:8px}
+h1{font-family:'Orbitron', sans-serif;font-size:14px;letter-spacing:.25em;text-align:center;color:rgba(124,58,237,.9);margin-bottom:8px}
 .subtitle{font-size:9px;letter-spacing:.15em;text-align:center;color:rgba(180,160,255,.4);margin-bottom:32px}
 .field{margin-bottom:12px}
-input[type=email],input[type=text],input[type=password]{width:100%;padding:12px 16px;background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:6px;color:#e0e0ff;font-family:'Orbitron',monospace;font-size:12px;letter-spacing:.15em;outline:none;transition:border-color .3s}
+input[type=email],input[type=text],input[type=password]{width:100%;padding:12px 16px;background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:6px;color:#e0e0ff;font-family:'Inter',system-ui,sans-serif;font-size:12px;letter-spacing:.15em;outline:none;transition:border-color .3s}
 input[type=email]:focus,input[type=text]:focus,input[type=password]:focus{border-color:rgba(124,58,237,.7);box-shadow:0 0 15px rgba(124,58,237,.15)}
 input::placeholder{color:rgba(180,160,255,.25)}
-button{width:100%;padding:12px;margin-top:4px;background:linear-gradient(135deg,rgba(124,58,237,.3),rgba(124,58,237,.15));border:1px solid rgba(124,58,237,.4);border-radius:6px;color:rgba(200,180,255,.9);font-family:'Orbitron',monospace;font-size:11px;letter-spacing:.2em;cursor:pointer;transition:all .3s}
+button{width:100%;padding:12px;margin-top:4px;background:linear-gradient(135deg,rgba(124,58,237,.3),rgba(124,58,237,.15));border:1px solid rgba(124,58,237,.4);border-radius:6px;color:rgba(200,180,255,.9);font-family:'Inter',system-ui,sans-serif;font-size:11px;letter-spacing:.2em;cursor:pointer;transition:all .3s}
 button:hover{background:linear-gradient(135deg,rgba(124,58,237,.45),rgba(124,58,237,.25));border-color:rgba(124,58,237,.7);box-shadow:0 0 20px rgba(124,58,237,.2)}
 .error{color:#ff4466;font-size:9px;text-align:center;margin-top:12px;letter-spacing:.1em}
 .scan-line{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(124,58,237,.15),transparent);animation:scan 4s linear infinite;pointer-events:none}

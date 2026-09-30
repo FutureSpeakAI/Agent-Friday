@@ -83,4 +83,15 @@ if ! $PY "$HERE/../scripts/check_stale_model_names.py"; then
     exit 1
 fi
 
+# ── Brand token check ─────────────────────────────────────────────────────
+# The palette lives in src/agent_friday/brand.py; the UI carries one --fr-*
+# token block in index.html and ui_parts/head.html. Fails when the two blocks
+# disagree or a Python module keeps its own copy of a brand/status colour.
+# Stdlib only; loads brand.py by path without importing the app.
+if ! $PY "$HERE/../scripts/check_brand_tokens.py"; then
+    echo "[pre-commit] brand token check FAILED - commit blocked." >&2
+    echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
+    exit 1
+fi
+
 exec $PY "$SCANNER"

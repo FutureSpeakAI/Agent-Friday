@@ -31,6 +31,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from agent_friday import brand
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR, _load_settings
 from agent_friday.services import credential_store as cs
@@ -145,7 +146,7 @@ _LOCK = threading.RLock()
 _AUDIT_CATEGORY = "google_account"
 
 # Distinct, color-blind-friendly hues for per-account event coloring / badges.
-_PALETTE = ["#00d4ff", "#a855f7", "#22c55e", "#f59e0b", "#ec4899", "#14b8a6", "#ef4444"]
+_PALETTE = list(brand.ACCOUNT_PALETTE)
 
 _MIGRATION_DONE = False
 

@@ -991,7 +991,7 @@ function PrivacyHoldCard({hold,msg,onChoose,onCancel}){
   return <div style={{margin:'10px 0',border:'1px solid #f59e0b55',borderRadius:9,padding:12,background:'#111726'}}>
     <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6}}>
       <span style={{fontSize:13}}>{'\u{1F6E1}'}</span>
-      <span style={{fontFamily:'Orbitron',fontSize:12,color:'#f59e0b'}}>Held for privacy</span>
+      <span style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#f59e0b'}}>Held for privacy</span>
       <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono'}}>full check starting</span>
     </div>
     <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',lineHeight:1.5,marginBottom:4}}>{hold&&hold.text}</div>
@@ -1020,7 +1020,7 @@ function PrivacyHoldCard({hold,msg,onChoose,onCancel}){
 function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
   return(<>
       <div data-chat-head="" style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',rowGap:6,padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
+        <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           <button onClick={()=>{setChatMsgs([]);fetch('/api/chat/clear',{method:'POST'}).catch(()=>{})}} title="Start a new conversation (pinned messages preserved)" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
           <button onClick={()=>setChatOpen(false)} title="Close chat" aria-label="Close chat" style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
@@ -1131,7 +1131,7 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
               title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()}
               style={{padding:'4px 7px',fontSize:13,color:audioDevicePopup?'#00d4ff':'#666',border:'1px solid '+(audioDevicePopup?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.1)'),background:audioDevicePopup?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.03)'}}>🎙</button>
             {audioDevicePopup&&<div ref={audioDevicePopupRef} style={{position:'absolute',bottom:'calc(100% + 8px)',left:0,width:226,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 0',zIndex:200,boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontSize:11,fontFamily:'Inter'}}>
-              <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>MIC INPUT</div>
+              <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron, sans-serif',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>MIC INPUT</div>
               {[{deviceId:'',label:'System Default'},...audioInputDevices].map(d=>{const sel=agentSettings.audio_input_device_id===d.deviceId;const lbl=d.label||(d.deviceId?'Mic ('+d.deviceId.slice(0,8)+'...)':'System Default');return(<div key={d.deviceId}
                 onClick={()=>{saveAgentSettings({audio_input_device_id:d.deviceId});setAudioDevicePopup(false)}}
                 style={{padding:'5px 10px',cursor:'pointer',color:sel?'#00d4ff':'#ccc',background:sel?'rgba(0,212,255,0.1)':'transparent',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',transition:'background .1s'}}
@@ -1141,7 +1141,7 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
               </div>)})}
               {audioOutputDevices.length>0&&<>
                 <div style={{height:1,background:'rgba(0,212,255,0.1)',margin:'5px 0'}}/>
-                <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>SPEAKER OUT</div>
+                <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron, sans-serif',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>SPEAKER OUT</div>
                 {[{deviceId:'',label:'System Default'},...audioOutputDevices].map(d=>{const sel=agentSettings.audio_output_device_id===d.deviceId;const lbl=d.label||(d.deviceId?'Speaker ('+d.deviceId.slice(0,8)+'...)':'System Default');return(<div key={d.deviceId}
                   onClick={()=>{saveAgentSettings({audio_output_device_id:d.deviceId});setAudioDevicePopup(false)}}
                   style={{padding:'5px 10px',cursor:'pointer',color:sel?'#00d4ff':'#ccc',background:sel?'rgba(0,212,255,0.1)':'transparent',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',transition:'background .1s'}}
@@ -1327,7 +1327,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
     <div onMouseDown={e=>{if(e.target.closest('button'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y}}} style={{cursor:'grab',padding:'10px 12px',borderBottom:'1px solid rgba(0,212,255,0.18)',display:'flex',alignItems:'center',gap:8,background:'rgba(0,212,255,0.05)'}}>
       <span style={{fontSize:15}}>💬</span>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff',letterSpacing:'.04em'}}>{emoji} {label} · Studio</div>
+        <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',letterSpacing:'.04em'}}>{emoji} {label} · Studio</div>
         <div style={{fontSize:10,color:'#8891a8'}}>Shape this workspace by talking to Friday</div>
       </div>
       <button onClick={()=>setShowVer(v=>!v)} title="Version history" style={{background:'none',border:'1px solid rgba(255,255,255,0.14)',borderRadius:6,color:'#aab',cursor:'pointer',fontSize:11,padding:'2px 7px'}}>🕘 {versions.length}</button>
@@ -2021,12 +2021,12 @@ function CareerWS(){
         <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20,color:'#00ff80'}}>{offered}</div><div className="stat-label">offers</div></div>
       </div>
       <div className="card" style={{marginBottom:12}}><div className="card-title">Pipeline Funnel</div>
-        {[{l:'Evaluated',c:entries.length,cl:'#f59e0b',p:100},{l:'Applied',c:applied,cl:'#00d4ff',p:entries.length?Math.round(applied/entries.length*100):0},{l:'Interviewing',c:interviewing,cl:'#7c3aed',p:entries.length?Math.round(interviewing/entries.length*100):0},{l:'Offers',c:offered,cl:'#00ff80',p:entries.length?Math.round(offered/entries.length*100):0}].map((s,i)=><div key={i} style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}><span style={{color:'#aaa'}}>{s.l}</span><span style={{fontFamily:'Orbitron',color:s.cl}}>{s.c} ({s.p}%)</span></div><div className="progress-bar"><div className="progress-fill" style={{width:Math.max(s.p,2)+'%',background:s.cl}}/></div></div>)}
+        {[{l:'Evaluated',c:entries.length,cl:'#f59e0b',p:100},{l:'Applied',c:applied,cl:'#00d4ff',p:entries.length?Math.round(applied/entries.length*100):0},{l:'Interviewing',c:interviewing,cl:'#7c3aed',p:entries.length?Math.round(interviewing/entries.length*100):0},{l:'Offers',c:offered,cl:'#00ff80',p:entries.length?Math.round(offered/entries.length*100):0}].map((s,i)=><div key={i} style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}><span style={{color:'#aaa'}}>{s.l}</span><span style={{fontFamily:'Orbitron, sans-serif',color:s.cl}}>{s.c} ({s.p}%)</span></div><div className="progress-bar"><div className="progress-fill" style={{width:Math.max(s.p,2)+'%',background:s.cl}}/></div></div>)}
       </div>
       {reports.length>0&&<div className="card"><div className="card-title">Recent Evaluations</div>{reports.slice(0,5).map((r,i)=><div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11,cursor:'pointer',color:'#aaa'}} onClick={()=>loadReport(r.name)}>{r.name}</div>)}</div>}
       {!hasData&&<div className="card" style={{textAlign:'center',padding:20}}><div style={{fontSize:16,marginBottom:8}}>Get Started</div><div style={{fontSize:12,color:'#888',marginBottom:12}}>Paste a job URL above to evaluate your first role.</div><div style={{fontSize:11,color:'#999'}}>Career-ops uses A-F scoring across 10 weighted dimensions. Generates tailored CVs and tracks applications.</div></div>}
     </div>}
-    {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}{e.role?<span style={{color:'#888',fontWeight:400}}> · {e.role}</span>:null}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
+    {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}{e.role?<span style={{color:'#888',fontWeight:400}}> · {e.role}</span>:null}</span><span style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
     {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:11,color:'#999'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
     {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
     {view==='pipeline'&&<div>{pipeline?<FridayDoc compact text={pipeline}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
@@ -2062,7 +2062,7 @@ function OutreachPanel(){
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
       <div className="card"><div className="card-title">Warm Contacts</div>
         {warm.length===0?<div style={{color:'#999',fontSize:11}}>No warm leads (trust &lt; 55%).</div>:warm.slice(0,10).map((w,i)=>{const pct=Math.round((w.score||0)*100);const col=pct>70?'#00ff80':pct>55?'#f59e0b':'#888';return(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer',opacity:w.already_contacted?0.5:1}} onClick={()=>pickContact(w.contact)}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{w.contact}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:col}}>{pct}%</span></div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{w.contact}</span><span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:col}}>{pct}%</span></div>
           <div style={{fontSize:11,color:'#a8a8b4'}}>{w.reason}{w.already_contacted?' · contacted':''}</div>
         </div>)})}
       </div>
@@ -4208,25 +4208,25 @@ function KnowledgeGraphWS(props){
 
     {/* 3D canvas */}
     <div ref={mountRef} className="kw-scene" style={{flex:1,minHeight:0,position:'relative',borderRadius:8,overflow:'hidden',border:'1px solid rgba(90,60,160,0.35)'}}>
-      {status==='loading'&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#8a7bd8',fontFamily:'Orbitron',fontSize:13,letterSpacing:'.15em',zIndex:2}}>CHARTING THE GALAXY…</div>}
+      {status==='loading'&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#8a7bd8',fontFamily:'Orbitron, sans-serif',fontSize:13,letterSpacing:'.15em',zIndex:2}}>CHARTING THE GALAXY…</div>}
       {status==='empty'&&<div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',gap:10,alignItems:'center',justifyContent:'center',color:'#8fa8c8',fontSize:13,zIndex:2}}>
         <div>The knowledge graph is empty — write some wiki pages first.</div>
         <button className="btn" onClick={reindex}>Build index</button>
       </div>}
       {status==='error'&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#ff7098',fontSize:13,zIndex:2}}>Knowledge graph unavailable.</div>}
       {hover&&<div style={{position:'absolute',left:12,bottom:12,background:'rgba(5,8,20,0.85)',border:'1px solid rgba(0,212,255,0.3)',borderRadius:6,padding:'6px 10px',zIndex:3,pointerEvents:'none'}}>
-        <div style={{fontSize:12,color:'#00d4ff',fontFamily:'Orbitron'}}>{hover.title}
+        <div style={{fontSize:12,color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>{hover.title}
           {hover.type&&<span style={{marginLeft:8,fontSize:9,color:'#dff6ff',background:'rgba(0,212,255,0.14)',border:'1px solid rgba(0,212,255,0.35)',borderRadius:4,padding:'1px 6px',letterSpacing:'0.08em',textTransform:'uppercase',verticalAlign:'middle'}}>{hover.type}</span>}
         </div>
         <div style={{fontSize:11,color:'#8fa8c8'}}>{hover.section||'core'} · {hover.degree} links · double-click to open</div>
       </div>}
-      {lodMode&&<div style={{position:'absolute',top:10,left:12,fontSize:11,color:'#c9a8ff',fontFamily:'Orbitron',letterSpacing:'.1em',zIndex:3}}>CONSTELLATION VIEW — click a cluster to enter</div>}
+      {lodMode&&<div style={{position:'absolute',top:10,left:12,fontSize:11,color:'#c9a8ff',fontFamily:'Orbitron, sans-serif',letterSpacing:'.1em',zIndex:3}}>CONSTELLATION VIEW — click a cluster to enter</div>}
     </div>
 
     {/* selected node panel */}
     {!embedded&&selected&&<div style={{display:'flex',gap:10,alignItems:'center',border:'1px solid rgba(0,212,255,0.22)',borderRadius:6,background:'rgba(0,212,255,0.04)',padding:'7px 10px'}}>
       <div style={{flex:1,minWidth:0}}>
-        <span style={{fontSize:13,color:'#00d4ff',fontFamily:'Orbitron'}}>{selected.title}</span>
+        <span style={{fontSize:13,color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>{selected.title}</span>
         <span style={{fontSize:11,color:'#8fa8c8',marginLeft:10}}>{selected.description}</span>
       </div>
       {selected.type!=='soul'&&<button className="btn" style={{fontSize:11,padding:'4px 10px',color:'#00ff80',borderColor:'rgba(0,255,128,0.4)',whiteSpace:'nowrap'}}
@@ -5329,7 +5329,7 @@ function FSProjectCard({p,onToast,onChanged}){
         {p.url?<a href={p.url} target="_blank" rel="noopener" style={{fontSize:11,color:'#00d4ff',textDecoration:'none'}}>{p.url.replace(/^https?:\/\//,'')} →</a>:<span style={{fontSize:11,color:'#666'}}>no public URL</span>}
       </div>
       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3}}>
-        <span style={{display:'flex',alignItems:'center',gap:4,fontSize:11,fontFamily:'Orbitron',color:ds.c}}>
+        <span style={{display:'flex',alignItems:'center',gap:4,fontSize:11,fontFamily:'Orbitron, sans-serif',color:ds.c}}>
           <span style={{width:8,height:8,borderRadius:'50%',background:ds.c,boxShadow:'0 0 8px '+ds.c}}/>{ds.label}
         </span>
         <span style={{fontSize:11,color:cat.c,textTransform:'uppercase',letterSpacing:.5}}>{p.category}</span>
@@ -5408,7 +5408,7 @@ function FSStudio(){
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:30}}>Loading portfolio…</div>;
   return(<div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:6}}>
-      <div style={{display:'flex',gap:10,fontSize:11,fontFamily:'Orbitron',alignItems:'center'}}>
+      <div style={{display:'flex',gap:10,fontSize:11,fontFamily:'Orbitron, sans-serif',alignItems:'center'}}>
         <span style={{color:'#00ff80'}}>● {counts.green||0} deployed</span>
         <span style={{color:'#f59e0b'}}>● {counts.yellow||0} uncommitted</span>
         {(counts.red||0)>0&&<span style={{color:'#ff0080'}}>● {counts.red} error</span>}
@@ -5499,7 +5499,7 @@ function FuturespeakWS(){
       </div>
       <div className="card"><div className="card-title">Top Opportunities</div>
         {(pipe?.opportunities||[]).slice(0,3).map((o,i)=>(<div key={o.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc',fontWeight:600}}>{o.name}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:'#f59e0b'}}>{fmt(o.value_usd)}</span></div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc',fontWeight:600}}>{o.name}</span><span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#f59e0b'}}>{fmt(o.value_usd)}</span></div>
           <div style={{fontSize:11,color:'#a8a8b4'}}>{o.next_action}</div>
         </div>))}
       </div>
@@ -5509,7 +5509,7 @@ function FuturespeakWS(){
       {(pipe?.opportunities||[]).length===0?<div style={{color:'#999',textAlign:'center',padding:20}}>No opportunities tracked.</div>:(pipe?.opportunities||[]).map((o,i)=>{const col=STATUS_COLORS[o.status]||'#888';const prob=Math.round((o.probability||0)*100);return(<div key={o.id||i} className="card" style={{marginBottom:6}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}}>
           <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>{o.name}</div><div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>{(o.tags||[]).join(' · ')}</div></div>
-          <div style={{textAlign:'right'}}><div style={{fontFamily:'Orbitron',fontSize:14,color:'#f59e0b'}}>{fmt(o.value_usd)}</div><span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{o.status}</span></div>
+          <div style={{textAlign:'right'}}><div style={{fontFamily:'Orbitron, sans-serif',fontSize:14,color:'#f59e0b'}}>{fmt(o.value_usd)}</div><span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{o.status}</span></div>
         </div>
         <div className="progress-bar" style={{marginTop:4,marginBottom:4}}><div className="progress-fill" style={{width:prob+'%',background:col}}/></div>
         <div style={{fontSize:11,color:'#aaa',marginBottom:4}}><strong style={{color:'#00d4ff'}}>Next:</strong> {o.next_action}</div>
@@ -5520,7 +5520,7 @@ function FuturespeakWS(){
         </div>
         {drafting===null&&draft&&i===0&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',marginTop:6,background:'rgba(255,255,255,0.05)',padding:6,borderRadius:4,lineHeight:1.5}}>{draft}</pre>}
       </div>)})}
-      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>LAST DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Proposal')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
+      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>LAST DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Proposal')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
     </div>}
 
     {view==='revenue'&&<div>
@@ -5550,9 +5550,9 @@ function FuturespeakWS(){
       </div>
       <div className="card"><div className="card-title">Cash + Burn</div>
         <div style={{display:'flex',justifyContent:'space-around',fontSize:12}}>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#00d4ff'}}>{fmt(rev?.cash_on_hand)}</div><div style={{fontSize:11,color:'#a8a8b4'}}>cash on hand</div></div>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#ff0080'}}>{fmt(rev?.monthly_burn)}</div><div style={{fontSize:11,color:'#a8a8b4'}}>monthly burn</div></div>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:(rev?.net_monthly||0)>=0?'#00ff80':'#ff0080'}}>{fmt(Math.abs(rev?.net_monthly||0))}</div><div style={{fontSize:11,color:'#a8a8b4'}}>net/mo</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron, sans-serif',fontSize:16,color:'#00d4ff'}}>{fmt(rev?.cash_on_hand)}</div><div style={{fontSize:11,color:'#a8a8b4'}}>cash on hand</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron, sans-serif',fontSize:16,color:'#ff0080'}}>{fmt(rev?.monthly_burn)}</div><div style={{fontSize:11,color:'#a8a8b4'}}>monthly burn</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron, sans-serif',fontSize:16,color:(rev?.net_monthly||0)>=0?'#00ff80':'#ff0080'}}>{fmt(Math.abs(rev?.net_monthly||0))}</div><div style={{fontSize:11,color:'#a8a8b4'}}>net/mo</div></div>
         </div>
       </div>
     </div>}
@@ -5603,7 +5603,7 @@ function FuturespeakWS(){
           </div>
         </div>)})}
       </div>}
-      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>FOLLOW-UP DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Draft')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
+      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>FOLLOW-UP DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Draft')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
     </div>}
 
     {view==='studio'&&<div>
@@ -5641,7 +5641,7 @@ function FamilyWS(){
   const quickAsk=(q)=>{if(window.fridayQuickChat)window.fridayQuickChat(q);};
   return(<div>
     <FridaySays text={familyCountdown?(()=>{const d=familyCountdown.days??familyCountdown.days_until;return d==null?'Next family event coming up.':d===0?'A family event is today.':`Next family event in ${d} day${d===1?'':'s'}.`})():'Your family dashboard. Ask me to help set it up.'}/>
-    {hasEvents&&<div style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.label||c.name}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{(c.days??c.days_until)===0?'Today':`${c.days??c.days_until}d`}</span></div>)}</div>}
+    {hasEvents&&<div style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.label||c.name}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif',fontSize:11}}>{(c.days??c.days_until)===0?'Today':`${c.days??c.days_until}d`}</span></div>)}</div>}
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
       <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me add my family members to the wiki.')}>
         <div className="card-title">Family Members</div><div style={{fontSize:11,color:'#888'}}>Click to set up with Friday</div>
@@ -5910,7 +5910,7 @@ function TimelinePanel({onCreated}){
         <div key={n} draggable onDragStart={()=>setDrag(i)} onDragOver={e=>e.preventDefault()} onDrop={()=>{if(drag!=null&&drag!==i)reorder(drag,i);setDrag(null);}}
           style={{flexShrink:0,width:88,borderRadius:6,overflow:'hidden',cursor:'grab',border:'1px solid '+(drag===i?'#00d4ff':'rgba(127,182,201,0.25)'),background:'#0a0a0f',position:'relative'}}>
           <video src={u} muted style={{width:88,height:50,objectFit:'cover',display:'block',pointerEvents:'none'}}/>
-          <div style={{position:'absolute',top:2,left:3,fontSize:9,fontFamily:'Orbitron',color:'#00d4ff',background:'rgba(0,0,0,0.6)',borderRadius:3,padding:'0 4px'}}>{i+1}</div>
+          <div style={{position:'absolute',top:2,left:3,fontSize:9,fontFamily:'Orbitron, sans-serif',color:'#00d4ff',background:'rgba(0,0,0,0.6)',borderRadius:3,padding:'0 4px'}}>{i+1}</div>
           <div onClick={()=>removeClip(n)} title="remove" style={{position:'absolute',top:2,right:3,fontSize:11,color:'#ff7ab8',background:'rgba(0,0,0,0.6)',borderRadius:3,cursor:'pointer',width:14,textAlign:'center',lineHeight:'14px'}}>×</div>
           {i<clips.length-1&&<div style={{position:'absolute',right:-1,top:'50%',transform:'translateY(-50%)',fontSize:9,color:'#7fb6c9'}}>›</div>}
         </div>);})}
@@ -5993,7 +5993,7 @@ function ProductionPanel({onCreated}){
       </div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <span style={{fontSize:11,color:'#ccc'}}>Stage {Math.min(idx+(state==='completed'?0:1),stages.length)}/{stages.length}</span>
-        <span style={{fontSize:10,fontFamily:'Orbitron',color:PIPE_STATE_COL[state]||'#888'}}>{state}</span>
+        <span style={{fontSize:10,fontFamily:'Orbitron, sans-serif',color:PIPE_STATE_COL[state]||'#888'}}>{state}</span>
       </div>
       {state==='awaiting_checkpoint'&&<button className="btn" style={{fontSize:11,fontWeight:700,width:'100%',marginBottom:8}} onClick={approve}>Approve &amp; Continue →</button>}
       {/* milestone log */}
@@ -6091,7 +6091,7 @@ function ProjectsPanel(){
         <div key={r.run_id} style={{padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <span style={{fontSize:12,color:'#ccc'}}>{r.name} <span style={{fontSize:10,color:'#777'}}>· stage {Math.min(r.stage_index+ (r.state==='completed'?0:1),r.total_stages)}/{r.total_stages}</span></span>
-            <span style={{fontSize:10,fontFamily:'Orbitron',color:stateColor[r.state]||'#888'}}>{r.state}</span>
+            <span style={{fontSize:10,fontFamily:'Orbitron, sans-serif',color:stateColor[r.state]||'#888'}}>{r.state}</span>
           </div>
           {r.state==='awaiting_checkpoint'&&<button className="btn btn-magenta" style={{fontSize:10,padding:'2px 8px',marginTop:3}} onClick={()=>resumeRun(r.run_id)}>Approve & Continue →</button>}
         </div>
@@ -6313,7 +6313,7 @@ function StudioWS(){
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
         <button className="btn" onClick={()=>{setSelected(null);setPreview('')}} style={{fontSize:11}}>Back to Gallery</button>
         <div style={{display:'flex',gap:4,alignItems:'center'}}>
-          <span style={{fontFamily:'Orbitron',fontSize:11,color:'#999'}}>{selected.name}</span>
+          <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#999'}}>{selected.name}</span>
           <button className="btn" onClick={()=>window.fridayQuickPost&&window.fridayQuickPost({title:(selected.name||'').replace(/[-_]/g,' ').replace(/\.[^.]+$/,''),content:preview||'',asset:{filename:selected.name},source:{kind:'creation',ref:selected.name}})} style={{fontSize:11}} title="Quick-post this creation to your platforms">📤 Share / Post…</button>
           <PodcastButton sources={[podcastCreationSource(selected.name)]} title={(selected.name||'').replace(/\.[^.]+$/,'')}/>
           <button className="btn" onClick={()=>window.open('/creation/'+selected.name,'_blank')} style={{fontSize:11}}>↗ Open in Tab</button>
@@ -6389,7 +6389,7 @@ function StudioWS(){
           <div style={{width:'100%',padding:'18px 0',background:'rgba(255,84,112,0.06)',borderRadius:8,textAlign:'center',fontSize:11,color:'#ff5470'}}>⚠ File not found — may have moved to ~/.friday/friday-creations</div>:
           isImg?<img src={url} alt={f.name} loading="lazy" onError={()=>setImgErrors(e=>({...e,[f.name]:true}))} style={{width:'100%',maxHeight:260,objectFit:'cover',borderRadius:8,background:'#0a0a0f',display:'block'}}/>:
           isVid?<div style={{position:'relative',cursor:'pointer'}} onClick={e=>{e.stopPropagation();setExpandedCard(isExpanded?null:f.name)}}><video src={url} muted preload="metadata" style={{width:'100%',maxHeight:200,objectFit:'cover',borderRadius:8,background:'#0a0a0f',display:'block'}}/><div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:32,color:'rgba(255,255,255,0.9)',textShadow:'0 2px 8px #000',pointerEvents:'none',background:'rgba(0,0,0,0.25)',borderRadius:8}}>▶</div></div>:
-          isAud?<div style={{width:'100%',padding:'20px 0',borderRadius:8,background:'linear-gradient(135deg,hsl('+hue+',60%,20%),hsl('+((hue+60)%360)+',55%,12%))',display:'flex',alignItems:'center',justifyContent:'center',gap:12,fontSize:28}}>🎵<span style={{fontSize:13,color:'rgba(255,255,255,0.6)',fontFamily:'Orbitron'}}>Audio</span></div>:
+          isAud?<div style={{width:'100%',padding:'20px 0',borderRadius:8,background:'linear-gradient(135deg,hsl('+hue+',60%,20%),hsl('+((hue+60)%360)+',55%,12%))',display:'flex',alignItems:'center',justifyContent:'center',gap:12,fontSize:28}}>🎵<span style={{fontSize:13,color:'rgba(255,255,255,0.6)',fontFamily:'Orbitron, sans-serif'}}>Audio</span></div>:
           isMd||isHtml?<div style={{padding:'10px 14px',background:'rgba(255,255,255,0.02)',borderRadius:8,fontSize:11,color:'#aab',lineHeight:1.5,maxHeight:80,overflow:'hidden',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{summary||f.name}</div>:
           <div style={{padding:'18px 0',borderRadius:8,background:'rgba(255,255,255,0.02)',textAlign:'center',fontSize:28}}>{icon}</div>;
         const expandedContent=isImg?<img src={url} alt={f.name} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>:
@@ -6570,7 +6570,7 @@ function OrchestratorBudgetPanel(){
       </div>);
     })}
     {editing&&(<div style={{marginTop:10,padding:'10px 12px',background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:6}}>
-      <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'.05em',marginBottom:8}}>EDIT POLICY — {editing.toUpperCase()}</div>
+      <div style={{fontFamily:'Orbitron, sans-serif',fontSize:10,color:'#00d4ff',letterSpacing:'.05em',marginBottom:8}}>EDIT POLICY — {editing.toUpperCase()}</div>
       <div style={{display:'flex',gap:5,marginBottom:6}}>
         <div style={{flex:1}}>
           <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Monthly cap (mψ)</div>
@@ -6636,7 +6636,7 @@ function FederationPanel(){
     {identity?<div style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'10px 12px',marginBottom:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
         <div>
-          <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff',marginBottom:3}}>{identity.display_name||'Friday'}</div>
+          <div style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color:'#00d4ff',marginBottom:3}}>{identity.display_name||'Friday'}</div>
           <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{trunc(identity.agent_id,16)} {identity.agent_id&&identity.agent_id.length>16?'...':''}</div>
         </div>
         <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} onClick={copyPeerCard}>Copy Peer Card</button>
@@ -6662,7 +6662,7 @@ function FederationPanel(){
           <div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#888'}}>{trunc(p.agent_id,20)}</div>
         </div>
         <div style={{textAlign:'right',flexShrink:0}}>
-          <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>{typeof p.overall_score==='number'?(p.overall_score*100).toFixed(0)+'%':'—'}</div>
+          <div style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>{typeof p.overall_score==='number'?(p.overall_score*100).toFixed(0)+'%':'—'}</div>
           {p.last_handshake&&<div style={{fontSize:9,color:'#666'}}>{new Date(p.last_handshake).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>}
         </div>
         <select value={p.fed_pref||'ask'} onChange={e=>setPref(p.agent_id,e.target.value)}
@@ -6744,7 +6744,7 @@ function MarketplaceWS(){
                 {licBadge(l.license||'all-rights-reserved')}
               </div>
               <div style={{display:'flex',gap:6,alignItems:'center'}}>
-                <span style={{fontFamily:'Orbitron',fontSize:12,color:l.price_mpsi===0?'#00ff80':'#f59e0b'}}>{psiDisplay(l.price_mpsi||0)}</span>
+                <span style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:l.price_mpsi===0?'#00ff80':'#f59e0b'}}>{psiDisplay(l.price_mpsi||0)}</span>
                 <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={()=>buy(l.id)}>{l.price_mpsi===0?'Free':'Buy'}</button>
               </div>
             </div>
@@ -6761,7 +6761,7 @@ function MarketplaceWS(){
               <div style={{fontWeight:600,fontSize:13,color:'#dde'}}>{l.title}</div>
               <div style={{display:'flex',gap:4,marginTop:3,flexWrap:'wrap',alignItems:'center'}}>
                 {licBadge(l.license||'all-rights-reserved')}
-                <span style={{fontSize:10,fontFamily:'Orbitron',color:l.price_mpsi===0?'#00ff80':'#f59e0b'}}>{psiDisplay(l.price_mpsi||0)}</span>
+                <span style={{fontSize:10,fontFamily:'Orbitron, sans-serif',color:l.price_mpsi===0?'#00ff80':'#f59e0b'}}>{psiDisplay(l.price_mpsi||0)}</span>
                 {l.public!==false&&<span style={{fontSize:9,color:'#00d4ff',border:'1px solid rgba(0,212,255,0.25)',borderRadius:4,padding:'0 4px',fontFamily:'JetBrains Mono'}}>public</span>}
               </div>
             </div>
@@ -6790,7 +6790,7 @@ function MarketplaceWS(){
             <span style={{fontSize:11,color:'#888'}}>— {form.public?'visible to all federated agents':'only visible to you'}</span>
           </div>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:4}}>
-            <div style={{fontSize:11,color:'#a8a8b4'}}>Price: <span style={{color:form.price_mpsi===0?'#00ff80':'#f59e0b',fontFamily:'Orbitron'}}>{psiDisplay(form.price_mpsi)}</span></div>
+            <div style={{fontSize:11,color:'#a8a8b4'}}>Price: <span style={{color:form.price_mpsi===0?'#00ff80':'#f59e0b',fontFamily:'Orbitron, sans-serif'}}>{psiDisplay(form.price_mpsi)}</span></div>
             <button className="btn" style={{fontWeight:600}} disabled={publishing} onClick={publish}>{publishing?'Publishing...':'Publish Listing'}</button>
           </div>
         </div>
@@ -6840,18 +6840,18 @@ function WalletPanel(){
   return(<div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:12}}>
       <div className="card" style={{textAlign:'center'}}>
-        <div style={{fontSize:10,color:'#888',fontFamily:'Orbitron',letterSpacing:'.06em',marginBottom:4}}>BALANCE</div>
-        <div style={{fontFamily:'Orbitron',fontSize:22,color:'#00d4ff'}}>{(psi/1000).toFixed(3)}</div>
+        <div style={{fontSize:10,color:'#888',fontFamily:'Orbitron, sans-serif',letterSpacing:'.06em',marginBottom:4}}>BALANCE</div>
+        <div style={{fontFamily:'Orbitron, sans-serif',fontSize:22,color:'#00d4ff'}}>{(psi/1000).toFixed(3)}</div>
         <div style={{fontSize:11,color:'#a8a8b4'}}>ψ psi</div>
       </div>
       <div className="card" style={{textAlign:'center'}}>
-        <div style={{fontSize:10,color:'#888',fontFamily:'Orbitron',letterSpacing:'.06em',marginBottom:4}}>OUTSTANDING</div>
-        <div style={{fontFamily:'Orbitron',fontSize:22,color:'#f59e0b'}}>{(eta/1000).toFixed(3)}</div>
+        <div style={{fontSize:10,color:'#888',fontFamily:'Orbitron, sans-serif',letterSpacing:'.06em',marginBottom:4}}>OUTSTANDING</div>
+        <div style={{fontFamily:'Orbitron, sans-serif',fontSize:22,color:'#f59e0b'}}>{(eta/1000).toFixed(3)}</div>
         <div style={{fontSize:11,color:'#a8a8b4'}}>η eta</div>
       </div>
       <div className="card" style={{textAlign:'center'}}>
-        <div style={{fontSize:10,color:'#888',fontFamily:'Orbitron',letterSpacing:'.06em',marginBottom:4}}>Q SCORE</div>
-        <div style={{fontFamily:'Orbitron',fontSize:22,color:qCol}}>{(qScore/1000).toFixed(3)}</div>
+        <div style={{fontSize:10,color:'#888',fontFamily:'Orbitron, sans-serif',letterSpacing:'.06em',marginBottom:4}}>Q SCORE</div>
+        <div style={{fontFamily:'Orbitron, sans-serif',fontSize:22,color:qCol}}>{(qScore/1000).toFixed(3)}</div>
         <div style={{fontSize:11,color:'#a8a8b4'}}>net worth</div>
       </div>
     </div>
@@ -6865,7 +6865,7 @@ function WalletPanel(){
       {leaderboard.map((a,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}>
         <span style={{color:'#8891a8',fontFamily:'JetBrains Mono',width:18}}>{i+1}</span>
         <span style={{flex:1,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{trunc(a.agent_id,24)}</span>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:a.q_score>0?'#00ff80':a.q_score<0?'#ff5470':'#888'}}>{((a.q_score||0)/1000).toFixed(3)}ψ</span>
+        <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:a.q_score>0?'#00ff80':a.q_score<0?'#ff5470':'#888'}}>{((a.q_score||0)/1000).toFixed(3)}ψ</span>
       </div>)}
     </div>}
     <div className="card" style={{marginBottom:12}}>
@@ -6889,7 +6889,7 @@ function WalletPanel(){
           <tbody>{txns.map((t,i)=><tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.03)',color:'#bbc'}}>
             <td style={{padding:'3px 6px',fontFamily:'JetBrains Mono',fontSize:10}}>{trunc(t.from_agent,16)}</td>
             <td style={{padding:'3px 6px',fontFamily:'JetBrains Mono',fontSize:10}}>{trunc(t.to_agent,16)}</td>
-            <td style={{padding:'3px 6px',fontFamily:'Orbitron',fontSize:10,color:'#00d4ff'}}>{((t.amount||0)/1000).toFixed(3)}</td>
+            <td style={{padding:'3px 6px',fontFamily:'Orbitron, sans-serif',fontSize:10,color:'#00d4ff'}}>{((t.amount||0)/1000).toFixed(3)}</td>
             <td style={{padding:'3px 6px',fontSize:10,color:'#888'}}>{t.currency}</td>
             <td style={{padding:'3px 6px',fontSize:11,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.reason||'—'}</td>
             <td style={{padding:'3px 6px',fontSize:10,color:'#666',fontFamily:'JetBrains Mono'}}>{t.created_at?new Date(t.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—'}</td>
@@ -6919,7 +6919,7 @@ function TrustWS(){
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:11,color:'#999',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
-            <span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span>
+            <span style={{fontFamily:'Orbitron, sans-serif',fontSize:14,color:col}}>{pct}%</span>
             <SendTo content={()=>JSON.stringify(p,null,2)} personName={p.name||p.Name} dataType="contact_research" options={[{label:'Send to Calendar',dest:'calendar_notes',ico:'📅',needsEvent:true},{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/>
           </div>
         </div>
@@ -6960,7 +6960,7 @@ const WF_STATUS = {
 const WF_CSS = `
 .wfx{color:#e6e6ee;font-family:'Inter',sans-serif;font-size:13px;line-height:1.5}
 .wfx *{box-sizing:border-box}
-.wfx-h{font-family:'Orbitron',monospace;font-size:11px;letter-spacing:.08em;color:rgba(0,212,255,.92);margin:18px 0 8px;text-transform:uppercase}
+.wfx-h{font-family:'Orbitron', sans-serif;font-size:11px;letter-spacing:.08em;color:rgba(0,212,255,.92);margin:18px 0 8px;text-transform:uppercase}
 .wfx-in{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.16);border-radius:6px;color:#eee;padding:8px 10px;font-size:13px;width:100%;font-family:'Inter',sans-serif}
 .wfx-in:focus{outline:none;border-color:rgba(0,212,255,.6);box-shadow:0 0 0 2px rgba(0,212,255,.15)}
 .wfx-ask{min-height:78px;resize:vertical;font-size:14px;line-height:1.5}
@@ -7584,12 +7584,12 @@ function SystemWS(){
             <div style={{display:'flex',gap:8,marginBottom:8,flexWrap:'wrap'}}>
               <div className="card" style={{flex:1,minWidth:130,padding:8}}>
                 <div className="stat-label" style={{fontSize:10}}>Epistemic quality</div>
-                <div style={{fontFamily:'Orbitron',fontSize:22,color:eCol}}>{eo==null?'—':eo.toFixed(2)}</div>
+                <div style={{fontFamily:'Orbitron, sans-serif',fontSize:22,color:eCol}}>{eo==null?'—':eo.toFixed(2)}</div>
                 {epi.weakest_dimension&&<div style={{fontSize:10,color:'#888'}}>weakest: {epi.weakest_dimension.replace(/_/g,' ')}</div>}
               </div>
               <div className="card" style={{flex:1,minWidth:130,padding:8}}>
                 <div className="stat-label" style={{fontSize:10}}>Sycophancy</div>
-                <div style={{fontFamily:'Orbitron',fontSize:22,color:sCol}}>{si==null?'—':si.toFixed(2)}</div>
+                <div style={{fontFamily:'Orbitron, sans-serif',fontSize:22,color:sCol}}>{si==null?'—':si.toFixed(2)}</div>
                 <div style={{fontSize:10,color:sCol}}>{si==null?'no data':syc.danger_zone?'⚠ danger zone':syc.healthy?'healthy':'elevated'}</div>
               </div>
             </div>
@@ -7601,7 +7601,7 @@ function SystemWS(){
             {focus.length===0
               ?<div style={{fontSize:11,color:'#00ff80'}}>All metrics within healthy bands — maintain it.</div>
               :focus.map((f,i)=><div key={i} style={{fontSize:11,color:'#cdd',padding:'3px 0',borderTop:i?'1px solid rgba(255,255,255,0.04)':'none'}}>
-                <span style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',marginRight:6}}>{(f.area||'').replace(/_/g,' ')}</span>
+                <span style={{fontFamily:'Orbitron, sans-serif',fontSize:10,color:'#00d4ff',marginRight:6}}>{(f.area||'').replace(/_/g,' ')}</span>
                 <span style={{color:'#888'}}>{f.fix}</span>
               </div>)}
           </>);
@@ -7648,10 +7648,10 @@ function SystemWS(){
     {ctxToast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6,fontFamily:'JetBrains Mono'}}>✓ {ctxToast}</div>}
     <div className="card" style={{marginBottom:8}}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6,marginBottom:6}}>
-        <div style={{fontSize:11}}><span style={{color:'#888'}}>Days:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron'}}>{ctxStats?.days??0}</span></div>
-        <div style={{fontSize:11}}><span style={{color:'#888'}}>Entries:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron'}}>{ctxStats?.total_entries??0}</span></div>
-        <div style={{fontSize:11}}><span style={{color:'#888'}}>Size:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron'}}>{fmtBytes(ctxStats?.total_bytes)}</span></div>
-        <div style={{fontSize:11}}><span style={{color:'#888'}}>Avg/day:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron'}}>{ctxStats?.avg_entries_per_day??0}</span></div>
+        <div style={{fontSize:11}}><span style={{color:'#888'}}>Days:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>{ctxStats?.days??0}</span></div>
+        <div style={{fontSize:11}}><span style={{color:'#888'}}>Entries:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>{ctxStats?.total_entries??0}</span></div>
+        <div style={{fontSize:11}}><span style={{color:'#888'}}>Size:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>{fmtBytes(ctxStats?.total_bytes)}</span></div>
+        <div style={{fontSize:11}}><span style={{color:'#888'}}>Avg/day:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif'}}>{ctxStats?.avg_entries_per_day??0}</span></div>
       </div>
       <div style={{fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{ctxStats?.first_date?`${ctxStats.first_date} → ${ctxStats.last_date}`:'No entries yet'}</div>
     </div>
@@ -7677,12 +7677,12 @@ function SystemWS(){
       </div>
     </div>
     {ctxResults!==null&&<div className="card" style={{padding:8,maxHeight:340,overflowY:'auto'}}>
-      <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',marginBottom:6,letterSpacing:'.05em'}}>{ctxResults.length} ENTR{ctxResults.length===1?'Y':'IES'}</div>
+      <div style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff',marginBottom:6,letterSpacing:'.05em'}}>{ctxResults.length} ENTR{ctxResults.length===1?'Y':'IES'}</div>
       {ctxResults.length===0&&<div style={{fontSize:11,color:'#888',textAlign:'center',padding:12}}>No matching entries.</div>}
       {ctxResults.map((e,i)=>(<div key={i} style={{padding:'5px 0',borderTop:i?'1px solid rgba(255,255,255,0.04)':'none'}}>
         <div style={{display:'flex',gap:8,alignItems:'baseline'}}>
           <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{fmtTs(e.ts)}</span>
-          <span style={{fontFamily:'Orbitron',fontSize:10,letterSpacing:'.05em',color:typeColor(e.type),padding:'1px 5px',borderRadius:3,border:'1px solid '+typeColor(e.type)+'44'}}>{e.type}</span>
+          <span style={{fontFamily:'Orbitron, sans-serif',fontSize:10,letterSpacing:'.05em',color:typeColor(e.type),padding:'1px 5px',borderRadius:3,border:'1px solid '+typeColor(e.type)+'44'}}>{e.type}</span>
         </div>
         <pre style={{fontSize:11,color:'#bbb',fontFamily:'JetBrains Mono',whiteSpace:'pre-wrap',margin:'3px 0 0 0',lineHeight:1.5,maxHeight:120,overflowY:'auto'}}>{JSON.stringify(e.data,null,2)}</pre>
       </div>))}
@@ -7691,7 +7691,7 @@ function SystemWS(){
     {/* Delete confirmation modal */}
     {ctxDelOpen&&<div onClick={()=>{setCtxDelOpen(false);setCtxDelConfirm('')}} style={{position:'fixed',inset:0,zIndex:300,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
       <div onClick={e=>e.stopPropagation()} style={{width:'min(460px,90vw)',background:'rgba(15,5,15,0.97)',border:'1px solid rgba(255,0,128,0.45)',borderRadius:10,padding:18}}>
-        <div style={{fontFamily:'Orbitron',fontSize:12,color:'#ff0080',letterSpacing:'.1em',marginBottom:8}}>⚠ DELETE CONTEXT LOG RANGE</div>
+        <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#ff0080',letterSpacing:'.1em',marginBottom:8}}>⚠ DELETE CONTEXT LOG RANGE</div>
         <div style={{fontSize:12,color:'#ddd',marginBottom:10,lineHeight:1.5}}>This will permanently delete log files from <strong style={{color:'#ff0080'}}>{ctxFrom||'(beginning)'}</strong> to <strong style={{color:'#ff0080'}}>{ctxTo||'(end)'}</strong>. Type <strong>DELETE</strong> to confirm.</div>
         <input value={ctxDelConfirm} onChange={e=>setCtxDelConfirm(e.target.value)} placeholder="DELETE" autoFocus
           style={{width:'100%',background:'rgba(0,0,0,0.4)',color:'#fff',border:'1px solid rgba(255,0,128,0.4)',borderRadius:6,padding:'8px 10px',fontFamily:'JetBrains Mono',fontSize:13,outline:'none',marginBottom:10}}/>
@@ -7954,7 +7954,7 @@ function DevProcs({onLog}){
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <span style={{display:'flex',alignItems:'center',gap:6}}>
               <span style={{width:8,height:8,borderRadius:'50%',background:live?color:'#777',boxShadow:live?'0 0 8px '+color:'none',animation:live?'pulse 1.6s infinite':'none',display:'inline-block'}}/>
-              <span style={{fontFamily:'Orbitron',fontSize:11,color:live?color:'#888'}}>{p.kind||'proc'}</span>
+              <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:live?color:'#888'}}>{p.kind||'proc'}</span>
             </span>
             {p.killable&&<button className="btn btn-magenta" style={{fontSize:11,padding:'1px 7px'}} onClick={()=>kill(p.id)}>Kill</button>}
           </div>
@@ -7999,7 +7999,7 @@ function CodeWS(){
     <div style={{display:'flex',gap:4,marginBottom:12,flexWrap:'wrap',borderBottom:'1px solid rgba(255,255,255,0.06)',paddingBottom:8}}>
       {TABS.map(t=><button key={t.id} className={'btn '+(tab===t.id?'active':'')} style={{fontSize:11,position:'relative'}} onClick={()=>setTab(t.id)}>
         {t.ico} {t.label}
-        {t.id==='logs'&&unseen>0&&tab!=='logs'&&<span style={{position:'absolute',top:-6,right:-6,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:'#ff0080',color:'#fff',fontSize:9,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 10px rgba(255,0,128,0.8)',animation:'pulse 1.4s infinite'}}>{unseen>99?'99+':unseen}</span>}
+        {t.id==='logs'&&unseen>0&&tab!=='logs'&&<span style={{position:'absolute',top:-6,right:-6,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:'#ff0080',color:'#fff',fontSize:9,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 10px rgba(255,0,128,0.8)',animation:'pulse 1.4s infinite'}}>{unseen>99?'99+':unseen}</span>}
       </button>)}
     </div>
     {tab==='repos'&&<DevRepos repos={repos} loading={repoLoading} onScan={scanRepos} onPick={(r)=>setTab('git')}/>}
@@ -8498,7 +8498,7 @@ function NewsWS(){
         <FridayDoc text={htmlContent} style={{padding:'4px 8px'}}/>}
       </div>
       {chatOpen&&<div style={{width:280,borderLeft:'1px solid rgba(255,255,255,0.04)',paddingLeft:10,display:'flex',flexDirection:'column'}}>
-        <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',marginBottom:8}}>DISCUSS BRIEFING</div>
+        <div style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff',marginBottom:8}}>DISCUSS BRIEFING</div>
         <div style={{flex:1,overflowY:'auto',marginBottom:8}}>{chatMsgs.map((m,i)=><div key={i} style={{marginBottom:6,textAlign:m.role==='user'?'right':'left'}}><div style={{display:'inline-block',maxWidth:'90%',padding:'5px 8px',borderRadius:6,fontSize:11,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div></div>)}{chatLoad&&<div style={{fontSize:11,color:'#00d4ff'}}>Thinking...</div>}</div>
         <div style={{display:'flex',gap:4,alignItems:'flex-end'}}><FridayChatInput className="input" style={{flex:1,fontSize:11}} maxHeight={110} value={chatIn} onChange={setChatIn} onSend={sendBriefingChat} placeholder="Ask about this briefing..."/><button className="btn" style={{fontSize:11}} onClick={sendBriefingChat}>Send</button></div>
       </div>}
@@ -9504,7 +9504,7 @@ function buildDraftHtml(text,mode,promptText){
     "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }",
     '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }',
     '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }',
-    ".header h1 { font-family: 'Orbitron', monospace; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }",
+    ".header h1 { font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }",
     '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }',
     ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }",
     '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }',
@@ -9828,7 +9828,7 @@ function DraftWS(){
     {/* Draft output */}
     {draft&&<div style={{marginBottom:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>DRAFT OUTPUT</span>
+        <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>DRAFT OUTPUT</span>
         <div style={{display:'flex',gap:4,alignItems:'center'}}>
           <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:mode==='tweet'&&charCount>280?'#ff0080':'#555'}}>
             {charCount} chars{mode==='tweet'&&charCount>280?' ⚠️ over limit':''}
@@ -9858,7 +9858,7 @@ function DraftWS(){
 
     {/* History */}
     {history.length>0&&<div>
-      <div style={{fontFamily:'Orbitron',fontSize:11,color:'#999',marginBottom:6}}>RECENT DRAFTS</div>
+      <div style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#999',marginBottom:6}}>RECENT DRAFTS</div>
       {history.map((h,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer',padding:'6px 10px'}}
         onClick={()=>{setDraft(h.draft);setCharCount(h.draft.length);setMode(h.mode)}}>
         <div style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
@@ -9892,19 +9892,19 @@ function FinanceWS(){
         <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
         <div className="card"><div className="card-title">Card Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:11}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
       </div>
-      <div className="card" style={{marginBottom:10}}><div className="card-title">Positions</div>{positions.length===0?<div style={{color:'#999',fontSize:11}}>No positions configured. Edit ~/.friday/finance/portfolio.json</div>:positions.map((p,i)=>{const hasGain=p.shares>0&&p.cost_basis>0;return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><div><span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.ticker}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{p.shares} shares</span></div>{hasGain&&<span style={{fontSize:11,color:'#888'}}>basis: ${p.cost_basis.toLocaleString()}</span>}</div>})}</div>
+      <div className="card" style={{marginBottom:10}}><div className="card-title">Positions</div>{positions.length===0?<div style={{color:'#999',fontSize:11}}>No positions configured. Edit ~/.friday/finance/portfolio.json</div>:positions.map((p,i)=>{const hasGain=p.shares>0&&p.cost_basis>0;return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><div><span style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color:'#00d4ff'}}>{p.ticker}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{p.shares} shares</span></div>{hasGain&&<span style={{fontSize:11,color:'#888'}}>basis: ${p.cost_basis.toLocaleString()}</span>}</div>})}</div>
       <div className="card"><div className="card-title">Unused Perks</div>{unusedPerks.slice(0,5).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:12,color:'#aaa'}}>{p.name}</span><span className="badge-green" style={{fontSize:11}}>{p.value}</span></div>)}</div>
     </div>}
     {view==='portfolio'&&<div>
       <div className="card-title">Portfolio Positions</div>
-      {positions.map((p,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#a8a8b4'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
+      {positions.map((p,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron, sans-serif',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#a8a8b4'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
       <div style={{fontSize:11,color:'#999',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' · ')}</div>
       <div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
     </div>}
     {view==='perks'&&<div>
       <div className="card-title">Credit Card Perks</div>
       {perksList.map((p,i)=>{const expiring=p.expires&&((new Date(p.expires)-new Date())/(1000*60*60*24))<60;return <div key={i} className="card" style={{marginBottom:6,borderColor:p.used?'rgba(255,255,255,0.02)':expiring?'rgba(245,158,11,0.2)':'rgba(0,255,128,0.1)'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontSize:13,color:p.used?'#555':'#ddd'}}>{p.name}</span>{p.used&&<span className="badge-cyan" style={{fontSize:11,marginLeft:6}}>USED</span>}{!p.used&&expiring&&<span className="badge-amber" style={{fontSize:11,marginLeft:6}}>EXPIRING</span>}</div><span style={{fontFamily:'Orbitron',fontSize:12,color:p.used?'#444':'#00ff80'}}>{p.value}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontSize:13,color:p.used?'#555':'#ddd'}}>{p.name}</span>{p.used&&<span className="badge-cyan" style={{fontSize:11,marginLeft:6}}>USED</span>}{!p.used&&expiring&&<span className="badge-amber" style={{fontSize:11,marginLeft:6}}>EXPIRING</span>}</div><span style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:p.used?'#444':'#00ff80'}}>{p.value}</span></div>
         {p.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:3}}>{p.notes}</div>}
         {p.expires&&<div style={{fontSize:11,color:'#999',marginTop:2}}>Expires: {p.expires}</div>}
       </div>})}
@@ -9962,7 +9962,7 @@ function HealthWS(){
     {view==='insurance'&&<div>
       <div className="card-title">Insurance</div>
       <div className="card" style={{marginBottom:8}}>
-        <div style={{fontSize:16,fontFamily:'Orbitron',color:'#00d4ff',marginBottom:8}}>{ins.provider||'Your Insurance Provider'}</div>
+        <div style={{fontSize:16,fontFamily:'Orbitron, sans-serif',color:'#00d4ff',marginBottom:8}}>{ins.provider||'Your Insurance Provider'}</div>
         {[['Plan',ins.plan],['Policy #',ins.policy_number],['Group #',ins.group_number],['Member Services',ins.member_services]].map(([l,v],i)=>v?<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:11,color:'#888'}}>{l}</span><div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{v}</span><button className="btn" style={{fontSize:11,padding:'1px 5px'}} onClick={()=>copyText(v)}>Copy</button></div></div>:null)}
         {ins.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:6}}>{ins.notes}</div>}
       </div>
@@ -10090,7 +10090,7 @@ function ContactsWS(){
       <div className="card" style={{marginBottom:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
           <div><div style={{fontWeight:600,fontSize:14}}>{selected.name}</div>{selected.aliases&&selected.aliases.length>0&&<div style={{fontSize:11,color:'#999'}}>aka {selected.aliases.join(', ')}</div>}</div>
-          <div style={{fontFamily:'Orbitron',fontSize:16,color:col}}>{pct}%</div>
+          <div style={{fontFamily:'Orbitron, sans-serif',fontSize:16,color:col}}>{pct}%</div>
         </div>
         <div className="progress-bar"><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
       </div>
@@ -10135,7 +10135,7 @@ function ContactsWS(){
               <div style={{fontWeight:600,fontSize:12,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.name}</div>
               {c.aliases&&c.aliases.length>0&&<div style={{fontSize:11,color:'#999',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.aliases.join(', ')}</div>}
             </div>
-            <div style={{fontFamily:'Orbitron',fontSize:12,color:col,marginLeft:6}}>{pct}%</div>
+            <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:col,marginLeft:6}}>{pct}%</div>
           </div>
           <div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
           <div style={{fontSize:11,color:'#999',marginTop:3,fontFamily:'JetBrains Mono'}}>{c.evidence_count||0} evidence</div>
@@ -10193,7 +10193,7 @@ function ContentIdeasTab({onGraduate}){
       {/* Stage rail — click any stage to move this item there */}
       <div style={{display:'flex',gap:3,marginBottom:8}}>
         {STAGES.map((s,i)=><button key={s} onClick={()=>moveStage(s)} title={'Move to '+s}
-          style={{flex:1,fontSize:9.5,padding:'4px 2px',borderRadius:5,cursor:'pointer',textTransform:'uppercase',letterSpacing:'.03em',fontFamily:'Orbitron',
+          style={{flex:1,fontSize:9.5,padding:'4px 2px',borderRadius:5,cursor:'pointer',textTransform:'uppercase',letterSpacing:'.03em',fontFamily:'Orbitron, sans-serif',
             background:i===idx?STAGE_COLORS[s]+'33':'rgba(255,255,255,0.04)',color:i<=idx?STAGE_COLORS[s]:'#777',
             border:'1px solid '+(i===idx?STAGE_COLORS[s]+'66':'rgba(255,255,255,0.06)')}}>{s}</button>)}
       </div>
@@ -10280,7 +10280,7 @@ function ContentIdeasTab({onGraduate}){
     <div style={{display:'grid',gridTemplateColumns:'repeat(5, 1fr)',gap:6,minHeight:200}}>
       {STAGES.map(stage=>{const items=by[stage]||[];const col=STAGE_COLORS[stage];return(<div key={stage} style={{background:'rgba(255,255,255,0.05)',borderRadius:6,padding:6,border:'1px solid rgba(255,255,255,0.04)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,paddingBottom:4,borderBottom:'1px solid '+col+'22'}}>
-          <span style={{fontFamily:'Orbitron',fontSize:11,color:col,letterSpacing:'.05em',textTransform:'uppercase'}}>{stage}</span>
+          <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:col,letterSpacing:'.05em',textTransform:'uppercase'}}>{stage}</span>
           <span style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>{items.length}</span>
         </div>
         {items.length===0?<div style={{fontSize:11,color:'#888',textAlign:'center',padding:'8px 0'}}>—</div>:items.map((it,i)=>(<div key={it.id||i} className="card" style={{marginBottom:4,padding:6,cursor:'pointer',borderColor:col+'22'}} onClick={()=>openItem(it)}>
@@ -10576,13 +10576,13 @@ function ContentCalendarTab({onCompose,onEdit}){
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6}}>{toast}</div>}
     <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8}}>
       <button aria-label={view === 'month' ? 'Previous month' : 'Previous week'} title={view === 'month' ? 'Previous month' : 'Previous week'} className="btn" style={{fontSize:11}} onClick={()=>nav(-1)}>‹</button>
-      <span style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff',flex:1,textAlign:'center'}}>{hdr}</span>
+      <span style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',flex:1,textAlign:'center'}}>{hdr}</span>
       <button aria-label={view === 'month' ? 'Next month' : 'Next week'} title={view === 'month' ? 'Next month' : 'Next week'} className="btn" style={{fontSize:11}} onClick={()=>nav(1)}>›</button>
       <button className={'btn '+(view==='month'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('month')}>Month</button>
       <button className={'btn '+(view==='week'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('week')}>Week</button>
     </div>
     {view==='month'&&<div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3,marginBottom:3}}>{DOW.map(d=><div key={d} style={{fontSize:9,color:'#777',textAlign:'center',fontFamily:'Orbitron'}}>{d}</div>)}</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3,marginBottom:3}}>{DOW.map(d=><div key={d} style={{fontSize:9,color:'#777',textAlign:'center',fontFamily:'Orbitron, sans-serif'}}>{d}</div>)}</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3}}>
         {monthDays().map((day,i)=>{const inMonth=day.getMonth()===anchor.getMonth();const today=sameDay(new Date().toISOString(),day);
           return(<div key={i} onDragOver={e=>e.preventDefault()} onDrop={e=>dropOnDay(e,day)}
@@ -10595,7 +10595,7 @@ function ContentCalendarTab({onCompose,onEdit}){
     </div>}
     {view==='week'&&<div style={{display:'grid',gridTemplateColumns:'34px repeat(7,1fr)',gap:2}}>
       <div/>
-      {weekDays().map((d,i)=><div key={i} style={{fontSize:9,color:'#999',textAlign:'center',fontFamily:'Orbitron'}}>{DOW[i]} {d.getDate()}</div>)}
+      {weekDays().map((d,i)=><div key={i} style={{fontSize:9,color:'#999',textAlign:'center',fontFamily:'Orbitron, sans-serif'}}>{DOW[i]} {d.getDate()}</div>)}
       {[...Array(17)].map((_,ri)=>{const h=ri+6;return(<React.Fragment key={h}>
         <div style={{fontSize:8.5,color:'#666',fontFamily:'JetBrains Mono',textAlign:'right',paddingRight:3}}>{cpPad(h)}:00</div>
         {weekDays().map((day,ci)=>(<div key={ci} onDragOver={e=>e.preventDefault()} onDrop={e=>dropOnSlot(e,day,h)} title="Drop a pill here — top half = :00, bottom half = :30"
@@ -10632,7 +10632,7 @@ function ContentQueueTab({onEdit}){
   const paused=!!(q&&(q.paused||q.pause_all));
   const post=(url,payload,msg)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})}).then(r=>r.json()).then(d=>{flash(d&&d.ok===false?(d.message||d.reason||'Failed'):msg);load()}).catch(()=>flash('Request failed'));
   const pauseAll=()=>post('/api/content/pause',{paused:!paused},paused?'▶ Publishing resumed':'⏸ Publishing paused');
-  const Chip=({s})=><span style={{fontSize:9,padding:'1px 6px',borderRadius:4,fontFamily:'Orbitron',letterSpacing:'.04em',background:(cpStatusCol[s]||'#888')+'22',color:cpStatusCol[s]||'#888',border:'1px solid '+(cpStatusCol[s]||'#888')+'44'}}>{s}</span>;
+  const Chip=({s})=><span style={{fontSize:9,padding:'1px 6px',borderRadius:4,fontFamily:'Orbitron, sans-serif',letterSpacing:'.04em',background:(cpStatusCol[s]||'#888')+'22',color:cpStatusCol[s]||'#888',border:'1px solid '+(cpStatusCol[s]||'#888')+'44'}}>{s}</span>;
   const Row=({t})=>{const m=cpMeta(t.platform);return(
     <div className="card" style={{display:'flex',gap:8,alignItems:'center',padding:'7px 10px',marginBottom:4}}>
       <span style={{fontSize:14}}>{m.ico}</span>
@@ -10654,7 +10654,7 @@ function ContentQueueTab({onEdit}){
       <button className={'btn '+(paused?'':'btn-magenta')} style={{fontSize:11,color:paused?'#f59e0b':undefined}} title="Global kill switch — nothing publishes anywhere while paused" onClick={pauseAll}>{paused?'⏸ Paused — resume':'⏸ Pause all'}</button>
     </div>
     {held.length>0&&<div style={{border:'1px solid rgba(245,158,11,0.4)',borderRadius:8,padding:8,marginBottom:10,background:'rgba(245,158,11,0.05)'}}>
-      <div style={{fontFamily:'Orbitron',fontSize:11,color:'#f59e0b',letterSpacing:'.05em',marginBottom:6}}>⚠ HELD FOR YOUR REVIEW — nothing ships until you release it</div>
+      <div style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#f59e0b',letterSpacing:'.05em',marginBottom:6}}>⚠ HELD FOR YOUR REVIEW — nothing ships until you release it</div>
       {held.map((t,i)=>{const m=cpMeta(t.platform);const spans=t.flagged_spans||t.evidence||t.spans||[];return(
         <div key={t.id||i} className="card" style={{padding:'8px 10px',marginBottom:4,borderColor:'rgba(245,158,11,0.3)'}}>
           <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4}}>
@@ -10923,7 +10923,7 @@ function QuickPostModal({payload,onClose}){
   return(<div onClick={onClose} style={{position:'fixed',inset:0,zIndex:210,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
     <div onClick={e=>e.stopPropagation()} style={{width:'min(560px,92vw)',maxHeight:'85vh',overflowY:'auto',background:'rgba(10,10,18,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:12,padding:16,boxShadow:'0 12px 40px rgba(0,0,0,0.8)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <div style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff',letterSpacing:'.08em'}}>📤 QUICK POST{title?(' · '+title.slice(0,40)):''}</div>
+        <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',letterSpacing:'.08em'}}>📤 QUICK POST{title?(' · '+title.slice(0,40)):''}</div>
         <button className="btn" style={{fontSize:10}} onClick={onClose}>× Close</button>
       </div>
       {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6}}>{toast}</div>}
@@ -12653,7 +12653,7 @@ function TraceModalHost() {
     }
   }, rtEl("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 10,
       color: '#00d4ff',
       letterSpacing: '0.08em',
@@ -14964,7 +14964,7 @@ function VoiceSetupWizard({onClose}){
   };
   return(<div style={{background:'rgba(0,0,0,0.5)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,padding:20,marginBottom:18}}>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-      <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff',letterSpacing:'0.05em'}}>VOICE SETUP WIZARD</div>
+      <div style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color:'#00d4ff',letterSpacing:'0.05em'}}>VOICE SETUP WIZARD</div>
       {onClose&&<button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={onClose}>✕ Close</button>}
     </div>
     {!status&&<div style={{color:'#888',fontSize:12}}>Checking voice readiness…</div>}
@@ -15428,7 +15428,7 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Vault">
       {vaultStatus&&<div style={{padding:'12px 14px',background:'rgba(0,0,0,0.3)',borderRadius:8,border:'1px solid rgba(0,212,255,0.08)',marginBottom:14}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
-          {[{l:'Status',v:vaultStatus.locked?'LOCKED':'UNLOCKED',c:vaultStatus.locked?'#f59e0b':'#00ff80'},{l:'Encryption',v:vaultStatus.encryption||'None',c:vaultStatus.encryption==='AES-256-GCM'?'#00ff80':'#f59e0b'},{l:'Entries',v:vaultStatus.entry_count??'—',c:'#00d4ff'}].map(x=><div key={x.l}><div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:3}}>{x.l}</div><div style={{fontFamily:'Orbitron',fontSize:12,color:x.c}}>{x.v}</div></div>)}
+          {[{l:'Status',v:vaultStatus.locked?'LOCKED':'UNLOCKED',c:vaultStatus.locked?'#f59e0b':'#00ff80'},{l:'Encryption',v:vaultStatus.encryption||'None',c:vaultStatus.encryption==='AES-256-GCM'?'#00ff80':'#f59e0b'},{l:'Entries',v:vaultStatus.entry_count??'—',c:'#00d4ff'}].map(x=><div key={x.l}><div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:3}}>{x.l}</div><div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:x.c}}>{x.v}</div></div>)}
         </div>
       </div>}
       {!vaultStatus&&<div style={{fontSize:12,color:'var(--st-dim)',marginBottom:14}}>Reading the vault’s status…</div>}
@@ -16370,7 +16370,7 @@ function AddProviderForm({templates,onDone,onCancel}){
     setBusy(false);
   };
   return <div style={{background:'rgba(0,212,255,0.03)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:14,marginBottom:12}}>
-    <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'.1em',marginBottom:10}}>ADD PROVIDER</div>
+    <div style={{fontFamily:'Orbitron, sans-serif',fontSize:10,color:'#00d4ff',letterSpacing:'.1em',marginBottom:10}}>ADD PROVIDER</div>
     <StRow label="Template">
       <select className="input" style={{width:'100%'}} value={tpl} onChange={e=>setTpl(e.target.value)}>
         {tplNames.map(n=><option key={n} value={n}>{(templates[n].label||n)+(n==='custom'?' (any /v1 endpoint)':'')}</option>)}
@@ -17432,16 +17432,16 @@ function SettingsTabAbout(){
   const fmtUp=sec=>{if(!sec)return'—';const hh=Math.floor(sec/3600),mm=Math.floor((sec%3600)/60);return hh>0?`${hh}h ${mm}m`:`${mm}m`;};
   return <div>
     <div style={{textAlign:'center',padding:'24px 16px 20px',background:'linear-gradient(135deg,rgba(245,158,11,0.05),rgba(0,212,255,0.03))',borderRadius:10,border:'1px solid rgba(245,158,11,0.1)',marginBottom:24}}>
-      <div className="st-brand" style={{fontFamily:'Orbitron',fontSize:22,color:'#f59e0b',letterSpacing:'.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 20px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
+      <div className="st-brand" style={{fontFamily:'Orbitron, sans-serif',fontSize:22,color:'#f59e0b',letterSpacing:'.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 20px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
       <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>{'v'+(h?.version||'5.0.0')} · Desktop OS · Sovereign AI</div>
-      <div className="st-brand" style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',letterSpacing:'.2em'}}>BY FUTURESPEAK.AI</div>
+      <div className="st-brand" style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff',letterSpacing:'.2em'}}>BY FUTURESPEAK.AI</div>
     </div>
     <StSection title="System">
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
         {[{l:'Evolution day',v:evo?.day??'—',c:'#00d4ff'},{l:'Uptime',v:fmtUp(h?.uptime_seconds),c:'#00ff80'},{l:'Mood',v:h?.mood||'—',c:'#a855f7'},{l:'Creations today',v:h?.creations_today??'—',c:'#f59e0b'},{l:'Memory entries',v:h?.memory_entries??'—',c:'#00d4ff'},{l:'Vault entries',v:h?.vault_count??'—',c:'#22c55e'}].map(x=>(
           <div key={x.l} style={{padding:'10px 12px',background:'rgba(255,255,255,0.02)',borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}>
             <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:4}}>{x.l}</div>
-            <div style={{fontFamily:'Orbitron',fontSize:14,color:x.c}}>{x.v}</div>
+            <div style={{fontFamily:'Orbitron, sans-serif',fontSize:14,color:x.c}}>{x.v}</div>
           </div>
         ))}
       </div>
@@ -17659,7 +17659,7 @@ function LoopGuardSwitch({ on, onToggle }) {
              borderTop: '1px solid rgba(255,255,255,0.07)' }
   },
     /*#__PURE__*/React.createElement("div", {
-      style: { fontFamily: 'Orbitron', fontSize: 9, color: '#00d4ff',
+      style: { fontFamily: 'Orbitron, sans-serif', fontSize: 9, color: '#00d4ff',
                letterSpacing: '.15em', marginBottom: 8 }
     }, "STUCK-MODEL GUARD"),
     /*#__PURE__*/React.createElement("div", {
@@ -17878,7 +17878,7 @@ function SettingsTabCosts() {
     style: {
       fontSize: 30,
       color: '#fff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, usd(s && s.total_usd)), /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
@@ -17953,7 +17953,7 @@ function SettingsTabCosts() {
     style: {
       fontSize: 22,
       color: '#fff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, pct(s.cache_hit_rate)), /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
@@ -21391,10 +21391,10 @@ function App(){
     <div className={`top-bar ${topBarHidden?'hidden':''}`}>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
         <div style={{display:'flex',alignItems:'baseline',gap:5,lineHeight:1}}>
-          <span onClick={()=>toggle('system')} style={{fontFamily:'Orbitron',fontWeight:900,fontSize:15,color:'#00d4ff',cursor:'pointer',userSelect:'none',letterSpacing:'0.06em',textShadow:'0 0 14px rgba(0,212,255,0.45)',transition:'text-shadow .2s'}} title="Open System workspace">{agentSettings.agent_name||'AGENT FRIDAY'}</span>
+          <span onClick={()=>toggle('system')} style={{fontFamily:'Orbitron, sans-serif',fontWeight:900,fontSize:15,color:'#00d4ff',cursor:'pointer',userSelect:'none',letterSpacing:'0.06em',textShadow:'0 0 14px rgba(0,212,255,0.45)',transition:'text-shadow .2s'}} title="Open System workspace">{agentSettings.agent_name||'AGENT FRIDAY'}</span>
           <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(255,255,255,0.72)',letterSpacing:'0.04em',marginLeft:4,textShadow:'0 0 6px rgba(0,0,0,0.8)'}}>by</span>
           <a href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer"
-            style={{fontFamily:'Orbitron',fontWeight:900,fontSize:15,color:'#f59e0b',textDecoration:'none',letterSpacing:'0.06em',transition:'color .2s,text-shadow .2s',textShadow:'0 0 14px rgba(245,158,11,0.55)'}}
+            style={{fontFamily:'Orbitron, sans-serif',fontWeight:900,fontSize:15,color:'#f59e0b',textDecoration:'none',letterSpacing:'0.06em',transition:'color .2s,text-shadow .2s',textShadow:'0 0 14px rgba(245,158,11,0.55)'}}
             onMouseEnter={e=>{e.currentTarget.style.color='#fbbf24';e.currentTarget.style.textShadow='0 0 18px rgba(245,158,11,0.85)'}}
             onMouseLeave={e=>{e.currentTarget.style.color='#f59e0b';e.currentTarget.style.textShadow='0 0 14px rgba(245,158,11,0.55)'}}>
             FutureSpeak.AI
@@ -21417,7 +21417,7 @@ function App(){
             <span style={{fontSize:10,opacity:0.85}} aria-hidden="true">▾</span>
           </button>
           {sceneMenuOpen&&<div style={{position:'absolute',marginTop:6,width:260,background:'rgba(10,14,26,0.88)',backdropFilter:'blur(20px) saturate(1.3)',WebkitBackdropFilter:'blur(20px) saturate(1.3)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'6px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.5),0 0 40px rgba(0,212,255,0.06)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
-            <div style={{padding:'4px 12px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.7)',letterSpacing:'0.08em',textTransform:'uppercase'}}>Holographic Scene</div>
+            <div style={{padding:'4px 12px 6px',fontFamily:'Orbitron, sans-serif',fontSize:9,color:'rgba(0,212,255,0.7)',letterSpacing:'0.08em',textTransform:'uppercase'}}>Holographic Scene</div>
             {(structures.length>0?structures:WIZARD_STRUCTURES).map((s,i)=>(
               <button key={i} onClick={()=>{window.fridayVibe?.setStructure(i);fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:i})}).catch(()=>{});setSceneMenuOpen(false)}}
                 style={{display:'block',width:'100%',textAlign:'left',background:sceneState.structIdx===i?'rgba(0,212,255,0.12)':'transparent',border:'none',borderLeft:sceneState.structIdx===i?'2px solid rgba(0,212,255,0.7)':'2px solid transparent',padding:'7px 12px',cursor:'pointer',color:sceneState.structIdx===i?'#00d4ff':'rgba(255,255,255,0.72)',fontFamily:'JetBrains Mono',fontSize:11,transition:'background .15s,border-color .15s',letterSpacing:'.03em'}}
@@ -21435,7 +21435,7 @@ function App(){
             </button>
             <AvatarEvolutionSection/>
             <div style={{borderTop:'1px solid rgba(255,255,255,0.06)',margin:'4px 0'}}/>
-            <div style={{padding:'4px 12px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.7)',letterSpacing:'0.08em',textTransform:'uppercase'}}>Camera Tracking</div>
+            <div style={{padding:'4px 12px 6px',fontFamily:'Orbitron, sans-serif',fontSize:9,color:'rgba(0,212,255,0.7)',letterSpacing:'0.08em',textTransform:'uppercase'}}>Camera Tracking</div>
             {[{k:'holo',label:'Face Tracking',hint:'Parallax \u2014 the scene moves with your head',fn:'toggleHologram'},
               {k:'hands',label:'Minority Report',hint:'Pinch to click, hold to right-click',fn:'toggleHands'}].map(t=>(
               <button key={t.k} onClick={()=>{window.fridayVibe?.[t.fn]?.();setTimeout(()=>setSceneState(v=>({...v,holo:window.fridayVibe?.isHologramOn?.()??v.holo,hands:window.fridayVibe?.isHandsOn?.()??v.hands})),120)}}
@@ -21553,7 +21553,7 @@ function App(){
                 <span style={{fontSize:9,opacity:0.7,flexShrink:0}} aria-hidden="true">{modelMenuRole==='creative'?'▴':'▾'}</span>
               </button>
               {modelMenuRole==='creative'&&<div style={{paddingBottom:4}}>
-                <div style={{padding:'4px 12px 2px 34px',fontFamily:'Orbitron',fontSize:8,color:'rgba(0,212,255,0.55)',letterSpacing:'0.1em',textTransform:'uppercase'}}>Image model</div>
+                <div style={{padding:'4px 12px 2px 34px',fontFamily:'Orbitron, sans-serif',fontSize:8,color:'rgba(0,212,255,0.55)',letterSpacing:'0.1em',textTransform:'uppercase'}}>Image model</div>
                 {mmCreativeImg.length===0&&<div style={{padding:'2px 12px 4px 34px',fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>No available models — add a provider key</div>}
                 {mmCreativeImg.map(m=>{
                   const cur=agentSettings.creative_model===m.id;
@@ -21565,7 +21565,7 @@ function App(){
                     {cur?<span style={{flexShrink:0}} aria-hidden="true">✓</span>:null}
                   </button>
                 )})}
-                {mmCreativeVid.length>0&&<div style={{padding:'4px 12px 2px 34px',fontFamily:'Orbitron',fontSize:8,color:'rgba(0,212,255,0.55)',letterSpacing:'0.1em',textTransform:'uppercase'}}>Video model</div>}
+                {mmCreativeVid.length>0&&<div style={{padding:'4px 12px 2px 34px',fontFamily:'Orbitron, sans-serif',fontSize:8,color:'rgba(0,212,255,0.55)',letterSpacing:'0.1em',textTransform:'uppercase'}}>Video model</div>}
                 {mmCreativeVid.map(m=>{
                   const cur=creativeVideoId===m.id;
                   return(
@@ -21601,7 +21601,7 @@ function App(){
                   </button>
                 )})}
                 {voiceEngine==='gemini'&&mmVoiceModels.length>0&&<div>
-                  <div style={{padding:'4px 12px 2px 34px',fontFamily:'Orbitron',fontSize:8,color:'rgba(0,212,255,0.55)',letterSpacing:'0.1em',textTransform:'uppercase'}}>Gemini Live model</div>
+                  <div style={{padding:'4px 12px 2px 34px',fontFamily:'Orbitron, sans-serif',fontSize:8,color:'rgba(0,212,255,0.55)',letterSpacing:'0.1em',textTransform:'uppercase'}}>Gemini Live model</div>
                   {mmVoiceModels.map(m=>{
                     const cur=agentSettings.voice_model===m.id;
                     return(
@@ -21694,7 +21694,7 @@ function App(){
           aria-label={runningTaskCount>0?`${runningTaskCount} tasks running, open notifications`:'Open notifications'}>
           <span style={{fontSize:13}}>&#x1F514;</span>
           {bellBadgeCount>0&&<span className={runningTaskCount>0?'bell-badge-pulse':''}
-            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0a0f',fontWeight:700,fontFamily:'Orbitron'}}>{bellBadgeCount}</span>}
+            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0a0f',fontWeight:700,fontFamily:'Orbitron, sans-serif'}}>{bellBadgeCount}</span>}
         </button>
         <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}}
           style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
@@ -21749,7 +21749,7 @@ function App(){
         chat-panel's dock-clearance constant (116px). */}
     {noWindows&&<div style={{position:'fixed',left:0,right:0,bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
       <div style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
-      <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
+      <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron, sans-serif',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
       <div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:9,color:'rgba(0,212,255,0.45)',marginBottom:10,letterSpacing:'0.15em',textTransform:'uppercase'}}>by FutureSpeak.AI</div>
       {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:16,position:'relative',zIndex:1}}>
         {countdowns.map((c,i)=><React.Fragment key={i}>
@@ -21780,7 +21780,7 @@ function App(){
       {/* Start my day — sequential spoken briefing (calendar → email → news → tasks) */}
       <button onClick={()=>window.fridayStartMyDay&&window.fridayStartMyDay()}
         title="Start my day — a spoken briefing: calendar, then email, news, and tasks"
-        style={{marginTop:14,position:'relative',zIndex:1,pointerEvents:'auto',display:'inline-flex',alignItems:'center',gap:8,background:'rgba(0,212,255,0.10)',border:'1px solid rgba(0,212,255,0.35)',borderRadius:22,padding:'9px 18px',color:'#cdeffd',fontFamily:'Orbitron',fontSize:11,letterSpacing:'0.08em',cursor:'pointer',boxShadow:'0 4px 20px rgba(0,0,0,0.35)',transition:'background .2s,border-color .2s'}}
+        style={{marginTop:14,position:'relative',zIndex:1,pointerEvents:'auto',display:'inline-flex',alignItems:'center',gap:8,background:'rgba(0,212,255,0.10)',border:'1px solid rgba(0,212,255,0.35)',borderRadius:22,padding:'9px 18px',color:'#cdeffd',fontFamily:'Orbitron, sans-serif',fontSize:11,letterSpacing:'0.08em',cursor:'pointer',boxShadow:'0 4px 20px rgba(0,0,0,0.35)',transition:'background .2s,border-color .2s'}}
         onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,212,255,0.2)';e.currentTarget.style.borderColor='rgba(0,212,255,0.7)'}}
         onMouseLeave={e=>{e.currentTarget.style.background='rgba(0,212,255,0.10)';e.currentTarget.style.borderColor='rgba(0,212,255,0.35)'}}>
         <span style={{fontSize:14}}>🌅</span> START MY DAY
@@ -21795,7 +21795,7 @@ function App(){
       onClose={()=>{setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}}/>}
     {cameraOn&&cameraControlsOpen&&<div className="camera-control-panel">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>CAMERA MODE</span>
+        <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>CAMERA MODE</span>
         <button aria-label={'Close camera controls'} title={'Close camera controls'} onClick={()=>setCameraControlsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:13}}>&#x2715;</button>
       </div>
       <div style={{fontSize:11,color:'rgba(255,255,255,0.8)',marginTop:4}}>Source</div>
@@ -21882,7 +21882,7 @@ function App(){
     <TraceModalHost/>
     {activityOpen&&<div style={{position:'fixed',top:60,right:14,width:activityTab==='traces'?760:400,maxWidth:'calc(100vw - 16px)',maxHeight:'calc(100vh - 120px)',display:'flex',flexDirection:'column',background:'rgba(8,12,20,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:10,zIndex:9500,boxShadow:'0 8px 40px rgba(0,0,0,0.6)'}} onClick={e=>e.stopPropagation()}>
       <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-        <span style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'0.08em'}}>ACTIVITY LEDGER</span>
+        <span style={{fontFamily:'Orbitron, sans-serif',fontSize:10,color:'#00d4ff',letterSpacing:'0.08em'}}>ACTIVITY LEDGER</span>
         <div role="tablist" style={{display:'inline-flex',gap:2,flexShrink:0}}>
           {[['activity','Activity'],['traces','Reasoning traces']].map(([k,l])=><button key={k} role="tab" aria-selected={activityTab===k} onClick={()=>setActivityTab(k)}
             style={{background:activityTab===k?'rgba(0,212,255,0.14)':'none',border:'1px solid '+(activityTab===k?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.12)'),color:activityTab===k?'#00d4ff':'#99a',cursor:'pointer',fontSize:9,fontFamily:'JetBrains Mono',borderRadius:4,padding:'1px 6px',whiteSpace:'nowrap'}}>{l}</button>)}
@@ -22088,7 +22088,7 @@ function App(){
         the Settings workspace (dock → System → ⚙️ Settings). */}
     <div className={`settings-panel ${settingsOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 16px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK SETTINGS</span>
+        <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>QUICK SETTINGS</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           {settingsSaveMsg&&<span style={{fontSize:11,color:'#00ff80',fontFamily:'JetBrains Mono'}}>{settingsSaveMsg}</span>}
           <button onClick={()=>setSettingsOpen(false)} title="Close settings" aria-label="Close settings" style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:16}}>&#x2715;</button>
@@ -22134,7 +22134,7 @@ function App(){
     {/* Quick Draft Popup */}
     {quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
+        <span style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
         <button aria-label={'Close quick draft'} title={'Close quick draft'} onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
       </div>
       <div style={{display:'flex',gap:3,marginBottom:8,flexWrap:'wrap'}}>
@@ -22160,9 +22160,9 @@ function App(){
           <div className="dock-group-btns">
             {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
-              {w.id==='knowledge'&&wikiPending>0&&<span title={wikiPending+' wiki update'+(wikiPending===1?'':'s')+' waiting for your approval'} style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
-              {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
-              {w.id==='content'&&contentAlerts>0&&<span title="Held or failed posts need your attention — Content → Queue" style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{contentAlerts}</span>}
+              {w.id==='knowledge'&&wikiPending>0&&<span title={wikiPending+' wiki update'+(wikiPending===1?'':'s')+' waiting for your approval'} style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
+              {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
+              {w.id==='content'&&contentAlerts>0&&<span title="Held or failed posts need your attention — Content → Queue" style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{contentAlerts}</span>}
             </button>)}
           </div>
           {g.name&&<div className="dock-group-label">{g.name}</div>}
@@ -22182,7 +22182,7 @@ function App(){
       <div onClick={e=>e.stopPropagation()} style={{width:'min(720px, 90vw)',maxHeight:'85vh',overflowY:'auto',background:'rgba(10,10,18,0.96)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:12,padding:18,boxShadow:'0 12px 40px rgba(0,0,0,0.8)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
           <div>
-            <div style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff',letterSpacing:'.08em'}}>TASK RESULT · {(taskResultModal.status||'').toUpperCase()}</div>
+            <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',letterSpacing:'.08em'}}>TASK RESULT · {(taskResultModal.status||'').toUpperCase()}</div>
             <div style={{fontSize:14,color:'#fff',marginTop:3}}>{taskResultModal.name}</div>
           </div>
           <button className="btn" onClick={()=>setTaskResultModal(null)}>Close</button>
@@ -22192,7 +22192,7 @@ function App(){
           ?<FridayDoc compact text={taskResultModal.result} style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}/>
           :<div style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)',color:'#888',fontSize:12,fontStyle:'italic'}}>This process didn't return a written result — see the activity log below for what it did.</div>}
         {(taskResultModal.log||[]).length>0&&<div style={{marginTop:12}}>
-          <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',letterSpacing:'.08em',marginBottom:6}}>ACTIVITY LOG</div>
+          <div style={{fontFamily:'Orbitron, sans-serif',fontSize:11,color:'#00d4ff',letterSpacing:'.08em',marginBottom:6}}>ACTIVITY LOG</div>
           <div style={{background:'rgba(0,0,0,0.4)',padding:8,borderRadius:6,maxHeight:180,overflowY:'auto'}}>
             {(taskResultModal.log||[]).map((l,i)=><div key={i} style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(200,200,220,0.7)',padding:'1px 0'}}>→ {l}</div>)}
           </div>

@@ -161,7 +161,7 @@ def _build_draft_html(draft_text, mode, prompt_text=''):
         'body { background: #06060b; color: #e0e0e8; font-family: \'Inter\', sans-serif; line-height: 1.7; }\n'
         '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }\n'
         '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }\n'
-        '.header h1 { font-family: \'Orbitron\', monospace; font-size: 28px; font-weight: 900; '
+        '.header h1 { font-family: \'Orbitron\', sans-serif; font-size: 28px; font-weight: 900; '
         'background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); '
         '-webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }\n'
         '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }\n'

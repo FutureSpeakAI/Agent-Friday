@@ -29,7 +29,14 @@ git config core.hooksPath .githooks
    `src/`, and the two HTML files must write the same key set.
 4. **Stale model names** — `scripts/check_stale_model_names.py`. User-facing
    documents must not name a model that the product no longer ships.
-5. **Secret and PII scanner** — `.githooks/security_scan.py`. Scans staged
+5. **Brand tokens** — `scripts/check_brand_tokens.py`. The palette lives in
+   `src/agent_friday/brand.py`; the `--fr-*` block in `index.html` and
+   `ui_parts/head.html` must be byte-identical to `brand.css_root_block()`
+   (`--write` regenerates it). The Python colour tables read `brand`, the
+   reserved status hues stay at their shipped values, Orbitron always names a
+   `sans-serif` fallback, and `.status-dot` has one definition. It does not
+   migrate literals in the UI; see `docs/brand/BRAND.md`.
+6. **Secret and PII scanner** — `.githooks/security_scan.py`. Scans staged
    additions for credentials, private keys, personal identifiers, and
    username-bearing paths. Its exit status is the hook's.
 

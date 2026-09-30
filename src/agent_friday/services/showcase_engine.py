@@ -26,18 +26,19 @@ import logging
 import re
 from datetime import datetime
 
+from agent_friday import brand
 from agent_friday.core import CREATIONS_DIR
 from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.showcase")
 
 # Palette shared by both templates — Friday's dark-neon Studio look.
-_BG = "#07080d"
-_PANEL = "#10121c"
-_TEXT = "#e8e8f0"
-_MUTED = "#a8a8b4"
-_ACCENT = "#00d4ff"
-_ACCENT2 = "#a78bfa"
+_BG = brand.PAGE_BG
+_PANEL = brand.PAGE_PANEL
+_TEXT = brand.PAGE_TEXT
+_MUTED = brand.PAGE_MUTED
+_ACCENT = brand.CYAN
+_ACCENT2 = brand.VIOLET_SOFT
 
 
 # ── Spec parsing ───────────────────────────────────────────────────────────

@@ -65,6 +65,46 @@ window.addEventListener('DOMContentLoaded',function(){
      owner has not turned it off (services/web_fonts.py). -->
 <link href="/static/fonts/fonts.css" rel="stylesheet"/>
     <!-- Friday's scrollbars: one rule set, sized by one brand token. -->
+    <style id="friday-brand-tokens">
+/* brand-tokens:begin (generated from src/agent_friday/brand.py) */
+:root {
+    --fr-cyan: #00d4ff;
+    --fr-cyan-soft: rgba(0,212,255,0.12);
+    --fr-violet: #7b61ff;
+    --fr-magenta: #ff00ff;
+    --fr-violet-soft: #a78bfa;
+    --fr-cat-teal: #2dd4bf;
+    --fr-cat-pink: #f472b6;
+    --fr-ok: #00ff80;
+    --fr-warn: #f59e0b;
+    --fr-deny: #ff0080;
+    --fr-error: #ef4444;
+    --fr-neutral: #7a8699;
+    --fr-wordmark-amber: #f59e0b;
+    --fr-surface: #0a0e1a;
+    --fr-glass: rgba(10,14,26,0.75);
+    --fr-glass-blur: blur(16px) saturate(1.2);
+    --fr-glass-edge: rgba(255,255,255,0.06);
+    --fr-text: rgba(255,255,255,0.86);
+    --fr-label: rgba(255,255,255,0.78);
+    --fr-dim: rgba(255,255,255,0.46);
+    --fr-faint: rgba(255,255,255,0.3);
+    --fr-font-display: 'Orbitron', sans-serif;
+    --fr-font-body: 'Inter', system-ui, sans-serif;
+    --fr-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --fr-text-2xs: 9px;
+    --fr-text-xs: 10px;
+    --fr-text-sm: 11px;
+    --fr-text-md: 12px;
+    --fr-text-base: 13px;
+    --fr-text-lg: 15px;
+    --fr-text-xl: 18px;
+    --fr-text-2xl: 26px;
+    --fr-track-display: 0.06em;
+    --fr-track-label: 0.15em;
+}
+/* brand-tokens:end */
+    </style>
     <style id="friday-scrollbars">
         /* Every scroll area in Friday wears this one scrollbar. Its size is
            one brand token, --scrollbar-size: the track, which is also the grab
@@ -109,7 +149,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
     </style>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; cursor: default; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: var(--fr-font-body); cursor: default; }
         canvas { display: block; }
         /* Three.js renderer canvas: pin to viewport behind every UI layer. */
         body > canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
@@ -144,10 +184,15 @@ window.addEventListener('DOMContentLoaded',function(){
         .bottom-right .dot { bottom: 25%; right: 25%; }
 
         /* HEADER */
-        .status-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
-        .status-dot.green { background: #00ff66; box-shadow: 0 0 10px #00ff66, 0 0 2px #fff inset; }
-        .status-dot.red { background: #ff0033; box-shadow: 0 0 10px #ff0033, 0 0 2px #fff inset; }
-        .status-dot.yellow { background: #ffcc00; box-shadow: 0 0 10px #ffcc00, 0 0 2px #fff inset; }
+        .status-dot { --dot: var(--fr-neutral); width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+            background: var(--dot); box-shadow: 0 0 8px var(--dot); }
+        .status-dot.connected, .status-dot.green { --dot: var(--fr-ok); }
+        .status-dot.degraded, .status-dot.yellow { --dot: var(--fr-warn); }
+        .status-dot.connecting { --dot: var(--fr-violet); }
+        .status-dot.error, .status-dot.red { --dot: var(--fr-error); }
+        .status-dot.blocked_by_policy { --dot: var(--fr-deny); }
+        .status-dot.needs_setup { --dot: var(--fr-cyan); }
+        .status-dot.disconnected, .status-dot.unknown { --dot: var(--fr-neutral); box-shadow: none; }
 
         /* Camera indicator: only visible when holo mode active */
         #camera-indicator.holo-active { background: #00ff66; box-shadow: 0 0 8px #00ff66; }
@@ -302,7 +347,7 @@ window.addEventListener('DOMContentLoaded',function(){
             position: fixed; top: 44px; right: 16px; z-index: 9999;
             display: flex; align-items: center; gap: 7px;
             padding: 7px 14px; border-radius: 6px; cursor: pointer;
-            font-family: 'Orbitron', monospace; font-size: 12px; font-weight: 700;
+            font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 700;
             letter-spacing: 0.12em; border: none; pointer-events: auto;
             background: linear-gradient(135deg, #cc0000, #ff2222);
             color: #fff;
@@ -325,7 +370,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .cc-indicator {
             display: inline-flex; align-items: center; gap: 5px;
             padding: 2px 8px; border-radius: 10px; font-size: 10px;
-            font-family: 'Orbitron', monospace; letter-spacing: 0.06em;
+            font-family: 'Orbitron', sans-serif; letter-spacing: 0.06em;
             background: rgba(255,0,0,0.15); border: 1px solid rgba(255,80,80,0.5);
             color: #ff6060; animation: cc-blink 2s ease-in-out infinite;
         }
@@ -519,7 +564,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .chat-win-grip { color: rgba(0,212,255,0.55); font-size: 11px; }
         .chat-win-title {
-            font-family: 'Orbitron'; font-size: 10px; letter-spacing: .06em; color: #7fdcff;
+            font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: .06em; color: #7fdcff;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .chat-win textarea.input, .chat-panel textarea.input { min-height: 32px; }
@@ -535,10 +580,10 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .card:hover { border-color: rgba(0,212,255,0.3); box-shadow: 0 4px 30px rgba(0,0,0,0.35), 0 0 18px rgba(0,212,255,0.12); }
         .card-title {
-            font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.92);
+            font-family: 'Orbitron', sans-serif; font-size: 11px; color: rgba(0,212,255,0.92);
             letter-spacing: 0.08em; margin-bottom: 8px;
         }
-        .stat { font-family: 'Orbitron', monospace; font-size: 22px; color: #fff; }
+        .stat { font-family: 'Orbitron', sans-serif; font-size: 22px; color: #fff; }
         .stat-label { font-size: 11px; color: #b0b0c0; margin-top: 2px; }
 
         /* Badges */
@@ -621,10 +666,10 @@ window.addEventListener('DOMContentLoaded',function(){
             background: rgba(6,10,18,0.96); border-bottom: 1px solid rgba(0,212,255,0.18); backdrop-filter: blur(6px); }
         /* the desktop's own wordmark, as on its top bar */
         .ws-tab-brand { display: flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
-        .ws-tab-mark { font-family: 'Orbitron', monospace; font-weight: 900; font-size: 15px; letter-spacing: 0.06em; color: #00d4ff;
+        .ws-tab-mark { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 15px; letter-spacing: 0.06em; color: #00d4ff;
             text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); }
         .ws-tab-by { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: rgba(255,255,255,0.72); letter-spacing: 0.04em; margin-left: 4px; }
-        .ws-tab-fs { font-family: 'Orbitron', monospace; font-weight: 900; font-size: 15px; letter-spacing: 0.06em; color: #f59e0b;
+        .ws-tab-fs { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 15px; letter-spacing: 0.06em; color: #f59e0b;
             text-decoration: none; text-shadow: 0 0 14px rgba(245,158,11,0.55); transition: color .2s, text-shadow .2s; }
         .ws-tab-fs:hover { color: #fbbf24; text-shadow: 0 0 18px rgba(245,158,11,0.85); }
         .ws-tab-sep { color: rgba(255,255,255,0.28); font-size: 13px; user-select: none; }
@@ -839,7 +884,7 @@ window.addEventListener('DOMContentLoaded',function(){
             text-shadow: 0 1px 3px rgba(0,0,0,0.85), 0 0 12px rgba(0,0,0,0.7);
         }
         .greeting-ticker-item .days {
-            font-family: 'Orbitron', monospace; font-size: 18px; color: #00d4ff;
+            font-family: 'Orbitron', sans-serif; font-size: 18px; color: #00d4ff;
             text-shadow: 0 0 12px rgba(0,212,255,0.45), 0 1px 4px rgba(0,0,0,0.9);
         }
         .greeting-ticker-sep {
@@ -860,7 +905,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .settings-panel.open { right: 0; }
         .settings-section-title {
-            font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.95);
+            font-family: 'Orbitron', sans-serif; font-size: 11px; color: rgba(0,212,255,0.95);
             letter-spacing: 0.12em; margin-bottom: 10px; text-transform: uppercase;
         }
         .settings-subtitle {
@@ -881,12 +926,12 @@ window.addEventListener('DOMContentLoaded',function(){
            hard-coding its own greys, so the pane has one type scale and one
            palette. */
         .st-root {
-            --st-accent: #00d4ff; --st-accent-soft: rgba(0,212,255,0.12);
-            --st-text: rgba(255,255,255,0.86); --st-label: rgba(255,255,255,0.78);
-            --st-dim: rgba(255,255,255,0.46); --st-faint: rgba(255,255,255,0.3);
-            --st-line: rgba(255,255,255,0.06); --st-warn: #f59e0b; --st-danger: #ff6b8a;
-            --st-ok: #00ff80; --st-font: 'Inter', system-ui, sans-serif;
-            --st-mono: 'JetBrains Mono', monospace;
+            --st-accent: var(--fr-cyan); --st-accent-soft: var(--fr-cyan-soft);
+            --st-text: var(--fr-text); --st-label: var(--fr-label);
+            --st-dim: var(--fr-dim); --st-faint: var(--fr-faint);
+            --st-line: var(--fr-glass-edge); --st-warn: var(--fr-warn); --st-danger: var(--fr-error);
+            --st-ok: var(--fr-ok); --st-font: var(--fr-font-body);
+            --st-mono: var(--fr-font-mono);
         }
         .st-switch { all: unset; box-sizing: border-box; display: flex; width: 100%;
             justify-content: space-between; align-items: center; gap: 12px; cursor: pointer;
@@ -946,7 +991,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .sc-btn:hover { background: rgba(0,212,255,0.14); }
         .sc-btn[disabled] { opacity: .45; cursor: not-allowed; }
         .sc-btn.quiet { border-color: rgba(255,255,255,0.15); color: var(--st-dim); background: transparent; }
-        .sc-btn.danger { border-color: rgba(255,107,138,0.5); color: var(--st-danger); background: transparent; }
+        .sc-btn.danger { border-color: rgba(239,68,68,0.5); color: var(--st-danger); background: transparent; }
         .sc-side { flex: 1 1 520px; min-width: 0; overflow-y: auto; padding-left: 4px; }
         .sc-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; background: rgba(255,255,255,0.02);
             padding: 16px; margin-bottom: 14px; }
@@ -1054,7 +1099,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .camera-pip video { width: 100%; height: 100%; object-fit: cover; display: block; }
         .camera-pip .cam-label {
             position: absolute; top: 4px; left: 6px;
-            font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
+            font-family: 'Orbitron', sans-serif; font-size: 11px; color: #00d4ff;
             letter-spacing: 0.06em; text-shadow: 0 1px 4px #000;
             pointer-events: none;
         }
@@ -1123,7 +1168,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .task-tray-header {
             display: flex; justify-content: space-between; align-items: center;
             padding: 8px 12px; border-bottom: 1px solid rgba(0,212,255,0.08);
-            font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
+            font-family: 'Orbitron', sans-serif; font-size: 11px; color: #00d4ff;
             letter-spacing: 0.08em; position: sticky; top: 0;
             background: rgba(10,14,26,0.85);
             backdrop-filter: blur(16px) saturate(1.2);
@@ -1186,7 +1231,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .task-card-status {
             display: inline-flex; align-items: center; gap: 5px;
-            font-family: 'Orbitron', monospace; font-size: 11px;
+            font-family: 'Orbitron', sans-serif; font-size: 11px;
             letter-spacing: 0.06em;
         }
         .task-card.running .task-card-status { color: #f59e0b; }
@@ -1262,7 +1307,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .notif-section-header {
             display: flex; justify-content: space-between; align-items: center;
             padding: 9px 14px; border-bottom: 1px solid rgba(0,212,255,0.08);
-            font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
+            font-family: 'Orbitron', sans-serif; font-size: 11px; color: #00d4ff;
             letter-spacing: 0.1em; text-transform: uppercase;
             position: sticky; top: 0; z-index: 2;
             background: rgba(10,14,26,0.85);
@@ -1404,7 +1449,7 @@ window.addEventListener('DOMContentLoaded',function(){
             display: flex; align-items: flex-end; gap: 2px;
         }
         .dock-group-label {
-            font-family: 'Orbitron', monospace; font-size: 11px;
+            font-family: 'Orbitron', sans-serif; font-size: 11px;
             color: rgba(255,255,255,0.6); letter-spacing: 0.18em;
             text-transform: uppercase; margin-top: 2px;
             text-shadow: 0 1px 2px rgba(0,0,0,0.85);
@@ -1445,7 +1490,7 @@ window.addEventListener('DOMContentLoaded',function(){
             overflow-y: auto; padding: 6px 0;
         }
         .cmd-palette-section {
-            font-family: 'Orbitron', monospace; font-size: 11px;
+            font-family: 'Orbitron', sans-serif; font-size: 11px;
             color: rgba(0,212,255,0.9); letter-spacing: 0.14em;
             text-transform: uppercase; padding: 10px 20px 4px;
         }
@@ -1945,7 +1990,7 @@ window.addEventListener('DOMContentLoaded',function(){
         #condensed-approval .ca-actions { display: flex; gap: 6px; }
         #condensed-approval .ca-actions button {
             width: auto; height: 24px; padding: 0 10px; border-radius: 6px;
-            font-size: 10px; font-family: 'Orbitron', monospace; letter-spacing: 0.06em;
+            font-size: 10px; font-family: 'Orbitron', sans-serif; letter-spacing: 0.06em;
         }
 
         /* In the PiP window the page IS the widget, so there is no expanding
@@ -2092,7 +2137,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .thread-status-badge {
             display: inline-block; padding: 2px 7px; border-radius: 4px;
-            font-family: 'Orbitron', monospace; font-size: 9px;
+            font-family: 'Orbitron', sans-serif; font-size: 9px;
             letter-spacing: 0.1em; text-transform: uppercase; flex-shrink: 0;
         }
         .thread-status-badge.running { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
@@ -2157,7 +2202,7 @@ window.addEventListener('DOMContentLoaded',function(){
             border-top: 1px solid rgba(0,212,255,0.14);
         }
         .thread-result-label {
-            font-family: 'Orbitron', monospace; font-size: 9px; letter-spacing: 0.12em;
+            font-family: 'Orbitron', sans-serif; font-size: 9px; letter-spacing: 0.12em;
             color: #00d4ff; margin-bottom: 5px;
         }
         .thread-result-body {
@@ -2380,7 +2425,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* ─── Model Routing: Selector Tiers ─── */
         .model-selector-tier {
-            font-family: 'Orbitron', monospace; font-size: 9px;
+            font-family: 'Orbitron', sans-serif; font-size: 9px;
             color: rgba(0,212,255,0.75); letter-spacing: 0.12em;
             text-transform: uppercase; padding: 8px 12px 3px;
             user-select: none;
@@ -2411,7 +2456,7 @@ window.addEventListener('DOMContentLoaded',function(){
            NEWS WORKSPACE — magazine layout, source trust, status strip
            ═══════════════════════════════════════════════════════════ */
         /* Category accent colors — tech=cyan, politics=amber, local=green, business=purple */
-        .news-ws { --c-tech:#00d4ff; --c-politics:#f59e0b; --c-local:#00ff80; --c-business:#a78bfa; --c-science:#2dd4bf; --c-media:#f472b6;
+        .news-ws { --c-tech:var(--fr-cyan); --c-politics:var(--fr-warn); --c-local:var(--fr-ok); --c-business:var(--fr-violet-soft); --c-science:var(--fr-cat-teal); --c-media:var(--fr-cat-pink);
             container-type: inline-size; container-name: news; }
         .news-ws img { max-width: 100%; height: auto; }
 
@@ -2424,10 +2469,6 @@ window.addEventListener('DOMContentLoaded',function(){
             -webkit-backdrop-filter:blur(16px) saturate(1.2);
             border:1px solid rgba(255,255,255,0.06);
         }
-        .status-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-        .status-dot.connected { background:#00ff80; box-shadow:0 0 7px #00ff80; }
-        .status-dot.degraded { background:#f59e0b; box-shadow:0 0 7px rgba(245,158,11,0.7); }
-        .status-dot.disconnected { background:#666; }
         .status-pill .st-detail { color:rgba(255,255,255,0.4); font-size:10px; }
 
         /* News toolbar */
@@ -2486,7 +2527,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .news-headline, .news-snippet, .fp-lead-headline, .fp-lead-snippet, .cluster-headline, .cluster-item-link { overflow-wrap:break-word; }
         .cat-chip, .fp-badge, .breaking-badge, .source-badge, .cluster-badge { white-space:nowrap; flex-shrink:0; }
         .cat-chip {
-            font-family:'Orbitron',monospace; font-size:9px; letter-spacing:0.09em; text-transform:uppercase;
+            font-family:'Orbitron', sans-serif; font-size:9px; letter-spacing:0.09em; text-transform:uppercase;
             padding:2px 7px; border-radius:4px; color:var(--accent);
             background:color-mix(in srgb, var(--accent) 12%, transparent);
             border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -2605,7 +2646,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
         .news-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:10px; color:#727a8a; }
         .breaking-badge {
-            font-family:'Orbitron',monospace; font-size:9px; letter-spacing:0.07em;
+            font-family:'Orbitron', sans-serif; font-size:9px; letter-spacing:0.07em;
             padding:1px 6px; border-radius:4px; color:#ff5277;
             background:rgba(255,60,90,0.12); border:1px solid rgba(255,60,90,0.3);
             animation:breath 1.6s ease-in-out infinite;
@@ -2635,7 +2676,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .deepdive-btn {
             font-size:10px; color:#b794f6; cursor:pointer; background:rgba(124,58,237,0.10);
             border:1px solid rgba(124,58,237,0.28); border-radius:6px; padding:3px 9px;
-            font-family:'Orbitron',monospace; letter-spacing:0.04em;
+            font-family:'Orbitron', sans-serif; letter-spacing:0.04em;
         }
         .deepdive-btn:hover { background:rgba(124,58,237,0.20); color:#d6bcff; }
         .deepdive-panel {
@@ -2657,7 +2698,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .cluster-strip { margin-bottom:14px; display:grid; gap:9px; grid-template-columns:repeat(auto-fill, minmax(min(100%, 360px), 1fr)); align-items:start; }
         .cluster-strip > .cluster-strip-head { grid-column:1 / -1; margin-bottom:0; }
         .cluster-strip-head {
-            font-family:'Orbitron',monospace; font-size:11px; color:#ffae5b; letter-spacing:0.05em; margin-bottom:8px;
+            font-family:'Orbitron', sans-serif; font-size:11px; color:#ffae5b; letter-spacing:0.05em; margin-bottom:8px;
         }
         .cluster-card {
             border-radius:10px; padding:11px 13px; margin-bottom:0; min-width:0;
@@ -2665,7 +2706,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .cluster-cardtop { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
         .cluster-badge {
-            font-family:'Orbitron',monospace; font-size:9px; letter-spacing:0.05em; padding:2px 8px;
+            font-family:'Orbitron', sans-serif; font-size:9px; letter-spacing:0.05em; padding:2px 8px;
             border-radius:5px; color:#1a1208; background:#ffae5b; font-weight:600;
         }
         .cluster-headline { font-size:14px; font-weight:600; color:#f2f4fa; cursor:pointer; line-height:1.3; }
@@ -2673,7 +2714,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .cluster-sources { font-size:10px; color:#8b94a6; margin-top:5px; }
         .cluster-toggle {
             margin-top:7px; font-size:10px; color:#ffae5b; cursor:pointer; background:none; border:none; padding:0;
-            font-family:'Orbitron',monospace; letter-spacing:0.03em;
+            font-family:'Orbitron', sans-serif; letter-spacing:0.03em;
         }
         .cluster-toggle:hover { color:#ffc98a; }
         .cluster-list { margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px; }
@@ -2771,7 +2812,7 @@ window.addEventListener('DOMContentLoaded',function(){
             display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
             padding-bottom:12px; margin-bottom:14px; border-bottom:2px solid rgba(0,212,255,0.25);
         }
-        .fp-title { font-family:'Orbitron',monospace; font-size:22px; font-weight:700; color:#eef1f6; letter-spacing:0.02em; line-height:1.1; }
+        .fp-title { font-family:'Orbitron', sans-serif; font-size:22px; font-weight:700; color:#eef1f6; letter-spacing:0.02em; line-height:1.1; }
         .fp-sub { font-size:11px; color:#8b93a4; margin-top:5px; }
         .fp-lead {
             position:relative; margin-bottom:20px; padding:20px;
@@ -2806,13 +2847,13 @@ window.addEventListener('DOMContentLoaded',function(){
         .fp-section-head.cat-science { --accent:var(--c-science); }
         .fp-section-head.cat-media { --accent:var(--c-media); }
         .fp-section-title {
-            font-family:'Orbitron',monospace; font-size:13px; font-weight:600; text-transform:uppercase;
+            font-family:'Orbitron', sans-serif; font-size:13px; font-weight:600; text-transform:uppercase;
             letter-spacing:0.08em; color:var(--accent, #00d4ff);
         }
         .fp-section-ctx { font-size:11.5px; color:#9aa1b0; font-style:italic; }
         /* What-changed badges + thread updates */
         .fp-badge {
-            display:inline-block; font-family:'Orbitron',monospace; font-size:8.5px;
+            display:inline-block; font-family:'Orbitron', sans-serif; font-size:8.5px;
             letter-spacing:0.08em; padding:1px 6px; border-radius:4px; margin-left:7px;
             vertical-align:middle; font-weight:700;
         }
@@ -2832,7 +2873,7 @@ window.addEventListener('DOMContentLoaded',function(){
             border:1px solid rgba(124,58,237,0.28);
         }
         .fp-daycontext-head {
-            font-family:'Orbitron',monospace; font-size:12px; font-weight:600;
+            font-family:'Orbitron', sans-serif; font-size:12px; font-weight:600;
             letter-spacing:0.05em; color:#b794f6; margin-bottom:6px;
         }
         .fp-daycontext-body { font-size:13px; line-height:1.55; color:#d6d9e3; }
@@ -2845,7 +2886,7 @@ window.addEventListener('DOMContentLoaded',function(){
             border:1px solid rgba(245,158,11,0.34);
         }
         .fp-degraded-head {
-            font-family:'Orbitron',monospace; font-size:12px; font-weight:600;
+            font-family:'Orbitron', sans-serif; font-size:12px; font-weight:600;
             letter-spacing:0.05em; color:#f59e0b; margin-bottom:6px;
         }
         .fp-degraded-body { font-size:13px; line-height:1.55; color:#e6d9c3; }
@@ -2862,7 +2903,7 @@ window.addEventListener('DOMContentLoaded',function(){
             box-shadow:0 0 22px rgba(244,114,182,0.12);
         }
         .fp-contrarian-head {
-            font-family:'Orbitron',monospace; font-size:12px; font-weight:700;
+            font-family:'Orbitron', sans-serif; font-size:12px; font-weight:700;
             letter-spacing:0.05em; color:#f472b6; margin-bottom:7px;
         }
         .fp-contrarian-title { font-size:15px; font-weight:700; color:#f6e9f1; line-height:1.25; margin-bottom:6px; }
@@ -2889,7 +2930,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .wk-num {
             flex:0 0 auto; width:26px; height:26px; border-radius:50%;
             display:flex; align-items:center; justify-content:center;
-            font-family:'Orbitron',monospace; font-size:13px; font-weight:700;
+            font-family:'Orbitron', sans-serif; font-size:13px; font-weight:700;
             color:#03060d; background:#00d4ff;
         }
         .wk-story-title { font-size:13.5px; font-weight:600; color:#eef1f6; line-height:1.3; }
@@ -2924,7 +2965,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .ed-archive-item:hover { border-color:rgba(244,114,182,0.4); background:rgba(244,114,182,0.05); }
         .ed-archive-item.active { border-color:#f472b6; background:rgba(244,114,182,0.08); }
         .ed-archive-week {
-            font-family:'Orbitron',monospace; font-size:12px; font-weight:600; color:#f472b6;
+            font-family:'Orbitron', sans-serif; font-size:12px; font-weight:600; color:#f472b6;
         }
         .ed-archive-meta { font-size:10.5px; color:#8b93a4; margin-top:2px; }
         .ed-archive-preview { font-size:11.5px; color:#9aa1b0; line-height:1.45; margin-top:5px; }
@@ -2940,7 +2981,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .brief-card:hover { border-color:rgba(0,212,255,0.3); box-shadow:0 4px 24px rgba(0,0,0,0.32); }
         .brief-card.expanded { cursor:default; border-color:rgba(0,212,255,0.28); }
         .brief-cardhead { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-        .brief-date { font-family:'Orbitron',monospace; font-size:13px; color:#eef1f6; }
+        .brief-date { font-family:'Orbitron', sans-serif; font-size:13px; color:#eef1f6; }
         .brief-preview { font-size:11.5px; line-height:1.55; color:#9aa1b0; margin-top:7px;
             display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
 
@@ -2959,7 +3000,7 @@ window.addEventListener('DOMContentLoaded',function(){
             animation:slidein 0.22s ease;
         }
         @keyframes slidein { from{transform:translateX(28px);opacity:0;} to{transform:translateX(0);opacity:1;} }
-        .news-side h3 { font-family:'Orbitron',monospace; font-size:12px; color:#00d4ff; letter-spacing:0.08em; margin:0 0 12px; }
+        .news-side h3 { font-family:'Orbitron', sans-serif; font-size:12px; color:#00d4ff; letter-spacing:0.08em; margin:0 0 12px; }
         .manage-row {
             display:flex; align-items:center; justify-content:space-between; gap:8px;
             padding:8px 10px; margin-bottom:6px; border-radius:7px;
@@ -2984,9 +3025,9 @@ window.addEventListener('DOMContentLoaded',function(){
            color per triage lane.
            ═══════════════════════════════════════════════════════════ */
         .msg-ws {
-            --lane-career:#00d4ff; --lane-finance:#22c55e;
-            --lane-futurespeak:#a78bfa; --lane-family:#f472b6;
-            --lane-subscriptions:#8a93a6; --lane-noise:#5b6373; --lane-all:#00d4ff;
+            --lane-career:var(--fr-cyan); --lane-finance:#22c55e;
+            --lane-futurespeak:var(--fr-violet-soft); --lane-family:var(--fr-cat-pink);
+            --lane-subscriptions:#8a93a6; --lane-noise:#5b6373; --lane-all:var(--fr-cyan);
         }
         .lane-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
         .lane-tab {
@@ -3014,7 +3055,7 @@ window.addEventListener('DOMContentLoaded',function(){
             background:rgba(0,212,255,0.06); border:1px solid rgba(0,212,255,0.18);
         }
         .msg-pipeline .pl-stat { display:flex; flex-direction:column; }
-        .msg-pipeline .pl-num { font-family:'Orbitron',monospace; font-size:20px; color:#00d4ff; line-height:1; }
+        .msg-pipeline .pl-num { font-family:'Orbitron', sans-serif; font-size:20px; color:#00d4ff; line-height:1; }
         .msg-pipeline .pl-lbl { font-size:10px; color:#8fb8c8; letter-spacing:0.04em; text-transform:uppercase; margin-top:3px; }
         .msg-pipeline .pl-arrow { color:#48586a; font-size:16px; }
 
@@ -3040,7 +3081,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .msg-avatar {
             width:38px; height:38px; border-radius:50%; flex-shrink:0;
             display:flex; align-items:center; justify-content:center;
-            font-family:'Orbitron',monospace; font-size:15px; font-weight:700; color:#031018;
+            font-family:'Orbitron', sans-serif; font-size:15px; font-weight:700; color:#031018;
             background:linear-gradient(135deg, var(--lc,#00d4ff), color-mix(in srgb,var(--lc,#00d4ff) 55%, #7c3aed));
             box-shadow:0 0 12px color-mix(in srgb,var(--lc,#00d4ff) 35%,transparent);
         }
@@ -3049,7 +3090,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .msg-sender { font-size:12.5px; font-weight:650; color:#eef1f6; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:40%; }
         .msg-time { font-size:10px; color:#727a8a; margin-left:auto; flex-shrink:0; }
         .msg-lane-badge {
-            font-family:'Orbitron',monospace; font-size:8.5px; letter-spacing:0.08em; text-transform:uppercase;
+            font-family:'Orbitron', sans-serif; font-size:8.5px; letter-spacing:0.08em; text-transform:uppercase;
             padding:2px 7px; border-radius:4px; color:var(--lc,#00d4ff); flex-shrink:0;
             background:color-mix(in srgb, var(--lc,#00d4ff) 13%, transparent);
             border:1px solid color-mix(in srgb, var(--lc,#00d4ff) 30%, transparent);
@@ -3084,7 +3125,7 @@ window.addEventListener('DOMContentLoaded',function(){
         /* ═══════════════════════════════════════════════════════════
            CALENDAR — "Friday's Time Intelligence"
            ═══════════════════════════════════════════════════════════ */
-        .cal-ws { --cal-accent:#00d4ff; --cal-career:#a78bfa; }
+        .cal-ws { --cal-accent:var(--fr-cyan); --cal-career:var(--fr-violet-soft); }
         .cal-week { display:grid; grid-template-columns:repeat(7,1fr); gap:7px; margin-bottom:14px; }
         .cal-day {
             cursor:pointer; padding:9px 6px; border-radius:9px; text-align:center;
@@ -3097,7 +3138,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .cal-day.today .cal-daynum { color:#00d4ff; }
         .cal-day.career { box-shadow:inset 0 -3px 0 var(--cal-career); }
         .cal-dow { font-size:10px; color:#8a93a6; text-transform:uppercase; letter-spacing:0.06em; }
-        .cal-daynum { font-family:'Orbitron',monospace; font-size:18px; color:#e0e4ee; margin:3px 0; }
+        .cal-daynum { font-family:'Orbitron', sans-serif; font-size:18px; color:#e0e4ee; margin:3px 0; }
         .cal-dots { display:flex; gap:3px; justify-content:center; height:8px; }
         .cal-dots .dd { width:5px; height:5px; border-radius:50%; }
         .cal-dots .dd.light { background:rgba(0,212,255,0.4); }
@@ -3138,7 +3179,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .cal-conflict-warn { display:flex; align-items:center; gap:8px; padding:9px 13px; margin-bottom:10px;
             border-radius:8px; font-size:11.5px; color:#ffb3c1; background:rgba(255,60,90,0.09); border:1px solid rgba(255,60,90,0.26); }
         .cal-quickadd { display:flex; gap:6px; margin-bottom:12px; }
-        .cal-section-title { font-family:'Orbitron',monospace; font-size:11px; color:#00d4ff; letter-spacing:0.07em;
+        .cal-section-title { font-family:'Orbitron', sans-serif; font-size:11px; color:#00d4ff; letter-spacing:0.07em;
             margin:16px 0 9px; text-transform:uppercase; }
         .cal-tomorrow-card {
             display:flex; gap:10px; align-items:center; padding:9px 13px; margin-bottom:7px; border-radius:9px;
@@ -9160,7 +9201,7 @@ function WorkspaceChat({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 12,
       color: '#00d4ff',
       letterSpacing: '.04em'
@@ -9701,7 +9742,7 @@ function ChatSurface(props) {
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff'
     }
@@ -10338,7 +10379,7 @@ function ChatSurface(props) {
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '4px 10px 6px',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 9,
       color: 'rgba(0,212,255,0.75)',
       letterSpacing: '.14em'
@@ -10384,7 +10425,7 @@ function ChatSurface(props) {
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '4px 10px 6px',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 9,
       color: 'rgba(0,212,255,0.75)',
       letterSpacing: '.14em'
@@ -12267,7 +12308,7 @@ function CareerWS() {
     }
   }, s.l), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       color: s.cl
     }
   }, s.c, " (", s.p, "%)")), /*#__PURE__*/React.createElement("div", {
@@ -12341,7 +12382,7 @@ function CareerWS() {
       }
     }, " \xB7 ", e.role) : null), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 13,
         color
       }
@@ -12641,7 +12682,7 @@ function OutreachPanel() {
       }
     }, w.contact), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 11,
         color: col
       }
@@ -15634,7 +15675,7 @@ function KnowledgeGraphWS(props) {
       alignItems: 'center',
       justifyContent: 'center',
       color: '#8a7bd8',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 13,
       letterSpacing: '.15em',
       zIndex: 2
@@ -15682,7 +15723,7 @@ function KnowledgeGraphWS(props) {
     style: {
       fontSize: 12,
       color: '#00d4ff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, hover.title, hover.type && /*#__PURE__*/React.createElement("span", {
     style: {
@@ -15709,7 +15750,7 @@ function KnowledgeGraphWS(props) {
       left: 12,
       fontSize: 11,
       color: '#c9a8ff',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       letterSpacing: '.1em',
       zIndex: 3
     }
@@ -15732,7 +15773,7 @@ function KnowledgeGraphWS(props) {
     style: {
       fontSize: 13,
       color: '#00d4ff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, selected.title), /*#__PURE__*/React.createElement("span", {
     style: {
@@ -16967,7 +17008,7 @@ function FSProjectCard({
       alignItems: 'center',
       gap: 4,
       fontSize: 11,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       color: ds.c
     }
   }, /*#__PURE__*/React.createElement("span", {
@@ -17304,7 +17345,7 @@ function FSStudio() {
       display: 'flex',
       gap: 10,
       fontSize: 11,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       alignItems: 'center'
     }
   }, /*#__PURE__*/React.createElement("span", {
@@ -17777,7 +17818,7 @@ function FuturespeakWS() {
     }
   }, o.name), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#f59e0b'
     }
@@ -17830,7 +17871,7 @@ function FuturespeakWS() {
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 14,
         color: '#f59e0b'
       }
@@ -17918,7 +17959,7 @@ function FuturespeakWS() {
     style: {
       fontSize: 11,
       color: '#00d4ff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, "LAST DRAFT"), /*#__PURE__*/React.createElement("button", {
     className: "btn",
@@ -18107,7 +18148,7 @@ function FuturespeakWS() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 16,
       color: '#00d4ff'
     }
@@ -18122,7 +18163,7 @@ function FuturespeakWS() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 16,
       color: '#ff0080'
     }
@@ -18137,7 +18178,7 @@ function FuturespeakWS() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 16,
       color: (rev?.net_monthly || 0) >= 0 ? '#00ff80' : '#ff0080'
     }
@@ -18408,7 +18449,7 @@ function FuturespeakWS() {
     style: {
       fontSize: 11,
       color: '#00d4ff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, "FOLLOW-UP DRAFT"), /*#__PURE__*/React.createElement("button", {
     className: "btn",
@@ -18560,7 +18601,7 @@ function FamilyWS() {
   }, c.label || c.name), /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#00d4ff',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11
     }
   }, (c.days ?? c.days_until) === 0 ? 'Today' : `${c.days ?? c.days_until}d`)))), /*#__PURE__*/React.createElement("div", {
@@ -19681,7 +19722,7 @@ function TimelinePanel({
         top: 2,
         left: 3,
         fontSize: 9,
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         color: '#00d4ff',
         background: 'rgba(0,0,0,0.6)',
         borderRadius: 3,
@@ -20168,7 +20209,7 @@ function ProductionPanel({
   }, "Stage ", Math.min(idx + (state === 'completed' ? 0 : 1), stages.length), "/", stages.length), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 10,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       color: PIPE_STATE_COL[state] || '#888'
     }
   }, state)), state === 'awaiting_checkpoint' && /*#__PURE__*/React.createElement("button", {
@@ -20600,7 +20641,7 @@ function ProjectsPanel() {
   }, "\xB7 stage ", Math.min(r.stage_index + (r.state === 'completed' ? 0 : 1), r.total_stages), "/", r.total_stages)), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 10,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       color: stateColor[r.state] || '#888'
     }
   }, r.state)), r.state === 'awaiting_checkpoint' && /*#__PURE__*/React.createElement("button", {
@@ -21473,7 +21514,7 @@ function StudioWS() {
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 11,
         color: '#999'
       }
@@ -21868,7 +21909,7 @@ function StudioWS() {
       style: {
         fontSize: 13,
         color: 'rgba(255,255,255,0.6)',
-        fontFamily: 'Orbitron'
+        fontFamily: 'Orbitron, sans-serif'
       }
     }, "Audio")) : isMd || isHtml ? /*#__PURE__*/React.createElement("div", {
       style: {
@@ -22546,7 +22587,7 @@ function OrchestratorBudgetPanel() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 10,
       color: '#00d4ff',
       letterSpacing: '.05em',
@@ -22767,7 +22808,7 @@ function FederationPanel() {
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 13,
       color: '#00d4ff',
       marginBottom: 3
@@ -22887,7 +22928,7 @@ function FederationPanel() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff'
     }
@@ -23180,7 +23221,7 @@ function MarketplaceWS() {
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 12,
       color: l.price_mpsi === 0 ? '#00ff80' : '#f59e0b'
     }
@@ -23241,7 +23282,7 @@ function MarketplaceWS() {
   }, licBadge(l.license || 'all-rights-reserved'), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 10,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       color: l.price_mpsi === 0 ? '#00ff80' : '#f59e0b'
     }
   }, psiDisplay(l.price_mpsi || 0)), l.public !== false && /*#__PURE__*/React.createElement("span", {
@@ -23407,7 +23448,7 @@ function MarketplaceWS() {
   }, "Price: ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: form.price_mpsi === 0 ? '#00ff80' : '#f59e0b',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, psiDisplay(form.price_mpsi))), /*#__PURE__*/React.createElement("button", {
     className: "btn",
@@ -23524,13 +23565,13 @@ function WalletPanel() {
     style: {
       fontSize: 10,
       color: '#888',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       letterSpacing: '.06em',
       marginBottom: 4
     }
   }, "BALANCE"), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 22,
       color: '#00d4ff'
     }
@@ -23548,13 +23589,13 @@ function WalletPanel() {
     style: {
       fontSize: 10,
       color: '#888',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       letterSpacing: '.06em',
       marginBottom: 4
     }
   }, "OUTSTANDING"), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 22,
       color: '#f59e0b'
     }
@@ -23572,13 +23613,13 @@ function WalletPanel() {
     style: {
       fontSize: 10,
       color: '#888',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       letterSpacing: '.06em',
       marginBottom: 4
     }
   }, "Q SCORE"), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 22,
       color: qCol
     }
@@ -23654,7 +23695,7 @@ function WalletPanel() {
     }
   }, trunc(a.agent_id, 24)), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: a.q_score > 0 ? '#00ff80' : a.q_score < 0 ? '#ff5470' : '#888'
     }
@@ -23771,7 +23812,7 @@ function WalletPanel() {
   }, trunc(t.to_agent, 16)), /*#__PURE__*/React.createElement("td", {
     style: {
       padding: '3px 6px',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 10,
       color: '#00d4ff'
     }
@@ -23890,7 +23931,7 @@ function TrustWS() {
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 14,
         color: col
       }
@@ -24011,7 +24052,7 @@ const WF_STATUS = {
 const WF_CSS = `
 .wfx{color:#e6e6ee;font-family:'Inter',sans-serif;font-size:13px;line-height:1.5}
 .wfx *{box-sizing:border-box}
-.wfx-h{font-family:'Orbitron',monospace;font-size:11px;letter-spacing:.08em;color:rgba(0,212,255,.92);margin:18px 0 8px;text-transform:uppercase}
+.wfx-h{font-family:'Orbitron', sans-serif;font-size:11px;letter-spacing:.08em;color:rgba(0,212,255,.92);margin:18px 0 8px;text-transform:uppercase}
 .wfx-in{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.16);border-radius:6px;color:#eee;padding:8px 10px;font-size:13px;width:100%;font-family:'Inter',sans-serif}
 .wfx-in:focus{outline:none;border-color:rgba(0,212,255,.6);box-shadow:0 0 0 2px rgba(0,212,255,.15)}
 .wfx-ask{min-height:78px;resize:vertical;font-size:14px;line-height:1.5}
@@ -25792,7 +25833,7 @@ function SystemWS() {
       }
     }, "Epistemic quality"), /*#__PURE__*/React.createElement("div", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 22,
         color: eCol
       }
@@ -25815,7 +25856,7 @@ function SystemWS() {
       }
     }, "Sycophancy"), /*#__PURE__*/React.createElement("div", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 22,
         color: sCol
       }
@@ -25868,7 +25909,7 @@ function SystemWS() {
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 10,
         color: '#00d4ff',
         marginRight: 6
@@ -26056,7 +26097,7 @@ function SystemWS() {
   }, "Days:"), " ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#00d4ff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, ctxStats?.days ?? 0)), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -26069,7 +26110,7 @@ function SystemWS() {
   }, "Entries:"), " ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#00d4ff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, ctxStats?.total_entries ?? 0)), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -26082,7 +26123,7 @@ function SystemWS() {
   }, "Size:"), " ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#00d4ff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, fmtBytes(ctxStats?.total_bytes))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -26095,7 +26136,7 @@ function SystemWS() {
   }, "Avg/day:"), " ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#00d4ff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, ctxStats?.avg_entries_per_day ?? 0))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -26210,7 +26251,7 @@ function SystemWS() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff',
       marginBottom: 6,
@@ -26243,7 +26284,7 @@ function SystemWS() {
     }
   }, fmtTs(e.ts)), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 10,
       letterSpacing: '.05em',
       color: typeColor(e.type),
@@ -26288,7 +26329,7 @@ function SystemWS() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 12,
       color: '#ff0080',
       letterSpacing: '.1em',
@@ -27384,7 +27425,7 @@ function DevProcs({
       }
     }), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 11,
         color: live ? color : '#888'
       }
@@ -27537,7 +27578,7 @@ function CodeWS() {
       background: '#ff0080',
       color: '#fff',
       fontSize: 9,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -29204,7 +29245,7 @@ function NewsWS() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff',
       marginBottom: 8
@@ -32413,7 +32454,7 @@ function buildDraftHtml(text, mode, promptText) {
   const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const paras = (text || '').split(/\n\n+/).filter(Boolean);
   const paraHtml = paras.map((p, i) => `<p${i === 0 ? ' style="font-size:18px;color:#e8e8f0"' : ''}>${esc(p).replace(/\n/g, '<br>')}</p>`).join('\n    ');
-  return fridayFrameScrollbars(['<!DOCTYPE html><html lang="en"><head>', '<meta charset="UTF-8">', `<title>FRIDAY DRAFT — ${esc(label)}</title>`, '<link href="/static/fonts/fonts.css" rel="stylesheet">', '<style>', '* { margin: 0; padding: 0; box-sizing: border-box; }', "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }", '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }', '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }', ".header h1 { font-family: 'Orbitron', monospace; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }", '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }', ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }", '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }', ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7c3aed; border: 1px solid rgba(124,58,237,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }", ".prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }", '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }', ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }", '</style></head><body>', '<div class="container">', '  <div class="header"><h1>FRIDAY DRAFT</h1><div class="neon-line"></div>', `  <div class="subtitle">${esc(label)}</div><div class="date">${esc(now)}</div></div>`, promptText ? `  <div class="prompt-ctx">Prompt: ${esc((promptText || '').substring(0, 200))}</div>` : '', `  <div class="mode-tag">${esc(label.toUpperCase())}</div>`, `  <div class="draft-body">\n    ${paraHtml}\n  </div>`, '  <div class="footer">Generated by FRIDAY · FutureSpeak.AI</div>', '</div></body></html>'].join('\n'));
+  return fridayFrameScrollbars(['<!DOCTYPE html><html lang="en"><head>', '<meta charset="UTF-8">', `<title>FRIDAY DRAFT — ${esc(label)}</title>`, '<link href="/static/fonts/fonts.css" rel="stylesheet">', '<style>', '* { margin: 0; padding: 0; box-sizing: border-box; }', "body { background: #06060b; color: #e0e0e8; font-family: 'Inter', sans-serif; line-height: 1.7; }", '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }', '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }', ".header h1 { font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 900; background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }", '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }', ".header .date { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }", '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }', ".mode-tag { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7c3aed; border: 1px solid rgba(124,58,237,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }", ".prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }", '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }', ".footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }", '</style></head><body>', '<div class="container">', '  <div class="header"><h1>FRIDAY DRAFT</h1><div class="neon-line"></div>', `  <div class="subtitle">${esc(label)}</div><div class="date">${esc(now)}</div></div>`, promptText ? `  <div class="prompt-ctx">Prompt: ${esc((promptText || '').substring(0, 200))}</div>` : '', `  <div class="mode-tag">${esc(label.toUpperCase())}</div>`, `  <div class="draft-body">\n    ${paraHtml}\n  </div>`, '  <div class="footer">Generated by FRIDAY · FutureSpeak.AI</div>', '</div></body></html>'].join('\n'));
 }
 function openDraftTab(text, mode, promptText) {
   const html = buildDraftHtml(text, mode, promptText);
@@ -33207,7 +33248,7 @@ function DraftWS() {
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff'
     }
@@ -33275,7 +33316,7 @@ function DraftWS() {
     }
   }, "\uD83D\uDCE7 Gmail"))), history.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#999',
       marginBottom: 6
@@ -33436,7 +33477,7 @@ function FinanceWS() {
       }
     }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 13,
         color: '#00d4ff'
       }
@@ -33490,7 +33531,7 @@ function FinanceWS() {
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 15,
       color: '#00d4ff'
     }
@@ -33556,7 +33597,7 @@ function FinanceWS() {
       }
     }, "EXPIRING")), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 12,
         color: p.used ? '#444' : '#00ff80'
       }
@@ -33869,7 +33910,7 @@ function HealthWS() {
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 16,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       color: '#00d4ff',
       marginBottom: 8
     }
@@ -34441,7 +34482,7 @@ function ContactsWS() {
       }
     }, "aka ", selected.aliases.join(', '))), /*#__PURE__*/React.createElement("div", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 16,
         color: col
       }
@@ -34668,7 +34709,7 @@ function ContactsWS() {
       }
     }, c.aliases.join(', '))), /*#__PURE__*/React.createElement("div", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 12,
         color: col,
         marginLeft: 6
@@ -34944,7 +34985,7 @@ function ContentIdeasTab({
         cursor: 'pointer',
         textTransform: 'uppercase',
         letterSpacing: '.03em',
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         background: i === idx ? STAGE_COLORS[s] + '33' : 'rgba(255,255,255,0.04)',
         color: i <= idx ? STAGE_COLORS[s] : '#777',
         border: '1px solid ' + (i === idx ? STAGE_COLORS[s] + '66' : 'rgba(255,255,255,0.06)')
@@ -35362,7 +35403,7 @@ function ContentIdeasTab({
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontFamily: 'Orbitron',
+        fontFamily: 'Orbitron, sans-serif',
         fontSize: 11,
         color: col,
         letterSpacing: '.05em',
@@ -36707,7 +36748,7 @@ function ContentCalendarTab({
     onClick: () => nav(-1)
   }, "\u2039"), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 12,
       color: '#00d4ff',
       flex: 1,
@@ -36744,7 +36785,7 @@ function ContentCalendarTab({
       fontSize: 9,
       color: '#777',
       textAlign: 'center',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, d))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -36792,7 +36833,7 @@ function ContentCalendarTab({
       fontSize: 9,
       color: '#999',
       textAlign: 'center',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, DOW[i], " ", d.getDate())), [...Array(17)].map((_, ri) => {
     const h = ri + 6;
@@ -36935,7 +36976,7 @@ function ContentQueueTab({
       fontSize: 9,
       padding: '1px 6px',
       borderRadius: 4,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       letterSpacing: '.04em',
       background: (cpStatusCol[s] || '#888') + '22',
       color: cpStatusCol[s] || '#888',
@@ -37067,7 +37108,7 @@ function ContentQueueTab({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#f59e0b',
       letterSpacing: '.05em',
@@ -38236,7 +38277,7 @@ function QuickPostModal({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 12,
       color: '#00d4ff',
       letterSpacing: '.08em'
@@ -40282,7 +40323,7 @@ function TraceModalHost() {
     }
   }, rtEl("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 10,
       color: '#00d4ff',
       letterSpacing: '0.08em',
@@ -44072,7 +44113,7 @@ function WorkProposal({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 13,
       color: '#00d4ff'
     }
@@ -44353,7 +44394,7 @@ function PrivacyHoldCard({
     }
   }, '\u{1F6E1}'), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 12,
       color: '#f59e0b'
     }
@@ -44487,7 +44528,7 @@ function PauseWarning({
     }
   }, "\u23F3"), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 12,
       color: cm.c
     }
@@ -45348,7 +45389,7 @@ function ConversationBar({ convList, convId, convSeat, open, setOpen,
       'aria-label': 'Switch conversation',
       style: {
         background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-        fontFamily: 'Orbitron', fontSize: 11, color: '#00d4ff',
+        fontFamily: 'Orbitron, sans-serif', fontSize: 11, color: '#00d4ff',
         display: 'flex', alignItems: 'center', gap: 5, maxWidth: 180,
       },
     },
@@ -45772,7 +45813,7 @@ function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
   },
     E('div', {
       style: {
-        fontFamily: 'Orbitron', fontSize: 12, color: '#00d4ff',
+        fontFamily: 'Orbitron, sans-serif', fontSize: 12, color: '#00d4ff',
         marginBottom: 2,
       },
     }, 'PROJECT'),
@@ -46128,7 +46169,7 @@ function FetchPreflightCard({ modelId, onClose, onConfirm, confirming }) {
 
   return wrap(
     E('div', {
-      style: { fontFamily: 'Orbitron', fontSize: 12, color: '#00d4ff', marginBottom: 8 },
+      style: { fontFamily: 'Orbitron, sans-serif', fontSize: 12, color: '#00d4ff', marginBottom: 8 },
     }, c.what),
     line('Where', c.where),
     line('What stands down', c.what_stands_down),
@@ -46175,7 +46216,7 @@ function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching,
       return E('div', { key: sec, style: { marginTop: 10 } },
         E('div', {
           style: {
-            fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6,
+            fontFamily: 'Orbitron, sans-serif', fontSize: 10, letterSpacing: 0.6,
             color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 2,
           },
         }, _MODALITY_HEADING[sec] || sec),
@@ -46189,7 +46230,7 @@ function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching,
     !(lm.video || []).length && E('div', { style: { marginTop: 10 } },
       E('div', {
         style: {
-          fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6,
+          fontFamily: 'Orbitron, sans-serif', fontSize: 10, letterSpacing: 0.6,
           color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 2,
         },
       }, 'VIDEO'),
@@ -46483,7 +46524,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
 function WeightsRows({ rows }) {
   if (!rows || !rows.length) return null;
   return E('div', { style: { marginTop: 10 } },
-    E('div', { style: { fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 4 } }, 'Weights'),
+    E('div', { style: { fontFamily: 'Orbitron, sans-serif', fontSize: 10, letterSpacing: 0.6, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 4 } }, 'Weights'),
     rows.map(w => {
       const bad = w.remote || !w.present || (w.lora && !w.lora_present);
       const tone = w.retired ? 'rgba(255,255,255,0.35)' : bad ? '#ef4444' : 'rgba(255,255,255,0.8)';
@@ -47148,7 +47189,7 @@ function VoiceSetupWizard({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 13,
       color: '#00d4ff',
       letterSpacing: '0.05em'
@@ -48157,7 +48198,7 @@ function SettingsTabPrivacy({
     }
   }, x.l), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 12,
       color: x.c
     }
@@ -50088,7 +50129,7 @@ function AddProviderForm({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 10,
       color: '#00d4ff',
       letterSpacing: '.1em',
@@ -51606,7 +51647,7 @@ function SettingsTabAbout() {
   }, /*#__PURE__*/React.createElement("div", {
     className: "st-brand",
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 22,
       color: '#f59e0b',
       letterSpacing: '.08em',
@@ -51624,7 +51665,7 @@ function SettingsTabAbout() {
   }, (upd?.current_version || h?.version) ? 'v' + (upd?.current_version || h?.version) : 'Version unknown', " \xB7 Desktop OS \xB7 Sovereign AI"), /*#__PURE__*/React.createElement("div", {
     className: "st-brand",
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff',
       letterSpacing: '.2em'
@@ -51686,7 +51727,7 @@ function SettingsTabAbout() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 13,
       color: '#00d4ff',
       marginBottom: 6
@@ -51766,7 +51807,7 @@ function SettingsTabAbout() {
     }
   }, x.l), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 14,
       color: x.c
     }
@@ -52017,7 +52058,7 @@ function LoopGuardSwitch({ on, onToggle }) {
              borderTop: '1px solid rgba(255,255,255,0.07)' }
   },
     /*#__PURE__*/React.createElement("div", {
-      style: { fontFamily: 'Orbitron', fontSize: 9, color: '#00d4ff',
+      style: { fontFamily: 'Orbitron, sans-serif', fontSize: 9, color: '#00d4ff',
                letterSpacing: '.15em', marginBottom: 8 }
     }, "STUCK-MODEL GUARD"),
     /*#__PURE__*/React.createElement("div", {
@@ -52236,7 +52277,7 @@ function SettingsTabCosts() {
     style: {
       fontSize: 30,
       color: '#fff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, usd(s && s.total_usd)), /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
@@ -52311,7 +52352,7 @@ function SettingsTabCosts() {
     style: {
       fontSize: 22,
       color: '#fff',
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, pct(s.cache_hit_rate)), /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
@@ -57975,7 +58016,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     onClick: () => toggle('system'),
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontWeight: 900,
       fontSize: 15,
       color: '#00d4ff',
@@ -58000,7 +58041,7 @@ function App() {
     target: "_blank",
     rel: "noopener noreferrer",
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontWeight: 900,
       fontSize: 15,
       color: '#f59e0b',
@@ -58086,7 +58127,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '4px 12px 6px',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 9,
       color: 'rgba(0,212,255,0.7)',
       letterSpacing: '0.08em',
@@ -58181,7 +58222,7 @@ function App() {
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '4px 12px 6px',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 9,
       color: 'rgba(0,212,255,0.7)',
       letterSpacing: '0.08em',
@@ -58369,7 +58410,7 @@ function App() {
       justifyContent: 'center',
       color: '#0a0a0f',
       fontWeight: 700,
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron, sans-serif'
     }
   }, bellBadgeCount)), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
@@ -58537,7 +58578,7 @@ function App() {
     style: {
       position: 'relative',
       zIndex: 1,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 26,
       color: 'rgba(0,212,255,0.98)',
       marginBottom: 12,
@@ -58648,7 +58689,7 @@ function App() {
       borderRadius: 22,
       padding: '9px 18px',
       color: '#cdeffd',
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       letterSpacing: '0.08em',
       cursor: 'pointer',
@@ -58689,7 +58730,7 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff'
     }
@@ -59013,7 +59054,7 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 10,
       color: '#00d4ff',
       letterSpacing: '0.08em'
@@ -59657,7 +59698,7 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff'
     }
@@ -59794,7 +59835,7 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff'
     }
@@ -59964,7 +60005,7 @@ function App() {
       color: '#0a0a0f',
       fontSize: 9,
       fontWeight: 700,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -59983,7 +60024,7 @@ function App() {
       color: '#031018',
       fontSize: 9,
       fontWeight: 700,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -60003,7 +60044,7 @@ function App() {
       color: '#0a0a0f',
       fontSize: 9,
       fontWeight: 700,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -60051,7 +60092,7 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 12,
       color: '#00d4ff',
       letterSpacing: '.08em'
@@ -60097,7 +60138,7 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: 'Orbitron',
+      fontFamily: 'Orbitron, sans-serif',
       fontSize: 11,
       color: '#00d4ff',
       letterSpacing: '.08em',
