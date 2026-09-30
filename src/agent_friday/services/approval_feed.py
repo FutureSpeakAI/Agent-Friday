@@ -48,12 +48,17 @@ def subscribers() -> int:
         return len(_SUBS)
 
 
-def _put(q: _queue.Queue, event: dict) -> None:
+def _put(q: _queue.Queue, event: dict, lossy: bool = False) -> None:
     try:
         q.put_nowait(event)
         return
     except _queue.Full:
         pass
+    if lossy:
+        # A presence frame (services/presence.py) is a moment, not state: a
+        # page that is behind simply misses it. Dropping the queue for it
+        # would throw away the approval cards waiting behind it.
+        return
     # Behind: drop what it has not read and have it fetch the list again.
     try:
         while True:
@@ -66,13 +71,16 @@ def _put(q: _queue.Queue, event: dict) -> None:
         pass
 
 
-def publish(event: dict) -> None:
-    """Send `event` to every connected page. Never raises."""
+def publish(event: dict, lossy: bool = False) -> None:
+    """Send `event` to every connected page. Never raises.
+
+    `lossy` events are dropped for a page that is behind instead of making it
+    resync; only presence frames are sent that way."""
     try:
         with _LOCK:
             subs = list(_SUBS)
         for q in subs:
-            _put(q, event)
+            _put(q, event, lossy)
     except Exception as e:           # a push must never break an approval
         _log.warning("approval feed publish failed: %s", e)
 
