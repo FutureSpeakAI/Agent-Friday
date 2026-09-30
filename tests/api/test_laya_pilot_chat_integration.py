@@ -261,6 +261,17 @@ def test_empty_response_failure_is_excluded_from_success_timings(loop_setup):
     assert ctx["_laya_pilot_outcome"] == "error"
 
 
+def test_confirmation_only_turn_finishes_once_without_model_rounds(client, monkeypatch, pilot):
+    from flask import jsonify
+    ticket, starts = pilot
+    monkeypatch.setattr(chat_mod, "_confirmed_action_response", lambda *a: jsonify({"response": "Fixture approved"}))
+    response = client.post("/api/chat", json={"message": "Confirm the fixture action"})
+    assert response.status_code == 200
+    assert len(starts) == 1
+    assert len(ticket.finished) == 1
+    assert ticket.counts["model_rounds"] == 0
+
+
 @pytest.mark.parametrize("endpoint", ["/api/chat", "/api/chat/send"])
 def test_final_integrity_rejection_is_not_a_success(client, monkeypatch, pilot, endpoint):
     ticket, _ = pilot
