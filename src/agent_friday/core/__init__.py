@@ -3602,6 +3602,20 @@ def check_auth():
         g.friday_principal = "user"
     except Exception:
         pass
+    # Cross-site refusal comes BEFORE loopback trust: trust says who the
+    # machine is, not which page in the browser is speaking for it.
+    try:
+        from agent_friday.services import origin_gate as _og
+        from agent_friday.services.local_address import local_hosts as _lh
+        _og_reason = _og.refusal(
+            request.method, request.headers, host=request.host,
+            is_local=_is_local_request(),
+            token_valid=_api_token_valid(request.headers.get("X-Friday-Token")),
+            own_hosts=_lh())
+    except Exception:
+        _og_reason = None
+    if _og_reason:
+        return jsonify({"error": _og_reason}), 403
     # Loopback / same-machine access is always trusted — auto-authenticate the
     # session so the user never sees a login screen on their own device.
     # Remote access (e.g. via Cloudflare Tunnel) still goes through the
