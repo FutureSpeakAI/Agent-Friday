@@ -320,13 +320,13 @@ def test_no_box_inside_the_pages_side_scrolls_on_its_own(css):
 
 @pytest.mark.parametrize("css", sorted(CSS_FILES))
 def test_every_scroll_area_wears_the_apps_scrollbar(css):
-    """A global ::-webkit-scrollbar theme, and no global scrollbar-color in
-    Chromium (it would switch the per-area ::-webkit-scrollbar rules off)."""
+    """A global ::-webkit-scrollbar theme sized by the one token (the rest of
+    its rules are held by test_scrollbars.py), and no scrollbar-color in
+    Chromium (it would switch every ::-webkit-scrollbar rule off)."""
     s = CSS_FILES[css].read_text(encoding="utf-8")
-    assert "        ::-webkit-scrollbar { width: 4px; height: 4px; }" in s, css
-    assert "::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }" in s, css
+    assert "        ::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }" in s, css
     code = re.sub(r"/\*.*?\*/", "", s, flags=re.S)
     for line in code.splitlines():
         if "scrollbar-color" in line:
-            assert "* { scrollbar-width: thin;" in line, (
+            assert "* { scrollbar-width: auto;" in line, (
                 "%s: scrollbar-color outside the Firefox-only block: %s" % (css, line.strip()))

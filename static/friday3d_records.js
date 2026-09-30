@@ -467,7 +467,7 @@
       .f3-glass { position:absolute; background:rgba(4,8,16,0.82); border:1px solid rgba(80,140,220,0.25); border-radius:9px; color:#dbe8fa; font-size:11px; }
       /* The legend sits above the scene, never over it, so it cannot hide a
          group's heading in any view. */
-      .f3-legend { display:flex; gap:4px; align-items:center; overflow-x:auto; margin:-2px 0 6px; padding:2px 0; scrollbar-width:thin; }
+      .f3-legend { display:flex; gap:4px; align-items:center; overflow-x:auto; margin:-2px 0 6px; padding:2px 0; }
       .f3-legend button { display:inline-flex; align-items:center; gap:6px; flex:none; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); color:#c6d6ea; font-size:11px; padding:3px 9px; border-radius:999px; cursor:pointer; white-space:nowrap; }
       .f3-legend button:hover { background:rgba(255,255,255,0.07); }
       .f3-legend button.off { opacity:.35; }
