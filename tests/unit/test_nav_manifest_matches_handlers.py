@@ -105,7 +105,7 @@ def test_messages_declares_what_its_deep_link_reads():
     ("news", "NewsWS", ["frontpage", "feed", "readlater", "notes", "briefings", "weekly",
                         "editorial", "trust"]),
     ("studio", "StudioWS", ["generate", "music", "timeline", "production", "gallery",
-                            "projects", "files"]),
+                            "projects", "podcasts", "files"]),
     ("system", "SystemWS", ["self-improvement", "approvals"]),
 ])
 def test_declared_sections_are_ones_the_workspace_has(ws, component, ids):

@@ -564,6 +564,9 @@ function fridayRunActions(actions){
       }else if(a.type==='open_url'&&a.url){
         const u=fridayHttpUrl(a.url);
         if(u){try{window.open(u,'_blank','noopener');}catch(_){}}
+      }else if(a.type==='podcast'){
+        // Voice or chat steering the podcast player (podcast_tools.podcast_play).
+        fridayPodcast(a.op||'play',a.episode_id,{t:a.t});
       }else if(a.type==='open_last_source'){
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
@@ -1302,6 +1305,342 @@ function CommandPalette({onClose,onOpenWs,openWins}){
 }
 
 // ═══ SEND-TO DROPDOWN (Data Flow) ═══
+// ═══ PODCASTS — player, Studio view, News chip (services/podcast_engine.py) ═══
+// Plain React.createElement so the same block runs in index.html and reads the
+// same in ui_parts/app.html. Episodes never play on their own: the player
+// opens on a click, a notification's "Listen", or a voice request
+// ({type:'podcast'} on the desktop bus, see fridayRunActions).
+function fridayPodcast(op, episodeId, extra) {
+  window.dispatchEvent(new CustomEvent('friday-podcast', {
+    detail: Object.assign({ op: op, episode_id: episodeId || '' }, extra || {})
+  }));
+}
+window.fridayPodcast = fridayPodcast;
+function podcastClock(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  const m = Math.floor(s / 60), r = s % 60;
+  return m + ':' + (r < 10 ? '0' : '') + r;
+}
+const PODCAST_C = {
+  bg: 'rgba(8,12,20,0.96)', line: 'rgba(255,255,255,0.10)', text: 'rgba(255,255,255,0.88)',
+  dim: 'rgba(255,255,255,0.55)', accent: '#00d4ff', ok: '#00ff80', warn: '#f59e0b', bad: '#ff6b8a'
+};
+function PodcastBadges({ ep }) {
+  const h = React.createElement;
+  if (!ep) return null;
+  const chk = ep.check || {};
+  const pill = (txt, color, title) => h('span', {
+    title: title || txt,
+    style: { fontSize: 11, padding: '1px 7px', borderRadius: 10, border: '1px solid ' + color, color: color, whiteSpace: 'nowrap' }
+  }, txt);
+  return h('span', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap' } },
+    ep.privacy === 'private'
+      ? pill('🔒 Private · made on this PC', PODCAST_C.warn, 'Built from your own material. Written and spoken on this computer; never sent to a cloud model or voice.')
+      : pill('Public sources', PODCAST_C.dim),
+    chk.ok === true ? pill('✓ checked by ear', PODCAST_C.ok, 'Transcribed back on this computer: ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script') : null,
+    chk.ok === false ? pill('⚠ check found differences', PODCAST_C.bad, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
+    ep.mode === 'data' ? pill('📊 data mode', PODCAST_C.accent, 'Every number is from a computation over your data') : null);
+}
+function PodcastPlayer() {
+  const h = React.createElement;
+  const [ep, setEp] = useState(null);
+  const [t, setT] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [rate, setRate] = useState(1);
+  const [showText, setShowText] = useState(false);
+  const [srcOpen, setSrcOpen] = useState(null);
+  const audio = useRef(null);
+  const epRef = useRef(null);
+  const pendingPlay = useRef(false);
+  epRef.current = ep;
+  const report = (playingNow) => {
+    const e = epRef.current, a = audio.current;
+    if (!e || !a) return;
+    fetch('/api/podcasts/now-playing', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ episode_id: e.id, t: a.currentTime, playing: !!playingNow })
+    }).catch(() => {});
+  };
+  const load = async (id, play) => {
+    if (!id) return;
+    if (epRef.current && epRef.current.id === id) {
+      if (play && audio.current) audio.current.play().catch(() => {});
+      return;
+    }
+    try {
+      const r = await fetch('/api/podcasts/' + encodeURIComponent(id));
+      const d = await r.json();
+      if (!d.episode) return;
+      pendingPlay.current = !!play;
+      setT(0);
+      setSrcOpen(null);
+      setEp(d.episode);
+    } catch (_) {}
+  };
+  const chapters = (ep && ep.chapters) || [];
+  const chapterAt = (sec) => {
+    let i = -1;
+    chapters.forEach((c, k) => { if ((c.start || 0) <= sec + 0.05) i = k; });
+    return i;
+  };
+  const pendingSeek = useRef(null);
+  const seek = (sec) => {
+    const a = audio.current;
+    // Before the audio's metadata loads, a seek would be dropped: hold it.
+    if (!a || a.readyState < 1) { pendingSeek.current = Math.max(0, sec); return; }
+    a.currentTime = Math.max(0, sec); setT(a.currentTime); report(!a.paused);
+  };
+  const stepChapter = (dir) => {
+    const a = audio.current;
+    if (!a || !chapters.length) return;
+    const cur = chapterAt(a.currentTime);
+    let k = dir > 0 ? cur + 1 : (a.currentTime - ((chapters[cur] || {}).start || 0) > 3 ? cur : cur - 1);
+    k = Math.max(0, Math.min(chapters.length - 1, k));
+    seek(chapters[k].start || 0);
+  };
+  // One listener for the player's lifetime, reading the latest state through a
+  // ref. Re-registering on every render left a gap in which a deep link fired
+  // from another workspace's mount effect found no listener and was lost.
+  const onCommand = useRef(null);
+  onCommand.current = (d) => {
+    const a = audio.current;
+    const op = d.op || 'open';
+    if (op === 'open' || op === 'play') {
+      if (d.t != null) pendingSeek.current = Number(d.t) || 0;
+      load(d.episode_id, op === 'play');
+      return;
+    }
+    if (op === 'seek') { seek(Number(d.t) || 0); return; }
+    if (!a) return;
+    if (op === 'pause') a.pause();
+    else if (op === 'resume') a.play().catch(() => {});
+    else if (op === 'stop') { a.pause(); setEp(null); }
+    else if (op === 'next_chapter') stepChapter(1);
+    else if (op === 'previous_chapter') stepChapter(-1);
+  };
+  useEffect(() => {
+    const on = (ev) => { if (onCommand.current) onCommand.current(ev.detail || {}); };
+    window.addEventListener('friday-podcast', on);
+    return () => window.removeEventListener('friday-podcast', on);
+  }, []);
+  useEffect(() => {
+    if (!playing) return;
+    const iv = setInterval(() => report(true), 5000);
+    return () => clearInterval(iv);
+  }, [playing, ep && ep.id]);
+  useEffect(() => { if (audio.current) audio.current.playbackRate = rate; }, [rate, ep && ep.id]);
+  if (!ep) return null;
+  const lines = ep.lines || [];
+  let cur = -1;
+  lines.forEach((ln, i) => { if ((ln.start || 0) <= t + 0.05) cur = i; });
+  const line = lines[cur];
+  const ch = chapterAt(t);
+  const hosts = ep.hosts || {};
+  const who = (s) => ((hosts[s] || {}).name || s);
+  const srcById = {};
+  (ep.sources || []).forEach(s => { srcById[s.id] = s; });
+  (ep.facts || []).forEach(f => { srcById[f.id] = { id: f.id, title: f.text, kind: 'fact', expr: f.expr }; });
+  const cite = (c) => h('button', {
+    key: c, className: 'btn', onClick: () => setSrcOpen(srcOpen === c ? null : c),
+    'aria-label': 'Source ' + c + ': ' + ((srcById[c] || {}).title || ''),
+    style: { fontSize: 10, padding: '0 5px', marginLeft: 4, minHeight: 0, lineHeight: '16px' }
+  }, c);
+  const chartFor = () => {
+    if (!line || !ep.charts) return null;
+    const cs = line.cites || [];
+    return ep.charts.find(c => c.file && (c.facts || []).some(f => cs.includes(f))) || null;
+  };
+  const chart = chartFor();
+  const src = srcOpen ? srcById[srcOpen] : null;
+  const btn = (label, aria, onClick, extra) => h('button', Object.assign({
+    className: 'btn', 'aria-label': aria, title: aria, onClick: onClick,
+    style: { minWidth: 34, padding: '4px 8px' }
+  }, extra || {}), label);
+  return h('div', {
+    role: 'region', 'aria-label': 'Podcast player',
+    style: {
+      position: 'fixed', right: 16, bottom: 16, zIndex: 180, width: 'min(400px, calc(100vw - 32px))',
+      background: PODCAST_C.bg, border: '1px solid ' + PODCAST_C.line, borderRadius: 12,
+      boxShadow: '0 12px 40px rgba(0,0,0,0.5)', color: PODCAST_C.text, fontSize: 13, padding: 12,
+      display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '70vh'
+    }
+  },
+  h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
+    h('div', { style: { flex: 1, minWidth: 0 } },
+      h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.show),
+      h('div', { style: { color: PODCAST_C.dim, fontSize: 11, margin: '2px 0 4px' } },
+        ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
+      h(PodcastBadges, { ep: ep })),
+    btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); setEp(null); })),
+  h('audio', {
+    ref: audio, preload: 'metadata', src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/audio',
+    onLoadedMetadata: () => {
+      const a = audio.current;
+      if (!a) return;
+      if (pendingSeek.current != null) { a.currentTime = pendingSeek.current; setT(a.currentTime); pendingSeek.current = null; }
+      if (pendingPlay.current) { pendingPlay.current = false; a.play().catch(() => {}); }
+    },
+    onTimeUpdate: () => setT(audio.current ? audio.current.currentTime : 0),
+    onPlay: () => { setPlaying(true); report(true); },
+    onPause: () => { setPlaying(false); report(false); },
+    onEnded: () => { setPlaying(false); report(false); }
+  }, h('track', { kind: 'captions', src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/captions.vtt', srcLang: 'en', label: 'English', default: true })),
+  h('input', {
+    type: 'range', min: 0, max: Math.max(1, ep.duration_s || 0), step: 1, value: Math.floor(t),
+    'aria-label': 'Position', 'aria-valuetext': podcastClock(t) + ' of ' + podcastClock(ep.duration_s),
+    onChange: (e) => seek(Number(e.target.value)), style: { width: '100%' }
+  }),
+  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+    btn('⏮', 'Previous chapter', () => stepChapter(-1)),
+    btn(playing ? '⏸' : '▶', playing ? 'Pause' : 'Play', () => { const a = audio.current; if (a) (a.paused ? a.play().catch(() => {}) : a.pause()); }),
+    btn('⏭', 'Next chapter', () => stepChapter(1)),
+    h('span', { style: { color: PODCAST_C.dim, fontSize: 11, fontFamily: 'monospace' } }, podcastClock(t) + ' / ' + podcastClock(ep.duration_s)),
+    h('span', { style: { flex: 1 } }),
+    h('select', {
+      'aria-label': 'Playback speed', value: rate, onChange: (e) => setRate(Number(e.target.value)),
+      style: { background: 'transparent', color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6 }
+    }, [0.8, 1, 1.25, 1.5, 1.75, 2].map(r => h('option', { key: r, value: r, style: { color: '#000' } }, r + '×'))),
+    btn(showText ? 'Hide transcript' : 'Transcript', showText ? 'Hide the transcript' : 'Show the transcript', () => setShowText(!showText), { 'aria-expanded': showText })),
+  line ? h('div', { 'aria-live': 'polite', style: { fontSize: 13, lineHeight: 1.45 } },
+    h('b', { style: { color: line.speaker === 'a' ? PODCAST_C.accent : PODCAST_C.warn } }, who(line.speaker) + ': '),
+    line.text, (line.cites || []).map(cite)) : null,
+  src ? h('div', { style: { fontSize: 12, borderLeft: '2px solid ' + PODCAST_C.accent, paddingLeft: 8, color: PODCAST_C.text } },
+    h('b', null, srcOpen + ' '), src.kind === 'fact' ? src.title : (src.title || ''),
+    src.expr ? h('div', { style: { color: PODCAST_C.dim, fontFamily: 'monospace', fontSize: 11 } }, 'computed by ', src.expr) : null,
+    src.url ? h('div', null, h('a', { href: src.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, 'Open the source ↗')) : null) : null,
+  chart ? h('img', { src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/charts/' + encodeURIComponent(chart.file), alt: chart.title, style: { width: '100%', borderRadius: 6, background: '#fff' } }) : null,
+  showText ? h('div', { style: { overflowY: 'auto', maxHeight: '32vh', borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
+    lines.map((ln, i) => h('div', { key: i },
+      (i === 0 || lines[i - 1].chapter !== ln.chapter) && chapters[ln.chapter]
+        ? h('div', { style: { fontWeight: 600, margin: '8px 0 2px', color: PODCAST_C.accent } }, chapters[ln.chapter].title) : null,
+      h('div', {
+        role: 'button', tabIndex: 0, onClick: () => seek(ln.start || 0),
+        onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); seek(ln.start || 0); } },
+        'aria-current': i === cur ? 'true' : undefined,
+        style: { padding: '3px 4px', borderRadius: 4, cursor: 'pointer', background: i === cur ? 'rgba(0,212,255,0.12)' : 'transparent' }
+      }, h('b', null, who(ln.speaker) + ': '), ln.text, (ln.cites || []).map(cite)))),
+    (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: 11, marginTop: 8 } },
+      (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
+}
+function PodcastChip({ routine, runId }) {
+  const h = React.createElement;
+  const [ep, setEp] = useState(null);
+  useEffect(() => {
+    if (!routine || !runId) { setEp(null); return; }
+    let dead = false;
+    const get = () => fetch('/api/podcasts/for-run?routine=' + encodeURIComponent(routine) + '&run_id=' + encodeURIComponent(runId))
+      .then(r => r.json()).then(d => { if (!dead) setEp(d.episode || null); }).catch(() => {});
+    get();
+    const iv = setInterval(get, 15000);
+    return () => { dead = true; clearInterval(iv); };
+  }, [routine, runId]);
+  if (!ep) return null;
+  const style = { fontSize: 12, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: 6 };
+  if (ep.status === 'ready') {
+    return h('button', { className: 'btn', style: style, onClick: () => fridayPodcast('play', ep.id),
+      'aria-label': 'Listen to this run\u2019s episode, ' + Math.max(1, Math.round((ep.duration_s || 0) / 60)) + ' minutes' },
+      '🎧 Listen · ' + Math.max(1, Math.round((ep.duration_s || 0) / 60)) + ' min');
+  }
+  if (ep.status === 'failed') {
+    return h('span', { style: Object.assign({}, style, { color: PODCAST_C.bad }), title: (ep.error || {}).message || '' },
+      '🎧 Episode failed: ' + (((ep.error || {}).message) || '').slice(0, 90));
+  }
+  if (ep.status === 'cancelled') return null;
+  return h('span', { style: Object.assign({}, style, { color: PODCAST_C.dim }) }, '🎧 Episode: ' + (ep.stage_detail || ep.status));
+}
+const PODCAST_KINDS = [
+  { id: 'text', label: 'Text', ph: 'Paste notes or an article' },
+  { id: 'file', label: 'File', ph: 'C:\\path\\to\\notes.pdf' },
+  { id: 'dataset', label: 'Dataset', ph: 'C:\\path\\to\\data.csv (data mode)' },
+  { id: 'wiki', label: 'Wiki page', ph: 'projects/atlas.md' },
+  { id: 'topic', label: 'My notes on…', ph: 'a topic in your wiki' },
+  { id: 'url', label: 'Web page', ph: 'https://… (fetched from the web)' },
+  { id: 'kg_node', label: 'Knowledge entry', ph: 'node id' }
+];
+function PodcastsView() {
+  const h = React.createElement;
+  const [eps, setEps] = useState([]);
+  const [rows, setRows] = useState([{ kind: 'text', value: '' }]);
+  const [length, setLength] = useState('short');
+  const [instructions, setInstructions] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const refresh = () => fetch('/api/podcasts?limit=60').then(r => r.json()).then(d => setEps(d.episodes || [])).catch(() => {});
+  useEffect(() => {
+    refresh();
+    const iv = setInterval(refresh, 6000);
+    return () => clearInterval(iv);
+  }, []);
+  const make = async () => {
+    const sources = [];
+    let topic = '';
+    rows.forEach(r => {
+      const v = (r.value || '').trim();
+      if (!v) return;
+      if (r.kind === 'topic') topic = v;
+      else if (r.kind === 'text') sources.push({ kind: 'text', text: v, title: 'Pasted text' });
+      else if (r.kind === 'url') sources.push({ kind: 'url', url: v });
+      else if (r.kind === 'kg_node') sources.push({ kind: 'kg_node', id: v });
+      else sources.push({ kind: r.kind, path: v });
+    });
+    if (!sources.length && !topic) { setMsg('Add at least one source.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      const body = { sources: sources, length: length, instructions: instructions };
+      if (topic) body.topic = topic;
+      const r = await fetch('/api/podcasts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (d.status === 'ok') { setMsg('Queued. The local model is writing it; you\u2019ll get a notice when it\u2019s ready.'); setRows([{ kind: 'text', value: '' }]); setInstructions(''); refresh(); }
+      else setMsg(d.message || 'Could not start the episode.');
+    } catch (e) { setMsg('Could not start the episode.'); }
+    setBusy(false);
+  };
+  const act = (ep, what) => {
+    if (what === 'delete' && !confirm('Delete this episode and its audio from this computer?')) return;
+    fetch('/api/podcasts/' + encodeURIComponent(ep.id) + (what === 'delete' ? '' : '/' + what),
+      { method: what === 'delete' ? 'DELETE' : 'POST' }).then(refresh).catch(() => {});
+  };
+  const field = { background: 'rgba(255,255,255,0.04)', color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6, padding: '6px 8px', fontSize: 13 };
+  return h('div', { style: { padding: 16, color: PODCAST_C.text, display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 900 } },
+    h('div', null,
+      h('h2', { style: { margin: 0, fontSize: 18 } }, '🎧 Podcasts'),
+      h('div', { style: { color: PODCAST_C.dim, fontSize: 12, marginTop: 4 } },
+        'Two hosts talk through any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and the hosts may only say computed numbers.')),
+    h('section', { 'aria-label': 'Make a podcast', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
+      rows.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'flex-start' } },
+        h('select', { 'aria-label': 'Source type', value: r.kind, style: field,
+          onChange: (e) => setRows(rows.map((x, k) => k === i ? { kind: e.target.value, value: x.value } : x)) },
+          PODCAST_KINDS.map(k => h('option', { key: k.id, value: k.id, style: { color: '#000' } }, k.label))),
+        r.kind === 'text'
+          ? h('textarea', { 'aria-label': 'Source text', rows: 3, value: r.value, placeholder: PODCAST_KINDS[0].ph, style: Object.assign({ flex: 1, resize: 'vertical' }, field),
+              onChange: (e) => setRows(rows.map((x, k) => k === i ? { kind: x.kind, value: e.target.value } : x)) })
+          : h('input', { 'aria-label': 'Source', value: r.value, placeholder: (PODCAST_KINDS.find(k => k.id === r.kind) || {}).ph, style: Object.assign({ flex: 1 }, field),
+              onChange: (e) => setRows(rows.map((x, k) => k === i ? { kind: x.kind, value: e.target.value } : x)) }),
+        rows.length > 1 ? h('button', { className: 'btn', 'aria-label': 'Remove this source', onClick: () => setRows(rows.filter((_, k) => k !== i)) }, '✕') : null)),
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+        h('button', { className: 'btn', onClick: () => setRows(rows.concat([{ kind: 'file', value: '' }])) }, '+ Add source'),
+        h('select', { 'aria-label': 'Length', value: length, style: field, onChange: (e) => setLength(e.target.value) },
+          [['short', 'Short (~5 min)'], ['standard', 'Standard (~10 min)'], ['long', 'Long (~30 min)']].map(o => h('option', { key: o[0], value: o[0], style: { color: '#000' } }, o[1]))),
+        h('input', { 'aria-label': 'Angle or emphasis (optional)', placeholder: 'Angle or emphasis (optional)', value: instructions, style: Object.assign({ flex: 1, minWidth: 180 }, field), onChange: (e) => setInstructions(e.target.value) }),
+        h('button', { className: 'btn active', disabled: busy, onClick: make }, busy ? 'Starting…' : 'Make episode')),
+      msg ? h('div', { role: 'status', style: { fontSize: 12, color: PODCAST_C.dim } }, msg) : null,
+      h('div', { style: { fontSize: 11, color: PODCAST_C.dim } }, 'A web page is fetched from the internet to be read; nothing about the episode is sent anywhere.')),
+    h('section', { 'aria-label': 'Episodes', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+      eps.length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes yet. Every News routine run now comes with one, and you can make your own above.') : null,
+      eps.map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
+        h('div', { style: { flex: 1, minWidth: 0 } },
+          h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ep.title || ep.show),
+          h('div', { style: { fontSize: 11, color: PODCAST_C.dim, margin: '2px 0 4px' } },
+            ep.show, ' · ', new Date((ep.created_at || 0) * 1000).toLocaleString(),
+            ep.duration_s ? ' · ' + podcastClock(ep.duration_s) : '',
+            ep.status !== 'ready' ? ' · ' + (ep.status === 'failed' ? 'failed: ' + ((ep.error || {}).message || '') : (ep.stage_detail || ep.status)) : ''),
+          h(PodcastBadges, { ep: ep })),
+        ep.status === 'ready' ? h('button', { className: 'btn', 'aria-label': 'Play ' + (ep.title || ''), onClick: () => fridayPodcast('play', ep.id) }, '▶ Play') : null,
+        ['queued', 'waiting', 'writing', 'speaking', 'checking'].includes(ep.status) ? h('button', { className: 'btn', onClick: () => act(ep, 'cancel') }, 'Stop') : null,
+        ['failed', 'cancelled'].includes(ep.status) ? h('button', { className: 'btn', onClick: () => act(ep, 'retry') }, 'Retry') : null,
+        h('button', { className: 'btn', 'aria-label': 'Delete ' + (ep.title || 'episode'), onClick: () => act(ep, 'delete') }, '🗑')))));
+}
+const NEWS_PODCAST_ROUTINE = { frontpage: 'front_page', briefings: 'briefing', weekly: 'weekly', editorial: 'editorial' };
 function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
   const[open,setOpen]=useState(false);const[status,setStatus]=useState(null);const ref=useRef(null);
   useEffect(()=>{if(!open)return;const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false)};document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h)},[open]);
@@ -1312,6 +1651,7 @@ function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
     {label:'Add to Briefing',dest:'briefing',ico:'📰'},
     {label:'Draft Email',dest:'gmail_draft',ico:'✉️'},
     {label:'Share / Post…',dest:'content_pipeline',ico:'📤'},
+    {label:'Make a podcast',dest:'podcast',ico:'🎧'},
   ];
   const opts=(options||defaultOpts).filter(o=>{
     if(o.needsPerson&&!personName)return false;
@@ -1326,6 +1666,27 @@ function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
       setOpen(false);
       const c=typeof content==='function'?content():content;
       if(window.fridayQuickPost)window.fridayQuickPost({title:personName||'',content:typeof c==='string'?c:JSON.stringify(c),source:{kind:'flow',ref:dataType||'general'}});
+      return;
+    }
+    if (dest === 'podcast') {
+      // A podcast from whatever this menu is attached to: written by the local
+      // model and spoken on this computer (services/podcast_engine.py).
+      setOpen(false);
+      setStatus('sending');
+      const c = typeof content === 'function' ? content() : content;
+      try {
+        const r = await fetch('/api/podcasts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sources: [{ kind: 'text', text: typeof c === 'string' ? c : JSON.stringify(c, null, 1), title: personName || dataType || 'From Friday' }], length: 'short' })
+        });
+        const d = await r.json();
+        setStatus(d.status === 'ok' ? 'ok' : 'fail');
+        fridayToast(d.status === 'ok' ? '🎧 Episode queued. It\u2019s written and spoken on this computer; find it in Studio → Podcasts.' : (d.message || 'Could not start the episode.'));
+      } catch (e) {
+        setStatus('fail');
+      }
+      setTimeout(() => setStatus(null), 2000);
       return;
     }
     setStatus('sending');setOpen(false);
@@ -5666,8 +6027,8 @@ function StudioPromptBar({onCreated}){
   </div>);
 }
 // Studio's views, as its view buttons name them.
-const STUDIO_VIEWS=[{id:'generate',label:'Generate'},{id:'music',label:'Music'},{id:'timeline',label:'Timeline'},{id:'production',label:'Production'},{id:'gallery',label:'Gallery'},{id:'projects',label:'Projects'},{id:'files',label:'Files 3D',aliases:['files','file browser','folders']}];
-fridayDeclareNav('studio',{key:'view',keys:['view','root','path','file','creation','creation_title','creation_date'],sections:STUDIO_VIEWS});
+const STUDIO_VIEWS=[{id:'generate',label:'Generate'},{id:'music',label:'Music'},{id:'timeline',label:'Timeline'},{id:'production',label:'Production'},{id:'gallery',label:'Gallery'},{id:'projects',label:'Projects'},{id:'podcasts',label:'Podcasts',aliases:['podcast','episodes','audio overview']},{id:'files',label:'Files 3D',aliases:['files','file browser','folders']}];
+fridayDeclareNav('studio',{key:'view',keys:['view','root','path','file','creation','creation_title','creation_date','episode'],sections:STUDIO_VIEWS});
 function StudioWS(){
   const[creations,setCreations]=useState([]);const[loading,setLoading]=useState(true);const[view,setView]=useState('gallery');
   const[selected,setSelected]=useState(null);const[preview,setPreview]=useState('');const[filter,setFilter]=useState('all');
@@ -5694,6 +6055,8 @@ function StudioWS(){
     // {view:'files', root, path, file} opens that folder in the 3D file
     // browser, with the file chosen when one is named.
     if(t.view==='files'){if(t.root)window.__files3dOpen={root:t.root,path:t.path||'',file:t.file||''};setView('files');window.dispatchEvent(new Event('friday-files3d-open'));return;}
+    // {view:'podcasts', episode} opens Podcasts with that episode in the player (not playing).
+    if(t.view==='podcasts'||t.episode){setView('podcasts');if(t.episode)fridayPodcast('open',t.episode);return;}
     if(t.view&&STUDIO_VIEWS.some(v=>v.id===t.view)&&!t.creation&&!t.creation_title&&!t.creation_date){setView(t.view);return;}
     if(t.creation){loadCreations();openCreation({name:t.creation});return;}
     // Older daily-creation notifications carry only a title/date — resolve that
@@ -5755,8 +6118,10 @@ function StudioWS(){
       <button className={'btn '+(view==='gallery'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('gallery')}>🖼️ Gallery</button>
       <button className={'btn '+(view==='projects'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('projects')}>📁 Projects</button>
       <button className={'btn '+(view==='files'?'':'btn-magenta')} style={{fontSize:11}} title="Browse your folders in 3D: wall, carousel, tree, city, timeline and clusters" onClick={()=>setView('files')}>🧊 Files 3D</button>
+      <button className={'btn '+(view==='podcasts'?'':'btn-magenta')} style={{fontSize:11}} title="Podcasts from any sources, written and spoken on this computer" onClick={()=>setView('podcasts')}>🎧 Podcasts</button>
     </div>
     {view==='projects'&&<ProjectsPanel/>}
+    {view==='podcasts'&&<PodcastsView/>}
     {view==='files'&&(window.Files3DPanel?<window.Files3DPanel/>:<div style={{color:'#888',fontSize:12,padding:20}}>The 3D file browser did not load.</div>)}
     {view==='generate'&&<GeneratePanel onCreated={loadCreations}/>}
     {view==='music'&&<MusicPanel onCreated={loadCreations}/>}
@@ -7923,6 +8288,7 @@ function NewsWS(){
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('customize');loadPrefs()}}>⚙ Customize</button>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('diet');loadDiet()}}>📊 Your Media Diet</button>
         {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={()=>{loadFeed(true);loadArchStats();loadClusters()}}>↻ Refresh</button>}
+        <PodcastChip routine={NEWS_PODCAST_ROUTINE[tab]} runId={tab==='frontpage'?fp&&fp.id:tab==='weekly'?weekly&&weekly.id:tab==='editorial'?editorial&&editorial.id:tab==='briefings'?selected&&selected.date:''}/>
         {/* The old "🔊 Listen" button (listenFrontPage: one monolithic WAV, not
             interruptible by voice) was removed as redundant — "Listen to Front
             Page" (anchor mode, natively interruptible) is the one way to hear
@@ -21397,6 +21763,7 @@ function App(){
 
     {/* Global Quick-Post modal — opened from any workspace via window.fridayQuickPost() */}
     <QuickPostHost/>
+    <PodcastPlayer/>
 
     {/* Background tasks now live in the bell-icon dropdown above */}
 
