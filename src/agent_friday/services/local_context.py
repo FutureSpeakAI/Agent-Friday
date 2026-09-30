@@ -395,9 +395,34 @@ def request(question: str, *, conversation_id, cloud_model: str,
             unavailable = note or unavailable
     if not local_model:
         return {"status": "unavailable", "reason": unavailable}
-    draft = prepare(raw)
+    return offer(raw, conversation_id=conversation_id, cloud_model=cloud_model,
+                 local_model=local_model, question=question)
+
+
+def offer(raw_text: str, *, conversation_id, cloud_model: str, local_model: str,
+          question: str, title: Optional[str] = None) -> dict:
+    """Scrub text produced on this machine and share it on a grant or a card.
+
+    The half of `request` after the local model has spoken, split out because
+    a second caller has the text already: a WORKFLOW whose steps ran on a
+    local seat. Its result is bound for the same cloud voice session and needs
+    the same treatment — scrub to placeholders, apply the egress floor, sign a
+    receipt, and let the owner read the exact words before any of it leaves.
+
+    Routing a workflow result through here is not a way around the egress
+    gate. The gate's verdict on private material is to withhold it whole,
+    which keeps the promise and loses the answer; this keeps the promise AND
+    offers the owner a scrubbed version to approve. Every protection the gate
+    has is still in front of it: the never-send floor refuses outright, hard
+    identifiers refuse outright, and nothing moves without the owner's yes.
+
+    Returns the same ``{"status": ...}`` shape as `request`.
+    """
+    draft = prepare(raw_text)
     if _withheld_whole(draft["text"]):
-        return {"status": "withheld", "reason": "nothing in the answer could be shared"}
+        return {"status": "withheld",
+                "reason": draft.get("refused")
+                or "nothing in the answer could be shared"}
     draft.update({"local_model": local_model, "cloud_model": cloud_model,
                   "question": question, "conversation_id": conversation_id, "version": 1,
                   "history": []})
@@ -412,7 +437,7 @@ def request(question: str, *, conversation_id, cloud_model: str,
     from agent_friday.services import approvals
     rec = approvals.create_approval(
         kind=KIND, subject_type="local_context", subject_id=uuid.uuid4().hex,
-        title=f"Share context from your local model with {cloud_model}?",
+        title=title or f"Share context from your local model with {cloud_model}?",
         description=draft["text"][:2000],
         action_description=(f"Send this answer from {local_model} to {cloud_model} "
                             f"for the voice conversation"),
