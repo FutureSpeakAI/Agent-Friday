@@ -538,6 +538,100 @@ def preview(cid: str) -> str:
     return html
 
 
+# ── point-and-say: the pick, and a non-model patcher for simple edits ───────
+# (§4.11 item 2). The user selects an element in the preview; the pick is told
+# to the model next turn so "make this bigger" has a referent. Simple property
+# edits never go through a model: one CSS rule, appended as a step by "you".
+
+_SELECTOR_RE = re.compile(r"^[A-Za-z0-9 _#.\->:\[\]=\"',()*+~]{1,300}$")
+_VALUE_RE = re.compile(r"^[A-Za-z0-9#%.,\- ()]{1,60}$")
+SAFE_PROPS = frozenset({
+    "font-size", "font-weight", "font-style", "color", "background", "background-color", "display",
+    "visibility", "padding", "margin", "border", "border-radius", "text-align", "text-decoration",
+    "width", "max-width", "opacity", "letter-spacing", "line-height", "gap",
+})
+QUICK_ACTIONS = {
+    "bigger": ("font-size", "1.25em"), "smaller": ("font-size", "0.85em"), "bolder": ("font-weight", "700"),
+    "hide": ("display", "none"), "center": ("text-align", "center"), "rounder": ("border-radius", "12px"),
+}
+_PICK_CSS_NOTE = "/* point-and-say (Friday pick): one rule per quick edit, each its own step */"
+
+
+def _check_selector(selector: str) -> str:
+    s = " ".join(str(selector or "").split())
+    if not s or not _SELECTOR_RE.match(s) or any(c in s for c in "{};/\\"):
+        raise ValueError("that is not a plain CSS selector")
+    return s
+
+
+def set_pick(cid: str, pick: dict) -> dict:
+    """Remember what the user pointed at in the preview."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    pick = pick or {}
+    sel = _check_selector(pick.get("selector"))
+    tag = re.sub(r"[^a-z0-9-]", "", str(pick.get("tag") or "").lower())[:32]
+    text = " ".join(str(pick.get("text") or "").split())[:200]
+    snippet = str(pick.get("snippet") or "")
+    if len(snippet) > 400:
+        raise ValueError("the snippet is too long")
+    rect = pick.get("rect") if isinstance(pick.get("rect"), dict) else None
+    if rect is not None:
+        rect = {k: float(rect.get(k) or 0) for k in ("x", "y", "w", "h")}
+    stored = {"selector": sel, "tag": tag, "text": text, "snippet": snippet, "rect": rect,
+              "at": datetime.now().isoformat(timespec="seconds")}
+    rec["pick"] = stored
+    _save(rec)
+    try:
+        from agent_friday.services import desktop_bus
+        desktop_bus.broadcast({"type": "codebase_pick", "codebase_id": cid, "conversation_id": rec.get("conversation_id"),
+                               "selector": sel, "tag": tag}, kind="chat")
+    except Exception:
+        pass
+    return stored
+
+
+def clear_pick(cid: str) -> bool:
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    had = rec.get("pick") is not None
+    rec["pick"] = None
+    _save(rec)
+    return had
+
+
+def quick_style(cid: str, selector: str, prop: str, value: str) -> dict:
+    """One CSS rule for the picked element, as a step by "you". No model."""
+    sel = _check_selector(selector)
+    prop = str(prop or "").strip().lower()
+    value = " ".join(str(value or "").split())
+    if prop not in SAFE_PROPS:
+        raise ValueError("%r is not one of the simple properties a quick edit may set" % prop)
+    low = value.lower()
+    if not _VALUE_RE.match(value) or "url(" in low or "expression" in low or "javascript" in low:
+        raise ValueError("that value is not a plain CSS value")
+    repo = repo_path(cid)
+    changes: dict = {}
+    target = "styles.css" if (repo / "styles.css").is_file() else "friday-pick.css"
+    current = read(cid, target) or ""
+    if target == "friday-pick.css" and not current:
+        current = _PICK_CSS_NOTE + "\n"
+        index = read(cid, "index.html")
+        if index and 'href="friday-pick.css"' not in index:
+            link = '<link rel="stylesheet" href="friday-pick.css">'
+            m = re.search(r"</head>", index, re.I)
+            changes["index.html"] = (index[:m.start()] + link + "\n" + index[m.start():]) if m else (link + "\n" + index)
+    elif _PICK_CSS_NOTE not in current:
+        current = current.rstrip("\n") + "\n\n" + _PICK_CSS_NOTE + "\n"
+    changes[target] = current.rstrip("\n") + "\n%s { %s: %s; }\n" % (sel, prop, value)
+    st = step(cid, changes, "You styled %s: %s %s" % (sel, prop, value), author="you", model="", key_profile="")
+    if st is None:
+        raise RuntimeError("that rule is already there")
+    return st
+
+
 # ── export: a plain project, no lock-in ─────────────────────────────────────
 
 _EXPORT_NOTE = "Exported from Friday's salon as a plain project: no lock-in, nothing of Friday's inside."
@@ -604,6 +698,12 @@ def context_block_for(cid: str) -> str:
     lines.append("Last steps (newest first):")
     for s in steps(cid, limit=6):
         lines.append("- %s \u00b7 %s \u00b7 %s" % (s["sha"][:7], s["kind"], s["summary"]))
+    pick = rec.get("pick")
+    if isinstance(pick, dict) and pick.get("selector"):
+        lines.append("The user POINTED AT this element in the preview (when they say \"this\" or \"that\", they mean it): "
+                     "<%s> \u00b7 selector `%s` \u00b7 text \"%s\" \u00b7 snippet `%s` \u00b7 picked %s. "
+                     "Edit the rule or markup that governs it; it stays selected until they pick another."
+                     % (pick.get("tag") or "element", pick["selector"], pick.get("text") or "", (pick.get("snippet") or "")[:200], pick.get("at") or ""))
     return "\n".join(lines) + "\n"
 
 

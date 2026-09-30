@@ -87,6 +87,25 @@
     return (window.fridayFrameScrollbars || (x => x))(doc);
   }
   window.fridayArtifactFrameDoc = html => frameDoc(html, FRAME_CSP, FRAME_BASE_CSS);
+
+  // Point-and-say: the picker that runs INSIDE the preview frame in point
+  // mode. Inline, so it needs no network under the frame's CSP. A hover
+  // outlines; a click is swallowed, the element is outlined solid, and one
+  // message crosses to the parent: a selector that resolves to that element
+  // alone, the tag, its text and a short snippet. Nothing else crosses.
+  const PICKER_JS = "(function(){var hov=null,sel=null;var S=document.createElement('style');S.textContent='[data-fp-hover]{outline:2px dashed #00d4ff!important;outline-offset:2px!important;cursor:crosshair!important}[data-fp-sel]{outline:2px solid #00d4ff!important;outline-offset:2px!important}';document.documentElement.appendChild(S);" +
+    "function selector(el){if(el.id&&/^[A-Za-z][\\w-]*$/.test(el.id)&&document.querySelectorAll('#'+el.id).length===1)return '#'+el.id;var parts=[],cur=el,depth=0;while(cur&&cur.nodeType===1&&cur!==document.documentElement&&depth<6){var part=cur.tagName.toLowerCase();var cls=(cur.getAttribute('class')||'').trim().split(/\\s+/)[0];if(cls&&/^[A-Za-z_][\\w-]*$/.test(cls))part+='.'+cls;var sib=cur.parentElement?Array.prototype.filter.call(cur.parentElement.children,function(c){return c.tagName===cur.tagName}):[];if(sib.length>1)part+=':nth-of-type('+(sib.indexOf(cur)+1)+')';parts.unshift(part);var cand=parts.join(' > ');try{if(document.querySelectorAll(cand).length===1)return cand;}catch(e){}cur=cur.parentElement;depth++;}return parts.join(' > ');}" +
+    "document.addEventListener('mouseover',function(e){var t=e.target;if(!(t instanceof Element)||t===document.documentElement||t===document.body)return;if(hov&&hov!==t)hov.removeAttribute('data-fp-hover');hov=t;t.setAttribute('data-fp-hover','');},true);" +
+    "document.addEventListener('mouseout',function(e){if(e.target instanceof Element)e.target.removeAttribute('data-fp-hover');},true);" +
+    "document.addEventListener('click',function(e){var t=e.target;if(!(t instanceof Element))return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();if(sel)sel.removeAttribute('data-fp-sel');sel=t;t.removeAttribute('data-fp-hover');t.setAttribute('data-fp-sel','');var r=t.getBoundingClientRect();var html=t.outerHTML.replace(/ data-fp-(hover|sel)=\"\"/g,'');" +
+    "parent.postMessage({__friday:'pick',selector:selector(t),tag:t.tagName.toLowerCase(),text:(t.textContent||'').trim().replace(/\\s+/g,' ').slice(0,200),snippet:html.slice(0,400),rect:{x:r.x,y:r.y,w:r.width,h:r.height}},'*');},true);" +
+    "document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(sel)sel.removeAttribute('data-fp-sel');sel=null;}},true);})();";
+  window.fridayPickerDoc = html => {
+    const s = String(html == null ? '' : html);
+    const tag = '<script>' + PICKER_JS + '</script>';
+    const i = s.toLowerCase().lastIndexOf('</body>');
+    return i >= 0 ? s.slice(0, i) + tag + s.slice(i) : s + tag;
+  };
   const svgDoc = svg => frameDoc('<!doctype html><html><head></head><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0b0e14">' + String(svg || '') + '</body></html>', SVG_CSP, 'svg{max-width:100%;max-height:100vh}');
 
   // ── One event stream for the whole page ───────────────────────────────
@@ -509,7 +528,32 @@
     const [busy, setBusy] = useState(false);
     const [note, setNote] = useState(null);
     const [reload, setReload] = useState(0);
+    const [pointing, setPointing] = useState(false);
+    const [pick, setPick] = useState(codebase.pick || null);
+    const frameRef = useRef(null);
     const base = '/api/codebases/' + encodeURIComponent(codebase.id);
+    // The picker's one message, from this panel's own frame only.
+    useEffect(() => {
+      const onMsg = e => {
+        if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
+        const d = e.data;
+        if (!d || d.__friday !== 'pick' || typeof d.selector !== 'string') return;
+        const body = { selector: d.selector, tag: d.tag, text: d.text, snippet: d.snippet, rect: d.rect };
+        postJ(base + '/pick', body).then(({ ok, j }) => { if (ok) setPick(j.pick); else setNote({ text: 'Could not keep that selection: ' + ((j && j.error) || '') }); }).catch(() => {});
+      };
+      window.addEventListener('message', onMsg);
+      return () => window.removeEventListener('message', onMsg);
+    }, [base]);
+    const quick = action => {
+      if (!pick || busy) return;
+      setBusy(true);
+      postJ(base + '/quick-style', { selector: pick.selector, action }).then(({ ok, j }) => {
+        if (!ok) { setNote({ text: (j && j.error) || 'That edit did not apply.' }); return; }
+        setNote({ text: j.step.summary + ' (a step you can undo)', ok: true });
+        loadSteps(); loadPreview();
+      }).catch(e => setNote({ text: 'That edit did not apply: ' + e })).then(() => setBusy(false));
+    };
+    const clearPick = () => { postJ(base + '/pick/clear', {}).then(() => setPick(null)).catch(() => {}); };
 
     const loadPreview = useCallback(() => getJ(base + '/preview').then(d => setHtml(d.html || '')).catch(() => setHtml('')), [base]);
     const loadFiles = useCallback(() => getJ(base + '/files').then(d => setFiles(d.files || [])).catch(() => {}), [base]);
@@ -540,7 +584,7 @@
     const showDiff = st => { if (diff && diff.sha === st.sha) { setDiff(null); return; } getJ(base + '/diff/' + st.sha).then(d => setDiff({ sha: st.sha, text: d.diff || '' })).catch(() => {}); };
     const kindChip = k => chipEl(k === 'undo' ? 'UNDO' : k === 'start' ? 'START' : 'STEP', k === 'undo' ? AMBER : k === 'start' ? 'rgba(255,255,255,0.5)' : ACCENT);
     const tabBtn = (id, label) => h('button', { className: 'fa-btn' + (view === id ? ' fa-primary' : ' fa-quiet'), onClick: () => setView(id), role: 'tab', 'aria-selected': view === id }, label);
-    const doc = useMemo(() => html == null ? null : window.fridayArtifactFrameDoc(html), [html, reload]);
+    const doc = useMemo(() => html == null ? null : window.fridayArtifactFrameDoc(pointing ? window.fridayPickerDoc(html) : html), [html, reload, pointing]);
 
     return h('div', { className: 'fa-panel' + (tab ? ' fa-tab' : ''), style: tab ? undefined : { width, flexShrink: 0 }, 'data-codebase-panel': codebase.id, 'data-codebase-view': view, role: 'complementary', 'aria-label': 'Codebase panel' },
       h('div', { className: 'fa-head' },
@@ -557,12 +601,20 @@
         h('div', { className: 'fa-tools', role: 'tablist' },
           tabBtn('preview', 'Preview'), tabBtn('files', 'Files'), tabBtn('changes', 'Changes' + (steps.length > 1 ? ' · ' + (steps.length - 1) : '')),
           artifactsTab ? tabBtn('artifacts', 'Artifacts') : null,
+          view === 'preview' ? h('button', { className: 'fa-btn' + (pointing ? ' fa-primary' : ' fa-quiet'), 'data-point-mode': pointing ? 'on' : 'off', onClick: () => setPointing(v => !v), title: 'Point at something in the preview, then say what to change' }, '\u2316 Point') : null,
           view === 'preview' ? h('span', { style: { marginLeft: 'auto', display: 'flex', gap: 4 } }, WIDTHS.map(([name, w]) => h('button', { key: name, className: 'fa-btn fa-quiet', style: frameW === w ? { color: ACCENT, borderColor: ACCENT } : undefined, onClick: () => setFrameW(w), title: name }, name))) : null,
           view === 'changes' ? h('button', { className: 'fa-btn fa-amber', style: { marginLeft: 'auto' }, onClick: undo, disabled: busy || steps.filter(s => s.kind === 'step').length === 0 }, 'Undo last step') : null)),
       note ? h('div', { className: 'fa-note' + (note.ok ? ' fa-ok' : ''), role: 'status' }, note.text) : null,
+      view === 'preview' && (pointing || pick) ? h('div', { className: 'fa-note', 'data-pick': pick ? pick.selector : '', role: 'status', style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+        pick ? h(React.Fragment, null,
+          h('span', { style: { fontFamily: MONO, fontSize: 10 } }, '<' + (pick.tag || 'element') + '>'),
+          h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, (pick.text ? '\u201c' + pick.text.slice(0, 60) + '\u201d' : pick.selector) + ' \u2014 say what to change, here or by voice, or:'),
+          ['bigger', 'smaller', 'bolder', 'center', 'hide'].map(a => h('button', { key: a, className: 'fa-btn fa-amber', onClick: () => quick(a), disabled: busy }, a)),
+          h('button', { className: 'fa-btn fa-quiet', onClick: clearPick, title: 'Forget the selection' }, 'clear'))
+          : h('span', null, 'Point mode: click anything in the preview to select it.')) : null,
       view === 'preview' ? h('div', { className: 'fa-body fa-flush', style: { display: 'flex', justifyContent: 'center', background: frameW ? 'rgba(0,0,0,0.35)' : undefined } },
         doc == null ? h('div', { className: 'fa-empty' }, 'Loading the preview…')
-          : h('iframe', { key: reload + ':' + codebase.id, className: 'fa-frame', sandbox: SANDBOX, srcDoc: doc, referrerPolicy: 'no-referrer', title: 'Preview (sandboxed)', style: frameW ? { width: frameW, maxWidth: '100%', borderLeft: '1px solid rgba(0,212,255,0.15)', borderRight: '1px solid rgba(0,212,255,0.15)' } : undefined })) : null,
+          : h('iframe', { key: reload + ':' + codebase.id + ':' + (pointing ? 'p' : 'v'), ref: frameRef, className: 'fa-frame', sandbox: SANDBOX, srcDoc: doc, referrerPolicy: 'no-referrer', title: 'Preview (sandboxed)', style: frameW ? { width: frameW, maxWidth: '100%', borderLeft: '1px solid rgba(0,212,255,0.15)', borderRight: '1px solid rgba(0,212,255,0.15)' } : undefined })) : null,
       view === 'files' ? h('div', { className: 'fa-body', style: { display: 'flex', gap: 10, padding: 0 } },
         h('div', { style: { width: 180, flexShrink: 0, borderRight: '1px solid rgba(0,212,255,0.10)', overflow: 'auto', padding: '8px 6px', fontFamily: MONO, fontSize: 11 } },
           files.map(f => h('div', { key: f.path, onClick: () => openFile(f), title: f.bytes + ' bytes', style: { padding: '3px 6px', cursor: 'pointer', borderRadius: 4, color: file && file.path === f.path ? ACCENT : '#dfe7f2', background: file && file.path === f.path ? 'rgba(0,212,255,0.08)' : undefined, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, f.path))),

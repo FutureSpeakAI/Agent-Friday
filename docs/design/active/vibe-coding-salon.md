@@ -2,7 +2,7 @@
 
 > **Status:** accepted and in build. Its three original questions were settled on 2026-09-29 as delegated decisions, as recommended, under the owner's "build all pending specs" delegation. Three owner rulings since then are recorded in §12 (LocalStack is out and no component may phone home; Friday never serves tools or pages to the internet from the user's hardware; "This PC" is the default host for published static artifacts). The 2026-09-30 revision also folds in the spike results (S1, S2, S4), a competitor gap pass and the workspace-evolution re-sequencing (§10).
 > **Last verified:** 2026-09-30 against main `02035ba6`
-> **Implementation:** Phase 1, first increment, on branch `feat/salon-phase1` (not on main): `services/artifacts.py` (the store), `routes/artifacts.py`, the `artifact_put` tool in `services/agent.py`, the fenced-block absorb in `routes/chat.py`, `static/friday_artifacts.js` (the panel and the frame), `FridayChatShell` in `index.html` and `ui_parts/app.html`. Tests: `tests/unit/test_artifacts_store.py`, `test_artifact_tool_and_gate.py`, `test_artifact_panel_ui_files.py`, `tests/api/test_artifacts_routes.py`, `test_chat_absorbs_fenced_artifact.py`, `tests/ui/test_artifact_frame_isolation.py`. **Phase 1b (publish to web), first three increments, on the same branch:** `services/publish_web.py` (the bundle, the scan, the licence check, the one card, "This PC" writes), `services/published_server.py` (the separate static server), `services/publish_hosting.py` (the tunnel, the switch, the status, account connections), `routes/publish.py`, `static/friday_publish.js` (the card body and the Settings section), the `publish_artifact` tool; tests in `tests/unit/test_publish_web.py`, `test_published_server.py`, `test_publish_hosting.py`, `tests/api/test_publish_routes.py`. 1b-D added `services/publish_adapters.py` (Cloudflare Pages and GitHub Pages, tested against fakes; their first real run is the gated check) and `tests/exposure_guard.py` (no test process may start a tunnel binary or bind a public host). **Workspace-ecosystem Phase 1 (pulled forward, §4.9.1):** undo walks backwards, ids are refused not rewritten, the studio chat passes the blast-radius gate, every workspace route requires login and carries a CSP; its Phase 0 UI already existed. **Phase 2, first two increments:** `services/codebases.py` (repo per codebase, templates, steps as commits with receipts, undo that walks back, the one-document preview, the model's context), `routes/codebases.py`, the `codebase_edit` / `codebase_undo` / `codebase_read` tools, "+ Codebase" in the sidebar and the panel's Preview, Files and Changes in `static/friday_artifacts.js`. Not yet built in Phase 2: the point-and-say, plan-first, data-viewer and export gaps of §4.11, the receipt classifier hand-off to goals-and-receipts (its Phase 0 is not on main; receipts are written in the §4.8 shape and the classifier plugs in later), the frame broker's read-only subset. Not yet built in 1b: the voice verb. Everything else in this document is not built. Builds on:
+> **Implementation:** Phase 1, first increment, on branch `feat/salon-phase1` (not on main): `services/artifacts.py` (the store), `routes/artifacts.py`, the `artifact_put` tool in `services/agent.py`, the fenced-block absorb in `routes/chat.py`, `static/friday_artifacts.js` (the panel and the frame), `FridayChatShell` in `index.html` and `ui_parts/app.html`. Tests: `tests/unit/test_artifacts_store.py`, `test_artifact_tool_and_gate.py`, `test_artifact_panel_ui_files.py`, `tests/api/test_artifacts_routes.py`, `test_chat_absorbs_fenced_artifact.py`, `tests/ui/test_artifact_frame_isolation.py`. **Phase 1b (publish to web), first three increments, on the same branch:** `services/publish_web.py` (the bundle, the scan, the licence check, the one card, "This PC" writes), `services/published_server.py` (the separate static server), `services/publish_hosting.py` (the tunnel, the switch, the status, account connections), `routes/publish.py`, `static/friday_publish.js` (the card body and the Settings section), the `publish_artifact` tool; tests in `tests/unit/test_publish_web.py`, `test_published_server.py`, `test_publish_hosting.py`, `tests/api/test_publish_routes.py`. 1b-D added `services/publish_adapters.py` (Cloudflare Pages and GitHub Pages, tested against fakes; their first real run is the gated check) and `tests/exposure_guard.py` (no test process may start a tunnel binary or bind a public host). **Workspace-ecosystem Phase 1 (pulled forward, §4.9.1):** undo walks backwards, ids are refused not rewritten, the studio chat passes the blast-radius gate, every workspace route requires login and carries a CSP; its Phase 0 UI already existed. **Phase 2, first two increments:** `services/codebases.py` (repo per codebase, templates, steps as commits with receipts, undo that walks back, the one-document preview, the model's context), `routes/codebases.py`, the `codebase_edit` / `codebase_undo` / `codebase_read` tools, "+ Codebase" in the sidebar and the panel's Preview, Files and Changes in `static/friday_artifacts.js`. **Phase 2, §4.11 gaps:** plan-first (`services/plans.py`, the `plan_first` / `plan_approve` / `plan_milestone` tools, the plan strip with "Build this plan", approval opens a task-ledger run, milestones close with typed blockers), one-click export (`codebase_export`, `GET /api/codebases/<id>/export`, a plain zip with nothing of Friday's inside) and point-and-say (`set_pick` / `clear_pick` / `quick_style` in `services/codebases.py`, the `/pick`, `/pick/clear` and `/quick-style` routes, the picker `window.fridayPickerDoc` injected into the preview frame in Point mode, the pick strip's quick actions; the pick is told to the model next turn, a quick style is one CSS rule as a step by "you", never a model call). Not yet built in Phase 2: the data viewer of §4.11 (waits on Phase 5), the receipt classifier hand-off to goals-and-receipts (its Phase 0 is not on main; receipts are written in the §4.8 shape and the classifier plugs in later), the frame broker's read-only subset. Not yet built in 1b: the voice verb. Everything else in this document is not built. Builds on:
 > - `index.html`: `ChatSurface`, `ChatSidebar`, `CodeWS` and its `CODE_TABS`
 >   (`DevDiff`, `DevFiles`, `DevGit`, `DevVibe`), `FWin`, `useTabState`,
 >   `useNavTarget`
@@ -1233,14 +1233,34 @@ recommended engineering option taken as a delegated decision (§12), are:
 2. **Point-and-say visual editing (Phase 2).** Select an element in the
    preview and say or type the change. Selection returns a selector plus a
    cropped screenshot; simple property edits go through a non-model patcher,
-   the rest is a normal edit turn.
+   the rest is a normal edit turn. *As built:* the picker runs inside the
+   sandboxed preview frame as an inline script (the frame's CSP allows no
+   network); one click posts one message to the panel, `{selector, tag, text,
+   snippet, rect}`, and nothing else crosses; the panel accepts it only from
+   its own frame's window. The selector is `#id` when unique, else a
+   structural path (`main > section > p.lead`) that resolves to that element
+   alone. The pick is stored on the codebase and told to the model in its
+   context block ("the user POINTED AT ..."), so "make this bigger" has a
+   referent; it stays until cleared or replaced. The quick actions (bigger,
+   smaller, bolder, center, hide) append one rule to `styles.css` (or create
+   and link `friday-pick.css`) as a step by "you", undoable like any other.
+   The patcher accepts only a fixed set of plain properties and plain values:
+   no `url(`, no `expression(`, no `;` or `}`. The cropped screenshot waits
+   for the frame broker; the rect is already in the message.
 3. **Bring your own code (Phase 4).** Open any existing repo or local folder
    (§4.8 already gives it a salon branch); push and open a PR through one
    card kind, `code_publish`, non-grantable by default, with the receipt's
    screenshot in the PR body.
 4. **Plan-first mode for big asks (Phase 2).** A short plan as a `markdown`
    artifact, approval, then build; its milestones become task-ledger tasks
-   and every step closes with a typed blocker, wired to goals.
+   and every step closes with a typed blocker, wired to goals. *As built:*
+   `plan_first` makes the plan a `markdown` artifact with `meta.plan`
+   (twelve milestones at most); the panel shows a plan strip whose "Build
+   this plan" is the approval (`POST .../plan/approve`), which opens a
+   task-ledger run and appends a system line to the chat. Until then the
+   model's context block says AWAITING and "Do not build". `plan_milestone`
+   moves one milestone through todo, doing, done or blocked with one of the
+   goals spec's typed blockers, and the block names the next milestone.
 5. **Phone preview (Phase 5).** LAN-first behind a one-time 30-minute token
    with a QR code; a tunnel the user already runs is detected, never
    installed, and opening one is a card.

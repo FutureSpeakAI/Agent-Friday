@@ -11,6 +11,11 @@
   POST  /api/codebases/<id>/undo              revert the newest step not yet undone
   GET   /api/codebases/<id>/diff/<sha>        one step's unified diff
   GET   /api/codebases/<id>/preview           {html}: the one-document preview for the frame
+  GET   /api/codebases/<id>/export            the plain project as a zip (nothing of Friday's inside)
+  POST  /api/codebases/<id>/pick              {selector, tag, text, snippet, rect}: what the user pointed at
+  POST  /api/codebases/<id>/pick/clear        forget it
+  POST  /api/codebases/<id>/quick-style       {selector, action} or {selector, prop, value}: one CSS rule,
+                                              a step by "you", never a model call
 """
 from __future__ import annotations
 
@@ -117,6 +122,38 @@ def codebase_undo(cid):
 @login_required
 def codebase_diff(cid, sha):
     return jsonify({"status": "ok", "sha": sha, "diff": cb.diff(cid, sha)})
+
+
+@codebases_bp.route("/api/codebases/<cid>/pick", methods=["POST"])
+@login_required
+def codebase_pick(cid):
+    body = request.get_json(silent=True) or {}
+    return jsonify({"status": "ok", "pick": cb.set_pick(cid, body)})
+
+
+@codebases_bp.route("/api/codebases/<cid>/pick/clear", methods=["POST"])
+@login_required
+def codebase_pick_clear(cid):
+    return jsonify({"status": "ok", "cleared": cb.clear_pick(cid)})
+
+
+@codebases_bp.route("/api/codebases/<cid>/quick-style", methods=["POST"])
+@login_required
+def codebase_quick_style(cid):
+    """A simple property edit through the non-model patcher: one rule, one step by "you"."""
+    body = request.get_json(silent=True) or {}
+    action = str(body.get("action") or "")
+    if action:
+        if action not in cb.QUICK_ACTIONS:
+            return _bad("unknown quick action %r" % action)
+        prop, value = cb.QUICK_ACTIONS[action]
+    else:
+        prop, value = str(body.get("prop") or ""), str(body.get("value") or "")
+    try:
+        st = cb.quick_style(cid, str(body.get("selector") or ""), prop, value)
+    except RuntimeError as e:
+        return _bad(e, 409)
+    return jsonify({"status": "ok", "step": st})
 
 
 @codebases_bp.route("/api/codebases/<cid>/export", methods=["GET"])

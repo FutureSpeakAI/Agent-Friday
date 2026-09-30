@@ -156,6 +156,12 @@ def test_the_codebase_panel_exports_a_plain_project(js):
     assert "/export'" in js and "aria-label': 'Export'" in js
 
 
+def test_point_and_say_lives_in_the_panel(js):
+    assert "fridayPickerDoc" in js and "data-point-mode" in js and "/quick-style'" in js and "/pick'" in js
+    # The picker's message is accepted only from this panel's own frame.
+    assert "e.source !== frameRef.current.contentWindow" in js
+
+
 def test_the_svg_frame_has_no_scripts(js):
     m = re.search(r"SVG_SANDBOX\s*=\s*['\"]([^'\"]*)['\"]", js)
     assert m, "svg is framed with its own sandbox constant"
