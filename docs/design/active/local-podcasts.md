@@ -392,6 +392,38 @@ day with the same defects).
 - **Source chips** show the outlet or title, never a bare "S3", and are set
   apart from the sentence.
 
+### 3.12 Links are attached by code, in every News routine
+
+The saved briefings showed the fetched URLs reaching the prompt and the local
+model keeping real article links on some days and none on others, and once
+writing addresses of its own (a mail homepage, a jobs page). So no routine
+lets the model write a link (`services/news_links.py`):
+
+- The model sees each story as `[N3] Headline (outlet): snippet`, with no URL,
+  and cites by id. Code turns each id into a link to the fetched URL, removes
+  any link or address the model typed, and ends with the stories cited.
+- Briefing: ids N1…; Weekly Digest: stories picked by id (W1…), title and
+  link attached by code; Weekly Editorial: E1…, its cited stories saved
+  beside it; Front Page: stories were already chosen by index and linked by
+  code. The spoken Start My Day briefing gets the same stories without ids.
+- `link_problems` fails text that cites no story or cites one without a
+  working link. Google News redirect links are resolved to the publisher.
+- An episode's source chips carry the same ids (`story_id`), so the written
+  routine and its episode link the same story the same way.
+
+### 3.13 A third pass on the Briefing episode
+
+- Home is the listener's own setting (`news_local_area`): "here in <city>",
+  never "where you are going". A practical line is owed only for a specific
+  tie: the venue or street of one of today's events.
+- Every fact in a sentence comes from the story it is about (`crossed_facts`).
+- No read or opinion on violence or crime; elsewhere a read rests on the
+  cited facts. The writer never narrates its own process.
+- No forced relevance: a personal tie is said only when it is real.
+- Stories are weighted by news value (local safety, policy, the economy
+  first; gadgets last), at most eight in a briefing episode.
+- `/api/podcasts/<id>/transcript.txt` is UTF-8 with a byte-order mark.
+
 ---
 
 ## 4. Not built, deliberately
