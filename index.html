@@ -5828,6 +5828,36 @@ function apiFetch(url, opts) {
     headers
   }));
 }
+/* SESSION TOKEN ON EVERY STATE CHANGE. Friday's server requires the session
+   token on any browser request that changes state, loopback included, so a
+   page in another origin cannot act through this browser. This page holds the
+   token; every same-origin POST/PUT/PATCH/DELETE made through fetch carries it,
+   whether or not the caller used apiFetch. Installed before the panel cache so
+   that wrapper sits on top of this one. */
+(function installSessionTokenFetch() {
+  if (window.__fridayTokenFetch) return;
+  window.__fridayTokenFetch = true;
+  const rawFetch = window.fetch.bind(window);
+  const UNSAFE = /^(POST|PUT|PATCH|DELETE)$/i;
+  window.fetch = function (input, init) {
+    try {
+      const tok = window.__FRIDAY_API_TOKEN || '';
+      const isReq = typeof Request !== 'undefined' && input instanceof Request;
+      const method = init && init.method || isReq && input.method || 'GET';
+      if (tok && UNSAFE.test(method)) {
+        const u = new URL(isReq ? input.url : String(input), window.location.href);
+        if (u.origin === window.location.origin) {
+          const headers = new Headers(init && init.headers || (isReq ? input.headers : undefined));
+          if (!headers.has('X-Friday-Token')) headers.set('X-Friday-Token', tok);
+          init = Object.assign({}, init, {
+            headers
+          });
+        }
+      }
+    } catch (e) {}
+    return rawFetch(input, init);
+  };
+})();
 // ── Panel data cache (stale-while-revalidate) ─────────────────────────────
 // A workspace unmounts when closed and refetches everything when reopened,
 // and some of those reads are slow (a git sweep over every repo, a feed

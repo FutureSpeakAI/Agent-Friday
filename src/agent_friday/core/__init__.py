@@ -3574,6 +3574,35 @@ def _settings_system_prefix(settings, personality):
     ]).strip() + "\n"
 
 
+def _origin_gate_reason():
+    """Why the current request is refused by the session-token / cross-site gate,
+    or None. A browser request that changes state (or upgrades to a WebSocket)
+    must carry the session token; requests with no browser metadata (tray, CLI)
+    pass. Fails closed: if the gate cannot be evaluated, a guarded request is
+    refused rather than waved through."""
+    try:
+        from agent_friday.services import origin_gate as _og
+        from agent_friday.services.local_address import own_origins as _oo
+    except Exception:
+        _og = None
+    if _og is None:
+        return ("I couldn't check where that request came from, so I refused it. "
+                "Reload Friday's page and try again."
+                if (request.method or "").upper() in ("POST", "PUT", "PATCH", "DELETE")
+                or "websocket" in (request.headers.get("Upgrade") or "").lower()
+                else None)
+    def _inputs():
+        tok = request.headers.get("X-Friday-Token") or (
+            request.args.get("t") if _og._is_upgrade(request.headers) else None)
+        return dict(host=request.host, is_local=_is_local_request(),
+                    token_valid=_api_token_valid(tok), own_origins=_oo())
+    try:
+        kw = _inputs()
+    except Exception:
+        return _og.GATE_ERROR_REASON if _og.is_guarded(request.method, request.headers) else None
+    return _og.refusal_or_closed(request.method, request.headers, **kw)
+
+
 @app.before_request
 def check_auth():
     # Observer credential (services/observer_access; task-visibility.md §4.5):
@@ -3602,18 +3631,9 @@ def check_auth():
         g.friday_principal = "user"
     except Exception:
         pass
-    # Cross-site refusal comes BEFORE loopback trust: trust says who the
-    # machine is, not which page in the browser is speaking for it.
-    try:
-        from agent_friday.services import origin_gate as _og
-        from agent_friday.services.local_address import local_hosts as _lh
-        _og_reason = _og.refusal(
-            request.method, request.headers, host=request.host,
-            is_local=_is_local_request(),
-            token_valid=_api_token_valid(request.headers.get("X-Friday-Token")),
-            own_hosts=_lh())
-    except Exception:
-        _og_reason = None
+    # Session-token and cross-site gate comes BEFORE loopback trust: trust says
+    # who the machine is, not which page in the browser is speaking for it.
+    _og_reason = _origin_gate_reason()
     if _og_reason:
         return jsonify({"error": _og_reason}), 403
     # Loopback / same-machine access is always trusted — auto-authenticate the

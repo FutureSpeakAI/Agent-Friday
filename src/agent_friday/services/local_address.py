@@ -182,6 +182,23 @@ def local_hosts() -> set:
         return set()
 
 
+def own_origins() -> set:
+    """Exact origins Friday's own page can have through the local proxy.
+
+    The configured host and agent.<default>, each on the ports the proxy is set
+    to listen on and no others: a dev server on agent.friday:5173 is not Friday.
+    """
+    try:
+        b = _block()
+        hosts = {configured_host(), f"agent.{DEFAULT_SLUG}"}
+        return {origin(scheme, h, int(b.get(key) or default))
+                for h in hosts if h
+                for scheme, key, default in (("https", "https_port", 443),
+                                             ("http", "http_port", 80))}
+    except Exception:
+        return set()
+
+
 def origin(scheme: str, host: str, port: int) -> str:
     default = 443 if scheme == "https" else 80
     return f"{scheme}://{host}" + ("" if int(port) == default else f":{int(port)}")
