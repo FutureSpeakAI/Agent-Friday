@@ -481,6 +481,16 @@ if not _TESTING:
             print(_msg)
     except Exception as _pk_err:
         print(f"  Provider keys: skipped ({_pk_err})")
+    # Published pages (services/publish_hosting): after a restart the static
+    # server and its tunnel come back only when something is published and the
+    # owner's switch is on. Nothing is started for an empty folder.
+    try:
+        from agent_friday.services import publish_hosting as _ph
+        from agent_friday.services import publish_web as _pw
+        if _pw.list_published() and _ph.enabled():
+            _ph.ensure_started()
+    except Exception as _ph_err:
+        print(f"  Published pages: hosting not started ({_ph_err})")
 
     # Adopt whatever was running when the previous process died.
     #

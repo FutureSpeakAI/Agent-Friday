@@ -681,7 +681,13 @@ def _this_pc_url(slug: str) -> str:
 
 
 def _publish_this_pc(bundle: Bundle) -> str:
-    """Write the bundle into the served folder, atomically per site."""
+    """Write the bundle into the served folder, atomically per site, with the
+    static server and its tunnel running so the address handed back is live."""
+    try:
+        from agent_friday.services import publish_hosting as _ph
+        _ph.ensure_started()
+    except Exception as e:
+        _log.warning("This PC hosting did not start: %s", e)
     root = _published_root()
     root.mkdir(parents=True, exist_ok=True)
     slug = _check_slug(bundle.slug)

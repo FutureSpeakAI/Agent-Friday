@@ -84,6 +84,18 @@ def test_list_and_unpublish(client, monkeypatch):
     assert client.post("/api/publish/..%2F..%2Fetc/unpublish").status_code in (400, 404)
 
 
+def test_the_switch_takes_pages_offline_and_back(client, monkeypatch):
+    from agent_friday.services import publish_hosting as ph
+    calls = []
+    monkeypatch.setattr(ph, "set_enabled", lambda on: calls.append(on) or {})
+    monkeypatch.setattr(ph, "status", lambda refresh=False: {"enabled": not calls or calls[-1], "serving": bool(calls and calls[-1]), "url": None, "reachable": None})
+    monkeypatch.setattr(ph, "status_line", lambda refresh=False: "line")
+    assert client.post("/api/publish/this-pc/disable").get_json()["this_pc"]["enabled"] is False
+    assert calls == [False]
+    assert client.post("/api/publish/this-pc/enable").get_json()["this_pc"]["serving"] is True
+    assert client.post("/api/publish/this-pc/explode").status_code == 404
+
+
 def test_status_reports_the_default_adapter_and_this_pc_state(client):
     d = client.get("/api/publish/status").get_json()
     assert d["status"] == "ok"

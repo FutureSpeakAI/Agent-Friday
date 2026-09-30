@@ -78,16 +78,34 @@ def publish_unpublish(slug):
     return jsonify({"status": "ok", "slug": slug})
 
 
+def _this_pc(refresh: bool = False) -> dict:
+    try:
+        from agent_friday.services import publish_hosting as _ph
+        st = _ph.status(refresh=refresh)
+        st["line"] = _ph.status_line()
+        return st
+    except Exception as e:
+        return {"enabled": False, "serving": False, "url": None, "reachable": None,
+                "line": "Published pages: hosting is unavailable (%s)." % e, "error": str(e)}
+
+
 @publish_bp.route("/api/publish/status", methods=["GET"])
 @login_required
 def publish_status():
     adapters = {"cloudflare_pages": {"connected": pw.adapter_connected("cloudflare_pages")},
-                "github_pages": {"connected": pw.adapter_connected("github_pages")}}
-    try:
-        from agent_friday.services import publish_hosting as _ph
-        adapters["this_pc"] = _ph.status()
-    except Exception as e:
-        adapters["this_pc"] = {"enabled": False, "serving": False, "url": None, "reachable": None,
-                               "error": str(e)}
+                "github_pages": {"connected": pw.adapter_connected("github_pages")},
+                "this_pc": _this_pc(refresh=request.args.get("refresh") in ("1", "true"))}
     return jsonify({"status": "ok", "default_adapter": pw.default_adapter(), "adapters": adapters,
                     "published": len(pw.list_published())})
+
+
+@publish_bp.route("/api/publish/this-pc/<action>", methods=["POST"])
+@login_required
+def publish_this_pc_switch(action):
+    """The owner's switch: `disable` takes every published page offline at
+    once; `enable` brings the server and its tunnel back."""
+    if action not in ("enable", "disable"):
+        return _bad("action must be enable or disable", 404)
+    from agent_friday.services import publish_hosting as _ph
+    _ph.set_enabled(action == "enable")
+    return jsonify({"status": "ok", "this_pc": _this_pc()})
