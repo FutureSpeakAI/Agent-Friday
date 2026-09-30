@@ -416,8 +416,9 @@ SOLO_VOICE = (
     "why it matters today; deadpan understatement, and now and then one dry, "
     "well-placed aside (never at the expense of anyone harmed). Full sentences "
     "with verbs: no flat fragments such as \"It's context.\" or \"It's the "
-    "scale.\" She labels her read as hers, and says what she did not check "
-    "once, where it matters.\n")
+    "scale.\" She labels her read as hers. When something is not confirmed, "
+    "she says so once, in the story, as a fact about the story (\"police have "
+    "not named a motive\"), never as a remark about herself or her process.\n")
 
 
 def _host_brief(hosts: dict, fmt: str = "duo") -> str:
@@ -652,7 +653,8 @@ def _revise(ep: dict, system: str, docs: list[dict], lines: list[dict], problems
         "SOURCES:\n\n%s\n\nTHE SCRIPT (the fixed opening and sign-off are added "
         "around it):\n%s\n\nPROBLEMS FOUND by the script check:\n%s\n\n"
         "Rewrite the script so that every problem is fixed and what is right "
-        "stays. Keep each line's chapter. %s Return {\"lines\": [{\"chapter\": 0, "
+        "stays. The problems are notes to you, the writer: never say them aloud "
+        "or talk about them in the script. Keep each line's chapter. %s Return {\"lines\": [{\"chapter\": 0, "
         "\"speaker\": \"a\", \"text\": \"...\", \"cites\": [\"S1\"]}]} for the whole script."
         % (_source_block(docs), json.dumps(script, ensure_ascii=False), found,
            "Every line is speaker \"a\"." if solo else "")),

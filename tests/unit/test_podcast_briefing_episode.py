@@ -261,3 +261,19 @@ def test_the_episode_as_it_went_out_digest_only_fails_the_gate(home, monkeypatch
     assert done["script_check"]["ok"] is False
     assert {"repeats_word", "flat_fragments"} <= {p["code"] for p in done["script_check"]["problems"]}
     assert "linked" not in done["lines"][-1]["text"]
+
+
+def test_the_writer_is_not_invited_to_narrate_its_own_process(home, monkeypatch, speaker):
+    """Real runs spoke lines like "I did not check the exact time, so I am not
+    inventing one": the brief asks for unconfirmed facts as facts about the
+    story, and a revision's problem notes are for the writer only."""
+    p = pe._system_prompt({"show": "The Briefing", "hosts": pe.DEFAULTS["hosts"], "format": "solo",
+                           "attached": {"routine": "briefing"}})
+    assert "what she did not check" not in p and "never as a remark about herself" in p
+    _write_run(home)
+    ds = fx.docs()
+    llm = _writer(fx.bad_lines(ds), revised=fx.good_lines(ds))
+    monkeypatch.setattr(pe, "_llm_json", llm)
+    pe.produce(_briefing()["id"])
+    rev = [c["user"] for c in llm.calls if "PROBLEMS FOUND" in c["user"]][0]
+    assert "never say them aloud" in rev
