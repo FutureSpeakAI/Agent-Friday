@@ -176,6 +176,20 @@ def _tool_make_podcast(inp):
     })
 
 
+def _tool_podcast_format(inp):
+    """Read or set who is on each show: Friday alone (solo) or two hosts (duo)."""
+    inp = inp or {}
+    routine = str(inp.get("routine") or "").strip()
+    fmt = str(inp.get("format") or "").strip().lower()
+    if fmt:
+        try:
+            pe.set_format(routine if routine != "any" else "", fmt)
+        except pe.PodcastRefused as e:
+            return json.dumps({"status": "error", "message": str(e)})
+    return json.dumps({"status": "ok", "formats": pe.formats(),
+                       "message": ("%s is now %s." % (routine or "any", fmt)) if fmt else ""})
+
+
 def _tool_podcast_list(inp):
     inp = inp or {}
     try:
@@ -294,6 +308,12 @@ TOOLS = [
          "voice": {"type": "string", "enum": ["local", "cloud"],
                    "description": "local (default). cloud only if the owner asks and has switched cloud voices on."},
      }}},
+    {"name": "podcast_format",
+     "description": ("Who is on each show: solo (Friday alone) or duo (two hosts). No "
+                     "format: read all, with the recommended one. With routine and format: set it."),
+     "input_schema": {"type": "object", "properties": {
+         "routine": {"type": "string", "enum": ["briefing", "front_page", "editorial", "weekly", "any"]},
+         "format": {"type": "string", "enum": ["solo", "duo"]}}}},
     {"name": "podcast_list",
      "description": "List podcast episodes, newest first: title, status, length, chapters, privacy. Filter by routine (front_page, briefing, weekly, editorial). Read them back as sentences, not a table.",
      "input_schema": {"type": "object", "properties": {
@@ -321,14 +341,17 @@ TOOLS = [
 
 #: make_podcast writes an episode on this computer (ring 1). Listing and
 #: source lookup only read (ring 0). Playing steers the owner's own screen,
-#: like navigate_to (ring 1).
-RINGS = {"make_podcast": 1, "podcast_list": 0, "podcast_play": 1, "podcast_source": 0}
+#: like navigate_to (ring 1). podcast_format changes the owner's own podcast
+#: setting on this computer (ring 1).
+RINGS = {"make_podcast": 1, "podcast_list": 0, "podcast_play": 1, "podcast_source": 0,
+         "podcast_format": 1}
 
 HANDLERS = {
     "make_podcast": _tool_make_podcast,
     "podcast_list": _tool_podcast_list,
     "podcast_play": _tool_podcast_play,
     "podcast_source": _tool_podcast_source,
+    "podcast_format": _tool_podcast_format,
 }
 
 

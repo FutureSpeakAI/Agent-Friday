@@ -106,3 +106,22 @@ def test_delete_removes_the_episode(client):
     ep = pe.create([{"kind": "text", "text": "x"}])
     assert client.delete("/api/podcasts/" + ep["id"]).status_code == 200
     assert pe.load(ep["id"]) is None
+
+
+def test_the_show_formats_are_read_and_set_over_the_api(client, monkeypatch):
+    import agent_friday.core as core
+    saved = {}
+    monkeypatch.setattr(core, "_load_settings", lambda: saved)
+    monkeypatch.setattr(core, "_save_settings", lambda d, **k: saved.setdefault("podcasts", {})
+                        .setdefault("format", {}).update(d["podcasts"]["format"]))
+    r = client.get("/api/podcasts/formats").get_json()
+    assert r["formats"]["briefing"] == {"format": "solo", "recommended": "solo"}
+    r = client.put("/api/podcasts/formats", json={"routine": "weekly", "format": "solo"}).get_json()
+    assert r["formats"]["weekly"] == {"format": "solo", "recommended": "duo"}
+    assert client.put("/api/podcasts/formats", json={"routine": "weekly", "format": "x"}).status_code == 409
+
+
+def test_the_recommended_formats_are_the_shipped_defaults():
+    from agent_friday.core import DEFAULT_SETTINGS
+    from agent_friday.services import podcast_engine as pe
+    assert DEFAULT_SETTINGS["podcasts"]["format"] == pe.RECOMMENDED_FORMAT

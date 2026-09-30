@@ -38,9 +38,13 @@ github.com/souzatharsis/podcastfy). Only the idea is borrowed; no code is.
    on this computer, and draws charts. The hosts may only say numbers that
    appear in that computation; a line with a number that cannot be traced is
    cut before it is spoken, and the cut is recorded.
-5. **Checked by ear.** Every finished episode is transcribed back by the local
-   speech recogniser and compared with the script. The episode shows the match
-   rate; one that does not match is marked, not hidden.
+5. **Two checks, named for what they check.** Before a word is spoken, the
+   script-quality gate checks the script against the episode's story list and
+   calendar (§3.11); the episode shows "script checked" or the problems it
+   found. After speaking, the local speech recogniser transcribes the audio
+   back and compares it with the script; that badge reads "audio matches
+   script", because it checks the audio, not the writing. Either failure is
+   marked, not hidden.
 6. **Private stays private.** An episode made from mail, the vault, the wiki,
    files or chats is labelled "Private · made on this PC". No cloud model or
    cloud voice is ever used for it, and when voice mode (which may be a cloud
@@ -340,6 +344,53 @@ and 4,500 (~30 min) for long.
   (it means "needs you"); "Private" is violet-soft. Charts read their colours
   from `agent_friday.brand` when it is present. `tests/unit/test_podcast_ui_brand.py`
   holds this.
+
+### 3.11 The Briefing, and the script-quality gate
+
+What the first live Briefing episode got wrong, and the rules that now hold
+(`services/podcast_quality.py`, `tests/unit/test_podcast_quality.py`,
+`tests/unit/test_podcast_briefing_episode.py`; the fixtures are a synthetic
+day with the same defects).
+
+- **Who is on the show** is a setting per routine, shown with the
+  recommended value and changeable in Studio → Podcasts, over
+  `/api/podcasts/formats`, or by voice and chat (`podcast_format`). The
+  Briefing, the Front Page and the Editorial are Friday alone (a newscast and
+  an op-ed are one voice); the Weekly and episodes made from the owner's own
+  sources are two hosts.
+- **The Briefing keeps its sources.** The calendar events (title, times,
+  place; never attendees or descriptions) and the news items (title, outlet,
+  link, snippet) that a briefing was written from are saved beside the run
+  (`briefing_runs/<date>.json`). The episode is written from those, one source
+  per story and per event, with Friday's written notes as context. A run from
+  before this has no story list, so its sign-off never claims links.
+- **The gate**, run on every script before it is spoken:
+  - *ledes*: a story's first mention says what happened, who or where, when,
+    and the outlet aloud, then why it matters to the listener;
+  - *safety*: violence, death or local safety is introduced plainly and
+    attributed, never called background, with a practical line when it
+    happened where the listener is going that day;
+  - *calendar times*: every clock time is in the calendar or a source, and
+    "before" / "after" agree with the calendar's order;
+  - *repetition*: a word no source uses is said at most twice, no line
+    restates another, and the close adds instead of re-reading;
+  - *headings*: an outline heading is stripped from speech;
+  - *fragments*: at most one flat fragment ("It's context.");
+  - *link claim*: "linked in the transcript" only when every story heard has
+    a link, which the transcript then lists under Sources;
+  - *density*, for a solo newscast: at least two stories or events per spoken
+    minute when the list has them.
+  Lines that only restate are dropped; for the rest the writer gets up to two
+  revision passes with the problems by line. What still fails is published
+  with the problems shown, not passed as checked.
+- **The bar.** A solo briefing is judged against a public-radio five-minute
+  hourly newscast; a two-host episode against the best two-host audio
+  overviews. It must still sound like Friday: evidence first and dry, with
+  an anchor's authority, an explainer's build from context to consequence,
+  and deadpan understatement. These are traits; no real person is named or
+  imitated, in prompts or in copy.
+- **Source chips** show the outlet or title, never a bare "S3", and are set
+  apart from the sentence.
 
 ---
 

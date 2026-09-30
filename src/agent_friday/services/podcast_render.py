@@ -564,7 +564,7 @@ def _whisper():
                 raise RenderError(
                     "check_model_missing",
                     "The local speech recogniser (faster-whisper base.en) is not "
-                    "installed, so the episode could not be checked by ear. (%s)"
+                    "installed, so the audio could not be checked against the script. (%s)"
                     % str(e)[:120]) from e
         return _WHISPER
 

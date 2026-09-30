@@ -37,6 +37,10 @@ def _fake_writer(script_for_chapter=None, outline=None):
 
     def llm(system, user, *, max_tokens=3000):
         calls.append({"system": system, "user": user})
+        if "PROBLEMS FOUND" in user:
+            # A revision pass: this stand-in cannot improve the script.
+            body = user.split("sign-off are added around it):\n", 1)[1].split("\n\nPROBLEMS FOUND", 1)[0]
+            return {"lines": json.loads(body)}, "bonsai2:27b"
         if '"chapters"' in user and "Plan an episode" in user:
             return (outline or {"title": "Test episode", "chapters": [
                 {"title": "Open", "sources": ["S1"]},
@@ -545,3 +549,21 @@ def test_her_habits_are_character_not_a_refrain():
     where it matters, and for varied wording."""
     prompt = pe._system_prompt({"show": "S", "hosts": pe.DEFAULTS["hosts"]})
     assert "once, where it matters" in prompt and "not as a refrain" in prompt
+
+
+def test_an_outline_heading_never_reaches_speech_and_the_sentence_after_it_does():
+    kept, _cut = pe.clean_lines([{"speaker": "a", "cites": ["S1"], "text":
+                                  "2. Top News (relevant to you). The pledge is thin on terms."}], {"S1"})
+    assert kept[0]["text"] == "The pledge is thin on terms."
+    kept, _cut = pe.clean_lines([{"speaker": "a", "cites": ["S1"], "text":
+                                  "It rose 3.5 percent. 4. Proactive Insight: lead with it."}], {"S1"})
+    assert kept[0]["text"] == "It rose 3.5 percent. lead with it."
+
+
+def test_lines_with_their_own_sources_are_not_merged_so_each_chip_stays_by_its_sentence():
+    ls = [{"speaker": "a", "chapter": 0, "text": "Story one.", "cites": ["S1"]},
+          {"speaker": "a", "chapter": 0, "text": "Why it matters.", "cites": []},
+          {"speaker": "a", "chapter": 0, "text": "Story two.", "cites": ["S2"]}]
+    out = pe.merge_turns(ls)
+    assert [o["text"] for o in out] == ["Story one. Why it matters.", "Story two."]
+    assert [o["cites"] for o in out] == [["S1"], ["S2"]]

@@ -947,6 +947,34 @@ def warm_news_cache(limit_per: int = 8) -> None:
         _news_refresh(limit_per)
 
 
+#: The structured sources behind the latest briefing (calendar events, news
+#: items), kept so the run's episode can introduce, time and link each one.
+#: Written beside the run by _notify_briefing; see podcast_news.sidecar_path.
+_LAST_BRIEFING_SOURCES: dict = {}
+
+
+def _keep_briefing_sources(**parts):
+    today = datetime.now().strftime('%Y-%m-%d')
+    if _LAST_BRIEFING_SOURCES.get("date") != today:
+        _LAST_BRIEFING_SOURCES.clear()
+        _LAST_BRIEFING_SOURCES.update({"version": 1, "date": today, "calendar": [], "news": []})
+    _LAST_BRIEFING_SOURCES.update(parts)
+
+
+def _save_briefing_sources(date_str):
+    """Save the briefing's structured sources beside the run. Attendees and
+    event descriptions are never kept: the episode needs times and places."""
+    if _LAST_BRIEFING_SOURCES.get("date") != date_str:
+        return
+    try:
+        from agent_friday.services.podcast_news import sidecar_path
+        p = sidecar_path(date_str)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(_LAST_BRIEFING_SOURCES, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"  [briefing] sources not saved for the episode: {e}")
+
+
 def _gather_live_briefing_context():
     """Fetch live calendar, unread email, and news for an on-demand briefing.
 
@@ -975,6 +1003,9 @@ def _gather_live_briefing_context():
             cal_err = _google_section_error(cal_events)
             if cal_err:
                 return f"## Today's Calendar\n({cal_err})"
+            _keep_briefing_sources(calendar=[
+                {k: ev.get(k) or "" for k in ("title", "start_time", "end_time", "location")}
+                for ev in (cal_events or [])[:20] if isinstance(ev, dict)])
             if cal_events:
                 lines = []
                 for ev in cal_events[:20]:
@@ -1029,6 +1060,10 @@ def _gather_live_briefing_context():
             cats = [c for c in NEWS_CATEGORIES
                     if prefs.get("categories_enabled", {}).get(c, True)]
             items = _fetch_news_items(categories=cats, limit_per=4)
+            _keep_briefing_sources(news=[
+                {k: it.get(k) or "" for k in ("title", "source", "url", "snippet", "category",
+                                               "published")}
+                for it in (items or []) if isinstance(it, dict)])
             if items:
                 by_cat = {}
                 for it in items:
@@ -2409,6 +2444,7 @@ def _notify_weekly_editorial(ed, manual=False):
 
 def _notify_briefing(date_str, manual=False):
     """Push the 'Daily briefing ready' notification."""
+    _save_briefing_sources(date_str)
     _queue_podcast('briefing', date_str)
     if not (_notif_engine and date_str):
         return

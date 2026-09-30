@@ -7,9 +7,11 @@ the Weekly Editorial) ends by calling its `_notify_*` function in
 episode (`podcast_engine.create`), so the routine is never held up.
 
 `run_documents` turns a saved run into numbered source documents: one per
-story for the Front Page and the Digest, one per section for the Briefing and
-the Editorial. Each story keeps its outlet and link, so every line of the
-episode can say where it came from.
+story for the Front Page and the Digest; for the Briefing, one per story and
+one per calendar event from the structured sources saved with the run
+(`briefing_runs/<date>.json`), plus Friday's own written sections as context;
+one per section for the Editorial. Each story keeps its outlet and link, so
+every line can say where it came from and the transcript can link it.
 """
 
 from __future__ import annotations
@@ -122,6 +124,61 @@ def _markdown_docs(md: str, label: str, private: bool) -> list[dict]:
     return [_doc(t, x, private=private, origin=label) for t, x in parts[:MAX_STORIES]]
 
 
+def sidecar_path(run_id: str) -> Path:
+    """The Briefing run's structured sources: calendar events and news items."""
+    from agent_friday.core import FRIDAY_DIR
+    if not _RUN_ID_RE.match(run_id or ""):
+        raise ValueError("not a run id")
+    return Path(FRIDAY_DIR) / "briefing_runs" / f"{run_id}.json"
+
+
+#: Digest sections the episode rebuilds from structured data instead of
+#: paraphrasing (the calendar and the news), matched on the heading.
+_REBUILT_SECTION_RE = re.compile(r"calendar|news", re.I)
+
+
+def _heading_title(heading: str) -> str:
+    """"2. Top News (relevant to you)" -> "Top News"."""
+    t = re.sub(r"^\s*\d{1,2}[.)]\s*", "", heading or "")
+    t = re.sub(r"\s*\([^)]*\)\s*$", "", t).strip()
+    return t or "Briefing"
+
+
+def briefing_docs(side: dict, markdown: str, run_id: str) -> list[dict]:
+    """The Briefing's sources: one per story (outlet and link), one per calendar
+    event (its times), then Friday's own written sections that are not
+    rebuilt from those (tasks, analysis, insight) as context."""
+    docs = []
+    for a in (side.get("news") or [])[:MAX_STORIES]:
+        if not isinstance(a, dict) or not a.get("title"):
+            continue
+        d = _story_doc(a)
+        if d:
+            d.update(private=True, role="story")
+            docs.append(d)
+    for ev in (side.get("calendar") or [])[:20]:
+        if not isinstance(ev, dict) or ev.get("error") or not ev.get("title"):
+            continue
+        from agent_friday.services.podcast_quality import clock_text
+        start, end = clock_text(ev.get("start_time") or ""), clock_text(ev.get("end_time") or "")
+        when = ("%s to %s" % (start, end)) if start and end else (start or "all day")
+        text = "On your calendar: %s, %s" % (when, ev["title"])
+        if ev.get("location"):
+            text += ", at %s" % ev["location"]
+        docs.append({"title": ev["title"][:200], "kind": "event", "role": "event",
+                     "text": text + ".", "url": "", "origin": "calendar", "private": True,
+                     "outlet": "", "start": ev.get("start_time") or "",
+                     "end": ev.get("end_time") or "", "location": ev.get("location") or ""})
+    for d in _markdown_docs(markdown, "Briefing %s" % run_id, private=True):
+        if _REBUILT_SECTION_RE.search(d["title"]):
+            continue
+        heading = d["title"]
+        d.update(kind="digest", role="digest", heading=heading,
+                 title="Friday's written briefing: %s" % _heading_title(heading))
+        docs.append(d)
+    return [d for d in docs if d["text"]]
+
+
 def run_documents(routine: str, run_id: str) -> list[dict]:
     from agent_friday.services.podcast_sources import SourceError
     try:
@@ -135,8 +192,21 @@ def run_documents(routine: str, run_id: str) -> list[dict]:
         docs = _front_page_docs(data) if routine == "front_page" else _weekly_docs(data)
     else:
         text = p.read_text(encoding="utf-8")
-        docs = _markdown_docs(text, "%s %s" % (routine.title(), run_id),
-                              private=(routine == "briefing"))
+        side = None
+        if routine == "briefing":
+            try:
+                side = json.loads(sidecar_path(run_id).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                side = None
+        if side:
+            docs = briefing_docs(side, text, run_id)
+        else:
+            # A run from before its sources were kept: the written sections,
+            # headings cleaned so none is read out as a heading.
+            docs = _markdown_docs(text, "%s %s" % (routine.title(), run_id),
+                                  private=(routine == "briefing"))
+            for d in docs:
+                d.update(role="digest", heading=d["title"], title=_heading_title(d["title"]))
     docs = [d for d in docs if d["text"]]
     if not docs:
         raise SourceError("that run has no stories to talk about")

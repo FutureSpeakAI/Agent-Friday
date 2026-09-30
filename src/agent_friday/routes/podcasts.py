@@ -96,6 +96,23 @@ def podcasts_voices():
                     "settings": pe.settings()})
 
 
+@podcasts_bp.route('/api/podcasts/formats', methods=['GET'])
+def podcasts_formats():
+    """Who is on each show (solo or two hosts), with the recommended format."""
+    return jsonify({"status": "ok", "formats": pe.formats()})
+
+
+@podcasts_bp.route('/api/podcasts/formats', methods=['PUT'])
+def podcasts_set_format():
+    data = request.get_json(silent=True) or {}
+    try:
+        routine = str(data.get("routine") or "")
+        pe.set_format("" if routine == "any" else routine, str(data.get("format") or ""))
+    except pe.PodcastRefused as e:
+        return api_error(e, "Couldn't change the show's format", status=400)
+    return jsonify({"status": "ok", "formats": pe.formats()})
+
+
 @podcasts_bp.route('/api/podcasts/now-playing', methods=['POST'])
 def podcasts_now_playing():
     from agent_friday.services import podcast_tools

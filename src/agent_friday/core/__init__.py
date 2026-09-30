@@ -2527,6 +2527,11 @@ DEFAULT_SETTINGS = {
     "podcasts": {
         "enabled_for_routines": {"front_page": True, "briefing": True,
                                  "weekly": True, "editorial": True},
+        # Who is on each show: "solo" (Friday alone) or "duo" (two hosts).
+        # "any" is every episode not made by a routine. Recommended values;
+        # podcast_engine.RECOMMENDED_FORMAT is the same table.
+        "format": {"briefing": "solo", "front_page": "solo", "editorial": "solo",
+                   "weekly": "duo", "any": "duo"},
         "length": {"front_page": "short", "briefing": "short",
                    "weekly": "standard", "editorial": "standard"},
         "hosts": {"a": {"name": "Friday", "voice": "af_heart"},

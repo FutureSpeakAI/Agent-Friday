@@ -1,4 +1,5 @@
-"""Podcast episodes: written by the local model, spoken on the CPU, checked by ear.
+"""Podcast episodes: written by the local model, the script checked before it
+is spoken, spoken on the CPU, and the audio checked against the script.
 
 Design: docs/design/active/local-podcasts.md.
 
@@ -39,6 +40,7 @@ import time
 from pathlib import Path
 
 from agent_friday import brand
+from agent_friday.services import podcast_quality as quality
 from agent_friday.services import podcast_render as render
 from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services import podcast_sources as sources_mod
@@ -83,8 +85,22 @@ def _spoken_credit(ep: dict) -> str:
     return "%s from %s" % (show_name(ep) or "a podcast", brand.PRODUCT)
 
 
+#: Who is on the show: Friday alone ("solo") or Friday with a co-host ("duo").
+#: A briefing, the front page and an editorial are one voice, like a newscast
+#: or an op-ed; the weekly and episodes made from the owner's own sources are
+#: a conversation. "any" is every episode not made by a routine. The owner
+#: can change each; these are shown as the recommended choice.
+FORMATS = ("solo", "duo")
+RECOMMENDED_FORMAT = {"briefing": "solo", "front_page": "solo", "editorial": "solo",
+                      "weekly": "duo", "any": "duo"}
+#: Revision passes the writer gets when the script-quality gate finds problems.
+MAX_REVISIONS = 2
+#: Fewer words than this that survived the source check is no episode.
+MIN_SCRIPT_WORDS = 8
+
 DEFAULTS = {
     "enabled_for_routines": {r: True for r in ROUTINES},
+    "format": dict(RECOMMENDED_FORMAT),
     "length": {"front_page": "short", "briefing": "short",
                "weekly": "standard", "editorial": "standard"},
     "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
@@ -119,12 +135,42 @@ def _merge(base: dict, over: dict) -> dict:
     return out
 
 
+def _merge_into(base: dict, over: dict) -> None:
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _merge_into(base[k], v)
+        else:
+            base[k] = copy.deepcopy(v)
+
+
 def settings() -> dict:
     try:
         from agent_friday.core import _load_settings
         return _merge(DEFAULTS, (_load_settings() or {}).get("podcasts") or {})
     except Exception:
         return copy.deepcopy(DEFAULTS)
+
+
+def format_for(routine: str = "") -> str:
+    """"solo" or "duo" for a routine's episodes ("" or "any": everything else)."""
+    key = routine if routine in RECOMMENDED_FORMAT else "any"
+    got = (settings().get("format") or {}).get(key)
+    return got if got in FORMATS else RECOMMENDED_FORMAT[key]
+
+
+def set_format(routine: str, fmt: str) -> None:
+    key = routine or "any"
+    if key not in RECOMMENDED_FORMAT:
+        raise PodcastRefused("no such show %r; one of: %s" % (routine, ", ".join(RECOMMENDED_FORMAT)))
+    if fmt not in FORMATS:
+        raise PodcastRefused("a show is \"solo\" (Friday alone) or \"duo\" (two hosts)")
+    from agent_friday.core import _save_settings
+    _save_settings({"podcasts": {"format": {key: fmt}}})
+
+
+def formats() -> dict:
+    return {k: {"format": format_for("" if k == "any" else k), "recommended": v}
+            for k, v in RECOMMENDED_FORMAT.items()}
 
 
 def root() -> Path:
@@ -282,6 +328,7 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         "instructions": (instructions or "").strip()[:1000],
         "voice_engine": voice_engine,
         "hosts": hosts,
+        "format": format_for((attached or {}).get("routine") or ""),
         "created_at": time.time(),
     }
     save(ep)
@@ -363,10 +410,23 @@ def _llm_json(system: str, user: str, *, max_tokens: int = 3000) -> tuple[dict, 
     return out, seat
 
 
-def _host_brief(hosts: dict) -> str:
-    """Friday's own character (docs/brand/BRAND.md "Voice"), and a co-host who
-    keeps her honest. Not a generic two-host show."""
+SOLO_VOICE = (
+    "Her delivery: evidence first and dry. The calm authority of a network "
+    "anchor; the explainer's habit of building from what you need to know to "
+    "why it matters today; deadpan understatement, and now and then one dry, "
+    "well-placed aside (never at the expense of anyone harmed). Full sentences "
+    "with verbs: no flat fragments such as \"It's context.\" or \"It's the "
+    "scale.\" She labels her read as hers, and says what she did not check "
+    "once, where it matters.\n")
+
+
+def _host_brief(hosts: dict, fmt: str = "duo") -> str:
+    """Friday's own character (docs/brand/BRAND.md "Voice"): alone, or with a
+    co-host who keeps her honest. Never a generic two-host show."""
     a, b = hosts["a"]["name"], hosts["b"]["name"]
+    if fmt == "solo":
+        return (f"One host: speaker \"a\", {a}, alone. There is no co-host; every "
+                f"line is hers and speaks to the listener directly.\n" + SOLO_VOICE)
     return (
         f"Two hosts. Speaker \"a\" is {a}. She is calm and perceptive, with a dry "
         f"warmth, and has a point of view of her own. Answer first, then the "
@@ -406,17 +466,41 @@ DATA_RULES = (
     "counts of months or days you worked out yourself.\n")
 
 
+NEWS_RULES = (
+    "This is a newscast built from a STORY LIST (the sources with an outlet and "
+    "a link) and, when given, the listener's CALENDAR (sources that begin \"On "
+    "your calendar\").\n"
+    "- Introduce every story you mention. Its first mention is a spoken lede: "
+    "what happened, who, where, when, and the outlet named aloud (\"The "
+    "Guardian reports that on Tuesday, in Washington, ...\"). Then one line on "
+    "why it matters to the listener today. Never refer to a story as if the "
+    "listener had already read it (\"the pledge\", \"the $400B figure\").\n"
+    "- A story about violence, death or local safety is introduced plainly and "
+    "humanely, with only what is confirmed and who confirmed it. It is never "
+    "background or noise. If it happened where the listener is going today "
+    "(the calendar's locations), add one practical line.\n"
+    "- Say only the times the calendar gives, exactly. Say \"before\" or "
+    "\"after\" only when the calendar's order says so.\n"
+    "- Cover as many stories as fit, and spend the words on the news. Never "
+    "repeat a phrase or an image. The close adds the one thing to watch and "
+    "never re-reads earlier lines.\n"
+    "- \"Friday's written briefing\" sources are your own notes: use them for "
+    "context and your read, and never read a heading aloud.\n")
+
+
 def _system_prompt(ep: dict) -> str:
+    fmt = ep.get("format") or "duo"
     parts = [
         "You write the script for an audio show made entirely on the owner's own "
         "computer. The show is \"%s\".\n" % ep.get("show", "Friday Podcast"),
-        _host_brief(ep["hosts"]),
+        _host_brief(ep["hosts"], fmt),
         WRITING_RULES,
     ]
     att = ep.get("attached") or {}
     if att.get("routine"):
         from agent_friday.services.voice_persona import VOICE_ANCHOR_RULES
         parts.append(VOICE_ANCHOR_RULES)
+        parts.append(NEWS_RULES)
     if ep.get("mode") == "data":
         parts.append(DATA_RULES)
     if ep.get("instructions"):
@@ -437,10 +521,12 @@ def _source_block(docs: list[dict], only: set | None = None) -> str:
 
 
 def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
-    """Outline, then one chapter at a time, then validate. Returns
-    {title, chapters: [{title, facts?}], lines: [...], rejected: [...], model}."""
+    """Outline, one chapter at a time, then the script-quality gate with up to
+    MAX_REVISIONS revision passes. Returns {title, chapters, lines, rejected,
+    model, script_check}."""
     words = LENGTH_WORDS[ep["length"]]
     n_ch = LENGTH_CHAPTERS[ep["length"]]
+    solo = ep.get("format") == "solo"
     system = _system_prompt(ep)
     valid = {d["sid"] for d in docs}
     outline, model = _llm_json(system, (
@@ -457,50 +543,140 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
     title = (ep.get("title") or str(outline.get("title") or "").strip()[:160]
              or show_name(ep) or "A podcast")
     per = max(80, words // len(chapters))
+    who = ("Every line is speaker \"a\"; there is no second host. At most three "
+           "sentences per line." if solo else
+           "Alternate between the two hosts, at most three sentences per line.")
     lines, rejected = [], []
     for i, ch in enumerate(chapters):
         use = {s for s in (ch.get("sources") or []) if s in valid} or valid
         tail = "\n".join("%s: %s" % (ep["hosts"][ln["speaker"]]["name"], ln["text"])
                          for ln in lines[-6:])
-        where = ("This is the opening. The show's fixed opening, naming the show "
-                 "and both hosts, plays just before it: do not greet or introduce "
-                 "anyone. Start with the single most important thing."
+        opening = ("naming the show and %s" % ("Friday" if solo else "both hosts"))
+        where = ("This is the opening. The show's fixed opening, %s, plays just "
+                 "before it: do not greet or introduce anyone. Start with the "
+                 "single most important thing." % opening
                  if i == 0 else
                  "This is the close: sum up in two lines. The show's fixed sign-off "
                  "follows it: do not sign off." if i == len(chapters) - 1 else
-                 "Carry on naturally from the conversation so far.")
+                 "Carry on naturally from the script so far.")
         raw, _m = _llm_json(system, (
             "SOURCES FOR THIS CHAPTER:\n\n%s\n\n"
             "Chapter %d of %d: \"%s\". Points: %s\n"
-            "The conversation so far ended with:\n%s\n\n%s\n"
-            "Write about %d words. Alternate between the two hosts, at most three "
-            "sentences per line. Never mention chapters, sections or these instructions "
-            "in the dialogue. "
-            "Return {\"lines\": [{\"speaker\": \"a\" or \"b\", "
+            "The script so far ended with:\n%s\n\n%s\n"
+            "Write about %d words. %s Never mention chapters, sections or these "
+            "instructions in the dialogue. "
+            "Return {\"lines\": [{\"speaker\": \"a\"%s, "
             "\"text\": \"...\", \"cites\": [\"S1\"]}]}."
             % (_source_block(docs, use), i + 1, len(chapters), ch.get("title", ""),
                "; ".join(str(p) for p in (ch.get("points") or [])[:6]) or "(your call)",
-               tail or "(nothing yet)", where, per)),
+               tail or "(nothing yet)", where, per, who, "" if solo else " or \"b\"")),
             max_tokens=3000)
         got, bad = clean_lines(raw.get("lines") or [], valid, chapter=i,
-                               facts=ep.get("_facts"))
+                               facts=ep.get("_facts"), solo=solo)
         lines += got
         rejected += bad
         if progress:
             progress(i + 1, len(chapters))
-    lines = with_signature(merge_turns(lines), ep, len(chapters))
+    lines = merge_turns(lines)
+
+    news = bool((ep.get("attached") or {}).get("routine"))
+    gate = dict(n_chapters=len(chapters), news=news, personal=news, solo=solo)
+
+    offset = len(signature_lines(ep)[0])
+
+    def problems_of(ls):
+        return quality.script_problems(with_signature(ls, ep, len(chapters), docs), docs, **gate)
+
+    lines, cut = _drop_dead_lines(lines, problems_of(lines), offset)
+    rejected += cut
+    problems = problems_of(lines)
+    revisions = 0
+    while problems and revisions < MAX_REVISIONS:
+        revisions += 1
+        revised, bad = _revise(ep, system, docs, lines, problems, len(chapters), solo)
+        if revised:
+            revised, cut = _drop_dead_lines(revised, problems_of(revised), offset)
+            rejected += bad + cut
+            # A revision that loses a chapter lost part of the episode.
+            if len(revised) >= 2 and {ln["chapter"] for ln in lines} <= {ln["chapter"] for ln in revised}:
+                lines = revised
+        problems = problems_of(lines)
+    lines = with_signature(lines, ep, len(chapters), docs)
     return {"title": title,
             "chapters": [{"title": str(c.get("title") or "Chapter %d" % (i + 1))[:120],
                           "sources": [s for s in (c.get("sources") or []) if s in valid]}
                          for i, c in enumerate(chapters)],
-            "lines": lines, "rejected": rejected, "model": model}
+            "lines": lines, "rejected": rejected, "model": model,
+            "script_check": {"ok": not problems, "problems": problems,
+                             "revisions": revisions, "checks": list(quality.CHECKS)}}
 
 
-def signature_lines(ep: dict) -> tuple[list[dict], list[dict]]:
-    """The same opening and sign-off on every episode, spoken by the hosts.
+#: Problems a line can be dropped for outright: nothing is lost by not saying it.
+_DROPPABLE = ("close_restates", "restates", "heading_read_aloud")
+
+
+def _drop_dead_lines(lines: list[dict], problems: list[dict],
+                     offset: int) -> tuple[list, list]:
+    """Remove the lines that only restate an earlier one or read a heading aloud.
+
+    `problems` index the signed script, whose fixed opening is `offset` lines
+    long; the flagged line is dropped by position, never the earlier line it
+    repeats.
+    """
+    dead = {p["line"] - offset: p["message"] for p in problems
+            if p["code"] in _DROPPABLE and p.get("line") is not None}
+    if not dead:
+        return lines, []
+    kept, cut = [], []
+    for i, ln in enumerate(lines):
+        if i in dead:
+            cut.append({"text": ln["text"], "chapter": ln.get("chapter", 0),
+                        "reason": "cut by the script check: " + dead[i].split(":")[0]})
+        else:
+            kept.append(ln)
+    return kept, cut
+
+
+def _revise(ep: dict, system: str, docs: list[dict], lines: list[dict], problems: list[dict],
+            n_chapters: int, solo: bool) -> tuple[list, list]:
+    """One revision pass: the whole script, the problems by line, the sources."""
+    signed = with_signature(lines, ep, n_chapters, docs)
+    offset = next((i for i, ln in enumerate(signed) if not ln.get("signature")), 0)
+    script = [{"line": i + offset, "chapter": ln.get("chapter", 0), "speaker": ln["speaker"],
+               "text": ln["text"], "cites": ln.get("cites") or []} for i, ln in enumerate(lines)]
+    found = "\n".join("- %s%s" % ("line %d: " % p["line"] if p.get("line") is not None else "",
+                                   p["message"]) for p in problems)
+    raw, _m = _llm_json(system, (
+        "SOURCES:\n\n%s\n\nTHE SCRIPT (the fixed opening and sign-off are added "
+        "around it):\n%s\n\nPROBLEMS FOUND by the script check:\n%s\n\n"
+        "Rewrite the script so that every problem is fixed and what is right "
+        "stays. Keep each line's chapter. %s Return {\"lines\": [{\"chapter\": 0, "
+        "\"speaker\": \"a\", \"text\": \"...\", \"cites\": [\"S1\"]}]} for the whole script."
+        % (_source_block(docs), json.dumps(script, ensure_ascii=False), found,
+           "Every line is speaker \"a\"." if solo else "")),
+        max_tokens=4000)
+    valid = {d["sid"] for d in docs}
+    out, bad = [], []
+    for item in raw.get("lines") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            ch = min(max(int(item.get("chapter") or 0), 0), n_chapters - 1)
+        except (TypeError, ValueError):
+            ch = 0
+        got, cut = clean_lines([item], valid, chapter=ch, facts=ep.get("_facts"), solo=solo)
+        out += got
+        bad += cut
+    return merge_turns(out), bad
+
+
+def signature_lines(ep: dict, *, link_claim: bool = False) -> tuple[list[dict], list[dict]]:
+    """The same opening and sign-off on every episode.
 
     Fixed text, not written by the model: it is what makes an episode
-    recognisably Friday's from its first seconds, whatever the sources.
+    recognisably Friday's from its first seconds, whatever the sources. The
+    sign-off says the stories are linked only when `link_claim` says every
+    story heard has a link.
     """
     show = _spoken_credit(ep)
     a, b = ep["hosts"]["a"]["name"], ep["hosts"]["b"]["name"]
@@ -508,19 +684,24 @@ def signature_lines(ep: dict) -> tuple[list[dict], list[dict]]:
         where = ("Every number you heard was computed from your data, and the "
                  "working is in the transcript.")
     elif (ep.get("attached") or {}).get("routine"):
-        where = "Every story you heard is linked in the transcript."
+        where = ("Every story you heard is linked in the transcript." if link_claim
+                 else "The transcript shows what each line came from.")
     else:
         where = "Every claim you heard has its source in the transcript."
     opening = [{"speaker": "a", "text": "This is %s. I'm %s." % (show, a), "cites": [],
-                "signature": True},
-               {"speaker": "b", "text": "And I'm %s." % b, "cites": [], "signature": True}]
+                "signature": True}]
+    if ep.get("format") != "solo":
+        opening.append({"speaker": "b", "text": "And I'm %s." % b, "cites": [], "signature": True})
     closing = [{"speaker": "a", "text": "That's %s. %s I'm %s." % (show, where, a),
                 "cites": [], "signature": True}]
     return opening, closing
 
 
-def with_signature(lines: list[dict], ep: dict, n_chapters: int) -> list[dict]:
-    opening, closing = signature_lines(ep)
+def with_signature(lines: list[dict], ep: dict, n_chapters: int,
+                   docs: list[dict] | None = None) -> list[dict]:
+    story_list = quality.stories(docs or [])
+    opening, closing = signature_lines(
+        ep, link_claim=bool(story_list) and quality.link_claim_ok(lines, story_list))
     last = max(0, n_chapters - 1)
     return ([dict(x, chapter=0) for x in opening] + lines
             + [dict(x, chapter=last) for x in closing])
@@ -540,9 +721,16 @@ _DIGIT_RE = re.compile(r"\d")
 MAX_LINE_CHARS = 320
 
 
+#: An outline heading carried over from a source ("2. Top News (relevant to
+#: you)") is never speech.
+_HEADING_TEXT_RE = re.compile(
+    r"(?:^|(?<=[.!?]\s))\s*\d{1,2}\.\s+[A-Z][\w&'’]*(?:\s+[\w&'’]+){0,4}(?:\s*\([^)]*\))?\s*[.:]?\s*")
+
+
 def _clean_text(t: str) -> str:
     from agent_friday import brand
     t = brand.spoken(str(t or ""))
+    t = _HEADING_TEXT_RE.sub(" ", str(t or ""))
     for rx, rep in _STRIP_RE:
         t = rx.sub(rep, t)
     return t.strip()
@@ -564,14 +752,15 @@ def _split_long(text: str) -> list[str]:
 
 
 def clean_lines(raw: list, valid_ids: set, *, chapter: int = 0,
-                facts: list | None = None) -> tuple[list, list]:
-    """Keep the lines that are accountable; return (kept, rejected-with-reason)."""
+                facts: list | None = None, solo: bool = False) -> tuple[list, list]:
+    """Keep the lines that are accountable; return (kept, rejected-with-reason).
+    In a solo show every line is Friday's, whatever speaker the model gave."""
     kept, rejected = [], []
     for item in raw:
         if not isinstance(item, dict):
             continue
         spk = str(item.get("speaker") or "a").strip().lower()[:1]
-        spk = spk if spk in ("a", "b") else "a"
+        spk = spk if spk in ("a", "b") and not solo else "a"
         text = _clean_text(item.get("text"))
         if not text:
             continue
@@ -600,11 +789,14 @@ def clean_lines(raw: list, valid_ids: set, *, chapter: int = 0,
 
 
 def merge_turns(lines: list[dict]) -> list[dict]:
-    """Merge short consecutive lines by the same speaker in the same chapter."""
+    """Merge short consecutive lines by the same speaker in the same chapter,
+    when the second adds no source of its own: each source chip stays beside
+    the sentences it sources."""
     out = []
     for ln in lines:
         prev = out[-1] if out else None
         if (prev and prev["speaker"] == ln["speaker"] and prev["chapter"] == ln["chapter"]
+                and set(ln["cites"]) <= set(prev["cites"])
                 and len(prev["text"]) + len(ln["text"]) < MAX_LINE_CHARS):
             prev["text"] = prev["text"] + " " + ln["text"]
             prev["cites"] = sorted(set(prev["cites"]) | set(ln["cites"]))
@@ -649,9 +841,19 @@ def _gather(ep: dict) -> list[dict]:
 
 def _public_sources(docs: list[dict]) -> list[dict]:
     """What the episode records about each source (no source text)."""
-    return [{"id": d["sid"], "title": d["title"], "kind": d["kind"],
-             "url": d.get("url") or "", "origin": d.get("origin") or "",
-             "private": d.get("private", True)} for d in docs]
+    out = []
+    for d in docs:
+        rec = {"id": d["sid"], "title": d["title"], "kind": d["kind"],
+               "url": d.get("url") or "", "origin": d.get("origin") or "",
+               "private": d.get("private", True)}
+        if d.get("role"):
+            rec["role"] = d["role"]
+        if d.get("outlet"):
+            rec["outlet"] = quality.spoken_outlet(d) or d["outlet"]
+        if d.get("kind") == "event":
+            rec["when"] = quality.clock_text(d.get("start") or "")
+        out.append(rec)
+    return out
 
 
 def _voices(ep: dict) -> dict:
@@ -696,12 +898,15 @@ def produce(eid: str, *, should_stop=None) -> dict:
                 _orb(orb, "progress", ep, (i / n) * 0.4)))
             if stop():
                 return load(eid)
-            if sum(1 for ln in script["lines"] if not ln.get("signature")) < 2:
+            # Counted in words: a solo show merges her sentences into few lines.
+            if sum(len(ln["text"].split()) for ln in script["lines"] if not ln.get("signature")) < MIN_SCRIPT_WORDS:
                 raise render.RenderError(
                     "script_empty", "The local model's script did not survive the "
                     "source check (%d lines cut)." % len(script["rejected"]))
             ep = _update(eid, title=script["title"], chapters=script["chapters"],
                          lines=script["lines"], rejected=script["rejected"],
+                         script_check=script["script_check"],
+                         format=ep.get("format") or "duo",
                          sources=_public_sources(docs), writer_model=script["model"],
                          facts=[{k: f[k] for k in ("id", "text", "expr") if k in f}
                                 for f in ep.get("_facts") or [] if not f.get("names_only")] or None,
@@ -863,7 +1068,11 @@ def _announce(ep: dict) -> None:
         body = "%s · %d min%s" % (show_credit(ep, marked=False), mins,
                                   " · private, made on this PC" if ep.get("privacy") == "private" else "")
         if (ep.get("check") or {}).get("ok") is False:
-            body += " · the listening check found differences"
+            body += " · the audio does not fully match the script"
+        sc = ep.get("script_check") or {}
+        if sc.get("ok") is False:
+            body += " · the script check found %d problem%s" % (
+                len(sc.get("problems") or []), "" if len(sc.get("problems") or []) == 1 else "s")
         target = {"workspace": "studio", "view": "podcasts", "episode": ep["id"]}
         ne.push(title="🎧 " + title, body=body, source="podcasts", kind="info",
                 priority="low", dedupe_key="podcast:" + ep["id"], target=target,
