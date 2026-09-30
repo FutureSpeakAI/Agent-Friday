@@ -516,21 +516,88 @@ def revise_by_voice(approval_id: str, instruction: str) -> dict:
             return {"ok": False, "error": f"the draft does not contain \"{old}\""}
         revised = re.sub(re.escape(old), new.replace("\\", "\\\\"), text, flags=re.I)
     else:
-        m = re.match(r"(?i)^\s*(?:leave out|remove|drop|cut)\s+(?:the part |the bit |anything )?(?:about|on|mentioning)?\s*[\"']?(.+?)[\"']?\s*\.?$", ins)
+        m = re.match(r"(?i)^\s*(?:take out|leave out|leave off|remove|drop|cut|omit|skip)\s+(?:the part |the bit |anything )?(?:about|on|mentioning)?\s*[\"']?(.+?)[\"']?\s*\.?$", ins)
         if not m:
             return {"ok": False, "error": "say 'change X to Y' or 'leave out the part about Z'"}
-        topic = m.group(1).lower()
+        # He speaks in the first person about his own people — "my sister" —
+        # while the draft, written by the local model out of his data, says
+        # "her sister" or names her outright. So the noun is tried on its own
+        # when the possessive form matches nothing.
+        spoken = m.group(1).lower()
+        candidates = [spoken]
+        bare = re.sub(r"(?i)^(?:my|his|her|their|our|the|a|an)\s+", "", spoken).strip()
+        if bare and bare != spoken:
+            candidates.append(bare)
         parts = re.split(r"(?<=[.!?])\s+", text)
-        kept = [s for s in parts if topic not in s.lower()]
-        if len(kept) == len(parts):
+        for topic in candidates:
+            kept = [s for s in parts if topic not in s.lower()]
+            if len(kept) != len(parts):
+                break
+        else:
             return {"ok": False, "error": f"the draft has nothing about \"{m.group(1)}\""}
         revised = " ".join(kept)
     return edit(approval_id, revised, accept="checked")
 
 
 #: Spoken words that decide a share request (checked against HIS words only).
-YES_RE = re.compile(r"(?i)\b(send it|send that|go ahead|yes|yeah|yep|approve|share it|okay send|ok send)\b")
+_YES_WORDS = (r"send it|send that|go ahead|yes|yeah|yep|approve|share it|"
+              r"okay send|ok send")
+YES_RE = re.compile(r"(?i)\b(" + _YES_WORDS + r")\b")
 NO_RE = re.compile(r"(?i)\b(don'?t send|do not send|no|nope|decline|don'?t share|do not share|cancel)\b")
+
+#: A yes with one of these attached is not a yes to the text on the card: it
+#: is consent to a card that does not exist yet, so it asks for a revision
+#: instead of deciding anything. Typed chat never had this problem, because a
+#: card there is decided by its own buttons and the same sentence revises the
+#: draft and asks again.
+COND_RE = re.compile(r"(?i)\b(but|except|apart from|other than|only|without|"
+                     r"take out|leave out|leave off|leave in|drop|remove|cut|"
+                     r"omit|skip|change|instead|as long as|provided)\b")
+
+#: The hinge between his agreement and his instruction, removed when the
+#: instruction is lifted out of the sentence.
+_HINGE_RE = re.compile(r"(?i)^[\s,;.—-]*(?:but|except|apart from|"
+                       r"other than|only|as long as|provided(?: that)?)\b")
+_LEAD_YES_RE = re.compile(r"(?i)^\s*(?:friday[\s,]*)?(?:" + _YES_WORDS + r")\b")
+
+
+def condition_from(owner_words: str) -> str:
+    """The editing instruction inside a conditional yes.
+
+    "yes, but take out the part about my sister" -> "take out the part about
+    my sister": the agreement and the hinge come off, and what is left is an
+    instruction `revise_by_voice` already knows how to apply.
+    """
+    s = str(owner_words or "").strip()
+    s = _LEAD_YES_RE.sub("", s, count=1)
+    s = _HINGE_RE.sub("", s, count=1)
+    return s.strip(" ,;.—-")
+
+
+def change_summary(approval_id: str) -> str:
+    """How much the last revision changed, in words that are safe to say.
+
+    Counts only. The draft is unapproved, so none of it may travel back out
+    in a read-back — not the part that came out, and not the part that
+    stayed.
+    """
+    from agent_friday.services import approvals
+    rec = approvals.get_approval(approval_id) or {}
+    p = rec.get("payload") or {}
+    hist = p.get("history") or []
+    if not hist:
+        return "it changed"
+    before = str(hist[-1].get("text") or "")
+    after = str(p.get("text") or "")
+    n_b = len([x for x in re.split(r"(?<=[.!?])\s+", before) if x.strip()])
+    n_a = len([x for x in re.split(r"(?<=[.!?])\s+", after) if x.strip()])
+    if n_a < n_b:
+        gone = n_b - n_a
+        return ("one sentence came out" if gone == 1
+                else str(gone) + " sentences came out")
+    if len(after) != len(before):
+        return "some wording changed"
+    return "it changed"
 
 
 def _room_approvals_need_name() -> bool:
@@ -562,9 +629,16 @@ def spoken_decision(owner_words: str, room_mode: bool) -> Optional[str]:
     words = str(owner_words or "")
     if room_mode and _room_approvals_need_name() and "friday" not in words.lower():
         return None
+    yes = YES_RE.search(words)
+    # Tested before the refusal, so a condition that carries its own "don't
+    # send the part about X" is read as the edit he meant rather than as a
+    # decline of the whole card. A bare "no, don't send it" holds no editing
+    # words and still lands on deny below.
+    if yes and COND_RE.search(words):
+        return "revise"
     if NO_RE.search(words):
         return "deny"
-    if YES_RE.search(words):
+    if yes:
         return "approve"
     return None
 
@@ -573,6 +647,13 @@ def decide_by_voice(approval_id: str, owner_words: str, room_mode: bool, claimed
     """The cloud model reports a spoken decision; it counts only if his words say so."""
     from agent_friday.services import approvals
     verdict = spoken_decision(owner_words, room_mode)
+    if verdict == "revise":
+        # Not a refusal and not an approval: he said yes to something that is
+        # not on the card yet. Nothing is decided here.
+        return {"ok": False, "revise": True,
+                "instruction": condition_from(owner_words),
+                "error": ("his yes had a condition attached, so it is not an "
+                          "approval of the text on the card")}
     if verdict is None or verdict != claimed:
         return {"ok": False, "error": ("his own words did not " + ("approve" if claimed == "approve" else "decline")
                                        + " it" + (" (in a room of several people, a spoken OK must name Friday)"
