@@ -222,6 +222,10 @@ def test_mutations_with_the_live_checkout_as_cwd_are_blocked(live, command):
     "git log > /tmp/log.txt", "pytest tests/unit/test_x.py", "ls -la", "cp AGENTS.md /tmp/copy.md",
     "sed 's/a/b/' AGENTS.md", "python -c \"print(open('AGENTS.md').read())\"",
     "echo 'deploy-2b' > .claude/DEPLOY_LANE", "git worktree remove /tmp/x",
+    "echo \"main -> branch is a clean fast-forward\"", "cat > \"$SCRATCH/notes.md\" <<'EOF'
+body
+EOF",
+    "ls .claude/DEPLOY_LANE 2>&1 | sed 's/^/x: /'", "git log -1 2>/dev/null",
 ])
 def test_reads_and_worktree_creation_in_the_live_checkout_are_allowed(live, command):
     ok, why = g.decide(bash(command, live["live"]), live["cfg"])

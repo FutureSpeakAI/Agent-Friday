@@ -449,10 +449,16 @@ def path_args(seg: Segment, start: int = 1) -> list[str]:
 
 
 def redirect_targets(seg: Segment) -> list[str]:
-    out = []
-    for m in re.finditer(r"(?<![0-9&])(?:\d?>>?|&>)\s*([^\s;&|]+)", seg.text):
-        t = m.group(1)
-        if t.startswith("&") or t.lower() in {"/dev/null", "nul", "$null"}:
+    """Files a segment's redirections write to. Works on tokens, so text inside
+    quotes ("main -> branch") is not a redirection; a target that is a shell
+    variable cannot be resolved and is not treated as a live-checkout write."""
+    out, toks = [], seg.toks
+    for i, tok in enumerate(toks):
+        m = re.fullmatch(r"(\d?>>?|&>)(.*)", tok)
+        if not m:
+            continue
+        t = m.group(2) or (toks[i + 1] if i + 1 < len(toks) else "")
+        if not t or t.startswith(("&", "$", "%")) or t.lower() in {"/dev/null", "nul", "$null"}:
             continue
         out.append(norm_path(t, seg.cwd))
     return out
