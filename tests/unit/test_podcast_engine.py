@@ -466,3 +466,19 @@ def test_no_render_worker_runs_in_the_test_process():
     pe.create([{"kind": "text", "text": "x"}])
     assert pe._WORKER is None
     assert "start_worker" not in Path(routes.__file__).read_text(encoding="utf-8")
+
+
+def test_the_wav_master_is_removed_once_the_mp3_is_checked_and_signed(monkeypatch, _podcast_home):
+    monkeypatch.setattr(pe, "_llm_json", _fake_writer())
+    _fake_speaker(monkeypatch)
+
+    def encode(wav, mp3, title=""):
+        mp3.write_bytes(b"ID3fake")
+        return True
+    monkeypatch.setattr(render, "encode_mp3", encode)
+    real = render.listen_back
+    monkeypatch.setattr(render, "listen_back", lambda wav, s, transcribe=None: real(wav, s, transcribe=lambda p: s))
+    done = pe.produce(_text_ep()["id"])
+    d = _podcast_home / "podcasts" / done["id"]
+    assert done["status"] == "ready" and done["audio"] == "audio.mp3"
+    assert (d / "audio.mp3").is_file() and not (d / "audio.wav").exists()

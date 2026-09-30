@@ -267,7 +267,8 @@ TOOLS = [
          "numbers first and the hosts may only say computed numbers), web pages or "
          "pasted text. Or pass `topic` to use the owner's wiki notes on it. Written by "
          "the local model and spoken on this computer; returns at once and the episode "
-         "follows in minutes."),
+         "follows in minutes. Say one short sentence that it has started and that a "
+         "notice will come when it is ready; do NOT guess what it will say."),
      "input_schema": {"type": "object", "properties": {
          "sources": {"type": "array", "description": (
              "Each item: {kind: file|wiki|kg_node|conversation|creation|dataset|text|url|news_run, "
@@ -284,7 +285,7 @@ TOOLS = [
                    "description": "local (default). cloud only if the owner asks and has switched cloud voices on."},
      }}},
     {"name": "podcast_list",
-     "description": "List podcast episodes, newest first: title, status, length, chapters, privacy. Filter by routine (front_page, briefing, weekly, editorial).",
+     "description": "List podcast episodes, newest first: title, status, length, chapters, privacy. Filter by routine (front_page, briefing, weekly, editorial). Read them back as sentences, not a table.",
      "input_schema": {"type": "object", "properties": {
          "routine": {"type": "string", "enum": ["", "front_page", "briefing", "weekly", "editorial"]},
          "limit": {"type": "integer"}}}},
@@ -292,7 +293,8 @@ TOOLS = [
      "description": (
          "Play or control a podcast episode on the owner's screen: play (an episode id, or the "
          "latest episode of a routine such as today's briefing), pause, resume, stop, "
-         "next_chapter, previous_chapter, or seek to a second."),
+         "next_chapter, previous_chapter, or seek to a second. If it says no_desktop, "
+         "tell the user to open Friday's window and it will play there."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(PLAY_OPS)},
          "episode_id": {"type": "string"},
@@ -301,7 +303,9 @@ TOOLS = [
     {"name": "podcast_source",
      "description": (
          "Answer \"what's the source for that?\" while a podcast plays: the line being spoken "
-         "now and the sources (outlet and link, or the computed fact) it cites."),
+         "now and the sources (outlet and link, or the computed fact) it cites. Name "
+         "the outlet out loud; if the line cites nothing, say it was the hosts' own "
+         "talk rather than inventing a source."),
      "input_schema": {"type": "object", "properties": {
          "episode_id": {"type": "string"},
          "seconds": {"type": "number", "description": "A position other than now."}}}},

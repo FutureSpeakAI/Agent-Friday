@@ -672,6 +672,13 @@ def produce(eid: str, *, should_stop=None) -> dict:
             check = {"ok": None, "error": str(e)}
         ep = _update(eid, check=check)
         _write_provenance(ep, d / audio)
+        if audio == "audio.mp3":
+            # Checked and signed: the uncompressed master (about 3 MB a
+            # minute) is not kept beside the copy that plays.
+            try:
+                wav.unlink()
+            except OSError:
+                pass
         ep = _update(eid, status="ready", stage_detail="", progress=None,
                      finished_at=time.time())
         _orb(orb, "done", ep)
