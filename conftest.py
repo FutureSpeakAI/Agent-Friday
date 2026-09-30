@@ -23,6 +23,10 @@ spawn anything, for every invocation. That is the property this file exists
 to get, and the reason it is a separate file rather than three more lines in
 the one below it.
 
+It has one other job, for the same reason (it must run for every invocation,
+before xdist starts workers): it loads pytest_resource_guard, which caps
+workers at two and refuses a full run without enough free memory and disk.
+
 Deliberately nothing else lives here. The hermetic-environment setup stays in
 tests/conftest.py where it belongs; a rootdir conftest applies to anything
 pytest is ever pointed at, so the less it does the better.
@@ -32,6 +36,8 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+
+pytest_plugins = ["pytest_resource_guard"]
 
 _SRC = Path(__file__).resolve().parent / "src"
 if str(_SRC) not in sys.path:

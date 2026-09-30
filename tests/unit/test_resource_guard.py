@@ -1,0 +1,92 @@
+"""The test-run resource guard: at most two workers, and no broad run without room.
+
+Parallel full suites have exhausted memory and disk on the owner's machine and
+left the live Friday unable to answer. These tests pin the floors and prove the
+guard is loaded for every pytest invocation from the repository root.
+"""
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import pytest_resource_guard as g
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_the_floors_are_the_agreed_ones():
+    assert g.MAX_WORKERS == 2
+    assert g.MIN_FREE_RAM_GB == 12.0
+    assert g.MIN_FREE_DISK_GB == 20.0
+
+
+@pytest.mark.parametrize("requested,expected", [(4, 2), (3, 2), (2, 2), (1, 1), (0, 0),
+                                                ("auto", "auto"), (None, None)])
+def test_worker_requests_are_capped(requested, expected):
+    assert g.capped_workers(requested) == expected
+
+
+def test_auto_resolves_to_the_cap():
+    assert g.pytest_xdist_auto_num_workers(None) == 2
+
+
+@pytest.mark.parametrize("args,broad", [
+    ([], True),
+    (["tests/unit", "tests/api"], True),
+    (["tests"], True),
+    (["tests/unit/test_resource_guard.py"], False),
+    (["tests/unit/test_resource_guard.py::test_the_floors_are_the_agreed_ones"], False),
+    (["-q", "tests/unit/test_resource_guard.py"], False),
+])
+def test_broad_runs_are_told_from_targeted_ones(args, broad):
+    assert g.is_broad_run(args, ROOT) is broad
+
+
+def test_a_broad_run_is_refused_below_either_floor_and_says_which():
+    low_ram = g.refusal(3.1, 40.0)
+    assert low_ram and "3.1 GB" in low_ram and "12 GB" in low_ram and "disk" not in low_ram
+    low_disk = g.refusal(20.0, 3.7)
+    assert low_disk and "3.7 GB" in low_disk and "20 GB" in low_disk
+    assert g.refusal(12.0, 20.0) is None
+    assert g.refusal(None, None) is None
+
+
+def _config(args, n):
+    return SimpleNamespace(option=SimpleNamespace(numprocesses=n), args=args, rootpath=ROOT)
+
+
+def test_configure_caps_workers_and_stops_a_broad_run_without_room(monkeypatch):
+    monkeypatch.setattr(g, "free_ram_gb", lambda: 2.0)
+    monkeypatch.setattr(g, "free_disk_gb", lambda p=None: 50.0)
+    cfg = _config(["tests/unit", "tests/api"], 4)
+    with pytest.raises(pytest.exit.Exception) as ei:
+        g.pytest_configure(cfg)
+    assert cfg.option.numprocesses == 2
+    assert "free memory is 2.0 GB" in str(ei.value)
+
+
+def test_configure_lets_a_targeted_run_through_whatever_the_room(monkeypatch):
+    monkeypatch.setattr(g, "free_ram_gb", lambda: 0.4)
+    monkeypatch.setattr(g, "free_disk_gb", lambda p=None: 1.0)
+    cfg = _config(["tests/unit/test_resource_guard.py"], 4)
+    g.pytest_configure(cfg)
+    assert cfg.option.numprocesses == 2
+
+
+def test_the_root_conftest_loads_the_guard_for_every_invocation():
+    text = (ROOT / "conftest.py").read_text(encoding="utf-8")
+    assert 'pytest_plugins = ["pytest_resource_guard"]' in text
+
+
+def test_a_real_run_asking_for_four_workers_gets_two(tmp_path):
+    """End to end: the cap must bite before xdist builds its workers."""
+    import subprocess
+    import sys
+    probe = ROOT / "tests" / "unit" / "test_resource_guard.py"
+    out = subprocess.run(
+        [sys.executable, "-m", "pytest", f"{probe}::test_the_floors_are_the_agreed_ones",
+         "-n", "4", "-p", "no:cacheprovider", "-o", "addopts="],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=300)
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text[-2000:]
+    assert "2 workers" in text and "4 workers" not in text, text[-2000:]
