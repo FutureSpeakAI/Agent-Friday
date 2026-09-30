@@ -8136,7 +8136,11 @@ function ChatSurface(props) {
       borderRadius: 4,
       fontFamily: 'Inter'
     }
-  }, "⧉ Window"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
+  }, "⧉ Window"), convId && /*#__PURE__*/React.createElement(PodcastButton, {
+    sources: [{ kind: 'conversation', id: convId }],
+    title: ((convList || []).find(x => x.id === convId) || {}).title || 'this conversation',
+    compact: true
+  }), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
     /* UNDOCK. This conversation, in its own window, so a second one can be
        worked alongside it — the point being two MODELS at once, since each
        conversation carries its own seat binding.
@@ -9793,6 +9797,47 @@ function PodcastPlayer() {
       }, h('b', null, who(ln.speaker) + ': '), ln.text, (ln.cites || []).map(cite)))),
     (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
+}
+// A creation as a podcast source: a spreadsheet or table goes in as a dataset
+// (data mode), anything else as a creation.
+function podcastCreationSource(name) {
+  const ext = String(name || '').split('.').pop().toLowerCase();
+  return ['csv', 'tsv', 'xlsx', 'xlsm', 'parquet'].includes(ext)
+    ? { kind: 'dataset', filename: name } : { kind: 'creation', filename: name };
+}
+// "Make a podcast" from whatever item a workspace is showing: a wiki page, a
+// graph entry, a creation, a conversation. One button, one request; the
+// episode follows in Studio → Podcasts with a notice when it is ready.
+function PodcastButton({ sources, title, compact, className }) {
+  const h = React.createElement;
+  const [state, setState] = useState('');
+  const go = async (e) => {
+    if (e) e.stopPropagation();
+    if (state === 'busy') return;
+    setState('busy');
+    try {
+      const r = await fetch('/api/podcasts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sources: sources, length: 'short' }) });
+      const d = await r.json();
+      if (d.status === 'ok') {
+        setState('queued');
+        fridayToast('🎧 Episode queued' + (title ? ' from “' + title + '”' : '') + '. It is written and spoken on this computer; you will get a notice when it is ready.');
+      } else {
+        setState('');
+        fridayToast(d.message || 'Could not start the episode.');
+      }
+    } catch (_) {
+      setState('');
+      fridayToast('Could not start the episode.');
+    }
+  };
+  const label = state === 'busy' ? '🎧 …' : state === 'queued' ? '🎧 Queued' : (compact ? '🎧' : '🎧 Podcast');
+  return h('button', {
+    className: className || 'btn', onClick: go, disabled: state === 'busy',
+    title: 'Make a podcast from ' + (title ? '“' + title + '”' : 'this') + ', written and spoken on this computer',
+    'aria-label': 'Make a podcast from ' + (title || 'this'),
+    style: className ? undefined : { fontSize: PODCAST_C.sm, fontFamily: PODCAST_C.font }
+  }, label);
 }
 function PodcastChip({ routine, runId }) {
   const h = React.createElement;
@@ -14431,7 +14476,12 @@ function KnowledgeWS() {
     className: 'kw-crumb'
   }, '✦ ', h('b', null, sel.title), sel.type && sel.type !== 'page' ? h('span', {
     className: 'kw-dim'
-  }, ' \xB7 ', sel.type) : null) : section ? h('span', {
+  }, ' \xB7 ', sel.type) : null, sel.type && sel.type !== 'page' && sel.type !== 'soul' ? h(PodcastButton, {
+    sources: [{ kind: 'kg_node', id: sel.id }],
+    title: sel.title,
+    compact: true,
+    className: 'kw-btn'
+  }) : null) : section ? h('span', {
     className: 'kw-crumb'
   }, '▦ Section ', h('b', null, section), h('span', {
     className: 'kw-dim'
@@ -14995,7 +15045,11 @@ function KnowledgePages({
     onClick: beginEdit,
     disabled: !doc || doc.content == null || doc.locked || doc.missing,
     title: doc && doc.locked ? 'This page is encrypted and the vault is locked' : 'Edit this page'
-  }, '✎ Edit'), editing && h('button', {
+  }, '✎ Edit'), !editing && path && h(PodcastButton, {
+    sources: [{ kind: 'wiki', path: path }],
+    title: String(path).split('/').pop().replace(/\.md$/, ''),
+    className: 'kw-btn'
+  }), editing && h('button', {
     className: 'kw-btn kw-go',
     disabled: saving,
     onClick: saveEdit
@@ -19758,7 +19812,10 @@ function StudioWS() {
         fontSize: 11
       },
       title: "Quick-post this creation to your platforms"
-    }, "\uD83D\uDCE4 Share / Post\u2026"), /*#__PURE__*/React.createElement("button", {
+    }, "\uD83D\uDCE4 Share / Post\u2026"), /*#__PURE__*/React.createElement(PodcastButton, {
+      sources: [podcastCreationSource(selected.name)],
+      title: (selected.name || '').replace(/\.[^.]+$/, '')
+    }), /*#__PURE__*/React.createElement("button", {
       className: "btn",
       onClick: () => window.open('/creation/' + selected.name, '_blank'),
       style: {
