@@ -1551,6 +1551,12 @@ def chat():
                 sp = sp + _art.context_block(_conversation_id)
             except Exception:
                 pass
+            # The codebase this chat's panel is bound to, if any (services/codebases).
+            try:
+                from agent_friday.services import codebases as _cbs
+                sp = sp + _cbs.context_block(_conversation_id)
+            except Exception:
+                pass
             if voice_mode:
                 sp = (
                     "=== VOICE MODE ACTIVE ===\n"
@@ -2632,6 +2638,11 @@ def chat_send():
             try:
                 from agent_friday.services import artifacts as _art
                 prompt = prompt + _art.context_block(_conversation_id)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import codebases as _cbs
+                prompt = prompt + _cbs.context_block(_conversation_id)
             except Exception:
                 pass
             # Assembled here, not by `_get_friday_system_prompt`: the policy

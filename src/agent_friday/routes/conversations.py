@@ -81,6 +81,9 @@ def _summary(conv: dict, project_seats: dict | None = None) -> dict:
         # which is the right answer for them.
         "pinned_at": conv.get("pinned_at"),
         "project": conv.get("project"),
+        # The codebase this chat's panel is bound to (services/codebases), or
+        # None. The panel shows Preview, Files and Changes when it is set.
+        "codebase": conv.get("codebase"),
         "seat": conv.get("seat"),
         # What this chat will ACTUALLY run on once its project's default is
         # taken into account. The sidebar shows this, because a chat in a

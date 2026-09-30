@@ -575,6 +575,26 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
             return OUTWARD, f"the office command could not be classified ({e})"
     if tool_name == "write_file":
         return classify_write(a.get("path"))
+    if tool_name in ("codebase_edit", "codebase_undo", "codebase_read"):
+        # A codebase Friday made lives under ~/.friday/codebases and is hers to
+        # change; an existing folder the user pointed at is their files, so a
+        # change there is judged as any write outside Friday's output is.
+        try:
+            from agent_friday.services import codebases as _cb
+            cbid = str(a.get("codebase_id") or "").strip()
+            if not cbid:
+                from agent_friday.services.agent import _CURRENT_CONVERSATION
+                rec = _cb.for_conversation(_CURRENT_CONVERSATION.get())
+                cbid = rec["id"] if rec else ""
+            if not cbid or _cb.load(cbid) is None:
+                return OUTWARD, "no codebase is in scope for this call"
+            if tool_name == "codebase_read":
+                return INTERNAL, "it only reads a codebase file"
+            if _cb.is_managed(cbid):
+                return INTERNAL, "it changes a codebase Friday made, under her own folder"
+            return classify_write(str(_cb.repo_path(cbid) / "x"))
+        except Exception as e:
+            return OUTWARD, f"the codebase action could not be classified ({e})"
     if tool_name in ("browser_click", "browser_type"):
         # A click that submits, sends, pays or confirms, typing into a payment
         # field, and Enter in a form are outward; a password field is

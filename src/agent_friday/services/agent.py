@@ -8228,6 +8228,116 @@ def _tool_publish_artifact(inp):
 CLAUDE_TOOL_HANDLERS.update({"publish_artifact": _tool_publish_artifact})
 TOOL_RINGS.update({"publish_artifact": 2})   # publishing is outward; its own card is the gate
 
+
+# ══════════════════════════════════════════════════════════════
+#  CODEBASES — a chat's panel with a repository behind it
+#  (docs/design/active/vibe-coding-salon.md §4.8; services/codebases)
+# ══════════════════════════════════════════════════════════════
+CLAUDE_TOOLS.append({
+    "name": "codebase_edit",
+    "description": (
+        "Change files in this chat's codebase (the panel's Preview/Files/Changes). "
+        "Pass the FULL new content of each file you change (or null to delete "
+        "one) and a one-line plain-language summary for the user. Every call is "
+        "one step: a commit the user can undo by saying 'undo that'. The preview "
+        "is one index.html with relative css/js inlined, running in a sandboxed "
+        "frame with no server; packages only from https://esm.sh pinned to exact "
+        "versions. Do not say the change is done until the result names the step; "
+        "then say what changed in one line and do not paste the code."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "files": {"type": "object", "description": "{path: full new text, or null to delete}. Paths are relative; never .git or .friday.",
+                      "additionalProperties": {"type": ["string", "null"]}},
+            "summary": {"type": "string", "description": "One plain line for the user, e.g. 'Made the header bigger'."},
+            "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase; normally omitted."},
+        },
+        "required": ["files", "summary"],
+    },
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_undo",
+    "description": ("Undo the last step in this chat's codebase ('undo that'). Each call goes one step further back; "
+                    "an undo is itself a step. Say which step was undone, from the result."),
+    "input_schema": {"type": "object", "properties": {
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
+})
+CLAUDE_TOOLS.append({
+    "name": "codebase_read",
+    "description": "Read one file of this chat's codebase that your context did not show in full (large files are listed by name only).",
+    "input_schema": {"type": "object", "properties": {
+        "path": {"type": "string", "description": "Relative path, e.g. 'app.js'."},
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}},
+        "required": ["path"]},
+})
+
+
+def _codebase_in_scope(inp):
+    from agent_friday.services import codebases as _cb
+    cbid = str((inp or {}).get("codebase_id") or "").strip()
+    if cbid:
+        rec = _cb.load(cbid)
+    else:
+        rec = _cb.for_conversation(_CURRENT_CONVERSATION.get())
+    return rec
+
+
+def _tool_codebase_edit(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return "codebase_edit: this chat has no codebase. Ask the user to open one with '+ Codebase'. Nothing was changed."
+    files = inp.get("files")
+    if not isinstance(files, dict) or not files:
+        return "codebase_edit refused: 'files' must be a non-empty object of {path: content}. Nothing was changed."
+    try:
+        st = _cb.step(rec["id"], files, str(inp.get("summary") or "Change"),
+                      model=str((inp.get("_model") or "")), key_profile="mine")
+    except ValueError as e:
+        return f"codebase_edit refused: {e}. Nothing was changed."
+    except RuntimeError as e:
+        return f"codebase_edit failed: {e}. Nothing was committed."
+    if st is None:
+        return {"status": "no_change", "note": "The files were already exactly that; no step was made."}
+    return {"status": "ok", "codebase": rec["id"], "step": {"sha": st["sha"], "summary": st["summary"],
+            "files": [f["path"] for f in st["receipt"]["files"]], "deleted": st["receipt"]["deleted"]},
+            "note": "Step made; the preview reloads. Say what changed in one line."}
+
+
+def _tool_codebase_undo(inp):
+    from agent_friday.services import codebases as _cb
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return "codebase_undo: this chat has no codebase. Nothing was changed."
+    try:
+        st = _cb.undo(rec["id"])
+    except _cb.NothingToUndo as e:
+        return {"status": "nothing_to_undo", "note": str(e)}
+    except RuntimeError as e:
+        return f"codebase_undo failed: {e}."
+    return {"status": "ok", "codebase": rec["id"], "step": {"sha": st["sha"], "kind": "undo", "summary": st["summary"], "undoes": st["undoes"]}}
+
+
+def _tool_codebase_read(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return "codebase_read: this chat has no codebase."
+    try:
+        content = _cb.read(rec["id"], str(inp.get("path") or ""))
+    except ValueError as e:
+        return f"codebase_read refused: {e}."
+    if content is None:
+        return {"status": "missing", "path": inp.get("path")}
+    return {"status": "ok", "path": inp.get("path"), "content": content[:60000]}
+
+
+CLAUDE_TOOL_HANDLERS.update({"codebase_edit": _tool_codebase_edit, "codebase_undo": _tool_codebase_undo,
+                             "codebase_read": _tool_codebase_read})
+TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0})
+
 # ══════════════════════════════════════════════════════════════
 #  CAPABILITY PREFLIGHT — a tool whose dependency is missing is REMOVED
 # ══════════════════════════════════════════════════════════════
