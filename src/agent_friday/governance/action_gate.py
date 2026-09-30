@@ -281,11 +281,96 @@ _SELF_API = re.compile(r"\b(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[?::1\]?|
                        r"|/api/", re.I)
 
 
+def _literal_search_patterns(cmd: str) -> str:
+    """Hide inert search patterns from checks of executable shell text.
+
+    This recognizes only flat, static Get-Content/Select-String pipelines,
+    optionally followed by Select-Object. Only quoted -Pattern values are
+    hidden; paths and other arguments still face the local-API check. Any
+    interpolation, scriptblock, chaining or unfamiliar syntax keeps the
+    original conservative classification.
+    """
+    # PowerShell also treats typographic quotes as delimiters. They are
+    # outside this small literal grammar, including inside ASCII quotes.
+    if any(c in cmd for c in "\n\r\u2018\u2019\u201a\u201b\u201c\u201d\u201e\u201f"):
+        return cmd
+    stages = [[]]
+    i = 0
+    while i < len(cmd):
+        if cmd[i].isspace():
+            i += 1
+            continue
+        if cmd[i] == "|":
+            if not stages[-1]:
+                return cmd
+            stages.append([])
+            i += 1
+            continue
+        start = i
+        quoted = cmd[i] in "\"'"
+        if quoted:
+            quote = cmd[i]
+            i += 1
+            while i < len(cmd):
+                if quote == '"' and cmd[i] in "$`":
+                    return cmd
+                if cmd[i] == quote:
+                    if quote == "'" and i + 1 < len(cmd) and cmd[i + 1] == quote:
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            else:
+                return cmd
+            if i < len(cmd) and not cmd[i].isspace() and cmd[i] not in ",|":
+                return cmd
+        elif cmd[i] == ",":
+            i += 1
+        else:
+            while i < len(cmd) and not cmd[i].isspace() and cmd[i] not in ",|":
+                i += 1
+            if not re.fullmatch(r"[\w./:\\*?=-]+", cmd[start:i]):
+                return cmd
+        stages[-1].append((start, i, quoted))
+
+    spans = []
+    for position, stage in enumerate(stages):
+        if not stage or stage[0][2]:
+            return cmd
+        head = cmd[stage[0][0]:stage[0][1]].lower()
+        allowed = {"select-string", "sls", "select-object", "select"}
+        if position == 0:
+            allowed = {"get-content", "gc", "cat", "type", "select-string", "sls"}
+        if head not in allowed:
+            return cmd
+        if head not in {"select-string", "sls"}:
+            continue
+        for index, (start, end, quoted) in enumerate(stage):
+            if quoted or cmd[start:end].lower() != "-pattern":
+                continue
+            j = index + 1
+            if j == len(stage) or not stage[j][2]:
+                return cmd
+            while True:
+                spans.append(stage[j][:2])
+                j += 1
+                if j == len(stage) or cmd[stage[j][0]:stage[j][1]] != ",":
+                    break
+                j += 1
+                if j == len(stage) or not stage[j][2]:
+                    return cmd
+    for start, end in reversed(spans):
+        cmd = cmd[:start] + "'search-pattern'" + cmd[end:]
+    return cmd
+
+
 def classify_command(cmd: str) -> tuple:
     """(class, why) for one PowerShell command."""
     c = (cmd or "").strip()
     if not c:
         return INTERNAL, "empty"
+    c = _literal_search_patterns(c)
     if _SELF_API.search(c):
         return "forbidden", "it addresses Friday's own local API"
     if _DANGEROUS.search(c):
