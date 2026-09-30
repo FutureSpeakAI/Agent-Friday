@@ -285,6 +285,77 @@ with no Friday routes at all.
 publish Friday's own port through a tunnel; if you must, set
 `FRIDAY_TRUST_LOOPBACK=0` so every request needs a login.
 
+### 7. Web pages, other sites and generated markup reaching the vault, credentials or `run_command`
+
+**Threat:** Friday trusts requests from this PC, and the owner's browser is on
+this PC. A web page the owner happens to have open, a dev-server preview on
+another port, a DNS-rebound hostname, or markup Friday itself renders (a model
+reply, a workspace creation) could otherwise act as the owner.
+
+**Defence, in the order a request meets it** (`services/origin_gate.py`, applied
+in `core.check_auth` before loopback trust):
+
+- **Host header (DNS rebinding).** A request from this machine must name
+  Friday: `localhost`, `127.0.0.1`, `::1`, or one of Friday's own local-address
+  names. A rebound page looks same-origin to the browser (`Sec-Fetch-Site:
+  same-origin`, no foreign `Origin`) but cannot change its Host header, so it is
+  refused for reads too, `/api/session/token` and the page that embeds the token
+  included.
+- **Cross-site writes.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade,
+  that carries browser metadata is refused when `Sec-Fetch-Site` is
+  `cross-site` or `same-site`, when `Origin` is `null` (a sandboxed frame), or
+  when `Origin` is not one of Friday's own exact scheme, host and port (another
+  loopback port included). A token held by such a document is treated as a
+  leaked token and does not help.
+- **Session token.** From Friday's own origin, those same calls also need the
+  rotating `X-Friday-Token` (`?t=` on a socket URL), on loopback too. Friday's
+  page attaches it itself; the owner sees no extra prompt.
+- **Sandboxed and foreign frames.** Under `/api/` and `/ws/` a request whose
+  metadata says sandbox or another site is refused for every method. The
+  exceptions are ones script cannot read: a top-level navigation, an image,
+  audio, video, track or font load, and a creation shown in a frame.
+- **Sandboxed markup.** Generated pages and creations render in an iframe with
+  `sandbox` and never `allow-same-origin`, so they run in an opaque origin. The
+  only route back is the closed `postMessage` broker
+  (`static/js/friday_frame_broker.js`), which exposes a fixed list of
+  operations and never the vault, credentials or `run_command`. Model replies
+  are allowlisted before they reach `innerHTML`. Markup responses carry a
+  `Content-Security-Policy`; a served creation gets a `sandbox` directive no
+  wider than the default.
+- **Fail closed.** If the gate cannot evaluate a guarded request, it refuses.
+
+**What this does not protect (residual risk, stated plainly):**
+
+- **No browser metadata means no gate.** `Origin` and `Sec-Fetch-Site` are
+  forbidden headers for page script, so a request with no browser metadata is not a browser
+  request (the tray, the CLI, a server-to-server call) and keeps loopback trust
+  by design. Any process on this machine can send such a request, and can read
+  the session token from `/api/session/token` (it passes the Host check). This
+  gate keeps other sites out; it does not separate Friday from other software
+  running as the same user, which is Section 1 of what we do not defend against.
+- **Reads need no token.** A GET from Friday's own origin reads vault,
+  conversation and settings routes without `X-Friday-Token`. The token guards
+  state changes and socket upgrades only. Origin, Host and frame checks are what
+  guard reads, so a script that runs in Friday's own origin can read them.
+- **There is no per-call principal.** Authority is "this machine plus, for
+  writes, the session token". Individual calls are not tied to who or what
+  issued them.
+- **The page's CSP allows inline script and eval.** `OWN_PAGE_CSP` keeps
+  `'unsafe-inline'` and `'unsafe-eval'` because the UI is one inline bundle and
+  hand tracking compiles WebAssembly. It therefore adds almost no defence in
+  depth if the reply sanitizer is bypassed; the allowlist, not the CSP, is what
+  keeps injected script out of the privileged shell. The CSP does still pin
+  `frame-ancestors`, `object-src`, `base-uri` and `form-action`.
+- **Look-alike overlays.** The reply allowlist keeps the `style` and `class`
+  attributes. A model reply or echoed web content can draw fixed-position
+  overlays or look-alikes of Friday's own cards inside the privileged shell.
+  Nothing on screen proves a card came from Friday rather than from text she
+  displayed; approvals are only real when they come through the approval gate.
+- **Creation assets load cross-site.** The frame gate lets another site load
+  `/api/creations/*` as a script or style, so it can run a creation's JavaScript
+  in its own origin and read any owner data that script embeds, given the
+  creation's id. Do not embed owner data or secrets in a creation's files.
+
 ---
 
 ## What We Do NOT Defend Against
@@ -434,7 +505,7 @@ permissions) as the fallback. The Ed25519 private key is a file only,
 
 ---
 
-*Last verified against the code: 2026-09-24. Update this document whenever the
+*Last verified against the code: 2026-09-30. Update this document whenever the
 security architecture changes. The egress gate guarantee is a functional
 invariant; any change that weakens it requires explicit security review. How to
 report a problem, and which versions receive fixes, is in the repository's
