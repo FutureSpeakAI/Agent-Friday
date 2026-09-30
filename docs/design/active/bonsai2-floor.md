@@ -2,7 +2,7 @@
 
 > **Status:** active, specification with measurements
 > **Written:** 2026-09-30
-> **Implementation:** none. This document and [`bonsai2-tiers.json`](bonsai2-tiers.json) are inputs to the installer section of the first-run and onboarding master spec and to [`model-soup-advisor.md`](model-soup-advisor.md).
+> **Implementation:** none. This document and [`bonsai2-tiers.json`](bonsai2-tiers.json) (version 2: download manifest with sha256, per-backend release assets, the structured pick, the detection commands) are inputs to the installer section of the first-run and onboarding master spec and to [`model-soup-advisor.md`](model-soup-advisor.md).
 > **Owner's direction (verbatim, 2026-09-29):** "bonsai2 is our standard now, not Gemma. not Qwen..only bonsai2. [...] whatever the lowest range is, that is applications floor. All the other local models are out for suggested installation on first setup. We should support any models the user wishes."
 > **Method:** STORM. Six simulated experts argued each section against the tree, the publisher's card and the September logs on the reference machine: an on-device inference engineer, a llama.cpp maintainer, an Apple Silicon ML engineer, a low-end-hardware user, a privacy reviewer and a generative-media engineer. Where they disagreed the disagreement is recorded, not smoothed.
 > **Provenance tags.** **MEASURED-2026-09-18** and **MEASURED-2026-09-30** were measured on the reference machine (RTX 4070 12 GB, i7-10700F, 32 GB DDR4, Windows 11). **PUBLISHED** is from a cited public source. **TREE** was read from the code at `02035ba6`. **ESTIMATE** is arithmetic on tagged inputs with the formula shown. **UNMEASURED** means no evidence exists yet; the installer must not promise a number for an UNMEASURED row until it has benchmarked on that device (§7.4).
@@ -13,7 +13,7 @@
 
 1. **Bonsai 2 ships at one size.** Ternary Bonsai 2 is the 27B only: PrismML's ternary compression of Qwen3.8-27B, Apache-2.0, 5.95 GB in the `PTQ1_0` packing and 7.21 GB in `PQ2_0` (**PUBLISHED**, [model card](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf); [publisher's download table](https://docs.prismml.com/download/models)). The smaller Bonsai files in the catalogue (1.7B, 4B, 8B) are the earlier *Bonsai* and *Ternary Bonsai* generations on Qwen3 bases. The 4B on this machine is one of those (**MEASURED-2026-09-30**, GGUF metadata: architecture `qwen3`, basename `Ternary-Bonsai`, 32K YaRN context). So "the smallest viable Bonsai 2" is the 27B, and the floor is the lowest machine that runs a 6 GB model well.
 
-2. **The application floor is 16 GB of RAM with AVX2, or any 8 GB graphics card.** On a 16 GB Windows machine with no GPU: 6,144 MiB OS reserve + about 1,500 MiB for Friday itself + 5,672 MiB of weights + 512 MiB of cache at 8K context + about 400 MiB compute buffer is 14,228 MiB of 16,384 (**ESTIMATE** from **TREE** reserves and the **MEASURED** file size). An 8 GB machine cannot hold the weights beside the operating system. A 12 GB machine holds them only with nothing else open, and one browser tab pushes the weights into the page file, where decode drops below one token a second. The floor is therefore 16 GB, which is what the README already publishes for RAM. What changes is the GPU line: "an NVIDIA graphics card" is no longer required, and the Gemma table is retired (§8).
+2. **The application floor is 16 GB of RAM with AVX2; a graphics card of 6 GB or more lifts a machine into a GPU tier.** On a 16 GB Windows machine with no GPU: 6,144 MiB OS reserve + about 1,500 MiB for Friday itself + 5,672 MiB of weights + 512 MiB of cache at 8K context + about 400 MiB compute buffer is 14,228 MiB of 16,384 (**ESTIMATE** from **TREE** reserves and the **MEASURED** file size). An 8 GB machine cannot hold the weights beside the operating system. A 12 GB machine holds them only with nothing else open, and one browser tab pushes the weights into the page file, where decode drops below one token a second. The floor is therefore 16 GB, which is what the README already publishes for RAM. What changes is the GPU line: "an NVIDIA graphics card" is no longer required, and the Gemma table is retired (§8).
 
 3. **At the floor the binding constraint is prompt processing, not tokens per second.** The publisher's community kernels reach 3.9 to 8.3 tokens a second decoding on a laptop CPU, and about 16 tokens a second reading the prompt (**PUBLISHED**, [Bonsai-demo issue #196](https://github.com/PrismML-Eng/Bonsai-demo/issues/196)). Friday's full tool registry is about 8.6K tokens before the user says a word (**TREE**, `services/model_seat_gate.py` `GATE_NUM_CTX` comment). At 16 tokens a second that first turn takes nine minutes. The CPU profile in §5.3 fixes this by sending the twelve tools the turn needs (about 1,700 tokens, **TREE** `services/tool_selector.py`) and keeping the prompt cache warm, which brings the once-per-session cost to about two minutes and the per-turn cost to seconds. Without that profile the floor is not honest.
 
@@ -69,6 +69,8 @@ The companion `Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf` (600 MiB) is a 27-block Si
 | `Q2_0_g64` | mainline `Q2_0` | 2.25 | ~7.6 GB | loads on **stock** llama.cpp; the escape hatch for a platform the fork has no binary for | PUBLISHED [formats page](https://docs.prismml.com/download/formats) |
 | MLX 2-bit | (MLX) | 2.25 | 8.49 GB | Apple Silicon through `mlx-lm`; best raw decode on Apple | PUBLISHED [MLX guide](https://docs.prismml.com/run/mlx) |
 
+The repository also carries the F16 reference weights (51,316 MiB) and a BF16 vision tower (888 MiB), neither of which is served (**API**, 2026-09-30). The download manifest with byte counts and sha256 for every file the installer may fetch is in the JSON under `model_family.*.manifest`; the `PTQ1_0` entry's byte count matches the file on this machine.
+
 Two publisher warnings that the installer must encode: a `Q2_0` file on a stock build "loads silently and outputs gibberish" because the Hadamard transform is missing (**PUBLISHED**, llama.cpp guide); and `PQ2_0` on CPU has crashed in the repack step on some builds, exit code 139 in `ggml_backend_cpu_repack_buffer_set_tensor`, worked around with `--no-repack` or by using `PTQ1_0` (**PUBLISHED**, atomic.chat guide). Friday's CPU tiers use `PTQ1_0` for both reasons.
 
 ### 1.4 Quality, from the publisher
@@ -88,7 +90,7 @@ By category: math 96.57 versus 97.06, coding 89.42 versus 89.07, agentic tool ca
 
 ### 1.5 The runtime
 
-The fork is `PrismML-Eng/llama.cpp`, branch `prism`, developed as `prism-v7`, tracking mainline; `prism-v6` is a stale mid-migration snapshot not to build from (**PUBLISHED**, [fork README mirror](https://github.com/snailium/bonsai2-mainline)). Releases from `prism-b10658` cover the platforms in §0.4. The installed build is `0.2.0-dev (build 10685, commit 7dffb158d)`, MSVC, CUDA 12 DLLs (**MEASURED-2026-09-30**). The other two llama.cpp folders under `~/.friday/runtime/` are stock builds (`llama.cpp`, build 10415, Clang) and cannot serve these files.
+The fork is `PrismML-Eng/llama.cpp`, branch `prism`, developed as `prism-v7`, tracking mainline; `prism-v6` is a stale mid-migration snapshot not to build from (**PUBLISHED**, [fork README mirror](https://github.com/snailium/bonsai2-mainline)). Releases from `prism-b10658` cover the platforms in §0.4; the latest is `prism-b10743-adfffbe` (2026-09-25) with one asset per platform and backend: Windows CPU x64/arm64, CUDA 12.4 and 13.3 (plus a `cudart` bundle), HIP Radeon, Vulkan; Linux CPU x64/arm64, CUDA 12.4/12.8/13.3, ROCm 7.2, Vulkan x64/arm64; macOS arm64 (Metal, plus a KleidiAI variant) and x64 (**API**, GitHub releases, 2026-09-30). The JSON's `runtime.release_assets` maps each (OS, backend) to its asset name and size so the installer downloads exactly one. The installed build is `0.2.0-dev (build 10685, commit 7dffb158d)`, MSVC, CUDA 12 DLLs (**MEASURED-2026-09-30**). The other two llama.cpp folders under `~/.friday/runtime/` are stock builds (`llama.cpp`, build 10415, Clang) and cannot serve these files.
 
 Upstream status: mainline llama.cpp has merged the older `Q1_0` and `Q2_0_g64` formats on CPU, Metal, CUDA and Vulkan; the Bonsai 2 types are requested in issue #29058 and remain unsupported because the activation-side Walsh-Hadamard transform is not upstream (**PUBLISHED**, formats page and the issue). *llama.cpp maintainer:* "Plan on the fork for the life of this spec. If mainline lands the types, the installer's runtime check (§7.2) starts passing on stock builds and nothing else has to change."
 
@@ -137,7 +139,7 @@ Decode on a ternary model is memory-bandwidth-bound: each generated token stream
 
     decode tok/s ≈ 0.7 × bandwidth (GB/s) ÷ 5.5
 
-where 0.7 is the fraction of theoretical bandwidth the publisher's community AVX2 kernels reached on a single-channel DDR5 laptop: 8.3 tok/s decode, up from 3.9 with the generic kernel, on an i7-13620H (**PUBLISHED**, issue #196). GPU tiers are interpolated by memory bandwidth between the published card (L4 32.1, RTX 4090 91.1, RTX 5090 120.5 tok/s for `PTQ1_0`) and the measured RTX 4070. Prompt processing on CPU is about twice decode (16 versus 8.3 in the same issue); on GPU it is the published PP512 figure. Seat memory is weights + KV cache at the served context (64 KiB per token at f16, half at q8_0; **PUBLISHED**, atomic.chat guide, consistent with the header in §1.2) + compute buffer (about 400 MiB at `-ub 512`, about 1,200 at `-ub 2048`) + 630 MiB mmproj only when vision is on.
+where 0.7 is the fraction of theoretical bandwidth the publisher's community AVX2 kernels reached on a single-channel DDR5 laptop: 8.3 tok/s decode, up from 3.9 with the generic kernel, on an i7-13620H (**PUBLISHED**, issue #196). For partial offload (T4a) the estimate is `1 / (f_gpu / gpu_tok_s + f_cpu / cpu_tok_s)`, with `f_gpu` the fraction of weight bytes on the card, and the layer count is `floor(64 × (usable VRAM − KV − compute) ÷ 5,671)`, clamped so that fewer than 24 layers means the CPU tier instead. GPU tiers are interpolated by memory bandwidth between the published card (L4 32.1, RTX 4090 91.1, RTX 5090 120.5 tok/s for `PTQ1_0`) and the measured RTX 4070. Prompt processing on CPU is about twice decode (16 versus 8.3 in the same issue); on GPU it is the published PP512 figure. Seat memory is weights + KV cache at the served context (64 KiB per token at f16, half at q8_0; **PUBLISHED**, atomic.chat guide, consistent with the header in §1.2) + compute buffer (about 400 MiB at `-ub 512`, about 1,200 at `-ub 2048`) + 630 MiB mmproj only when vision is on.
 
 The machine-readable form of this table, with every tag, is [`bonsai2-tiers.json`](bonsai2-tiers.json).
 
@@ -150,7 +152,8 @@ The machine-readable form of this table, with every tag, is [`bonsai2-tiers.json
 | **T2 CPU-only 32 GB fast** | 32 GB DDR5 dual-channel (80 to 90 GB/s), AVX-512 or AVX-VNNI, 8+ cores; Strix Halo via Vulkan | `PTQ1_0`, `-ngl 0` or iGPU | 32,768 | 8 to 12 | 20 to 40 | ESTIMATE 0.7×85/5.5 = 10.8; UNMEASURED | comfortable; system-one seat co-resides in RAM |
 | **T3a Apple 16 GB** | M1 to M4 base, 16 GB unified (12 GB usable) | `PTQ1_0` via fork Metal, or MLX 2-bit when memory allows | 16,384 | 10 to 16 | 150 to 300 | ESTIMATE from PUBLISHED M4 Pro 18.0 by bandwidth ratio; UNMEASURED | viable; one API on every platform argues for the fork over MLX |
 | **T3b Apple Pro/Max 24 to 128 GB** | M4 Pro, M5 Pro, M5 Max, M3 Ultra | `PQ2_0` or MLX 2-bit | 65,536 to 262,144 | 18.0 (M4 Pro), 28.1 (M5 Pro), 47.0 (M5 Max) | 387 (M5 Pro), 765 (M5 Max) | PUBLISHED card | whole soup co-resident from 48 GB |
-| **T4 8 GB GPU** | RTX 3050 8G / 4060 / 5060, RX 7600, Arc A770 8G; 16 GB RAM | `PTQ1_0`, q8_0 KV; full offload on Linux; on Windows the 2,560 MiB display reserve forces 8K or `-ngl 56` of 64 | 8,192 | 20 to 32 | 300 to 470 | ESTIMATE bracketed by PUBLISHED L4 32.1 / 467; UNMEASURED; AMD via Vulkan/HIP UNMEASURED | good core loop; vision on demand evicts context |
+| **T4a 6 to 8 GB GPU on Windows, 6 GB on Linux: partial offload** | RTX 3050 6G, 4050 laptop 6G, 4060 8G, 5060 8G, RX 7600 8G; 16 GB RAM | `PTQ1_0`, q8_0 KV, `-ngl 33` (6 GB Windows: 3,584 usable) or `-ngl 56` (8 GB Windows: 5,632 usable; 6 GB Linux); the rest of the weights in RAM, so the T1 RAM floor still applies | 8,192 | 8 to 10 (33 layers), 14 to 20 (56 layers) | 100 to 300 | ESTIMATE by the partial-offload formula (§3.1); UNMEASURED | better than CPU-only; an 8 GB card on Windows cannot hold the 5,671 MiB of weights under the 2,560 MiB display reserve, which the earlier table missed |
+| **T4 8 GB GPU on Linux, 10 GB on Windows: full offload** | RTX 4060 / 5060 on Linux (7,680 usable); RTX 3080 10G on Windows | `PTQ1_0`, `-ngl 99`, q8_0 KV, one slot, `-ub 512`; mmproj only when vision is turned on | 16,384 | 20 to 32 | 300 to 470 | ESTIMATE bracketed by PUBLISHED L4 32.1 / 467; UNMEASURED; AMD via Vulkan/HIP UNMEASURED | good core loop; vision on demand costs context |
 | **T5 12 GB GPU (reference)** | RTX 4070 / 3060 12G / 5070 | `PTQ1_0`, `-ngl 99`, q8_0 KV, 2 unified slots, mmproj loaded, `-ub 2048` | **49,152** (64K fits with 495 MiB spare) | **30 to 36** | **95 to 100** short, **467** on a 16K prompt | **MEASURED-2026-09-18** | the reference; everything above is extrapolated from here and the card |
 | **T6 16 GB GPU** | RTX 4070 Ti Super / 4080 / 5080, RX 7800 XT / 9070 XT | `PTQ1_0` (Ada) or `PQ2_0` (RDNA, Blackwell), q8_0 KV | 131,072 | 45 to 70 | 800 to 1,400 | ESTIMATE between T5 and 4090; UNMEASURED | brain + system one + embeddings + Kokoro co-resident |
 | **T7 24 GB GPU** | RTX 3090 / 4090, RX 7900 XTX | `PTQ1_0` on 4090; `PQ2_0` on 3090 and RDNA | 196,608 | 91.1 (4090 `PTQ1_0`), 81.2 (`PQ2_0`) | 1,645 to 3,124 | PUBLISHED card | brain and deep reasoner take turns; image generation co-resides at 64K |
@@ -187,7 +190,7 @@ The machine-readable form of this table, with every tag, is [`bonsai2-tiers.json
 
 **Friday's minimum requirements, to be published:**
 
-- **Memory:** 16 GB of RAM. (An 8 GB graphics card, of any vendor the fork has a build for, lifts a 16 GB machine to tier T4; it does not replace the RAM.)
+- **Memory:** 16 GB of RAM. (A graphics card with 6 GB or more, of any vendor the fork has a build for, lifts a 16 GB machine into a GPU tier: partial offload at 6 to 8 GB on Windows, full offload from 8 GB on Linux and 10 GB on Windows. It does not replace the RAM.)
 - **Processor:** x86-64 with AVX2 and at least four physical cores (six recommended), or Apple Silicon.
 - **Operating system:** Windows 10 or 11 64-bit; macOS 14 or newer on Apple Silicon; Linux x86-64 or arm64 with a supported GPU driver or none.
 - **Disk:** 20 GB free at install (6 GB weights + 0.6 GB vision tower + the 10 GiB residency floor that keeps the machine from filling; voice models add 1.5 GB).
@@ -251,7 +254,7 @@ The spoken form follows the voice contract: one sentence, then the question, the
 
 `hardware_profile.detect()` (**TREE**, `hardware_profile.py:651`) already returns OS family and version, CPU model with physical cores and threads, RAM total and available, memory bandwidth class from SMBIOS (DDR type, speed, channel count; `method` says heuristic), NVIDIA GPUs with total and live-used VRAM and a `compute_class`, display reserve, and disk free with an optional read-rate measurement. The profile is cached at `~/.friday/runtime/residency/hardware-profile.json` and refreshed on a 60 s memo.
 
-The installer adds, in this order (build items in §11):
+The JSON's `detection.fields` lists every field with the command that reads it per OS, which pick input it feeds, and whether the tree has it today. The installer adds, in this order (build items in §11):
 
 1. **CPU feature flags:** AVX2, AVX-512, AVX-VNNI, AMX on x86; NEON is implied on arm64. Source: `cpuid` via a 30-line ctypes probe on Windows/Linux, `sysctl machdep.cpu` on macOS.
 2. **Non-NVIDIA GPUs:** `vulkaninfo --summary` where present, `rocm-smi`, Windows `Get-CimInstance Win32_VideoController` for name and dedicated memory, `system_profiler SPDisplaysDataType` on macOS. Each with `vendor` set and `vram_total_mib`, so the Vulkan and HIP tiers can be planned.
@@ -260,23 +263,31 @@ The installer adds, in this order (build items in §11):
 
 ### 7.2 Runtime check
 
-Before any weight is downloaded: run `llama-server --version` from the bundled fork and confirm the build is `prism-b10658` or newer; run `llama-bench --list-devices` and record the backend and device the build sees. A stock build, or a fork build that sees no device on a GPU tier, is a refusal with the sentence that explains it. This is where a future mainline merge would start passing silently, which is fine: the check is on capability, not on the fork's name.
+Before any weight is downloaded: install the one release asset for the detected OS and backend (`runtime.release_assets` in the JSON), run `llama-server --version` and confirm the build is `prism-b10658` or newer; run `llama-bench --list-devices` and record the backend and device the build sees. A stock build, or a fork build that sees no device on a GPU tier, is a refusal with the sentence that explains it. This is where a future mainline merge would start passing silently, which is fine: the check is on capability, not on the fork's name.
 
 ### 7.3 Pick
 
 The pick is a pure function of the profile, in `model_plan` (the pure half; `model_setup` executes and verifies, **TREE**), and it writes one model record with `serve_args`:
 
 ```
-if gpu.vram_total_mib >= 30_000:            T8: PQ2_0, -c 262144, f16 KV
-elif gpu.vram_total_mib >= 22_000:          T7: PTQ1_0 (Ada) or PQ2_0, -c 196608, q8_0 KV
-elif gpu.vram_total_mib >= 15_000:          T6: -c 131072, q8_0
-elif gpu.vram_total_mib >= 11_000:          T5: -c 49152, -np 2 --kv-unified -b 4096 -ub 2048, q8_0, mmproj
-elif gpu.vram_total_mib >= 7_500:           T4: -c 8192 (Windows) / 16384 (Linux), q8_0; -ngl 56 if the display reserve check fails at 99
-elif os == darwin and unified:              T3a/T3b by usable_mib: -c 16384 at 12 GB usable, 65536 at 18+, 262144 at 48+
-elif ram.total_mib >= 30_000 and bandwidth_gb_s >= 70:  T2: -ngl 0, -c 32768, CPU profile
-elif ram.total_mib >= 15_500 and cpu.avx2:  T1: -ngl 0, -c 8192, CPU profile
-else:                                       T0: refuse with numbers; offer cloud; D1 lesser local
+usable_vram = vram_total − max(display_reserve_min[os], measured_idle_used)
+ram_budget  = ram_total − os_reserve[os] − friday_footprint
+apple_budget = 0.75 × unified_total − friday_footprint
+
+usable_vram ≥ 28,000            → T8  PQ2_0, -ngl 99, -c 262144, f16 KV
+usable_vram ≥ 20,000            → T7  packing by rule, -c 196608, q8_0
+usable_vram ≥ 13,000            → T6  packing by rule, -c 131072, q8_0
+usable_vram ≥  9,000            → T5  PTQ1_0, -c 49152, -np 2 --kv-unified -b 4096 -ub 2048, q8_0, mmproj
+usable_vram ≥  6,300            → T4  PTQ1_0, -ngl 99, -c 16384, q8_0, one slot        (8 GB Linux; 10 GB Windows)
+usable_vram ≥  3,000 and RAM floor met → T4a PTQ1_0, -ngl floor(64×(usable−KV−compute)÷5,671), -c 8192, CPU profile
+darwin, unified, apple_budget ≥ 16,000 → T3b  PQ2_0 on M5 else PTQ1_0, -c 65536..262144 by budget
+darwin, unified, apple_budget ≥  7,000 → T3a  PTQ1_0, -c 16384
+RAM ≥ 30,000, AVX2, bandwidth ≥ 70 GB/s → T2  PTQ1_0, -ngl 0, -c 32768, CPU profile
+RAM ≥ 15,500, AVX2, cores ≥ 4         → T1  PTQ1_0, -ngl 0, -c 8192, CPU profile          (the floor)
+otherwise                             → T0  refuse with numbers; cloud path; D1 lesser local
 ```
+
+The same procedure, with every threshold, output and the headroom arithmetic per rule, is the `pick` object in the JSON; the installer reads that, and this listing is its commentary. The packing rule: `PQ2_0` on NVIDIA Ampere, Hopper and Blackwell, on AMD RDNA through HIP, and on Apple M5, when the budget holds it; `PTQ1_0` everywhere else and on every CPU tier. The disk rule: a download proceeds only if free space minus everything to be fetched, runtime asset included, stays above the 10 GiB floor (R8).
 
 Every branch then runs `residency_policy.plan()` with the proposed seat so R1 (OS reserve), R2 (RAM ceiling), R3 (VRAM budget), R8 (disk) and R10 (sidekick) can refuse it with their own reasons before a byte downloads. The packing choice follows the publisher's rule: `PTQ1_0` where memory binds or the card is Ada-class or a CPU; `PQ2_0` on Ampere, Hopper, Blackwell, RDNA and Apple M5.
 
