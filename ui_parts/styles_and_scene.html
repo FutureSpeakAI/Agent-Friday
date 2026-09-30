@@ -963,7 +963,7 @@
                 // The cube nearest the middle of the side facing the user: on
                 // that side (within half a cube of it), then closest to centre.
                 const fmax = Math.max(...an.units.map(u => dot(u, an.toward)));
-                const facing = an.units.map((u, i) => [dot(u, an.toward) >= fmax - an.spacing / 2 ? 1 : 0,
+                const facing = an.facing ? an.facing.slice() : an.units.map((u, i) => [dot(u, an.toward) >= fmax - an.spacing / 2 ? 1 : 0,
                     -Math.hypot(...sub(u, scl(an.toward, dot(u, an.toward)))), dot(u, an.toward), i])
                     .sort((a, b) => b[0] - a[0] || b[1] - a[1] || b[2] - a[2]).map(x => x[3]);
                 const apUnits = [];
@@ -1128,12 +1128,17 @@
                 return !twists.length && !queue.length && !waves.length && !vents.length
                     && !scans.length && !approvals && !approvalEnv.length && mic <= 0.02;
             }
+            // Nothing active, nothing still fading, the lattice not aligned:
+            // the scene can skip gesture work entirely this frame.
+            function settled() {
+                return idle() && align === 0 && !Object.keys(lastB).length && !Object.keys(lastG).length;
+            }
             function reset() {
                 twists = []; queue = []; waves = []; vents = []; scans = [];
                 approvals = 0; approvalEnv = []; mic = 0; lastB = {}; lastG = {}; align = 0;
                 round = 0; route = null; now = 0;
             }
-            return { frame, setApprovals, setMic, setReduced, step, status, idle, reset,
+            return { frame, setApprovals, setMic, setReduced, step, status, idle, settled, reset,
                      _twists: () => twists, _queue: () => queue };
         })();
         // </presence-gestures>
@@ -1220,9 +1225,272 @@
                 };
             }
 
+            // ── The other twelve structures (§13.2, §13.4) ──────────────────
+            // Each maps its own geometry onto the same anatomy, so a gesture
+            // means the same thing on every structure. Three families:
+            //   objects: each child object is a unit (shells, rings, pillars
+            //            and crystals, tubes, lines, loops, spines);
+            //   points:  a point cloud split into stable clusters (network,
+            //            Mandelbrot, Mobius, ocean);
+            //   vertices: the tesseract's sixteen corners, edges following.
+            // Whatever a gesture adds is taken back at the start of the next
+            // frame (begin), so it is right whether or not the structure's
+            // own animation rewrites that value.
+            const ADAPTERS = {
+                ICOSAHEDRON: { kind: 'objects', concentric: true, pick: g => g.children },
+                ASTROLABE:   { kind: 'objects', concentric: true, pick: g => g.children },
+                QUANTUM:     { kind: 'objects', concentric: true, pick: g => g.children.filter(o => o.type === 'LineLoop') },
+                DOME:        { kind: 'objects', pick: g => g.children.filter(o => o.geometry && /Cylinder|Octahedron/.test(o.geometry.type)) },
+                CABLES:      { kind: 'objects', pick: g => g.children },
+                NONE:        { kind: 'objects', pick: g => g.children },
+                EDEN:        { kind: 'objects', pick: g => { const s = g.children.find(o => o.type === 'Group' && o.children.length && o.children.every(c => c.type === 'Line')); return s ? s.children : []; } },
+                NETWORK:     { kind: 'points', cloud: g => g.children[0] },
+                MANDELBROT:  { kind: 'points', cloud: g => g.children[0] },
+                MOBIUS:      { kind: 'points', cloud: g => g.children[0] },
+                GRID:        { kind: 'points', cloud: g => g.children[0] },
+                TESSERACT:   { kind: 'vertices', cloud: g => g.children[1], lines: g => g.children[0] },
+            };
+            const cache = {};
+            const undoObjects = new Map();      // object -> {d, r, s}
+            const undoPoints = [];              // {attr, idx:[...], d:[x,y,z]}
+            let marker = null;
+
+            function fib(i, n) {                // well-spread fixed directions
+                const y = 1 - (i + 0.5) / n * 2, r = Math.sqrt(1 - y * y), th = i * Math.PI * (3 - Math.sqrt(5));
+                return [Math.cos(th) * r, y, Math.sin(th) * r];
+            }
+            function ownMaterials(obj) {
+                obj.traverse(o => {
+                    if (o.material && !o.material.userData._perUnit) {
+                        o.material = o.material.clone();
+                        o.material.userData = Object.assign({}, o.material.userData, { _perUnit: true });
+                    }
+                });
+            }
+            function groupsOf(pts, size) {      // greedy nearest-neighbour groups
+                const left = pts.map((p, i) => i), out = [];
+                while (left.length) {
+                    const seed = left.shift(), grp = [seed];
+                    left.sort((a, b) => dist(pts[a], pts[seed]) - dist(pts[b], pts[seed]));
+                    while (grp.length < size && left.length) grp.push(left.shift());
+                    out.push(grp);
+                }
+                return out;
+            }
+            const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+            const meanOf = (pts, idx) => [0, 1, 2].map(k => idx.reduce((s, i) => s + pts[i][k], 0) / idx.length);
+            const unitv = v => { const m = Math.hypot(v[0], v[1], v[2]); return m > 1e-6 ? v.map(x => x / m) : [0, 1, 0]; };
+
+            function build(id, group) {
+                const spec = ADAPTERS[id];
+                if (!spec) return null;
+                if (spec.kind === 'objects') {
+                    const objs = spec.pick(group).filter(Boolean);
+                    if (!objs.length) return null;
+                    objs.forEach(ownMaterials);
+                    const n = objs.length;
+                    const pts = objs.map((o, i) => {
+                        if (o.geometry && !o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+                        let bs = o.geometry ? o.geometry.boundingSphere : null;
+                        if (!bs && o.children.length) { const b = new THREE.Box3().setFromObject(o); bs = b.getBoundingSphere(new THREE.Sphere()); }
+                        const r = bs ? bs.radius : 1, c = bs ? bs.center : V(0, 0, 0);
+                        if (spec.concentric) return fib(i, n).map(v => v * r);
+                        return [o.position.x + c.x, o.position.y + c.y, o.position.z + c.z];
+                    });
+                    const blocks = (n <= 16 ? pts.map((p, i) => [i]) : groupsOf(pts, 4)).map((u, k) => ({
+                        units: u, axis: spec.concentric ? [[1, 0, 0], [0, 1, 0], [0, 0, 1]][k % 3] : unitv(meanOf(pts, u)),
+                        // A one-unit block turns in place, about its own centre.
+                        centre: meanOf(pts, u) }));
+                    return { kind: 'objects', spec, objs, pts, blocks, n };
+                }
+                const cloud = spec.cloud(group);
+                if (!cloud || !cloud.geometry || !cloud.geometry.attributes.position) return null;
+                const pos = cloud.geometry.attributes.position, N = pos.count;
+                let clusters;
+                if (spec.kind === 'vertices') clusters = Array.from({ length: N }, (_, i) => [i]);
+                else {
+                    cloud.geometry.computeBoundingBox();
+                    const bb = cloud.geometry.boundingBox, ext = [bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z];
+                    const ax = [0, 1, 2].sort((a, b) => ext[b] - ext[a]).slice(0, 2), G = 4, min = [bb.min.x, bb.min.y, bb.min.z];
+                    const cells = {};
+                    for (let i = 0; i < N; i++) {
+                        const v = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+                        const k = ax.map(a => Math.min(G - 1, Math.floor((v[a] - min[a]) / (ext[a] || 1) * G))).join(',');
+                        (cells[k] = cells[k] || []).push(i);
+                    }
+                    clusters = Object.values(cells).filter(c => c.length);
+                }
+                const lines = spec.lines ? spec.lines(group) : null;
+                return { kind: spec.kind, spec, cloud, clusters, lines, n: clusters.length,
+                         vertexColors: !!(cloud.material && cloud.material.vertexColors) };
+            }
+
+            function clusterPoints(C) {
+                const pos = C.cloud.geometry.attributes.position;
+                return C.clusters.map(c => {
+                    let x = 0, y = 0, z = 0;
+                    for (const i of c) { x += pos.getX(i); y += pos.getY(i); z += pos.getZ(i); }
+                    return [x / c.length, y / c.length, z / c.length];
+                });
+            }
+
+            function genericAnatomy(id) {
+                const group = structures[id];
+                if (!group || !group.visible || !ADAPTERS[id]) return null;
+                const C = cache[id] || (cache[id] = build(id, group));
+                if (!C || !C.n) return null;
+                const pts = C.kind === 'objects' ? C.pts : clusterPoints(C);
+                if (C.kind !== 'objects' && !C.blocks) {
+                    C.blocks = (C.n <= 16 ? groupsOf(pts, 4) : groupsOf(pts, 4)).map(u => ({ units: u, axis: unitv(meanOf(pts, u)), centre: meanOf(pts, u) }));
+                }
+                if (C.kind !== 'objects') C.blocks.forEach(b => { b.centre = meanOf(pts, b.units); });
+                const wp = group.getWorldPosition(V(0, 0, 0));
+                const tw = localDir(group, camera.position.clone()), up = localDir(group, wp.clone().add(V(0, 1, 0)));
+                const ac = V(0, 0, 0).crossVectors(up, tw).normalize();
+                const toward = [tw.x, tw.y, tw.z], upv = [up.x, up.y, up.z], across = [ac.x, ac.y, ac.z];
+                const core = meanOf(pts, pts.map((p, i) => i));
+                const rel = pts.map(p => [p[0] - core[0], p[1] - core[1], p[2] - core[2]]);
+                const extent = Math.max(...rel.map(p => Math.hypot(...p))) || 1;
+                const spacing = extent / Math.max(1.5, Math.cbrt(pts.length));
+                const L = Math.max(2, Math.min(8, Math.round(Math.cbrt(pts.length) + 1)));
+                const layers = Array.from({ length: L }, () => []);
+                if (C.spec.concentric) {
+                    pts.map((p, i) => [Math.hypot(...p), i]).sort((a, b) => a[0] - b[0])
+                        .forEach(([, i], k) => layers[Math.min(L - 1, Math.floor(k * L / pts.length))].push(i));
+                } else {
+                    const d = rel.map(p => p[0] * across[0] + p[1] * across[1] + p[2] * across[2]);
+                    const lo = Math.min(...d), hi = Math.max(...d);
+                    d.forEach((v, i) => layers[Math.min(L - 1, Math.floor((v - lo) / ((hi - lo) || 1) * L))].push(i));
+                }
+                const upd = rel.map(p => p[0] * upv[0] + p[1] * upv[1] + p[2] * upv[2]);
+                const topMax = Math.max(...upd);
+                let top = upd.map((v, i) => [v, i]).filter(([v]) => v >= topMax - extent * 0.3).map(([, i]) => i);
+                if (top.length > Math.max(1, pts.length / 4)) top = top.sort((a, b) => upd[b] - upd[a]).slice(0, Math.max(1, Math.floor(pts.length / 4)));
+                // The unit nearest the middle of the screen, among those in view,
+                // is the one that steps forward for an approval.
+                const facing = pts.map((p, i) => {
+                    const s = group.localToWorld(V(p[0], p[1], p[2])).project(camera);
+                    return [s.z < 1 && Math.abs(s.x) < 1 && Math.abs(s.y) < 1 ? 0 : 1, Math.hypot(s.x, s.y), i];
+                }).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
+                return { kind: C.kind, id, group, C, absCore: core, an: { units: rel, facing, layers: layers.filter(l => l.length), blocks: C.blocks.map(b => ({
+                            units: b.units, axis: b.axis, centre: [b.centre[0] - core[0], b.centre[1] - core[1], b.centre[2] - core[2]] })),
+                         top, core: [0, 0, 0], toward, up: upv, across, extent, spacing } };
+            }
+
+            function tintObject(obj, u, accent) {
+                obj.traverse(o => {
+                    const m = o.material;
+                    if (!m || !m.color || !m.userData) return;
+                    if (u.hue === 'approval') m.color.setHex(APPROVAL_HUE).multiplyScalar(o.isMesh && !m.wireframe ? 0.35 + 0.2 * u.g : 1);
+                    else if (u.g > 0) m.color.lerp(accent, 0.6 * u.g).multiplyScalar(1 + (o.isMesh && !m.wireframe ? 0.4 : 1.4) * u.g);
+                    if (u.b !== 1) m.color.multiplyScalar(u.b);
+                });
+            }
+
+            function applyGeneric(A, r, accent) {
+                const C = A.C;
+                let approvalAt = null;
+                if (C.kind === 'objects') {
+                    Object.keys(r.units).forEach(k => {
+                        const o = C.objs[+k], u = r.units[k];
+                        if (!o) return;
+                        o.position.x += u.d[0]; o.position.y += u.d[1]; o.position.z += u.d[2];
+                        o.rotation.x += u.r[0]; o.rotation.y += u.r[1]; o.rotation.z += u.r[2];
+                        if (u.s !== 1) o.scale.multiplyScalar(u.s);
+                        undoObjects.set(o, { d: u.d.slice(), r: u.r.slice(), s: u.s });
+                        tintObject(o, u, accent);
+                        if (u.hue === 'approval') approvalAt = [A.an.units[+k], u.d];
+                    });
+                    showMarker(A, approvalAt);
+                    return;
+                }
+                const pos = C.cloud.geometry.attributes.position;
+                const col = C.vertexColors ? C.cloud.geometry.attributes.color : null;
+                let gMax = 0, bMax = 1;
+                Object.keys(r.units).forEach(k => {
+                    const idx = C.clusters[+k], u = r.units[k];
+                    if (!idx) return;
+                    if (u.d.some(v => v)) {
+                        for (const i of idx) { pos.setXYZ(i, pos.getX(i) + u.d[0], pos.getY(i) + u.d[1], pos.getZ(i) + u.d[2]); }
+                        undoPoints.push({ attr: pos, idx, d: u.d.slice() });
+                        if (C.lines) moveEdges(C, idx, u.d);
+                    }
+                    gMax = Math.max(gMax, u.g); bMax = Math.max(bMax, u.b);
+                    if (u.hue === 'approval') approvalAt = [A.an.units[+k], u.d];
+                    if (col && (u.g > 0 || u.hue)) {
+                        const c = new THREE.Color();
+                        for (const i of idx) {
+                            c.setRGB(col.getX(i), col.getY(i), col.getZ(i));
+                            if (u.hue === 'approval') c.setHex(APPROVAL_HUE); else c.lerp(accent, 0.7 * u.g);
+                            col.setXYZ(i, c.r * u.b, c.g * u.b, c.b * u.b);
+                        }
+                    }
+                });
+                pos.needsUpdate = true;
+                if (col) col.needsUpdate = true;
+                else if (C.cloud.material && C.cloud.material.color && (gMax > 0 || bMax !== 1))
+                    C.cloud.material.color.lerp(accent, 0.4 * gMax).multiplyScalar(bMax);
+                showMarker(A, approvalAt);
+            }
+
+            // One approval signature on every structure but the lattice (whose
+            // cube itself turns amber): a warm light at the unit that stepped
+            // forward, in the approval hue, sized to be seen on any structure.
+            function showMarker(A, at) {
+                if (!marker) {
+                    // Normal blending: added over a bright structure, amber would
+                    // wash out to white.
+                    marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture, color: APPROVAL_HUE,
+                        transparent: true, depthWrite: false, blending: THREE.NormalBlending }));
+                    // Out of updateGroupColors' reach: the mood never repaints it.
+                    marker.material.userData = null;
+                    // Drawn over the structure, so a solid shape in front
+                    // (Giga Earth's boss) never hides a waiting approval.
+                    marker.material.depthTest = false;
+                    marker.renderOrder = 999;
+                    marker.visible = false;
+                }
+                if (!at) { marker.visible = false; return; }
+                if (marker.parent !== A.group) A.group.add(marker);
+                const core = A.absCore || [0, 0, 0];
+                const p = at[0], d = at[1] || [0, 0, 0];
+                marker.position.set(p[0] + d[0] + core[0], p[1] + d[1] + core[1], p[2] + d[2] + core[2]);
+                const ws = A.group.getWorldScale(V(1, 1, 1)).x || 1;
+                marker.scale.setScalar(Math.max(A.an.extent * 0.22, 1.6 / ws));
+                marker.visible = true;
+            }
+
+            function moveEdges(C, idx, d) {
+                const lp = C.lines.geometry.attributes.position, edges = C.lines.userData.edges || [], set = new Set(idx), moved = [];
+                for (let e = 0; e < edges.length; e += 2) {
+                    [edges[e], edges[e + 1]].forEach((v, side) => {
+                        if (!set.has(v)) return;
+                        const i = (e / 2) * 2 + side;
+                        lp.setXYZ(i, lp.getX(i) + d[0], lp.getY(i) + d[1], lp.getZ(i) + d[2]);
+                        moved.push(i);
+                    });
+                }
+                if (moved.length) { undoPoints.push({ attr: lp, idx: moved, d: d.slice() }); lp.needsUpdate = true; }
+            }
+
+            function undoGeneric() {
+                undoObjects.forEach((a, o) => {
+                    o.position.x -= a.d[0]; o.position.y -= a.d[1]; o.position.z -= a.d[2];
+                    o.rotation.x -= a.r[0]; o.rotation.y -= a.r[1]; o.rotation.z -= a.r[2];
+                    if (a.s !== 1 && a.s) o.scale.multiplyScalar(1 / a.s);
+                });
+                undoObjects.clear();
+                for (const u of undoPoints) {
+                    for (const i of u.idx) u.attr.setXYZ(i, u.attr.getX(i) - u.d[0], u.attr.getY(i) - u.d[1], u.attr.getZ(i) - u.d[2]);
+                    u.attr.needsUpdate = true;
+                }
+                undoPoints.length = 0;
+            }
+
             function begin() {
                 applied.forEach((r, m) => { m.rotation.x -= r[0]; m.rotation.y -= r[1]; m.rotation.z -= r[2]; });
                 applied.clear();
+                undoGeneric();
             }
 
             const _glowFace = new THREE.Color();
@@ -1278,16 +1546,24 @@
                 FridayGestures.setMic(window._fridayMicLevel || 0);
                 FridayGestures.setApprovals(window.__fridayPendingApprovals || 0);
                 ensureObjects();
-                const A = anatomyFor(targetStructure);
+                if (FridayGestures.settled()) {
+                    // At rest: no anatomy, no per-point work, nothing drawn.
+                    if (statusEl) statusEl.style.display = 'none';
+                    thread.visible = false; scanPlane.visible = false;
+                    if (marker) marker.visible = false;
+                    return;
+                }
+                const A = anatomyFor(targetStructure) || genericAnatomy(targetStructure);
                 const r = FridayGestures.step(dt, A ? A.an : { units: [], layers: [], blocks: [], top: [],
                     core: [0, 0, 0], toward: [0, 0, 1], up: [0, 1, 0], across: [1, 0, 0], extent: 1, spacing: 1 });
                 if (statusEl) {
                     statusEl.textContent = r.status ? r.status.toUpperCase() : '';
                     statusEl.style.display = r.status ? 'block' : 'none';
                 }
-                if (!A) { thread.visible = false; scanPlane.visible = false; return; }
+                if (!A) { thread.visible = false; scanPlane.visible = false; if (marker) marker.visible = false; return; }
                 const accent = moodLerpValues.accentColor;
-                if (r.align > 0) {
+                if (A.C) applyGeneric(A, r, accent);
+                else if (r.align > 0) {
                     const k = 0.18 * r.align;
                     A.meshes.forEach(m => {
                         m.rotation.x += (snap(m.rotation.x) - m.rotation.x) * k;
@@ -1295,7 +1571,7 @@
                         m.rotation.z += (snap(m.rotation.z) - m.rotation.z) * k;
                     });
                 }
-                Object.keys(r.units).forEach(k => {
+                if (!A.C) Object.keys(r.units).forEach(k => {
                     const m = A.meshes[+k], u = r.units[k];
                     if (!m) return;
                     m.position.x += u.d[0]; m.position.y += u.d[1]; m.position.z += u.d[2];
@@ -1329,7 +1605,7 @@
                 } else scanPlane.visible = false;
             }
 
-            return { begin, end, anatomyFor };
+            return { begin, end, anatomyFor, genericAnatomy, ADAPTERS };
         })();
         // </presence-gesture-scene>
 

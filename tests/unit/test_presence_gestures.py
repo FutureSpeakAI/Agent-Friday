@@ -242,3 +242,27 @@ def test_the_feed_hands_presence_frames_to_the_scene(path):
     # the mic meter publishes its level for the listening ripple
     assert t.count("window._fridayMicLevel = v.micPeakRecent || 0") + t.count(
         "window._fridayMicLevel=v.micPeakRecent||0") == 1
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_the_engine_reports_settled_only_when_everything_has_faded(path):
+    m = BLOCK.search(path.read_text(encoding="utf-8"))
+    src = m.group(1) + r"""
+const an = { units: [[0,0,1.6],[1.6,0,1.6]], layers: [[0],[1]], blocks: [{ units: [0,1], axis: [0,0,1], centre: [0.8,0,1.6] }],
+             top: [0], core: [0,0,0], toward: [0,0,1], up: [0,1,0], across: [1,0,0], extent: 2.4, spacing: 1.6 };
+const G = FridayGestures, out = {};
+G.reset(); out.fresh = G.settled();
+G.frame({ type: 'presence', state: 'tool', phase: 'start', ref: 'a' });
+G.step(1/60, an); out.busy = G.settled();
+G.frame({ type: 'presence', state: 'tool', phase: 'end', ref: 'a' });
+for (let i = 0; i < 20; i++) G.step(1/60, an);
+out.fading = G.settled();
+for (let i = 0; i < 300; i++) G.step(1/60, an);
+out.after = G.settled();
+console.log(JSON.stringify(out));
+"""
+    r = subprocess.run([node, "-"], input=src, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o == {"fresh": True, "busy": False, "fading": False, "after": True}
