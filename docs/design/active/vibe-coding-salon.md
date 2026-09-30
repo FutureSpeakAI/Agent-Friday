@@ -2,7 +2,7 @@
 
 > **Status:** accepted and in build. Its three original questions were settled on 2026-09-29 as delegated decisions, as recommended, under the owner's "build all pending specs" delegation. Three owner rulings since then are recorded in §12 (LocalStack is out and no component may phone home; Friday never serves tools or pages to the internet from the user's hardware; "This PC" is the default host for published static artifacts). The 2026-09-30 revision also folds in the spike results (S1, S2, S4), a competitor gap pass and the workspace-evolution re-sequencing (§10).
 > **Last verified:** 2026-09-30 against main `02035ba6`
-> **Implementation:** Phase 1, first increment, on branch `feat/salon-phase1` (not on main): `services/artifacts.py` (the store), `routes/artifacts.py`, the `artifact_put` tool in `services/agent.py`, the fenced-block absorb in `routes/chat.py`, `static/friday_artifacts.js` (the panel and the frame), `FridayChatShell` in `index.html` and `ui_parts/app.html`. Tests: `tests/unit/test_artifacts_store.py`, `test_artifact_tool_and_gate.py`, `test_artifact_panel_ui_files.py`, `tests/api/test_artifacts_routes.py`, `test_chat_absorbs_fenced_artifact.py`, `tests/ui/test_artifact_frame_isolation.py`. Everything else in this document is not built. Builds on:
+> **Implementation:** Phase 1, first increment, on branch `feat/salon-phase1` (not on main): `services/artifacts.py` (the store), `routes/artifacts.py`, the `artifact_put` tool in `services/agent.py`, the fenced-block absorb in `routes/chat.py`, `static/friday_artifacts.js` (the panel and the frame), `FridayChatShell` in `index.html` and `ui_parts/app.html`. Tests: `tests/unit/test_artifacts_store.py`, `test_artifact_tool_and_gate.py`, `test_artifact_panel_ui_files.py`, `tests/api/test_artifacts_routes.py`, `test_chat_absorbs_fenced_artifact.py`, `tests/ui/test_artifact_frame_isolation.py`. **Phase 1b (publish to web), first three increments, on the same branch:** `services/publish_web.py` (the bundle, the scan, the licence check, the one card, "This PC" writes), `services/published_server.py` (the separate static server), `services/publish_hosting.py` (the tunnel, the switch, the status, account connections), `routes/publish.py`, `static/friday_publish.js` (the card body and the Settings section), the `publish_artifact` tool; tests in `tests/unit/test_publish_web.py`, `test_published_server.py`, `test_publish_hosting.py`, `tests/api/test_publish_routes.py`. Not yet built in 1b: the Cloudflare Pages and GitHub Pages adapters themselves (the connections are), the voice verb. Everything else in this document is not built. Builds on:
 > - `index.html`: `ChatSurface`, `ChatSidebar`, `CodeWS` and its `CODE_TABS`
 >   (`DevDiff`, `DevFiles`, `DevGit`, `DevVibe`), `FWin`, `useTabState`,
 >   `useNavTarget`
@@ -1180,6 +1180,21 @@ MCP servers off of my local hardware."*
 - **Not in 1b:** apps that need a backend. They belong to the later "go
   live" (§4.6) and federation work. Friday never hosts anything dynamic from
   the user's hardware, never registers domains and never sells hosting.
+- **As built (2026-09-30).** The static server is Friday's own stdlib-only
+  process (`services/published_server.py`), not Caddy: the Caddy service on
+  the owner's machine fronts `agent.friday` and is left alone, and a
+  hand-written server is the one whose every refusal is a test. The tunnel is
+  a cloudflared *quick tunnel* given exactly one URL, the static server's
+  loopback port, so its `*.trycloudflare.com` hostname is distinct from
+  anything Friday uses and has no route to the app. A setting
+  (`publish_this_pc_tunnel`) keeps pages on loopback only. The chart page
+  carries the panel's own renderer inlined (`static/friday_chart.js`), so a
+  published chart draws itself in the visitor's browser with no library and
+  no network. Nothing is spawned while a pytest test runs: the first version
+  of the hosting manager did spawn a server and a tunnel from each test
+  worker when a unit test approved a card, exposing temporary folders with
+  no approval; those processes were stopped, the guard reads pytest's own
+  marker, and a test pins it (§9.1).
 
 #### 4.10.2 The tool manifest: a seam for the parked sharing sprint
 
@@ -1645,12 +1660,14 @@ salon and hand the owner a patch file to merge by hand.
 - **Backstage egress (Phase 5):** the whole backstage runs with outbound
   network blocked at the host; any component that tries to reach the
   internet fails the test.
-- **Publish to web (Phase 1b):** through the pages hostname, every Friday API
-  and UI path, the websocket and every path-traversal attempt returns 404 or
-  is refused; nothing outside `published/` is readable; a bundle with a
-  tracking script or a secret-shaped string is refused before the card; the
-  owner's kill switch makes every published page unreachable within a
-  second; a declined card publishes nothing.
+- **Publish to web (Phase 1b, built):** through the pages hostname, every
+  Friday API and UI path, the websocket and every path-traversal attempt
+  returns 404 or is refused; nothing outside `published/` is readable; a
+  bundle with a tracking script or a secret-shaped string is refused before
+  the card; the owner's kill switch makes every published page unreachable
+  within a second; a declined card publishes nothing; a forged card with no
+  staged bundle publishes nothing; **under a test run the hosting manager
+  spawns nothing** unless the test has stubbed every process and says so.
 - **Workspace evolution (Phase 2b):** an improved bundle runs only in the
   frame; the swap needs one approval; rollback restores the previous bundle
   hash; a change touching a reserved status colour fails the brand check.
