@@ -849,14 +849,20 @@ simply never grows, and everything else works.
   - no gene may add a render pass, render target, texture or per-frame CPU
     loop, which the schema enforces by having no such genes;
   - bloom never above the v1 maximum.
-- **Measured baseline.** On first enable, the page records the p95 frame time
-  of the v1 genome on the active structure over 20 s of idle. It stores that
-  locally as `baseline_p95`.
-- **Live check after applying.** After a step, the page samples 20 s of idle.
-  If p95 > `baseline_p95 × 1.10`, it:
-  - reverts the *expression* to the parent (history is untouched);
-  - marks the step `held: frame budget`;
-  - requires the next step to be a simplifying one.
+- **Measured baseline.** The page times calm frames all the time: nothing
+  gesturing and the tab visible. The last 600 of them are the baseline for
+  the look that is showing. That baseline is recomputed on every machine,
+  never stored.
+- **Live check after applying.** After a step's geometry is on screen, the
+  page samples 600 calm frames. If their p95 is more than 10% slower than
+  the baseline and more than 1 ms slower, it:
+  - puts the previous look back;
+  - asks the server to undo the step (`POST /api/avatar/undo`), which
+    weights that kind of change down for the next steps;
+  - says so in the status line: "That look was too heavy for this computer;
+    I went back".
+
+  Built as `FridayGenome.sample` and `held` in `index.html`.
 - **Local brain residency.** The step never loads a model and never touches
   the GPU. Authoring is a cloud call. Only the *scene's* cost competes with
   the resident brain.
@@ -1343,7 +1349,7 @@ that it doesn't exist yet. "Reduced motion" is the swap required by §13.7.
 | **Listening** | Rings ripple across the facing side toward the user, timed to the user's voice amplitude | Mic level during a voice session or push-to-talk | Ripple amplitude = mic level. No voice, no ripple | The face brightens with the mic level (smoothed, ≤ 2 Hz) |
 | **Memory or KG search** | Inner cubes light up and drift to the core, **one per source actually retrieved** | Retrieval finished, with a count per layer | n cubes = n sources (capped at the unit count; the status line gives the true n) | Those n cubes brighten in place |
 | **Reasoning** | A slow wave rolls through the lattice, **one layer per round** | Agent round n started | Wave index = round number = the status line's "round N" | The layer for round n brightens, and the previous one fades |
-| **Where the thinking happens** | **Local:** the wave stays inside. **Cloud:** one face opens like a vent, and a thread of light leaves the edge | The round's routing decision (local seat or cloud provider), **and** the egress gate actually sealing an outbound call | Vent opens on the egress event, never on the routing guess alone | The face brightens and a static thin line appears; no opening motion |
+| **Where the thinking happens** | **Local:** the wave stays inside. **Cloud:** the top opens like a vent, and a thread of light rises out of it. It is the top, not the far side: a vent on the far side would be hidden behind the structure from the camera | The round's routing decision (local seat or cloud provider), **and** the egress gate actually sealing an outbound call | Vent opens on the egress event, never on the routing guess alone | The face brightens and a static thin line appears; no opening motion |
 | **Tool call** | A 2×2 block twists 90° like a Rubik's move and snaps back when the tool returns. **One twist per call** | Tool call started, then tool call returned (same `call_id`) | One block per in-flight call. Up to 4 twist at once; more calls queue visibly (§13.6) | The block brightens until return |
 | **Laya reflex or instant command** | A tiny, fast snap twist of one cube | A reflex-class decision, or an instant command fast path, ran | One per command | One cube pulses once (brightness, no motion) |
 | **Waiting for approval** | One cube steps forward out of the grid and holds, gently breathing, until the user decides. It uses the **approval hue** | An approval card is pending, then resolved | One stepped-out cube per pending card, up to 3; the status line gives the count | The cube lights in the approval hue and holds, with slow brightness breathing (≤ 0.3 Hz, ≤ 15% amplitude) |
@@ -1360,6 +1366,24 @@ that it doesn't exist yet. "Reduced motion" is the swap required by §13.7.
 whatever else is showing.
 
 ### 13.4 How the other 12 structures say it
+
+**As built (2026-09-30).** Three adapter families map each structure onto
+the §13.2 slots:
+- **objects:** shells, rings, pillars and crystals, tubes, lines, loops and
+  spines;
+- **point clouds, split into stable clusters:** network, Mandelbrot,
+  Mobius and ocean;
+- **the tesseract's sixteen corners**, with their edges following.
+
+The lattice's own cube turns amber for an approval. On every other
+structure, a waiting approval is one warm light in the approval hue at the
+unit nearest the middle of the screen:
+- it is drawn over the structure, so a solid shape in front cannot hide it;
+- it uses normal blending, so it stays amber over bright geometry.
+
+Every gesture was captured on all thirteen structures and the frames were
+looked at. Transcendence, the network and the small tesseract are the
+faintest.
 
 The gestures are defined on slots (§13.2), so every structure expresses them
 automatically. Four need explicit renderings, because their slots have no
