@@ -68,6 +68,7 @@ def register() -> None:
         return
     from agent_friday.services import approvals as _ap
     _ap.register_decision_hook(KIND, _on_decision)
+    _ap.register_decision_hook("tool_confirm", _on_decision)
     _registered = True
     _log.info("approval executor registered for %r cards", KIND)
 
@@ -129,6 +130,9 @@ def _on_decision(record: dict) -> None:
     """Run an approved card's action once, and report what happened."""
     if not isinstance(record, dict):
         return
+    if record.get("kind") == "tool_confirm":
+        from agent_friday.services.agent import clear_confirmation_card
+        clear_confirmation_card(record.get("approval_id"))
     if record.get("status") != "approved":
         return                                  # denied, expired, blocked: nothing runs
 
@@ -164,11 +168,20 @@ def _on_decision(record: dict) -> None:
         return
 
     ctx = {"authenticated": True, "approved_card": aid,
-           "surface": "approval_card", "confirm_bypass": True}
+           "surface": "approval_card", "confirm_bypass": True,
+           "conversation_id": payload.get("conversation_id") or ""}
     started = time.time()
     try:
         result = _run_tool(tool, args, session_ctx=ctx)
-        ok = True
+        from agent_friday.services.completion_receipts import receipt_ok
+        ok = receipt_ok({"name": tool, "result": result})
+        if tool == "navigate" and str(result).startswith("NAV_OK:"):
+            # There is no chat HTTP response to carry the UI action from a
+            # card decision. Use the desktop's acknowledged command channel.
+            from agent_friday.services.desktop_targets import open_on_desktop
+            workspace = str(result).split(":", 1)[1].split()[0]
+            shown = open_on_desktop("workspace", workspace=workspace)
+            result, ok = shown["text"], shown.get("status") == "opened"
     except Exception as e:
         result, ok = "%s: %s" % (type(e).__name__, e), False
 
@@ -178,7 +191,7 @@ def _on_decision(record: dict) -> None:
                           "result": str(result)[:800]})
 
     if ok:
-        _post_back(record, "Approved and done: %s\n\n%s"
+        _post_back(record, "Approved action result: %s\n\n%s"
                    % (_describe(tool, args), str(result)[:600]))
     else:
         _post_back(record, "You approved %s, but it did not go through: %s"
