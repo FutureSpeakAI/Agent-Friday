@@ -110,3 +110,13 @@ These are proposals, reported to the owner with the evidence. Moving a doc to
 - **`approvals.py` has about 22 callers**, not only `goals.py`.
 - **The resident seat is `bonsai2:27b`**, planned at 65,536 context and served at 49,152, not 32,768.
 - **The ElevenLabs selection never saves.** The server rejects the value with a 400. The "hears Piper" outcome needs a second path around validation.
+
+## Salon additions, 2026-09-30
+
+Owner rulings (the owner's words are quoted in `docs/design/active/vibe-coding-salon.md` §12):
+
+- **LocalStack is out entirely; no salon component may phone home.** Evidence: localstack.cloud/pricing, checked 2026-09-29 (account required on the free plan, offline delivery only on top tiers, telemetry sharing enforced on the free plan). Phase 5 becomes Friday's own local cloud emulator on the patterns spike S4 recorded.
+- **Friday never serves tools or pages to the internet from the user's hardware.** The tool manifest keeps `share_tier` `none` and `bundle` and adds `web`; the "trusted" and "public" hosting tiers are removed.
+- **"This PC" is the default host for published static artifacts**, with the isolated static server, its own tunnel hostname, the read-only `published/` folder, no route to Friday, the kill switch, reachability status and adversarial tests. Hosted adapters (the user's own Cloudflare Pages or GitHub Pages; FutureSpeak later) are for always-on pages.
+
+Delegated decisions taken as recommended (engineering; the owner may overrule): the competitor-pass options in the spec's §4.11 and §12; B1 as an AppContainer with a pipe bridge (S2); esm.sh as the one frame package host (S1); one shared event stream per page; SVG charts drawn by the panel. Product intent flagged, not decided: whether Friday publishes or only prepares; whether a self-made tool may act while the owner is away; licence posture (inform or refuse).
