@@ -27,6 +27,15 @@ Killing it manually forfeits that.
 The same function reaps orphans the plan does *not* want, which is what stops
 one leaked seat accumulating per restart.
 
+Boot then brings up **every** pinned llama-server seat in the plan, whatever
+role it is pinned in (a model pinned only as `memory_manager` is as pinned as
+the brain), once per model. A seat adopted at boot that the plan still wants is
+kept running through the baseline measurement, which is taken net of it. A
+pinned seat that cannot be loaded is logged at WARNING through
+`friday.residency` and reported in `/api/residency/status` under
+`seat_problems` (and as a `reason` on its `drift` row); `reclaim_gpu`
+(Resume, the end of a stand-down) retries it.
+
 ## There is no auto-restart of a dead server
 
 `friday_tray._watchdog` polls every five seconds and notifies when the server
@@ -101,3 +110,12 @@ The server runs from the working tree, so checking out an earlier commit and
 restarting *is* the rollback. Nothing in the task-journal or resume path
 writes a migration or changes an on-disk format: `resume.json` is additive,
 per task, inside the existing journal directory, and older code ignores it.
+
+## Who starts a model seat
+
+A llama.cpp seat is started by the arbiter and by nothing else. A seat started
+by hand from an agent's or an editor's tool shell is a child of that shell's
+job object and dies when the session exits, taking the local brain with it.
+The arbiter's own spawn is detached from the caller; boot adopts a wanted seat
+it finds already running, so a seat that survives is kept, and one that cannot
+be loaded appears under `seat_problems` in `/api/residency/status`.

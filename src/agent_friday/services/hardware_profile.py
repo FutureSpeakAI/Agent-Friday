@@ -536,13 +536,19 @@ def refresh_display_reserve(profile: dict, *, ours_resident_mib: int = 0) -> dic
     return profile
 
 
-def refresh_baseline(profile: dict, *, assert_idle: bool = False) -> dict:
+def refresh_baseline(profile: dict, *, assert_idle: bool = False,
+                     ours_resident_mib: int = 0) -> dict:
     """Record each GPU's idle floor.
 
     `assert_idle` is the caller promising that nothing of ours is resident --
     the Arbiter calls this at boot, before it loads anything. Without that
     promise the live reading is not a baseline and is refused, because a
     poisoned floor is worse than a defaulted one: it is wrong and it is cached.
+
+    `ours_resident_mib` is the footprint of seats deliberately kept resident
+    through the measurement (an adopted seat the plan still wants). It is
+    subtracted from the live reading, so the floor is the desktop's and never
+    the desktop's plus our own model.
     """
     if not assert_idle:
         return profile
@@ -551,7 +557,8 @@ def refresh_baseline(profile: dict, *, assert_idle: bool = False) -> dict:
     for g in profile.get("gpus", []):
         cur = live.get(g["index"])
         if cur:
-            g["vram_baseline_mib"] = cur["vram_used_mib"]
+            g["vram_baseline_mib"] = max(
+                0, cur["vram_used_mib"] - max(0, int(ours_resident_mib or 0)))
             g["vram_baseline_at"] = stamp
     save(profile)
     return profile

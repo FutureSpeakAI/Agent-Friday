@@ -68,14 +68,18 @@ def status():
         pass
 
     # The disagreement, computed rather than left for the reader to spot.
+    problems = dict(getattr(arb, "seat_problems", {}) or {})
     drift = []
     for role, s in seats.items():
         if not s or s.get("status") != "pinned":
             continue
         if s["model_id"] not in resident and \
                 s["model_id"] not in getattr(arb.llama, "procs", {}):
+            why = (problems.get(s["model_id"]) or {}).get("reason")
             drift.append({"role": role, "model_id": s["model_id"],
-                          "problem": "planned as pinned but not resident"})
+                          "problem": "planned as pinned but not resident",
+                          "reason": why or "no load has been attempted "
+                                           "since the plan pinned it"})
 
     from agent_friday.services import context_budget
     return jsonify({
@@ -84,6 +88,7 @@ def status():
         "lease": arb.lease,
         "seats": seats,
         "drift": drift,
+        "seat_problems": problems,
         "resident_ollama": resident,
         "resident_llama_server": list(getattr(arb.llama, "procs", {})),
         "budgets": plan.get("budgets"),

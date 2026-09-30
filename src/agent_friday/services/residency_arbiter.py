@@ -1718,6 +1718,11 @@ class Arbiter:
         # model_id -> last time §7's thrash row actually recorded a mark
         # (respond_to_monitor's own debounce; see _THRASH_MARK_INTERVAL_S).
         self._last_thrash_mark: dict = {}
+        # model_id -> {"role", "reason", "since"} for every pinned seat the
+        # plan wants that is not being served by a process we own. Written by
+        # _serve_pinned_seats, read by status() and /api/residency/status;
+        # empty is the healthy state.
+        self.seat_problems: dict = {}
 
     # ── planning ────────────────────────────────────────────────────────────
 
@@ -1979,10 +1984,19 @@ class Arbiter:
 
             if measure_baseline:
                 # The one moment we can honestly measure the idle GPU floor.
+                # A seat we own that the plan still wants (an adopted one) is
+                # not idle weight to be cleared: killing it lost every pinned
+                # seat whose role had no default reload. Everything else
+                # goes, and the floor is measured net of what was kept.
                 self.ollama.evict_all()
-                self.llama.evict_all()
+                _keep = self._pinned_llama_models()
+                for _m in list(self.llama.procs):
+                    if _m not in _keep:
+                        self.llama.evict(_m)
                 time.sleep(2)
-                hwp.refresh_baseline(self.profile, assert_idle=True)
+                hwp.refresh_baseline(
+                    self.profile, assert_idle=True,
+                    ours_resident_mib=self._ours_resident_mib())
             self.compute_plan()
             t0 = time.time()
             self._load_default_seats()
@@ -1994,15 +2008,7 @@ class Arbiter:
         the lock."""
         self.state = STATE_TRANSITIONING
         try:
-            already = self.ollama.resident()
-            for role in ("interactive_brain", "sidekick"):
-                seat = (self.plan["seats"] or {}).get(role)
-                if not seat or seat.get("status") != "pinned":
-                    continue
-                if seat["model_id"] in already:
-                    self._record("adopt", role, seat["model_id"], 0.0)
-                    continue
-                self._load_pinned(seat, role)
+            self._serve_pinned_seats()
             emb = (self.plan["seats"] or {}).get("embedder")
             if emb and str(emb.get("device", "")).startswith("gpu"):
                 self._load_leased(emb, "embedder")
@@ -2012,6 +2018,84 @@ class Arbiter:
             self._rollback()
             self.state = STATE_DEGRADED
             raise TransitionError("boot failed: %s" % e)
+
+    def _pinned_llama_seats(self):
+        """Every pinned seat that needs a model process, whatever its role.
+
+        The two default roles come first, the rest in name order, and a model
+        pinned in several roles appears once (one process serves them all).
+        A seat bound only to memory_manager is as pinned as the brain; a role
+        filter here is how it was silently absent after a restart. The
+        embedder is a lease-managed seat and non-generative models (stt, tts,
+        embedding) are not llama-server seats.
+        """
+        seats = (self.plan or {}).get("seats") or {}
+        first = [r for r in ("interactive_brain", "sidekick") if r in seats]
+        rest = sorted(r for r in seats
+                      if r not in first and r != "embedder")
+        out, seen = [], set()
+        for role in first + rest:
+            seat = seats.get(role)
+            if not isinstance(seat, dict) or seat.get("status") != "pinned":
+                continue
+            model_id = seat.get("model_id")
+            if not model_id or model_id in seen:
+                continue
+            entry = self._entry(model_id)
+            if entry.get("is_embedding") or entry.get("can_generate") is False:
+                continue
+            seen.add(model_id)
+            out.append((role, seat))
+        return out
+
+    def _pinned_llama_models(self):
+        return {seat["model_id"] for _r, seat in self._pinned_llama_seats()}
+
+    def _serve_pinned_seats(self, roles=None):
+        """Bring every pinned seat up, or confirm it is up. Caller holds the
+        lock.
+
+        A seat already served by a process we own is adopted, not reloaded. A
+        seat that cannot be served is recorded in `seat_problems` with the
+        plain reason and logged, and the next seat is still tried. The two
+        default roles keep failing the transition when the backend itself is
+        broken.
+        """
+        already = self.ollama.resident()
+        for role, seat in self._pinned_llama_seats():
+            if roles is not None and role not in roles:
+                continue
+            model_id = seat["model_id"]
+            if model_id in already or model_id in self.llama.procs:
+                self._record("adopt", role, model_id, 0.0)
+                self.seat_problems.pop(model_id, None)
+                continue
+            seat.pop("pin_unenforced", None)
+            try:
+                self._load_pinned(seat, role)
+            except Exception as e:
+                if role in ("interactive_brain", "sidekick"):
+                    raise
+                self._note_seat_problem(role, model_id, "load failed: %s" % e)
+                continue
+            if model_id in self.llama.procs:
+                self.seat_problems.pop(model_id, None)
+            elif not self.gpu_not_ours():
+                self._note_seat_problem(
+                    role, model_id,
+                    seat.get("pin_unenforced") or "no process is serving it")
+
+    def _note_seat_problem(self, role, model_id, reason):
+        prev = self.seat_problems.get(model_id) or {}
+        self.seat_problems[model_id] = {
+            "role": role, "reason": reason,
+            "since": prev.get("since") or time.strftime("%Y-%m-%dT%H:%M:%S")}
+        try:
+            __import__("logging").getLogger("friday.residency").warning(
+                "[arbiter] pinned seat %s (%s) is not being served: %s",
+                model_id, role, reason)
+        except Exception:
+            pass
 
     # ── whose GPU it is ─────────────────────────────────────────────────────
 
@@ -2731,13 +2815,10 @@ class Arbiter:
         needlessly reloaded — reloading the sidekick would evict it first and
         briefly produce exactly the silence R10 exists to prevent.
         """
-        for role in (roles if roles is not None
-                     else ("interactive_brain", "sidekick")):
-            if role in rp.RETAINED_THROUGH_LEASE:
-                continue
-            seat = (self.plan["seats"] or {}).get(role)
-            if seat and seat.get("status") == "pinned":
-                self._load_pinned(seat, role)
+        if roles is None:
+            roles = [r for r, _s in self._pinned_llama_seats()]
+        self._serve_pinned_seats(
+            {r for r in roles if r not in rp.RETAINED_THROUGH_LEASE})
 
     def _retained_models(self):
         seats = self.plan["seats"] or {}
@@ -2796,7 +2877,10 @@ class Arbiter:
             by_model = {}
             for seat in seats.values():
                 if isinstance(seat, dict) and seat.get("model_id"):
-                    by_model.setdefault(seat["model_id"], seat)
+                    _cur = by_model.get(seat["model_id"])
+                    if _cur is None or (seat.get("vram_mib") or 0) > (
+                            _cur.get("vram_mib") or 0):
+                        by_model[seat["model_id"]] = seat
             for model_id in list(getattr(self.llama, "procs", {}) or {}):
                 mib = (by_model.get(model_id) or {}).get("vram_mib")
                 if isinstance(mib, (int, float)) and mib > 0:
@@ -2813,6 +2897,7 @@ class Arbiter:
                            for r, s in (self.plan or {}).get("seats", {}).items()},
             "resident_ollama": self.ollama.resident(),
             "resident_llama_server": list(self.llama.procs),
+            "seat_problems": {m: dict(p) for m, p in self.seat_problems.items()},
             "transitions": list(self.transitions),
         }
 

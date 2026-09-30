@@ -495,3 +495,138 @@ def test_boot_plans_with_the_bindings_it_was_primed_with(arb):
     arb.boot(measure_baseline=False)
     assert arb.plan["seats"]["interactive_brain"]["model_id"] == "gemma4:e2b"
     assert "gemma4:e2b" in arb.llama.procs
+
+
+# ── a pinned seat comes back whatever role it is pinned in ───────────────────
+
+def _memory_manager_only_plan(monkeypatch, model_id="gemma4:e4b"):
+    """The plan of an owner whose reasoning and local seats are cloud: the only
+    pinned llama.cpp seat is the one bound to memory_manager."""
+    real = ra.rp.plan
+
+    def plan(profile, entries, overrides=None, **kw):
+        p = real(profile, entries, {"memory_manager": model_id}, **kw)
+        for role in ("interactive_brain", "sidekick"):
+            p["seats"][role] = None
+        p["seats"]["memory_manager"]["status"] = "pinned"
+        return p
+
+    monkeypatch.setattr(ra.rp, "plan", plan)
+
+
+def _mm_arbiter(llama=None):
+    return ra.Arbiter(profile=fx.P1, entries=fx.catalog(fx.P1),
+                      ollama=FakeOllama(), llama=llama or FakeLlama(),
+                      comfy=FakeComfy(),
+                      gguf_paths={"gemma4:e4b": "/x/e4b.gguf"})
+
+
+def test_a_seat_pinned_only_as_memory_manager_is_loaded_at_boot(monkeypatch):
+    _memory_manager_only_plan(monkeypatch)
+    a = _mm_arbiter()
+    a.compute_plan()
+    seat = a.plan["seats"]["memory_manager"]
+    assert seat and seat["status"] == "pinned", "fixture must pin the seat"
+    a.boot(measure_baseline=False)
+    assert set(a.llama.procs) == {"gemma4:e4b"}
+
+
+def test_reclaim_and_restore_load_a_seat_pinned_in_any_role(monkeypatch):
+    _memory_manager_only_plan(monkeypatch)
+    a = _mm_arbiter()
+    a.compute_plan()
+    assert a.reclaim_gpu()["ok"]
+    assert set(a.llama.procs) == {"gemma4:e4b"}
+    a.llama.evict_all()
+    with a._lock:
+        a._restore_pinned()
+    assert set(a.llama.procs) == {"gemma4:e4b"}
+
+
+class _AdoptingLlama(FakeLlama):
+    """A llama backend that finds the wanted seat already running."""
+
+    def __init__(self, model_id):
+        super().__init__()
+        self._adopt = model_id
+        self.loaded = []
+
+    def adopt_or_reap(self, wanted):
+        if self._adopt in wanted:
+            self.procs[self._adopt] = (object(), 8090)
+            return {"adopted": [self._adopt], "reaped": []}
+        return {"adopted": [], "reaped": []}
+
+    def load(self, model_id, *a, **k):
+        self.loaded.append(model_id)
+        return super().load(model_id, *a, **k)
+
+
+def test_an_adopted_seat_the_plan_wants_survives_the_baseline_measurement(monkeypatch):
+    _memory_manager_only_plan(monkeypatch)
+    llama = _AdoptingLlama("gemma4:e4b")
+    a = _mm_arbiter(llama)
+    a.compute_plan()
+    monkeypatch.setattr(ra.time, "sleep", lambda s: None)
+    seen = {}
+
+    def refresh(profile, *, assert_idle=False, ours_resident_mib=0):
+        seen["ours"] = ours_resident_mib
+        seen["resident"] = set(llama.procs)
+        return profile
+
+    monkeypatch.setattr(ra.hwp, "refresh_baseline", refresh)
+    a.boot(measure_baseline=True)
+    assert "gemma4:e4b" in llama.procs, "the wanted seat was killed at boot"
+    assert llama.loaded == [], "an adopted seat is not reloaded"
+    assert seen["resident"] == {"gemma4:e4b"}
+    assert seen["ours"] > 0, "the baseline is measured net of our own seat"
+
+
+def test_an_unwanted_seat_is_still_cleared_before_the_baseline(monkeypatch):
+    _memory_manager_only_plan(monkeypatch)
+    llama = _AdoptingLlama("gemma4:e4b")
+    llama.procs["stray:1b"] = (object(), 8099)
+    a = _mm_arbiter(llama)
+    a.compute_plan()
+    monkeypatch.setattr(ra.time, "sleep", lambda s: None)
+    a.boot(measure_baseline=True)
+    assert "stray:1b" not in llama.procs
+    assert "gemma4:e4b" in llama.procs
+
+
+def test_refresh_baseline_subtracts_what_we_hold(monkeypatch):
+    from agent_friday.services import hardware_profile as hwp
+    monkeypatch.setattr(hwp, "detect_gpus", lambda: [
+        {"index": 0, "vram_used_mib": 10000}])
+    monkeypatch.setattr(hwp, "save", lambda p: None)
+    prof = {"gpus": [{"index": 0}]}
+    hwp.refresh_baseline(prof, assert_idle=True, ours_resident_mib=8000)
+    assert prof["gpus"][0]["vram_baseline_mib"] == 2000
+
+
+def test_a_refused_pinned_load_is_logged_and_reported(monkeypatch, caplog):
+    import logging
+    _memory_manager_only_plan(monkeypatch)
+    a = _mm_arbiter(FakeLlama(fail=True))
+    a.compute_plan()
+    with caplog.at_level(logging.WARNING, logger="friday.residency"):
+        a.boot(measure_baseline=False)
+    assert any("gemma4:e4b" in r.getMessage() and "boom" in r.getMessage()
+               for r in caplog.records), "the refusal must reach the logger"
+    problems = a.status()["seat_problems"]
+    assert problems["gemma4:e4b"]["role"] == "memory_manager"
+    assert "boom" in problems["gemma4:e4b"]["reason"]
+
+
+def test_a_seat_that_loads_later_clears_its_problem(monkeypatch):
+    _memory_manager_only_plan(monkeypatch)
+    llama = FakeLlama(fail=True)
+    a = _mm_arbiter(llama)
+    a.compute_plan()
+    a.boot(measure_baseline=False)
+    assert a.status()["seat_problems"]
+    llama.fail = False
+    a.ollama._res.clear()
+    assert a.reclaim_gpu()["ok"]
+    assert a.status()["seat_problems"] == {}
