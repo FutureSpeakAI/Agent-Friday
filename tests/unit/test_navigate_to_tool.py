@@ -56,10 +56,12 @@ def test_taint_knows_both_tools():
     assert "check_situation" in taint.OWN_DATA_TOOLS
 
 
-def test_voice_declares_both_from_the_text_registry():
+def test_voice_declares_both_once():
+    """Both have voice declarations of their own (the manners a spoken reply
+    needs), so neither is borrowed from the text registry as well."""
     from agent_friday.services import voice_engine
-    names = [n for n, _d, _s in voice_engine._voice_shared_tool_specs()]
-    assert "navigate_to" in names and "check_situation" in names
+    names = voice_engine._voice_tool_names()
+    assert names.count("navigate_to") == 1 and names.count("check_situation") == 1
 
 
 def test_an_interactive_turn_opens_without_asking(opened):

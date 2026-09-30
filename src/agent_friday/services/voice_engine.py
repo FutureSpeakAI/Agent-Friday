@@ -523,11 +523,9 @@ _VOICE_SHARED_TOOLS = (
     "open_path",
     "search_email",
     "screenshot",
-    # The desktop and the live situation, the same in voice as in text. Both
-    # answer inside the bridge's hard limit: navigate_to resolves within its
-    # own budgets and check_situation reads memory.
-    "navigate_to",
-    "check_situation",
+    # navigate_to and check_situation are voice tools too, declared in
+    # _VOICE_LIVE_TOOLS with the manners a spoken reply needs; a name has one
+    # declaration, so they are not borrowed from the text registry here.
     # Podcasts, by voice: make one ("from my notes on X"), play and steer it,
     # and "what's the source for that?". make_podcast only queues, so it
     # answers inside the bridge's limit; private episodes are described to a
@@ -554,8 +552,14 @@ def _voice_shared_tool_specs():
         _log.error("voice shared tools unavailable (registry import failed): %s", e)
         return []
     by_name = {t.get("name"): t for t in CLAUDE_TOOLS if isinstance(t, dict)}
+    own = {t[0] for t in _VOICE_LIVE_TOOLS}
     out = []
     for name in _VOICE_SHARED_TOOLS:
+        if name in own:
+            # One name, one declaration: its voice spec is the one declared.
+            _log.warning("voice shared tool %r has its own voice declaration - "
+                         "not declaring it a second time", name)
+            continue
         entry = by_name.get(name)
         if not entry or name not in CLAUDE_TOOL_HANDLERS:
             _log.warning("voice shared tool %r is not in the text registry - "

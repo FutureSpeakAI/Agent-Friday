@@ -291,6 +291,26 @@ def test_the_new_tools_render_as_real_gemini_declarations():
         assert name in rendered, "%s never reaches Gemini" % name
 
 
+def test_every_voice_tool_is_declared_once():
+    """One name, one declaration. A tool in both lists would reach Gemini
+    twice, with two descriptions, and which one the model follows would not
+    be ours to choose; the prompt's tool list would name it twice as well."""
+    names = ve._voice_tool_names()
+    twice = sorted({n for n in names if names.count(n) > 1})
+    assert not twice, "declared more than once: %s" % twice
+    both = {t[0] for t in ve._VOICE_LIVE_TOOLS} & set(ve._VOICE_SHARED_TOOLS)
+    assert not both, "in _VOICE_LIVE_TOOLS and _VOICE_SHARED_TOOLS: %s" % sorted(both)
+
+
+def test_the_rendered_declarations_are_unique():
+    types = pytest.importorskip("google.genai.types",
+                                reason="google-genai not installed")
+    rendered = [d.name for t in ve._build_voice_live_tools(types)
+                for d in (getattr(t, "function_declarations", None) or [])]
+    twice = sorted({n for n in rendered if rendered.count(n) > 1})
+    assert not twice, "Gemini is handed these twice: %s" % twice
+
+
 def test_the_handoff_tool_names_the_private_domains_it_is_for():
     """The description is the only instruction the cloud model gets.
 
