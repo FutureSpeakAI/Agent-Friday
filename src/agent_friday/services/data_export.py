@@ -21,8 +21,7 @@ DOWNLOAD_TOPS = frozenset({"runtime", "local_voice", "models", "cache"})
 # log. Left in, it smuggled that content past the secret filter through a
 # NESTED path (backups/.../vault/.vault_config.json was shipped in the default
 # export). It is redundant with the live data every export already holds, so it
-# is excluded from ALL exports; credential_store prunes it after a verified
-# re-encrypt so it does not stand around in the first place.
+# is excluded from ALL exports.
 BACKUP_TOPS = frozenset({"backups"})
 SECRET_DIRS = (
     ("security",),                 # keystore root key, DPAPI passphrase copy

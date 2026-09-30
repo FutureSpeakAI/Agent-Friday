@@ -25,6 +25,7 @@ the attestation signing key), never the owner's content.
 from __future__ import annotations
 
 import fnmatch
+import functools
 import os
 import re
 from pathlib import Path
@@ -127,9 +128,27 @@ def _norm(p: Path) -> str:
         return os.path.normcase(str(p))
 
 
-def _within(child: Path, parent: Path) -> bool:
-    c, pa = _norm(child), _norm(parent)
-    return c == pa or c.startswith(pa + os.sep)
+def _asis(p: Path) -> str:
+    """`p` as written, made absolute, without touching the filesystem."""
+    return os.path.normcase(os.path.abspath(str(p)))
+
+
+@functools.lru_cache(maxsize=8)
+def _deny_norms(home: str, friday: str):
+    """Normalised deny directories and files, as written and as they resolve.
+
+    Cached per (home, Friday dir) so judging one more file costs string
+    comparisons, not a fresh round of path resolution.
+    """
+    dirs: dict[str, str] = {}
+    files: dict[str, str] = {}
+    for d, why in _deny_dirs():
+        dirs.setdefault(_asis(d), why)
+        dirs.setdefault(_norm(d), why)
+    for f, why in _deny_files():
+        files.setdefault(_asis(f), why)
+        files.setdefault(_norm(f), why)
+    return tuple(dirs.items()), tuple(files.items())
 
 
 def _plain_name(name: str) -> str:
@@ -160,15 +179,17 @@ def _expand_path_text(path) -> str:
     return os.path.expandvars(os.path.expanduser(t))
 
 
-def check(path) -> str | None:
+def check(path, *, sniff: bool = True) -> str | None:
     """A short reason `path` is off-limits to Friday's tools, or None.
 
     Names the KIND of secret, for a message the owner can act on. Works on a
     path that does not exist yet (open_path targets), so it never depends on
     the file being present. The path is judged as written AND as it resolves
-    (symlink, junction, 8.3 short name, relative traversal), and an existing
-    small file is judged by what it holds, so a key copied, hard-linked or
-    renamed to anything is still a key.
+    (symlink, junction, 8.3 short name, relative traversal), and with `sniff`
+    an existing small file is judged by what it holds, so a key copied,
+    hard-linked or renamed to anything is still a key. A bulk walk passes
+    `sniff=False` and judges only by name and place; the content of what it
+    then opens is checked where it is read.
     """
     try:
         p = Path(_expand_path_text(path))
@@ -178,12 +199,13 @@ def check(path) -> str | None:
         rp = p.resolve()
     except Exception:
         rp = p
-    for cand in (p, rp):
-        for d, why in _deny_dirs():
-            if _within(cand, d):
+    dirs, files = _deny_norms(str(_home()), str(_friday()))
+    for cand in dict.fromkeys((_asis(p), os.path.normcase(str(rp)))):
+        for d, why in dirs:
+            if cand == d or cand.startswith(d + os.sep):
                 return why
-        for fpath, why in _deny_files():
-            if _norm(cand) == _norm(fpath):
+        for f, why in files:
+            if cand == f:
                 return why
     names = {_plain_name(p.name), _plain_name(rp.name)}
     for name in names:
@@ -198,9 +220,9 @@ def check(path) -> str | None:
                 if _holds_private_key(rp) is False:
                     break
                 return why
-    if _holds_private_key(rp):
+    if sniff and _holds_private_key(rp):
         return "a private key"
-    full = _norm(rp).replace("\\", "/")
+    full = os.path.normcase(str(rp)).replace("\\", "/")
     if any(b in full for b in _BROWSER_DIR_WORDS) and             any(s in full for s in _BROWSER_STORE_NAMES):
         return "a browser's saved-login or cookie store"
     return None
@@ -290,6 +312,66 @@ def _tokens(cmd: str):
         yield next(g for g in m.groups() if g)
 
 
+#: A command that can carry file content somewhere: read, copy, archive,
+#: filter, upload, or feed a listing to another command.
+_READER_RE = re.compile(
+    r"(?<![a-z0-9_-])(?:cat|type|gc|get-content|more|less|head|tail|sls|"
+    r"select-string|findstr|grep|rg|copy|cp|xcopy|robocopy|copy-item|tar|zip|"
+    r"compress-archive|certutil|xargs|foreach(?:-object)?|iwr|irm|curl|wget|"
+    r"invoke-webrequest|invoke-restmethod|readall\w+|base64|xxd|od|format-hex|"
+    r"scp|sftp|ftp|rsync)(?![a-z0-9_-])")
+_RECURSE_RE = re.compile(r"(?<![a-z0-9_-])(?:-recurse|-r|/s|-recursive|-R)(?![a-z0-9_-])",
+                         re.I)
+_MAX_DIR_ENTRIES = 300
+
+
+def _directory_holds_credential(path: str, recurse: bool) -> str | None:
+    """Why a directory named next to a reading verb holds a denied file, or None.
+
+    Closes `Get-ChildItem <dir> -Filter x* | Get-Content`, where no token names
+    the key itself. Bounded, and shallow unless the command recurses.
+    """
+    try:
+        root = Path(path)
+        if not root.is_dir():
+            return None
+        seen = 0
+        walker = os.walk(root) if recurse else [(str(root), [], [
+            e.name for e in os.scandir(root) if e.is_file(follow_symlinks=False)])]
+        for dp, _dirs, names in walker:
+            for name in names:
+                seen += 1
+                if seen > _MAX_DIR_ENTRIES:
+                    return None
+                why = check(Path(dp) / name)
+                if why:
+                    return why
+    except Exception:
+        return None
+    return None
+
+
+def scan_code(code: str) -> str | None:
+    """A reason program text (the sandbox tool's Python) reads a credential path.
+
+    Everything `scan_command` catches, plus the markers again once ALL
+    whitespace is dropped, so `".s" "sh"` (adjacent string literals) reads
+    `.ssh`. Output is redacted separately, so a route this misses still does
+    not return key material.
+    """
+    why = scan_command(code)
+    if why:
+        return why
+    squeezed = re.sub(r"[\s\"'`^+()\[\],]", "", code or "").replace("\\", "/").lower()
+    for marker, reason in _COMMAND_MARKERS:
+        if marker in squeezed:
+            return reason
+    m = _COMMAND_DIR_RE.search(squeezed)
+    if m:
+        return _DIR_WHY[m.group(1)]
+    return None
+
+
 def scan_command(cmd: str, _depth: int = 0) -> str | None:
     """A reason a shell command reads a credential path, or None.
 
@@ -313,6 +395,8 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
     if any(b in flat for b in _BROWSER_DIR_WORDS) and \
             any(s in flat for s in _BROWSER_STORE_NAMES):
         return "a browser's saved-login or cookie store"
+    reads = bool(_READER_RE.search(flat))
+    recurse = bool(_RECURSE_RE.search(flat))
     for tok in _tokens(re.sub(r"[`^]", "", cmd)):
         tok = tok.strip(",;|()")
         if len(tok) < 3:
@@ -326,6 +410,10 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
             why = check(Path(expanded))
             if why:
                 return why
+            if reads and not any(ch in expanded for ch in "*?["):
+                why = _directory_holds_credential(expanded, recurse)
+                if why:
+                    return why
             if any(ch in expanded for ch in "*?["):
                 import glob
                 try:

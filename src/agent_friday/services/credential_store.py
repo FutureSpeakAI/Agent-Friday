@@ -870,33 +870,7 @@ def reencrypt_stale_provider_keys(names: list[str] | None = None) -> dict:
                           "encrypted blob back to the same content -- "
                           "original left untouched")})
 
-    # Prune the safety-net backup once every key came through cleanly. It was
-    # cover for a mistake DURING this operation; with no failures it is only a
-    # standing whole-vault copy -- key material plus a plaintext context log --
-    # under backups/, which the data export used to ship. Kept on any failure.
-    if not result["failed"]:
-        result["backups_pruned"] = _prune_reencrypt_backups()
-        result["backup_dir"] = None
-
     return result
-
-
-def _prune_reencrypt_backups() -> list:
-    """Remove every backups/vault-reencrypt-* directory; return the names gone."""
-    import shutil
-    root = core.FRIDAY_DIR / "backups"
-    removed = []
-    if not root.exists():
-        return removed
-    for d in sorted(root.glob("vault-reencrypt-*")):
-        if not d.is_dir():
-            continue
-        try:
-            shutil.rmtree(d)
-            removed.append(d.name)
-        except Exception:
-            pass
-    return removed
 
 
 def _env_key_for_provider(provider: str) -> str | None:

@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 from agent_friday.services import credential_paths as _cred
+from agent_friday.services import secret_patterns as _sp
 
 _MAX_FILES_SCANNED = 4000        # entries examined for a name search
 _MAX_CONTENT_CANDIDATES = 500    # files actually opened for a content search
@@ -133,9 +134,10 @@ def _walk(roots: list[Path], deadline: float, budget: dict):
                     return
                 budget["scanned"] += 1
                 fp = dp / name
-                # Key material is never a search result — not by name, and (the
-                # real leak) not opened for a content snippet (credential_paths).
-                if _cred.check(fp):
+                # Key material is never a search result by name or place; a
+                # file is judged by what it holds only where it is opened, in
+                # a content search (credential_paths).
+                if _cred.check(fp, sniff=False):
                     continue
                 yield fp
 
@@ -219,6 +221,8 @@ def _search_content(roots, query, content_query, newest_first, limit, deadline, 
         if result.text is None:
             continue
         text = result.text[: _MAX_CONTENT_BYTES]
+        if _sp.contains_key_material(text):
+            continue        # a key, whatever it is called, is never a snippet
         # KNOWN GAP: a content-search snippet does NOT yet feed the grant
         # registry. Calling file_grants.on_file_read here would run before
         # this handler's JSON result is PII-scrubbed by the generic post-tool

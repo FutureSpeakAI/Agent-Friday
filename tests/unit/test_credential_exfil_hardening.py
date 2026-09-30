@@ -259,7 +259,7 @@ SECRETS = {
     "stripe live": "sk_" + "live_" + "a" * 24,
     "npm": "npm_" + "a" * 36,
     "jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop",  # pragma: allowlist secret
-    "bearer": "Authorization: Bearer " + "q" * 30,
+    "bearer": "Authorization: Bearer " + "q7" * 15,
     "url credentials": "postgres://admin:s3cretpass@db.example:5432/app",  # pragma: allowlist secret
     "slack webhook": "https://hooks.slack.com/services/T0000000/B0000000/" + "X" * 24,
     "google oauth": "ya29." + "a" * 40,

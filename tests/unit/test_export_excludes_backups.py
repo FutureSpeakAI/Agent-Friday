@@ -1,5 +1,4 @@
-"""A data export never ships the vault re-encrypt backup, and a clean
-re-encrypt prunes it.
+"""A data export never ships the vault re-encrypt backup.
 
 The re-encrypt backup was a whole-vault copytree: the default export used to include
 backups/.../vault/.vault_config.json and backups/.../vault/context-log/*.jsonl
@@ -38,19 +37,3 @@ def test_backups_excluded_from_every_export(rel, full):
 ])
 def test_live_owner_data_still_included(rel):
     assert de.skip_reason(PurePath(rel), full=True) is None
-
-
-def test_reencrypt_prune_removes_only_reencrypt_backups(friday_dir):
-    from agent_friday.services import credential_store as cs
-    bdir = friday_dir / "backups"
-    (bdir / f"{_STAMP}" / "vault").mkdir(parents=True, exist_ok=True)
-    (bdir / f"{_STAMP}" / "vault" / ".vault_config.json").write_text("x", encoding="utf-8")
-    (bdir / "vault-reencrypt-OLDER" / "providers" / "keys").mkdir(parents=True, exist_ok=True)
-    (bdir / "wiki-legacy-backup-20260704.zip").write_text("keep me", encoding="utf-8")
-
-    removed = cs._prune_reencrypt_backups()
-
-    assert set(removed) == {_STAMP, "vault-reencrypt-OLDER"}
-    assert not (bdir / _STAMP).exists()
-    assert not (bdir / "vault-reencrypt-OLDER").exists()
-    assert (bdir / "wiki-legacy-backup-20260704.zip").exists()   # not a re-encrypt backup

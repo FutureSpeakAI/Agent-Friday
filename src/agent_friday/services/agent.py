@@ -2160,13 +2160,23 @@ def _tool_run_sandboxed(inp):
     shell. The checkpoint has already ruled on it: the host backend is
     outward, Windows Sandbox is internal only where it is installed."""
     from agent_friday.services import code_sandbox as _sbx
+    from agent_friday.services import credential_paths as _cred
     inp = inp or {}
+    # The host backend reads whatever the account can, so key material is
+    # refused before the code runs, even when the owner asks.
+    _why = _cred.scan_code(str(inp.get("code") or ""))
+    if _why:
+        return _cred.refusal_command(_why)
     res = _sbx.run(str(inp.get("code") or ""),
                    timeout_s=inp.get("timeout_seconds") or _sbx.DEFAULT_TIMEOUT_S,
                    memory_mb=inp.get("memory_mb") or _sbx.DEFAULT_MEMORY_MB,
                    backend=str(inp.get("backend") or "host"))
     if not res.get("ok"):
         return f"Not run: {res.get('error')}"
+    # Whatever the program printed, key blocks and tokens are withheld.
+    for _k in ("stdout", "stderr"):
+        if isinstance(res.get(_k), str):
+            res[_k] = _cred.redact_secrets(res[_k])
     return json.dumps(res, default=str)
 
 
