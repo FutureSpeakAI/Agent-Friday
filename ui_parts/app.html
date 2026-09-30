@@ -16357,6 +16357,7 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Knowledge indexing">
       <KnowledgeSettings s={s} save={save} part="privacy"/>
     </StSection>
+    {window.FridayPublishSettings ? <window.FridayPublishSettings s={s} save={save}/> : null}
     <StSection title="Conversation logging">
       <StToggle label="Log conversations and tool use" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="An append-only record of chats, tool calls and file reads, kept on this machine."/>
       <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."/>
@@ -20067,6 +20068,9 @@ function fridayIsBatchCard(a){return!!(a&&a.payload&&a.payload.handler==='item_b
 function ApprovalCardBody({ a, busy, onDecide }) {
   // The share card has its own body: the exact payload, edit, and four choices.
   if (a && a.kind === 'local_context_share') return <LocalContextShareCard a={a} busy={busy} onDecide={onDecide}/>;
+  // A publish card shows what would go public, the scan, the licences and a
+  // sandboxed preview (static/friday_publish.js).
+  if (a && a.kind === 'publish_web' && window.FridayPublishCard) return <window.FridayPublishCard a={a} busy={busy} onDecide={onDecide}/>;
   return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
     {a.action_description && <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}

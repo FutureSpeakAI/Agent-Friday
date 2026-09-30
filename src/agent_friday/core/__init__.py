@@ -2316,6 +2316,7 @@ DEFAULT_SETTINGS = {
     "publish_default_adapter": "this_pc",  # owner decision 2026-09-29: this PC by default; cloudflare_pages | github_pages for always-on pages
     "publish_mark": True,                  # the small "Made with Friday" mark on published pages
     "publish_this_pc_enabled": True,       # the kill switch for local hosting: False takes every published page offline at once
+    "publish_this_pc_tunnel": True,        # False keeps published pages on this PC's loopback only (no cloudflared quick tunnel)
     # ── Workspaces / Dock ──
     # When True the dock shows ALL workspaces (Finance, Health, Family, Trust,
     # Studio, Content, FutureSpeak); when False it shows only the

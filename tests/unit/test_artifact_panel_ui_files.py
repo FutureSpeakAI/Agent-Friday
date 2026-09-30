@@ -116,6 +116,25 @@ def test_the_chart_renderer_is_one_shared_file_loaded_before_the_panel():
     assert "FridayChart.renderSVG" in _read(PANEL_JS)
 
 
+PUBLISH_JS = ROOT / "static" / "friday_publish.js"
+
+
+def test_publish_to_web_has_its_card_and_settings_in_both_files():
+    assert PUBLISH_JS.exists()
+    pj = _read(PUBLISH_JS)
+    for name in ("window.FridayPublishCard", "window.FridayPublishSettings"):
+        assert name in pj, name
+    m = re.search(r"PREVIEW_SANDBOX\s*=\s*'([^']*)'", pj)
+    assert m and "allow-scripts" in m.group(1) and "allow-same-origin" not in m.group(1)
+    for p in (INDEX, MIRROR):
+        s = _read(p)
+        assert "publish_web" in s and "FridayPublishCard" in s, p.name
+        assert "FridayPublishSettings" in s, p.name
+    for p in (INDEX, STYLES):
+        s = _read(p)
+        assert s.index('/static/friday_artifacts.js') < s.index('/static/friday_publish.js'), p.name
+
+
 def test_the_svg_frame_has_no_scripts(js):
     m = re.search(r"SVG_SANDBOX\s*=\s*['\"]([^'\"]*)['\"]", js)
     assert m, "svg is framed with its own sandbox constant"

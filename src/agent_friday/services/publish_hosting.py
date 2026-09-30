@@ -53,11 +53,24 @@ _STATE: dict = {"serving": False, "url": None, "port": None, "tunnel": False,
                 "reachable": None, "probed_at": None, "started_at": None}
 _TUNNEL_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
+#: A test must say so before this module may start a process. While a pytest
+#: test is running (pytest sets PYTEST_CURRENT_TEST in the worker for the
+#: test's duration) nothing is spawned otherwise: a unit test that approves a
+#: publish card must never open a real tunnel to a temp folder. The hosting
+#: tests set this after stubbing `_spawn`. FRIDAY_TESTING alone does not
+#: count: a private server instance runs with it and must be able to host.
+ALLOW_UNDER_TEST = False
+
+
+def _under_test() -> bool:
+    return bool(os.environ.get("PYTEST_CURRENT_TEST")) and not ALLOW_UNDER_TEST
+
 
 def _reset_for_tests() -> None:
-    global _SERVER, _TUNNEL
+    global _SERVER, _TUNNEL, ALLOW_UNDER_TEST
     _SERVER = None
     _TUNNEL = None
+    ALLOW_UNDER_TEST = False
     _STATE.update({"serving": False, "url": None, "port": None, "tunnel": False,
                    "reachable": None, "probed_at": None, "started_at": None})
 
@@ -87,6 +100,11 @@ def _settings() -> dict:
 
 def enabled() -> bool:
     return _settings().get("publish_this_pc_enabled", True) is not False
+
+
+def tunnel_wanted() -> bool:
+    """False keeps pages on loopback only: nothing leaves this PC."""
+    return _settings().get("publish_this_pc_tunnel", True) is not False
 
 
 def _save_setting(key: str, value) -> None:
@@ -192,6 +210,9 @@ def start() -> dict:
             _STATE.update({"serving": False, "url": None, "tunnel": False})
             _write_state()
             return status()
+        if _under_test():
+            _log.info("publish hosting: not started under a test run")
+            return status()
         if _alive(_SERVER):
             return status()
         root = _published_root()
@@ -201,7 +222,7 @@ def start() -> dict:
                           "--port", str(port), "--bind", "127.0.0.1"])
         _STATE.update({"serving": True, "port": port, "started_at": time.time(),
                        "url": "http://127.0.0.1:%d" % port, "tunnel": False, "reachable": None})
-        cf = _cloudflared_path()
+        cf = _cloudflared_path() if tunnel_wanted() else None
         if cf:
             # ONE url, and it is the static server. Never Friday's port.
             _TUNNEL = _spawn([cf, "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:%d" % port])
@@ -283,6 +304,7 @@ def status(refresh: bool = False) -> dict:
         out = dict(_STATE)
         out["enabled"] = enabled()
         out["serving"] = alive
+        out["under_test"] = _under_test()
         out["url"] = _STATE.get("url") if alive else None
         out["published"] = len([p for p in _published_root().iterdir() if p.is_dir() and not p.name.startswith(".")]) \
             if _published_root().exists() else 0
@@ -297,7 +319,8 @@ def status_line(refresh: bool = False) -> str:
     if not st["serving"]:
         return "Published pages are not reachable: the page server is not running."
     if not st.get("tunnel"):
-        return "Published pages are served on this PC only (no tunnel): %s" % st["url"]
+        why = "the tunnel is switched off" if not tunnel_wanted() else "no tunnel"
+        return "Published pages are served on this PC only (%s): %s" % (why, st["url"])
     if st.get("reachable") is False:
         return "Published pages are not reachable right now at %s (the tunnel may be down)." % st["url"]
     if st.get("reachable") is True:
@@ -320,6 +343,49 @@ def _stored_secret(name: str) -> Optional[str]:
 
 def adapter_connected(adapter: str) -> bool:
     return bool(_stored_secret(adapter))
+
+
+def _store_secret(name: str, value: Optional[str]) -> None:
+    from agent_friday.services import credential_store as _cs
+    if value is None:
+        _cs.delete_provider_key("publish:" + name)
+    else:
+        _cs.set_provider_key("publish:" + name, value)
+
+
+def connect_adapter(adapter: str, token: str, *, account_id: str = "", project: str = "",
+                    repo: str = "", branch: str = "") -> None:
+    """Store a hosted adapter's connection: the token plus the account or
+    repository it publishes to, as one encrypted record. Values are never
+    logged or returned."""
+    if adapter == "cloudflare_pages":
+        if not account_id or not project:
+            raise ValueError("Cloudflare Pages needs an account id and a project name")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,57}", project):
+            raise ValueError("a Pages project name is lowercase letters, digits and dashes")
+        rec = {"token": token, "account_id": account_id, "project": project}
+    elif adapter == "github_pages":
+        if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+            raise ValueError("GitHub Pages needs a repository as owner/name")
+        rec = {"token": token, "repo": repo, "branch": branch or "gh-pages"}
+    else:
+        raise ValueError("unknown adapter %r" % adapter)
+    _store_secret(adapter, json.dumps(rec))
+
+
+def disconnect_adapter(adapter: str) -> None:
+    _store_secret(adapter, None)
+
+
+def connection(adapter: str) -> Optional[dict]:
+    raw = _stored_secret(adapter)
+    if not raw:
+        return None
+    try:
+        rec = json.loads(raw)
+        return rec if isinstance(rec, dict) and rec.get("token") else None
+    except Exception:
+        return None
 
 
 def publish_remote(adapter: str, bundle) -> str:

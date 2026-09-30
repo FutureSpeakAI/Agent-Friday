@@ -89,6 +89,40 @@ def _this_pc(refresh: bool = False) -> dict:
                 "line": "Published pages: hosting is unavailable (%s)." % e, "error": str(e)}
 
 
+@publish_bp.route("/api/publish/connect", methods=["POST"])
+@login_required
+def publish_connect():
+    """Connect a hosted adapter with the user's own token. The token is stored
+    encrypted in the credential store and is never echoed back."""
+    body = request.get_json(silent=True) or {}
+    adapter = str(body.get("adapter") or "")
+    token = str(body.get("token") or "").strip()
+    if adapter not in ("cloudflare_pages", "github_pages"):
+        return _bad("adapter must be cloudflare_pages or github_pages")
+    if not token:
+        return _bad("a token is required")
+    from agent_friday.services import publish_hosting as _ph
+    try:
+        _ph.connect_adapter(adapter, token, account_id=str(body.get("account_id") or ""),
+                            project=str(body.get("project") or ""), repo=str(body.get("repo") or ""),
+                            branch=str(body.get("branch") or ""))
+    except ValueError as e:
+        return _bad(e)
+    return jsonify({"status": "ok", "adapter": adapter, "connected": _ph.adapter_connected(adapter)})
+
+
+@publish_bp.route("/api/publish/disconnect", methods=["POST"])
+@login_required
+def publish_disconnect():
+    body = request.get_json(silent=True) or {}
+    adapter = str(body.get("adapter") or "")
+    if adapter not in ("cloudflare_pages", "github_pages"):
+        return _bad("adapter must be cloudflare_pages or github_pages")
+    from agent_friday.services import publish_hosting as _ph
+    _ph.disconnect_adapter(adapter)
+    return jsonify({"status": "ok", "adapter": adapter, "connected": False})
+
+
 @publish_bp.route("/api/publish/status", methods=["GET"])
 @login_required
 def publish_status():

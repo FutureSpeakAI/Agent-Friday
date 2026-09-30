@@ -29,6 +29,10 @@ def _stores(monkeypatch, tmp_path):
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     # No network for the licence lookup unless a test provides one.
     monkeypatch.setattr(pw, "_fetch_package_json", lambda url: None)
+    # Hosting is another module's job and spawns processes; none here.
+    from agent_friday.services import publish_hosting as ph
+    monkeypatch.setattr(ph, "ensure_started", lambda: {"serving": False})
+    monkeypatch.setattr(ph, "public_base_url", lambda: None)
     pw._reset_for_tests()
     yield
 

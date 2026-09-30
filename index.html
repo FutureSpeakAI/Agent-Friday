@@ -3679,6 +3679,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_chart.js"></script>
     <!-- The artifact panel beside every chat (defines window.FridayArtifactHost). -->
     <script src="/static/friday_artifacts.js"></script>
+    <!-- Publish to web: the card body and the Settings section (defines window.FridayPublishCard). -->
+    <script src="/static/friday_publish.js"></script>
 
     <script>
         // --- UI INTERACTION LOGIC ---
@@ -50384,7 +50386,10 @@ function SettingsTabPrivacy({
     s: s,
     save: save,
     part: "privacy"
-  })), /*#__PURE__*/React.createElement(StSection, {
+  })), window.FridayPublishSettings ? /*#__PURE__*/React.createElement(window.FridayPublishSettings, {
+    s: s,
+    save: save
+  }) : null, /*#__PURE__*/React.createElement(StSection, {
     title: "Conversation logging"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Log conversations and tool use",
@@ -55970,6 +55975,13 @@ function ApprovalCardBody({
 }) {
   // The share card has its own body: the exact payload, edit, and four choices.
   if (a && a.kind === 'local_context_share') return /*#__PURE__*/React.createElement(LocalContextShareCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
+  // A publish card shows what would go public, the scan, the licences and a
+  // sandboxed preview (static/friday_publish.js).
+  if (a && a.kind === 'publish_web' && window.FridayPublishCard) return /*#__PURE__*/React.createElement(window.FridayPublishCard, {
     a: a,
     busy: busy,
     onDecide: onDecide

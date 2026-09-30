@@ -64,6 +64,8 @@ def world(monkeypatch, tmp_path):
     settings = {"publish_this_pc_enabled": True}
     monkeypatch.setattr(ph, "_settings", lambda: settings)
     ph._reset_for_tests()
+    # Every process here is a fake; only then may the manager "start".
+    monkeypatch.setattr(ph, "ALLOW_UNDER_TEST", True)
     yield {"spawned": spawned, "settings": settings, "probes": probes, "tmp": tmp_path}
     ph.stop()
 
@@ -146,6 +148,28 @@ def test_without_cloudflared_pages_serve_locally_and_the_line_says_so(world, mon
     assert st["serving"] is True and st["url"] == "http://127.0.0.1:48123"
     assert st["tunnel"] is False
     assert "this pc only" in ph.status_line().lower() or "no tunnel" in ph.status_line().lower()
+
+
+def test_the_tunnel_can_be_switched_off_to_keep_pages_on_this_pc(world):
+    world["settings"]["publish_this_pc_tunnel"] = False
+    st = ph.start()
+    assert len(world["spawned"]) == 1, "no cloudflared process when the tunnel is off"
+    assert st["serving"] is True and st["tunnel"] is False
+    assert st["url"] == "http://127.0.0.1:48123"
+    assert "switched off" in ph.status_line().lower()
+
+
+def test_nothing_is_spawned_under_a_test_run_unless_the_test_says_so(world, monkeypatch):
+    """A unit test that approves a publish card once launched a real static
+    server AND a real cloudflared quick tunnel per test worker, exposing temp
+    folders publicly with no approval. Under pytest the manager spawns nothing
+    unless the test has stubbed the processes and said so."""
+    monkeypatch.setattr(ph, "ALLOW_UNDER_TEST", False)
+    st = ph.start()
+    assert world["spawned"] == []
+    assert st["serving"] is False and st["url"] is None
+    ph.ensure_started()
+    assert world["spawned"] == []
 
 
 def test_remote_adapters_are_not_connected_until_a_token_is_stored(world, monkeypatch):

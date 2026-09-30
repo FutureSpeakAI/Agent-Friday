@@ -25,6 +25,10 @@ def _stores(monkeypatch, tmp_path):
     monkeypatch.setattr(pw, "_staging_root", lambda: tmp_path / "staging")
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(pw, "_fetch_package_json", lambda url: None)
+    # Hosting is another module's job and spawns processes; none here.
+    from agent_friday.services import publish_hosting as ph
+    monkeypatch.setattr(ph, "ensure_started", lambda: {"serving": False})
+    monkeypatch.setattr(ph, "public_base_url", lambda: None)
     pw._reset_for_tests()
     yield
 
@@ -94,6 +98,22 @@ def test_the_switch_takes_pages_offline_and_back(client, monkeypatch):
     assert calls == [False]
     assert client.post("/api/publish/this-pc/enable").get_json()["this_pc"]["serving"] is True
     assert client.post("/api/publish/this-pc/explode").status_code == 404
+
+
+def test_connecting_a_hosted_adapter_stores_the_token_without_echoing_it(client, monkeypatch):
+    from agent_friday.services import publish_hosting as ph
+    store = {}
+    monkeypatch.setattr(ph, "_stored_secret", lambda name: store.get(name))
+    monkeypatch.setattr(ph, "_store_secret", lambda name, value: store.__setitem__(name, value) if value is not None else store.pop(name, None))
+    r = client.post("/api/publish/connect", json={"adapter": "cloudflare_pages", "token": "cf-test-token-not-real", "account_id": "acct1", "project": "friday-pages"})  # pragma: allowlist secret
+    d = r.get_json()
+    assert r.status_code == 200 and d["connected"] is True
+    assert "cf-test-token-not-real" not in r.data.decode()
+    assert client.get("/api/publish/status").get_json()["adapters"]["cloudflare_pages"]["connected"] is True
+    assert client.post("/api/publish/connect", json={"adapter": "github_pages", "token": "x", "repo": "not a repo"}).status_code == 400
+    assert client.post("/api/publish/connect", json={"adapter": "dropbox", "token": "x"}).status_code == 400
+    assert client.post("/api/publish/disconnect", json={"adapter": "cloudflare_pages"}).get_json()["connected"] is False
+    assert "cloudflare_pages" not in store
 
 
 def test_status_reports_the_default_adapter_and_this_pc_state(client):
