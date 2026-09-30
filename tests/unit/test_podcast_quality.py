@@ -108,3 +108,51 @@ def test_outlets_are_said_the_way_people_say_them():
     assert "ap" in q.outlet_aliases({"outlet": "apnews.com"})
     assert "the local ledger" in q.outlet_aliases(
         {"outlet": "news.google.com", "title": "Council votes - The Local Ledger"})
+
+
+# ── from the first real regeneration ────────────────────────────────────────
+
+def test_the_digest_s_summary_and_analysis_are_not_sources():
+    """They discuss news the listener has not heard introduced, in the digest's
+    own phrases; only tasks and the insight are context."""
+    titles = [d["title"] for d in docs() if d.get("role") == "digest"]
+    assert titles == ["Friday's written briefing: Active Tasks & Commitments",
+                      "Friday's written briefing: Proactive Insight"]
+
+
+def test_the_digest_s_words_still_count_as_the_script_s_own(ds):
+    digest = dict(ds[-1], text=ds[-1]["text"] + " The day turns on a linchpin.")
+    lines = good_lines(ds)
+    for i in (1, 4, 6):
+        lines[i] = dict(lines[i], text=lines[i]["text"] + " That is the linchpin.")
+    msgs = [p["message"] for p in q.repetition_problems(lines, ds[:-1] + [digest], 3)]
+    assert any("linchpin" in m for m in msgs)
+
+
+@pytest.mark.parametrize("when", ["in August", "last month", "this quarter"])
+def test_a_month_or_period_is_a_when(when):
+    assert q._WHEN_RE.search("Core inflation eased %s, the report says." % when)
+
+
+def test_a_name_that_opens_the_headline_is_who():
+    s = q.stories([{"sid": "S1", "kind": "news", "title": "Robinhood unveils weekend trading hours",
+                    "text": "The broker said the hours start next month.", "outlet": "cnbc.com"}])[0]
+    assert "robinhood" in s["entities"]
+
+
+def test_a_city_in_an_event_s_title_counts_as_where_you_are_going(ds):
+    evs = [dict(d, title="Makers meetup Springfield", location="12 Harbor St") if d.get("kind") == "event"
+           and d["start"].endswith("17:30:00-05:00") else d for d in ds]
+    lines = [dict(ln, cites=[c for c in ln["cites"] if not c.startswith("S") or
+                             next(x for x in evs if x["sid"] == c).get("kind") != "event"])
+             if "5:30 PM" in ln["text"] else ln
+             for ln in good_lines(ds) if not ln["text"].startswith("Tonight's meetup")]
+    lines = [dict(ln, text=ln["text"].replace("Your 5:30 PM meetup is in Springfield, so c", "C"))
+             for ln in lines]
+    assert "safety_no_practical_line" in _codes(q.safety_problems(lines, q.stories(evs), q.events(evs)))
+
+
+def test_the_episode_never_points_at_the_written_digest(ds):
+    lines = good_lines(ds)
+    lines[1] = dict(lines[1], text="My written briefing flags this interview as the day's key moment.")
+    assert "digest_referenced" in _codes(_check(lines, ds))

@@ -17,7 +17,8 @@ against the episode's own story list and calendar:
   than re-reads the opening.
 * **density** (solo news formats) — enough distinct stories and events per
   spoken minute to be worth the time.
-* **headings** — no outline heading from a source is read out.
+* **headings** — no outline heading from a source is read out, and the
+  written digest is never pointed at ("my written briefing says").
 * **fragments** — at most one flat verbless fragment ("It's context.").
 * **link claim** — "linked in the transcript" is said only when every story
   heard has a link.
@@ -63,9 +64,11 @@ _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’-]+")
 _CLOCK_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?\s?m\.?|p\.?\s?m\.?)(?![a-z])", re.I)
 _WHEN_RE = re.compile(
     r"\b(today|tonight|yesterday|overnight|this (morning|afternoon|evening|week|weekend)|"
-    r"last (night|week|month)|earlier (today|this week)|on (%s)|(%s)|(%s) \d{1,2}|"
+    r"last (night|week|month|quarter|year)|this (month|quarter)|in (%s)|"
+    r"earlier (today|this week)|on (%s)|(%s)|(%s) \d{1,2}|"
     r"\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)|hours ago|this year|since (%s))\b"
-    % ("|".join(_DAYS), "|".join(_DAYS), "|".join(_MONTHS), "|".join(_DAYS + _MONTHS)), re.I)
+    % ("|".join(_MONTHS), "|".join(_DAYS), "|".join(_DAYS), "|".join(_MONTHS),
+       "|".join(_DAYS + _MONTHS)), re.I)
 _YOU_RE = re.compile(r"\b(you|your|you're|you'll|yours)\b", re.I)
 _ATTRIB_RE = re.compile(r"\b(said|says|say|according to|police|officials|authorities|reported|"
                         r"reports|confirmed|investigators)\b", re.I)
@@ -209,7 +212,11 @@ def _entities(title: str, text: str) -> set[str]:
     if not body:
         # The text names no one: the headline's own names are all there is.
         body = _caps(title, initial=False)
-    return body | ({w for w in _caps(title, initial=True) if w in body}) | figures
+    # The headline's first word, when it is a name ("Robinhood unveils ...").
+    first = re.sub(r"['’]s$", "", (title.split() or [""])[0].strip(".,;:!?\"'“”‘’"))
+    lead = ({first.lower()} if len(first) >= 3 and first[0].isupper()
+            and first.lower() not in _STOP and first.lower() not in _MONTHS + _DAYS else set())
+    return body | lead | ({w for w in _caps(title, initial=True) if w in body}) | figures
 
 
 def _places(text: str) -> set[str]:
@@ -255,7 +262,11 @@ def events(docs: list[dict]) -> list[dict]:
                     "keys": {_stem(w) for w in _content(d.get("title") or "")},
                     "places": {p.strip().lower() for p in re.split(r"[,\n]", d.get("location") or "")
                                if re.fullmatch(r"[A-Za-z][A-Za-z .'-]{2,}", p.strip() or "")
-                               and len(p.strip()) > 2}})
+                               and len(p.strip()) > 2}
+                    # A city is often in the event's name ("Makers meetup Springfield").
+                    | {w.lower().strip(":,") for w in (d.get("title") or "").split()
+                       if len(w.strip(":,")) >= 4 and w[0].isupper() and w.strip(":,").isalpha()
+                       and w.lower().strip(":,") not in _STOP}})
     return out
 
 
@@ -348,9 +359,17 @@ def safety_problems(lines: list[dict], story_list: list[dict], event_list: list[
             # line of the story (or the one after it) that names that event.
             near_events = [e for e in event_list if e["places"] & close]
             span = sorted({j for k in idx for j in (k, k + 1) if j < len(lines)})
+            place_stems = {_stem(w) for p in close for w in p.split()}
+
+            def names_event(text, e):
+                # The event by its time, or by a word of its name that is not
+                # the shared place (saying "Springfield" is not naming it).
+                clocks = {_minutes(*m.groups()) for m in _CLOCK_RE.finditer(text)}
+                return (e["start"] is not None and e["start"] in clocks) or \
+                    bool((e["keys"] - place_stems) & {_stem(w) for w in _content(text)})
             practical = any(
                 {e["sid"] for e in near_events} & set(lines[j].get("cites") or [])
-                or any(e in near_events for e in _events_in(lines[j]["text"], event_list))
+                or any(names_event(lines[j]["text"], e) for e in near_events)
                 for j in span if not lines[j].get("signature"))
             if not practical:
                 out.append(_p("safety_no_practical_line", "\"%s\" happened in %s, where you are "
@@ -430,6 +449,8 @@ def repetition_problems(lines: list[dict], docs: list[dict], n_chapters: int) ->
     out = []
     vocab = set()
     for d in docs:
+        if d.get("role") == "digest":
+            continue            # Friday's own notes: their phrases are hers, not a source's
         vocab |= {_stem(w) for w in _words("%s %s" % (d.get("title") or "", d.get("text") or ""))}
     spoken = _spoken(lines)
     counts: dict[str, list] = {}
@@ -493,6 +514,16 @@ def heading_problems(lines: list[dict], docs: list[dict]) -> list[dict]:
     return out
 
 
+_DIGEST_REF_RE = re.compile(r"\b(written briefing|my (notes|briefing|digest)|the (digest|written notes))\b", re.I)
+
+
+def digest_problems(lines: list[dict]) -> list[dict]:
+    """The listener never read the written digest: say the thing, not where it was written."""
+    return [_p("digest_referenced", "This line points at the written briefing instead of saying "
+               "the thing itself: \"%s\"" % ln["text"][:90], i)
+            for i, ln in _spoken(lines) if _DIGEST_REF_RE.search(ln["text"])]
+
+
 def fragment_problems(lines: list[dict]) -> list[dict]:
     frags = []
     for i, ln in _spoken(lines):
@@ -525,7 +556,7 @@ def link_claim_problems(lines: list[dict], story_list: list[dict]) -> list[dict]
 
 
 CHECKS = ("ledes", "safety stories", "calendar times", "repetition", "restated close",
-          "headings", "fragments", "link claim", "density")
+          "headings", "digest references", "fragments", "link claim", "density")
 
 
 def script_problems(lines: list[dict], docs: list[dict], *, n_chapters: int = 1,
@@ -540,6 +571,7 @@ def script_problems(lines: list[dict], docs: list[dict], *, n_chapters: int = 1,
     probs += time_problems(lines, event_list, docs)
     probs += repetition_problems(lines, docs, n_chapters)
     probs += heading_problems(lines, docs)
+    probs += digest_problems(lines)
     probs += fragment_problems(lines)
     probs += link_claim_problems(lines, story_list)
     if news and solo:

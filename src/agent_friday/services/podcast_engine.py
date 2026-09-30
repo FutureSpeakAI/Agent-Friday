@@ -485,7 +485,8 @@ NEWS_RULES = (
     "repeat a phrase or an image. The close adds the one thing to watch and "
     "never re-reads earlier lines.\n"
     "- \"Friday's written briefing\" sources are your own notes: use them for "
-    "context and your read, and never read a heading aloud.\n")
+    "context and your read. Never read a heading aloud, and never mention the "
+    "written briefing or your notes: say the thing itself.\n")
 
 
 def _system_prompt(ep: dict) -> str:

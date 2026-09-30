@@ -132,9 +132,11 @@ def sidecar_path(run_id: str) -> Path:
     return Path(FRIDAY_DIR) / "briefing_runs" / f"{run_id}.json"
 
 
-#: Digest sections the episode rebuilds from structured data instead of
-#: paraphrasing (the calendar and the news), matched on the heading.
-_REBUILT_SECTION_RE = re.compile(r"calendar|news", re.I)
+#: The digest sections an episode may use as context: the owner's tasks and
+#: Friday's insight. The calendar and the news are rebuilt from structured
+#: data; the summary and the analysis discuss news in the digest's own words,
+#: which the listener has not heard introduced, so they are left out.
+_CONTEXT_SECTION_RE = re.compile(r"task|commitment|insight|recommend|to-?do|follow.?up|priorit", re.I)
 
 
 def _heading_title(heading: str) -> str:
@@ -146,8 +148,7 @@ def _heading_title(heading: str) -> str:
 
 def briefing_docs(side: dict, markdown: str, run_id: str) -> list[dict]:
     """The Briefing's sources: one per story (outlet and link), one per calendar
-    event (its times), then Friday's own written sections that are not
-    rebuilt from those (tasks, analysis, insight) as context."""
+    event (its times), then Friday's written tasks and insight as context."""
     docs = []
     for a in (side.get("news") or [])[:MAX_STORIES]:
         if not isinstance(a, dict) or not a.get("title"):
@@ -170,7 +171,7 @@ def briefing_docs(side: dict, markdown: str, run_id: str) -> list[dict]:
                      "outlet": "", "start": ev.get("start_time") or "",
                      "end": ev.get("end_time") or "", "location": ev.get("location") or ""})
     for d in _markdown_docs(markdown, "Briefing %s" % run_id, private=True):
-        if _REBUILT_SECTION_RE.search(d["title"]):
+        if not _CONTEXT_SECTION_RE.search(d["title"]):
             continue
         heading = d["title"]
         d.update(kind="digest", role="digest", heading=heading,
