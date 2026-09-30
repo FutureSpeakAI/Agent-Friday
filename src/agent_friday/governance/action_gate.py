@@ -155,7 +155,7 @@ OUTWARD_TOOLS = frozenset({
 #: Tools whose handler raises its own approval card and cannot complete the
 #: action itself (draft_email only queues; gmail_send sends on approval).
 SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
-                        "career_update_tracker", "publish_artifact",
+                        "career_update_tracker", "publish_artifact", "workspace_swap",
                         # Friday's browser (services/browser_session.py): when
                         # classified outward, the handler submits or fills
                         # only on an approved card for exactly what the page
@@ -212,6 +212,9 @@ INTERNAL_TOOLS = frozenset({
     "plan_first", "plan_approve", "plan_milestone",
     # A plain-project zip of a codebase, handed to the user; reads only.
     "codebase_export",
+    # Improving a bundle workspace opens a codebase chat; the swap raises ONE
+    # card and installs only on approval (services/workspace_bundles).
+    "improve_workspace", "workspace_swap",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it

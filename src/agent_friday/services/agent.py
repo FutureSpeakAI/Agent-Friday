@@ -2340,6 +2340,13 @@ try:
 except Exception as _e:                                    # pragma: no cover
     _log.warning("publish executor not registered: %s", _e)
 
+# An approved workspace swap installs the bundle version, once, the same way.
+try:
+    from agent_friday.services import workspace_bundles as _workspace_bundles
+    _workspace_bundles.register()
+except Exception as _e:                                    # pragma: no cover
+    _log.warning("workspace swap executor not registered: %s", _e)
+
 # The payload card for sharing local context with the cloud voice model runs
 # through the same single approval path: one decision, executed once.
 try:
@@ -8355,6 +8362,98 @@ def _tool_codebase_export(inp):
 CLAUDE_TOOL_HANDLERS.update({"codebase_edit": _tool_codebase_edit, "codebase_undo": _tool_codebase_undo,
                              "codebase_read": _tool_codebase_read, "codebase_export": _tool_codebase_export})
 TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0, "codebase_export": 0})
+
+
+# ── "Improve this workspace" (services/workspace_bundles; spec §4.9.1) ───────
+CLAUDE_TOOLS.append({
+    "name": "improve_workspace",
+    "description": (
+        "Open the codebase chat that improves one of the user's workspaces, by id or spoken name "
+        "('improve the News workspace'). While it runs, say you are opening it. Only a bundle workspace "
+        "(one the user built in the salon, under \"Mine\" in the dock) can be improved this way: its live "
+        "version keeps running and nothing changes until the user approves a swap. A NATIVE workspace "
+        "(News, Messages, Calendar and the rest of Friday's own) is part of Friday herself; improving it "
+        "means editing Friday's own source, which is not built yet, and the result says so: tell the user "
+        "that plainly, do not promise it. The result carries conversation_id: tell the user the chat is open."),
+    "input_schema": {"type": "object", "properties": {
+        "workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'rent-board', 'the chore wheel', 'news'."}},
+        "required": ["workspace"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "workspace_swap",
+    "description": (
+        "Ask the user to swap this chat's codebase in as the live version of the workspace it improves "
+        "(or to install a fresh bundle codebase as a new workspace). Raises ONE approval card after the "
+        "manifest check, the brand check and a browser load check; the user decides on the card or by "
+        "saying yes or no. Call it only when the user says they are happy with the change. If the result "
+        "is refused, say why in one line (a reserved colour, a broken manifest, a page that throws) and "
+        "fix it; never say the workspace is swapped until the card is approved."),
+    "input_schema": {"type": "object", "properties": {
+        "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
+})
+
+
+def _resolve_workspace_name(name):
+    """A registry id, an alias, or an installed bundle's id or label; None when nothing matches."""
+    from agent_friday.services import workspace_bundles as _wb, workspace_registry as _reg
+    n = (name or "").strip()
+    if not n:
+        return None
+    rid = _reg.resolve(n) or (n.lower() if n.lower() in _reg.ids() else None)
+    if rid:
+        return rid
+    low = n.lower()
+    for suffix in (" workspace", " window", " tab", " app"):
+        if low.endswith(suffix):
+            low = low[: -len(suffix)].strip()
+    for prefix in ("the ", "my "):
+        if low.startswith(prefix):
+            low = low[len(prefix):].strip()
+    for w in _wb.list_installed():
+        if low in (w["id"], (w.get("label") or "").lower()) or low in [a.lower() for a in w.get("aliases") or []]:
+            return w["id"]
+    return None
+
+
+def _tool_improve_workspace(inp):
+    from agent_friday.services import workspace_bundles as _wb
+    name = str((inp or {}).get("workspace") or "")
+    ws_id = _resolve_workspace_name(name)
+    if not ws_id:
+        return {"status": "refused", "say": "I don't know a workspace called \"%s\". The ones you built are under Mine in the dock." % name}
+    try:
+        out = _wb.improve(ws_id)
+    except _wb.NativeWorkspace as e:
+        return {"status": "refused", "blocker": e.blocker, "workspace_id": ws_id, "say": str(e)}
+    try:
+        from agent_friday.services import desktop_bus as _bus
+        _bus.broadcast({"type": "open_conversation", "conversation_id": out["conversation_id"],
+                        "title": "Improve %s" % out["label"], "reason": "improve_workspace"}, kind="chat")
+    except Exception:
+        pass
+    return {"status": "ok", **out,
+            "say": 'I opened a codebase chat for "%s". Tell me what to change; every change is a step you can undo, '
+                   "and nothing goes live until you approve the swap." % out["label"]}
+
+
+def _tool_workspace_swap(inp):
+    from agent_friday.services import workspace_bundles as _wb
+    rec = _codebase_in_scope(inp or {})
+    if rec is None:
+        return "workspace_swap: this chat has no codebase."
+    try:
+        card = _wb.request_swap(rec["id"], requested_by="friday")
+    except _wb.SmokeFailed as e:
+        return {"status": "refused", "blocker": e.blocker, "say": str(e)}
+    except (_wb.BrandRefused, _wb.ManifestRefused, ValueError) as e:
+        return {"status": "refused", "say": str(e)}
+    return {"status": "ok", "approval_id": card["approval_id"], "card_status": card["status"],
+            "spoken": card["payload"]["spoken"],
+            "note": "The card is on screen; read its spoken line and wait for the user's decision."}
+
+
+CLAUDE_TOOL_HANDLERS.update({"improve_workspace": _tool_improve_workspace, "workspace_swap": _tool_workspace_swap})
+TOOL_RINGS.update({"improve_workspace": 1, "workspace_swap": 1})
 
 
 # ── Plan-first for big asks (services/plans; spec §4.11 item 4) ──────────────

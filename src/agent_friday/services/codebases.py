@@ -233,8 +233,10 @@ def template_files(template: str, title: str) -> dict:
 # ── creating ─────────────────────────────────────────────────────────────────
 
 def create(title: str, template: str = "static", *, conversation_id: Optional[str] = None,
-           existing_path: Optional[str] = None) -> dict:
-    """A new codebase from a template, or an existing folder on a salon branch."""
+           existing_path: Optional[str] = None, files: Optional[dict] = None) -> dict:
+    """A new codebase from a template, or an existing folder on a salon branch.
+    ``files`` seeds the tree in place of the template's files (an installed
+    bundle's version, say) while the record keeps the template's name."""
     title = str(title or "").strip() or "Untitled"
     slug = slug_for(title)
     cid = new_id()
@@ -260,7 +262,10 @@ def create(title: str, template: str = "static", *, conversation_id: Optional[st
         repo = _dir(cid) / "repo"
         repo.mkdir(parents=True, exist_ok=False)
         _git(repo, "init", "-q", "-b", "main")
-        for path, content in template_files(template, title).items():
+        for path, content in (files if files is not None else template_files(template, title)).items():
+            if not path or ".." in path.split("/") or path.startswith(("/", "\\", ".git", ".friday")) or "\\" in path:
+                raise ValueError("not a file path inside the codebase: %r" % path)
+            (repo / path).parent.mkdir(parents=True, exist_ok=True)
             (repo / path).write_text(content, encoding="utf-8", newline="\n")
         (repo / ".gitignore").write_text(".friday/\nnode_modules/\n", encoding="utf-8", newline="\n")
         _git(repo, "add", "-A")
@@ -287,6 +292,60 @@ def bind(cid: str, conversation_id: str) -> None:
         _convs.patch(conversation_id, codebase=cid)
     except Exception as e:
         _log.warning("could not bind conversation %s to codebase %s: %s", conversation_id, cid, e)
+
+
+def set_workspace(cid: str, ws_id: Optional[str]) -> None:
+    """Mark the codebase as the one that improves a bundle workspace."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    rec["workspace_id"] = ws_id
+    _save(rec)
+
+
+def head(cid: str) -> str:
+    """The working tree's HEAD commit, or "" when there is none."""
+    cp = _git(repo_path(cid), "rev-parse", "--verify", "HEAD", check=False)
+    return cp.stdout.strip() if cp.returncode == 0 else ""
+
+
+def _playwright():
+    """The Playwright sync API module, or None when it is not installed."""
+    try:
+        from playwright import sync_api
+        return sync_api
+    except Exception:
+        return None
+
+
+def smoke(cid: str) -> dict:
+    """The self-testing loop's first rung (§4.11 item 1): load the preview in
+    a headless browser and collect page errors and console errors. Says when
+    it could not run rather than passing by default."""
+    sha = head(cid)
+    pw = _playwright()
+    if pw is None:
+        return {"ran": False, "ok": None, "errors": [], "note": "browser check not run: Playwright is not installed",
+                "sha": sha, "ms": 0}
+    t0 = time.time()
+    errors: list = []
+    try:
+        html = preview(cid)
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch()
+            try:
+                page = browser.new_page()
+                page.on("pageerror", lambda e: errors.append("page error: %s" % e))
+                page.on("console", lambda m: errors.append("console %s: %s" % (m.type, m.text)) if m.type == "error" else None)
+                page.set_content(html, wait_until="load")
+                page.wait_for_timeout(1500)
+            finally:
+                browser.close()
+    except Exception as e:
+        return {"ran": False, "ok": None, "errors": [], "note": "browser check not run: %s" % e, "sha": sha,
+                "ms": int((time.time() - t0) * 1000)}
+    return {"ran": True, "ok": not errors, "errors": errors[:20], "note": "", "sha": sha,
+            "ms": int((time.time() - t0) * 1000)}
 
 
 def for_conversation(conversation_id: Optional[str]) -> Optional[dict]:
@@ -703,6 +762,19 @@ def context_block_for(cid: str) -> str:
              "Do not say a change is done until the tool result names the step. "
              "For a BIG ask (a new feature, several files), call plan_first with a short plan and 3-7 milestones and stop; "
              "build only after the user approves it."]
+    if rec.get("workspace_id"):
+        ws_label = rec["workspace_id"]
+        try:
+            from agent_friday.services import workspace_bundles as _wb
+            ws_label = (_wb.get(rec["workspace_id"]) or {}).get("label") or ws_label
+        except Exception:
+            pass
+        lines.append("This codebase IMPROVES THE WORKSPACE \"%s\" (id %s), a bundle in the user's dock. Its live version keeps "
+                     "running until the user approves a swap: when they are happy, call workspace_swap (or they press the panel's "
+                     "\"Swap in\"), which raises ONE card; never say it is live before that. Keep manifest.json's friday_api 1 and "
+                     "capabilities.network [\"none\"]. Never use the reserved status colours or anything close to them: amber #f59e0b, "
+                     "green #00ff80 / #00ff66, pink #ff0080, red #ff0033 / #ef4444, yellow #ffcc00; the brand check refuses them."
+                     % (ws_label, rec["workspace_id"]))
     budget = _CONTEXT_MAX
     lines.append("Files:")
     for f in files(cid):

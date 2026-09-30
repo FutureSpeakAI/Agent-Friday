@@ -311,6 +311,20 @@ _VOICE_LIVE_TOOLS = [
      "Switch the Friday desktop UI to a workspace on-screen for the user. It is "
      "the user's own screen, so no approval is needed. Workspaces: {workspace_ids}.",
      {"workspace": ("string", "Workspace id or spoken name, e.g. 'news', 'settings'.")}, ["workspace"]),
+    ("improve_workspace",
+     "Open the codebase chat that improves one of the user's own workspaces ('improve the "
+     "chore wheel'). Say you are opening it while it runs; then say the chat is open and "
+     "that nothing goes live until they approve the swap. Only a workspace the user built "
+     "(under Mine) can be improved; for a native one (News, Messages and the rest) the "
+     "result says improving it means Friday's own source, which is not built yet: say that "
+     "plainly, do not promise it.",
+     {"workspace": ("string", "Workspace id or spoken name, e.g. 'chore wheel', 'news'.")}, ["workspace"]),
+    ("workspace_swap",
+     "When the user says they are happy with the change to their workspace, ask to swap it in. "
+     "This raises ONE card on screen; read the card's spoken line back as one sentence and "
+     "wait for their yes, no, or change it. Never say the workspace is swapped before the "
+     "card is approved. If the result is refused, say why in one line.",
+     {}, []),
     ("delegate_to_friday",
      "Hand ANY request to the full Friday agent, with every tool it has in chat "
      "(email drafting, files, the wiki, browsing, research, workflows, anything the "
@@ -1335,6 +1349,15 @@ def _voice_tool_run(name, args, send_client, session=None):
             # conversation that asked, which this call's session names.
             from agent_friday.services import agent as _ag
             _fn = getattr(_ag, "_tool_" + name)
+            _cid = session.get("conversation_id") if isinstance(session, dict) else None
+            _tok = _ag._CURRENT_CONVERSATION.set(_cid)
+            try:
+                return _governed(name, _fn, args)
+            finally:
+                _ag._CURRENT_CONVERSATION.reset(_tok)
+        if name in ("improve_workspace", "workspace_swap"):
+            from agent_friday.services import agent as _ag
+            _fn = _ag._tool_improve_workspace if name == "improve_workspace" else _ag._tool_workspace_swap
             _cid = session.get("conversation_id") if isinstance(session, dict) else None
             _tok = _ag._CURRENT_CONVERSATION.set(_cid)
             try:

@@ -135,7 +135,7 @@ ROUTE_MODULES = [
     'persona', 'phone', 'platform', 'podcasts', 'privacy_consent', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'setup_chat', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos', 'traces',
     'work_plan',
     'updates', 'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
-    'workspace_studio', 'workspace_undo',
+    'workspace_bundles', 'workspace_studio', 'workspace_undo',
 ]
 
 # ── Blueprint criticality ─────────────────────────────────────────────────

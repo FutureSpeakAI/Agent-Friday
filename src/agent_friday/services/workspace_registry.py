@@ -136,6 +136,22 @@ def resolve(name: str) -> str | None:
     return None
 
 
+def boundary(ws_id: str) -> dict:
+    """What "this workspace" is, for evolution (salon spec §4.9.1 item 5): a
+    native workspace's declared set of components, or a bundle. KeyError
+    for an id that names neither."""
+    w = get(ws_id)
+    if w is not None:
+        b = dict(w.get("boundary") or {})
+        b.setdefault("kind", "native")
+        b.setdefault("components", [])
+        return b
+    from agent_friday.services import workspace_bundles as _wb
+    if _wb.get(ws_id) is not None:
+        return {"kind": "bundle"}
+    raise KeyError(ws_id)
+
+
 def tool_list() -> str:
     """The workspaces as a tool description names them: each id, with its
     name beside it where the two differ ("contacts (People)")."""
