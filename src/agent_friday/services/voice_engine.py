@@ -1099,6 +1099,24 @@ def _tool_answer_share_request(inp, session=None):
     words = session.get("owner_text", "") if isinstance(session, dict) else ""
     from agent_friday.services import local_context as _lc
     res = _lc.decide_by_voice(rid, words, _voice_room_mode(), claimed)
+    if res.get("revise"):
+        # A yes with a condition attached. It approves nothing: the condition
+        # is applied here, the card comes back as a new version, and he is
+        # asked again about the text he has now actually seen.
+        rev = _lc.revise_by_voice(rid, res.get("instruction") or "")
+        if not rev.get("ok"):
+            return ("NOT SENT, and nothing was decided: his yes had a "
+                    "condition attached, so it is not consent to the text on "
+                    "the card, and the change could not be made ("
+                    + str(rev.get("error")) + "). Say that in one sentence, "
+                    "ask him how he wants it changed, and send nothing.")
+        # What changed, in counts. The draft is still unapproved, so none of
+        # its words may come back out here.
+        return ("NOT SENT: his yes had a condition, so the card was changed "
+                "on his screen instead of being sent - "
+                + _lc.change_summary(rid) + ". Read back what he asked you to "
+                "change, in his own words, then ask him to say 'send it' or "
+                "'don't send it'. Do not read the card's own text aloud.")
     if not res.get("ok"):
         return ("NOT RECORDED: " + str(res.get("error"))
                 + ". Ask him directly whether to send it or not.")
