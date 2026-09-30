@@ -289,3 +289,18 @@ def test_the_new_tools_render_as_real_gemini_declarations():
     for name in ("navigate_to", "check_situation", "run_workflow",
                  "workflow_status"):
         assert name in rendered, "%s never reaches Gemini" % name
+
+
+def test_the_handoff_tool_names_the_private_domains_it_is_for():
+    """The description is the only instruction the cloud model gets.
+
+    Without naming the domains, a request about mail or money is answered from
+    whatever the model happens to hold instead of going to the local model —
+    which is the one thing this path exists to prevent.
+    """
+    spec = next(t for t in ve._VOICE_LIVE_TOOLS if t[0] == "ask_local_for_context")
+    desc = spec[1].lower()
+    for domain in ("mail", "vault", "wiki", "files", "contacts", "finances",
+                   "health"):
+        assert domain in desc, "the handoff should be reached for %r" % domain
+    assert "only a summary" in desc, "say what the model actually receives"

@@ -324,14 +324,20 @@ _VOICE_LIVE_TOOLS = [
       "title": ("string", "A short title for the task list, e.g. 'Draft reply to the school'.")},
      ["request"]),
     ("ask_local_for_context",
-     "Ask the user's LOCAL model a question that needs his private context (his "
-     "notes, calendar, memory, the people in his life, his preferences), for "
-     "example 'What do they enjoy doing on weekends, and what is on their calendar "
-     "next weekend?'. The local model answers from his own data; names become "
-     "placeholders like [their partner]; and he approves the exact text on a card "
-     "(or by voice) before you receive it. Say one short sentence that you're "
-     "asking his OK to share some context, then carry on. The approved context is "
-     "handed to you when he decides; if he declines, carry on without it.",
+     "Ask the user's LOCAL model a question that needs his private data, and use "
+     "this INSTEAD of answering from anything you were told, whenever a request "
+     "reaches his mail, his vault, his wiki, his files, his contacts, his "
+     "finances or his health — as well as his notes, calendar, memory, the people "
+     "in his life and his preferences. Example: 'What do they enjoy doing on "
+     "weekends, and what is on their calendar next weekend?'. The local model "
+     "reads the raw data here on his machine; you receive only a summary with the "
+     "identifiers replaced — names become placeholders like [their partner] — and "
+     "he approves that exact text on a card (or by voice) before any of it "
+     "reaches you. Reach for this rather than guessing or asking him to read "
+     "something out: it is how private work gets done without the private part "
+     "leaving his PC. Say one short sentence that you're asking his OK to share "
+     "some context, then carry on. The approved context is handed to you when he "
+     "decides; if he declines, carry on without it.",
      {"question": ("string", "The question for his local model, in full.")}, ["question"]),
     ("navigate_to",
      "Open ONE specific thing on the user's Friday desktop, on screen: an email "
