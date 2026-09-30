@@ -1064,8 +1064,30 @@ event, and the panel re-reads the line after each step. `cost_calls` carries
 Costs splits by either. The agent loops set the current model before a tool
 runs, so each step and receipt names the seat that made it. Tools
 `codebase_seat`, `codebase_key` and `codebase_costs` work in chat and by
-voice. Guest keys, the per-call key, the Costs view and the `claude_agent`
-engine follow in the next increments.
+voice.
+
+*As built (Phase 3, second and third increments):* a **guest key** is stored
+in the credential store under a name only that codebase uses, with label,
+provider, cap and date beside it and never the key; a turn under it calls
+Anthropic on a client built for that key, so the owner's key is never sent
+for that codebase's work; the payer's cap stops a call before it is made,
+and Friday adds none; a refused key turns the header red, names whose key
+failed, and the turn stops with nothing falling back; removal deletes the
+key and says so. Guest keys are Anthropic only for now. Settings → Salon
+shows, per codebase, the header, the seats, whose key pays and the guest
+keys; Costs splits by key and by codebase. The **`claude_agent` engine**
+runs the user's own Claude Code CLI for one task in the codebase's folder as
+a process on this PC (B1, disclosed), with a scrubbed environment pointed at
+the **salon proxy**: loopback only, provider API paths only, the dummy key
+swapped for the real one on the way out, answers relayed as they stream, and
+a record of host, path, method, status and size per request with no body
+and no key. Everything the agent changed becomes one step whose receipt
+names the engine, the hosts reached, any refused requests and the
+disclosure. A missing CLI is a typed blocker; a failed run commits nothing.
+The engine is chosen per codebase (`codebase_engine`) and a run is refused
+until it is. Not run here: the money measurement of a reference session and
+the §12 capture of hosts Claude's agent reaches beyond the API, both of
+which spend the owner's tokens and wait on the owner.
 
 ### 4.8 Every change is a step
 
@@ -1794,10 +1816,13 @@ not count.
     - the workspace and its improved copy side by side;
     - the swap card;
     - the installed versions, and after rollback.
-  - **Phase 3:**
-    - the header line on the local seat;
-    - the header line on the cloud seat;
-    - the header line on a guest key;
+  - **Phase 3 (taken and looked at, 2026-09-30; the private server has no
+    resident local model, so the local-seat wording is proven by unit test):**
+    - the header line with no local model resident, and after "use Opus for
+      this one";
+    - the header line on a guest key, and red after a rejection;
+    - Settings → Salon with a guest key;
+    - the header line at 390 px;
     - Costs split by key.
   - **Phase 4:**
     - an install announcement line;
