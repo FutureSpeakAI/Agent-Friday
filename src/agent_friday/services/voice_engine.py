@@ -1338,7 +1338,16 @@ def _voice_tool_run(name, args, send_client, session=None):
             # what ring 2 asks for. Ring 3 still consults the Computer
             # Control grant independently, so a screenshot with CC off
             # comes back as an honest deny, not a silent nothing.
-            return _execute_tool(name, args, session_ctx=_voice_ctx(session))
+            # The conversation this call belongs to, for any shared tool that
+            # starts work reporting back to it (make_podcast pins "this
+            # conversation" from it); docs/reference/voice-tool-contract.md step 4.
+            from agent_friday.services import agent as _ag
+            _cid = session.get("conversation_id") if isinstance(session, dict) else None
+            _tok = _ag._CURRENT_CONVERSATION.set(_cid)
+            try:
+                return _execute_tool(name, args, session_ctx=_voice_ctx(session))
+            finally:
+                _ag._CURRENT_CONVERSATION.reset(_tok)
     except Exception as e:
         _log.error("Voice tool %r raised %s: %s", name, type(e).__name__, e, exc_info=True)
         return (f"I ran into a problem using the {name} tool: {type(e).__name__}. "

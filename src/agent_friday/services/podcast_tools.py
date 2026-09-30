@@ -141,6 +141,19 @@ def _tool_make_podcast(inp):
                            "message": "Give me at least one source: a file, wiki page, "
                                       "knowledge entry, conversation, creation, dataset, "
                                       "web page or some text."})
+    # "This conversation": pinned now, while the chat or voice call that asked
+    # is the current one. The episode is rendered later, on another thread.
+    for r in refs:
+        if r.get("kind") == "conversation" and not r.get("id"):
+            try:
+                from agent_friday.services.agent import _CURRENT_CONVERSATION
+                r["id"] = _CURRENT_CONVERSATION.get() or ""
+            except Exception:
+                r["id"] = ""
+            if not r["id"]:
+                return json.dumps({"status": "error",
+                                   "message": "I couldn't tell which conversation you mean. "
+                                              "Ask from inside the conversation, or name it."})
     try:
         ep = pe.create(refs, title=str(inp.get("title") or ""),
                        length=str(inp.get("length") or "standard"),

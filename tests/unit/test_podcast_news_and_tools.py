@@ -338,3 +338,31 @@ def test_the_tools_are_classified_internal():
     from agent_friday.governance import action_gate
     for n in NAMES:
         assert n in action_gate.INTERNAL_TOOLS
+
+
+# ── "this conversation", from chat and from voice ──────────────────────────
+
+def test_a_podcast_of_this_conversation_from_chat(_home):
+    from agent_friday.services import agent
+    tok = agent._CURRENT_CONVERSATION.set("conv-chat-1")
+    try:
+        out = json.loads(podcast_tools._tool_make_podcast({"sources": [{"kind": "conversation"}]}))
+    finally:
+        agent._CURRENT_CONVERSATION.reset(tok)
+    assert out["status"] == "queued"
+    assert pe.load(out["episode_id"])["refs"] == [{"kind": "conversation", "id": "conv-chat-1"}]
+
+
+def test_a_podcast_of_this_conversation_by_voice(_home, monkeypatch):
+    from agent_friday.services import voice_engine as ve
+    from agent_friday.services import agent
+    monkeypatch.setattr(agent, "_execute_tool", lambda name, args, session_ctx=None:
+                        podcast_tools._tool_make_podcast(args))
+    out = json.loads(ve._voice_tool_run("make_podcast", {"sources": [{"kind": "conversation"}]},
+                                        lambda obj: None, session={"conversation_id": "conv-voice-7"}))
+    assert pe.load(out["episode_id"])["refs"] == [{"kind": "conversation", "id": "conv-voice-7"}]
+
+
+def test_no_conversation_to_use_is_said_plainly(_home):
+    out = json.loads(podcast_tools._tool_make_podcast({"sources": [{"kind": "conversation"}]}))
+    assert out["status"] == "error" and "conversation" in out["message"]
