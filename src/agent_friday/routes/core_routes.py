@@ -1127,6 +1127,14 @@ def api_onboarding_acks():
             state[k] = bool(data[k])
     if data.get("updates_choice") in ("on", "off"):
         state["updates_choice"] = data["updates_choice"]
+    if data.get("call_mode_choice") in ("automatic", "ask", "off"):
+        # The choice is the setting: recorded here for the wizard's "what is
+        # unanswered" and written to settings, where call_watch reads it.
+        state["call_mode_choice"] = data["call_mode_choice"]
+        try:
+            core._save_settings({"call_mode": data["call_mode_choice"]})
+        except Exception as e:
+            return api_error(e, "Couldn't save the call mode")
     state["updated"] = datetime.now(timezone.utc).isoformat()
     try:
         core.FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
@@ -1194,6 +1202,9 @@ _VOICE_ENUMS = {
     # Clean-sheet §8.1: per-stage GPU policy, read by voice_manifest.
     "voice_ear_gpu": ("never", "if_free", "required"),
     "voice_mouth_gpu": ("never", "if_free", "required"),
+    # Not a voice key, but the same rule: an unknown value would silently
+    # resolve to automatic, which is not what was written.
+    "call_mode": ("automatic", "ask", "off"),
 }
 
 

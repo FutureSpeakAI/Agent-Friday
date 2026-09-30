@@ -65,15 +65,19 @@ def parse(entries) -> list[str]:
     return out
 
 
-def read_registry() -> list:
-    """(key, start, stop) for every app Windows has seen use the webcam."""
+def read_registry(kind: str = "webcam") -> list:
+    """(key, start, stop) for every app Windows has seen use the `kind`
+    device: "webcam" or "microphone"."""
     if sys.platform != "win32":
         return []
     try:
         import winreg
     except ImportError:  # pragma: no cover
         return []
-    root = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam"
+    if kind not in ("webcam", "microphone"):
+        return []
+    root = (r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager"
+            "\\ConsentStore\\" + kind)
     out = []
 
     def walk(path):
@@ -148,8 +152,8 @@ def _process_names() -> list[str]:
         return []
 
 
-def snapshot() -> dict:
+def snapshot(kind: str = "webcam") -> dict:
     """{'holders': [...certain...], 'candidates': [...running camera apps...]}."""
-    holders = parse(read_registry())
+    holders = parse(read_registry(kind))
     candidates = [n for n in running_camera_apps() if n not in holders]
     return {"holders": holders, "candidates": candidates}

@@ -526,6 +526,11 @@ if not _TESTING:
     except Exception as _tj_err:
         print(f"  Task journal: restore skipped ({_tj_err})")
     start_scheduler()
+    try:
+        from agent_friday.services import call_watch as _call_watch
+        _call_watch.start()
+    except Exception as _cw_err:
+        print(f"  Call watch: not started ({_cw_err})")
 
     if _notif_engine:
         threading.Thread(target=_notification_trigger_loop, daemon=True).start()

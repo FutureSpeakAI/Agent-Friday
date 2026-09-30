@@ -114,6 +114,40 @@ def camera_holders():
                     "candidates": snap["candidates"]})
 
 
+@desktop_bp.route("/api/call/state", methods=["GET"])
+@login_required
+def call_state():
+    """Whether Friday is standing back for a call, and the call_mode setting."""
+    from agent_friday.services import call_watch
+    return jsonify(dict(status="ok", **call_watch.watch().snapshot()))
+
+
+@desktop_bp.route("/api/call/start", methods=["POST"])
+@login_required
+def call_start():
+    """Stand back by hand (the chip, or a spoken 'I'm on a call')."""
+    from agent_friday.services import call_watch
+    body = request.get_json(silent=True) or {}
+    return jsonify(dict(status="ok", **call_watch.watch().start(str(body.get("app") or ""))))
+
+
+@desktop_bp.route("/api/call/end", methods=["POST"])
+@login_required
+def call_end():
+    from agent_friday.services import call_watch
+    return jsonify(dict(status="ok", **call_watch.watch().end()))
+
+
+@desktop_bp.route("/api/call/decide", methods=["POST"])
+@login_required
+def call_decide():
+    """The answer to an 'ask' chip: {accept: bool, app}."""
+    from agent_friday.services import call_watch
+    body = request.get_json(silent=True) or {}
+    return jsonify(dict(status="ok", **call_watch.watch().decide(
+        bool(body.get("accept")), str(body.get("app") or ""))))
+
+
 @desktop_bp.route("/api/situation", methods=["GET"])
 @login_required
 def situation_read():

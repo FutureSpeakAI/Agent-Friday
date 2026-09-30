@@ -645,6 +645,16 @@ function fridayRunActions(actions){
       }else if(a.type==='landing'){
         // show_my_day: the start screen's cluster now, or when it shows on its own.
         window.dispatchEvent(new CustomEvent('friday:landing',{detail:{summon:!!a.summon,mode:a.mode||null,via:a.via||'friday'}}));
+      }else if(a.type==='call'){
+        // Call mode (services/call_watch): stand back, come back, or ask.
+        const cm=window.fridayCallMode;
+        if(cm){
+          if(a.op==='start')cm.start(a.app||'',a.by||'');
+          else if(a.op==='end')cm.end();
+          else if(a.op==='ask')cm.ask(a.app||'');
+          else if(a.op==='declined')cm.declined();
+          a.result={call:cm.state.active,app:cm.state.app};
+        }
       }else if(a.type==='tracking'){
         // Voice or chat tuning the hologram window (hologram_tools). The
         // server has already persisted the dials; this applies them live.
@@ -16525,6 +16535,61 @@ const TrackingSlider = StSlider;
 // `part` picks which slice of the tracking settings to show: the camera
 // controls live in Voice & Tracking, the dock's depth in Appearance & 3D, and
 // the debug overlay in Advanced. All three edit the one `tracking` object.
+// ── CALL MODE ────────────────────────────────────────────────────────────
+// Whether Friday stands back on her own when a call takes the camera or the
+// mic (services/call_watch). The recommended option is labelled, not
+// pre-selected: the stored value is what shows.
+function CallModePanel({
+  s,
+  save
+}) {
+  const cur = s && s.call_mode || 'automatic';
+  const opts = [{
+    k: 'automatic',
+    l: 'Stand back on her own (recommended)',
+    d: 'When a call takes the camera or the mic, Friday lets go of both, holds the scene still and parks the local brain; she comes back when the call ends.'
+  }, {
+    k: 'ask',
+    l: 'Ask me first',
+    d: 'A chip asks once per call.'
+  }, {
+    k: 'off',
+    l: 'Don\'t',
+    d: 'Friday keeps going through calls. "I\'m on a call" still works by voice or from the chip.'
+  }];
+  return /*#__PURE__*/React.createElement(StSection, {
+    title: "Calls",
+    desc: "A video call needs the camera, the mic and most of this computer's memory: the same things Friday's local brain and 3D scene use."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Call mode",
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6
+    }
+  }, opts.map(o => /*#__PURE__*/React.createElement("button", {
+    key: o.k,
+    type: "button",
+    role: "radio",
+    "aria-checked": cur === o.k,
+    className: `settings-btn ${cur === o.k ? 'active' : ''}`,
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      textAlign: 'left'
+    },
+    onClick: () => save({
+      call_mode: o.k
+    })
+  }, /*#__PURE__*/React.createElement("div", null, o.l), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--st-dim)',
+      marginTop: 2
+    }
+  }, o.d)))));
+}
 function TrackingPanel({
   s,
   save,
@@ -19318,6 +19383,9 @@ function SettingsWS() {
   }), tab === 'voice' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabVoice, {
     s: s,
     save: save
+  }), /*#__PURE__*/React.createElement(CallModePanel, {
+    s: s,
+    save: save
   }), /*#__PURE__*/React.createElement(StSection, {
     title: "Head and hand tracking"
   }, /*#__PURE__*/React.createElement(TrackingPanel, {
@@ -21932,6 +22000,10 @@ function App(){
         visible: document.visibilityState === 'visible',
         focused: document.hasFocus(),
         open: open.map(win),
+        devices: {
+          camera: !!(window.FridayCamera && window.FridayCamera.stream),
+          mic: !!(window.fridayVoice && window.fridayVoice.isOn && window.fridayVoice.isOn())
+        },
         focused_window: focused,
         chat: { open: kind === 'chat' || !!d.chatOpen },
         landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined
@@ -21962,6 +22034,9 @@ function App(){
       timer = setTimeout(() => report(false), ms == null ? 300 : ms);
     };
     deskSoonRef.current = soon;
+    // The camera and the voice session say when they change, so the report
+    // that tells a call from Friday's own device use is never stale.
+    window.fridayDeskSoon = soon;
     const same = (key, a, b) => {
       const n = v => {
         let s = String(v == null ? '' : v).trim().toLowerCase().replace(/\\/g, '/');

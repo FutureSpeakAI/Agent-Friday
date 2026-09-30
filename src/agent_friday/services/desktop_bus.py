@@ -261,6 +261,21 @@ def focused_workspace(now: float | None = None) -> str | None:
     return None
 
 
+def page_devices(now: float | None = None) -> dict:
+    """{camera: bool, mic: bool} as the freshest desktop page last reported
+    them, so a browser holding a device can be told from a call in a browser
+    (services/call_watch). Empty when no page has said."""
+    now = now or time.time()
+    with _LOCK:
+        recs = [r for r in _CLIENTS.values()
+                if r.get("state_at") and r.get("kind") == "desktop" and _fresh(r, now)]
+        if not recs:
+            return {}
+        best = max(recs, key=lambda r: r.get("state_at") or 0)
+        d = (best.get("state") or {}).get("devices")
+    return dict(d) if isinstance(d, dict) else {}
+
+
 def reset() -> None:
     """Forget every page (tests)."""
     with _LOCK:

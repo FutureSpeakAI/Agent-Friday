@@ -310,12 +310,26 @@ window.addEventListener('DOMContentLoaded',function(){
         #camera-status {
             /* Under the top bar's status chips, clear of the dock, which
                wraps to two rows on a narrow window and would cover it. */
-            position: fixed; top: 44px; right: 16px; z-index: 200; max-width: 46vw;
+            position: fixed; top: 66px; right: 16px; z-index: 200; max-width: 46vw;
             font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: .04em;
             color: rgba(0, 212, 255, 0.78); text-align: right; pointer-events: none;
             opacity: 0; transition: opacity 0.3s;
         }
         #camera-status.shown { opacity: 1; }
+        /* Call mode: a small chip under the top bar while Friday stands back
+           for a call, or asks whether to. Friday's palette; nothing amber. */
+        #call-mode-chip {
+            position: fixed; top: 42px; right: 16px; z-index: 201; display: none;
+            align-items: center; gap: 8px; padding: 4px 10px; border-radius: 999px;
+            font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: .04em;
+            color: #bfefff; background: rgba(0, 40, 60, 0.82);
+            border: 1px solid rgba(0, 212, 255, 0.45); box-shadow: 0 0 10px rgba(0, 212, 255, 0.18);
+        }
+        #call-mode-chip.shown { display: flex; }
+        #call-mode-chip button {
+            cursor: pointer; font-family: inherit; font-size: 10px; padding: 2px 9px; border-radius: 999px;
+            color: #e8fbff; background: rgba(0, 212, 255, 0.16); border: 1px solid rgba(0, 212, 255, 0.5);
+        }
 
         /* --- REACT UI LAYER STYLES --- */
 
@@ -796,6 +810,7 @@ window.addEventListener('DOMContentLoaded',function(){
         html.ws-standalone #hud-overlay,
         html.ws-standalone #camera-indicator,
         html.ws-standalone #camera-status,
+        html.ws-standalone #call-mode-chip,
         html.ws-standalone #hand-cursor,
         html.ws-standalone #state-indicator,
         html.ws-standalone #chrome-orb-exit { display: none !important; }
@@ -860,6 +875,7 @@ window.addEventListener('DOMContentLoaded',function(){
         body.chrome-chat #hud-overlay,
         body.chrome-chat #camera-indicator,
         body.chrome-chat #camera-status,
+        body.chrome-chat #call-mode-chip,
         body.chrome-chat #hand-cursor,
         body.chrome-chat #state-indicator { display: none !important; }
         body.chrome-chat { background: #070b14; }
@@ -979,6 +995,7 @@ window.addEventListener('DOMContentLoaded',function(){
         body.chrome-orb .hud-corner { display: none !important; }
         body.chrome-orb #camera-indicator,
         body.chrome-orb #camera-status,
+        body.chrome-orb #call-mode-chip,
         body.chrome-orb #hand-cursor { display: none !important; }
         body.chrome-orb #state-indicator {
             left: 50% !important;
@@ -3570,6 +3587,7 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- Parallax Tracker Dot -->
     <div id="camera-indicator"></div>
     <div id="camera-status" role="status" aria-live="polite"></div>
+    <div id="call-mode-chip" role="status" aria-live="polite"></div>
 
     <div id="hud-overlay">
         <!-- Minimalist Optical Arcs -->
@@ -4520,6 +4538,95 @@ window.addEventListener('DOMContentLoaded',function(){
             if (cursor) cursor.classList.add('hidden');
         }
         function startSharedCamera() { FridayCamera.start(trackingFrame, trackingLost); }
+
+        // ── CALL MODE ───────────────────────────────────────────────────
+        // Friday gets out of the way of a call (services/call_watch decides
+        // when; the action bus says so). The webcam and the mic are let go,
+        // the scene holds its last frame, and a chip says what is happening.
+        // When the call ends, tracking that was on comes back and the scene
+        // resumes; the head filter eases the view in rather than snapping.
+        let callHold = false;
+        const fridayCallMode = (function () {
+            const state = { active: false, app: '', asking: '', wasHolo: false, wasHands: false };
+            function chip() { return document.getElementById('call-mode-chip'); }
+            function post(url, body) {
+                return (window.apiFetch || fetch)(url, { method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+            }
+            function button(label, onClick) {
+                const b = document.createElement('button');
+                b.type = 'button'; b.textContent = label; b.onclick = onClick;
+                return b;
+            }
+            function render() {
+                const c = chip();
+                if (!c) return;
+                c.innerHTML = '';
+                if (state.active) {
+                    const t = document.createElement('span');
+                    t.textContent = '\u25cf On a call' + (state.app ? ' \u00b7 ' + state.app : '')
+                                    + ' \u2014 Friday is standing back';
+                    c.appendChild(t);
+                    c.appendChild(button('Done', () => { post('/api/call/end').catch(() => {}); end(); }));
+                    c.classList.add('shown');
+                } else if (state.asking) {
+                    const t = document.createElement('span');
+                    t.textContent = 'A call started' + (state.asking ? ' in ' + state.asking : '') + '. Stand back?';
+                    c.appendChild(t);
+                    c.appendChild(button('Yes', () => {
+                        const app = state.asking;
+                        post('/api/call/decide', { accept: true, app: app }).catch(() => {});
+                        start(app, 'asked');
+                    }));
+                    c.appendChild(button('Not now', () => {
+                        post('/api/call/decide', { accept: false, app: state.asking }).catch(() => {});
+                        state.asking = ''; render();
+                    }));
+                    c.classList.add('shown');
+                } else {
+                    c.classList.remove('shown');
+                }
+            }
+            function start(app, by) {
+                if (state.active) { state.app = app || state.app; render(); return; }
+                state.active = true; state.app = app || ''; state.asking = ''; state.by = by || '';
+                state.wasHolo = isHologramMode; state.wasHands = isHandTrackingMode;
+                // The webcam: both modes off releases it (releaseCameraIfUnused).
+                if (isHologramMode) toggleHologram();
+                if (isHandTrackingMode) toggleHands();
+                // The mic: the voice session, if one is open. Starting one again
+                // during the call is the owner's, by the button, and works.
+                try {
+                    if (window.fridayVoice && window.fridayVoice.isOn && window.fridayVoice.isOn()) window.fridayVoice.stop();
+                } catch (e) {}
+                callHold = true;
+                render();
+                if (window.fridayDeskSoon) window.fridayDeskSoon(100);
+            }
+            function end() {
+                if (!state.active) { state.asking = ''; render(); return; }
+                state.active = false; state.app = '';
+                callHold = false;
+                if (state.wasHolo && !isHologramMode) toggleHologram();
+                if (state.wasHands && !isHandTrackingMode) toggleHands();
+                state.wasHolo = state.wasHands = false;
+                render();
+                if (window.fridayDeskSoon) window.fridayDeskSoon(100);
+            }
+            function ask(app) { if (!state.active) { state.asking = app || 'another app'; render(); } }
+            function declined() { state.asking = ''; render(); }
+            return { start, end, ask, declined, state, isOn: () => state.active };
+        })();
+        window.fridayCallMode = fridayCallMode;
+        // FridayCamera tells the desktop report when it takes or lets go of the
+        // webcam, so the server can tell Friday's own camera use from a call's.
+        (function () {
+            const s = FridayCamera.state;
+            let last = s.status;
+            setInterval(() => {
+                if (s.status !== last) { last = s.status; if (window.fridayDeskSoon) window.fridayDeskSoon(100); }
+            }, 500);
+        })();
         // A camera nobody is reading is a camera another app cannot open.
         function releaseCameraIfUnused() {
             if (!isHologramMode && !isHandTrackingMode) FridayCamera.stop();
@@ -7152,6 +7259,9 @@ window.addEventListener('DOMContentLoaded',function(){
             // With the context gone, every draw call below is a no-op against a
             // dead context and the per-frame work is wasted. Idle until restore.
             if (sceneContextLost) return;
+            // On a call the scene holds its last frame: nothing is simulated
+            // and nothing is drawn, so the GPU is the call's.
+            if (callHold) return;
             const delta = Math.min(clock.getDelta(), 0.1);
             // Take back last frame's gesture rotations before anything moves.
             FridayGestureScene.begin();
@@ -8542,6 +8652,16 @@ function fridayRunActions(actions) {
         window.dispatchEvent(new CustomEvent('friday:landing', {
           detail: { summon: !!a.summon, mode: a.mode || null, via: a.via || 'friday' }
         }));
+      } else if (a.type === 'call') {
+        // Call mode (services/call_watch): stand back, come back, or ask.
+        const cm = window.fridayCallMode;
+        if (cm) {
+          if (a.op === 'start') cm.start(a.app || '', a.by || '');
+          else if (a.op === 'end') cm.end();
+          else if (a.op === 'ask') cm.ask(a.app || '');
+          else if (a.op === 'declined') cm.declined();
+          a.result = { call: cm.state.active, app: cm.state.app };
+        }
       } else if (a.type === 'tracking') {
         // Voice or chat tuning the hologram window (hologram_tools). The
         // server has already persisted the dials; this applies them live.
@@ -9379,6 +9499,13 @@ function fridayStandDownBanner(state) {
   try {
     var active = !!(state && state.active);
     var bar = document.getElementById('friday-stand-down-bar');
+    // A call's stand-down is shown by the call-mode chip, not this bar; the
+    // poll also keeps the chip right after a restart.
+    if (active && state.kind === 'call') {
+      if (bar) bar.remove();
+      if (window.fridayCallMode && !window.fridayCallMode.isOn()) window.fridayCallMode.start(state.app || '', 'restart');
+      return;
+    }
     if (!active) { if (bar) bar.remove(); return; }
     if (!bar) {
       bar = document.createElement('div');
@@ -42847,6 +42974,7 @@ function ConsentFlow({ onDone }) {
   const [pass2, setPass2] = React.useState('');
   const [mode, setMode] = React.useState('');
   const [upd, setUpd] = React.useState('');
+  const [calls, setCalls] = React.useState('');
   const [err, setErr] = React.useState('');
   const [saving, setSaving] = React.useState(false);
 
@@ -42885,6 +43013,9 @@ function ConsentFlow({ onDone }) {
         body: JSON.stringify({ enabled: upd === 'on' })
       }).catch(() => {});
     }
+    // The recommended answer is labelled, never pre-selected; the acks route
+    // writes the choice to settings, where call_watch reads it.
+    if (s.name === 'calls') ack({ call_mode_choice: calls });
     if (last) { onDone({ vault_passphrase: pass, routing_mode: mode || 'cloud_only' }); return; }
     setI(i + 1);
   };
@@ -42969,6 +43100,27 @@ function ConsentFlow({ onDone }) {
           style: { fontSize: 12, color: '#9aa5b1', marginTop: 3 }
         }, c.detail)))),
 
+    s.name === 'calls' && React.createElement('div', {
+      role: 'radiogroup', 'aria-label': s.title, style: { marginBottom: 18 }
+    },
+      (s.choices || []).map(c => React.createElement('div', {
+        key: c.value, role: 'radio', tabIndex: 0, 'aria-checked': calls === c.value,
+        onClick: () => setCalls(c.value),
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setCalls(c.value); } },
+        style: {
+          padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
+          border: '1px solid ' + (calls === c.value ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
+          background: calls === c.value ? 'rgba(0,212,255,0.08)' : 'transparent'
+        }
+      },
+        React.createElement('div', { style: { fontWeight: 600, color: '#fff' } }, c.label,
+          c.recommended && React.createElement('span', {
+            style: { marginLeft: 10, fontSize: 10, letterSpacing: 1.2, color: '#00d4ff' }
+          }, 'RECOMMENDED')),
+        React.createElement('div', {
+          style: { fontSize: 12, color: '#9aa5b1', marginTop: 3 }
+        }, c.detail)))),
+
     s.name === 'updates' && React.createElement('div', {
       role: 'radiogroup', 'aria-label': s.title, style: { marginBottom: 18 }
     },
@@ -43007,7 +43159,7 @@ function ConsentFlow({ onDone }) {
           : React.createElement('button', {
               className: 'btn',
               onClick: advance,
-              disabled: (s.name === 'routing' && !mode) || (s.name === 'updates' && !upd)
+              disabled: (s.name === 'routing' && !mode) || (s.name === 'updates' && !upd) || (s.name === 'calls' && !calls)
             }, s.name === 'third_party' ? 'I understand' : 'Continue'))));
 }
 
@@ -50200,6 +50352,61 @@ const TrackingSlider = StSlider;
 // `part` picks which slice of the tracking settings to show: the camera
 // controls live in Voice & Tracking, the dock's depth in Appearance & 3D, and
 // the debug overlay in Advanced. All three edit the one `tracking` object.
+// ── CALL MODE ────────────────────────────────────────────────────────────
+// Whether Friday stands back on her own when a call takes the camera or the
+// mic (services/call_watch). The recommended option is labelled, not
+// pre-selected: the stored value is what shows.
+function CallModePanel({
+  s,
+  save
+}) {
+  const cur = s && s.call_mode || 'automatic';
+  const opts = [{
+    k: 'automatic',
+    l: 'Stand back on her own (recommended)',
+    d: 'When a call takes the camera or the mic, Friday lets go of both, holds the scene still and parks the local brain; she comes back when the call ends.'
+  }, {
+    k: 'ask',
+    l: 'Ask me first',
+    d: 'A chip asks once per call.'
+  }, {
+    k: 'off',
+    l: 'Don\'t',
+    d: 'Friday keeps going through calls. "I\'m on a call" still works by voice or from the chip.'
+  }];
+  return /*#__PURE__*/React.createElement(StSection, {
+    title: "Calls",
+    desc: "A video call needs the camera, the mic and most of this computer's memory: the same things Friday's local brain and 3D scene use."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Call mode",
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6
+    }
+  }, opts.map(o => /*#__PURE__*/React.createElement("button", {
+    key: o.k,
+    type: "button",
+    role: "radio",
+    "aria-checked": cur === o.k,
+    className: `settings-btn ${cur === o.k ? 'active' : ''}`,
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      textAlign: 'left'
+    },
+    onClick: () => save({
+      call_mode: o.k
+    })
+  }, /*#__PURE__*/React.createElement("div", null, o.l), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--st-dim)',
+      marginTop: 2
+    }
+  }, o.d)))));
+}
 function TrackingPanel({
   s,
   save,
@@ -54345,6 +54552,9 @@ function SettingsWS() {
     s: s,
     save: save
   }), tab === 'voice' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabVoice, {
+    s: s,
+    save: save
+  }), /*#__PURE__*/React.createElement(CallModePanel, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(StSection, {
@@ -58906,6 +59116,10 @@ function App() {
         visible: document.visibilityState === 'visible',
         focused: document.hasFocus(),
         open: open.map(win),
+        devices: {
+          camera: !!(window.FridayCamera && window.FridayCamera.stream),
+          mic: !!(window.fridayVoice && window.fridayVoice.isOn && window.fridayVoice.isOn())
+        },
         focused_window: focused,
         chat: { open: kind === 'chat' || !!d.chatOpen, conversation: d.convId || null, windows: (d.convWins || []).length },
         landing: kind === 'desktop' && d.landing ? { shown: !!d.landing.show, reason: d.landing.reason } : undefined
@@ -58936,6 +59150,9 @@ function App() {
       timer = setTimeout(() => report(false), ms == null ? 300 : ms);
     };
     deskSoonRef.current = soon;
+    // The camera and the voice session say when they change, so the report
+    // that tells a call from Friday's own device use is never stale.
+    window.fridayDeskSoon = soon;
     const same = (key, a, b) => {
       const n = v => {
         let s = String(v == null ? '' : v).trim().toLowerCase().replace(/\\/g, '/');

@@ -2575,6 +2575,11 @@ DEFAULT_SETTINGS = {
     #     region with gain is what makes small movements cover the screen.
     #   * pinch_enter/pinch_exit differ on purpose. One threshold chatters at
     #     the boundary; the gap is the hysteresis.
+    # Call mode (services/call_watch): when another app takes the camera or
+    # the mic, Friday stands back on its own - releases the webcam and mic,
+    # holds the scene, parks the brain seat - and comes back when the call
+    # ends. "automatic" (recommended), "ask" (a chip, once per call), "off".
+    "call_mode": "automatic",
     "tracking": {
         "parallax_strength": 1.0,
         "depth_strength": 1.0,

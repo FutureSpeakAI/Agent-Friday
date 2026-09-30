@@ -8091,6 +8091,15 @@ try:
 except Exception as _hte:  # never let optional deps break the agent import
     print(f"  [HOLOGRAM] registration skipped: {_hte}")
 
+# Call mode (call_mode): standing back for a call, and the setting that
+# decides whether that happens on its own. Shared into voice. See
+# services/call_tools.py.
+try:
+    from agent_friday.services import call_tools as _call_tools
+    _call_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _cte:  # never let optional deps break the agent import
+    print(f"  [CALL] registration skipped: {_cte}")
+
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
 # hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.

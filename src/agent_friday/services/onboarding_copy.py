@@ -25,7 +25,10 @@ from __future__ import annotations
 
 # Screen order. Screens 1, 2 and 4 are new; 3 replaces the old provider screen;
 # 3b is shown only when 3 chose cloud.
-SCREEN_ORDER = ("collects", "vault", "routing", "cloud_ack", "third_party", "updates")
+# The updates question stays last (test_onboarding_copy pins it); calls sit
+# just before it.
+SCREEN_ORDER = ("collects", "vault", "routing", "cloud_ack", "third_party", "calls",
+                "updates")
 
 
 # The one scheduled request to Friday's own project (GitHub's releases list).
@@ -48,6 +51,35 @@ UPDATES_CHOICES = (
     ("off", "Don't check",
      "Friday never asks. You can switch this on later in Settings, or look at "
      "the releases page yourself."),
+)
+
+
+# Calls need the webcam, the mic, the GPU and the RAM that Friday's brain
+# seat and 3D scene use. Standing back is the recommended answer; the choice
+# is the owner's, labelled but never pre-selected (first-run-and-onboarding.md
+# rule 9), and it can be changed later in Settings or by voice.
+CALLS_TITLE = "When you're on a call"
+
+CALLS = """\
+A video call needs the camera, the microphone and most of this computer's
+memory. Friday's local brain and her 3D scene use the same things, and a call
+that has to share them drops video and sound.
+
+So when another app takes the camera or the microphone - Zoom, Teams, a call
+in the browser - Friday can stand back on her own: she lets go of the camera
+and the microphone, holds her scene still, and parks her local brain so its
+memory is free. A small chip on screen says so, and when the call ends she
+comes back. Talking to her by voice still works during a call if you start
+it yourself; she never starts speaking on her own while you are on one."""
+
+CALLS_CHOICES = (
+    ("automatic", "Stand back on her own - recommended",
+     "When a call takes the camera or the microphone, Friday steps aside and "
+     "comes back when it ends."),
+    ("ask", "Ask me first",
+     "A chip asks once per call whether to stand back."),
+    ("off", "Don't",
+     "Friday keeps going through calls. You can still say 'I'm on a call'."),
 )
 
 
@@ -278,6 +310,11 @@ def screen(name: str) -> dict:
         return {"title": UPDATES_TITLE, "blocks": [UPDATES],
                 "choices": [{"value": v, "label": lbl, "detail": det}
                             for v, lbl, det in UPDATES_CHOICES]}
+    if name == "calls":
+        return {"title": CALLS_TITLE, "blocks": [CALLS],
+                "choices": [{"value": v, "label": lbl, "detail": det,
+                             "recommended": v == "automatic"}
+                            for v, lbl, det in CALLS_CHOICES]}
     raise ValueError("unknown onboarding screen: %r" % (name,))
 
 

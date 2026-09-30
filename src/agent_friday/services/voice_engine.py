@@ -655,6 +655,8 @@ _VOICE_SHARED_TOOLS = (
     # The hologram window: "make the zoom stronger", "calibrate where I'm
     # sitting", "reset the window". Persists the dials and applies them live.
     "hologram_window",
+    # Call mode: "I'm on a call", "the call is over", "ask me first on calls".
+    "call_mode",
 )
 
 
