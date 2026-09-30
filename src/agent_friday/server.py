@@ -117,11 +117,7 @@ from flask import Blueprint as _Blueprint
 # is the frozen fallback. tests/unit/test_blueprint_discovery.py fails if it
 # drifts from the actual routes/ directory, so it can't silently go stale.
 ROUTE_MODULES = [
-    'actions', 'activity', 'arbiter', 'avatar',
-    'actions', 'activity', 'arbiter',
-    'activity', 'arbiter', 'artifacts',
-    'activity', 'arbiter', 'artifacts', 'codebases',
-    'publish',
+    'actions', 'activity', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish',
     'actions', 'activity', 'arbiter', 'artifacts', 'codebases', 'publish',
     'ambient', 'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code',
     'compute', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations',
