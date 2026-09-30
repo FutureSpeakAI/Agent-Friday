@@ -302,6 +302,11 @@ def _openai_style(base: str, system: str, user: str, model: str,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "max_tokens": max_tokens, "temperature": 0.1, "stream": False,
+        # No reasoning preamble, as the daemon path's "think": False. A
+        # reasoning model left at its default can spend the whole max_tokens
+        # thinking and return an empty answer.
+        "chat_template_kwargs": {"enable_thinking": False},
+        "reasoning_effort": "none",
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
