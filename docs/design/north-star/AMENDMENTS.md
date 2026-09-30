@@ -62,6 +62,35 @@ other place that assumes data leaves the machine for measurement.
   the user's own machine, where they stay, or come from our own test
   infrastructure (the test suite, clean-machine runs and gauntlet
   measurements).
+- **The weekly ask, the one refinement.** In the owner's words: *"maybe Friday
+  should ask if it's ok to email those to futurespeak once a week."* The user
+  decides every single time, so this stays within the no-telemetry rule:
+  - **An ask, never a background send.** Friday asks once, and remembers one
+    of three answers: "Yes, ask me weekly", "Not now", or "Never ask again".
+    "Never ask again" ends it until the user turns it back on in Settings. A
+    "yes" never becomes a silent automatic send.
+  - **What each week looks like.** The ask is a card showing the exact report,
+    with **Send**, **Skip this week** and **Stop asking**.
+  - **No nagging.** The ask sits quietly in the weekly review and in Home's
+    "what's waiting" list. It never interrupts a task, and it never repeats
+    within a week.
+  - **The payload is the local Doctor report and nothing else.** That means
+    versions, failing checks, error signatures, settings drift and performance
+    numbers. It never includes conversation content, file names, email
+    addresses, contacts, or anything from the vault. The report is scrubbed by
+    the existing PII gate and the local model. The user then sees the literal
+    text that will leave, exactly as it will be sent.
+  - **It sends from the user's own email account,** so it appears in their Sent
+    folder. It is an outward action, so it goes through the normal approval
+    card and leaves a receipt. If Friday has no send permission, she prepares a
+    draft and the user presses send. Friday never asks for wider email
+    permissions just for this.
+  - **It goes to a FutureSpeak address,** named in one constant. The card
+    carries a one-paragraph, plain-language promise of what FutureSpeak does
+    with the report.
+  - **Local-only mode and off-the-record.** In local-only mode it never runs
+    unless the user explicitly says yes there too. Nothing from an
+    off-the-record session enters the report.
 - **§35's crash-free rate** is therefore measured by the test infrastructure
   and by local Doctor history. It is never collected from users' machines.
 
