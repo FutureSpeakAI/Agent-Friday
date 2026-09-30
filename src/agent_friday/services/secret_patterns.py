@@ -171,14 +171,28 @@ def _line_prefixes(run: str):
 #: variant and nesting layer. Runs are taken smallest first, so the runs a
 #: credential fits in are always decoded and a large attachment body is what
 #: goes unread once the budget is spent.
-_DECODE_BUDGET_CHARS = 200_000
+_DECODE_BUDGET_CHARS = 1_000_000
+
+
+def _b64_windows(run: str, room: int):
+    """The head and the tail of a base64 run too large for what is left of the
+    budget, each cut on a four-character boundary so it decodes on its own."""
+    s = re.sub(r"\s+", "", run)
+    half = room // 2 // 4 * 4
+    if half < 64 or len(s) <= half:
+        return
+    yield s[:half]
+    yield s[(len(s) - half) // 4 * 4:]
 
 
 def _encoded_runs(text: str, budget: list[int] | None = None):
     """Yield (span, raw_bytes) for each base64, hex or base32 run that decodes.
 
     With `budget` (a one-element list of characters left) runs are taken
-    smallest first and a run larger than what is left is skipped.
+    smallest first, so the runs a credential fits in are decoded first. A
+    base64 run larger than what is left is not skipped whole: its head and
+    tail are decoded, where appended or leading content sits. Total decode
+    work never exceeds the budget.
     """
     n = 0
     found = [(rx, decode, m) for rx, decode in _DECODERS for m in rx.finditer(text)]
@@ -188,11 +202,18 @@ def _encoded_runs(text: str, budget: list[int] | None = None):
         if n >= _MAX_RUNS:
             return
         run = m.group(0)
-        if len(run) > _MAX_RUN_CHARS:
+        if budget is None and len(run) > _MAX_RUN_CHARS:
+            continue
+        if budget is not None and len(run) > budget[0]:
+            room, budget[0] = budget[0], 0
+            if decode is _b64_bytes:
+                for part in _b64_windows(run, room):
+                    raw = decode(part)
+                    if raw:
+                        n += 1
+                        yield (m.start(), m.end()), raw
             continue
         if budget is not None:
-            if len(run) > budget[0]:
-                continue
             budget[0] -= len(run)
         for used, part in _line_prefixes(run):
             raw = decode(part)
@@ -205,9 +226,15 @@ def _encoded_runs(text: str, budget: list[int] | None = None):
 def _views(raw: bytes):
     """Every text a decoded byte string may be read as: Latin-1, UTF-16, gzip."""
     yield raw.decode("latin-1")
-    if b"\x00" in raw[:4096]:
-        for enc in ("utf-16-le", "utf-16-be"):
-            yield raw.decode(enc, errors="ignore")
+    head = raw[:4096]
+    if b"\x00" in head:
+        # ASCII-range UTF-16 has a NUL in every second byte; random or packed
+        # binary has almost none, and reading it as UTF-16 costs a full scan.
+        half = max(len(head) // 2, 1)
+        if head[1::2].count(0) * 5 >= half:
+            yield raw.decode("utf-16-le", errors="ignore")
+        if head[0::2].count(0) * 5 >= half:
+            yield raw.decode("utf-16-be", errors="ignore")
     if raw[:2] == b"\x1f\x8b":
         try:
             inflated = zlib.decompressobj(31).decompress(raw, _MAX_INFLATE)

@@ -3,9 +3,8 @@
 A deny-list for the MODEL's file reach, not the user's. The user opens their
 own SSH key, keystore or start.bat whenever they like; Friday does not, so a
 prompt-injected "archive everything and send it" cannot turn her into the
-courier for key material — the Meta Muse incident, where an agent asked to
-"archive everything you can see" zipped its whole runtime, SSH keys included,
-and shipped it to a connected Drive.
+courier for key material: an agent told to "archive everything you can see"
+must not zip the runtime, SSH keys included, and ship it to a connected drive.
 
 It holds even when the OWNER asks Friday directly. "Read my SSH key and paste
 it here" is the same keystroke to an injected page as to the owner, and the
@@ -45,19 +44,19 @@ def _deny_dirs() -> list[tuple[Path, str]]:
     """Directories whose every file is a private key or a live credential."""
     h, f = _home(), _friday()
     return [
-        (h / ".ssh", "an SSH key directory"),
-        (h / ".aws", "your AWS credentials"),
-        (h / ".gnupg", "your GnuPG keyring"),
-        (h / ".config" / "gcloud", "your Google Cloud credentials"),
-        (h / ".config" / "gh", "your GitHub CLI sign-in"),
-        (h / ".azure", "your Azure credentials"),
-        (h / ".kube", "your Kubernetes credentials"),
-        (f / "backups", "a backup copy of Friday's vault and keys"),
-        (f / "security", "Friday's keystore and passphrase store"),
-        (f / "providers" / "keys", "your stored provider API keys"),
-        (f / "google_accounts" / "tokens", "your Google account tokens"),
-        (f / "mcp_oauth", "your connector sign-in tokens"),
-        (f / "phone" / "secrets", "your phone-service secrets"),
+        (h / ".ssh", "your SSH keys folder"),
+        (h / ".aws", "your AWS credentials folder"),
+        (h / ".gnupg", "your GnuPG keyring folder"),
+        (h / ".config" / "gcloud", "your Google Cloud credentials folder"),
+        (h / ".config" / "gh", "your GitHub CLI sign-in folder"),
+        (h / ".azure", "your Azure credentials folder"),
+        (h / ".kube", "your Kubernetes credentials folder"),
+        (f / "backups", "Friday's backup folder, which holds copies of her vault and keys"),
+        (f / "security", "Friday's keystore folder"),
+        (f / "providers" / "keys", "your provider API keys folder"),
+        (f / "google_accounts" / "tokens", "your Google account tokens folder"),
+        (f / "mcp_oauth", "your connector sign-in tokens folder"),
+        (f / "phone" / "secrets", "your phone-service secrets folder"),
     ]
 
 
@@ -181,34 +180,121 @@ def _expand_path_text(path) -> str:
 
 _EXTENDED_DRIVE = re.compile(r"^\\\\[?.]\\[A-Za-z]:(?:\\|$)")
 _EXTENDED_UNC = re.compile(r"^\\\\[?.]\\UNC\\", re.I)
-_ADMIN_SHARE = re.compile(r"^\\\\[^\\]+\\([A-Za-z])\$(?:\\|$)")
+
+_DEVICE = "a raw device path"
+_SHARE = "this PC's own disks, reached through a network share"
 
 
-def _canonical_windows_spelling(text: str) -> tuple[str, bool]:
-    r"""`text` with the extended-length and admin-share spellings of a local
-    drive path rewritten to the plain `X:\...` form the deny rules are written
-    in, and whether it is a device path that names no ordinary file.
+@functools.lru_cache(maxsize=1)
+def _own_names() -> tuple[frozenset, frozenset]:
+    """(host names, IP addresses) that mean this machine, lower-cased."""
+    import socket
+    names = {"localhost", "localhost.localdomain"}
+    ips: set[str] = {"127.0.0.1", "::1"}
+    for n in (os.environ.get("COMPUTERNAME"), os.environ.get("USERDNSDOMAIN")):
+        if n:
+            names.add(n.lower())
+    try:
+        host = socket.gethostname()
+        names.update({host.lower(), host.split(".")[0].lower(),
+                      socket.getfqdn().lower()})
+        ips.update(socket.gethostbyname_ex(host)[2])
+        ips.update(ai[4][0] for ai in socket.getaddrinfo(host, None))
+    except Exception:
+        pass
+    return frozenset(names), frozenset(i.split("%")[0] for i in ips)
 
-    `\\?\C:\x`, `\\.\C:\x`, `\\?\UNC\host\C$\x` and `\\host\C$\x` all reach
-    the same file as `C:\x`; a comparison that does not fold them together
-    lets a directory rule be walked around by spelling alone. Any other
-    `\\?\` or `\\.\` target (a volume GUID, GLOBALROOT, a device) is refused:
-    Friday never needs one, and none can be judged by name.
+
+def _is_this_machine(host: str) -> bool:
+    """True when a UNC host names this PC: localhost, a loopback or own address
+    in any spelling (short, decimal, hex, IPv6-literal), or its computer name."""
+    import ipaddress
+    import socket
+    h = host.strip().lower().rstrip(".")
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
+    if h.endswith(".ipv6-literal.net"):
+        h = h[:-len(".ipv6-literal.net")].replace("-", ":").replace("s", "%")
+    h = h.split("%")[0]
+    names, ips = _own_names()
+    if h in names or h in ips:
+        return True
+    addr = None
+    try:
+        addr = ipaddress.ip_address(h)
+    except ValueError:
+        try:
+            addr = ipaddress.ip_address(socket.inet_aton(h))
+        except (OSError, ValueError):
+            return False
+    if addr.is_loopback or addr.is_unspecified:
+        return True
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        return addr.ipv4_mapped.is_loopback or str(addr.ipv4_mapped) in ips
+    return str(addr) in ips
+
+
+@functools.lru_cache(maxsize=1)
+def _local_shares() -> dict[str, str]:
+    r"""Lower-cased share name -> the local folder it exposes: the drive admin
+    shares, ADMIN$, and every share the Server service lists."""
+    import string
+    table = {f"{c.lower()}$": f"{c}:\\" for c in string.ascii_uppercase}
+    root = os.environ.get("SystemRoot")
+    if root:
+        table["admin$"] = root
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Services\LanmanServer\Shares")
+        with key:
+            i = 0
+            while True:
+                try:
+                    name, value, _t = winreg.EnumValue(key, i)
+                except OSError:
+                    break
+                i += 1
+                for entry in value if isinstance(value, list) else [str(value)]:
+                    if entry.lower().startswith("path="):
+                        table[name.lower()] = entry[5:]
+    except Exception:
+        pass
+    return table
+
+
+def _canonical_windows_spelling(text: str) -> tuple[str, str | None]:
+    r"""`text` with the extended-length and same-machine share spellings of a
+    local path rewritten to the plain `X:\...` form the deny rules are written
+    in, and the reason it must be refused outright, when there is one.
+
+    `\\?\C:\x`, `\\.\C:\x`, `\\?\UNC\host\C$\x`, `\\host\C$\x` and
+    `\\localhost\Users\x` (any share of this PC) all reach the same file as
+    `C:\x`; a comparison that does not fold them together lets a directory
+    rule be walked around by spelling alone. A share of this PC that cannot
+    be mapped to its folder, and any other `\\?\` or `\\.\` target (a volume
+    GUID, GLOBALROOT, a device), is refused: Friday never needs one, and none
+    can be judged by name. A share on another machine is not this disk.
     """
     t = text.replace("/", "\\")
     if not t.startswith("\\\\"):
-        return text, False
+        return text, None
     if _EXTENDED_DRIVE.match(t):
-        return t[4:], False
+        return t[4:], None
     unc = _EXTENDED_UNC.match(t)
     if unc:
         t = "\\\\" + t[unc.end():]
     elif t[2:3] in ("?", "."):
-        return text, True
-    share = _ADMIN_SHARE.match(t)
-    if share:
-        return share.group(1) + ":\\" + t[share.end():], False
-    return text, False
+        return text, _DEVICE
+    host, _, rest = t[2:].partition("\\")
+    if not host or not _is_this_machine(host):
+        return text, None
+    share, _, tail = rest.partition("\\")
+    base = _local_shares().get(share.rstrip(". ").lower()) if share else None
+    if not base:
+        return text, _SHARE
+    return base.rstrip("\\") + "\\" + tail, None
 
 
 def check(path, *, sniff: bool = True) -> str | None:
@@ -223,10 +309,22 @@ def check(path, *, sniff: bool = True) -> str | None:
     `sniff=False` and judges only by name and place; the content of what it
     then opens is checked where it is read.
     """
+    hit = _verdict(path, sniff)
+    return hit[0] if hit else None
+
+
+def _verdict(path, sniff: bool = True) -> tuple[str, str] | None:
+    """(reason, kind) when `path` is off-limits, else None.
+
+    `kind` says what was matched, so the refusal can speak correctly:
+    "device", "share", "folder" (the denied folder itself), "inside" (a
+    file or folder under one), "file" (named or holding key material) and
+    "unsure" (a .pem/.key that cannot be read, so cannot be told from a key).
+    """
     try:
-        text, device = _canonical_windows_spelling(_expand_path_text(path))
-        if device:
-            return "a device path"
+        text, problem = _canonical_windows_spelling(_expand_path_text(path))
+        if problem:
+            return problem, "device" if problem == _DEVICE else "share"
         p = Path(text)
     except Exception:
         return None
@@ -234,32 +332,48 @@ def check(path, *, sniff: bool = True) -> str | None:
         rp = p.resolve()
     except Exception:
         rp = p
+    # A link or junction may resolve to any spelling of a path; the deny rules
+    # judge the target in the same plain form as the path as written.
+    try:
+        rtext, problem = _canonical_windows_spelling(str(rp))
+        if problem:
+            return problem, "device" if problem == _DEVICE else "share"
+        if rtext != str(rp):
+            rp = Path(rtext)
+    except Exception:
+        pass
     dirs, files = _deny_norms(str(_home()), str(_friday()))
     for cand in dict.fromkeys((_asis(p), os.path.normcase(str(rp)))):
         for d, why in dirs:
-            if cand == d or cand.startswith(d + os.sep):
-                return why
+            if cand == d:
+                return why, "folder"
+            if cand.startswith(d + os.sep):
+                return why, "inside"
         for f, why in files:
             if cand == f:
-                return why
+                return why, "file"
     names = {_plain_name(p.name), _plain_name(rp.name)}
     for name in names:
         if name.endswith(".pub"):
             continue
         for pat, why in _NAME_GLOBS:
             if fnmatch.fnmatch(name, pat):
-                return why
+                return why, "file"
     for name in names:
         for pat, why in _CONTENT_GATED:
             if fnmatch.fnmatch(name, pat):
-                if _holds_private_key(rp) is False:
+                held = _holds_private_key(rp)
+                if held is False:
                     break
-                return why
+                if held:
+                    return "a private key", "file"
+                return why, "unsure"
     if sniff and _holds_private_key(rp):
-        return "a private key"
+        return "a private key", "file"
     full = os.path.normcase(str(rp)).replace("\\", "/")
-    if any(b in full for b in _BROWSER_DIR_WORDS) and             any(s in full for s in _BROWSER_STORE_NAMES):
-        return "a browser's saved-login or cookie store"
+    if any(b in full for b in _BROWSER_DIR_WORDS) and \
+            any(s in full for s in _BROWSER_STORE_NAMES):
+        return "a browser's saved-login or cookie store", "file"
     return None
 
 
@@ -305,9 +419,9 @@ _COMMAND_MARKERS: tuple[tuple[str, str], ...] = (
 #: the middle of a host name (`console.aws.amazon.com`).
 _COMMAND_DIR_RE = re.compile(
     r"(?:^|[^A-Za-z0-9])\.(ssh|aws|gnupg|azure|kube)(?![A-Za-z0-9_-])")
-_DIR_WHY = {"ssh": "an SSH key directory", "aws": "your AWS credentials",
-            "gnupg": "your GnuPG keyring", "azure": "your Azure credentials",
-            "kube": "your Kubernetes credentials"}
+_DIR_WHY = {"ssh": "your SSH keys folder", "aws": "your AWS credentials folder",
+            "gnupg": "your GnuPG keyring folder", "azure": "your Azure credentials folder",
+            "kube": "your Kubernetes credentials folder"}
 
 _ENCODED_RE = re.compile(r"(?i)\s-e(?:nc(?:odedcommand)?|c)?\s+([A-Za-z0-9+/]{16,}={0,2})")
 _B64_LITERAL_RE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
@@ -479,18 +593,40 @@ def redact_secrets(text: str) -> str:
     return secret_patterns.redact(text)
 
 
+_CLOSED = "Key material stays closed to me, even when you ask."
+
+
 def refusal(path) -> str:
-    """The plain line Friday says instead of reading `path`."""
-    p = Path(path).expanduser()
-    why = check(p) or "a credential or key file"
-    return (f"I won't open {p.name} — it's {why}, and I don't read key material "
-            f"even when asked, so nothing slipped into a page, email or document "
-            f"can make me copy it out. You can open it yourself; it's in "
-            f"{p.parent}.")
+    """The plain line Friday says instead of reading `path`.
+
+    Answer first, the reason once, and a way forward. What is named agrees with
+    what was matched: a file under a denied folder is a file in that folder,
+    a device path is not called key material, and a .pem she cannot read is
+    not called a key.
+    """
+    hit = _verdict(path)
+    why, kind = hit if hit else ("a credential or key file", "file")
+    if kind == "device":
+        return ("That's a raw device path, not a file, so I'm leaving it alone. "
+                "Give me the ordinary path and I'll take it from there.")
+    if kind == "share":
+        return ("That goes into this PC's own disks through a network share, so "
+                "I'm not following it. Give me the ordinary path and I'll check "
+                "that one.")
+    try:
+        p = Path(str(path).strip().strip('"')).expanduser()
+        name, where = p.name or str(p), p.parent
+    except Exception:
+        name, where = str(path), ""
+    if kind == "unsure":
+        return (f"I can't read {name} to tell whether it holds a private key, so "
+                f"I'm leaving it closed. A certificate saved as .crt opens fine.")
+    lead = f"it sits in {why}" if kind == "inside" else f"it's {why}"
+    return (f"I won't open {name}: {lead}. {_CLOSED} "
+            f"You can open it yourself at {where}.")
 
 
 def refusal_command(why: str) -> str:
     """The plain line Friday says instead of running a credential-reading command."""
-    return (f"I won't run that — it reads {why}, and I don't read key material "
-            f"even when asked, so nothing slipped into a page, email or document "
-            f"can make me copy it out. Open the file yourself if you need it.")
+    return (f"I won't run that: it reaches {why}. {_CLOSED} "
+            f"Open the file yourself if you need it.")

@@ -18,10 +18,9 @@ TRANSIENT_PARTS = frozenset({"audio-cache", "vibe-code-logs", "__pycache__"})
 DOWNLOAD_TOPS = frozenset({"runtime", "local_voice", "models", "cache"})
 # A vault re-encrypt backup (backups/vault-reencrypt-*) is a whole-vault
 # copytree: it carries key material AND a second plaintext copy of the context
-# log. Left in, it smuggled that content past the secret filter through a
-# NESTED path (backups/.../vault/.vault_config.json was shipped in the default
-# export). It is redundant with the live data every export already holds, so it
-# is excluded from ALL exports.
+# log, at nested paths (backups/.../vault/.vault_config.json) the top-level
+# secret filter does not see. It is redundant with the live data every export
+# already holds, so it is excluded from ALL exports.
 BACKUP_TOPS = frozenset({"backups"})
 SECRET_DIRS = (
     ("security",),                 # keystore root key, DPAPI passphrase copy
