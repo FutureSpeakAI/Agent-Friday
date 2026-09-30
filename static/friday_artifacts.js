@@ -547,15 +547,6 @@
     // the live version beside the improved one; Swap in raises the ONE card.
     const wsId = codebase.workspace_id || null;
     const isBundle = codebase.template === 'bundle';
-    // The header line (spec §4.7): seats · key · this codebase's cost. It is
-    // computed on the server and re-read after every step and every change.
-    const [hdr, setHdr] = useState(null);
-    const loadHeader = useCallback(() => getJ(base + '/header').then(h => setHdr(h)).catch(() => {}), [base]);
-    useEffect(() => { loadHeader(); }, [loadHeader, refreshKey]);
-    useEffect(() => {
-      if (!window.fridayBusSubscribe) return undefined;
-      return window.fridayBusSubscribe(m => { if (m && (m.type === 'codebase_header' || m.type === 'codebase_step') && m.codebase_id === codebase.id) loadHeader(); });
-    }, [codebase.id, loadHeader]);
     const [compare, setCompare] = useState(false);
     const [liveDoc, setLiveDoc] = useState(null);
     useEffect(() => {
@@ -574,6 +565,15 @@
     };
     const frameRef = useRef(null);
     const base = '/api/codebases/' + encodeURIComponent(codebase.id);
+    // The header line (spec §4.7): seats · key · this codebase's cost. It is
+    // computed on the server and re-read after every step and every change.
+    const [hdr, setHdr] = useState(null);
+    const loadHeader = useCallback(() => getJ(base + '/header').then(h => setHdr(h)).catch(() => {}), [base]);
+    useEffect(() => { loadHeader(); }, [loadHeader, refreshKey]);
+    useEffect(() => {
+      if (!window.fridayBusSubscribe) return undefined;
+      return window.fridayBusSubscribe(m => { if (m && (m.type === 'codebase_header' || m.type === 'codebase_step') && m.codebase_id === codebase.id) loadHeader(); });
+    }, [codebase.id, loadHeader]);
     // The picker's one message, from this panel's own frame only.
     useEffect(() => {
       const onMsg = e => {

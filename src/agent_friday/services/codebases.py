@@ -630,23 +630,39 @@ def _with_defaults(rec: Optional[dict]) -> Optional[dict]:
     return rec
 
 
+_RESIDENT_CACHE: dict = {"at": 0.0, "value": None}
+_RESIDENT_TTL_S = 15.0
+
+
 def _resident_brain() -> Optional[tuple]:
     """(model_id, label) of the local model resident right now, or None on a
-    cloud-only machine. Read from the seats that are actually serving."""
+    cloud-only machine. The arbiter's status is asked first: it knows what it
+    is serving without probing anything, and the header is read after every
+    step. The probing path is the fallback, and the answer is kept 15 s."""
+    now = time.time()
+    if now - _RESIDENT_CACHE["at"] < _RESIDENT_TTL_S:
+        return _RESIDENT_CACHE["value"]
+    value = None
     try:
-        from agent_friday.services import local_seats as _ls
-        serving = _ls.serving() or {}
-        if not serving:
-            return None
-        try:
-            mid = _ls.resolve("brain") or next(iter(serving))
-        except Exception:
-            mid = next(iter(serving))
-        if mid not in serving:
-            mid = next(iter(serving))
-        return mid, model_short(mid)
+        from agent_friday.services import residency_arbiter as _ra
+        st = _ra.get_arbiter().status() or {}
+        mids = [m for m in list(st.get("resident_llama_server") or []) + list(st.get("resident_ollama") or []) if m]
+        plan = st.get("plan_seats") or {}
+        brain = plan.get("interactive_brain") or plan.get("brain")
+        if mids:
+            mid = brain if brain in mids else mids[0]
+            value = (mid, model_short(mid))
     except Exception:
-        return None
+        try:
+            from agent_friday.services import local_seats as _ls
+            serving = _ls.serving() or {}
+            if serving:
+                mid = next(iter(serving))
+                value = (mid, model_short(mid))
+        except Exception:
+            value = None
+    _RESIDENT_CACHE.update(at=now, value=value)
+    return value
 
 
 def model_short(model_id: str) -> str:
