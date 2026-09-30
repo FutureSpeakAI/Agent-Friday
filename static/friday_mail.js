@@ -56,7 +56,7 @@
   // What the Messages workspace can be opened to (index.html's
   // fridayDeclareNav; queued, since this script loads first).
   (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['messages', {
-    keys: ['thread_id', 'account', 'subject', 'from', 'lane', 'folder', 'reply'],
+    keys: ['thread_id', 'account', 'subject', 'from', 'lane', 'folder', 'reply', 'q', 'max'],
     sections: Object.keys(LANES).map(id => ({ id, label: LANES[id][0], key: 'lane' }))
       .concat(FOLDERS.filter(f => f[0]).map(f => ({ id: f[0], label: f[2], key: 'folder' })))
   }]);
@@ -162,6 +162,9 @@
       /* until a conversation is open, the list has the larger share */
       .fm:not(.fm-reading) .fm-listwrap { flex-basis:58%; }
       .fm:not(.fm-reading) .fm-thread { flex-basis:42%; }
+      /* maximized (a tab opened for one conversation): the conversation alone */
+      .fm.fm-max.fm-reading .fm-side, .fm.fm-max.fm-reading .fm-listwrap { display:none; }
+      .fm.fm-max.fm-reading .fm-thread { flex-basis:100%; }
       .fm-reading-hint { text-align:center; color:#7f93ad; font-size:13px; max-width:340px; }
       .fm-msg { border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:10px; margin-bottom:10px; background:rgba(255,255,255,0.02); }
       .fm-hdr { font-size:11px; color:#8fa6c4; line-height:1.6; display:flex; gap:8px; align-items:flex-start; }
@@ -636,6 +639,8 @@
     const [dialog, setDialog] = useState(null);
     const [busyIds, setBusyIds] = useState(() => new Set());
     const [sideOpen, setSideOpen] = useState(() => store.get('fm_side', null));
+    // opened for one conversation, maximized: the conversation fills the panel
+    const [maxRead, setMaxRead] = useState(false);
     // wide: folders | list | reading pane; mid: the folders become a drawer;
     // narrow (a small window, a phone): one pane at a time
     const [layout, setLayout] = useState('wide');
@@ -675,16 +680,25 @@
     // every account's own labels, for the side, the rows and the label menu
     useEffect(() => { accounts.forEach(a => loadLabels(a.id)); }, [accounts.length]);
 
-    // deep link {workspace:'messages', lane, thread_id, folder, account}.
+    // deep link {workspace:'messages', lane, thread_id, folder, account, q, max}.
     // A thread named with its account opens at once, by its id, as a click
     // would, without waiting on a slow inbox; one named by id alone waits for
-    // the list, and opens from it when it is there.
+    // the list, and opens from it when it is there. `q` is a Gmail search:
+    // its results are shown and selected, which is what Friday is about to
+    // act on when it asks. `max` opens the conversation on its own.
     const pending = useRef(null);
+    const selectFor = useRef(null);
     useEffect(() => {
       const apply = t => {
         if (!t || t.workspace !== 'messages') return;
         if (t.lane) setLane(t.lane);
         if (t.folder != null) setFolder(t.folder);
+        const q = t.q == null ? '' : String(t.q).trim();
+        if (q) {
+          selectFor.current = q;
+          setOpen(null); setLane('all'); setFolder(''); setQInput(q); setQuery(q);
+        }
+        setMaxRead(!!(t.max && t.max !== '0' && t.thread_id));
         if (t.thread_id) {
           pending.current = { id: t.thread_id, reply: !!t.reply, account: t.account || '', subject: t.subject || '', from: t.from || '' };
           setTimeout(() => tryPendingRef.current(), 0);
@@ -697,8 +711,15 @@
     }, []);
     // what its own tab (↗) opens on: the same keys as the deep link above
     (window.fridayUseTabState || function () {})('messages', () => ({
-      lane: lane !== 'all' ? lane : '', folder: folder || '',
+      lane: lane !== 'all' ? lane : '', folder: folder || '', q: query || '',
       thread_id: open ? (open.card.thread_id || open.card.id) : '' }));
+    // the results of a search Friday opened are selected once they arrive
+    useEffect(() => {
+      if (!data || selectFor.current == null || (data.query || '') !== selectFor.current) return;
+      selectFor.current = null;
+      setSel(new Set((data.messages || []).map(m => m.id)));
+    }, [data]);
+    useEffect(() => { if (!open) setMaxRead(false); }, [open]);
 
     const all = (data && data.messages) || [];
     const shown = all.filter(m => (acct === 'all' || m.account_id === acct) && (lane === 'all' || m.lane === lane) && (!unreadOnly || m.unread));
@@ -1136,7 +1157,7 @@
     useEffect(() => { if (headRef.current) headRef.current.indeterminate = someChecked && !allChecked; }, [someChecked, allChecked]);
     const bulk = selected();
     const sideLabels = allLabelNames();
-    return h('div', { className: 'fm ws-fill fm-' + layout + (open ? ' fm-reading' : ''), ref: boxRef, tabIndex: 0, onKeyDown: onKey, style: { outline: 'none' } },
+    return h('div', { className: 'fm ws-fill fm-' + layout + (open ? ' fm-reading' : '') + (maxRead ? ' fm-max' : ''), ref: boxRef, tabIndex: 0, onKeyDown: onKey, style: { outline: 'none' } },
       // row 1: accounts, search, actions
       h('div', { className: 'fm-bar' },
         h('button', { className: 'btn fm-btn', onClick: () => { if (layout === 'wide') { const v = showSide ? false : null; setSideOpen(v); store.set('fm_side', v); } else setSideOpen(showSide ? null : true); },
@@ -1216,7 +1237,11 @@
               h('div', { style: { fontSize: 11, color: '#8fa6c4', marginTop: 2 } },
                 h('span', { className: 'fm-dot', style: { background: open.card.account_color, marginRight: 5 } }), open.card.account_label + ' · ' + laneLabel(open.card.lane),
                 (open.card.labels || []).map(id => labelName(open.card.account_id, id)).filter(Boolean).map(n => h('span', { key: n, className: 'fm-lab', style: { marginLeft: 6 } }, n)))),
-            h('button', { className: 'btn fm-btn', onClick: () => setOpen(null), title: layout === 'narrow' ? 'Back to the list (u)' : 'Close the conversation (u)', 'aria-label': layout === 'narrow' ? 'Back to the list' : 'Close the conversation' }, layout === 'narrow' ? '← Back to the list' : '✕ Close')),
+            h('span', { style: { display: 'flex', gap: 6 } },
+              h('button', { className: 'btn fm-btn', 'data-testid': 'fm-max-toggle', onClick: () => setMaxRead(v => !v),
+                title: maxRead ? 'Show the folders and the list again' : 'Fill the panel with this conversation',
+                'aria-label': maxRead ? 'Show the list' : 'Maximize the conversation', 'aria-pressed': maxRead }, maxRead ? '⤡ Show the list' : '⤢ Maximize'),
+              h('button', { className: 'btn fm-btn', onClick: () => setOpen(null), title: layout === 'narrow' ? 'Back to the list (u)' : 'Close the conversation (u)', 'aria-label': layout === 'narrow' ? 'Back to the list' : 'Close the conversation' }, layout === 'narrow' ? '← Back to the list' : '✕ Close'))),
           h('div', { className: 'fm-bar', style: { margin: '8px 0' }, role: 'toolbar', 'aria-label': 'Conversation actions' },
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('reply'), title: 'r' }, '↩ Reply'),
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('replyAll'), title: 'a' }, '↩↩ Reply all'),

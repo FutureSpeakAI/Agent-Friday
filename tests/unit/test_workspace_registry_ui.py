@@ -1,4 +1,5 @@
-"""One registry names every workspace, and the page reads it.
+"""One registry names every workspace, and the page keeps the contracts the
+server's navigate tools rely on.
 
   * The page loads static/workspace_registry.js before the app, and the dock,
     window titles, tab headers and the command palette read it.
@@ -6,6 +7,10 @@
     that point at one workspace each, and a brand accent (never a status hue).
   * An icon's straight lines paint: no horizontal or vertical stroke uses a
     gradient or glow in box units, which paint nothing on a zero-height box.
+  * A window can fill the desktop; a tab Friday opened for one item confirms
+    what it shows under the id the server put in its address.
+  * Messages takes a Gmail search and a maximized conversation; News opens one
+    story on its own.
 """
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8")
 APP = (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")
 HEAD = (ROOT / "ui_parts" / "head.html").read_text(encoding="utf-8")
+MAIL = (ROOT / "static" / "friday_mail.js").read_text(encoding="utf-8")
 REG = workspace_registry.parse((ROOT / "static" / "workspace_registry.js").read_text(encoding="utf-8"))
 UI = {"index.html": INDEX, "app.html": APP}
 
@@ -83,3 +89,38 @@ def test_an_icons_straight_lines_paint(icon):
             continue
         for ref in re.findall(r'url\(#([^)]+)\)', el):
             assert ref not in box, "%s: a straight line uses %s, in box units" % (icon, ref)
+
+
+@pytest.mark.parametrize("ui", sorted(UI))
+def test_a_window_can_fill_the_desktop(ui):
+    s = UI[ui]
+    assert "friday:fwin-max" in s and "__fridayMaxFor" in s
+    assert s.count("data-fwin-max") >= 1
+    assert re.search(r"a\.max", s), "the action bus does not pass max to the window"
+
+
+@pytest.mark.parametrize("ui", sorted(UI))
+def test_a_tab_confirms_under_the_id_the_server_gave_it(ui):
+    s = UI[ui]
+    m = re.search(r"/\^tab-\[0-9\]\+-\[0-9a-f\]\{6\}\$/", s)
+    assert m, "the tab's report id pattern is missing"
+    rid = "tab-%d-%s" % (1759200000, "a1b2c3")
+    assert re.fullmatch(r"tab-[0-9]+-[0-9a-f]{6}", rid)
+    import inspect
+    from agent_friday.services import desktop_targets
+    assert '"tab-%d-%s" % (int(time.time()), secrets.token_hex(3))' in inspect.getsource(desktop_targets)
+    assert "post('/api/desktop/ack'" in s and "q0.get('nav')" in s
+
+
+def test_messages_takes_a_search_and_a_maximized_conversation():
+    assert "'q', 'max'" in MAIL
+    assert "selectFor.current = q" in MAIL and "setSel(new Set((data.messages || []).map(m => m.id)))" in MAIL
+    assert "q: query || ''" in MAIL
+    assert ".fm.fm-max.fm-reading .fm-listwrap" in MAIL
+
+
+@pytest.mark.parametrize("ui", sorted(UI))
+def test_news_opens_one_story_on_its_own(ui):
+    s = UI[ui]
+    assert "function NewsArticleView" in s
+    assert re.search(r"keys:\s*\[\s*'tab',\s*'article',\s*'url',\s*'title',\s*'source'\s*\]", s)

@@ -21,6 +21,12 @@ _CURRENT_CONVERSATION: ContextVar = ContextVar("friday_tool_conversation",
 #: context `prepare_confirmation_ctx` stamps; read by the phone tools, which
 #: contact a number other than the owner's only when these words name it.
 _CURRENT_OWNER_TEXT: ContextVar = ContextVar("friday_tool_owner_text", default="")
+
+#: Where the running tool call came from ("voice-live", "voice-local", "chat",
+#: ...), so a handler knows whether the owner's words were spoken and whether
+#: its result goes to the cloud voice model, which is never handed raw private
+#: data (docs/reference/voice-tool-contract.md §5).
+_CURRENT_SURFACE: ContextVar = ContextVar("friday_tool_surface", default="")
 import subprocess
 import shutil
 import base64
@@ -700,9 +706,11 @@ CLAUDE_TOOLS = [
                       "required": ["model"]}},
     {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: " + _ws_registry.tool_list() + ".",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
-    {"name": "navigate_to", "description": "Open one specific thing on the user's Friday desktop, on screen: a workspace section or tab, an email thread in Messages, a file in Studio's file browser, a wiki page or graph node in Knowledge, a Settings tab or section, a calendar day or meeting, a contact card, or a content post. Pass the user's own words as query ('the Harbor Legal email', 'my budget spreadsheet', 'model settings') or an exact id you already have. It is the user's own screen, so no approval is needed. NAV_OK means the desktop confirmed it; NAV_PARTIAL, the window opened on something else; NAV_FAIL gives the reason and closest matches.",
+    {"name": "navigate_to", "description": "Open one specific thing on the user's Friday desktop, on screen: a workspace section or tab, an email thread in Messages, the mail a Gmail search finds (mail_search), a file in Studio's file browser, a creation, a news story, a wiki page or graph node in Knowledge, a Settings tab or section, a calendar day or meeting, a contact card, or a content post. Pass the user's own words as query ('the Harbor Legal email', 'my budget spreadsheet', 'model settings') or an exact id you already have. new_tab opens it in its own Chrome tab, maximized; max fills the desktop with it. It is the user's own screen, so no approval is needed. NAV_OK means the page confirmed it; NAV_PARTIAL, it opened on something else; NAV_FAIL gives the reason and closest matches.",
      "input_schema": {"type": "object", "properties": {
-         "kind": {"type": "string", "enum": ["workspace", "email", "file", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post"]},
+         "kind": {"type": "string", "enum": ["workspace", "email", "mail_search", "file", "creation", "news_article", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post"]},
+         "new_tab": {"type": "boolean", "description": "Open it in its own Chrome tab, maximized."},
+         "max": {"type": "boolean", "description": "Fill the whole window or tab with it."},
          "query": {"type": "string", "description": "The user's words for the thing."},
          "id": {"type": "string", "description": "An exact id: Gmail thread id, file path, wiki path, graph node id, YYYY-MM-DD, meeting or post id."},
          "workspace": {"type": "string", "description": "For kind=workspace: which workspace."},
@@ -2771,6 +2779,13 @@ def _tool_navigate(inp):
     return f"NAV_OK:{ws} — Opening the {label} workspace for the user now."
 
 
+def _cloud_voice() -> bool:
+    """True when this call's result goes to the cloud voice model (the live
+    session), which is never handed raw private data: no subject, sender,
+    person, file or page name (docs/reference/voice-tool-contract.md §5)."""
+    return (_CURRENT_SURFACE.get() or "") == "voice-live"
+
+
 def _tool_navigate_to(inp):
     """Tool handler: open one specific thing on the owner's desktop.
 
@@ -2778,12 +2793,16 @@ def _tool_navigate_to(inp):
     thread, a file, a wiki page, a Settings section...) and pushes it to the
     desktop page, which says what it actually showed. Only that confirmation
     earns NAV_OK; the reply-honesty check keys off the 'navigate' in the name.
+    A result for the cloud voice model calls the item what it is, not by name.
     """
     inp = inp or {}
     from agent_friday.services.desktop_targets import open_on_desktop
+    new_tab = bool(inp.get('new_tab'))
     r = open_on_desktop(inp.get('kind') or '', query=inp.get('query') or '',
                         id=inp.get('id') or '', workspace=inp.get('workspace') or '',
-                        section=inp.get('section') or '')
+                        section=inp.get('section') or '', new_tab=new_tab,
+                        maximize=bool(inp.get('max', new_tab)),
+                        name_items=not _cloud_voice())
     return r['text']
 
 
@@ -8594,10 +8613,12 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _owner_tok = _CURRENT_OWNER_TEXT.set(
             "" if (_sc.get("origin") == "phone" or _sc.get("is_background_task"))
             else str(_sc.get("owner_text") or ""))
+        _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
         try:
             _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
             result = handler(ctx.input)
         finally:
+            _CURRENT_SURFACE.reset(_surface_tok)
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
             _gate_mod.DECIDED.reset(_dtok)
             _taint_mod.CURRENT_KEY.reset(_ktok)

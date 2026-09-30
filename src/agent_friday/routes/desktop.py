@@ -95,7 +95,9 @@ def desktop_open():
                         id=str(body.get("id") or ""),
                         workspace=str(body.get("workspace") or ""),
                         section=str(body.get("section") or ""),
-                        account=str(body.get("account") or ""))
+                        account=str(body.get("account") or ""),
+                        new_tab=bool(body.get("new_tab")),
+                        maximize=bool(body.get("max", body.get("new_tab"))))
     return jsonify({"status": r["status"], "text": r["text"],
                     "target": (r.get("resolved") or {}).get("target"),
                     "ack": (r.get("sent") or {}).get("ack")})

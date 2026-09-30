@@ -341,21 +341,29 @@ _VOICE_LIVE_TOOLS = [
      {"question": ("string", "The question for his local model, in full.")}, ["question"]),
     ("navigate_to",
      "Open ONE specific thing on the user's Friday desktop, on screen: an email "
-     "thread, a file, a wiki page or graph node, a Settings tab, a calendar day or "
-     "meeting, a contact, a content post, or a workspace section. Pass his own "
-     "words as `query` ('the Harbor Legal email', 'my budget spreadsheet', 'model "
-     "settings') with the `kind` you think he means. Prefer this over "
-     "navigate_workspace whenever he names a THING rather than a whole workspace. "
-     "It is his own screen, so no approval is needed. NAV_OK means the desktop "
-     "confirmed it — say so in one short sentence. NAV_PARTIAL means it opened "
-     "something else, and NAV_FAIL carries the reason and the closest matches: "
-     "read him the closest matches instead of claiming you opened it.",
-     {"kind": ("string", "One of: workspace, email, file, wiki_page, graph_node, "
-                         "settings, calendar, contact, content_post."),
-      "query": ("string", "His words for the thing."),
+     "thread, the mail a Gmail search finds, a file, a wiki page or graph node, a "
+     "news story, a Studio creation, a Settings tab, a calendar day or meeting, a "
+     "contact, a content post, or a workspace section. Pass the user's own words "
+     "as `query` ('the Harbor Legal email', 'my budget spreadsheet', 'model "
+     "settings') with the `kind` you think they mean. Prefer this over "
+     "navigate_workspace whenever they name a THING rather than a whole "
+     "workspace. new_tab opens it in its own Chrome tab, filling the tab: for "
+     "reading a long email, a story or a creation. It is their own screen, so no "
+     "approval is needed. NAV_OK means the screen confirmed it: say so in one "
+     "short sentence. NAV_SENT means it is still opening: say that, not that it "
+     "is open. NAV_PARTIAL means it opened something else, and NAV_FAIL carries "
+     "the reason and how many closest matches there were: ask for other words "
+     "instead of claiming you opened it. Private names are not in these "
+     "results; the screen shows them.",
+     {"kind": ("string", "One of: workspace, email, mail_search, file, wiki_page, "
+                         "graph_node, news_article, creation, settings, calendar, "
+                         "contact, content_post."),
+      "query": ("string", "Their words for the thing; for mail_search, the Gmail search."),
       "id": ("string", "An exact id, if you already have one."),
       "workspace": ("string", "For kind=workspace: which workspace."),
-      "section": ("string", "A tab or section by name, e.g. 'feed', 'Models'.")},
+      "section": ("string", "A tab or section by name, e.g. 'feed', 'Models'."),
+      "new_tab": ("boolean", "Open it in its own Chrome tab, filling the tab."),
+      "max": ("boolean", "On the desktop: fill the desktop with its window.")},
      ["kind"]),
     ("check_situation",
      "What is happening on this machine right now: which workspaces are open, CPU, "

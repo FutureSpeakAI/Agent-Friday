@@ -23,8 +23,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
-KINDS = ("workspace", "email", "file", "wiki_page", "graph_node", "settings",
-         "calendar", "contact", "content_post")
+KINDS = ("workspace", "email", "mail_search", "file", "wiki_page", "graph_node",
+         "settings", "calendar", "contact", "content_post", "news_article", "creation")
 
 #: Words that say what kind of thing is meant, not which one.
 _FILLER = {
@@ -62,6 +62,11 @@ _ROOT_WORDS = {"documents": "documents", "downloads": "downloads",
 
 MAIL_NETWORK_BUDGET_S = 6.0
 FILE_BUDGET_S = 6.0
+NEWS_BUDGET_S = 3.0
+#: How long a new tab has to load Friday's page and say what it shows. The
+#: resolution before it takes at most MAIL_NETWORK_BUDGET_S, so a spoken
+#: request still answers inside the voice bridge's limit.
+TAB_ACK_TIMEOUT_S = 10.0
 
 
 def _tokens(s: Any) -> list[str]:
@@ -608,19 +613,116 @@ def resolve_content_post(query: str = "", id: str = "") -> dict:
     return _ok({"workspace": "content", "post": pid}, "the post %s" % pid)
 
 
+def resolve_mail_search(query: str = "", id: str = "") -> dict:
+    """Messages showing what a Gmail search finds: the mail organize_email
+    would act on, selected on screen."""
+    q = (query or id or "").strip()
+    if not q:
+        return _fail("give the Gmail search, e.g. from:linkedin.com older_than:1m")
+    return _ok({"workspace": "messages", "q": q}, "the mail matching %s" % q, verify=("q", q))
+
+
+#: Words that say a news story or a creation is meant, not which one.
+_NEWS_WORDS = {"story", "stories", "article", "articles", "news", "piece", "headline",
+               "headlines", "report", "item", "link"}
+_CREATION_WORDS = {"creation", "creations", "picture", "pictures", "image", "images",
+                   "photo", "photos", "video", "clip", "song", "track", "art", "artwork",
+                   "drawing", "made", "you", "generated"}
+
+
+def resolve_news_article(query: str = "", id: str = "",
+                         budget_s: float = NEWS_BUDGET_S) -> dict:
+    """An article from the news archive, by its id, its address, or words
+    from its headline, newest first."""
+    from agent_friday.services import news_engine as ne
+    key = (id or "").strip()
+    if key.startswith(("http://", "https://")):
+        key = ne._news_url_hash(key)
+    q = _content(query, _NEWS_WORDS)
+    if not key and not q:
+        return _fail("say which story")
+    deadline = time.time() + budget_s
+    ranked = []
+    for n, a in enumerate(ne._iter_archive()):
+        if key and a.get("id") == key:
+            ranked = [(1.0, a)]
+            break
+        if q:
+            s = _score(q, str(a.get("title") or "").lower())
+            if s >= 0.99:
+                ranked.append((s, a))
+        if n % 200 == 0 and time.time() > deadline:
+            break
+        if len(ranked) >= 6:
+            break
+    if not ranked:
+        return _fail("no story in the news archive matches %r" % (key or " ".join(q)))
+    a = ranked[0][1]
+    return _ok({"workspace": "news", "article": a.get("id"), "url": a.get("url") or "",
+                "title": a.get("title") or ""},
+               "the story \u201c%s\u201d (%s)" % (a.get("title") or a.get("url"), a.get("source") or ""),
+               verify=("article", a.get("id")),
+               also=[x[1].get("title") for x in ranked[1:5]])
+
+
+def resolve_creation(query: str = "", id: str = "") -> dict:
+    """One of Friday's creations, by file name or words from it, newest first."""
+    from agent_friday import core
+    dirs = [Path(d) for d in (getattr(core, "CREATIONS_DIR", None),
+                               getattr(core, "DAILY_CREATIONS_DIR", None)) if d]
+    name = (id or "").strip()
+    q = _content(query, _CREATION_WORDS)
+    if not name and not q:
+        return _fail("say which creation")
+    found = []
+    for d in dirs:
+        try:
+            for p in d.iterdir():
+                if not p.is_file() or p.name.startswith("."):
+                    continue
+                if name and p.name.lower() == name.lower():
+                    found.append((1.0, p.stat().st_mtime, p))
+                elif q:
+                    s = _score(q, p.stem.lower().replace("_", " ").replace("-", " "))
+                    if s >= 0.99:
+                        found.append((s, p.stat().st_mtime, p))
+        except OSError:
+            continue
+    if not found:
+        return _fail("no creation matches %r" % (name or " ".join(q)))
+    found.sort(key=lambda x: (round(x[0], 2), x[1]), reverse=True)
+    top = found[0][2]
+    return _ok({"workspace": "studio", "creation": top.name}, "the creation %s" % top.name,
+               verify=("creation", top.name), also=[x[2].name for x in found[1:5]])
+
+
+#: Other names for a kind, as the model and the desktop say them.
+_KIND_ALIASES = {"wiki": "wiki_page", "page": "wiki_page", "node": "graph_node",
+                 "graph": "graph_node", "emails": "mail_search", "article": "news_article",
+                 "story": "news_article", "news": "news_article",
+                 "studio_creation": "creation"}
+
+
+def _norm_kind(kind: str) -> str:
+    kind = (kind or "").strip().lower().replace(" ", "_")
+    return _KIND_ALIASES.get(kind, kind)
+
+
 def resolve(kind: str, query: str = "", id: str = "", workspace: str = "",
             section: str = "", account: str = "") -> dict:
-    kind = (kind or "").strip().lower().replace(" ", "_")
-    if kind in ("wiki", "page"):
-        kind = "wiki_page"
-    if kind in ("node", "graph"):
-        kind = "graph_node"
+    kind = _norm_kind(kind)
     if kind == "workspace":
         return resolve_workspace(workspace, section, query)
     if kind == "settings":
         return resolve_settings(query, section, id)
     if kind == "email":
         return resolve_email(query, id, account)
+    if kind == "mail_search":
+        return resolve_mail_search(query, id)
+    if kind == "news_article":
+        return resolve_news_article(query, id)
+    if kind == "creation":
+        return resolve_creation(query, id)
     if kind == "file":
         return resolve_file(query, id)
     if kind in ("wiki_page", "graph_node"):
@@ -634,11 +736,131 @@ def resolve(kind: str, query: str = "", id: str = "", workspace: str = "",
     return _fail("kind must be one of: " + ", ".join(KINDS))
 
 
-# ── Resolve, show, and say what the desktop confirmed ────────────────────────
+#: What an item of a private kind is called in a result that must not name it.
+#: A result bound for the cloud voice model carries no subject, sender, file,
+#: page, person or creation name (docs/reference/voice-tool-contract.md §5);
+#: the screen shows the item itself. News stories are public and keep theirs.
+UNNAMED = {"email": "the email", "file": "the file", "wiki_page": "the wiki page",
+           "graph_node": "the wiki entry", "contact": "the contact card",
+           "creation": "the creation"}
+
+
+def _unnamed(r: dict, kind: str) -> dict:
+    """`r` with its private names taken out: the item is called what it is,
+    and the other matches are counted rather than listed."""
+    what = UNNAMED.get(kind)
+    if not what:
+        return r
+    r = dict(r)
+    if r.get("ok"):
+        r["label"] = what
+    for key, one, many in (("also", "more", "more"),
+                           ("candidates", "near match", "near matches")):
+        n = len(r.get(key) or [])
+        if n:
+            r[key] = ["%d %s, not named here (private)" % (n, one if n == 1 else many)]
+    return r
+
+
+def _note(ack: dict, quiet: bool) -> str:
+    """The page's own words about what it shows, in brackets. None when the
+    result must not name a private item: they can name one ("it shows ...")."""
+    n = "" if quiet else str(ack.get("note") or "")
+    return (" (%s)" % n) if n else ""
+
+
+def launch_in_browser(url: str) -> str:
+    """Open `url` in the owner's own Chrome as a new tab (the default browser
+    when Chrome is not installed). Returns "" or why it could not."""
+    import os
+    import subprocess
+    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"),
+                 os.environ.get("LOCALAPPDATA")):
+        if not base:
+            continue
+        exe = Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe"
+        if exe.is_file():
+            try:
+                subprocess.Popen([str(exe), url])
+                return ""
+            except OSError as e:
+                return "Chrome would not start (%s)" % e
+    try:
+        os.startfile(url)  # type: ignore[attr-defined]
+        return ""
+    except Exception as e:
+        return "no browser would open it (%s)" % e
+
+
+def tab_url(target: dict, report_id: str = "", maximize: bool = True) -> str:
+    """The address of `target` in its own workspace tab: the same deep-link
+    keys the desktop takes, `max=1` to fill the tab with the item, and the id
+    the tab reports under once it shows it."""
+    from urllib.parse import urlencode
+    from agent_friday.services import local_address
+    info = local_address.page_info()
+    origin = str(info.get("origin") or info.get("local") or "").rstrip("/")
+    params = {k: v for k, v in target.items() if k != "workspace" and v not in (None, "")}
+    if maximize:
+        params["max"] = "1"
+    if report_id:
+        params["nav"] = report_id
+    q = urlencode(params)
+    return "%s/w/%s%s" % (origin, target["workspace"], ("?" + q) if q else "")
+
+
+def _open_in_tab(r: dict, maximize: bool, t0: float, quiet: bool = False) -> dict:
+    import secrets
+    from agent_friday.services import desktop_bus
+    target = r["target"]
+    ws = target["workspace"]
+    out = {"resolved": r, "took_s": 0.0}
+    if ws == "settings":
+        out.update(status="failed", text="NAV_FAIL: Settings opens on the desktop, not in a tab of its own.")
+        return out
+    rid = "tab-%d-%s" % (int(time.time()), secrets.token_hex(3))
+    waiter = desktop_bus.expect(rid)
+    url = tab_url(target, rid, maximize)
+    why = launch_in_browser(url)
+    if why:
+        desktop_bus.wait(rid, waiter, 0)
+        if quiet:
+            # The error can quote the address, which carries the item's keys.
+            why = why.split(" (", 1)[0]
+        out.update(status="failed", text="NAV_FAIL: %s, so %s was not opened in a tab." % (why, r["label"]))
+        return out
+    got = desktop_bus.wait(rid, waiter, TAB_ACK_TIMEOUT_S)
+    out["sent"] = got
+    out["took_s"] = round(time.time() - t0, 2)
+    how = "in a new Chrome tab" + (", maximized" if maximize else "")
+    also = (" Other matches: %s." % "; ".join(str(a) for a in r["also"])) if r.get("also") else ""
+    if not got["acked"]:
+        out.update(status="sent", text=(
+            "NAV_SENT:%s — opened a new Chrome tab for %s; it had not confirmed what it shows "
+            "within %d seconds (it may still be loading).%s" % (ws, r["label"], int(TAB_ACK_TIMEOUT_S), also)))
+        return out
+    ack = got["ack"]
+    if ack.get("matched") is False:
+        out.update(status="partial", text="NAV_PARTIAL:%s — the new tab opened, but it is not "
+                   "showing %s%s.%s" % (ws, r["label"], _note(ack, quiet), also))
+        return out
+    out.update(status="opened", text="NAV_OK:%s — opened %s %s.%s" % (ws, r["label"], how, also))
+    return out
+
 
 def open_on_desktop(kind: str, query: str = "", id: str = "", workspace: str = "",
-                    section: str = "", account: str = "") -> dict:
+                    section: str = "", account: str = "", new_tab: bool = False,
+                    maximize: bool = False, name_items: bool = True) -> dict:
     """Resolve the request, push it to the desktop, and return what happened.
+
+    `new_tab` opens it in its own Chrome tab instead, which fills with the
+    item when `maximize` is set (the default for a tab); on the desktop,
+    `maximize` fills the whole desktop with the item's window.
+
+    `name_items=False` keeps private names out of the text (subjects,
+    senders, files, pages, people, creations), for a result bound for the
+    cloud voice model: the item is called what it is and other matches are
+    counted (docs/reference/voice-tool-contract.md §5).
 
     {"status": "opened" | "opened_unconfirmed" | "partial" | "failed" |
                "sent" | "no_desktop" | "not_found",
@@ -648,15 +870,23 @@ def open_on_desktop(kind: str, query: str = "", id: str = "", workspace: str = "
     NAV_PARTIAL when it opened but shows something other than the target.
     """
     t0 = time.time()
-    r = resolve(kind, query=query, id=id, workspace=workspace, section=section,
+    k = _norm_kind(kind)
+    quiet = not name_items and k in UNNAMED
+    r = resolve(k, query=query, id=id, workspace=workspace, section=section,
                 account=account)
+    if quiet:
+        r = _unnamed(r, k)
     if not r.get("ok"):
         text = "NAV_FAIL: " + r["reason"]
         if r.get("candidates"):
             text += ". Closest: " + "; ".join(str(c) for c in r["candidates"])
         return {"status": "not_found", "text": text, "resolved": r}
+    if new_tab:
+        return _open_in_tab(r, maximize, t0, quiet)
     from agent_friday.services import desktop_bus
     action = dict(r["target"], type="navigate")
+    if maximize:
+        action["max"] = True
     sent = desktop_bus.send([action], verify=r.get("verify"))
     ws = r["target"]["workspace"]
     out = {"resolved": r, "sent": sent, "took_s": round(time.time() - t0, 2)}
@@ -672,7 +902,7 @@ def open_on_desktop(kind: str, query: str = "", id: str = "", workspace: str = "
         return out
     if ack.get("opened") is False:
         out.update(status="failed", text="NAV_FAIL: the desktop did not open %s%s." % (
-            r["label"], (" (%s)" % ack["note"]) if ack.get("note") else ""))
+            r["label"], _note(ack, quiet)))
         return out
     also = (" Other matches: %s." % "; ".join(str(a) for a in r["also"])) if r.get("also") else ""
     hidden = ("" if ack.get("visible", True) else
@@ -681,14 +911,13 @@ def open_on_desktop(kind: str, query: str = "", id: str = "", workspace: str = "
     if r.get("verify") and matched is False:
         out.update(status="partial", text=(
             "NAV_PARTIAL:%s — opened %s, but it is not showing %s%s.%s%s" % (
-                ws, ack.get("label") or ws, r["label"],
-                (" (%s)" % ack["note"]) if ack.get("note") else "", hidden, also)))
+                ws, ack.get("label") or ws, r["label"], _note(ack, quiet), hidden, also)))
         return out
     if r.get("verify") and matched is None:
         out.update(status="opened_unconfirmed", text=(
             "NAV_OK:%s — opened %s on the desktop; %s, so it could not confirm the "
-            "exact item.%s%s" % (ws, r["label"], ack.get("note") or "the window does not "
-                                 "report what it shows", hidden, also)))
+            "exact item.%s%s" % (ws, r["label"], (not quiet and ack.get("note")) or "the window "
+                                 "does not report what it shows", hidden, also)))
         return out
     out.update(status="opened", text="NAV_OK:%s — opened %s on the desktop.%s%s" % (
         ws, r["label"], hidden, also))

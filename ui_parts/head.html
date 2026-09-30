@@ -351,6 +351,17 @@ window.addEventListener('DOMContentLoaded',function(){
         .ws-icon-glyph { width: auto; height: auto; font-size: 13px; line-height: 1; filter: none; }
         .cmd-palette-item .ico .ws-icon { width: 17px; height: 17px; margin-right: 0; vertical-align: -3px; }
         .ws-tab-name .ws-icon { width: 20px; height: 20px; margin-right: 0; }
+        /* A window maximized to the desktop between the top bar and the dock. */
+        .fwin.maxed { border-radius: 10px; transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease; }
+        .fwin.maxed .win-edge, .fwin.maxed .resize-h { display: none; }
+        /* News: one story, opened on its own (a deep link or Friday). */
+        .news-article { position: relative; padding: 18px 22px 28px; border-radius: 10px;
+          background: linear-gradient(180deg, rgba(6,14,28,0.6), rgba(4,10,20,0.2)); }
+        .news-article-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+        .news-article h2 { font-size: 22px; line-height: 1.3; color: #fff; margin: 0 0 8px; max-width: 880px; }
+        .news-article .news-article-src { font-size: 12px; color: #8fa6c4; margin-bottom: 16px; }
+        .news-article .news-article-src b { color: #00d4ff; font-weight: 600; }
+        .news-article .deepdive-panel { max-width: 880px; }
         .fwin-btns button {
             background: none; border: none; color: rgba(255,255,255,0.6); cursor: pointer;
             font-size: 16px; padding: 0 4px; transition: color 0.2s;

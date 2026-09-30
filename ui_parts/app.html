@@ -526,6 +526,9 @@ function fridayRunActions(actions){
     if(!a||typeof a!=='object')continue;
     try{
       if(a.type==='navigate'&&a.workspace){
+        // max: the item's window fills the desktop (FWin reads the flag when
+        // this open mounts it, the event when it is already open).
+        if(a.max){window.__fridayMaxFor=fridayWorkspaceId(a.workspace);try{window.dispatchEvent(new CustomEvent('friday:fwin-max',{detail:{workspace:window.__fridayMaxFor}}))}catch(_){}}
         // openWs (mount the window) + deep-link in one call. If the global opener
         // isn't mounted yet (very early in app boot), retry on the next frame
         // instead of falling back to fridayNavigate, which only deep-links an
@@ -1063,7 +1066,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   const dOff=useRef({x:0,y:0});const rStart=useRef({x:0,y:0,w:0,h:0});
   useEffect(()=>{if(!dragging)return;const mv=e=>setPos({x:clampX(e.clientX-dOff.current.x),y:clampY(e.clientY-dOff.current.y)});const up=()=>setDragging(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
   // Resize from any edge or corner; the dragged side moves, the opposite one stays.
-  const startResize=(e,dir)=>{rStart.current={px:e.clientX,py:e.clientY,x:pos.x,y:pos.y,w:size.w,h:size.h,dir};setResizing(dir);onFocus()};
+  const startResize=(e,dir)=>{if(maxed)return;rStart.current={px:e.clientX,py:e.clientY,x:pos.x,y:pos.y,w:size.w,h:size.h,dir};setResizing(dir);onFocus()};
   useEffect(()=>{if(!resizing)return;fridayResizeCursor(resizing);const mv=e=>{const r=fridayResizeRect(rStart.current,rStart.current.dir||'se',e.clientX,e.clientY,{minW:400,minH:280,maxW:vw()-20,maxH:vh()-50,minY:30,maxRight:vw()-4,maxBottom:vh()-4});setSize({w:Math.round(r.w),h:Math.round(r.h)});setPos({x:Math.round(r.x),y:Math.round(r.y)})};const up=()=>setResizing(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{fridayResizeCursor(null);removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[resizing]);
   // Persist geometry whenever it settles.
   useEffect(()=>{try{localStorage.setItem(LSK,JSON.stringify({x:pos.x,y:pos.y,w:size.w,h:size.h,pv:pref?pref.v:undefined}))}catch(_){}},[pos.x,pos.y,size.w,size.h]);
@@ -1084,6 +1087,17 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   // this workspace just now", an event covers "the window was already open, so
   // nothing is going to mount." Both clear the flag, or it would sit there and
   // fire on some unrelated open later.
+  // MAXIMIZED: the window fills the desktop between the top bar and the dock
+  // (the ⤢ button, a double-click on the title bar, or Friday opening one item
+  // with max); its own size and place are kept for when it is restored.
+  const[maxed,setMaxed]=useState(()=>window.__fridayMaxFor===id);const[maxBox,setMaxBox]=useState(null);
+  useEffect(()=>{if(window.__fridayMaxFor===id)delete window.__fridayMaxFor;
+    const on=e=>{if(e&&e.detail&&e.detail.workspace===id){delete window.__fridayMaxFor;setMaxed(true)}};
+    window.addEventListener('friday:fwin-max',on);return()=>window.removeEventListener('friday:fwin-max',on)},[id]);
+  useEffect(()=>{if(!maxed)return;const fit=()=>{const dock=document.querySelector('.dock:not(.hidden)');const dr=dock&&dock.getBoundingClientRect();
+    const floor=(dr&&dr.height?dr.top:vh())-6;setMaxBox({x:6,y:34,w:vw()-12,h:Math.max(280,floor-34)})};
+    fit();addEventListener('resize',fit);return()=>removeEventListener('resize',fit)},[maxed]);
+  const box=maxed&&maxBox?maxBox:{x:pos.x,y:pos.y,w:size.w,h:size.h};
   const[histOpen,setHistOpen]=useState(false);
   // The browser refused the tab (pop-ups blocked): the window stays and says why.
   const[tabBlocked,setTabBlocked]=useState(false);
@@ -1093,9 +1107,9 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
     window.addEventListener('friday:open-ws-history',onOpen);
     return()=>window.removeEventListener('friday:open-ws-history',onOpen);
   },[id]);
-  return(<div className={'fwin'+(closing?' closing':'')} ref={fwinRef} style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
-    <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
-      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
+  return(<div className={'fwin'+(closing?' closing':'')+(maxed?' maxed':'')} ref={fwinRef} style={{left:box.x,top:box.y,width:box.w,height:box.h,zIndex}} onClick={onFocus}>
+    <div className="fwin-bar" onDoubleClick={e=>{if(e.target.closest('.fwin-btns'))return;setMaxed(v=>!v)}} onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;if(maxed){onFocus();return}setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
+      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button><button title={maxed?`Restore ${title} to its own size`:`Maximize ${title}`} aria-label={maxed?`Restore ${title}`:`Maximize ${title}`} aria-pressed={maxed} data-fwin-max={id} onClick={e=>{e.stopPropagation();setMaxed(v=>!v)}} style={{fontSize:12}}>{maxed?'⤡':'⤢'}</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
     </div>{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
       {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
       {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
@@ -6048,7 +6062,7 @@ function StudioWS(){
   // Deep-link: a notification's "Open Document" button navigates here with
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
   // What it is showing: the view, and in Files 3D the folder and chosen file.
-  useTabState('studio',()=>{const f=view==='files'&&window.__files3dShowing||{};return{view,root:f.root,path:f.path,file:f.file}});
+  useTabState('studio',()=>{const f=view==='files'&&window.__files3dShowing||{};return{view,root:f.root,path:f.path,file:f.file,creation:selected&&selected.name||''}});
   useNavTarget('studio',t=>{
     if(!t)return;
     // {view:'files', root, path, file} opens that folder in the 3D file
@@ -7921,11 +7935,23 @@ function archiveToCard(a,boostedSet){
 function _fmtDur(sec){if(!sec||!isFinite(sec)||sec<0)return'0:00';const s=Math.floor(sec);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 
 const NEWS_TABS=[{id:'frontpage',label:'Front Page'},{id:'feed',label:'Feed'},{id:'readlater',label:'Read Later'},{id:'notes',label:'My Notes'},{id:'briefings',label:'Briefings'},{id:'weekly',label:'Weekly'},{id:'editorial',label:'Editorial'},{id:'trust',label:'Trust'}];
-fridayDeclareNav('news',{key:'tab',keys:['tab'],sections:NEWS_TABS});
+fridayDeclareNav('news',{key:'tab',keys:['tab','article','url','title','source'],sections:NEWS_TABS});
 // The Local beat is the owner's setting: the place Local news covers and the
 // outlets it reads (news_local_area, news_local_sources). Nothing ships with a
 // city; both empty means no Local section. Listed outlets are trusted like the
 // built-in high-trust sources.
+/* ONE STORY ON ITS OWN: what a deep link to an article opens. The headline and
+   its source, the original a click away, and Friday's deep dive on request. */
+function NewsArticleView({a,onClose}){
+  let host=a.source||'';try{if(!host&&a.url)host=new URL(a.url).hostname.replace(/^www\./,'')}catch(e){}
+  return(<div className="news-article" role="article" data-article={a.id||''}>
+    <div className="news-article-bar"><button className="btn" onClick={onClose} style={{fontSize:11}}>← Back to the news</button>
+      {a.url&&<a className="btn" href={fridayHttpUrl(a.url)||'#'} target="_blank" rel="noopener noreferrer" style={{fontSize:11,textDecoration:'none'}}>Read it at {host||'the source'} ↗</a>}</div>
+    <h2>{a.title||a.url||'Story'}</h2>
+    <div className="news-article-src">From <b>{host||'an unknown source'}</b>{a.snippet?' · '+a.snippet:''}</div>
+    <DeepDive it={{url:a.url,title:a.title,source:host}}/>
+  </div>);
+}
 function NewsLocalBeatSettings() {
   const h = React.createElement;
   const [area, setArea] = useState(null);
@@ -8003,10 +8029,13 @@ function NewsWS(){
   const[annById,setAnnById]=useState({});const[annotations,setAnnotations]=useState([]);
   const[annotateFor,setAnnotateFor]=useState(null);const[annoText,setAnnoText]=useState('');const[annoBusy,setAnnoBusy]=useState(false);
   const[shareBusy,setShareBusy]=useState(null);const[newsToast,setNewsToast]=useState('');
+  // One story opened on its own (a deep link or Friday): {id, url, title}.
+  const[articleOpen,setArticleOpen]=useState(null);
   // Deep-link: a notification target {workspace:'news', tab:'frontpage'|'briefings'|...}
   // switches to the requested tab and clears any open single-briefing reader.
-  useTabState('news',()=>({tab})); // what its own tab opens on
-  useNavTarget('news',t=>{if(t.tab){setTab(t.tab);setSelected(null);}});
+  useTabState('news',()=>({tab,article:articleOpen?articleOpen.id||articleOpen.url:''})); // what its own tab opens on
+  useNavTarget('news',t=>{if(t.tab){setTab(t.tab);setSelected(null);}
+    if(t.article||t.url)setArticleOpen({id:t.article||'',url:t.url||'',title:t.title||'',source:t.source||''})});
 
   // Pull a page of the permanent archive (newest first). reset=true clears and
   // refetches from offset 0 (category/sort change, manual refresh); reset=false
@@ -8207,6 +8236,7 @@ function NewsWS(){
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
 
   // ── Expanded single-briefing reader ──
+  if(articleOpen)return(<div className="news-ws" style={{position:'relative',minHeight:'100%'}}><NewsArticleView a={articleOpen} onClose={()=>setArticleOpen(null)}/></div>);
   if(selected)return(<div className="news-ws">
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
       <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:11}}>← Back</button>
@@ -18767,7 +18797,8 @@ function StandaloneShell({ws,children}){
     document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l=>l.parentNode.removeChild(l));
     const link=document.createElement('link');link.rel='icon';link.href=iconUrl||emojiIcon;if(iconUrl)link.type='image/svg+xml';link.onerror=()=>{link.href=emojiIcon};document.head.appendChild(link);
   },[ws.id]);
-  return(<div className="ws-tab" data-standalone={ws.id}>
+  const maxedTab=(()=>{try{const m=new URLSearchParams(window.location.search).get('max');return!!m&&m!=='0'}catch(e){return false}})();
+  return(<div className={'ws-tab'+(maxedTab?' ws-max':'')} data-standalone={ws.id}>
     <header className="ws-tab-head">
       <div className="ws-tab-brand"><a className="ws-tab-mark" href="/" title="Back to the Friday desktop">{agentName}</a><span className="ws-tab-by">by</span><a className="ws-tab-fs" href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer">FutureSpeak.AI</a></div>
       <span className="ws-tab-sep" aria-hidden="true">|</span>
@@ -20778,6 +20809,44 @@ function App(){
     };
     connect();
     if (kind !== 'desktop') report(true);
+    // A tab Friday opened for one item (navigate_to with new_tab) says what
+    // it shows, under the id its address carries (desktop_targets.tab_url),
+    // so Friday reports what the tab confirmed, not what it launched.
+    if (kind === 'tab') {
+      let q0 = null;
+      try { q0 = new URLSearchParams(window.location.search); } catch (e) {}
+      const navId = q0 && q0.get('nav');
+      if (navId && /^tab-[0-9]+-[0-9a-f]{6}$/.test(navId)) {
+        const want = {};
+        q0.forEach((v, k) => { if (k !== 'nav' && k !== 'max' && k !== 'scroll') want[k] = v; });
+        const t1 = Date.now();
+        const tell = result => post('/api/desktop/ack', {
+          id: navId,
+          result: Object.assign({ label: label(tabWs), visible: document.visibilityState === 'visible', ms: Date.now() - t1 }, result)
+        }).catch(() => {});
+        const look = () => {
+          if (stopped) return;
+          const keys = Object.keys(want);
+          if (!keys.length) return tell({ opened: true, matched: true });
+          if (!(FRIDAY_TAB_REPORTERS[tabWs] > 0)) {
+            if (Date.now() - t1 > 6000) return tell({ opened: true, matched: null, note: label(tabWs) + ' does not report what it shows' });
+            return setTimeout(look, 150);
+          }
+          const p = shows(tabWs);
+          const known = keys.filter(k => k in p);
+          if (!known.length) return tell({ opened: true, matched: null, note: label(tabWs) + ' does not report ' + keys.join(', ') });
+          if (known.every(k => same(k, p[k], want[k]))) return tell({ opened: true, matched: true, shown: brief(p) });
+          if (Date.now() - t1 > 6000) return tell({ opened: true, matched: false, shown: brief(p), note: 'it shows ' + (brief(p) || 'its default view') });
+          setTimeout(look, 150);
+        };
+        setTimeout(look, 100);
+        try {
+          q0.delete('nav');
+          const rest = q0.toString();
+          history.replaceState(history.state, '', window.location.pathname + (rest ? '?' + rest : '') + window.location.hash);
+        } catch (e) {}
+      }
+    }
     const onNav = () => soon(700);
     const onSeen = () => soon(150);
     const onTouch = () => soon(1200);

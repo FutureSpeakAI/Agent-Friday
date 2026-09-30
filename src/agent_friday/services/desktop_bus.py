@@ -163,6 +163,24 @@ def broadcast(event: dict, kind: str = "chat") -> int:
     return sent
 
 
+def expect(cmd_id: str) -> dict:
+    """Wait for a report from a page that does not exist yet: a new tab is
+    opened with this id in its address and reports under it once it shows
+    what it was opened for. Register before opening the tab, then `wait`."""
+    waiter = {"event": threading.Event(), "ack": None}
+    with _LOCK:
+        _PENDING[cmd_id] = waiter
+    return waiter
+
+
+def wait(cmd_id: str, waiter: dict, timeout: float) -> dict:
+    """{"acked": bool, "ack": {...}} for an `expect`ed report."""
+    got = waiter["event"].wait(max(0.0, timeout))
+    with _LOCK:
+        _PENDING.pop(cmd_id, None)
+    return {"acked": bool(got), "ack": waiter["ack"] or {}}
+
+
 def ack(cmd_id: str, payload: dict | None) -> bool:
     """A page's report of what a command did. False for an unknown id."""
     with _LOCK:

@@ -71,7 +71,8 @@ def test_an_interactive_turn_opens_without_asking(opened):
                               session_ctx=ctx)
     assert res.startswith("NAV_OK:messages"), res
     assert opened == [{"kind": "email", "query": "the Harbor Legal email", "id": "",
-                       "workspace": "", "section": ""}]
+                       "workspace": "", "section": "", "new_tab": False, "maximize": False,
+                       "name_items": True}]
     assert "s-nav" not in agent._PENDING_CONFIRMATIONS
 
 
@@ -80,6 +81,7 @@ def test_voice_opens_without_asking(opened):
                               session_ctx={"authenticated": True, "surface": "voice-live",
                                            "taint_key": "voice-live"})
     assert res.startswith("NAV_OK:messages"), res
+    assert opened[-1]["name_items"] is False, "a cloud voice result names no private item"
 
 
 def test_a_phone_turn_cannot_drive_the_screen_but_can_ask_what_is_happening():
