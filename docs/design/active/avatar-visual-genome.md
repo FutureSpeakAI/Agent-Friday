@@ -1,8 +1,9 @@
 # Avatar visual genome: Friday's look evolves weekly, on every structure, reversibly
 
 > **Status:** proposed (spec only; nothing in this document is built). The
-> owner decided all three open questions on 2026-09-29 (§12): on by default,
-> frontier models only, one shared palette within ±30° of cyan. This is
+> owner decided all three open questions on 2026-09-29 (§12): on by default;
+> a frontier model authors by default, and the user may choose any model; one
+> shared palette within ±30° of cyan. This is
 > the converged design. It replaces the 2026-09-22 version of this file and the
 > uncommitted `docs/design/evolve-genome.md` (2026-09-28). That draft is
 > preserved verbatim in Appendix B so it is in git.
@@ -69,8 +70,14 @@ authoritative.
    - **The history** lets you go back to any earlier look.
    - Nothing is ever deleted unless you delete it.
 4. **You can see what changed and why.** Every change says, in plain words,
-   what moved, why, and which frontier model made it. Friday picks the model
-   each week and credits it by name.
+   what moved, why, and which model made it. By default Friday picks a
+   frontier cloud model each week and credits it by name.
+   - **You can choose any model instead:** your local model, a different cloud
+     model, or no model at all (Friday's own seeded change). Your choice
+     sticks until you change it.
+   - **She never switches on her own.** If the default cloud model isn't
+     available, she waits and tells you. The notice offers both fixes: connect
+     a cloud model, or use your local model instead.
 5. **Her colours are the same on every structure.** All 13 share one palette,
    so switching from the lattice to the Möbius strip never changes her colours.
    Over her lifetime she drifts at most 30° either way from today's cyan (teal
@@ -82,13 +89,18 @@ authoritative.
 
 | | |
 |---|---|
-| **Privacy** | About 40 numbers a week go to the frontier model Friday picks, and you can see all of them. No words, names or titles are ever sent. Nothing is reported to anyone else, ever. |
-| **Money** | A few cents a week (INFERRED; §9). It shows in Costs like any other cloud call. |
-| **Speed** | The scene is capped at today's drawing cost. Friday measures it on your machine and undoes any change that slows her down. |
-| **Effort** | None. Evolution is on from the start. If no cloud model is connected, Friday says "evolution is waiting for a cloud model" and offers one click to connect one. |
+| | Cloud model (the default) | Local model or no model (your choice) |
+|---|---|---|
+| **Privacy** | About 40 numbers a week go to the model, and you can see all of them. No words, names or titles are ever sent. | Nothing leaves the computer. |
+| **Money** | A few cents a week (INFERRED; §9). It shows in Costs like any other cloud call. | Nothing. |
+| **Speed** | The scene is capped at today's drawing cost. Friday measures it on your machine and undoes any change that slows her down. | Same. A local model call takes a few seconds, while you're away. |
+| **Effort** | None. It is on from the start. | One choice in the menu, or by voice. |
 
-**Decided 2026-09-29** (§12): on by default; frontier models only; one shared
-palette within ±30° of cyan.
+Either way, nothing is reported to anyone else, ever.
+
+**Decided 2026-09-29** (§12): on by default; a frontier model authors by
+default and the user may pick any model; one shared palette within ±30° of
+cyan.
 
 ---
 
@@ -330,11 +342,11 @@ question.
 > **A.** Not if it is (a) the user's choice, (b) to the user's own key, (c) an
 > allowlisted numeric payload shown in full, (d) never sent to a Friday
 > server. There is no Friday server, and there is no metrics endpoint, now or
-> later. (The owner chose frontier-only authorship on 2026-09-29, so the weekly
-> call is the one thing that leaves the machine. A user who wants nothing to
-> leave turns evolution off, or runs local-only mode, and it waits.) A test pins that the step module
-> imports no network client except through the cloud author's single call
-> site.
+> later. (A frontier model is the default author, owner, 2026-09-29, so by
+> default the weekly call is the one thing that leaves the machine. A user who
+> wants nothing to leave picks a local model or the seeded author, and then
+> nothing does.) A test pins that the step module imports no network client
+> except through the cloud author's single call site.
 >
 > **Q.** What about off the record?
 > **A.** Off the record writes nothing (main `0597f9e2`). So no signal row may
@@ -365,11 +377,12 @@ question.
 > **Q.** Why a model at all?
 > **A.** A seeded mutation engine is enough to produce divergence, and it
 > costs nothing. A model adds *authorship*: a rationale, taste, and the fun
-> credit the 2026-09-22 design wanted. The owner decided (2026-09-29) that
-> authorship is the point: **frontier models only**. The seed still makes
-> installs differ (it seeds the builders and the sigil), but it never authors
-> a step. A seeded engine exists only as a test stub for the simulated year
-> (§10.2).
+> credit the 2026-09-22 design wanted. The owner decided (2026-09-29) that a
+> **frontier model is the default author**, and that the user may choose
+> **any** model, or the seeded engine with no model at all. So all three
+> authors exist, one is the default, and the user's choice sticks. The seed
+> makes installs differ whichever author is chosen (it seeds the builders and
+> the sigil).
 >
 > **Q.** Thirteen expression functions is a lot of surface.
 > **A.** Thirteen small ones. Each maps shared genes onto literals that
@@ -388,7 +401,7 @@ question.
 | Status colours | State moods keep their hue; reserved-hue distance; never touch orbs or DOM | §6.2 |
 | GPU | Element caps v1+10%; no new passes; in-page frame check; measured against tok/s | §6.4, §10.3 |
 | Off the record | Excluded from signals | §5.1 |
-| Who authors | Frontier models only, picked by Friday and credited; no local or seeded fallback | §5.3 |
+| Who authors | A frontier model by default, picked by Friday and credited; the user may choose any model or the seeded author; never a silent switch | §5.3 |
 
 ---
 
@@ -517,23 +530,33 @@ days (§1.1). Instead:
   - The *visual transition* waits until she is not speaking and no voice
     session is open, up to 10 minutes, then crossfades. Her face never
     changes mid-sentence.
-- **The author gate: a frontier model or nothing.** A step is due only when a
-  frontier model is available. That means a working key for at least one
-  frontier provider, and a cloud-consent answer that allows cloud calls
-  (`privacy/cloud_consent.resolve`). A user who chose local-only mode is not
-  offered a cloud call.
-  - If none is available when a step falls due, **no step runs and nothing
-    falls back** to a seeded or local author. `last_step_at` does not move.
-    Friday shows one plain notice: *"Evolution is waiting for a cloud model."*
-    It has one button, **Connect a model**, which opens Settings → Accounts &
-    Keys (or the consent question if that is what is missing).
+- **The author gate: the chosen author, or wait.** A step runs with the author
+  in `state.json` (§5.3), and only that one.
+  - **The default author is "frontier".** It is available when there is a
+    working key for at least one frontier provider, and a cloud-consent answer
+    that allows cloud calls (`privacy/cloud_consent.resolve`). A user who
+    chose local-only mode is not offered a cloud call.
+  - **A named model** (local or cloud) is available when its seat or key
+    answers. A local model also waits for `idle_work_blocked_reason` to open.
+  - **The seeded author** is always available.
+  - **If the chosen author is unavailable when a step falls due, no step
+    runs, and Friday never switches authors on her own.** `last_step_at` does
+    not move. She shows one plain notice with both fixes, one click each:
+    *"Evolution is waiting for a cloud model."* **[Connect a cloud model]**
+    **[Use <local model name> instead]**. The second button appears when a
+    local seat exists, and names it.
+    - "Connect" opens Settings → Accounts & Keys, or the consent question if
+      that is what is missing.
+    - "Use … instead" sets that local model as the author (the choice
+      sticks), and runs the waiting step at once.
+    - For a chosen author other than frontier, the notice names that author
+      and offers "try again" and "choose another model".
   - The notice repeats at most once a week. The waiting state shows in the
     scene menu (§8.1) and in voice ("what changed?" answers "nothing yet:
-    I'm waiting for a cloud model").
-  - When a model becomes available, the next hourly check runs **one** step.
-    That is the same catch-up rule as a machine that was switched off.
-  - The call itself then goes through the spend guard and the egress gate
-    (§5.3).
+    I'm waiting for a cloud model", and offers the local model by name).
+  - When the author becomes available, the next hourly check runs **one**
+    step. That is the same catch-up rule as a machine that was switched off.
+  - A cloud call goes through the spend guard and the egress gate (§5.3).
 
 ### 4.2 The step pipeline
 
@@ -615,20 +638,39 @@ Suggested weightings, which a model author may depart from within bounds:
 
 Low calibration scores never make her look worse. There is no worse.
 
-### 5.3 The author: a frontier model, picked by Friday and credited (decided)
+### 5.3 The author: frontier by default, any model by choice (decided)
 
-The owner decided on 2026-09-29: **frontier models only**. This restores the
-2026-09-22 rule, and reverses this spec's earlier local-default
-recommendation.
+The owner decided on 2026-09-29, verbatim: *"those users should be able to run
+evolution on any model they wish, but default to frontier"*.
 
-| | |
-|---|---|
-| **Who** | Friday picks among frontier models with a working key, favouring one that hasn't made any of the last few steps. She records a one-line reason ("Chose <model>: it hasn't shaped Friday since W31"). |
-| **How** | A direct, pinned call: `_call_claude(..., model=...)` or `_call_openai(..., provider=..., model=..., fallback_models=None)`. Never `_generate_text`, which falls through to local providers. |
-| **Credit** | The model the provider *reports* it used. If it differs from the one requested (a router substituting silently), both are shown, with a warning. |
-| **Returns** | `proposed_genome`, `rationale` (≤ 280 characters, shown as the model's own words), `name` |
-| **What leaves the machine** | The allowlisted payload below (about 40 numbers), through spend guard → `seal_outbound` (fail-closed) → `cost_meter` (`avatar_evolution`, so it appears in Costs) → `attribution.record_generation` |
-| **Never** | A local model or a seeded engine standing in. When no frontier model is available, the step waits (§4.1). |
+- **The author is a user setting.** It is `author` in `state.json`, set from
+  the scene menu, from Settings, or by voice (§8.4). It keeps its value until
+  the user changes it.
+- **The default is `frontier`.** Friday picks among frontier models with a
+  working key, favouring one that hasn't made any of the last few steps, and
+  records a one-line reason ("Chose <model>: it hasn't shaped Friday since
+  W31").
+- **The user may instead choose any model they have:** a specific cloud
+  model, a local model (any seat the arbiter can serve), or `seeded`
+  (Friday's own change, no model).
+- **Friday never changes the author herself,** not even when the chosen one
+  is unavailable (§4.1).
+
+| Author | Credit shown | How it runs | What leaves the machine |
+|---|---|---|---|
+| **Frontier (default)** | "<model the provider reported>, picked by Friday", with her reason | A direct, pinned call: `_call_claude(..., model=...)` or `_call_openai(..., provider=..., model=..., fallback_models=None)`. Never `_generate_text`, which falls through to other providers. | The allowlisted payload below (about 40 numbers), through spend guard → `seal_outbound` (fail-closed) → `cost_meter` (`avatar_evolution`, so it appears in Costs) → `attribution.record_generation` |
+| **A cloud model the user chose** | "<model the provider reported>, your choice" | The same pinned call, with the user's model; Friday does not pick | The same payload, the same chain |
+| **A local model the user chose** | "<seat name>, on this computer" | One call through `local_call` under `local_only`, with the same payload, gated by `idle_work_blocked_reason` | Nothing |
+| **Seeded (no model)** | "Friday, on this computer (no model)" | A deterministic mutation from `seed ⊕ step_number` and the weighted signals. The reason line is templated ("tighter lattice: a focused week"). | Nothing |
+
+- **Every model author returns** `proposed_genome`, `rationale` (≤ 280
+  characters, shown as the model's own words) and `name`. One reformat retry
+  goes to the *same* model.
+- **Credit for cloud calls** is the model the provider *reports* it used. If
+  it differs from the one requested (a router substituting silently), both are
+  shown, with a warning.
+- **Every author works inside the same bounds and validators** (§4.2, §6), so
+  the choice changes who proposes, never how far a step may go.
 
 **The first time.**
 
@@ -857,8 +899,11 @@ Each step is one JSON document:
 - "Evolve now";
 - "Undo last change";
 - "History…";
-- the author line: "Made by <model>, picked by Friday", or, when no frontier
-  model is available, *"Waiting for a cloud model"* with **Connect a model**.
+- **Author:** *Frontier (Friday picks)* (the default), plus each cloud model
+  with a key, each local seat, and *No model (seeded)*. The choice sticks.
+- the author line: "Made by <model>, picked by Friday" (or "your choice"),
+  or, when the chosen author is unavailable, *"Waiting for a cloud model"*
+  with **Connect a cloud model** and **Use <local model> instead**.
 
 The existing "Reset to auto (evolution)" item is relabelled **"Rotate
 structures automatically"**, so the two ideas stop sharing a word. Code uses
@@ -912,7 +957,8 @@ the owner's own desktop.
 
 | The user says | Action | Friday does and says |
 |---|---|---|
-| "Friday, evolve now." | `evolve_now` | Runs a step at once (§4.1). While the call runs she says "Asking <model> for this week's look." Then she describes the change (below). If no frontier model is available, she says so and offers to open Accounts & Keys. |
+| "Friday, evolve now." | `evolve_now` | Runs a step at once with the chosen author (§4.1). While the call runs she says "Asking <model> for this week's look." Then she describes the change (below). If the author is unavailable, she says so and offers both fixes: "I can open Accounts & Keys, or use <local model> instead. Which?" |
+| "Use my local model for evolution." / "Let Claude do it." / "Go back to the default." / "No model." | `set_author` | Sets the author (any model the user has, `frontier`, or `seeded`) and says what she set: "From now on, <model> will make my looks." The choice sticks, exactly as on screen. |
 | "Undo that look." | `undo` | Rolls back to the parent: "Done. I'm back to *<name>*." |
 | "Go back to last month's look." | `rollback` with `when: "last month"` | Resolves the phrase to the step that was active on that date (a named step, "the one Claude made", or "the week of the 7th" also resolve). She switches, and says which look it was and who made it. A second "undo that" returns to where she was. Rollback is reversible, so she doesn't ask for confirmation. Where a phrase matches more than one look, she names the two closest and asks which. |
 | "Turn evolution off." / "on" | `set_enabled` | Flips the switch: "Evolution is off. I'll keep this look." Turning it on while the cloud-consent question is unanswered makes her read the disclosure (about 40 numbers, never words, names or titles; the cost goes in Costs) and ask yes or no. The same card appears on screen. That is how the voice payload card already works. |
@@ -943,7 +989,7 @@ the owner's own desktop.
 | Failure | What the user sees |
 |---|---|
 | The machine was off for weeks | One step on return; the notice says "caught up after 5 weeks away" |
-| No frontier model (no key, no consent, or local-only mode) | No step runs and nothing falls back. One notice, "Evolution is waiting for a cloud model", with **Connect a model**, repeated at most weekly |
+| The chosen author is unavailable (for the default: no key, no consent, or local-only mode) | No step runs, and the author never changes by itself. One notice, "Evolution is waiting for a cloud model", with **Connect a cloud model** and **Use <local model> instead**, repeated at most weekly |
 | The cloud call fails | A `skipped` entry naming the model and the reason, plus Try again |
 | The frame budget is exceeded | The look reverts by itself; "held: this change was too heavy for this machine" |
 | A signature fails | The nearest verified ancestor is shown; the history row says "could not verify" |
@@ -970,10 +1016,16 @@ change and pass after it, run in both directions (AGENTS.md).
 - **Catch-up.** With `last_step_at` 5 weeks ago, one tick produces **one**
   step, with ordinary bounds, and `next_due = now + 7d`. "Evolve now" resets
   the clock.
-- **Frontier only.** With no frontier key, or with consent unanswered or
-  local-only: a due step does not run, `last_step_at` does not move, no local
-  or seeded author is called (asserted by spies), and exactly one waiting
-  notice is raised per week. When a key appears, exactly one step runs.
+- **Frontier by default, never a silent switch.**
+  - A fresh `state.json` has `author: "frontier"`.
+  - With no frontier key, or with consent unanswered or local-only: a due step
+    does not run, `last_step_at` does not move, and no other author is called
+    (asserted by spies). Exactly one waiting notice is raised per week, and it
+    carries both actions. When a key appears, exactly one step runs.
+  - "Use <local model> instead" sets `author` to that seat, persists it, and
+    runs the waiting step with it.
+  - Each author choice (a named cloud model, a local seat, `seeded`) survives
+    a restart, and only that author is called.
 - **One palette.** For a random genome, the colours `express(id)` returns are
   identical for all 13 structures. No structure section passes schema
   validation if it carries a colour field. The lifetime hue stays within
@@ -1060,7 +1112,9 @@ After the owner's restart:
 7. By voice: "evolve now", "what changed?", "undo that look", "go back to last
    month's look", "turn evolution off". Each spoken answer matches the notice.
 8. With the frontier key removed in a scratch home: "evolve now" says it is
-   waiting for a cloud model, and nothing runs.
+   waiting and offers both fixes, and nothing runs. Choose "use the local
+   model instead": one step runs with the local model's credit, and the
+   choice is still set after a restart.
 
 ---
 
@@ -1072,7 +1126,7 @@ Effort is in focused agent-days, with review. Each phase is shippable alone.
 |---|---|---|---|
 | **A0** | Scene safety, useful with or without evolution: the scene honours `prefers-reduced-motion`; `metamorphosisFlash` is capped to stay under the WCAG 2.3.1 threshold (none under reduced motion); time-lapse is off under reduced motion; `/api/evolution` bounds-checks `preferred_scene_index`; the freeze hook for screenshots | 1 | nothing |
 | **A1** | Genome schema, seed, the 13 expression sections, the loader, seeded PRNG in the builders, the "empty = v1" screenshot and pipeline gates, the signed step store, the tree, `GET /api/avatar/genome`, and rollback | 4 | A0 (freeze hook) |
-| **A2** | The frontier author (Friday's pick, pinned call, credit, "What was sent", costs, the waiting state and notice), nightly signal rows (off-record excluded), the catch-up job, "Evolve now", the reserved-hue / contrast / colour-blind / static-budget validators, the in-page frame check, and the simulated year with its contact sheet | 3-4 | A1 |
+| **A2** | The authors: frontier by default (Friday's pick, pinned call, credit, "What was sent", costs), a user-chosen cloud model, a local model through `local_call`, and seeded; the sticky author setting; the waiting state and its two-action notice; nightly signal rows (off-record excluded), the catch-up job, "Evolve now", the reserved-hue / contrast / colour-blind / static-budget validators, the in-page frame check, and the simulated year with its contact sheet | 3-4 | A1 |
 | **A3** | UI: the Evolve section in the scene menu and Settings, the first-run and existing-install announcement, the change notice with Undo, history (restore, hide, delete, trash), ask-first mode, and the pending dot. `index.html` and `ui_parts/` both | 3 | A2 |
 | **A4** | Voice: the `avatar_evolution` tool in both registries, the spoken descriptions, relative-date rollback, and the voice-path tests (§8.4) | 2 | A2 (tool), A3 (for parity with the notice) |
 | **A5** | Card export and import, and the share hook stopping before the market | 2 | A1 |
@@ -1144,9 +1198,10 @@ unattended work.
 
 **Replaced or confirmed by the owner on 2026-09-29:**
 
-- "A frontier model makes each change, never a local one": **confirmed**. The
-  author is frontier-only. There is no local or seeded fallback, and the step
-  waits visibly when no frontier model is available (§4.1, §5.3).
+- "A frontier model makes each change, never a local one": **amended**. A
+  frontier model is the **default** author, and the user may choose any model
+  or none. The author never switches on its own; when it is unavailable, the
+  step waits visibly (§4.1, §5.3).
 - "Off by default": **replaced by on by default** (below).
 - "Nightly or weekly": **weekly**, as recommended.
 - "Moving backwards": **dissolved**. There is no worse look (§2.2).
@@ -1155,16 +1210,24 @@ unattended work.
 
 **Decided by the owner, 2026-09-29.** Verbatim: *"Evolutions on by default:
 Yes, but only frontier models, and try to keep the color scheme consistent
-across all the different 3D avatars please. You pick though."* Where the owner said
-"you pick", the calls were made as follows.
+across all the different 3D avatars please. You pick though."* Corrected the
+same day on the author: *"those users should be able to run evolution on any
+model they wish, but default to frontier"*. Where the owner said "you pick",
+the calls were made as follows.
 
 1. **On by default,** for new installs and for existing ones, the owner's
    included. Existing installs get the one-time announcement with one-click
    off, and the first step comes a week after it (§5.3).
-2. **Frontier models only.** Friday picks the model and credits each look.
-   With no frontier model available (no key, no consent, or local-only mode),
-   nothing runs and nothing falls back. A plain notice says evolution is
-   waiting, and offers one click to connect a model (§4.1).
+2. **A frontier model by default; any model by choice.**
+   - By default, Friday picks the frontier model and credits each look.
+   - The user may switch the author to any model they have: a local model, a
+     different cloud model, or the seeded author with no model. The choice
+     sticks.
+   - When the chosen author is unavailable (for the default: no key, no
+     consent, or local-only mode), the step waits with a plain notice. It
+     offers both fixes in one step: connect a cloud model, or use the named
+     local model instead.
+   - Friday never switches authors quietly on her own (§4.1, §5.3).
 3. **One shared palette across all 13 structures,** so switching never changes
    her colours. Lifetime drift is ±30° from cyan (teal to azure), and never
    green, amber or pink, because those mean status (§3.2).

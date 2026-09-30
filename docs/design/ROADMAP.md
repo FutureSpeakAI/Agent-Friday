@@ -178,8 +178,9 @@ signed evolution that every structure expresses. Nothing is built.
 
 The owner decided three questions on 2026-09-29:
 - evolution is on by default;
-- only frontier models author a look, and each look is credited to the
-  model that made it;
+- a frontier model authors each look by default, credited to the model
+  that made it; the user may switch the author to any model they have, and
+  Friday never switches it on her own;
 - all 13 structures share one palette, which may drift at most ±30° from
   cyan over Friday's lifetime.
 
