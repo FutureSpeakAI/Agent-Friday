@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect your life · Agent Friday onboarding prototype</title>
+<link rel="stylesheet" href="friday.css">
+<style>
+  .group { margin-top: 26px; }
+  .group h2 { display: flex; align-items: baseline; gap: 10px; }
+  .group h2 small { color: var(--dim); font-size: 13px; font-weight: 400; }
+  .conn { display: grid; grid-template-rows: auto 1fr auto; }
+  .conn .what { font-size: 13px; color: var(--label); margin: 8px 0; }
+  .conn .sees { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; font-size: 12px; color: var(--dim); margin: 8px 0; }
+  .conn .sees b { color: var(--label); font-weight: 500; }
+  .conn .rw { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; }
+  .conn .foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .where { font-family: var(--display); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; padding: 2px 6px; border-radius: 8px; border: 1px solid var(--line); color: var(--dim); }
+  .where.local { color: var(--ok); border-color: rgba(0,255,128,.4); }
+  .where.cloud { color: var(--violet); border-color: rgba(167,139,250,.4); }
+  .truth { border: 1px solid rgba(245,158,11,.45); border-radius: var(--radius); padding: 18px 20px; background: rgba(245,158,11,.05); }
+  .truth h3 { color: var(--warn); }
+  .opt { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  .opt:first-of-type { border-top: 0; }
+  .opt .cost { text-align: right; color: var(--dim); white-space: nowrap; }
+  .summary { position: sticky; top: 52px; z-index: 5; background: rgba(0,0,0,.85); backdrop-filter: blur(8px); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 16px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+  .drop { border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 22px; text-align: center; color: var(--dim); }
+  .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 30; align-items: center; justify-content: center; padding: 16px; }
+  .modal.open { display: flex; }
+  .modal .box { background: #05080d; border: 1px solid var(--line-strong); border-radius: 14px; max-width: 560px; width: 100%; padding: 22px 24px; }
+</style>
+</head>
+<body>
+<main id="main" class="stage">
+  <div class="eyebrow">Setup · 07 · about 5 minutes, or come back later</div>
+  <h1>Connect your life</h1>
+  <p class="lede">Each card says what Friday will see, where it is processed, and how to take it back. Reading and writing are separate switches. Two sources are enough for her to show you something real in about fifteen minutes.</p>
+
+  <div class="friday-says">
+    <div class="holo" data-voice></div>
+    <div><p data-friday-line>You don't have to connect anything. If you do just two, I'd pick your mail and your calendar, or your mail and a folder of your writing. Tell me the names, or tap them.</p>
+    <div class="controls"><span>Say "connect my calendar" or "skip this"</span></div></div>
+  </div>
+
+  <div class="summary" role="status" aria-live="polite">
+    <b>She can see:</b> <span id="sum">nothing yet</span>
+    <span class="spacer"></span>
+    <span class="muted">Leaves this PC: <b id="leaves" style="color:var(--ok)">nothing</b></span>
+    <button class="btn sm" onclick="location.href='knowledge.html'">Start learning from these</button>
+  </div>
+
+  <!-- Email and calendar -->
+  <section class="group" aria-labelledby="g1">
+    <h2 id="g1">Email and calendar <small>the fastest path to first value</small></h2>
+    <div class="grid-cards">
+      <div class="card conn">
+        <div class="card-head"><h3>Gmail and Google Calendar</h3><span class="pill warn">read the note below</span></div>
+        <div class="what">Mail triage, commitments, people, meetings. Calendar prep and briefings.</div>
+        <div class="sees"><b>Sees</b><span>message headers, bodies, attachments' names; events, attendees</span><b>Processed</b><span><span class="where local">on this PC</span> extraction; a cloud model only sees scrubbed text and only if your routing allows</span><b>Kept</b><span>facts and wiki pages here; your mail is not copied into Friday's folder</span><b>Revoke</b><span>one button here, plus Google's own page. Facts already learned stay unless you say "forget this source"</span></div>
+        <div class="rw"><label class="toggle"><input type="checkbox" data-src="Gmail" onchange="recount()"><span class="track"></span><span>Read mail</span></label><label class="toggle"><input type="checkbox" data-src="Calendar" onchange="recount()"><span class="track"></span><span>Read calendar</span></label><label class="toggle"><input type="checkbox" disabled><span class="track"></span><span class="muted">Send mail (later, per workflow)</span></label></div>
+        <div class="foot"><button class="btn sm" onclick="openModal()">Connect with Google</button><button class="btn ghost sm" onclick="toast('Not connected. Nothing to revoke.')">Revoke</button><span class="muted small">last checked: never</span></div>
+      </div>
+      <div class="card conn">
+        <div class="card-head"><h3>Outlook and Microsoft 365</h3><span class="pill dim">planned</span></div>
+        <div class="what">Same as Gmail, for work accounts. Your admin may need to allow it.</div>
+        <div class="sees"><b>Sees</b><span>mail, calendar, contacts you choose</span><b>Processed</b><span><span class="where local">on this PC</span></span><b>Revoke</b><span>here, and in your Microsoft account's app list</span></div>
+        <div class="rw"><label class="toggle"><input type="checkbox" data-src="Outlook" onchange="recount()"><span class="track"></span><span>Read mail</span></label><label class="toggle"><input type="checkbox" data-src="Outlook calendar" onchange="recount()"><span class="track"></span><span>Read calendar</span></label></div>
+        <div class="foot"><button class="btn sm secondary">Connect with Microsoft</button><span class="muted small">or import a .pst below, no account needed</span></div>
+      </div>
+      <div class="card conn">
+        <div class="card-head"><h3>Any mail over IMAP</h3><span class="pill ok">no verification needed</span></div>
+        <div class="what">Fastmail, Proton (bridge), iCloud, your own domain, or Gmail with an app password.</div>
+        <div class="sees"><b>Sees</b><span>the folders you tick, from the date you pick</span><b>Processed</b><span><span class="where local">on this PC</span></span><b>Revoke</b><span>delete the app password at your provider; Friday forgets the credential here</span></div>
+        <div class="rw"><label class="toggle"><input type="checkbox" data-src="IMAP mail" onchange="recount()"><span class="track"></span><span>Read mail</span></label></div>
+        <div class="foot"><button class="btn sm secondary">Add a mailbox</button></div>
+      </div>
+    </div>
+
+    <div class="truth" style="margin-top:14px">
+      <h3>The honest note about Gmail</h3>
+      <p class="small">Reading Gmail through Google's own sign-in needs Google to verify the app. Until FutureSpeak passes that review, sign-in works only for people on a test list, and their access expires every seven days. Friday will not pretend otherwise. You have four ways in, and Friday shows the one that fits you first:</p>
+      <div class="opt"><div><b>Import a Google Takeout archive</b> · no sign-in, no Google review, everything up to today, in one file. Friday reads it here and never uploads it.</div><div class="cost">free · 10 min of your time · <span class="pill ok">recommended today</span></div></div>
+      <div class="opt"><div><b>IMAP with an app password</b> · live mail, read-only if you like, needs 2-step verification on your Google account.</div><div class="cost">free · 3 min</div></div>
+      <div class="opt"><div><b>Your own Google sign-in project</b> · you create a "desktop app" in Google Cloud, paste two strings here. Friday walks you through it. Verified by nobody, so Google shows a warning you click past, and the 100-user cap is yours alone.</div><div class="cost">free · 10 min · fiddly</div></div>
+      <div class="opt"><div><b>FutureSpeak's verified sign-in</b> · one tap, when it exists. Needs Google's review and, for reading mail, a yearly security assessment paid by FutureSpeak.</div><div class="cost">FutureSpeak's cost · not yet · <span class="pill dim">decision D2</span></div></div>
+    </div>
+  </section>
+
+  <!-- Files -->
+  <section class="group" aria-labelledby="g2">
+    <h2 id="g2">Files and writing <small>no account needed for any of these</small></h2>
+    <div class="grid-cards">
+      <div class="card conn"><div class="card-head"><h3>Folders on this PC</h3><span class="where local">on this PC</span></div><div class="what">Documents, a writing archive, notes, a project folder. Friday reads, never moves or edits, unless you grant that later per folder.</div><div class="rw"><label class="toggle"><input type="checkbox" data-src="Documents folder" onchange="recount()"><span class="track"></span><span>Read</span></label></div><div class="foot"><button class="btn sm secondary">Choose folders</button></div></div>
+      <div class="card conn"><div class="card-head"><h3>Google Drive, OneDrive, Dropbox</h3></div><div class="what">Only what is synced locally is read locally. Anything else needs the account's sign-in and is listed separately.</div><div class="rw"><label class="toggle"><input type="checkbox" data-src="Synced cloud folder" onchange="recount()"><span class="track"></span><span>Read synced folder</span></label></div><div class="foot"><button class="btn sm secondary">Pick the synced folder</button></div></div>
+      <div class="card conn"><div class="card-head"><h3>Published work</h3><span class="where local">on this PC</span></div><div class="what">A portfolio, a CV, a bylines page, a book. Friday fetches the pages you name, once, and cites them.</div><div class="rw"><label class="toggle"><input type="checkbox" data-src="Published work" onchange="recount()"><span class="track"></span><span>Fetch and read</span></label></div><div class="foot"><input type="text" placeholder="https://… (one per line, or drop a PDF)" style="max-width:260px"></div></div>
+    </div>
+  </section>
+
+  <!-- Messages -->
+  <section class="group" aria-labelledby="g3">
+    <h2 id="g3">Messages <small>other people are in here; Friday keeps facts about them minimal and forgettable</small></h2>
+    <div class="grid-cards">
+      <div class="card conn"><div class="card-head"><h3>Slack</h3></div><div class="what">Channels you pick. Facts about colleagues are kept only as "who works on what", never inferred traits.</div><div class="rw"><label class="toggle"><input type="checkbox" data-src="Slack" onchange="recount()"><span class="track"></span><span>Read</span></label><label class="toggle"><input type="checkbox" disabled><span class="track"></span><span class="muted">Post (later)</span></label></div><div class="foot"><button class="btn sm secondary">Connect</button></div></div>
+      <div class="card conn"><div class="card-head"><h3>Telegram and Discord</h3></div><div class="what">A bridge so you can talk to Friday from there. Reads only messages sent to her.</div><div class="rw"><label class="toggle"><input type="checkbox" data-src="Telegram bridge" onchange="recount()"><span class="track"></span><span>Bridge</span></label></div><div class="foot"><button class="btn sm secondary">Pair</button></div></div>
+      <div class="card conn"><div class="card-head"><h3>WhatsApp, iMessage, SMS</h3><span class="pill dim">export only</span></div><div class="what">No live access exists that respects your contacts' privacy. An exported chat file can be imported below.</div></div>
+    </div>
+  </section>
+
+  <!-- Work tools -->
+  <section class="group" aria-labelledby="g4">
+    <h2 id="g4">Work tools</h2>
+    <div class="grid-cards">
+      <div class="card conn"><div class="card-head"><h3>GitHub</h3></div><div class="what">Repos, issues, PRs you name. Read first; write scopes arrive with the first workflow that needs them, as a permission diff.</div><div class="rw"><label class="toggle"><input type="checkbox" data-src="GitHub" onchange="recount()"><span class="track"></span><span>Read</span></label></div><div class="foot"><button class="btn sm secondary">Connect</button></div></div>
+      <div class="card conn"><div class="card-head"><h3>Notion and Linear</h3></div><div class="what">Pages and issues. Same rules.</div><div class="rw"><label class="toggle"><input type="checkbox" data-src="Notion" onchange="recount()"><span class="track"></span><span>Read</span></label></div><div class="foot"><button class="btn sm secondary">Connect</button></div></div>
+      <div class="card conn"><div class="card-head"><h3>Any MCP server</h3><span class="pill dim">advanced</span></div><div class="what">Shown with its declared tools, a domain allowlist, and a size cap. Off until you turn each tool on.</div><div class="foot"><button class="btn sm secondary">Add</button></div></div>
+    </div>
+  </section>
+
+  <!-- Media -->
+  <section class="group" aria-labelledby="g5">
+    <h2 id="g5">Media and publishing</h2>
+    <div class="grid-cards">
+      <div class="card conn"><div class="card-head"><h3>Podcasts and news</h3><span class="where local">on this PC</span></div><div class="what">Feeds you follow. Used for the morning briefing and the local podcast, both opt-in later.</div><div class="rw"><label class="toggle"><input type="checkbox" data-src="Feeds" onchange="recount()"><span class="track"></span><span>Read</span></label></div></div>
+      <div class="card conn"><div class="card-head"><h3>LinkedIn, X, Bluesky, Substack, YouTube</h3></div><div class="what">Publishing accounts. Reading your own posts helps the wiki; posting is always a card.</div><div class="rw"><label class="toggle"><input type="checkbox" data-src="Own posts" onchange="recount()"><span class="track"></span><span>Read my posts</span></label><label class="toggle"><input type="checkbox" disabled><span class="track"></span><span class="muted">Post (later)</span></label></div><div class="foot"><button class="btn sm secondary">Connect one</button></div></div>
+      <div class="card conn"><div class="card-head"><h3>Music and photos</h3><span class="pill dim">later</span></div><div class="what">Offered in week two, if you want them. Photos are never sent to a cloud model.</div></div>
+    </div>
+  </section>
+
+  <!-- Imports -->
+  <section class="group" aria-labelledby="g6">
+    <h2 id="g6">Imports that need no account <small>the biggest, safest source of all</small></h2>
+    <div class="drop" tabindex="0" role="button" aria-label="Drop an archive here" onclick="toast('Choose a file: Takeout .zip or .tgz, Outlook .pst, .mbox, browser bookmarks .html, a WhatsApp export .txt, a Word or PDF CV.')">Drop an archive here, or click to choose<br><span class="small">Google Takeout · Microsoft export · .mbox · .pst · bookmarks · chat exports · a CV or portfolio · a previous Friday Bundle</span></div>
+    <p class="small muted" style="margin-top:10px">Imports are scanned here first. Friday reports what is inside (categories, counts, dates, how sensitive) and how long extraction will take before anything is kept. You exclude folders, people or years, then she stages it. Nothing from an import becomes permanent until you have seen it.</p>
+  </section>
+
+  <div class="actions">
+    <button class="btn secondary" onclick="location.href='birth.html'">Back</button>
+    <button class="btn" onclick="location.href='knowledge.html'">Start learning from these</button>
+    <button class="btn ghost" onclick="toast('Nothing connected. Friday stays useful for chat and voice. She will offer this again from Home, once.')">Connect nothing for now</button>
+  </div>
+
+  <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="mh">
+    <div class="box">
+      <h2 id="mh">Before Google's page opens</h2>
+      <p class="small">Friday is asking Google for these, and nothing else:</p>
+      <ul class="small">
+        <li><b>Read your mail</b> (restricted scope). Google will say the app is not verified. That is true today.</li>
+        <li><b>Read your calendar</b> (sensitive scope).</li>
+      </ul>
+      <p class="small">Not requested: sending, deleting, contacts, Drive. If Friday ever needs one of those, you will see a permission diff first.</p>
+      <p class="small muted">Because FutureSpeak's sign-in is not yet verified, your access through this path expires in 7 days. Friday will tell you the day before and offer the Takeout or IMAP route instead.</p>
+      <div class="actions"><button class="btn" onclick="closeModal(); toast('Google sign-in opened in your browser. Friday waits here.')">Open Google</button><button class="btn secondary" onclick="closeModal()">Not now</button></div>
+    </div>
+  </div>
+</main>
+<script src="friday.js"></script>
+<script>
+  protoNav('connect.html');
+  function recount() {
+    const on = [...document.querySelectorAll('input[data-src]:checked')].map(i => i.dataset.src);
+    document.getElementById('sum').textContent = on.length ? on.join(', ') : 'nothing yet';
+    document.getElementById('leaves').textContent = 'nothing';
+    if (on.length === 2) say("Two sources. That's enough. I'll start learning from these the moment you say go, here, on this PC.");
+  }
+  function openModal() { document.getElementById('modal').classList.add('open'); document.getElementById('mh').focus(); }
+  function closeModal() { document.getElementById('modal').classList.remove('open'); }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+</script>
+</body>
+</html>
