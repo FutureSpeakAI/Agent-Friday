@@ -260,7 +260,7 @@ def test_the_floors_come_from_config(friday_tree):
 
 def test_the_process_probe_sees_another_pytest_process_and_not_the_caller():
     marker = "import time; time.sleep(30)  # pytest-probe-target"
-    child = subprocess.Popen([sys.executable, "-c", marker])
+    child = subprocess.Popen([sys.executable, "-c", marker])  # python, not a shell wrapper
     try:
         time.sleep(1.0)
         found = g.running_pytest_processes()
@@ -272,6 +272,20 @@ def test_the_process_probe_sees_another_pytest_process_and_not_the_caller():
     finally:
         child.kill()
         child.wait(timeout=10)
+
+
+@pytest.mark.parametrize("cmdline,is_run", [
+    ("C:/x/venv/Scripts/python.exe -m pytest tests/unit/test_a.py -n 0", True),
+    ("pytest tests/unit/test_a.py", True),
+    ("python scripts/run_suite_guarded.py tests/unit tests/api", True),
+    ('"C:/Program Files/Git/bin/bash.exe" -c "cd /c/x && python -m pytest tests/unit/test_a.py -n 0"', False),
+    ('cmd.exe /c ""C:/x/python.exe" -m pytest test_a.py"', False),
+    ("powershell.exe -NoProfile -Command \"Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'pytest' }\"", False),
+    ("python C:/x/.claude/hooks/friday_guard.py", False),
+    ("python -c \"import time; time.sleep(30)\"", False),
+])
+def test_only_real_test_runs_count_as_pytest_processes(cmdline, is_run):
+    assert g.is_pytest_process(cmdline) is is_run
 
 
 def test_the_guarded_runner_counts_as_a_pytest_process(friday_tree):

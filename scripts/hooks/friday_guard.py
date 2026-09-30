@@ -182,10 +182,24 @@ def running_pytest_processes() -> list[tuple[int, str]] | None:
         pid_s = pid_s.strip()
         if not pid_s.isdigit() or int(pid_s) == me:
             continue
-        low = cmd.lower()
-        if any(m in low for m in PYTEST_PROCESS_MARKERS) and "friday_guard.py" not in low:
+        if is_pytest_process(cmd):
             out.append((int(pid_s), cmd.strip()[:160]))
     return out
+
+
+SHELL_WRAPPERS = {"bash", "sh", "zsh", "cmd", "powershell", "pwsh", "conhost", "wsl"}
+
+
+def is_pytest_process(cmdline: str) -> bool:
+    """A process that IS a test run: python running pytest or the guarded
+    runner. A shell whose command text merely contains the word (the bash or
+    cmd wrapper that launched the run, or a hook reading the process list) is
+    not one; its pytest child is counted on its own."""
+    low = cmdline.lower()
+    if not any(m in low for m in PYTEST_PROCESS_MARKERS) or "friday_guard.py" in low:
+        return False
+    toks = tokens(cmdline)
+    return bool(toks) and base_name(toks[0]) not in SHELL_WRAPPERS
 
 
 def lane_token(cfg: dict, now: float | None = None) -> str | None:
