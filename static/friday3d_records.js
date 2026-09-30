@@ -866,11 +866,11 @@
         (src.filters || []).map(f => h('span', { key: f.id, className: 'f3-chip' + (filters[f.id] ? ' on' : ''), role: 'switch', 'aria-checked': !!filters[f.id], tabIndex: 0,
           onClick: () => setFilters(o => Object.assign({}, o, { [f.id]: !o[f.id] })), title: f.tip || f.label }, (filters[f.id] ? '✓ ' : '') + f.label)),
         h('input', { className: 'f3-search', value: query, onChange: e => setQuery(e.target.value), placeholder: 'Search ' + noun + '…', 'aria-label': 'Search in 3D' }),
-        (src.tools || []).map(t => h('button', { key: t.id, className: 'btn btn-magenta f3-tool', onClick: () => t.run(ctx), title: t.tip || t.label, disabled: t.disabled ? t.disabled(ctx) : false }, t.label)),
-        zones && h('button', { className: 'btn f3-tool' + (lasso && lasso.on === 'sticky' ? '' : ' btn-magenta'), 'aria-pressed': !!(lasso && lasso.on === 'sticky'), onClick: () => setLasso(l => l && l.on === 'sticky' ? null : { on: 'sticky', pts: [] }), title: 'Lasso: draw round cards to pick several (Q, or hold Alt and drag). Shift adds to the pick.' }, '⬚ Lasso'),
-        src.triage && h('button', { className: 'btn f3-tool' + (triage ? '' : ' btn-magenta'), 'aria-pressed': !!triage, onClick: () => (triage ? setTriage(null) : startTriage()), title: 'Deal the unread one at a time; arrows act like swipes' }, triage ? '■ Stop triage' : '🃏 ' + src.triage.label),
-        h('button', { className: 'btn btn-magenta f3-tool', onClick: () => load(true), title: 'Read the records again', 'aria-label': 'Refresh' }, '↻ Refresh'),
-        h('button', { className: 'btn btn-magenta f3-tool', onClick: () => setHelp(v => !v), title: 'Mouse and keys (?)', 'aria-label': 'Help: mouse and keys', 'aria-pressed': help }, '? Help')),
+        (src.tools || []).map(t => h('button', { key: t.id, className: 'btn f3-tool', onClick: () => t.run(ctx), title: t.tip || t.label, disabled: t.disabled ? t.disabled(ctx) : false }, t.label)),
+        zones && h('button', { className: 'btn f3-tool' + (lasso && lasso.on === 'sticky' ? ' active' : ''), 'aria-pressed': !!(lasso && lasso.on === 'sticky'), onClick: () => setLasso(l => l && l.on === 'sticky' ? null : { on: 'sticky', pts: [] }), title: 'Lasso: draw round cards to pick several (Q, or hold Alt and drag). Shift adds to the pick.' }, '⬚ Lasso'),
+        src.triage && h('button', { className: 'btn f3-tool' + (triage ? ' btn-magenta' : ''), 'aria-pressed': !!triage, onClick: () => (triage ? setTriage(null) : startTriage()), title: 'Deal the unread one at a time; arrows act like swipes' }, triage ? '■ Stop triage' : '🃏 ' + src.triage.label),
+        h('button', { className: 'btn f3-tool', onClick: () => load(true), title: 'Read the records again', 'aria-label': 'Refresh' }, '↻ Refresh'),
+        h('button', { className: 'btn f3-tool' + (help ? ' active' : ''), onClick: () => setHelp(v => !v), title: 'Mouse and keys (?)', 'aria-label': 'Help: mouse and keys', 'aria-pressed': help }, '? Help')),
       legend.length > 1 && h('div', { className: 'f3-legend', role: 'group', 'aria-label': 'Groups' },
         legend.map(g => h('button', { key: g.key, className: solo && solo !== g.key ? 'off' : '', 'aria-pressed': solo === g.key, onClick: () => setSolo(s => s === g.key ? null : g.key), title: solo === g.key ? 'Show every group' : 'Show only ' + g.label },
           h('span', { className: 'sw', style: { background: hex(g.color) } }), clip(g.label, 28), h('span', { className: 'n' }, g.n)))),
@@ -904,7 +904,7 @@
             const hot = carry && carry.hot && carry.hot.id === z.id;
             const divider = (z.kind === 'lane' || z.kind === 'label') && (k === 0 || zones[k - 1].kind !== z.kind);
             return [divider && h('span', { key: 'd' + k, style: { width: 1, alignSelf: 'stretch', background: 'rgba(120,160,220,0.3)', margin: '0 4px' } }),
-              h('button', { key: z.id, 'data-zone': z.id, className: 'btn f3-tool' + (z.kind === 'lane' || z.kind === 'label' ? ' btn-magenta' : '') + (hot ? ' hot' : ''), title: z.tip || zlabel(z),
+              h('button', { key: z.id, 'data-zone': z.id, className: 'btn f3-tool' + (hot ? ' hot' : ''), title: z.tip || zlabel(z),
                 style: z.danger ? { borderColor: 'rgba(239,68,68,0.6)', color: '#ffb4b4' } : undefined,
                 onClick: () => { const t = targets(); if (t.length) perform(t, z); else setToast({ text: 'Pick a card first, or drag one here.' }); } }, z.ico + ' ' + zlabel(z))];
           })),
@@ -926,7 +926,8 @@
             src.detail(sel.rec).filter(r => r && r[1] != null && r[1] !== '').map(([k, v], j) => [h('div', { key: 'k' + j, className: 'k' }, k), h('div', { key: 'v' + j, style: { wordBreak: 'break-word' } }, String(v))])),
           h('div', { className: 'f3-acts' },
             h('button', { className: 'btn f3-tool', onClick: () => src.open(sel.rec) }, '↗ ' + src.openLabel),
-            (zones || []).filter(z => z.inDetail && (!z.when || z.when(sel.rec))).map(z => h('button', { key: z.id, className: 'btn btn-magenta f3-tool', onClick: () => perform([sel], z) }, z.ico + ' ' + zlabel(z)))))));
+            (zones || []).filter(z => z.inDetail && (!z.when || z.when(sel.rec))).map(z => h('button', { key: z.id, className: 'btn f3-tool', onClick: () => perform([sel], z),
+              style: z.danger ? { borderColor: 'rgba(239,68,68,0.6)', color: '#ffb4b4' } : undefined }, z.ico + ' ' + zlabel(z)))))));
   }
 
   // The bar every wrapped workspace gets. The workspace itself stays mounted
@@ -958,7 +959,7 @@
     return h('div', { className: 'f3-host' + (on ? ' on' : '') },
       h('div', { style: { display: 'flex', flex: 'none', justifyContent: 'flex-end', alignItems: 'center', gap: 6, marginBottom: on ? 6 : 4 } },
         on && h('span', { style: { fontFamily: 'Orbitron, Inter, sans-serif', fontSize: 10, letterSpacing: '.12em', color: '#00d4ff', marginRight: 'auto' } }, '🧊 ' + String(src.label).toUpperCase() + ' IN 3D'),
-        h('button', { className: 'btn' + (on ? '' : ' btn-magenta'), style: { fontSize: 11, padding: '4px 9px' }, onPointerEnter: on ? undefined : warm, onFocus: on ? undefined : warm, onClick: () => set(!on), title: on ? 'Back to the normal view' : 'See this workspace in 3D' }, on ? '✕ Close 3D' : '🧊 View in 3D')),
+        h('button', { className: 'btn', style: { fontSize: 11, padding: '4px 9px' }, onPointerEnter: on ? undefined : warm, onFocus: on ? undefined : warm, onClick: () => set(!on), title: on ? 'Back to the normal view' : 'See this workspace in 3D' }, on ? '✕ Close 3D' : '🧊 View in 3D')),
       on && (source === 'code' ? h(window.Files3DPanel, { root: 'projects', path: '', view: 'city', fill: true }) : h(Records3DPanel, { source, onClose: () => set(false) })),
       h('div', { className: 'f3-content', style: on ? { display: 'none' } : null }, children));
   }

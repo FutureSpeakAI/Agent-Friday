@@ -702,6 +702,18 @@ function fridayToast(msg, opts){
   try { console.warn('[friday]', msg); } catch(e) {}
 }
 
+// A workspace's passing notice ("Copied", "Saved", "Could not save") is
+// Friday's one toast: the same look and place in every workspace, in a window
+// and in a tab, and a failure reads as one. A workspace keeps calling
+// setToast(message); nothing of its own is drawn.
+const FRIDAY_TOAST_FAILED = /\b(?:fail(?:ed|s|ure)?|error|couldn['’]t|could not|can['’]t|cannot|unable)\b/i;
+function useFridayToast() {
+  const show = useCallback(msg => {
+    if (msg) fridayToast(msg, { error: FRIDAY_TOAST_FAILED.test(String(msg)) });
+  }, []);
+  return show;
+}
+
 function fridayEscapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function fridayFallbackMd(md){
   const lines=String(md||'').replace(/\r\n/g,'\n').split('\n');
@@ -1165,8 +1177,8 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
           </button>
           {/* Audio device quick-switcher */}
           <div style={{position:'relative',flexShrink:0,zIndex:1}}>
-            <button aria-label={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()} data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
-              title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()}
+            <button aria-label={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return (inp&&inp.label.split('(')[0].trim())||'Audio device'})()} data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
+              title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return (inp&&inp.label.split('(')[0].trim())||'Audio device'})()}
               style={{padding:'4px 7px',fontSize:13,color:audioDevicePopup?'#00d4ff':'#666',border:'1px solid '+(audioDevicePopup?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.1)'),background:audioDevicePopup?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.03)'}}>🎙</button>
             {audioDevicePopup&&<div ref={audioDevicePopupRef} style={{position:'absolute',bottom:'calc(100% + 8px)',left:0,width:226,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 0',zIndex:200,boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontSize:11,fontFamily:'Inter'}}>
               <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron, sans-serif',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>MIC INPUT</div>
@@ -1226,6 +1238,45 @@ function WsIcon({ws,glyph}){
   if(!w||!w.icon||failed)return <span className="ws-icon ws-icon-glyph" aria-hidden="true">{(w&&w.ico)||glyph||'\u25A3'}</span>;
   return <img className="ws-icon" src={'/assets/icons/'+w.icon+'.svg'} alt="" aria-hidden="true" onError={()=>setFailed(true)}/>;
 }
+// ═══ A WORKSPACE, THE SAME IN A WINDOW AND IN A TAB ═══
+// Its own tools (chat with Friday about it, talk to her about it, its earlier
+// versions), the mark that Friday has customized it, and its body with that
+// customization applied. A desktop window draws the tools in its title bar; a
+// workspace tab draws them in the top bar, beside the workspace's name.
+function WsTools({id,title,emoji,histOpen,onHistory}){
+  return(<>
+    <button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji)}} style={{fontSize:12}}>💬</button>
+    <button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button>
+    {/* The 40 snapshots workspace_studio keeps, reachable without asking Friday out loud. */}
+    <button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} aria-pressed={!!histOpen} onClick={e=>{e.stopPropagation();onHistory()}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>
+  </>);
+}
+function WsCustomizedMark({id}){
+  const {map}=useContext(WsCustomCtx);
+  const cust=map[id]||{};
+  if(!Object.keys(cust).length)return null;
+  return(<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>);
+}
+function WsCustomBody({id,title,emoji,children}){
+  // Live customization Friday applied to THIS workspace via the 💬 chat.
+  const {map:wsCustMap}=useContext(WsCustomCtx);
+  const cust=wsCustMap[id]||{};
+  const scope=`.ws-custom-root[data-ws="${id}"]`;
+  let custCss='';
+  if(cust.css)custCss+=cust.css.split('.ws-custom-root').join(scope)+'\n';
+  if(cust.hidden&&cust.hidden.length)custCss+=cust.hidden.map(s=>`${scope} ${s}`).join(',')+'{display:none!important}\n';
+  if(cust.density==='compact')custCss+=`${scope} .card{padding:7px 9px!important;margin-bottom:4px!important}${scope}{font-size:12px}\n`;
+  if(cust.accent)custCss+=`${scope}{--ws-accent:${cust.accent}}${scope} .card-title{color:${cust.accent}}${scope}>.ws-accent-bar{background:${cust.accent}}\n`;
+  const openWsChat=(seed)=>window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji,seed);
+  return(<div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
+      {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
+      {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
+      {cust.note&&<div style={{background:'rgba(255,84,112,0.08)',border:'1px solid rgba(255,84,112,0.25)',borderRadius:8,padding:'7px 10px',marginBottom:10,fontSize:12,color:'#ffd0d8',display:'flex',gap:8,alignItems:'flex-start'}}><span style={{flexShrink:0}}>🛠️</span><div style={{flex:1,minWidth:0}}><FridayDoc text={fridayTM(cust.note)} style={{margin:0}}/></div><button aria-label="Ask Friday to remove this note" onClick={()=>openWsChat('remove the pinned note')} title="Ask Friday to remove this note" style={{background:'none',border:'none',color:'#ff8aa0',cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button></div>}
+      {cust.actions&&cust.actions.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>{cust.actions.map((a,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>openWsChat(a.prompt)}>{a.label}</button>)}</div>}
+      {children}
+    </div>);
+}
+
 function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   // Size & position persist per workspace and are clamped to the viewport so a
   // window can never be dragged or resized off-screen.
@@ -1269,16 +1320,6 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   // Persist geometry whenever it settles.
   useEffect(()=>{try{localStorage.setItem(LSK,JSON.stringify({x:pos.x,y:pos.y,w:size.w,h:size.h,pv:pref?pref.v:undefined}))}catch(_){}},[pos.x,pos.y,size.w,size.h]);
   // ── Live customization Friday applied to THIS workspace via the 💬 chat ──
-  const {map:wsCustMap}=useContext(WsCustomCtx);
-  const cust=wsCustMap[id]||{};
-  const customized=cust&&Object.keys(cust).length>0;
-  const scope=`.ws-custom-root[data-ws="${id}"]`;
-  let custCss='';
-  if(cust.css)custCss+=cust.css.split('.ws-custom-root').join(scope)+'\n';
-  if(cust.hidden&&cust.hidden.length)custCss+=cust.hidden.map(s=>`${scope} ${s}`).join(',')+'{display:none!important}\n';
-  if(cust.density==='compact')custCss+=`${scope} .card{padding:7px 9px!important;margin-bottom:4px!important}${scope}{font-size:12px}\n`;
-  if(cust.accent)custCss+=`${scope}{--ws-accent:${cust.accent}}${scope} .card-title{color:${cust.accent}}${scope}>.ws-accent-bar{background:${cust.accent}}\n`;
-  const openWsChat=(seed)=>window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji,seed);
   // The history overlay is local to THIS window rather than App-level, so two
   // open workspaces each get their own. Two arrival paths, because the window
   // may or may not already exist: a flag read on mount covers "Settings opened
@@ -1311,14 +1352,8 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   },[id]);
   return(<div className={'fwin'+(closing?' closing':'')+(maxed?' maxed':'')} ref={fwinRef} style={{left:box.x,top:box.y,width:box.w,height:box.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onDoubleClick={e=>{if(e.target.closest('.fwin-btns'))return;setMaxed(v=>!v)}} onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;if(maxed){onFocus();return}setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
-      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button><button title={maxed?`Restore ${title} to its own size`:`Maximize ${title}`} aria-label={maxed?`Restore ${title}`:`Maximize ${title}`} aria-pressed={maxed} data-fwin-max={id} onClick={e=>{e.stopPropagation();setMaxed(v=>!v)}} style={{fontSize:12}}>{maxed?'⤡':'⤢'}</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
-    </div>{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
-      {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
-      {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
-      {cust.note&&<div style={{background:'rgba(255,84,112,0.08)',border:'1px solid rgba(255,84,112,0.25)',borderRadius:8,padding:'7px 10px',marginBottom:10,fontSize:12,color:'#ffd0d8',display:'flex',gap:8,alignItems:'flex-start'}}><span style={{flexShrink:0}}>🛠️</span><div style={{flex:1,minWidth:0}}><FridayDoc text={fridayTM(cust.note)} style={{margin:0}}/></div><button aria-label="Ask Friday to remove this note" onClick={()=>openWsChat('remove the pinned note')} title="Ask Friday to remove this note" style={{background:'none',border:'none',color:'#ff8aa0',cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button></div>}
-      {cust.actions&&cust.actions.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>{cust.actions.map((a,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>openWsChat(a.prompt)}>{a.label}</button>)}</div>}
-      {children}
-    </div></div>
+      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/>{title}<ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)}/><button title={maxed?`Restore ${title} to its own size`:`Maximize ${title}`} aria-label={maxed?`Restore ${title}`:`Maximize ${title}`} aria-pressed={maxed} data-fwin-max={id} onClick={e=>{e.stopPropagation();setMaxed(v=>!v)}} style={{fontSize:12}}>{maxed?'⤡':'⤢'}</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();/* ONE CLICK MOVES IT: the tab opens (or comes forward) inside this click with the window's place, and only then does the window fold into the dock */const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} style={{fontSize:12}}>↗</button><button aria-label={'Close ' + title} title={'Close ' + title} onClick={onClose}>×</button></div>
+    </div>{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then click ↗ again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
     {histOpen&&<WorkspaceHistory wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
     <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();e.preventDefault();startResize(e,'se')}}/>{fridayEdgeHandles(startResize)}
   </div>);
@@ -1336,13 +1371,13 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
   const[loading,setLoading]=useState(false);
   const[versions,setVersions]=useState([]);
   const[showVer,setShowVer]=useState(false);
-  const[toast,setToast]=useState('');
+  const setToast = useFridayToast();
   const[pos,setPos]=useState(()=>({x:Math.max(20,(window.innerWidth||1280)-410),y:90}));
   const[dragging,setDragging]=useState(false);
   const dOff=useRef({x:0,y:0});
   const {setCust}=useContext(WsCustomCtx);
   const endRef=useRef(null);const inRef=useRef(null);const seededRef=useRef(false);
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2600)};
+  const flash=t=>{setToast(t);};
   useEffect(()=>{if(!dragging)return;const mv=e=>setPos({x:Math.max(0,Math.min(e.clientX-dOff.current.x,(window.innerWidth||1280)-120)),y:Math.max(28,Math.min(e.clientY-dOff.current.y,(window.innerHeight||800)-80))});const up=()=>setDragging(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
   const load=()=>fetch(`/api/workspace/${wsId}/chat`).then(r=>r.json()).then(d=>{setMsgs(d.chat||[]);setVersions(d.versions||[]);if(d.customization!==undefined)setCust(wsId,d.customization)}).catch(()=>{});
   useEffect(()=>{load()},[wsId]);
@@ -1404,7 +1439,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
       {loading&&<div style={{display:'flex',gap:4,alignItems:'center',color:'#00d4ff',fontSize:12,padding:'4px 2px'}}><span className="ws-typing-dot"/><span className="ws-typing-dot" style={{animationDelay:'.15s'}}/><span className="ws-typing-dot" style={{animationDelay:'.3s'}}/><span style={{marginLeft:4,color:'#8891a8'}}>Friday is working…</span></div>}
       <div ref={endRef}/>
     </div>
-    {toast&&<div style={{padding:'4px 12px',fontSize:11,color:'#00d4ff',background:'rgba(0,212,255,0.06)'}}>{toast}</div>}
+    
     <div style={{padding:'8px 10px',borderTop:'1px solid rgba(255,255,255,0.08)',display:'flex',gap:6,alignItems:'flex-end'}}>
       <textarea ref={inRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>fridayEnterSends(e,send)}
         placeholder={`Ask Friday to change ${label}…`} rows={1}
@@ -2043,7 +2078,7 @@ function CareerWS(){
       <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8}}><input className="input" style={{flex:1}} value={evalUrl} onChange={e=>setEvalUrl(e.target.value)} onKeyDown={e=>e.key==='Enter'&&launchEval()} placeholder="Paste a job URL to evaluate..."/><button className="btn" onClick={launchEval}>Evaluate</button></div>
       <div style={{display:'flex',gap:4,flexWrap:'wrap'}}><button className="btn" onClick={launchScan} style={{fontSize:11}}>Scan Portals</button><button className="btn" style={{fontSize:11}} onClick={()=>setView('interview')}>Interview Prep</button><button className="btn" style={{fontSize:11}} onClick={()=>setView('overview')}>Overview</button></div>
     </div>
-    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','tracker','scanner','reports','pipeline','curated','interview','outreach'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','tracker','scanner','reports','pipeline','curated','interview','outreach'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='scanner'&&<div>
       <div className="card" style={{marginBottom:8,padding:10,display:'flex',gap:6,alignItems:'center'}}>
         <div style={{flex:1,fontSize:12,color:'#aaa'}}>Job Scanner engine — {engineJobs.length} tracked. Scoring, dedup and resume A/B variants run locally. Friday prepares applications; you submit them.</div>
@@ -2086,7 +2121,7 @@ function OutreachPanel(){
   const[sug,setSug]=useState(null);const[pipe,setPipe]=useState(null);const[loading,setLoading]=useState(true);
   const[selected,setSelected]=useState(null);const[angle,setAngle]=useState('reconnect');const[channel,setChannel]=useState('email');
   const[ctx,setCtx]=useState('');const[draft,setDraft]=useState('');const[drafting,setDrafting]=useState(false);
-  const[toast,setToast]=useState('');
+  const setToast = useFridayToast();
   const load=()=>{setLoading(true);Promise.all([
     fetch('/api/outreach/suggestions').then(r=>r.json()).then(setSug).catch(()=>null),
     fetch('/api/outreach/pipeline').then(r=>r.json()).then(setPipe).catch(()=>null)
@@ -2100,8 +2135,8 @@ function OutreachPanel(){
   const doLog=async(status)=>{if(!selected)return;
     const body={contact:selected.type==='contact'?selected.name:'',company:selected.type==='company'?selected.name:'',channel,angle,message:draft,status};
     try{await fetch('/api/outreach/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});setToast('Logged as '+status);load()}catch(e){setToast('Log failed')}
-    setTimeout(()=>setToast(''),2000)};
-  const doCopy=async()=>{if(!draft)return;try{await navigator.clipboard.writeText(draft);setToast('Copied')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),1500)};
+    };
+  const doCopy=async()=>{if(!draft)return;try{await navigator.clipboard.writeText(draft);setToast('Copied')}catch(e){setToast('Copy failed')}};
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading outreach pipeline...</div>;
   const warm=sug?.warm_contacts||[];const targets=sug?.career_targets||[];const recent=pipe?.recent||[];
   return(<div>
@@ -2126,10 +2161,10 @@ function OutreachPanel(){
         <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDraft('')}}>Clear</button>
       </div>
       <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
-        {['reconnect','intro','referral','follow-up','thank-you','ask'].map(a=><button key={a} className={'btn '+(angle===a?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setAngle(a)}>{a}</button>)}
+        {['reconnect','intro','referral','follow-up','thank-you','ask'].map(a=><button key={a} className={'btn'+(angle===a?' active':'')} aria-pressed={angle===a} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setAngle(a)}>{a}</button>)}
       </div>
       <div style={{display:'flex',gap:4,marginBottom:6}}>
-        {['email','linkedin','sms','call'].map(c=><button key={c} className={'btn '+(channel===c?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setChannel(c)}>{c}</button>)}
+        {['email','linkedin','sms','call'].map(c=><button key={c} className={'btn'+(channel===c?' active':'')} aria-pressed={channel===c} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setChannel(c)}>{c}</button>)}
       </div>
       <textarea className="input" style={{width:'100%',height:44,resize:'vertical',fontSize:11,marginBottom:6}} value={ctx} onChange={e=>setCtx(e.target.value)} placeholder="Context / specifics (optional)"/>
       <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
@@ -2137,10 +2172,10 @@ function OutreachPanel(){
         {draft&&<>
           <button className="btn" onClick={doCopy} style={{fontSize:11}}>📋 Copy</button>
           <button className="btn" onClick={()=>doLog('sent')} style={{fontSize:11}}>Log Sent</button>
-          <button className="btn btn-magenta" onClick={()=>doLog('drafted')} style={{fontSize:11}}>Log Drafted</button>
+          <button className="btn" onClick={()=>doLog('drafted')} style={{fontSize:11}}>Log Drafted</button>
         </>}
       </div>
-      {toast&&<div style={{fontSize:11,color:'#00d4ff',marginTop:6}}>{toast}</div>}
+      
       {draft&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'JetBrains Mono',marginTop:8,background:'rgba(255,255,255,0.05)',padding:8,borderRadius:6,lineHeight:1.5}}>{draft}</pre>}
     </div>}
     <div className="card"><div className="card-title">Recent Pipeline ({pipe?.total||0})</div>
@@ -4809,7 +4844,7 @@ function KnowledgePages({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmText, setConfirmText] = useState('');
   const [creating, setCreating] = useState(false);
@@ -5099,7 +5134,7 @@ function KnowledgePages({
     className: 'kw-side-top'
   }, h('span', {
     className: 'kw-dim kw-small'
-  }, totalFiles, ' pages \xB7 ', sections.length, ' sections'), h('button', {
+  }, struct ? totalFiles + ' pages \xB7 ' + sections.length + ' sections' : 'Reading the wiki\u2026'), h('button', {
     className: 'kw-btn kw-new',
     onClick: () => {
       setCreating(v => !v);
@@ -5152,7 +5187,7 @@ function KnowledgePages({
     className: 'kw-btn kw-go',
     onClick: () => approvePending(p.id)
   }, 'Approve'), h('button', {
-    className: 'kw-btn kw-danger',
+    className: 'kw-btn kw-deny',
     onClick: () => rejectPending(p.id)
   }, 'Reject'))))), recent.length > 0 && h('div', {
     className: 'kw-group'
@@ -5195,10 +5230,7 @@ function KnowledgePages({
   })), h('section', {
     className: 'kw-reader',
     'aria-label': 'Page'
-  }, toast && h('div', {
-    className: 'kw-toast',
-    role: 'status'
-  }, '✓ ', toast), showResults && h('div', {
+  }, showResults && h('div', {
     className: 'kw-results'
   }, h('div', {
     className: 'kw-results-h'
@@ -5395,7 +5427,7 @@ function FSProjectCard({p,onToast,onChanged}){
     <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
       {p.url&&<a className="btn" style={{fontSize:11,textDecoration:'none'}} href={p.url} target="_blank" rel="noopener">🌐 View Site</a>}
       {p.replit_url&&<button className="btn" style={{fontSize:11}} onClick={()=>window.open(p.replit_url,'_blank','noopener')}>⚡ Open in Replit</button>}
-      {cloned&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>{setEditing(!editing);setExpanded(true)}}>✏️ Quick Edit</button>}
+      {cloned&&<button className="btn" style={{fontSize:11}} onClick={()=>{setEditing(!editing);setExpanded(true)}}>✏️ Quick Edit</button>}
       <button aria-label={expanded ? 'Show less' : 'Show more'} title={expanded ? 'Show less' : 'Show more'} className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setExpanded(!expanded)}>{expanded?'▴':'▾'}</button>
     </div>
     {editing&&cloned&&<div style={{borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:6}}>
@@ -5420,11 +5452,11 @@ function FSProjectCard({p,onToast,onChanged}){
 function FSStudio(){
   const[projects,setProjects]=useState([]);const[counts,setCounts]=useState({});
   const[loading,setLoading]=useState(true);const[scanning,setScanning]=useState(false);
-  const[toast,setToast]=useState('');const[discovered,setDiscovered]=useState([]);
+  const setToast = useFridayToast();const[discovered,setDiscovered]=useState([]);
   const[wizard,setWizard]=useState(false);const[wMode,setWMode]=useState('describe');
   const[wDesc,setWDesc]=useState('');const[wBusy,setWBusy]=useState(false);
   const[wf,setWf]=useState({name:'',url:'',replit_url:'',repo:'',description:'',category:'company'});
-  const showToast=(m)=>{setToast(m);setTimeout(()=>setToast(''),2800)};
+  const showToast=(m)=>{setToast(m);};
   const load=useCallback(()=>{fetch('/api/futurespeak/projects').then(r=>r.json()).then(d=>{setProjects(d.projects||[]);setCounts(d.by_deploy||{});setLoading(false)}).catch(()=>setLoading(false))},[]);
   useEffect(()=>{load()},[load]);
   const refreshAll=async()=>{setScanning(true);
@@ -5466,11 +5498,11 @@ function FSStudio(){
         <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={()=>setWizard(!wizard)}>＋ New Project</button>
       </div>
     </div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    
     {wizard&&<div className="card" style={{marginBottom:10,borderColor:'rgba(0,212,255,0.3)'}}>
       <div style={{display:'flex',gap:4,marginBottom:8}}>
-        <button className={'btn '+(wMode==='describe'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setWMode('describe')}>🪄 Describe (scaffold)</button>
-        <button className={'btn '+(wMode==='manual'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setWMode('manual')}>✍️ Add existing</button>
+        <button className={'btn'+(wMode==='describe'?' active':'')} aria-pressed={wMode==='describe'} style={{fontSize:11}} onClick={()=>setWMode('describe')}>🪄 Describe (scaffold)</button>
+        <button className={'btn'+(wMode==='manual'?' active':'')} aria-pressed={wMode==='manual'} style={{fontSize:11}} onClick={()=>setWMode('manual')}>✍️ Add existing</button>
       </div>
       {wMode==='describe'?<div>
         <textarea className="input" style={{width:'100%',height:60,resize:'vertical',fontSize:12}} value={wDesc} onChange={e=>setWDesc(e.target.value)} placeholder="Describe the site to create… (e.g. 'a landing page for a solar installer with a quote form')"/>
@@ -5506,14 +5538,14 @@ function FSStudio(){
 function FuturespeakWS(){
   const[view,setView]=useState('sites');
   const[pipe,setPipe]=useState(null);const[rev,setRev]=useState(null);const[legal,setLegal]=useState(null);const[assets,setAssets]=useState(null);
-  const[loading,setLoading]=useState(true);const[toast,setToast]=useState('');const[drafting,setDrafting]=useState(null);const[draft,setDraft]=useState('');
+  const[loading,setLoading]=useState(true);const setToast = useFridayToast();const[drafting,setDrafting]=useState(null);const[draft,setDraft]=useState('');
   useEffect(()=>{Promise.all([
     fetch('/api/futurespeak/pipeline').then(r=>r.json()).then(setPipe).catch(()=>null),
     fetch('/api/futurespeak/revenue').then(r=>r.json()).then(setRev).catch(()=>null),
     fetch('/api/futurespeak/legal').then(r=>r.json()).then(setLegal).catch(()=>null),
     fetch('/api/futurespeak/assets').then(r=>r.json()).then(setAssets).catch(()=>null)
   ]).then(()=>setLoading(false))},[]);
-  const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(''),2000)};
+  const showToast=(msg)=>{setToast(msg);};
   const draftProposal=async(opp)=>{setDrafting(opp.id);setDraft('');
     try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company:opp.name,angle:'proposal',channel:'email',context:`Opportunity: ${opp.name}. Status: ${opp.status}. Value: $${opp.value_usd}. Next: ${opp.next_action}. ${opp.notes||''}`})});
       const d=await r.json();setDraft(d.draft||'')}catch(e){setDraft('[Error] '+e.message)}setDrafting(null)};
@@ -5528,8 +5560,8 @@ function FuturespeakWS(){
 
   return(<div>
     <FridaySays text={`FutureSpeak.AI · ${pipe?.total||0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
-    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['sites','overview','pipeline','revenue','legal','website','talent','demos','studio'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v==='sites'?'🚀 sites':v}</button>)}</div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['sites','overview','pipeline','revenue','legal','website','talent','demos','studio'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v==='sites'?'🚀 sites':v}</button>)}</div>
+    
 
     {view==='sites'&&<FSStudio/>}
 
@@ -5646,7 +5678,7 @@ function FuturespeakWS(){
           <div style={{fontSize:11,color:'#999',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB · {(a.modified||'').slice(0,10)}</div>
           <div style={{display:'flex',gap:3}}>
             <button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>copyText('futurespeak-asset://'+a.name,'Link')}>📋 Link</button>
-            <button className="btn btn-magenta" style={{fontSize:11,padding:'2px 6px'}} onClick={async()=>{try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:'[Prospect]',angle:'follow-up',channel:'email',context:`Sharing demo asset: ${a.name}`})});const d=await r.json();setDraft(d.draft||'');showToast('Follow-up drafted — see below')}catch(e){showToast('Draft failed')}}}>✉️ Draft Follow-up</button>
+            <button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={async()=>{try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:'[Prospect]',angle:'follow-up',channel:'email',context:`Sharing demo asset: ${a.name}`})});const d=await r.json();setDraft(d.draft||'');showToast('Follow-up drafted — see below')}catch(e){showToast('Draft failed')}}}>✉️ Draft Follow-up</button>
           </div>
         </div>)})}
       </div>}
@@ -5764,7 +5796,7 @@ function ProvenanceBar({filename}){
       <span title="Ed25519-signed Content Credential" style={{fontSize:10,fontFamily:'JetBrains Mono',color:verified?'#00ff80':sig===false?'#ff0080':'#7fb6c9'}}>{verified?'🔏 Signed & verified':sig===false?'⚠ signature mismatch':'🔏 Signed'}</span>
       <LicenseChip terms={L.terms} price={L.market&&L.market.price}/>
       {(m.media_type)&&<span style={{fontSize:9,color:'#6a8b98'}}>{m.media_type}</span>}
-      <button className="btn btn-magenta" style={{fontSize:9,padding:'1px 7px',marginLeft:'auto'}} onClick={()=>setEdit(!edit)}>{edit?'Close':'Change license'}</button>
+      <button className="btn" style={{fontSize:9,padding:'1px 7px',marginLeft:'auto'}} onClick={()=>setEdit(!edit)}>{edit?'Close':'Change license'}</button>
     </div>
     {edit&&lic&&<div style={{marginTop:8}}>
       <LicensePicker value={lic} onChange={setLic} label="Set license for this piece"/>
@@ -5813,7 +5845,7 @@ function GeneratePanel({onCreated}){
     setBusy(false);
   };
   const Lbl=({children})=><div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{children}</div>;
-  const tab=(id,label)=><button className={'btn '+(modality===id?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>{setModality(id);setResult(null);setErr('')}}>{label}</button>;
+  const tab=(id,label)=><button className={'btn'+(modality===id?' active':'')} aria-pressed={modality===id} style={{fontSize:11}} onClick={()=>{setModality(id);setResult(null);setErr('')}}>{label}</button>;
   return(<div className="card" style={{marginBottom:12,padding:14}}>
     <div style={{display:'flex',gap:6,marginBottom:12}}>{tab('image','🎨 Image')}{tab('video','🎬 Video')}</div>
     <Lbl>Prompt</Lbl>
@@ -5880,14 +5912,14 @@ function MusicPanel({onCreated}){
     <textarea className="input" style={{width:'100%',minHeight:56,resize:'vertical',marginBottom:8}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Warm lo-fi hip-hop with mellow Rhodes, vinyl crackle, ~80 BPM…"/>
     <Lbl>Style / genre</Lbl>
     <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:10}}>
-      {MUSIC_GENRES.map(g=><button key={g} className={'btn '+(genre===g?'':'btn-magenta')} style={{fontSize:10,padding:'2px 7px'}} onClick={()=>setGenre(genre===g?'':g)}>{g}</button>)}
+      {MUSIC_GENRES.map(g=><button key={g} className={'btn'+(genre===g?' active':'')} aria-pressed={genre===g} style={{fontSize:10,padding:'2px 7px'}} onClick={()=>setGenre(genre===g?'':g)}>{g}</button>)}
     </div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
       <div><Lbl>Model</Lbl><select className="input" style={{width:'100%'}} value={model} onChange={e=>setModel(e.target.value)}><option value="lyria-clip">Lyria 3 Clip (≤30s)</option><option value="lyria-pro">Lyria 3 Pro (full song)</option></select></div>
       <div><Lbl>Duration (sec)</Lbl><select className="input" style={{width:'100%'}} value={duration} onChange={e=>setDuration(e.target.value)}><option value="">auto</option>{[15,30,60,120,180].map(n=><option key={n} value={n}>{n}s</option>)}</select></div>
       <div><Lbl>Avoid</Lbl><input className="input" style={{width:'100%'}} value={neg} onChange={e=>setNeg(e.target.value)} placeholder="no drums"/></div>
       <div style={{display:'flex',alignItems:'flex-end'}}>
-        <button className={'btn '+(mode==='instrumental'?'':'btn-magenta')} style={{fontSize:11,width:'100%'}} onClick={()=>setMode(mode==='instrumental'?'song':'instrumental')} title="Toggle vocals">{mode==='instrumental'?'🎹 Instrumental':'🎤 Song (vocals)'}</button>
+        <button className={'btn'+(mode==='instrumental'?' active':'')} aria-pressed={mode==='instrumental'} style={{fontSize:11,width:'100%'}} onClick={()=>setMode(mode==='instrumental'?'song':'instrumental')} title="Toggle vocals">{mode==='instrumental'?'🎹 Instrumental':'🎤 Song (vocals)'}</button>
       </div>
     </div>
     {mode==='song'&&<div style={{marginBottom:10}}><Lbl>Lyrics (use [verse]/[chorus] tags)</Lbl><textarea className="input" style={{width:'100%',minHeight:64,resize:'vertical'}} value={lyrics} onChange={e=>setLyrics(e.target.value)} placeholder={'[verse]\nNeon rivers in the rain…\n[chorus]\n…'}/></div>}
@@ -5970,7 +6002,7 @@ function TimelinePanel({onCreated}){
     {/* ── Add clips palette ── */}
     {available.length>0&&<div style={{marginBottom:10}}><Lbl>Add a clip</Lbl>
       <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-        {available.slice(0,12).map(fr=><button key={fr.name} className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px'}} onClick={()=>addClip(fr.name)}>+ {fr.name.replace(/^friday-/,'').slice(0,18)}</button>)}
+        {available.slice(0,12).map(fr=><button key={fr.name} className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={()=>addClip(fr.name)}>+ {fr.name.replace(/^friday-/,'').slice(0,18)}</button>)}
       </div></div>}
     {videoFiles.length===0&&<div style={{fontSize:11,color:'#888',marginBottom:10}}>No video clips yet — generate some in ✨ Generate.</div>}
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:10}}>
@@ -5982,7 +6014,7 @@ function TimelinePanel({onCreated}){
     <input className="input" style={{width:'100%',marginBottom:10}} value={title} onChange={e=>setTitle(e.target.value)} placeholder="THE WANDERER"/>
     <Lbl>Export formats</Lbl>
     <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:10}}>
-      {(formats.length?formats:['mp4-1080p','mp4-vertical-9x16','gif-preview']).map(k=><button key={k} className={'btn '+(exp.includes(k)?'':'btn-magenta')} style={{fontSize:10,padding:'2px 6px'}} onClick={()=>toggleExp(k)}>{k}</button>)}
+      {(formats.length?formats:['mp4-1080p','mp4-vertical-9x16','gif-preview']).map(k=><button key={k} className={'btn'+(exp.includes(k)?' active':'')} aria-pressed={exp.includes(k)} style={{fontSize:10,padding:'2px 6px'}} onClick={()=>toggleExp(k)}>{k}</button>)}
     </div>
     <LicensePicker value={lic} onChange={setLic}/>
     <button className="btn" disabled={busy||!clips.length} onClick={go} style={{fontSize:12,fontWeight:700,width:'100%'}}>{busy?'Exporting…':'✨ Export Production'}</button>
@@ -5992,7 +6024,7 @@ function TimelinePanel({onCreated}){
     {result&&f&&<div style={{marginTop:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}><Lbl>{result.status==='demo'?'Demo (no ffmpeg) — signed timeline saved':'Result — '+(result.files.length)+' export'+(result.files.length!==1?'s':'')}</Lbl><LicenseChip terms={lic.terms} price={lic.market&&lic.market.price}/></div>
       {['mp4','webm','mov'].includes(fx)?<video controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0e1a'}}/>:<div style={{fontSize:11,color:'#aaa'}}>{result.message||f.filename} — <a href={'/creation/'+f.filename} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>open</a></div>}
-      {result.files.length>1&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>{result.files.map((x,i)=><a key={i} href={'/creation/'+x.filename} target="_blank" rel="noopener" className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px'}}>{x.profile||x.filename}</a>)}</div>}
+      {result.files.length>1&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>{result.files.map((x,i)=><a key={i} href={'/creation/'+x.filename} target="_blank" rel="noopener" className="btn" style={{fontSize:10,padding:'2px 7px'}}>{x.profile||x.filename}</a>)}</div>}
     </div>}
   </div>);
 }
@@ -6084,13 +6116,13 @@ function ProjectsPanel(){
         <select className="input" value={ptype} onChange={e=>setPtype(e.target.value)} style={{maxWidth:140}}>
           {['video-series','short-film','card','album','music','storybook','comic','campaign','brand','general'].map(t=><option key={t} value={t}>{t}</option>)}
         </select>
-        <button className="btn btn-magenta" style={{fontSize:11}} onClick={createProject}>+ Create</button>
+        <button className="btn" style={{fontSize:11}} onClick={createProject}>+ Create</button>
       </div>
     </div>
     <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:8}}>
       {projects.length===0&&<span style={{fontSize:11,color:'#999'}}>No projects yet.</span>}
       {projects.map(p=>(
-        <button key={p.id} className={'btn '+(p.id===activeId?'':'btn-magenta')} style={{fontSize:11}} title={p.type+' · '+p.characters+' cast · '+p.assets+' assets'} onClick={()=>activate(p.id)}>
+        <button key={p.id} className={'btn'+(p.id===activeId?' active':'')} aria-pressed={p.id===activeId} style={{fontSize:11}} title={p.type+' · '+p.characters+' cast · '+p.assets+' assets'} onClick={()=>activate(p.id)}>
           {p.id===activeId?'● ':''}{p.name}
         </button>
       ))}
@@ -6121,14 +6153,14 @@ function ProjectsPanel(){
       <div className="card-title">🧩 Run a Pipeline</div>
       <div style={{fontSize:11,color:'#888',marginBottom:6}}>{(templates.find(t=>t.id===pipeId)||{}).description||'Chain workspaces with checkpoints.'}</div>
       <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:6}}>
-        {templates.map(t=><button key={t.id} className={'btn '+(t.id===pipeId?'':'btn-magenta')} style={{fontSize:11}} title={(t.stages||[]).join(' → ')} onClick={()=>setPipeId(t.id)}>{t.name}</button>)}
+        {templates.map(t=><button key={t.id} className={'btn'+(t.id===pipeId?' active':'')} aria-pressed={t.id===pipeId} style={{fontSize:11}} title={(t.stages||[]).join(' → ')} onClick={()=>setPipeId(t.id)}>{t.name}</button>)}
       </div>
       <div style={{display:'flex',gap:4,marginBottom:6}}>
         <span style={{fontSize:10,color:'#666',alignSelf:'center'}}>{((templates.find(t=>t.id===pipeId)||{}).stages||[]).join(' → ')}</span>
       </div>
       <div style={{display:'flex',gap:6}}>
         <input className="input" style={{flex:1}} value={topic} onChange={e=>setTopic(e.target.value)} placeholder="Topic / logline to seed the first stage…" onKeyDown={e=>e.key==='Enter'&&runPipeline()}/>
-        <button className="btn btn-magenta" style={{fontSize:11}} disabled={busy} onClick={runPipeline}>{busy?'Starting…':'▶ Run'}</button>
+        <button className="btn" style={{fontSize:11}} disabled={busy} onClick={runPipeline}>{busy?'Starting…':'▶ Run'}</button>
         <button aria-label={'Refresh the list of runs'} title={'Refresh the list of runs'} className="btn" style={{fontSize:11}} onClick={loadRuns}>↻ Refresh</button>
       </div>
     </div>
@@ -6140,7 +6172,7 @@ function ProjectsPanel(){
             <span style={{fontSize:12,color:'#ccc'}}>{r.name} <span style={{fontSize:10,color:'#777'}}>· stage {Math.min(r.stage_index+ (r.state==='completed'?0:1),r.total_stages)}/{r.total_stages}</span></span>
             <span style={{fontSize:10,fontFamily:'Orbitron, sans-serif',color:stateColor[r.state]||'#888'}}>{r.state}</span>
           </div>
-          {r.state==='awaiting_checkpoint'&&<button className="btn btn-magenta" style={{fontSize:10,padding:'2px 8px',marginTop:3}} onClick={()=>resumeRun(r.run_id)}>Approve & Continue →</button>}
+          {r.state==='awaiting_checkpoint'&&<button className="btn btn-ok" style={{fontSize:10,padding:'2px 8px',marginTop:3}} onClick={()=>resumeRun(r.run_id)}>Approve & Continue →</button>}
         </div>
       ))}
     </div>)}
@@ -6227,9 +6259,9 @@ function StudioPromptBar({onCreated}){
     <textarea className="input" rows={2} style={{width:'100%',resize:'vertical',minHeight:46,marginBottom:8,boxSizing:'border-box'}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what you want to create..." onKeyDown={e=>fridayEnterSends(e,go)}/>
     <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
       {STUDIO_TYPES.map(x=>{const off=avail&&avail[x.id]&&avail[x.id].available===false;return(
-        <button key={x.id} className={'btn '+(type===x.id?'':'btn-magenta')} style={{fontSize:11,opacity:off?0.6:1}} title={off?(avail[x.id].reason||'Unavailable'):('Create '+x.label.toLowerCase()+' — e.g. '+x.ph)} onClick={()=>{setType(x.id);setErr(null);setResult(null)}}>{x.ico} {x.label}{off?' ⚠':''}</button>);})}
+        <button key={x.id} className={'btn'+(type===x.id?' active':'')} aria-pressed={type===x.id} style={{fontSize:11,opacity:off?0.6:1}} title={off?(avail[x.id].reason||'Unavailable'):('Create '+x.label.toLowerCase()+' — e.g. '+x.ph)} onClick={()=>{setType(x.id);setErr(null);setResult(null)}}>{x.ico} {x.label}{off?' ⚠':''}</button>);})}
       <div style={{flex:1}}/>
-      <button aria-label="Generation settings — model, style, aspect ratio, duration" className="btn btn-magenta" style={{fontSize:12,padding:'4px 10px'}} title="Generation settings — model, style, aspect ratio, duration" onClick={()=>setShowOpts(!showOpts)}>⚙</button>
+      <button aria-label="Generation settings — model, style, aspect ratio, duration" className="btn" style={{fontSize:12,padding:'4px 10px'}} title="Generation settings — model, style, aspect ratio, duration" onClick={()=>setShowOpts(!showOpts)}>⚙</button>
       <button className="btn" disabled={busy||!prompt.trim()} onClick={go} style={{fontSize:12,fontWeight:700,padding:'5px 16px'}}>{busy?'Generating…':'✨ Generate'}</button>
     </div>
     {showOpts&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:10}}>
@@ -6276,9 +6308,9 @@ function StudioPromptBar({onCreated}){
       <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:6}}>
         <Lbl>{isDemo?'Demo preview — saved to the gallery':'Result — saved to the gallery'}</Lbl>
         <div style={{flex:1}}/>
-        {result.text&&<button className="btn btn-magenta" style={{fontSize:10,padding:'2px 9px'}} onClick={copyText}>{copied?'✓ Copied':'⧉ Copy'}</button>}
-        {files[0]&&<a className="btn btn-magenta" style={{fontSize:10,padding:'2px 9px',textDecoration:'none'}} href={files[0].url} download={dlName(files[0])}>⬇ Download</a>}
-        {files[0]&&<button className="btn btn-magenta" style={{fontSize:10,padding:'2px 9px'}} onClick={()=>window.open('/creation/'+dlName(files[0]),'_blank')}>↗ Tab</button>}
+        {result.text&&<button className="btn" style={{fontSize:10,padding:'2px 9px'}} onClick={copyText}>{copied?'✓ Copied':'⧉ Copy'}</button>}
+        {files[0]&&<a className="btn" style={{fontSize:10,padding:'2px 9px',textDecoration:'none'}} href={files[0].url} download={dlName(files[0])}>⬇ Download</a>}
+        {files[0]&&<button className="btn" style={{fontSize:10,padding:'2px 9px'}} onClick={()=>window.open('/creation/'+dlName(files[0]),'_blank')}>↗ Tab</button>}
       </div>
       {isDemo&&<div style={{marginBottom:8,padding:'6px 9px',borderRadius:6,background:'rgba(255,190,0,0.07)',border:'1px dashed rgba(255,190,0,0.3)',fontSize:10,color:'#ffd166'}}>⚠ This is a preview of what WOULD be generated — {result.message||'cloud generation is unavailable.'}</div>}
       {files.length>0&&<div style={{display:'grid',gridTemplateColumns:files.length>1?'1fr 1fr':'1fr',gap:8}}>
@@ -6291,7 +6323,7 @@ function StudioPromptBar({onCreated}){
             {fx==='md'&&!(result&&result.text)&&<StudioMdPeek url={f.url}/>}
           </div>);})}
       </div>}
-      {files.length>1&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>{files.map((f,i)=><a key={i} className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px',textDecoration:'none'}} href={f.url} download={dlName(f)}>⬇ {dlName(f).slice(0,24)}</a>)}</div>}
+      {files.length>1&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>{files.map((f,i)=><a key={i} className="btn" style={{fontSize:10,padding:'2px 7px',textDecoration:'none'}} href={f.url} download={dlName(f)}>⬇ {dlName(f).slice(0,24)}</a>)}</div>}
       {result.text&&<div style={{maxHeight:340,overflowY:'auto',padding:'4px 8px',background:'rgba(255,255,255,0.02)',borderRadius:8,marginTop:files.length?8:0}}><FridayDoc text={result.text}/></div>}
     </div>}
   </div>);
@@ -6382,14 +6414,14 @@ function StudioWS(){
       <span style={{fontSize:10,color:'#5a8a6a'}}>— age-appropriate filtering is on for everything Friday creates here. Hiding older adult content from this gallery is coming soon.</span>
     </div>}
     <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
-      <button className={'btn '+(view==='generate'?'':'btn-magenta')} style={{fontSize:11,fontWeight:700}} onClick={()=>setView('generate')}>✨ Generate</button>
-      <button className={'btn '+(view==='music'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('music')}>🎵 Music</button>
-      <button className={'btn '+(view==='timeline'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('timeline')}>🎞️ Timeline</button>
-      <button className={'btn '+(view==='production'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('production')}>🎬 Production</button>
-      <button className={'btn '+(view==='gallery'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('gallery')}>🖼️ Gallery</button>
-      <button className={'btn '+(view==='projects'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('projects')}>📁 Projects</button>
-      <button className={'btn '+(view==='files'?'':'btn-magenta')} style={{fontSize:11}} title="Browse your folders in 3D: wall, carousel, tree, city, timeline and clusters" onClick={()=>setView('files')}>🧊 Files 3D</button>
-      <button className={'btn '+(view==='podcasts'?'':'btn-magenta')} style={{fontSize:11}} title="Podcasts from any sources, written and spoken on this computer" onClick={()=>setView('podcasts')}>🎧 Podcasts</button>
+      <button className={'btn'+(view==='generate'?' active':'')} aria-pressed={view==='generate'} style={{fontSize:11,fontWeight:700}} onClick={()=>setView('generate')}>✨ Generate</button>
+      <button className={'btn'+(view==='music'?' active':'')} aria-pressed={view==='music'} style={{fontSize:11}} onClick={()=>setView('music')}>🎵 Music</button>
+      <button className={'btn'+(view==='timeline'?' active':'')} aria-pressed={view==='timeline'} style={{fontSize:11}} onClick={()=>setView('timeline')}>🎞️ Timeline</button>
+      <button className={'btn'+(view==='production'?' active':'')} aria-pressed={view==='production'} style={{fontSize:11}} onClick={()=>setView('production')}>🎬 Production</button>
+      <button className={'btn'+(view==='gallery'?' active':'')} aria-pressed={view==='gallery'} style={{fontSize:11}} onClick={()=>setView('gallery')}>🖼️ Gallery</button>
+      <button className={'btn'+(view==='projects'?' active':'')} aria-pressed={view==='projects'} style={{fontSize:11}} onClick={()=>setView('projects')}>📁 Projects</button>
+      <button className={'btn'+(view==='files'?' active':'')} aria-pressed={view==='files'} style={{fontSize:11}} title="Browse your folders in 3D: wall, carousel, tree, city, timeline and clusters" onClick={()=>setView('files')}>🧊 Files 3D</button>
+      <button className={'btn'+(view==='podcasts'?' active':'')} aria-pressed={view==='podcasts'} style={{fontSize:11}} title="Podcasts from any sources, written and spoken on this computer" onClick={()=>setView('podcasts')}>🎧 Podcasts</button>
     </div>
     {view==='projects'&&<ProjectsPanel/>}
     {view==='podcasts'&&<PodcastsView/>}
@@ -6401,12 +6433,12 @@ function StudioWS(){
     {view!=='projects'&&view!=='files'&&view!=='music'&&view!=='timeline'&&view!=='production'&&(<React.Fragment>
     <StudioPromptBar onCreated={loadCreations}/>
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
-      {creationLog&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}
-      <button className="btn btn-magenta" style={{fontSize:11}} title="Opt-in agent task: Friday runs her autonomous daily creation in a Claude Code terminal. Completely separate from the prompt bar above — it does not use your prompt." onClick={runDailyAgent}>🌅 Daily creation (agent)</button>
+      {creationLog&&<button className="btn" style={{fontSize:11}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}
+      <button className="btn" style={{fontSize:11}} title="Opt-in agent task: Friday runs her autonomous daily creation in a Claude Code terminal. Completely separate from the prompt bar above — it does not use your prompt." onClick={runDailyAgent}>🌅 Daily creation (agent)</button>
     </div>
     {logOpen&&<div className="card" style={{marginBottom:10}}><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono',maxHeight:150,overflow:'auto'}}>{creationLog}</pre></div>}
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
-      {['all','html','md','png','mp4','mp3','wav'].map(f=><button key={f} className={'btn '+(filter===f?'':'btn-magenta')} style={{fontSize:11,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
+      {['all','html','md','png','mp4','mp3','wav'].map(f=><button key={f} className={'btn'+(filter===f?' active':'')} aria-pressed={filter===f} style={{fontSize:11,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
     </div>
     {loading?<div style={{color:'#999'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
     <div style={{display:'flex',flexDirection:'column',gap:12,maxWidth:680,margin:'0 auto'}}>
@@ -6645,8 +6677,8 @@ function OrchestratorBudgetPanel(){
 function FederationPanel(){
   const[identity,setIdentity]=useState(null);const[peers,setPeers]=useState([]);
   const[discoverUrl,setDiscoverUrl]=useState('');const[discovering,setDiscovering]=useState(false);
-  const[toast,setToast]=useState('');const[loading,setLoading]=useState(true);
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2800)};
+  const setToast = useFridayToast();const[loading,setLoading]=useState(true);
+  const flash=t=>{setToast(t);};
   const load=()=>{
     Promise.all([
       fetch('/api/federation/identity').then(r=>r.json()).then(d=>{if(d.ok||d.identity)setIdentity(d.identity||d)}).catch(()=>{}),
@@ -6677,7 +6709,7 @@ function FederationPanel(){
   const prefColor={ask:'#f59e0b',allow:'#00ff80',block:'#ff5470'};
   if(loading)return<div style={{color:'#999',fontSize:12,padding:'8px 0'}}>Loading federation data...</div>;
   return(<div>
-    {toast&&<div style={{marginBottom:8,padding:'5px 8px',borderRadius:5,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:11,color:'#00d4ff'}}>{toast}</div>}
+    
     {/* Agent Identity Card */}
     <div className="settings-subtitle">Agent Identity</div>
     {identity?<div style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'10px 12px',marginBottom:12}}>
@@ -6725,10 +6757,10 @@ function FederationPanel(){
 function MarketplaceWS(){
   const[view,setView]=useState('browse');
   const[listings,setListings]=useState([]);const[myListings,setMyListings]=useState([]);
-  const[loading,setLoading]=useState(true);const[toast,setToast]=useState('');
+  const[loading,setLoading]=useState(true);const setToast = useFridayToast();
   const[form,setForm]=useState({asset_id:'',title:'',description:'',price_mpsi:0,license:'CC-BY',public:true});
   const[publishing,setPublishing]=useState(false);
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2800)};
+  const flash=t=>{setToast(t);};
   const loadAll=()=>{
     setLoading(true);
     Promise.all([
@@ -6766,10 +6798,10 @@ function MarketplaceWS(){
   const mediaIcon=t=>({image:'🖼',video:'🎬',music:'🎵',html:'💻',text:'📝'}[t]||'📦');
   return(<div>
     <FridaySays text="Buy, sell, and share creations with other Friday agents. Prices are in ψ (psi) — Friday's internal economy currency."/>
-    {toast&&<div style={{marginBottom:8,padding:'6px 10px',borderRadius:6,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:12,color:'#00d4ff'}}>{toast}</div>}
+    
     <div style={{display:'flex',gap:4,marginBottom:12}}>
       {[['browse','Browse'],['my','My Listings'],['publish','Publish']].map(([k,l])=>(
-        <button key={k} className={'btn '+(view===k?'':'btn-magenta')} style={{fontSize:11,padding:'3px 9px'}} onClick={()=>setView(k)}>{l}</button>
+        <button key={k} className={'btn'+(view===k?' active':'')} aria-pressed={view===k} style={{fontSize:11,padding:'3px 9px'}} onClick={()=>setView(k)}>{l}</button>
       ))}
     </div>
     {view==='browse'&&(loading?<div style={{color:'#999',textAlign:'center',padding:30}}>Loading marketplace...</div>:
@@ -6849,11 +6881,11 @@ function MarketplaceWS(){
 // ═══ WALLET PANEL (embedded in FinanceWS) ═══
 function WalletPanel(){
   const[wallet,setWallet]=useState(null);const[txns,setTxns]=useState([]);
-  const[loading,setLoading]=useState(true);const[toast,setToast]=useState('');
+  const[loading,setLoading]=useState(true);const setToast = useFridayToast();
   const[transfer,setTransfer]=useState({to:'',amount:'',reason:''});
   const[sending,setSending]=useState(false);const[showLeader,setShowLeader]=useState(false);
   const[leaderboard,setLeaderboard]=useState([]);
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2800)};
+  const flash=t=>{setToast(t);};
   const load=()=>{
     setLoading(true);
     Promise.all([
@@ -6902,10 +6934,10 @@ function WalletPanel(){
         <div style={{fontSize:11,color:'#a8a8b4'}}>net worth</div>
       </div>
     </div>
-    {toast&&<div style={{marginBottom:8,padding:'6px 10px',borderRadius:6,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:12,color:'#00d4ff'}}>{toast}</div>}
+    
     <div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
       {wallet?.is_new&&<button className="btn" style={{fontSize:11,color:'#00ff80',borderColor:'rgba(0,255,128,0.3)'}} onClick={claimGenesis}>Claim Genesis Grant</button>}
-      <button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>showLeader?setShowLeader(false):loadLeader()}>{showLeader?'Hide Leaderboard':'Leaderboard'}</button>
+      <button className="btn" style={{fontSize:11}} onClick={()=>showLeader?setShowLeader(false):loadLeader()}>{showLeader?'Hide Leaderboard':'Leaderboard'}</button>
     </div>
     {showLeader&&leaderboard.length>0&&<div className="card" style={{marginBottom:12}}>
       <div className="card-title" style={{marginBottom:6}}>Top 20 by Q Score</div>
@@ -7790,9 +7822,10 @@ function DevRepos({repos,loading,onScan,onPick}){
     </div>
     {loading&&repos.length===0&&<div style={{color:'#999',textAlign:'center',padding:24,fontSize:12}}>Scanning ~/Projects…</div>}
     {!loading&&repos.length===0&&<div className="card" style={{textAlign:'center',padding:18,fontSize:12,color:'#999'}}>No git repos found in ~/Projects.</div>}
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+    {/* As many columns as fit: one in a small window, three in a wide tab. */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(min(100%, 420px), 1fr))',gap:8}}>
       {repos.map((r,i)=>{const col=r.clean?'#00ff80':'#f59e0b';
-        return(<div key={i} className="card" style={{cursor:'pointer',borderColor:r.error?'rgba(255,0,128,0.3)':undefined}} onClick={()=>onPick&&onPick(r)}>
+        return(<div key={i} className="card" style={{minWidth:0,cursor:'pointer',borderColor:r.error?'rgba(255,0,128,0.3)':undefined}} onClick={()=>onPick&&onPick(r)}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <span style={{fontWeight:600,color:'#cfe'}}>{r.name}</span>
             <span style={{display:'flex',alignItems:'center',gap:5,fontSize:11,fontFamily:'JetBrains Mono',color:'#9ad'}}>
@@ -7888,13 +7921,13 @@ function DevVibe({repos,onLog}){
 // ─── Git operations panel ───
 function DevGit({repos,onLog,onRefresh}){
   const[repo,setRepo]=useState('');const[branches,setBranches]=useState([]);const[current,setCurrent]=useState('');
-  const[diff,setDiff]=useState('');const[toast,setToast]=useState('');const[busy,setBusy]=useState('');
+  const[diff,setDiff]=useState('');const setToast = useFridayToast();const[busy,setBusy]=useState('');
   const[newBranch,setNewBranch]=useState('');const[prOpen,setPrOpen]=useState(false);const[prTitle,setPrTitle]=useState('');const[prBody,setPrBody]=useState('');
   useEffect(()=>{if(!repo&&repos.length)setRepo(repos[0].name)},[repos]);
   const loadBranches=()=>{if(!repo)return;fetch('/api/git/branches?repo='+encodeURIComponent(repo)).then(r=>r.json()).then(d=>{if(d.status==='ok'){setBranches(d.branches||[]);setCurrent(d.current||'')}}).catch(()=>{})};
   const loadDiff=()=>{if(!repo)return;fetch('/api/git/diff?repo='+encodeURIComponent(repo)).then(r=>r.json()).then(d=>setDiff(d.diff||'')).catch(()=>{})};
   useEffect(()=>{loadBranches();loadDiff()},[repo]);
-  const flash=(m)=>{setToast(m);setTimeout(()=>setToast(''),2600)};
+  const flash=(m)=>{setToast(m);};
   const op=async(label,url,body)=>{setBusy(label);
     try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{repo})});
       const d=await r.json();flash((d.ok||d.status==='ok')?('✓ '+label+(d.url?' → '+d.url:'')):('⚠ '+(d.message||d.stderr||label+' failed')));
@@ -7927,7 +7960,7 @@ function DevGit({repos,onLog,onRefresh}){
         <button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} disabled={!!busy||!newBranch.trim()} onClick={()=>{op('branch '+newBranch,'/api/git/branch',{repo,name:newBranch});setNewBranch('')}}>+ Create & switch</button>
       </div>
     </div>
-    {toast&&<div style={{fontSize:12,color:'#00d4ff',marginBottom:8,fontFamily:'JetBrains Mono',wordBreak:'break-all'}}>{toast}</div>}
+    
     {prOpen&&<div className="card" style={{marginBottom:10,borderColor:'rgba(0,212,255,0.3)'}}>
       <div className="card-title" style={{marginTop:0}}>Open Pull Request</div>
       <input className="input" style={{width:'100%',marginBottom:6,padding:'5px 8px'}} value={prTitle} onChange={e=>setPrTitle(e.target.value)} placeholder="PR title"/>
@@ -9105,7 +9138,7 @@ function MessagesWS(){
   const[expanded,setExpanded]=useState(null);const[thread,setThread]=useState(null);const[threadLoad,setThreadLoad]=useState(false);
   const[search,setSearch]=useState('');const[filterUnread,setFilterUnread]=useState(false);const[filterAttach,setFilterAttach]=useState(false);
   const[draftFor,setDraftFor]=useState(null);const[draftText,setDraftText]=useState('');const[draftBusy,setDraftBusy]=useState(false);const[draftInstr,setDraftInstr]=useState('');
-  const[toast,setToast]=useState('');
+  const setToast = useFridayToast();
   // Deep-link: a notification target {workspace:'messages', lane, thread_id} jumps
   // to the lane and (best-effort) auto-opens the thread once messages have loaded.
   const pendingThread=useRef(null);
@@ -9117,7 +9150,7 @@ function MessagesWS(){
   useEffect(()=>{loadStats()},[]);
   useEffect(()=>{loadMsgs()},[lane]);
 
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2200)};
+  const flash=t=>{setToast(t);};
   const openThread=(m)=>{if(expanded===m.id){setExpanded(null);setThread(null);return}setExpanded(m.id);setThread(null);setThreadLoad(true);setDraftFor(null);
     if(m.unread)act(m,'read',true);
     fetch('/api/messages/'+m.thread_id).then(r=>r.json()).then(d=>{setThread(d.messages||[]);setThreadLoad(false)}).catch(()=>setThreadLoad(false))};
@@ -9186,7 +9219,7 @@ function MessagesWS(){
         <span className={'toggle-pill '+(filterAttach?'on':'')} onClick={()=>setFilterAttach(v=>!v)}>📎 Attachments</span>
       </div>
       <div style={{display:'flex',gap:4,alignItems:'center'}}>
-        {toast&&<span style={{fontSize:11,color:'#00d4ff'}}>{toast}</span>}
+        
         <button className="btn" style={{fontSize:11}} onClick={()=>{loadMsgs();loadStats()}}>↻ Refresh</button>
       </div>
     </div>
@@ -9242,7 +9275,7 @@ function MessagesWS(){
                    <div style={{display:'flex',gap:6,marginTop:6}}>
                      <button className="btn" style={{fontSize:11}} onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(draftText);flash('Copied draft')}}>📋 Copy</button>
                      <SendTo content={()=>draftText} dataType="email_reply" emailThreadId={m.thread_id} options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Email',dest:'gmail_draft',ico:'✉️'}]}/>
-                     <button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setDraftFor(null)}>Close</button>
+                     <button className="btn" style={{fontSize:11}} onClick={()=>setDraftFor(null)}>Close</button>
                    </div></>}
               </div>}
             </div>}
@@ -9272,7 +9305,7 @@ function CalendarWS(){
   const[now,setNow]=useState(new Date());
   const[quick,setQuick]=useState('');const[adding,setAdding]=useState(false);
   const[prepFor,setPrepFor]=useState(null);const[prepText,setPrepText]=useState('');const[prepBusy,setPrepBusy]=useState(false);
-  const[toast,setToast]=useState('');
+  const setToast = useFridayToast();
   const tlRef=useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   useTabState('calendar',()=>({date:sel||''})); // what its own tab opens on
@@ -9285,7 +9318,7 @@ function CalendarWS(){
   useEffect(()=>{loadToday();loadWeek();loadTomorrow();
     const t=setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(t)},[]);
 
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2400)};
+  const flash=t=>{setToast(t);};
   const pickDay=(iso,isToday)=>{if(isToday){setSel(null);setDayData(null)}else{setSel(iso);loadDay(iso)}setPrepFor(null)};
   const quickAdd=async()=>{if(!quick.trim()||adding)return;setAdding(true);
     try{const r=await fetch('/api/calendar/quick-add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:quick})});const d=await r.json();
@@ -9315,7 +9348,7 @@ function CalendarWS(){
       <input className="input" style={{flex:1}} value={quick} onChange={e=>setQuick(e.target.value)} onKeyDown={e=>e.key==='Enter'&&quickAdd()} placeholder="Quick add — e.g. “interview with Acme Tuesday 2pm”"/>
       <button className="btn active" onClick={quickAdd} disabled={adding}>{adding?'Parsing…':'✨ Add'}</button>
     </div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    
     <MeetingsPanel/>
 
     {/* Week strip */}
@@ -9842,7 +9875,7 @@ function DraftWS(){
     {seedNote&&<div style={{display:'flex',alignItems:'center',gap:8,fontSize:11,color:'#00d4ff',background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:8,padding:'6px 10px',marginBottom:8}}><span>✍️ {seedNote}</span><button className="btn" style={{fontSize:10,padding:'1px 7px',marginLeft:'auto'}} onClick={()=>setSeedNote('')}>Dismiss</button></div>}
     {/* Mode selector */}
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
-      {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(mode===m.id?'':'btn-magenta')}
+      {DRAFT_MODES.map(m=><button key={m.id} className={'btn'+(mode===m.id?' active':'')} aria-pressed={mode===m.id}
         style={{fontSize:11,padding:'4px 10px'}} onClick={()=>setMode(m.id)}>
         {m.ico} {m.label}
       </button>)}
@@ -9897,7 +9930,7 @@ function DraftWS(){
         <button className="btn" onClick={()=>openDraftTab(draft,mode,prompt)} style={{fontSize:11}}>
           🔗 New Tab
         </button>
-        <button className="btn btn-magenta" onClick={()=>deploy('gmail_draft')} style={{fontSize:11}}>
+        <button className="btn" onClick={()=>deploy('gmail_draft')} style={{fontSize:11}}>
           📧 Gmail
         </button>
       </div>
@@ -9933,7 +9966,7 @@ function FinanceWS(){
   const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused credit card perks · $${totalPerkValue} total perk value`;
   return(<div>
     <FridaySays text={insight}/>
-    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref','wallet'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
+    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref','wallet'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
@@ -9983,7 +10016,7 @@ function HealthWS(){
   const insight=`${medList.length} medications · ${apptList.length} providers · ${vehList.length} vehicles in fleet`;
   return(<div>
     <FridaySays text={insight}/>
-    <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','medications','appointments','insurance','vehicles'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','medications','appointments','insurance','vehicles'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Medications</div><div className="stat">{medList.length}</div><div className="stat-label">active medications</div>{medList.slice(0,3).map((m,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{m.name}{m.dose?' — '+m.dose:''}</div>)}</div>
@@ -10111,15 +10144,15 @@ fridayDeclareNav('contacts',{keys:['name']});
 function ContactsWS(){
   const[contacts,setContacts]=useState([]);const[loading,setLoading]=useState(true);const[q,setQ]=useState('');
   const[selected,setSelected]=useState(null);const[detail,setDetail]=useState(null);const[detailLoad,setDetailLoad]=useState(false);
-  const[researching,setResearching]=useState(false);const[toast,setToast]=useState('');
+  const[researching,setResearching]=useState(false);const setToast = useFridayToast();
   const loadList=()=>{setLoading(true);fetch('/api/contacts').then(r=>r.json()).then(d=>{setContacts(d.contacts||[]);setLoading(false)}).catch(()=>{setLoading(false)})};
   useEffect(()=>{loadList()},[]);
   // Deep link: {workspace:'contacts', name} opens that person (the 3D view uses it).
   useTabState('contacts',()=>({name:selected&&selected.name||''})); // what its own tab opens on
   useNavTarget('contacts',t=>{if(t&&t.name)openContact({name:t.name});});
   const openContact=async(c)=>{setSelected(c);setDetail(null);setDetailLoad(true);try{const r=await fetch('/api/contacts/'+encodeURIComponent((c.name||'').toLowerCase()));const d=await r.json();setDetail(d.status==='ok'?{...d.contact,research:d.research}:null)}catch(e){setDetail(null)}setDetailLoad(false)};
-  const doResearch=async()=>{if(!selected||researching)return;setResearching(true);try{const r=await fetch('/api/contacts/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected.name})});const d=await r.json();setToast(d.status==='ok'?('Research queued for '+selected.name):'Research failed')}catch(e){setToast('Research failed')}setResearching(false);setTimeout(()=>setToast(''),2500)};
-  const doCopy=async()=>{if(!detail)return;try{await navigator.clipboard.writeText(JSON.stringify(detail,null,2));setToast('Copied contact JSON')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),2000)};
+  const doResearch=async()=>{if(!selected||researching)return;setResearching(true);try{const r=await fetch('/api/contacts/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected.name})});const d=await r.json();setToast(d.status==='ok'?('Research queued for '+selected.name):'Research failed')}catch(e){setToast('Research failed')}setResearching(false);};
+  const doCopy=async()=>{if(!detail)return;try{await navigator.clipboard.writeText(JSON.stringify(detail,null,2));setToast('Copied contact JSON')}catch(e){setToast('Copy failed')}};
   const filtered=contacts.filter(c=>!q||((c.name||'')+' '+((c.aliases||[]).join(' '))).toLowerCase().includes(q.toLowerCase()));
   if(selected){
     const score=detail?.scores?.overall??selected.overall??0.5;const pct=Math.round(score*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
@@ -10133,7 +10166,7 @@ function ContactsWS(){
           <button className="btn" style={{fontSize:11}} onClick={doCopy}>📋 Copy</button>
         </div>
       </div>
-      {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+      
       <div className="card" style={{marginBottom:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
           <div><div style={{fontWeight:600,fontSize:14}}>{selected.name}</div>{selected.aliases&&selected.aliases.length>0&&<div style={{fontSize:11,color:'#999'}}>aka {selected.aliases.join(', ')}</div>}</div>
@@ -10172,7 +10205,7 @@ function ContactsWS(){
       <button aria-label={'Refresh contacts'} title={'Refresh contacts'} className="btn" style={{fontSize:11}} onClick={loadList}>↻ Refresh</button>
     </div>
     <RelationshipPanel onImported={loadList}/>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    
     {loading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading contacts...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>{q?'No matches':'No contacts yet'}</div>:
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
       {filtered.map((c,i)=>{const pct=Math.round((c.overall||0)*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
@@ -10196,12 +10229,12 @@ function ContactsWS(){
 function ContentIdeasTab({onGraduate}){
   const[pipe,setPipe]=useState(null);const[loading,setLoading]=useState(true);
   const[showNew,setShowNew]=useState(false);const[newTitle,setNewTitle]=useState('');const[newType,setNewType]=useState('post');const[newChannel,setNewChannel]=useState('linkedin');const[newNotes,setNewNotes]=useState('');
-  const[selected,setSelected]=useState(null);const[draft,setDraft]=useState('');const[drafting,setDrafting]=useState(false);const[toast,setToast]=useState('');
+  const[selected,setSelected]=useState(null);const[draft,setDraft]=useState('');const[drafting,setDrafting]=useState(false);const setToast = useFridayToast();
   const[savedDrafts,setSavedDrafts]=useState([]);const[view,setView]=useState('pipeline');
   const[templates,setTemplates]=useState([]);const[editing,setEditing]=useState(false);
   const STAGES=['idea','drafting','review','scheduled','published'];
   const STAGE_COLORS={idea:'#888',drafting:'#f59e0b',review:'#00d4ff',scheduled:'#7b61ff',published:'#00ff80'};
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2000)};
+  const flash=t=>{setToast(t);};
   const load=()=>{setLoading(true);fetch('/api/content/pipeline').then(r=>r.json()).then(d=>{setPipe(d);setLoading(false)}).catch(()=>setLoading(false))};
   const loadDrafts=()=>fetch('/api/content/drafts').then(r=>r.json()).then(d=>setSavedDrafts(d.drafts||[])).catch(()=>{});
   const loadTemplates=()=>fetch('/api/content/templates').then(r=>r.json()).then(d=>setTemplates(d.templates||[])).catch(()=>{});
@@ -10246,14 +10279,14 @@ function ContentIdeasTab({onGraduate}){
       </div>
       <div style={{display:'flex',gap:4,marginBottom:8,flexWrap:'wrap'}}>
         <button className="btn" onClick={()=>doDraft(false)} disabled={drafting} style={{fontSize:11,fontWeight:600}}>{drafting?'Drafting…':'✨ Draft'}</button>
-        <button className="btn btn-magenta" onClick={()=>doDraft(true)} disabled={drafting} style={{fontSize:11}}>Draft + Advance</button>
+        <button className="btn" onClick={()=>doDraft(true)} disabled={drafting} style={{fontSize:11}}>Draft + Advance</button>
         {draft&&!editing&&<button className="btn" onClick={()=>setEditing(true)} style={{fontSize:11}}>✏️ Edit</button>}
         {editing&&<button className="btn" onClick={saveDraft} style={{fontSize:11,fontWeight:600,color:'#00ff80'}}>💾 Save</button>}
         {draft&&<button className="btn" onClick={doCopy} style={{fontSize:11}}>📋 Copy</button>}
         {draft&&<button className="btn" onClick={exportDoc} style={{fontSize:11}}>📤 Save as doc</button>}
         <button className="btn" onClick={()=>onGraduate&&onGraduate(selected)} style={{fontSize:11,color:'#a78bfa',fontWeight:600}} title="Graduate this idea into a real cross-platform post — opens the Compose tab">🚀 → Compose</button>
       </div>
-      {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+      
       <div className="card" style={{marginBottom:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
           <span style={{fontSize:13,fontWeight:600}}>{selected.title}</span>
@@ -10276,12 +10309,12 @@ function ContentIdeasTab({onGraduate}){
   return(<div>
     <FridaySays text={`${pipe?.total||0} items in pipeline · ${savedDrafts.length} saved drafts · ${templates.length} templates. Capture an idea, start from a template, or 💬 ask Friday to reshape this studio.`}/>
     <div style={{display:'flex',gap:4,marginBottom:10}}>
-      <button className={'btn '+(view==='pipeline'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('pipeline')}>Pipeline</button>
-      <button className={'btn '+(view==='templates'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>{setView('templates');loadTemplates()}}>Templates</button>
-      <button className={'btn '+(view==='drafts'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>{setView('drafts');loadDrafts()}}>Saved Drafts {savedDrafts.length>0&&`(${savedDrafts.length})`}</button>
+      <button className={'btn'+(view==='pipeline'?' active':'')} aria-pressed={view==='pipeline'} style={{fontSize:11}} onClick={()=>setView('pipeline')}>Pipeline</button>
+      <button className={'btn'+(view==='templates'?' active':'')} aria-pressed={view==='templates'} style={{fontSize:11}} onClick={()=>{setView('templates');loadTemplates()}}>Templates</button>
+      <button className={'btn'+(view==='drafts'?' active':'')} aria-pressed={view==='drafts'} style={{fontSize:11}} onClick={()=>{setView('drafts');loadDrafts()}}>Saved Drafts {savedDrafts.length>0&&`(${savedDrafts.length})`}</button>
     </div>
     {view==='templates'&&<div>
-      {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+      
       <div style={{fontSize:11,color:'#999',marginBottom:8}}>One-click scaffolds — Friday fills in the structure when you hit ✨ Draft.</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(210px,1fr))',gap:8}}>
         {templates.map(t=><div key={t.id} className="card" style={{cursor:'pointer',padding:'10px 12px'}} onClick={()=>startFromTemplate(t)}>
@@ -10311,15 +10344,15 @@ function ContentIdeasTab({onGraduate}){
         <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={()=>setShowNew(!showNew)}>{showNew?'× Cancel':'+ Idea'}</button>
       </div>
     </div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    
     {showNew&&<div className="card" style={{marginBottom:10}}>
       <div className="card-title">New Idea</div>
       <input className="input" style={{width:'100%',marginBottom:6,fontSize:12}} value={newTitle} onChange={e=>setNewTitle(e.target.value)} placeholder="Title / hook..."/>
       <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
-        {['post','article','thread','newsletter','video'].map(t=><button key={t} className={'btn '+(newType===t?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setNewType(t)}>{t}</button>)}
+        {['post','article','thread','newsletter','video'].map(t=><button key={t} className={'btn'+(newType===t?' active':'')} aria-pressed={newType===t} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setNewType(t)}>{t}</button>)}
       </div>
       <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
-        {['linkedin','twitter','blog','substack','youtube'].map(c=><button key={c} className={'btn '+(newChannel===c?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setNewChannel(c)}>{c}</button>)}
+        {['linkedin','twitter','blog','substack','youtube'].map(c=><button key={c} className={'btn'+(newChannel===c?' active':'')} aria-pressed={newChannel===c} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setNewChannel(c)}>{c}</button>)}
       </div>
       <textarea className="input" style={{width:'100%',height:50,resize:'vertical',fontSize:11,marginBottom:6}} value={newNotes} onChange={e=>setNewNotes(e.target.value)} placeholder="Notes, angle, references..."/>
       <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={addIdea}>Capture</button>
@@ -10431,8 +10464,8 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
   const[assets,setAssets]=useState([]);const[pickerOpen,setPickerOpen]=useState(false);const[gallery,setGallery]=useState([]);
   const[variants,setVariants]=useState([]);
   const[schedOpen,setSchedOpen]=useState(false);const[schedAt,setSchedAt]=useState('');const[optimal,setOptimal]=useState(true);const[slots,setSlots]=useState([]);
-  const[postId,setPostId]=useState(null);const[busy,setBusy]=useState(false);const[toast,setToast]=useState('');
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),3000)};
+  const[postId,setPostId]=useState(null);const[busy,setBusy]=useState(false);const setToast = useFridayToast();
+  const flash=t=>{setToast(t);};
   const didInit=useRef(false);
   const connected=p=>{const e=(platforms||[]).find(x=>x.name===p);return!!(e&&e.status&&e.status.connected)};
   const chipList=(platforms&&platforms.length)?platforms.map(p=>p.name):Object.keys(CONTENT_PLATFORMS).filter(p=>p!=='discord'&&p!=='telegram');
@@ -10506,7 +10539,7 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
     setBusy(false);
   };
   return(<div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    
     <div className="card" style={{marginBottom:12,padding:14,border:'1px solid rgba(0,212,255,0.18)'}}>
       <input className="input" style={{width:'100%',marginBottom:6,fontSize:12,boxSizing:'border-box'}} value={title} onChange={e=>setTitle(e.target.value)} placeholder="Working title (YouTube, Reddit and articles use it)…"/>
       <textarea className="input" rows={4} style={{width:'100%',resize:'vertical',minHeight:72,marginBottom:8,boxSizing:'border-box',fontSize:12.5,lineHeight:1.55}} value={body} onChange={e=>setBody(e.target.value)} placeholder="Write the canonical post — Friday adapts it to each platform's native voice and limits…"/>
@@ -10527,7 +10560,7 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
           </label>);})}
       </div>}
       <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',marginBottom:assets.length?6:0}}>
-        <button className="btn btn-magenta" style={{fontSize:11}} onClick={openPicker}>🖼 Attach from gallery</button>
+        <button className="btn" style={{fontSize:11}} onClick={openPicker}>🖼 Attach from gallery</button>
         {assets.map(a=><span key={a.filename} className="badge-cyan" style={{fontSize:10,display:'inline-flex',alignItems:'center',gap:4}}>
           {a.kind==='image'?'🖼':a.kind==='video'?'🎬':a.kind==='audio'?'🎵':'📄'} {a.filename.slice(0,28)}
           <span style={{cursor:'pointer',color:'#ff8aa0'}} onClick={()=>setAssets(x=>x.filter(y=>y.filename!==a.filename))}>×</span>
@@ -10542,7 +10575,7 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
         <input className="input" style={{flex:1,fontSize:11,padding:'3px 8px'}} value={a.alt_text||''} placeholder={'Describe '+a.filename+' for screen readers…'} onChange={e=>setAssets(x=>x.map(y=>y.filename===a.filename?{...y,alt_text:e.target.value}:y))}/>
       </div>)}
       <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',marginTop:6}}>
-        <button className="btn btn-magenta" style={{fontSize:11}} title="A/B alternates — each variant is assignable per platform" onClick={()=>setVariants(v=>[...v,{id:'var_'+Math.random().toString(36).slice(2,8),label:'Hook '+String.fromCharCode(65+v.length),body}])}>＋ Variant</button>
+        <button className="btn" style={{fontSize:11}} title="A/B alternates — each variant is assignable per platform" onClick={()=>setVariants(v=>[...v,{id:'var_'+Math.random().toString(36).slice(2,8),label:'Hook '+String.fromCharCode(65+v.length),body}])}>＋ Variant</button>
         {variants.map(v=><span key={v.id} className="badge-cyan" style={{fontSize:10,display:'inline-flex',gap:4,alignItems:'center'}}>{v.label}<span style={{cursor:'pointer',color:'#ff8aa0'}} onClick={()=>setVariants(x=>x.filter(y=>y.id!==v.id))}>×</span></span>)}
       </div>
       {variants.map(v=><div key={'ve-'+v.id} style={{marginTop:6}}>
@@ -10559,8 +10592,8 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
     <div className="card" style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',padding:'10px 12px'}}>
       <span style={{fontSize:10,padding:'2px 8px',borderRadius:4,background:warnCount?'rgba(245,158,11,0.12)':'rgba(0,255,128,0.1)',color:warnCount?'#f59e0b':'#00e87a',border:'1px solid '+(warnCount?'rgba(245,158,11,0.35)':'rgba(0,232,122,0.25)')}}>{warnCount?('⚠ '+warnCount+' pre-check warning'+(warnCount>1?'s':'')):'✓ pre-check clear'}</span>
       <div style={{flex:1}}/>
-      <button className="btn btn-magenta" style={{fontSize:11}} disabled={busy} onClick={()=>ship('draft')}>💾 Save draft</button>
-      <button className="btn btn-magenta" style={{fontSize:11}} disabled={busy} onClick={()=>setSchedOpen(!schedOpen)}>📅 Schedule…</button>
+      <button className="btn" style={{fontSize:11}} disabled={busy} onClick={()=>ship('draft')}>💾 Save draft</button>
+      <button className="btn" style={{fontSize:11}} disabled={busy} onClick={()=>setSchedOpen(!schedOpen)}>📅 Schedule…</button>
       <button className="btn" style={{fontSize:11,fontWeight:700}} disabled={busy} onClick={()=>ship('now')}>{busy?'Working…':'🚀 Post now'}</button>
     </div>
     {assets[0]&&<div style={{marginTop:8}}><ProvenanceBar filename={assets[0].filename}/></div>}
@@ -10571,7 +10604,7 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
         <label style={{fontSize:11,color:'#a8a8b4',display:'flex',gap:4,alignItems:'center'}}><input type="checkbox" checked={optimal&&!schedAt} onChange={e=>{setOptimal(e.target.checked);if(e.target.checked)setSchedAt('')}}/> ✨ Let Friday pick the optimal time</label>
       </div>
       {slots.length>0&&<div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:6}}>
-        {slots.map((s,i)=>{const at=s.at?cpLocalInput(s.at):cpNextSlot(s);return(<button key={i} className="btn btn-magenta" style={{fontSize:10,borderStyle:'dashed'}} onClick={()=>{setSchedAt(at);setOptimal(false)}}>
+        {slots.map((s,i)=>{const at=s.at?cpLocalInput(s.at):cpNextSlot(s);return(<button key={i} className="btn" style={{fontSize:10,borderStyle:'dashed'}} onClick={()=>{setSchedAt(at);setOptimal(false)}}>
           {cpMeta(s.platform||sel[0]).ico} {at.replace('T',' ')} · {(s.source==='learned'||s.learned)?'learned from your audience':'general best practice'}
         </button>);})}
       </div>}
@@ -10584,8 +10617,8 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
 // optimal-slot ghost pills (learned vs general), conflict amber (spec §10.1).
 function ContentCalendarTab({onCompose,onEdit}){
   const[view,setView]=useState('month');const[anchor,setAnchor]=useState(()=>new Date());
-  const[pills,setPills]=useState([]);const[sugg,setSugg]=useState([]);const[detail,setDetail]=useState(null);const[toast,setToast]=useState('');
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2500)};
+  const[pills,setPills]=useState([]);const[sugg,setSugg]=useState([]);const[detail,setDetail]=useState(null);const setToast = useFridayToast();
+  const flash=t=>{setToast(t);};
   const load=()=>{
     const a=new Date(anchor);let from,to;
     if(view==='month'){from=new Date(a.getFullYear(),a.getMonth(),1);from.setDate(1-from.getDay());to=new Date(a.getFullYear(),a.getMonth()+1,0);to.setDate(to.getDate()+(6-to.getDay()))}
@@ -10620,13 +10653,13 @@ function ContentCalendarTab({onCompose,onEdit}){
   const hdr=view==='month'?anchor.toLocaleString(undefined,{month:'long',year:'numeric'}):('Week of '+weekDays()[0].toLocaleDateString());
   const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   return(<div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6}}>{toast}</div>}
+    
     <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8}}>
       <button aria-label={view === 'month' ? 'Previous month' : 'Previous week'} title={view === 'month' ? 'Previous month' : 'Previous week'} className="btn" style={{fontSize:11}} onClick={()=>nav(-1)}>‹</button>
       <span style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',flex:1,textAlign:'center'}}>{hdr}</span>
       <button aria-label={view === 'month' ? 'Next month' : 'Next week'} title={view === 'month' ? 'Next month' : 'Next week'} className="btn" style={{fontSize:11}} onClick={()=>nav(1)}>›</button>
-      <button className={'btn '+(view==='month'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('month')}>Month</button>
-      <button className={'btn '+(view==='week'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('week')}>Week</button>
+      <button className={'btn'+(view==='month'?' active':'')} aria-pressed={view==='month'} style={{fontSize:11}} onClick={()=>setView('month')}>Month</button>
+      <button className={'btn'+(view==='week'?' active':'')} aria-pressed={view==='week'} style={{fontSize:11}} onClick={()=>setView('week')}>Week</button>
     </div>
     {view==='month'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:3,marginBottom:3}}>{DOW.map(d=><div key={d} style={{fontSize:9,color:'#777',textAlign:'center',fontFamily:'Orbitron, sans-serif'}}>{d}</div>)}</div>
@@ -10669,8 +10702,8 @@ function ContentCalendarTab({onCompose,onEdit}){
 // 📋 Queue — the truth about what will and did happen: HELD pinned on top with
 // flagged spans + Release/Edit, upcoming target rows, history, pause-all (§10.1).
 function ContentQueueTab({onEdit}){
-  const[q,setQ]=useState(null);const[toast,setToast]=useState('');
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2500)};
+  const[q,setQ]=useState(null);const setToast = useFridayToast();
+  const flash=t=>{setToast(t);};
   const load=()=>{fetch('/api/content/queue').then(r=>r.json()).then(setQ).catch(()=>setQ({}))};
   useEffect(load,[]);
   const upcoming=(q&&(q.upcoming||q.queue))||[];
@@ -10689,11 +10722,11 @@ function ContentQueueTab({onEdit}){
       </div>
       <Chip s={t.status||'PENDING'}/>
       <button className="btn" style={{fontSize:10,padding:'2px 7px'}} title="Publish this post now, once you approve its card" onClick={()=>post('/api/content/posts/'+(t.post_id||t.id)+'/publish-now',{},'Approve the card to publish')}>▶ now</button>
-      <button aria-label="Reschedule" className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px'}} title="Reschedule" onClick={()=>{const v=window.prompt('New time (YYYY-MM-DD HH:MM, your local time):');if(!v)return;const d=new Date(v.replace(' ','T'));if(isNaN(d)){flash('Could not parse that time');return}post('/api/content/posts/'+(t.post_id||t.id)+'/schedule',{publish_at:d.toISOString()},'📅 Rescheduled')}}>↺</button>
+      <button aria-label="Reschedule" className="btn" style={{fontSize:10,padding:'2px 7px'}} title="Reschedule" onClick={()=>{const v=window.prompt('New time (YYYY-MM-DD HH:MM, your local time):');if(!v)return;const d=new Date(v.replace(' ','T'));if(isNaN(d)){flash('Could not parse that time');return}post('/api/content/posts/'+(t.post_id||t.id)+'/schedule',{publish_at:d.toISOString()},'📅 Rescheduled')}}>↺</button>
       <button aria-label="Cancel this target" className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px',color:'#ff8aa0'}} title="Cancel this target" onClick={()=>post('/api/content/posts/'+(t.post_id||t.id)+'/cancel',{target_id:t.id},'Cancelled')}>✕</button>
     </div>)};
   return(<div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6}}>{toast}</div>}
+    
     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
       <span style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>{upcoming.length} queued · {held.length} held</span>
       <div style={{flex:1}}/>
@@ -10714,7 +10747,7 @@ function ContentQueueTab({onEdit}){
           {t.error&&<div style={{fontSize:10,color:'#f59e0b',marginBottom:4}}>{t.error}</div>}
           <div style={{display:'flex',gap:6}}>
             <button className="btn" style={{fontSize:10,color:'#00e87a'}} title="Publish anyway — I reviewed this and it's intentional" onClick={()=>post('/api/content/posts/'+(t.post_id||t.id)+'/release',{target_id:t.id,ack:true},'✓ Released — publishing')}>✓ Release</button>
-            <button className="btn btn-magenta" style={{fontSize:10}} onClick={()=>onEdit&&onEdit(t.post_id||t.id)}>✏️ Edit</button>
+            <button className="btn" style={{fontSize:10}} onClick={()=>onEdit&&onEdit(t.post_id||t.id)}>✏️ Edit</button>
           </div>
         </div>);})}
     </div>}
@@ -10825,9 +10858,9 @@ function ContentAnalyticsTab(){
 // plain-language scopes + the "Cannot:" negative space, expiry countdown,
 // rate budget, Test post, Disconnect, global controls.
 function ContentAccountsTab({platforms,reload}){
-  const[toast,setToast]=useState('');const[authOpen,setAuthOpen]=useState('');const[authVals,setAuthVals]=useState({});
+  const setToast = useFridayToast();const[authOpen,setAuthOpen]=useState('');const[authVals,setAuthVals]=useState({});
   const[paused,setPaused]=useState(false);const[staging,setStaging]=useState('');const[confWin,setConfWin]=useState('2');
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),3000)};
+  const flash=t=>{setToast(t);};
   useEffect(()=>{fetch('/api/content/queue').then(r=>r.json()).then(d=>setPaused(!!(d.paused||d.pause_all))).catch(()=>{})},[]);
   const list=(platforms&&platforms.length)?platforms:Object.keys(CONTENT_PLATFORMS).filter(p=>p!=='discord'&&p!=='telegram').map(name=>({name,label:cpMeta(name).label,status:{connected:false}}));
   const setAV=(name,k,v)=>setAuthVals(s=>({...s,[name]:{...(s[name]||{}),[k]:v}}));
@@ -10861,7 +10894,7 @@ function ContentAccountsTab({platforms,reload}){
   const saveGlobals=()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{content:{staging_base_url:staging,conflict_window_hours:Number(confWin)||2}}})}).then(r=>r.json()).then(d=>flash(d.status==='ok'?'Saved':'Save failed')).catch(()=>flash('Save failed'));
   const daysLeft=iso=>{if(!iso)return null;const d=Math.ceil((new Date(iso)-Date.now())/86400000);return isNaN(d)?null:d};
   return(<div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6}}>{toast}</div>}
+    
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(270px,1fr))',gap:10,marginBottom:12}}>
       {list.map(p=>{const name=p.name;const m=cpMeta(name);const st=p.status||{};const conn=!!st.connected;
         const sc=p.scopes_plain||CP_SCOPE_TEXT[name]||{can:[],cannot:[]};
@@ -10890,8 +10923,8 @@ function ContentAccountsTab({platforms,reload}){
           {isManual&&!conn&&<div style={{fontSize:10,color:'#a8a8b4',lineHeight:1.5,marginBottom:6,fontStyle:'italic'}}>No public API. Friday prepares a ready-to-paste package and opens the editor — you paste, publish, and confirm the URL back. Honest handoff, never fake automation.</div>}
           <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
             {!conn&&<button className="btn" style={{fontSize:11,fontWeight:700,padding:'4px 14px'}} onClick={()=>connect(p)}>{isManual?'Enable manual mode':'🔗 Connect'}</button>}
-            {conn&&<button className="btn btn-magenta" style={{fontSize:10}} onClick={()=>connect(p)}>Re-authenticate</button>}
-            {conn&&<button className="btn btn-magenta" style={{fontSize:10}} onClick={()=>testPost(name)}>Test post</button>}
+            {conn&&<button className="btn" style={{fontSize:10}} onClick={()=>connect(p)}>Re-authenticate</button>}
+            {conn&&<button className="btn" style={{fontSize:10}} onClick={()=>testPost(name)}>Test post</button>}
             {conn&&<button className="btn btn-magenta" style={{fontSize:10,color:'#ff8aa0'}} onClick={()=>disconnect(name)}>Disconnect</button>}
           </div>
           {authOpen===name&&pasteAuth&&<div style={{marginTop:8}}>
@@ -10935,9 +10968,9 @@ function ContentAccountsTab({platforms,reload}){
 function QuickPostModal({payload,onClose}){
   const[plats,setPlats]=useState([]);const[sel,setSel]=useState([]);
   const[body,setBody]=useState(payload.content||payload.text||'');const[title]=useState(payload.title||'');
-  const[preview,setPreview]=useState(null);const[busy,setBusy]=useState(false);const[toast,setToast]=useState('');
+  const[preview,setPreview]=useState(null);const[busy,setBusy]=useState(false);const setToast = useFridayToast();
   const assets=(payload.asset&&payload.asset.filename)?[(()=>{const ext=(payload.asset.filename||'').split('.').pop().toLowerCase();const kind=['png','jpg','jpeg','webp','svg','gif'].includes(ext)?'image':['mp4','webm','mov'].includes(ext)?'video':['mp3','wav','ogg','m4a'].includes(ext)?'audio':'document';return{filename:payload.asset.filename,content_hash:payload.asset.content_hash||'',kind,alt_text:payload.asset.alt_text||''}})()]:[];
-  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2500)};
+  const flash=t=>{setToast(t);};
   useEffect(()=>{fetch('/api/content/platforms').then(r=>r.json()).then(d=>{const ps=Array.isArray(d.platforms)?d.platforms:[];setPlats(ps);const conn=ps.filter(x=>x.status&&x.status.connected).map(x=>x.name);setSel(conn.slice(0,2))}).catch(()=>{})},[]);
   useEffect(()=>{
     if(!body.trim()||!sel[0]){setPreview(null);return}
@@ -10973,7 +11006,7 @@ function QuickPostModal({payload,onClose}){
         <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',letterSpacing:'.08em'}}>📤 QUICK POST{title?(' · '+title.slice(0,40)):''}</div>
         <button className="btn" style={{fontSize:10}} onClick={onClose}>× Close</button>
       </div>
-      {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6}}>{toast}</div>}
+      
       <textarea className="input" rows={4} style={{width:'100%',boxSizing:'border-box',fontSize:12,marginBottom:8,resize:'vertical'}} value={body} onChange={e=>setBody(e.target.value)} placeholder="What do you want to say?"/>
       {assets[0]&&<div style={{fontSize:10,color:'#8891a8',marginBottom:6}}>📎 {assets[0].filename}</div>}
       <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>
@@ -10987,9 +11020,9 @@ function QuickPostModal({payload,onClose}){
       </div>}
       <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
         <button className="btn" style={{fontSize:11,fontWeight:700}} disabled={busy} onClick={()=>ship('schedule')}>📅 Schedule (next optimal)</button>
-        <button className="btn btn-magenta" style={{fontSize:11}} disabled={busy} onClick={()=>ship('now')}>🚀 Post now</button>
+        <button className="btn" style={{fontSize:11}} disabled={busy} onClick={()=>ship('now')}>🚀 Post now</button>
         <div style={{flex:1}}/>
-        <button className="btn btn-magenta" style={{fontSize:11}} disabled={busy} onClick={()=>ship('composer')}>Open full composer →</button>
+        <button className="btn" style={{fontSize:11}} disabled={busy} onClick={()=>ship('composer')}>Open full composer →</button>
       </div>
     </div>
   </div>);
@@ -11034,7 +11067,7 @@ function ContentWS(){
   return(<div>
     {tab!=='ideas'&&<FridaySays text={says}/>}
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
-      {TABS.map(([id,label])=><button key={id} className={'btn '+(tab===id?'':'btn-magenta')} style={{fontSize:11,fontWeight:tab===id?700:400}} onClick={()=>setTab(id)}>{label}{(id==='queue'&&heldN>0)?' ⚠':''}</button>)}
+      {TABS.map(([id,label])=><button key={id} className={'btn'+(tab===id?' active':'')} aria-pressed={tab===id} style={{fontSize:11,fontWeight:tab===id?700:400}} onClick={()=>setTab(id)}>{label}{(id==='queue'&&heldN>0)?' ⚠':''}</button>)}
     </div>
     {tab==='compose'&&<ContentComposeTab platforms={plats} prefillPost={prefillPost} slot={slot} onNavAccounts={()=>setTab('accounts')}/>}
     {tab==='calendar'&&<ContentCalendarTab onCompose={s=>{setSlot(s);setTab('compose')}} onEdit={id=>{setPrefillPost(id);setTab('compose')}}/>}
@@ -13823,7 +13856,7 @@ function SetupResearchReview({ research, onChanged }) {
               <React.Fragment>
                 <button type="button" className="sc-btn" disabled={busy} aria-label={'Accept: ' + i.claim} onClick={() => send([{ id: i.id, action: 'accept' }])}>Accept</button>
                 <button type="button" className="sc-btn quiet" disabled={busy} aria-label={'Edit: ' + i.claim} onClick={() => setEdit(o => ({ ...o, [i.id]: i.claim }))}>Edit</button>
-                <button type="button" className="sc-btn danger" disabled={busy} aria-label={'Reject: ' + i.claim} onClick={() => send([{ id: i.id, action: 'reject' }])}>Reject</button>
+                <button type="button" className="sc-btn deny" disabled={busy} aria-label={'Reject: ' + i.claim} onClick={() => send([{ id: i.id, action: 'reject' }])}>Reject</button>
               </React.Fragment>
             )}
           </div>
@@ -15977,7 +16010,7 @@ function gaSyncTitle(acc){
 // everything after it. Reverting is itself snapshotted server-side, so nothing
 // here is a one-way door — worth SAYING, because a list of destructive-looking
 // buttons that are all reversible still reads as dangerous until someone says so.
-function WorkspaceHistory({wsId,label,onClose}){
+function WorkspaceHistory({wsId,label,onClose,top}){
   const[data,setData]=useState(null);
   const[busy,setBusy]=useState('');
   const[err,setErr]=useState('');
@@ -16014,7 +16047,7 @@ function WorkspaceHistory({wsId,label,onClose}){
     // own move, close and 🕒 buttons with it, so the one way out would be the
     // Close button inside — and a modal you can only leave through its own
     // affordance is how you strand someone.
-    <div onClick={e=>e.stopPropagation()} style={{position:'absolute',left:0,right:0,bottom:0,top:37,zIndex:6,background:'rgba(6,10,20,0.96)',backdropFilter:'blur(8px)',display:'flex',flexDirection:'column',padding:'14px 16px',overflowY:'auto'}}>
+    <div onClick={e=>e.stopPropagation()} style={{position:'absolute',left:0,right:0,bottom:0,top:top==null?37:top,zIndex:6,background:'rgba(6,10,20,0.96)',backdropFilter:'blur(8px)',display:'flex',flexDirection:'column',padding:'14px 16px',overflowY:'auto'}}>
       <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
         <span className="card-title">{'History — '+(label||wsId)}</span>
         <span style={{flex:1}}/>
@@ -18806,15 +18839,7 @@ function StandaloneApprovals(){
     {open&&<div className="ws-tab-drawer" role="dialog" aria-label="Approvals">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><b style={{color:'#ffd699'}}>Waiting for your approval</b><button aria-label={'Close'} title={'Close'} className="ws-tab-link" onClick={()=>setOpen(false)}>✕</button></div>
       {!items.length&&<div style={{color:'#7f93ad',fontSize:12}}>Nothing is waiting.</div>}
-      {items.map(a=><div key={a.approval_id} className="ws-tab-card">
-        <div style={{fontWeight:700,color:'#fff',marginBottom:4}}>{a.title}</div>
-        {a.action_description&&<div style={{whiteSpace:'pre-wrap',fontSize:12,color:'#b8c7dc',maxHeight:220,overflow:'auto'}}>{a.action_description}</div>}
-        <ApprovalPagePreview a={a}/>
-        <ApprovalProvenance p={a.provenance}/>
-        <div style={{display:'flex',gap:8,marginTop:8}}>
-          <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#00ff80',color:'#86efac'}} onClick={()=>decide(a.approval_id,'approve')}>{busy===a.approval_id?'…':'Approve'}</button>
-          <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#ef4444',color:'#fca5a5'}} onClick={()=>decide(a.approval_id,'deny')}>Deny</button>
-        </div></div>)}
+      {items.map(a=><ApprovalCardBody key={a.approval_id} a={a} busy={busy} onDecide={decide}/>)}
     </div>}
   </>);
 }
@@ -19181,11 +19206,17 @@ function ApprovalPopups() {
 }
 // The context slot of the top bar in a workspace tab: which workspace this is,
 // and the way to it on the desktop (where the scene menu sits on the desktop).
-function ShellTabName({ws}){
-  return(<span className="ws-tab-name" data-testid="ws-tab-name"><WsIcon ws={ws}/><span>{ws.label}</span>
-    <a className="ws-tab-link" href={'/?workspace='+encodeURIComponent(ws.id)} data-testid="ws-tab-back" title="Open the desktop, with this workspace open">Desktop</a></span>);
+function ShellTabName({ws,histOpen,onHistory}){
+  // Which workspace this is, the way to it on the desktop, and the workspace's
+  // own tools, as a desktop window's title bar has them.
+  return(<span className="ws-tab-name" data-testid="ws-tab-name"><WsIcon ws={ws}/><span>{ws.label}</span><WsCustomizedMark id={ws.id}/>
+    <a className="ws-tab-link" href={'/?workspace='+encodeURIComponent(ws.id)} data-testid="ws-tab-back" title="Open the desktop, with this workspace open">Desktop</a>
+    <span className="ws-tab-tools" data-testid="ws-tab-tools"><WsTools id={ws.id} title={ws.label} emoji={ws.ico} histOpen={histOpen} onHistory={onHistory}/></span></span>);
 }
-function StandaloneShell({ws,children}){
+// The tab: the workspace full-tab, in the same customized body as its desktop
+// window. Its title names the workspace (and the item it was opened for); its
+// icon is the rocket, as on every Friday page.
+function StandaloneShell({ws,histOpen,onCloseHistory,children}){
   // Moving the same workspace here again from the desktop finds this tab by
   // name and says where the window was, rather than reloading it. Only the
   // desktop that opened this tab is heard.
@@ -19198,14 +19229,11 @@ function StandaloneShell({ws,children}){
     // A tab opened for one item names it first: "Q3 plan · Messages · Agent Friday™".
     let item='';try{const q=new URLSearchParams(window.location.search);item=q.get('subject')||q.get('title')||q.get('creation')||q.get('file')||''}catch(e){}
     document.title=(item?item.slice(0,80)+' · ':'')+ws.label+' · '+window.FRIDAY_BRAND.name;
-    const iconUrl='/assets/icons/'+(ws.icon||ws.id)+'.svg';
-    const emojiIcon='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">'+(ws.ico||'▣')+'</text></svg>');
-    document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l=>l.parentNode.removeChild(l));
-    const link=document.createElement('link');link.rel='icon';link.href=iconUrl||emojiIcon;if(iconUrl)link.type='image/svg+xml';link.onerror=()=>{link.href=emojiIcon};document.head.appendChild(link);
   },[ws.id]);
   const maxedTab=(()=>{try{const m=new URLSearchParams(window.location.search).get('max');return!!m&&m!=='0'}catch(e){return false}})();
   return(<div className={'ws-tab'+(maxedTab?' ws-max':'')} data-standalone={ws.id}>
-    <main className="ws-tab-body">{children}</main>
+    <main className="ws-tab-body"><WsCustomBody id={ws.id} title={ws.label} emoji={ws.ico}>{children}</WsCustomBody></main>
+    {histOpen&&<div className="ws-tab-hist"><WorkspaceHistory wsId={ws.id} label={ws.label} onClose={onCloseHistory} top={0}/></div>}
   </div>);
 }
 
@@ -21439,6 +21467,15 @@ function App(){
   const setLayout=(ws,on)=>{const next=Object.assign({},agentSettings.workspace_layouts||{});if(on)next[ws]='fullscreen_chat';else delete next[ws];saveAgentSettings({workspace_layouts:next});applyLayout(ws,on)};
   const toggleLayout=()=>{const ws=frontWs();if(!ws){fridayToast('Open a workspace first: fullscreen with chat is set per workspace.');return}setLayout(ws,fsOn!==ws)};
   const layoutRef=useRef({});layoutRef.current={applyLayout,toggleLayout};
+  // The top bar's panels: the one that opens closes the ones it would cover.
+  // The bar's buttons and the command palette both open them through these.
+  const toggleNotifs=()=>{setNotifOpen(o=>!o);if(!notifOpen){setSettingsOpen(false);setChatOpen(false);setQuickDraft(false)}};
+  const toggleQuickDraft=()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}};
+  const toggleChat=()=>{setChatOpen(!chatOpen);if(!chatOpen){setSettingsOpen(false);setQuickDraft(false)}};
+  // The bar's own actions in the palette, beside the layout.
+  const barCommands=[{id:'chat',ico:'💬',label:chatOpen?'Close the chat':'Open the chat',meta:'Top bar',aka:['chat','talk','ask','conversation'],run:toggleChat},
+    {id:'quick-draft',ico:'✍️',label:'Quick Draft',meta:'Top bar',aka:['draft','write','compose'],run:toggleQuickDraft},
+    {id:'notifications',ico:'🔔',label:'Notifications',meta:'Top bar',aka:['bell','alerts','tasks'],run:toggleNotifs}];
   const layoutCommands=[{id:'fs-chat',ico:'⤢',label:fsOn?'Leave fullscreen with chat':'Fullscreen with chat',meta:'Ctrl+Shift+F',aka:['full screen','fullscreen','chat tray','layout'],run:()=>layoutRef.current.toggleLayout()}];
   // A workspace that remembers the layout opens that way: in its tab, and on
   // the desktop when its window comes to the front.
@@ -21464,6 +21501,8 @@ function App(){
   // and the modals they open (docs/design/active/unified-shell.md). Defined
   // once; the desktop and the tab each draw these same elements.
   const shellTab=STANDALONE_WS&&STANDALONE_WS!=='settings'?(wsInfo[STANDALONE_WS]||null):null;
+  // A tab's version history: opened by the tools in the bar, shown in the tab.
+  const[tabHistOpen,setTabHistOpen]=useState(false);
   const shellMeeting = <MeetingRecIndicator/>;
   const shellTopBar = <div className={`top-bar ${topBarHidden?'hidden':''}`} data-testid="friday-top-bar">
       <div style={{display:'flex',alignItems:'center',gap:8}}>
@@ -21475,7 +21514,7 @@ function App(){
             top bar itself, not this half of it, whose sides clip on a narrow
             window. With no top or left the menu sits where it would flow,
             right under the button. */}
-        {shellTab?<ShellTabName ws={shellTab}/>:(<div ref={sceneMenuRef}>
+        {shellTab?<ShellTabName ws={shellTab} histOpen={tabHistOpen} onHistory={()=>setTabHistOpen(v=>!v)}/>:(<div ref={sceneMenuRef}>
           <button onClick={()=>{setSceneMenuOpen(o=>!o);setModelMenuOpen(false)}}
             style={{background:'rgba(0,0,0,0.35)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}
             onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(0,212,255,0.45)'}}
@@ -21758,7 +21797,7 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <StandaloneApprovals/>
         <span className="top-bar-clock" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
-        <button ref={bellRef} onClick={()=>{setNotifOpen(o=>!o);if(!notifOpen){setSettingsOpen(false);setChatOpen(false);setQuickDraft(false)}}}
+        <button ref={bellRef} onClick={toggleNotifs}
           style={{background:'none',border:'none',color:notifOpen?'#00d4ff':'#ddd',cursor:'pointer',fontSize:14,position:'relative'}}
           title={runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications'}
           aria-label={runningTaskCount>0?`${runningTaskCount} tasks running, open notifications`:'Open notifications'}>
@@ -21766,12 +21805,12 @@ function App(){
           {bellBadgeCount>0&&<span className={runningTaskCount>0?'bell-badge-pulse':''}
             style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0e1a',fontWeight:700,fontFamily:'Orbitron, sans-serif'}}>{bellBadgeCount}</span>}
         </button>
-        <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}}
+        <button onClick={toggleQuickDraft}
           style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
           title="Quick Draft" aria-label="Open Quick Draft">
           <span style={{fontSize:13}}>&#x270D;&#xFE0F;</span>
         </button>
-        <button onClick={()=>{setChatOpen(!chatOpen);if(!chatOpen){setSettingsOpen(false);setQuickDraft(false)}}}
+        <button onClick={toggleChat}
           style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
           title={chatOpen?'Close chat':'Open chat with Friday'}
           aria-label={chatOpen?'Close chat':'Open chat with Friday'}>
@@ -22074,7 +22113,7 @@ function App(){
         <button aria-label={'Close quick draft'} title={'Close quick draft'} onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
       </div>
       <div style={{display:'flex',gap:3,marginBottom:8,flexWrap:'wrap'}}>
-        {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(qdMode===m.id?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setQdMode(m.id)}>{m.ico} {m.label}</button>)}
+        {DRAFT_MODES.map(m=><button key={m.id} className={'btn'+(qdMode===m.id?' active':'')} aria-pressed={qdMode===m.id} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setQdMode(m.id)}>{m.ico} {m.label}</button>)}
       </div>
       <textarea className="input" style={{width:'100%',height:48,resize:'none',fontSize:11,marginBottom:6}} value={qdPrompt} onChange={e=>setQdPrompt(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey)qdGenerate()}} placeholder="What do you need drafted? (Ctrl+Enter)"/>
       <div style={{display:'flex',gap:4,marginBottom:qdResult||qdLoading?8:0,flexWrap:'wrap'}}>
@@ -22087,7 +22126,7 @@ function App(){
         {qdResult.split(/\n\n+/).filter(Boolean).map((p,i)=><p key={i} style={{fontFamily:'Inter',fontSize:i===0?13:12,lineHeight:1.75,color:i===0?'#e8e8f0':'#ccc',marginBottom:10,whiteSpace:'pre-wrap'}}>{p}</p>)}
       </div>}
     </div>;
-  const shellPalette = paletteOpen&&<CommandPalette commands={layoutCommands} onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>;
+  const shellPalette = paletteOpen&&<CommandPalette commands={layoutCommands.concat(barCommands)} onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>;
   const shellQuickPost = <QuickPostHost/>;
   const shellPodcast = <PodcastPlayer/>;
   const shellTaskModal = taskResultModal&&<div onClick={()=>setTaskResultModal(null)} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -22123,7 +22162,7 @@ function App(){
     return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
       <ApprovalPopups/>
       {shellMeeting}{shellTopBar}{shellKillSwitch}
-      {sw?<StandaloneShell ws={sw}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
+      {sw?<StandaloneShell ws={sw} histOpen={tabHistOpen} onCloseHistory={()=>setTabHistOpen(false)}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
         :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the Friday desktop</a></div>}
       {shellWsChat}{shellChatPanel}{shellTrace}{shellActivity}{shellNotifs}{shellSettings}{shellQuickDraft}{shellPalette}{shellQuickPost}{shellPodcast}{shellTaskModal}
     </WsCustomCtx.Provider>);

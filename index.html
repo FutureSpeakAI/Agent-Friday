@@ -158,6 +158,9 @@ window.addEventListener('DOMContentLoaded',function(){
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: var(--fr-font-body); cursor: default; }
         canvas { display: block; }
+        /* A button or field without a face of its own takes the page's, not the
+           browser's (Arial, or monospace in a textarea). */
+        button, input, select, textarea { font-family: inherit; }
         /* Three.js renderer canvas: pin to viewport behind every UI layer. */
         body > canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
         
@@ -319,8 +322,13 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .btn:hover { background: rgba(255, 255, 255, 0.08); color: #fff; border-color: rgba(255,255,255,0.28); }
         .btn.active { color: #fff; background: rgba(0,212,255,0.12); border-color: rgba(0,212,255,0.5); }
+        /* Deny magenta is a refusal or a stop: Cancel, Stop, Remove, Disconnect.
+           A selected tab is .btn.active; an ordinary action is a plain .btn. */
         .btn-magenta { border-color: rgba(255,0,128,0.35); color: rgba(255,128,180,0.92); }
         .btn-magenta:hover { background: rgba(255,0,128,0.12); color: #ff66a8; border-color: rgba(255,0,128,0.55); }
+        /* Approve: ok green, as on the approval card. */
+        .btn-ok { border-color: rgba(0,255,128,0.35); color: #00ff80; }
+        .btn-ok:hover { background: rgba(0,255,128,0.1); color: #7dffb8; border-color: rgba(0,255,128,0.55); }
 
         /* Scrollbars: the one rule set is the friday-scrollbars style
            element above. Nothing here sizes or colours a scrollbar. */
@@ -475,6 +483,7 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
             position: fixed; display: flex; flex-direction: column;
+            color: var(--fr-text);
             background: rgba(10,14,26,0.75);
             backdrop-filter: blur(16px) saturate(1.2);
             -webkit-backdrop-filter: blur(16px) saturate(1.2);
@@ -512,7 +521,7 @@ window.addEventListener('DOMContentLoaded',function(){
             background: none; border: none; color: rgba(255,255,255,0.6); cursor: pointer;
             font-size: 16px; padding: 0 4px; transition: color 0.2s;
         }
-        .fwin-btns button:hover { color: #ff0080; }
+        .fwin-btns button:hover { color: #fff; }
         .fwin-body { flex: 1; overflow-y: auto; padding: 12px; }
         /* The browser refused a workspace's own tab: said under the title bar. */
         .fwin-tab-blocked { display: flex; gap: 8px; align-items: flex-start; margin: 6px 10px 0; padding: 7px 10px; border-radius: 8px; background: rgba(255,196,0,0.10); border: 1px solid rgba(255,196,0,0.38); color: #ffe7a3; font-size: 12px; line-height: 1.45; }
@@ -637,6 +646,7 @@ window.addEventListener('DOMContentLoaded',function(){
             background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
             border-radius: 6px; padding: 7px 10px; color: #ddd; font-size: 12px;
             font-family: 'Inter', sans-serif; outline: none; transition: border-color 0.2s;
+            box-sizing: border-box; /* width: 100% is the field's whole width, padding included */
         }
         .input:focus { border-color: rgba(0,212,255,0.3); }
 
@@ -700,7 +710,7 @@ window.addEventListener('DOMContentLoaded',function(){
         /* The tab sits under the same fixed top bar as the desktop, and a
            docked chat tray takes its width from the tab instead of covering
            it (--fr-chat-dock, set by App while the tray is open in a tab). */
-        .ws-tab { height: 100%; display: flex; flex-direction: column; overflow: hidden; color: #dbe6f5;
+        .ws-tab { height: 100%; display: flex; flex-direction: column; overflow: hidden; color: var(--fr-text);
             padding-top: var(--fr-topbar-h, 36px); padding-right: var(--fr-chat-dock, 0px); box-sizing: border-box;
             transition: padding-right 0.3s ease; }
         html.ws-standalone .chat-panel { bottom: 0; }
@@ -708,6 +718,13 @@ window.addEventListener('DOMContentLoaded',function(){
         .ws-tab-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; }
         .ws-tab-name img { width: 18px; height: 18px; }
         .ws-tab-name .ws-tab-link { margin-left: 6px; font-size: 11px; padding: 2px 8px; }
+        /* The workspace's own tools, as a desktop window's title bar has them. */
+        .ws-tab-name .ws-tab-tools { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; }
+        .ws-tab-name .ws-tab-tools button { background: none; border: none; color: rgba(255,255,255,0.6); cursor: pointer;
+            font-size: 13px; line-height: 1; padding: 3px 4px; transition: color 0.2s; }
+        .ws-tab-name .ws-tab-tools button:hover { color: #fff; }
+        /* A tab's version history covers the workspace, under the bar and beside a docked tray. */
+        .ws-tab-hist { position: fixed; top: var(--fr-topbar-h, 36px); left: 0; right: var(--fr-chat-dock, 0px); bottom: 0; z-index: 60; }
         .ws-tab-link { font-size: 12px; color: #9fd0ff; text-decoration: none; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.3); border-radius: 7px; background: transparent; cursor: pointer; }
         .ws-tab-link:hover { border-color: #00d4ff; color: #e6f9ff; }
         .ws-tab-ask { font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(245,158,11,0.6); background: rgba(245,158,11,0.12); color: #ffd699; }
@@ -737,7 +754,6 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .ws-tab-drawer { position: fixed; top: calc(var(--fr-topbar-h, 36px) + 10px); right: 14px; width: min(460px, 94vw); max-height: 78vh; overflow: auto; z-index: 70;
             background: rgba(8,12,22,0.98); border: 1px solid rgba(245,158,11,0.45); border-radius: 12px; padding: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
-        .ws-tab-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; padding: 10px; margin-bottom: 10px; background: rgba(255,255,255,0.02); }
         .ws-tab-toast { position: fixed; right: 16px; bottom: 16px; z-index: 80; display: flex; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 9px;
             background: rgba(8,12,22,0.97); border: 1px solid rgba(245,158,11,0.6); color: #ffe2ad; font-size: 12.5px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
 
@@ -1021,6 +1037,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .sc-btn[disabled] { opacity: .45; cursor: not-allowed; }
         .sc-btn.quiet { border-color: rgba(255,255,255,0.15); color: var(--st-dim); background: transparent; }
         .sc-btn.danger { border-color: rgba(239,68,68,0.5); color: var(--st-danger); background: transparent; }
+        .sc-btn.deny { border-color: rgba(255,0,128,0.5); color: var(--fr-deny); background: transparent; }
         .sc-side { flex: 1 1 520px; min-width: 0; overflow-y: auto; padding-left: 4px; }
         .sc-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; background: rgba(255,255,255,0.02);
             padding: 16px; margin-bottom: 14px; }
@@ -3270,7 +3287,8 @@ window.addEventListener('DOMContentLoaded',function(){
         .kw-btn:hover:not(:disabled) { border-color: rgba(0,212,255,0.5); color: #fff; }
         .kw-btn:disabled { opacity: 0.4; cursor: not-allowed; }
         .kw-go { color: #7dffc0; border-color: rgba(0,255,128,0.35); }
-        .kw-danger { color: #ff8fb0; border-color: rgba(255,0,128,0.35); }
+        .kw-danger { color: var(--fr-error); border-color: rgba(239,68,68,0.45); }
+        .kw-deny { color: var(--fr-deny); border-color: rgba(255,0,128,0.45); }
         .kw-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
         .kw-end { justify-content: flex-end; }
         .kw-pages-inner { flex: 1; min-height: 0; display: flex; }
@@ -3300,7 +3318,6 @@ window.addEventListener('DOMContentLoaded',function(){
         .kw-diff-old { background: rgba(255,0,128,0.06); border: 1px solid rgba(255,0,128,0.18); color: #ffb0c8; }
         .kw-diff-new { background: rgba(0,255,128,0.06); border: 1px solid rgba(0,255,128,0.18); color: #b0ffc8; }
         .kw-reader { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
-        .kw-toast { font-size: 12px; color: #7fe3ff; }
         .kw-results { border: 1px solid rgba(0,212,255,0.2); border-radius: 7px; padding: 8px 10px; background: rgba(0,212,255,0.03); max-height: 42%; overflow-y: auto; flex-shrink: 0; }
         .kw-results-h { font-size: 12px; font-weight: 600; color: #7fe3ff; margin-bottom: 4px; }
         .kw-hit { display: block; width: 100%; text-align: left; background: none; border: none; border-top: 1px solid rgba(255,255,255,0.05); padding: 5px 0; cursor: pointer; color: inherit; font-family: inherit; }
@@ -8195,6 +8212,18 @@ function fridayToast(msg, opts) {
 }
 window.fridayToast = fridayToast;
 
+// A workspace's passing notice ("Copied", "Saved", "Could not save") is
+// Friday's one toast: the same look and place in every workspace, in a window
+// and in a tab, and a failure reads as one. A workspace keeps calling
+// setToast(message); nothing of its own is drawn.
+const FRIDAY_TOAST_FAILED = /\b(?:fail(?:ed|s|ure)?|error|couldn['’]t|could not|can['’]t|cannot|unable)\b/i;
+function useFridayToast() {
+  const show = useCallback(msg => {
+    if (msg) fridayToast(msg, { error: FRIDAY_TOAST_FAILED.test(String(msg)) });
+  }, []);
+  return show;
+}
+
 // The stand-down banner. Fixed to the top so it reads as a state of the whole
 // app rather than of whichever panel is open, with Resume right there -- the
 // state is useless if getting out of it means hunting through Settings.
@@ -8645,6 +8674,166 @@ function WsIcon({
     onError: () => setFailed(true)
   });
 }
+// ═══ A WORKSPACE, THE SAME IN A WINDOW AND IN A TAB ═══
+// Its own tools (chat with Friday about it, talk to her about it, its earlier
+// versions), the mark that Friday has customized it, and its body with that
+// customization applied. A desktop window draws the tools in its title bar; a
+// workspace tab draws them in the top bar, beside the workspace's name.
+function WsTools({
+  id,
+  title,
+  emoji,
+  histOpen,
+  onHistory
+}) {
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    title: `Chat with Friday about ${title} \u2014 tweak the layout, add features, undo changes`,
+    "aria-label": `Workspace chat for ${title}`,
+    onClick: e => {
+      e.stopPropagation();
+      window.fridayOpenWorkspaceChat && window.fridayOpenWorkspaceChat(id, title, emoji);
+    },
+    style: {
+      fontSize: 12
+    }
+  }, "\uD83D\uDCAC"), /*#__PURE__*/React.createElement("button", {
+    title: `Talk to Friday about ${title}`,
+    "aria-label": `Start voice for ${title}`,
+    onClick: e => {
+      e.stopPropagation();
+      window.fridayStartWorkspaceVoice && window.fridayStartWorkspaceVoice(id);
+    },
+    style: {
+      fontSize: 12
+    }
+  }, "\uD83C\uDFA4"), /*#__PURE__*/React.createElement("button", {
+    /* The 40 snapshots workspace_studio keeps, reachable without asking
+       Friday out loud. Beside \uD83D\uDCAC because that is where the changes it
+       lists come from. */
+    title: `Earlier versions of ${title} \u2014 review and roll back`,
+    "aria-label": `Version history for ${title}`,
+    "aria-pressed": !!histOpen,
+    onClick: e => {
+      e.stopPropagation();
+      onHistory();
+    },
+    style: {
+      fontSize: 12,
+      color: histOpen ? '#00d4ff' : undefined
+    }
+  }, "\uD83D\uDD52"));
+}
+function WsCustomizedMark({
+  id
+}) {
+  const {
+    map
+  } = useContext(WsCustomCtx);
+  const cust = map[id] || {};
+  if (!Object.keys(cust).length) return null;
+  return /*#__PURE__*/React.createElement("span", {
+    title: "Friday has customized this workspace \u2014 open \uD83D\uDCAC to tweak or revert",
+    style: {
+      marginLeft: 6,
+      fontSize: 10,
+      opacity: .85
+    }
+  }, "\uD83D\uDEE0\uFE0F");
+}
+function WsCustomBody({
+  id,
+  title,
+  emoji,
+  children
+}) {
+  // ── Live customization Friday applied to THIS workspace via the 💬 chat ──
+  const {
+    map: wsCustMap
+  } = useContext(WsCustomCtx);
+  const cust = wsCustMap[id] || {};
+  const scope = `.ws-custom-root[data-ws="${id}"]`;
+  let custCss = '';
+  if (cust.css) custCss += cust.css.split('.ws-custom-root').join(scope) + '\n';
+  if (cust.hidden && cust.hidden.length) custCss += cust.hidden.map(s => `${scope} ${s}`).join(',') + '{display:none!important}\n';
+  if (cust.density === 'compact') custCss += `${scope} .card{padding:7px 9px!important;margin-bottom:4px!important}${scope}{font-size:12px}\n`;
+  if (cust.accent) custCss += `${scope}{--ws-accent:${cust.accent}}${scope} .card-title{color:${cust.accent}}${scope}>.ws-accent-bar{background:${cust.accent}}\n`;
+  const openWsChat = seed => window.fridayOpenWorkspaceChat && window.fridayOpenWorkspaceChat(id, title, emoji, seed);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ws-custom-root",
+    "data-ws": id,
+    style: {
+      position: 'relative'
+    }
+  }, custCss && /*#__PURE__*/React.createElement("style", {
+    dangerouslySetInnerHTML: {
+      __html: custCss
+    }
+  }), cust.accent && /*#__PURE__*/React.createElement("div", {
+    className: "ws-accent-bar",
+    style: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: -2,
+      height: 2,
+      opacity: .75,
+      borderRadius: 2
+    }
+  }), cust.note && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(255,84,112,0.08)',
+      border: '1px solid rgba(255,84,112,0.25)',
+      borderRadius: 8,
+      padding: '7px 10px',
+      marginBottom: 10,
+      fontSize: 12,
+      color: '#ffd0d8',
+      display: 'flex',
+      gap: 8,
+      alignItems: 'flex-start'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flexShrink: 0
+    }
+  }, "\uD83D\uDEE0\uFE0F"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement(FridayDoc, {
+    text: fridayTM(cust.note),
+    style: {
+      margin: 0
+    }
+  })), /*#__PURE__*/React.createElement("button", { "aria-label": "Ask Friday to remove this note", 
+    onClick: () => openWsChat('remove the pinned note'),
+    title: "Ask Friday to remove this note",
+    style: {
+      background: 'none',
+      border: 'none',
+      color: '#ff8aa0',
+      cursor: 'pointer',
+      fontSize: 13,
+      lineHeight: 1,
+      flexShrink: 0
+    }
+  }, "\xD7")), cust.actions && cust.actions.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginBottom: 10
+    }
+  }, cust.actions.map((a, i) => /*#__PURE__*/React.createElement("button", {
+    key: i,
+    className: "btn",
+    style: {
+      fontSize: 11
+    },
+    onClick: () => openWsChat(a.prompt)
+  }, a.label))), children);
+}
 function FWin({
   id,
   title,
@@ -8803,19 +8992,6 @@ function FWin({
       }));
     } catch (_) {}
   }, [pos.x, pos.y, size.w, size.h]);
-  // ── Live customization Friday applied to THIS workspace via the 💬 chat ──
-  const {
-    map: wsCustMap
-  } = useContext(WsCustomCtx);
-  const cust = wsCustMap[id] || {};
-  const customized = cust && Object.keys(cust).length > 0;
-  const scope = `.ws-custom-root[data-ws="${id}"]`;
-  let custCss = '';
-  if (cust.css) custCss += cust.css.split('.ws-custom-root').join(scope) + '\n';
-  if (cust.hidden && cust.hidden.length) custCss += cust.hidden.map(s => `${scope} ${s}`).join(',') + '{display:none!important}\n';
-  if (cust.density === 'compact') custCss += `${scope} .card{padding:7px 9px!important;margin-bottom:4px!important}${scope}{font-size:12px}\n`;
-  if (cust.accent) custCss += `${scope}{--ws-accent:${cust.accent}}${scope} .card-title{color:${cust.accent}}${scope}>.ws-accent-bar{background:${cust.accent}}\n`;
-  const openWsChat = seed => window.fridayOpenWorkspaceChat && window.fridayOpenWorkspaceChat(id, title, emoji, seed);
   // The history overlay is local to THIS window rather than App-level, so two
   // open workspaces each get their own and closing one does not close the other.
   // Settings → Appearance & 3D opens a workspace WITH its history showing by setting the
@@ -8917,50 +9093,17 @@ function FWin({
     glyph: emoji
   }), title, /*#__PURE__*/React.createElement(ConnectorDot, {
     wsId: id
-  }), customized && /*#__PURE__*/React.createElement("span", {
-    title: "Friday has customized this workspace \u2014 open \uD83D\uDCAC to tweak or revert",
-    style: {
-      marginLeft: 6,
-      fontSize: 10,
-      opacity: .85
-    }
-  }, "\uD83D\uDEE0\uFE0F")), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement(WsCustomizedMark, {
+    id: id
+  })), /*#__PURE__*/React.createElement("div", {
     className: "fwin-btns"
-  }, /*#__PURE__*/React.createElement("button", {
-    title: `Chat with Friday about ${title} — tweak the layout, add features, undo changes`,
-    "aria-label": `Workspace chat for ${title}`,
-    onClick: e => {
-      e.stopPropagation();
-      openWsChat();
-    },
-    style: {
-      fontSize: 12
-    }
-  }, "\uD83D\uDCAC"), /*#__PURE__*/React.createElement("button", {
-    title: `Talk to Friday about ${title}`,
-    "aria-label": `Start voice for ${title}`,
-    onClick: e => {
-      e.stopPropagation();
-      window.fridayStartWorkspaceVoice && window.fridayStartWorkspaceVoice(id);
-    },
-    style: {
-      fontSize: 12
-    }
-  }, "\uD83C\uDFA4"), /*#__PURE__*/React.createElement("button", {
-    /* The 40 snapshots workspace_studio has always kept, finally reachable
-       without asking Friday out loud. Sits next to \uD83D\uDCAC because that is where
-       the changes it lists come from. */
-    title: `Earlier versions of ${title} \u2014 review and roll back`,
-    "aria-label": `Version history for ${title}`,
-    onClick: e => {
-      e.stopPropagation();
-      setHistOpen(v => !v);
-    },
-    style: {
-      fontSize: 12,
-      color: histOpen ? '#00d4ff' : undefined
-    }
-  }, "\uD83D\uDD52"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement(WsTools, {
+    id: id,
+    title: title,
+    emoji: emoji,
+    histOpen: histOpen,
+    onHistory: () => setHistOpen(v => !v)
+  }), /*#__PURE__*/React.createElement("button", {
     title: maxed ? `Restore ${title} to its own size` : `Maximize ${title}`,
     "aria-label": maxed ? `Restore ${title}` : `Maximize ${title}`,
     "aria-pressed": maxed,
@@ -9013,81 +9156,11 @@ function FWin({
     }
   }, "\xD7")), /*#__PURE__*/React.createElement("div", {
     className: "fwin-body"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "ws-custom-root",
-    "data-ws": id,
-    style: {
-      position: 'relative'
-    }
-  }, custCss && /*#__PURE__*/React.createElement("style", {
-    dangerouslySetInnerHTML: {
-      __html: custCss
-    }
-  }), cust.accent && /*#__PURE__*/React.createElement("div", {
-    className: "ws-accent-bar",
-    style: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      top: -2,
-      height: 2,
-      opacity: .75,
-      borderRadius: 2
-    }
-  }), cust.note && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: 'rgba(255,84,112,0.08)',
-      border: '1px solid rgba(255,84,112,0.25)',
-      borderRadius: 8,
-      padding: '7px 10px',
-      marginBottom: 10,
-      fontSize: 12,
-      color: '#ffd0d8',
-      display: 'flex',
-      gap: 8,
-      alignItems: 'flex-start'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      flexShrink: 0
-    }
-  }, "\uD83D\uDEE0\uFE0F"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement(FridayDoc, {
-    text: fridayTM(cust.note),
-    style: {
-      margin: 0
-    }
-  })), /*#__PURE__*/React.createElement("button", { "aria-label": "Ask Friday to remove this note", 
-    onClick: () => openWsChat('remove the pinned note'),
-    title: "Ask Friday to remove this note",
-    style: {
-      background: 'none',
-      border: 'none',
-      color: '#ff8aa0',
-      cursor: 'pointer',
-      fontSize: 13,
-      lineHeight: 1,
-      flexShrink: 0
-    }
-  }, "\xD7")), cust.actions && cust.actions.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6,
-      flexWrap: 'wrap',
-      marginBottom: 10
-    }
-  }, cust.actions.map((a, i) => /*#__PURE__*/React.createElement("button", {
-    key: i,
-    className: "btn",
-    style: {
-      fontSize: 11
-    },
-    onClick: () => openWsChat(a.prompt)
-  }, a.label))), children)), histOpen && /*#__PURE__*/React.createElement(WorkspaceHistory, {
+  }, /*#__PURE__*/React.createElement(WsCustomBody, {
+    id: id,
+    title: title,
+    emoji: emoji
+  }, children)), histOpen && /*#__PURE__*/React.createElement(WorkspaceHistory, {
     wsId: id,
     label: title,
     onClose: () => setHistOpen(false)
@@ -9120,7 +9193,7 @@ function WorkspaceChat({
   const [loading, setLoading] = useState(false);
   const [versions, setVersions] = useState([]);
   const [showVer, setShowVer] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [pos, setPos] = useState(() => ({
     x: Math.max(20, (window.innerWidth || 1280) - 410),
     y: 90
@@ -9138,7 +9211,6 @@ function WorkspaceChat({
   const seededRef = useRef(false);
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2600);
   };
   useEffect(() => {
     if (!dragging) return;
@@ -9514,14 +9586,7 @@ function WorkspaceChat({
     }
   }, "Friday is working\u2026")), /*#__PURE__*/React.createElement("div", {
     ref: endRef
-  })), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '4px 12px',
-      fontSize: 11,
-      color: '#00d4ff',
-      background: 'rgba(0,212,255,0.06)'
-    }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '8px 10px',
       borderTop: '1px solid rgba(255,255,255,0.08)',
@@ -10440,7 +10505,7 @@ function ChatSurface(props) {
     }
   }, /*#__PURE__*/React.createElement("button", { "aria-label": (() => {
       const inp = audioInputDevices.find(d => d.deviceId === agentSettings.audio_input_device_id);
-      const name = inp ? inp.label.split('(')[0].trim() : 'default device';
+      const name = (inp && inp.label.split('(')[0].trim()) || 'default device';
       return 'Choose microphone and speaker — currently ' + name +
              '. This does not start voice mode; the 🎤 button beside it does.';
     })(), 
@@ -10455,7 +10520,7 @@ function ChatSurface(props) {
        which rather than relying on the glyph alone. */
     title: (() => {
       const inp = audioInputDevices.find(d => d.deviceId === agentSettings.audio_input_device_id);
-      const name = inp ? inp.label.split('(')[0].trim() : 'default device';
+      const name = (inp && inp.label.split('(')[0].trim()) || 'default device';
       return 'Choose microphone and speaker — currently ' + name +
              '. This does not start voice mode; the 🎤 button beside it does.';
     })(),
@@ -12252,7 +12317,8 @@ function CareerWS() {
     }
   }, ['overview', 'tracker', 'scanner', 'reports', 'pipeline', 'curated', 'interview', 'outreach'].map(v => /*#__PURE__*/React.createElement("button", {
     key: v,
-    className: 'btn ' + (view === v ? '' : 'btn-magenta'),
+    className: 'btn' + (view === v ? ' active' : ''),
+    "aria-pressed": view === v,
     style: {
       fontSize: 11,
       padding: '3px 8px'
@@ -12666,7 +12732,7 @@ function OutreachPanel() {
   const [ctx, setCtx] = useState('');
   const [draft, setDraft] = useState('');
   const [drafting, setDrafting] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const load = () => {
     setLoading(true);
     Promise.all([fetch('/api/outreach/suggestions').then(r => r.json()).then(setSug).catch(() => null), fetch('/api/outreach/pipeline').then(r => r.json()).then(setPipe).catch(() => null)]).then(() => setLoading(false));
@@ -12741,7 +12807,6 @@ function OutreachPanel() {
     } catch (e) {
       setToast('Log failed');
     }
-    setTimeout(() => setToast(''), 2000);
   };
   const doCopy = async () => {
     if (!draft) return;
@@ -12751,7 +12816,6 @@ function OutreachPanel() {
     } catch (e) {
       setToast('Copy failed');
     }
-    setTimeout(() => setToast(''), 1500);
   };
   if (loading) return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -12896,7 +12960,8 @@ function OutreachPanel() {
     }
   }, ['reconnect', 'intro', 'referral', 'follow-up', 'thank-you', 'ask'].map(a => /*#__PURE__*/React.createElement("button", {
     key: a,
-    className: 'btn ' + (angle === a ? '' : 'btn-magenta'),
+    className: 'btn' + (angle === a ? ' active' : ''),
+    "aria-pressed": angle === a,
     style: {
       fontSize: 11,
       padding: '2px 6px'
@@ -12910,7 +12975,8 @@ function OutreachPanel() {
     }
   }, ['email', 'linkedin', 'sms', 'call'].map(c => /*#__PURE__*/React.createElement("button", {
     key: c,
-    className: 'btn ' + (channel === c ? '' : 'btn-magenta'),
+    className: 'btn' + (channel === c ? ' active' : ''),
+    "aria-pressed": channel === c,
     style: {
       fontSize: 11,
       padding: '2px 6px'
@@ -12955,18 +13021,12 @@ function OutreachPanel() {
       fontSize: 11
     }
   }, "Log Sent"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     onClick: () => doLog('drafted'),
     style: {
       fontSize: 11
     }
-  }, "Log Drafted"))), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginTop: 6
-    }
-  }, toast), draft && /*#__PURE__*/React.createElement("pre", {
+  }, "Log Drafted"))), draft && /*#__PURE__*/React.createElement("pre", {
     style: {
       whiteSpace: 'pre-wrap',
       fontSize: 11,
@@ -16457,7 +16517,7 @@ function KnowledgePages({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmText, setConfirmText] = useState('');
   const [creating, setCreating] = useState(false);
@@ -16747,7 +16807,7 @@ function KnowledgePages({
     className: 'kw-side-top'
   }, h('span', {
     className: 'kw-dim kw-small'
-  }, totalFiles, ' pages \xB7 ', sections.length, ' sections'), h('button', {
+  }, struct ? totalFiles + ' pages \xB7 ' + sections.length + ' sections' : 'Reading the wiki\u2026'), h('button', {
     className: 'kw-btn kw-new',
     onClick: () => {
       setCreating(v => !v);
@@ -16800,7 +16860,7 @@ function KnowledgePages({
     className: 'kw-btn kw-go',
     onClick: () => approvePending(p.id)
   }, 'Approve'), h('button', {
-    className: 'kw-btn kw-danger',
+    className: 'kw-btn kw-deny',
     onClick: () => rejectPending(p.id)
   }, 'Reject'))))), recent.length > 0 && h('div', {
     className: 'kw-group'
@@ -16843,10 +16903,7 @@ function KnowledgePages({
   })), h('section', {
     className: 'kw-reader',
     'aria-label': 'Page'
-  }, toast && h('div', {
-    className: 'kw-toast',
-    role: 'status'
-  }, '✓ ', toast), showResults && h('div', {
+  }, showResults && h('div', {
     className: 'kw-results'
   }, h('div', {
     className: 'kw-results-h'
@@ -17226,7 +17283,7 @@ function FSProjectCard({
     },
     onClick: () => window.open(p.replit_url, '_blank', 'noopener')
   }, "\u26A1 Open in Replit"), cloned && /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -17329,7 +17386,7 @@ function FSStudio() {
   const [counts, setCounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [discovered, setDiscovered] = useState([]);
   const [wizard, setWizard] = useState(false);
   const [wMode, setWMode] = useState('describe');
@@ -17345,7 +17402,6 @@ function FSStudio() {
   });
   const showToast = m => {
     setToast(m);
-    setTimeout(() => setToast(''), 2800);
   };
   const load = useCallback(() => {
     fetch('/api/futurespeak/projects').then(r => r.json()).then(d => {
@@ -17507,13 +17563,7 @@ function FSStudio() {
       fontWeight: 600
     },
     onClick: () => setWizard(!wizard)
-  }, "\uFF0B New Project"))), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 8
-    }
-  }, toast), wizard && /*#__PURE__*/React.createElement("div", {
+  }, "\uFF0B New Project"))), wizard && /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginBottom: 10,
@@ -17526,13 +17576,15 @@ function FSStudio() {
       marginBottom: 8
     }
   }, /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (wMode === 'describe' ? '' : 'btn-magenta'),
+    className: 'btn' + (wMode === 'describe' ? ' active' : ''),
+    "aria-pressed": wMode === 'describe',
     style: {
       fontSize: 11
     },
     onClick: () => setWMode('describe')
   }, "\uD83E\uDE84 Describe (scaffold)"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (wMode === 'manual' ? '' : 'btn-magenta'),
+    className: 'btn' + (wMode === 'manual' ? ' active' : ''),
+    "aria-pressed": wMode === 'manual',
     style: {
       fontSize: 11
     },
@@ -17719,7 +17771,7 @@ function FuturespeakWS() {
   const [legal, setLegal] = useState(null);
   const [assets, setAssets] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [drafting, setDrafting] = useState(null);
   const [draft, setDraft] = useState('');
   useEffect(() => {
@@ -17727,7 +17779,6 @@ function FuturespeakWS() {
   }, []);
   const showToast = msg => {
     setToast(msg);
-    setTimeout(() => setToast(''), 2000);
   };
   const draftProposal = async opp => {
     setDrafting(opp.id);
@@ -17821,19 +17872,14 @@ function FuturespeakWS() {
     }
   }, ['sites', 'overview', 'pipeline', 'revenue', 'legal', 'website', 'talent', 'demos', 'studio'].map(v => /*#__PURE__*/React.createElement("button", {
     key: v,
-    className: 'btn ' + (view === v ? '' : 'btn-magenta'),
+    className: 'btn' + (view === v ? ' active' : ''),
+    "aria-pressed": view === v,
     style: {
       fontSize: 11,
       padding: '3px 8px'
     },
     onClick: () => setView(v)
-  }, v === 'sites' ? '🚀 sites' : v))), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 8
-    }
-  }, toast), view === 'sites' && /*#__PURE__*/React.createElement(FSStudio, null), view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, v === 'sites' ? '🚀 sites' : v))), view === 'sites' && /*#__PURE__*/React.createElement(FSStudio, null), view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginBottom: 10
@@ -18530,7 +18576,7 @@ function FuturespeakWS() {
       },
       onClick: () => copyText('futurespeak-asset://' + a.name, 'Link')
     }, "\uD83D\uDCCB Link"), /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-magenta",
+      className: "btn",
       style: {
         fontSize: 11,
         padding: '2px 6px'
@@ -19020,7 +19066,7 @@ function ProvenanceBar({
       color: '#6a8b98'
     }
   }, m.media_type), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 9,
       padding: '1px 7px',
@@ -19145,7 +19191,8 @@ function GeneratePanel({
     }
   }, children);
   const tab = (id, label) => /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (modality === id ? '' : 'btn-magenta'),
+    className: 'btn' + (modality === id ? ' active' : ''),
+    "aria-pressed": modality === id,
     style: {
       fontSize: 11
     },
@@ -19476,7 +19523,8 @@ function MusicPanel({
     }
   }, MUSIC_GENRES.map(g => /*#__PURE__*/React.createElement("button", {
     key: g,
-    className: 'btn ' + (genre === g ? '' : 'btn-magenta'),
+    className: 'btn' + (genre === g ? ' active' : ''),
+    "aria-pressed": genre === g,
     style: {
       fontSize: 10,
       padding: '2px 7px'
@@ -19526,7 +19574,8 @@ function MusicPanel({
       alignItems: 'flex-end'
     }
   }, /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (mode === 'instrumental' ? '' : 'btn-magenta'),
+    className: 'btn' + (mode === 'instrumental' ? ' active' : ''),
+    "aria-pressed": mode === 'instrumental',
     style: {
       fontSize: 11,
       width: '100%'
@@ -19925,7 +19974,7 @@ function TimelinePanel({
     }
   }, available.slice(0, 12).map(fr => /*#__PURE__*/React.createElement("button", {
     key: fr.name,
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 10,
       padding: '2px 7px'
@@ -19994,7 +20043,8 @@ function TimelinePanel({
     }
   }, (formats.length ? formats : ['mp4-1080p', 'mp4-vertical-9x16', 'gif-preview']).map(k => /*#__PURE__*/React.createElement("button", {
     key: k,
-    className: 'btn ' + (exp.includes(k) ? '' : 'btn-magenta'),
+    className: 'btn' + (exp.includes(k) ? ' active' : ''),
+    "aria-pressed": exp.includes(k),
     style: {
       fontSize: 10,
       padding: '2px 6px'
@@ -20090,7 +20140,7 @@ function TimelinePanel({
     href: '/creation/' + x.filename,
     target: "_blank",
     rel: "noopener",
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 10,
       padding: '2px 7px'
@@ -20540,7 +20590,7 @@ function ProjectsPanel() {
     key: t,
     value: t
   }, t))), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -20559,7 +20609,8 @@ function ProjectsPanel() {
     }
   }, "No projects yet."), projects.map(p => /*#__PURE__*/React.createElement("button", {
     key: p.id,
-    className: 'btn ' + (p.id === activeId ? '' : 'btn-magenta'),
+    className: 'btn' + (p.id === activeId ? ' active' : ''),
+    "aria-pressed": p.id === activeId,
     style: {
       fontSize: 11
     },
@@ -20691,7 +20742,8 @@ function ProjectsPanel() {
     }
   }, templates.map(t => /*#__PURE__*/React.createElement("button", {
     key: t.id,
-    className: 'btn ' + (t.id === pipeId ? '' : 'btn-magenta'),
+    className: 'btn' + (t.id === pipeId ? ' active' : ''),
+    "aria-pressed": t.id === pipeId,
     style: {
       fontSize: 11
     },
@@ -20724,7 +20776,7 @@ function ProjectsPanel() {
     placeholder: "Topic / logline to seed the first stage\u2026",
     onKeyDown: e => e.key === 'Enter' && runPipeline()
   }), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -20769,7 +20821,7 @@ function ProjectsPanel() {
       color: stateColor[r.state] || '#888'
     }
   }, r.state)), r.state === 'awaiting_checkpoint' && /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn btn-ok",
     style: {
       fontSize: 10,
       padding: '2px 8px',
@@ -21025,7 +21077,8 @@ function StudioPromptBar({
     const off = avail && avail[x.id] && avail[x.id].available === false;
     return /*#__PURE__*/React.createElement("button", {
       key: x.id,
-      className: 'btn ' + (type === x.id ? '' : 'btn-magenta'),
+      className: 'btn' + (type === x.id ? ' active' : ''),
+      "aria-pressed": type === x.id,
       style: {
         fontSize: 11,
         opacity: off ? 0.6 : 1
@@ -21042,7 +21095,7 @@ function StudioPromptBar({
       flex: 1
     }
   }), /*#__PURE__*/React.createElement("button", { "aria-label": "Generation settings \u2014 model, style, aspect ratio, duration", 
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 12,
       padding: '4px 10px'
@@ -21320,14 +21373,14 @@ function StudioPromptBar({
       flex: 1
     }
   }), result.text && /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 10,
       padding: '2px 9px'
     },
     onClick: copyText
   }, copied ? '✓ Copied' : '⧉ Copy'), files[0] && /*#__PURE__*/React.createElement("a", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 10,
       padding: '2px 9px',
@@ -21336,7 +21389,7 @@ function StudioPromptBar({
     href: files[0].url,
     download: dlName(files[0])
   }, "\u2B07 Download"), files[0] && /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 10,
       padding: '2px 9px'
@@ -21407,7 +21460,7 @@ function StudioPromptBar({
     }
   }, files.map((f, i) => /*#__PURE__*/React.createElement("a", {
     key: i,
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 10,
       padding: '2px 7px',
@@ -21765,51 +21818,59 @@ function StudioWS() {
       flexWrap: 'wrap'
     }
   }, /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'generate' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'generate' ? ' active' : ''),
+    "aria-pressed": view === 'generate',
     style: {
       fontSize: 11,
       fontWeight: 700
     },
     onClick: () => setView('generate')
   }, "\u2728 Generate"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'music' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'music' ? ' active' : ''),
+    "aria-pressed": view === 'music',
     style: {
       fontSize: 11
     },
     onClick: () => setView('music')
   }, "\uD83C\uDFB5 Music"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'timeline' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'timeline' ? ' active' : ''),
+    "aria-pressed": view === 'timeline',
     style: {
       fontSize: 11
     },
     onClick: () => setView('timeline')
   }, "\uD83C\uDF9E\uFE0F Timeline"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'production' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'production' ? ' active' : ''),
+    "aria-pressed": view === 'production',
     style: {
       fontSize: 11
     },
     onClick: () => setView('production')
   }, "\uD83C\uDFAC Production"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'gallery' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'gallery' ? ' active' : ''),
+    "aria-pressed": view === 'gallery',
     style: {
       fontSize: 11
     },
     onClick: () => setView('gallery')
   }, "\uD83D\uDDBC\uFE0F Gallery"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'projects' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'projects' ? ' active' : ''),
+    "aria-pressed": view === 'projects',
     style: {
       fontSize: 11
     },
     onClick: () => setView('projects')
   }, "\uD83D\uDCC1 Projects"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'files' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'files' ? ' active' : ''),
+    "aria-pressed": view === 'files',
     style: {
       fontSize: 11
     },
     title: "Browse your folders in 3D: wall, carousel, tree, city, timeline and clusters",
     onClick: () => setView('files')
   }, "\uD83E\uDDCA Files 3D"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'podcasts' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'podcasts' ? ' active' : ''),
+    "aria-pressed": view === 'podcasts',
     style: {
       fontSize: 11
     },
@@ -21840,13 +21901,13 @@ function StudioWS() {
       alignItems: 'center'
     }
   }, creationLog && /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
     onClick: () => setLogOpen(!logOpen)
   }, logOpen ? 'Hide Log' : 'Creation Log'), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -21875,7 +21936,8 @@ function StudioWS() {
     }
   }, ['all', 'html', 'md', 'png', 'mp4', 'mp3', 'wav'].map(f => /*#__PURE__*/React.createElement("button", {
     key: f,
-    className: 'btn ' + (filter === f ? '' : 'btn-magenta'),
+    className: 'btn' + (filter === f ? ' active' : ''),
+    "aria-pressed": filter === f,
     style: {
       fontSize: 11,
       padding: '2px 7px'
@@ -22834,11 +22896,10 @@ function FederationPanel() {
   const [peers, setPeers] = useState([]);
   const [discoverUrl, setDiscoverUrl] = useState('');
   const [discovering, setDiscovering] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [loading, setLoading] = useState(true);
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2800);
   };
   const load = () => {
     Promise.all([fetch('/api/federation/identity').then(r => r.json()).then(d => {
@@ -22903,17 +22964,7 @@ function FederationPanel() {
       padding: '8px 0'
     }
   }, "Loading federation data...");
-  return /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 8,
-      padding: '5px 8px',
-      borderRadius: 5,
-      background: 'rgba(0,212,255,0.08)',
-      border: '1px solid rgba(0,212,255,0.2)',
-      fontSize: 11,
-      color: '#00d4ff'
-    }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "settings-subtitle"
   }, "Agent Identity"), identity ? /*#__PURE__*/React.createElement("div", {
     style: {
@@ -23094,7 +23145,7 @@ function MarketplaceWS() {
   const [listings, setListings] = useState([]);
   const [myListings, setMyListings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [form, setForm] = useState({
     asset_id: '',
     title: '',
@@ -23106,7 +23157,6 @@ function MarketplaceWS() {
   const [publishing, setPublishing] = useState(false);
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2800);
   };
   const loadAll = () => {
     setLoading(true);
@@ -23222,17 +23272,7 @@ function MarketplaceWS() {
   })[t] || '📦';
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
     text: "Buy, sell, and share creations with other Friday agents. Prices are in \u03C8 (psi) \u2014 Friday's internal economy currency."
-  }), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 8,
-      padding: '6px 10px',
-      borderRadius: 6,
-      background: 'rgba(0,212,255,0.08)',
-      border: '1px solid rgba(0,212,255,0.2)',
-      fontSize: 12,
-      color: '#00d4ff'
-    }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 4,
@@ -23240,7 +23280,8 @@ function MarketplaceWS() {
     }
   }, [['browse', 'Browse'], ['my', 'My Listings'], ['publish', 'Publish']].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
-    className: 'btn ' + (view === k ? '' : 'btn-magenta'),
+    className: 'btn' + (view === k ? ' active' : ''),
+    "aria-pressed": view === k,
     style: {
       fontSize: 11,
       padding: '3px 9px'
@@ -23589,7 +23630,7 @@ function WalletPanel() {
   const [wallet, setWallet] = useState(null);
   const [txns, setTxns] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [transfer, setTransfer] = useState({
     to: '',
     amount: '',
@@ -23600,7 +23641,6 @@ function WalletPanel() {
   const [leaderboard, setLeaderboard] = useState([]);
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2800);
   };
   const load = () => {
     setLoading(true);
@@ -23752,17 +23792,7 @@ function WalletPanel() {
       fontSize: 11,
       color: '#a8a8b4'
     }
-  }, "net worth"))), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 8,
-      padding: '6px 10px',
-      borderRadius: 6,
-      background: 'rgba(0,212,255,0.08)',
-      border: '1px solid rgba(0,212,255,0.2)',
-      fontSize: 12,
-      color: '#00d4ff'
-    }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  }, "net worth"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -23778,7 +23808,7 @@ function WalletPanel() {
     },
     onClick: claimGenesis
   }, "Claim Genesis Grant"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -26628,7 +26658,8 @@ function DevRepos({
   }, "No git repos found in ~/Projects."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
+      // As many columns as fit: one in a small window, three in a wide tab.
+      gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 420px), 1fr))',
       gap: 8
     }
   }, repos.map((r, i) => {
@@ -26637,6 +26668,7 @@ function DevRepos({
       key: i,
       className: "card",
       style: {
+        minWidth: 0,
         cursor: 'pointer',
         borderColor: r.error ? 'rgba(255,0,128,0.3)' : undefined
       },
@@ -26992,7 +27024,7 @@ function DevGit({
   const [branches, setBranches] = useState([]);
   const [current, setCurrent] = useState('');
   const [diff, setDiff] = useState('');
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [busy, setBusy] = useState('');
   const [newBranch, setNewBranch] = useState('');
   const [prOpen, setPrOpen] = useState(false);
@@ -27020,7 +27052,6 @@ function DevGit({
   }, [repo]);
   const flash = m => {
     setToast(m);
-    setTimeout(() => setToast(''), 2600);
   };
   const op = async (label, url, body) => {
     setBusy(label);
@@ -27174,15 +27205,7 @@ function DevGit({
       });
       setNewBranch('');
     }
-  }, "+ Create & switch"))), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: '#00d4ff',
-      marginBottom: 8,
-      fontFamily: 'JetBrains Mono',
-      wordBreak: 'break-all'
-    }
-  }, toast), prOpen && /*#__PURE__*/React.createElement("div", {
+  }, "+ Create & switch"))), prOpen && /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginBottom: 10,
@@ -31135,7 +31158,7 @@ function MessagesWS() {
   const [draftText, setDraftText] = useState('');
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftInstr, setDraftInstr] = useState('');
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   // Deep-link: a notification target {workspace:'messages', lane, thread_id} jumps
   // to the lane and (best-effort) auto-opens the thread once messages have loaded.
   const pendingThread = useRef(null);
@@ -31168,7 +31191,6 @@ function MessagesWS() {
   }, [lane]);
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2200);
   };
   const openThread = m => {
     if (expanded === m.id) {
@@ -31384,12 +31406,7 @@ function MessagesWS() {
       gap: 4,
       alignItems: 'center'
     }
-  }, toast && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff'
-    }
-  }, toast), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 11
@@ -31560,7 +31577,7 @@ function MessagesWS() {
         ico: '✉️'
       }]
     }), /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-magenta",
+      className: "btn",
       style: {
         fontSize: 11
       },
@@ -31613,7 +31630,7 @@ function CalendarWS() {
   const [prepFor, setPrepFor] = useState(null);
   const [prepText, setPrepText] = useState('');
   const [prepBusy, setPrepBusy] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const tlRef = useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   // what its own tab (↗) opens on: the keys useNavTarget below reads
@@ -31639,7 +31656,6 @@ function CalendarWS() {
   }, []);
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2400);
   };
   const pickDay = (iso, isToday) => {
     if (isToday) {
@@ -31741,13 +31757,7 @@ function CalendarWS() {
     className: "btn active",
     onClick: quickAdd,
     disabled: adding
-  }, adding ? 'Parsing…' : '✨ Add')), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 8
-    }
-  }, toast), /*#__PURE__*/React.createElement(MeetingsPanel, null), /*#__PURE__*/React.createElement("div", {
+  }, adding ? 'Parsing…' : '✨ Add')), /*#__PURE__*/React.createElement(MeetingsPanel, null), /*#__PURE__*/React.createElement("div", {
     className: "cal-week"
   }, week.map(d => /*#__PURE__*/React.createElement("div", {
     key: d.date,
@@ -33293,7 +33303,8 @@ function DraftWS() {
     }
   }, DRAFT_MODES.map(m => /*#__PURE__*/React.createElement("button", {
     key: m.id,
-    className: 'btn ' + (mode === m.id ? '' : 'btn-magenta'),
+    className: 'btn' + (mode === m.id ? ' active' : ''),
+    "aria-pressed": mode === m.id,
     style: {
       fontSize: 11,
       padding: '4px 10px'
@@ -33433,7 +33444,7 @@ function DraftWS() {
       fontSize: 11
     }
   }, "\uD83D\uDD17 New Tab"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     onClick: () => deploy('gmail_draft'),
     style: {
       fontSize: 11
@@ -33529,7 +33540,8 @@ function FinanceWS() {
     }
   }, ['overview', 'portfolio', 'perks', 'contacts', 'quickref', 'wallet'].map(v => /*#__PURE__*/React.createElement("button", {
     key: v,
-    className: 'btn ' + (view === v ? '' : 'btn-magenta'),
+    className: 'btn' + (view === v ? ' active' : ''),
+    "aria-pressed": view === v,
     style: {
       fontSize: 11,
       padding: '3px 8px'
@@ -33867,7 +33879,8 @@ function HealthWS() {
     }
   }, ['overview', 'medications', 'appointments', 'insurance', 'vehicles'].map(v => /*#__PURE__*/React.createElement("button", {
     key: v,
-    className: 'btn ' + (view === v ? '' : 'btn-magenta'),
+    className: 'btn' + (view === v ? ' active' : ''),
+    "aria-pressed": view === v,
     style: {
       fontSize: 11,
       padding: '3px 8px'
@@ -34332,7 +34345,7 @@ function ContactsWS() {
   const [detail, setDetail] = useState(null);
   const [detailLoad, setDetailLoad] = useState(false);
   const [researching, setResearching] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   // -- Forget this person -------------------------------------------------
   // Friday derives records about people who never agreed to be recorded, and
   // rebuilds them nightly. Until this, a user asked to delete someone had to
@@ -34430,7 +34443,6 @@ function ContactsWS() {
       setToast('Research failed');
     }
     setResearching(false);
-    setTimeout(() => setToast(''), 2500);
   };
   const doCopy = async () => {
     if (!detail) return;
@@ -34440,7 +34452,6 @@ function ContactsWS() {
     } catch (e) {
       setToast('Copy failed');
     }
-    setTimeout(() => setToast(''), 2000);
   };
   const filtered = contacts.filter(c => !q || ((c.name || '') + ' ' + (c.aliases || []).join(' ')).toLowerCase().includes(q.toLowerCase()));
   if (selected) {
@@ -34508,13 +34519,7 @@ function ContactsWS() {
       },
       title: "Show what Friday holds about this person, and remove it",
       onClick: openForget
-    }, "\uD83D\uDDD1 Forget"))), toast && /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 11,
-        color: '#00d4ff',
-        marginBottom: 8
-      }
-    }, toast), forgetReport && /*#__PURE__*/React.createElement("div", {
+    }, "\uD83D\uDDD1 Forget"))), forgetReport && /*#__PURE__*/React.createElement("div", {
       className: "card",
       style: {
         marginBottom: 10,
@@ -34767,13 +34772,7 @@ function ContactsWS() {
     onClick: loadList
   }, "↻ Refresh")), /*#__PURE__*/React.createElement(RelationshipPanel, {
     onImported: loadList
-  }), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 8
-    }
-  }, toast), loading ? /*#__PURE__*/React.createElement("div", {
+  }), loading ? /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#999',
       textAlign: 'center',
@@ -34874,7 +34873,7 @@ function ContentIdeasTab({
   const [selected, setSelected] = useState(null);
   const [draft, setDraft] = useState('');
   const [drafting, setDrafting] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [savedDrafts, setSavedDrafts] = useState([]);
   const [view, setView] = useState('pipeline');
   const [templates, setTemplates] = useState([]);
@@ -34889,7 +34888,6 @@ function ContentIdeasTab({
   };
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2000);
   };
   const load = () => {
     setLoading(true);
@@ -35130,7 +35128,7 @@ function ContentIdeasTab({
         fontWeight: 600
       }
     }, drafting ? 'Drafting…' : '✨ Draft'), /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-magenta",
+      className: "btn",
       onClick: () => doDraft(true),
       disabled: drafting,
       style: {
@@ -35171,13 +35169,7 @@ function ContentIdeasTab({
         fontWeight: 600
       },
       title: "Graduate this idea into a real cross-platform post \u2014 opens the Compose tab"
-    }, "\uD83D\uDE80 \u2192 Compose")), toast && /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 11,
-        color: '#00d4ff',
-        marginBottom: 8
-      }
-    }, toast), /*#__PURE__*/React.createElement("div", {
+    }, "\uD83D\uDE80 \u2192 Compose")), /*#__PURE__*/React.createElement("div", {
       className: "card",
       style: {
         marginBottom: 10
@@ -35289,13 +35281,15 @@ function ContentIdeasTab({
       marginBottom: 10
     }
   }, /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'pipeline' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'pipeline' ? ' active' : ''),
+    "aria-pressed": view === 'pipeline',
     style: {
       fontSize: 11
     },
     onClick: () => setView('pipeline')
   }, "Pipeline"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'templates' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'templates' ? ' active' : ''),
+    "aria-pressed": view === 'templates',
     style: {
       fontSize: 11
     },
@@ -35304,7 +35298,8 @@ function ContentIdeasTab({
       loadTemplates();
     }
   }, "Templates"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'drafts' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'drafts' ? ' active' : ''),
+    "aria-pressed": view === 'drafts',
     style: {
       fontSize: 11
     },
@@ -35312,13 +35307,7 @@ function ContentIdeasTab({
       setView('drafts');
       loadDrafts();
     }
-  }, "Saved Drafts ", savedDrafts.length > 0 && `(${savedDrafts.length})`)), view === 'templates' && /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 8
-    }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  }, "Saved Drafts ", savedDrafts.length > 0 && `(${savedDrafts.length})`)), view === 'templates' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#999',
@@ -35426,13 +35415,7 @@ function ContentIdeasTab({
       fontWeight: 600
     },
     onClick: () => setShowNew(!showNew)
-  }, showNew ? '× Cancel' : '+ Idea'))), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 8
-    }
-  }, toast), showNew && /*#__PURE__*/React.createElement("div", {
+  }, showNew ? '× Cancel' : '+ Idea'))), showNew && /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginBottom: 10
@@ -35458,7 +35441,8 @@ function ContentIdeasTab({
     }
   }, ['post', 'article', 'thread', 'newsletter', 'video'].map(t => /*#__PURE__*/React.createElement("button", {
     key: t,
-    className: 'btn ' + (newType === t ? '' : 'btn-magenta'),
+    className: 'btn' + (newType === t ? ' active' : ''),
+    "aria-pressed": newType === t,
     style: {
       fontSize: 11,
       padding: '2px 6px'
@@ -35473,7 +35457,8 @@ function ContentIdeasTab({
     }
   }, ['linkedin', 'twitter', 'blog', 'substack', 'youtube'].map(c => /*#__PURE__*/React.createElement("button", {
     key: c,
-    className: 'btn ' + (newChannel === c ? '' : 'btn-magenta'),
+    className: 'btn' + (newChannel === c ? ' active' : ''),
+    "aria-pressed": newChannel === c,
     style: {
       fontSize: 11,
       padding: '2px 6px'
@@ -36009,10 +35994,9 @@ function ContentComposeTab({
   const [slots, setSlots] = useState([]);
   const [postId, setPostId] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 3000);
   };
   const didInit = useRef(false);
   const connected = p => {
@@ -36242,13 +36226,7 @@ function ContentComposeTab({
     }
     setBusy(false);
   };
-  return /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 8
-    }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginBottom: 12,
@@ -36362,7 +36340,7 @@ function ContentComposeTab({
       marginBottom: assets.length ? 6 : 0
     }
   }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -36440,7 +36418,7 @@ function ContentComposeTab({
       marginTop: 6
     }
   }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -36542,14 +36520,14 @@ function ContentComposeTab({
       flex: 1
     }
   }), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
     disabled: busy,
     onClick: () => ship('draft')
   }, "\uD83D\uDCBE Save draft"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -36625,7 +36603,7 @@ function ContentComposeTab({
     const at = s.at ? cpLocalInput(s.at) : cpNextSlot(s);
     return /*#__PURE__*/React.createElement("button", {
       key: i,
-      className: "btn btn-magenta",
+      className: "btn",
       style: {
         fontSize: 10,
         borderStyle: 'dashed'
@@ -36657,10 +36635,9 @@ function ContentCalendarTab({
   const [pills, setPills] = useState([]);
   const [sugg, setSugg] = useState([]);
   const [detail, setDetail] = useState(null);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2500);
   };
   const load = () => {
     const a = new Date(anchor);
@@ -36851,13 +36828,7 @@ function ContentCalendarTab({
     year: 'numeric'
   }) : 'Week of ' + weekDays()[0].toLocaleDateString();
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  return /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 6
-    }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -36885,13 +36856,15 @@ function ContentCalendarTab({
     },
     onClick: () => nav(1)
   }, "\u203A"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'month' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'month' ? ' active' : ''),
+    "aria-pressed": view === 'month',
     style: {
       fontSize: 11
     },
     onClick: () => setView('month')
   }, "Month"), /*#__PURE__*/React.createElement("button", {
-    className: 'btn ' + (view === 'week' ? '' : 'btn-magenta'),
+    className: 'btn' + (view === 'week' ? ' active' : ''),
+    "aria-pressed": view === 'week',
     style: {
       fontSize: 11
     },
@@ -37067,10 +37040,9 @@ function ContentQueueTab({
   onEdit
 }) {
   const [q, setQ] = useState(null);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2500);
   };
   const load = () => {
     fetch('/api/content/queue').then(r => r.json()).then(setQ).catch(() => setQ({}));
@@ -37154,7 +37126,7 @@ function ContentQueueTab({
       title: "Publish this post now, once you approve its card",
       onClick: () => post('/api/content/posts/' + (t.post_id || t.id) + '/publish-now', {}, 'Approve the card to publish')
     }, "\u25B6 now"), /*#__PURE__*/React.createElement("button", { "aria-label": "Reschedule", 
-      className: "btn btn-magenta",
+      className: "btn",
       style: {
         fontSize: 10,
         padding: '2px 7px'
@@ -37185,13 +37157,7 @@ function ContentQueueTab({
       }, 'Cancelled')
     }, "\u2715"));
   };
-  return /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 6
-    }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -37313,7 +37279,7 @@ function ContentQueueTab({
         ack: true
       }, '✓ Released — publishing')
     }, "\u2713 Release"), /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-magenta",
+      className: "btn",
       style: {
         fontSize: 10
       },
@@ -37765,7 +37731,7 @@ function ContentAccountsTab({
   platforms,
   reload
 }) {
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const [authOpen, setAuthOpen] = useState('');
   const [authVals, setAuthVals] = useState({});
   const [paused, setPaused] = useState(false);
@@ -37773,7 +37739,6 @@ function ContentAccountsTab({
   const [confWin, setConfWin] = useState('2');
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 3000);
   };
   useEffect(() => {
     fetch('/api/content/queue').then(r => r.json()).then(d => setPaused(!!(d.paused || d.pause_all))).catch(() => {});
@@ -37897,13 +37862,7 @@ function ContentAccountsTab({
     const d = Math.ceil((new Date(iso) - Date.now()) / 86400000);
     return isNaN(d) ? null : d;
   };
-  return /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 6
-    }
-  }, toast), /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill,minmax(270px,1fr))',
@@ -38042,13 +38001,13 @@ function ContentAccountsTab({
       },
       onClick: () => connect(p)
     }, isManual ? 'Enable manual mode' : '🔗 Connect'), conn && /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-magenta",
+      className: "btn",
       style: {
         fontSize: 10
       },
       onClick: () => connect(p)
     }, "Re-authenticate"), conn && /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-magenta",
+      className: "btn",
       style: {
         fontSize: 10
       },
@@ -38231,7 +38190,7 @@ function QuickPostModal({
   const [title] = useState(payload.title || '');
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [toast, setToast] = useState('');
+  const setToast = useFridayToast();
   const assets = payload.asset && payload.asset.filename ? [(() => {
     const ext = (payload.asset.filename || '').split('.').pop().toLowerCase();
     const kind = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'].includes(ext) ? 'image' : ['mp4', 'webm', 'mov'].includes(ext) ? 'video' : ['mp3', 'wav', 'ogg', 'm4a'].includes(ext) ? 'audio' : 'document';
@@ -38244,7 +38203,6 @@ function QuickPostModal({
   })()] : [];
   const flash = t => {
     setToast(t);
-    setTimeout(() => setToast(''), 2500);
   };
   useEffect(() => {
     fetch('/api/content/platforms').then(r => r.json()).then(d => {
@@ -38412,13 +38370,7 @@ function QuickPostModal({
       fontSize: 10
     },
     onClick: onClose
-  }, "\xD7 Close")), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 6
-    }
-  }, toast), /*#__PURE__*/React.createElement("textarea", {
+  }, "\xD7 Close")), /*#__PURE__*/React.createElement("textarea", {
     className: "input",
     rows: 4,
     style: {
@@ -38496,7 +38448,7 @@ function QuickPostModal({
     disabled: busy,
     onClick: () => ship('schedule')
   }, "\uD83D\uDCC5 Schedule (next optimal)"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -38507,7 +38459,7 @@ function QuickPostModal({
       flex: 1
     }
   }), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-magenta",
+    className: "btn",
     style: {
       fontSize: 11
     },
@@ -38616,7 +38568,8 @@ function ContentWS() {
     }
   }, TABS.map(([id, label]) => /*#__PURE__*/React.createElement("button", {
     key: id,
-    className: 'btn ' + (tab === id ? '' : 'btn-magenta'),
+    className: 'btn' + (tab === id ? ' active' : ''),
+    "aria-pressed": tab === id,
     style: {
       fontSize: 11,
       fontWeight: tab === id ? 700 : 400
@@ -42580,7 +42533,7 @@ function SetupResearchReview({
     }))
   }, "Edit"), /*#__PURE__*/React.createElement("button", {
     type: "button",
-    className: "sc-btn danger",
+    className: "sc-btn deny",
     disabled: busy,
     "aria-label": 'Reject: ' + i.claim,
     onClick: () => send([{
@@ -44925,7 +44878,15 @@ function prettyModel(id, label) {
   if (variant && /balanced|aggressive/i.test(variant)) s += ' (' + variant + ')';
   // Prefer the catalogue label when it is already human, but never when it is
   // just the raw id restyled.
-  if (label && label.length < 40 && !/^hf\.co|\//i.test(label)) return label;
+  if (label && label !== String(id) && label.length < 40 && !/^hf\.co|\//i.test(label)) return label;
+  // A vendor model the catalogue has no name for reads the way its maker
+  // writes it: "claude-sonnet-5-5" is Claude Sonnet 5.5, "gpt-5.1" is GPT 5.1.
+  const vendor = /^(claude|gemini|gpt) (.*)$/i.exec(s);
+  if (vendor) {
+    const rest = vendor[2].replace(/ \d{8}$/, '').replace(/\b(\d{1,2}) (\d{1,2})\b/g, '$1.$2')
+      .replace(/\b[a-z]/g, c => c.toUpperCase());
+    s = (vendor[1].toLowerCase() === 'gpt' ? 'GPT' : vendor[1][0].toUpperCase() + vendor[1].slice(1).toLowerCase()) + ' ' + rest;
+  }
   return s.length > 46 ? s.slice(0, 44) + '…' : s;
 }
 
@@ -49106,7 +49067,7 @@ function gaSyncTitle(acc) {
 // Reverting is itself snapshotted server-side, so nothing here is a one-way
 // door — which is worth SAYING, because a list of destructive-looking buttons
 // that are all reversible still reads as dangerous until someone says so.
-function WorkspaceHistory({ wsId, label, onClose }) {
+function WorkspaceHistory({ wsId, label, onClose, top }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
@@ -49155,7 +49116,7 @@ function WorkspaceHistory({ wsId, label, onClose }) {
     // window's own move, close and 🕘 buttons with it, so the one way out of
     // this overlay would be the Close button inside it — and a modal you can
     // only leave through its own affordance is how you strand someone.
-    style: { position: 'absolute', left: 0, right: 0, bottom: 0, top: 37, zIndex: 6, background: 'rgba(6,10,20,0.96)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', padding: '14px 16px', overflowY: 'auto' }
+    style: { position: 'absolute', left: 0, right: 0, bottom: 0, top: top == null ? 37 : top, zIndex: 6, background: 'rgba(6,10,20,0.96)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', padding: '14px 16px', overflowY: 'auto' }
   },
     /*#__PURE__*/React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 } },
       /*#__PURE__*/React.createElement("span", { className: 'card-title' }, "History — " + (label || wsId)),
@@ -53368,50 +53329,12 @@ function StandaloneApprovals() {
       color: '#7f93ad',
       fontSize: 12
     }
-  }, "Nothing is waiting."), items.map(a => /*#__PURE__*/React.createElement("div", {
+  }, "Nothing is waiting."), items.map(a => /*#__PURE__*/React.createElement(ApprovalCardBody, {
     key: a.approval_id,
-    className: "ws-tab-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 700,
-      color: '#fff',
-      marginBottom: 4
-    }
-  }, a.title), a.action_description && /*#__PURE__*/React.createElement("div", {
-    style: {
-      whiteSpace: 'pre-wrap',
-      fontSize: 12,
-      color: '#b8c7dc',
-      maxHeight: 220,
-      overflow: 'auto'
-    }
-  }, a.action_description), /*#__PURE__*/React.createElement(ApprovalPagePreview, {
-    a: a
-  }), /*#__PURE__*/React.createElement(ApprovalProvenance, {
-    p: a.provenance
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      marginTop: 8
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "ws-tab-link",
-    disabled: !!busy,
-    style: {
-      borderColor: '#00ff80',
-      color: '#86efac'
-    },
-    onClick: () => decide(a.approval_id, 'approve')
-  }, busy === a.approval_id ? '…' : 'Approve'), /*#__PURE__*/React.createElement("button", {
-    className: "ws-tab-link",
-    disabled: !!busy,
-    style: {
-      borderColor: '#ef4444',
-      color: '#fca5a5'
-    },
-    onClick: () => decide(a.approval_id, 'deny')
-  }, "Deny"))))));
+    a: a,
+    busy: busy,
+    onDecide: decide
+  }))));
 }
 // ── Approval cards in every open Friday page ──
 // One feed per page (/api/approvals/events, services/approval_feed.py): the
@@ -54130,26 +54053,42 @@ function ApprovalPopups() {
 }
 
 // The context slot of the top bar in a workspace tab: which workspace this is,
-// and the way to it on the desktop (where the scene menu sits on the desktop).
+// the way to it on the desktop (where the scene menu sits on the desktop), and
+// the workspace's own tools, as a desktop window's title bar has them.
 function ShellTabName({
-  ws
+  ws,
+  histOpen,
+  onHistory
 }) {
   return /*#__PURE__*/React.createElement("span", {
     className: "ws-tab-name",
     "data-testid": "ws-tab-name"
   }, /*#__PURE__*/React.createElement(WsIcon, {
     ws: ws
-  }), /*#__PURE__*/React.createElement("span", null, ws.label), /*#__PURE__*/React.createElement("a", {
+  }), /*#__PURE__*/React.createElement("span", null, ws.label), /*#__PURE__*/React.createElement(WsCustomizedMark, {
+    id: ws.id
+  }), /*#__PURE__*/React.createElement("a", {
     className: "ws-tab-link",
     href: '/?workspace=' + encodeURIComponent(ws.id),
     "data-testid": "ws-tab-back",
     title: 'Open the desktop, with this workspace open'
-  }, "Desktop"));
+  }, "Desktop"), /*#__PURE__*/React.createElement("span", {
+    className: "ws-tab-tools",
+    "data-testid": "ws-tab-tools"
+  }, /*#__PURE__*/React.createElement(WsTools, {
+    id: ws.id,
+    title: ws.label,
+    emoji: ws.ico,
+    histOpen: histOpen,
+    onHistory: onHistory
+  })));
 }
 // The tab itself: the workspace full-tab, under the same top bar as the
-// desktop (App draws the shell around it). The tab's title and favicon name
-// the workspace, so a row of Friday tabs can be told apart.
-function StandaloneShell({ ws, children }) {
+// desktop (App draws the shell around it), in the same customized body as its
+// desktop window. The tab's title names the workspace (and the item, when it
+// was opened for one), so a row of Friday tabs can be told apart; its icon is
+// the rocket, as on every Friday page.
+function StandaloneShell({ ws, histOpen, onCloseHistory, children }) {
   // Moving the same workspace here again from the desktop (\u2197) finds this
   // tab by name and says where the window was, rather than reloading it
   // (fridayOpenWorkspaceTab). Only the desktop that opened this tab is heard.
@@ -54181,15 +54120,6 @@ function StandaloneShell({ ws, children }) {
       item = q.get('subject') || q.get('title') || q.get('creation') || q.get('file') || '';
     } catch (e) {}
     document.title = (item ? item.slice(0, 80) + ' \u00B7 ' : '') + ws.label + ' \u00B7 ' + window.FRIDAY_BRAND.name;
-    const iconUrl = '/assets/icons/' + (ws.icon || ws.id) + '.svg';
-    const emojiIcon = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">' + (ws.ico || '\u25A3') + '</text></svg>');
-    document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l => l.parentNode.removeChild(l));
-    const link = document.createElement('link');
-    link.rel = 'icon';
-    link.href = iconUrl || emojiIcon;
-    if (iconUrl) link.type = 'image/svg+xml';
-    link.onerror = () => { link.href = emojiIcon; };
-    document.head.appendChild(link);
   }, [ws.id]);
   const maxedTab = (() => {
     try {
@@ -54200,7 +54130,10 @@ function StandaloneShell({ ws, children }) {
     }
   })();
   return /*#__PURE__*/React.createElement("div", { className: 'ws-tab' + (maxedTab ? ' ws-max' : ''), "data-standalone": ws.id },
-    /*#__PURE__*/React.createElement("main", { className: 'ws-tab-body' }, children));
+    /*#__PURE__*/React.createElement("main", { className: 'ws-tab-body' },
+      /*#__PURE__*/React.createElement(WsCustomBody, { id: ws.id, title: ws.label, emoji: ws.ico }, children)),
+    histOpen && /*#__PURE__*/React.createElement("div", { className: 'ws-tab-hist' },
+      /*#__PURE__*/React.createElement(WorkspaceHistory, { wsId: ws.id, label: ws.label, onClose: onCloseHistory, top: 0 })));
 }
 function App() {
   const [openWins, setOpenWins] = useState(new Set());
@@ -58145,6 +58078,53 @@ function App() {
   };
   const layoutRef = useRef({});
   layoutRef.current = { applyLayout, toggleLayout };
+  // The top bar's panels: the one that opens closes the ones it would cover.
+  // The bar's buttons and the command palette both open them through these.
+  const toggleNotifs = () => {
+    setNotifOpen(o => !o);
+    if (!notifOpen) {
+      setSettingsOpen(false);
+      setChatOpen(false);
+      setQuickDraft(false);
+    }
+  };
+  const toggleQuickDraft = () => {
+    setQuickDraft(!quickDraft);
+    if (!quickDraft) {
+      setChatOpen(false);
+      setSettingsOpen(false);
+    }
+  };
+  const toggleChat = () => {
+    setChatOpen(!chatOpen);
+    if (!chatOpen) {
+      setSettingsOpen(false);
+      setQuickDraft(false);
+    }
+  };
+  // The bar's own actions in the palette, beside the layout.
+  const barCommands = [{
+    id: 'chat',
+    ico: '\uD83D\uDCAC',
+    label: chatOpen ? 'Close the chat' : 'Open the chat',
+    meta: 'Top bar',
+    aka: ['chat', 'talk', 'ask', 'conversation'],
+    run: toggleChat
+  }, {
+    id: 'quick-draft',
+    ico: '\u270D\uFE0F',
+    label: 'Quick Draft',
+    meta: 'Top bar',
+    aka: ['draft', 'write', 'compose'],
+    run: toggleQuickDraft
+  }, {
+    id: 'notifications',
+    ico: '\uD83D\uDD14',
+    label: 'Notifications',
+    meta: 'Top bar',
+    aka: ['bell', 'alerts', 'tasks'],
+    run: toggleNotifs
+  }];
   const layoutCommands = [{
     id: 'fs-chat',
     ico: '⤢',
@@ -58204,6 +58184,8 @@ function App() {
   // and the modals they open (docs/design/active/unified-shell.md). Defined
   // once; the desktop and the tab each draw these same elements.
   const shellTab = STANDALONE_WS && STANDALONE_WS !== 'settings' ? wsInfo[STANDALONE_WS] || null : null;
+  // A tab's version history: opened by the tools in the bar, shown in the tab.
+  const [tabHistOpen, setTabHistOpen] = useState(false);
   const shellMeeting = /*#__PURE__*/React.createElement(MeetingRecIndicator, null);
   const shellTopBar = /*#__PURE__*/React.createElement("div", {
     className: `top-bar ${topBarHidden ? 'hidden' : ''}`,
@@ -58235,7 +58217,9 @@ function App() {
   // window. With no top or left the menu sits where it would flow, right
   // under the button.
   shellTab ? /*#__PURE__*/React.createElement(ShellTabName, {
-    ws: shellTab
+    ws: shellTab,
+    histOpen: tabHistOpen,
+    onHistory: () => setTabHistOpen(v => !v)
   }) : /*#__PURE__*/React.createElement("div", {
     ref: sceneMenuRef
   }, /*#__PURE__*/React.createElement("button", {
@@ -58538,14 +58522,7 @@ function App() {
     hour12: false
   })), /*#__PURE__*/React.createElement("button", {
     ref: bellRef,
-    onClick: () => {
-      setNotifOpen(o => !o);
-      if (!notifOpen) {
-        setSettingsOpen(false);
-        setChatOpen(false);
-        setQuickDraft(false);
-      }
-    },
+    onClick: toggleNotifs,
     style: {
       background: 'none',
       border: 'none',
@@ -58580,13 +58557,7 @@ function App() {
       fontFamily: 'Orbitron, sans-serif'
     }
   }, bellBadgeCount)), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setQuickDraft(!quickDraft);
-      if (!quickDraft) {
-        setChatOpen(false);
-        setSettingsOpen(false);
-      }
-    },
+    onClick: toggleQuickDraft,
     style: {
       background: 'none',
       border: 'none',
@@ -58601,13 +58572,7 @@ function App() {
       fontSize: 13
     }
   }, "\u270D\uFE0F")), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setChatOpen(!chatOpen);
-      if (!chatOpen) {
-        setSettingsOpen(false);
-        setQuickDraft(false);
-      }
-    },
+    onClick: toggleChat,
     style: {
       background: 'none',
       border: 'none',
@@ -59666,7 +59631,8 @@ function App() {
     }
   }, DRAFT_MODES.map(m => /*#__PURE__*/React.createElement("button", {
     key: m.id,
-    className: 'btn ' + (qdMode === m.id ? '' : 'btn-magenta'),
+    className: 'btn' + (qdMode === m.id ? ' active' : ''),
+    "aria-pressed": qdMode === m.id,
     style: {
       fontSize: 11,
       padding: '2px 6px'
@@ -59742,7 +59708,7 @@ function App() {
     }
   }, p))));
   const shellPalette = paletteOpen && /*#__PURE__*/React.createElement(CommandPalette, {
-    commands: layoutCommands,
+    commands: layoutCommands.concat(barCommands),
     onClose: () => setPaletteOpen(false),
     onOpenWs: id => {
       toggle(id);
@@ -59870,7 +59836,7 @@ function App() {
     const sw = wsInfo[STANDALONE_WS];
     return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
       value: { map: wsCustMap, setCust }
-    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw },
+    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw, histOpen: tabHistOpen, onCloseHistory: () => setTabHistOpen(false) },
       /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")))
       : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
         'There is no workspace called “' + STANDALONE_WS + '”. ',

@@ -198,6 +198,7 @@ def serve_creation_framed(filename):
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} · {brand.PRODUCT_NAME}</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
 <style>
   :root{{--cyan:#00d4ff;--bg:#05060c;--panel:#0a0d18;}}
   *{{box-sizing:border-box;}}

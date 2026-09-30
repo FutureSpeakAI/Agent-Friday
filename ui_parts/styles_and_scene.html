@@ -48,7 +48,7 @@
         /* The tab sits under the same fixed top bar as the desktop, and a
            docked chat tray takes its width from the tab instead of covering
            it (--fr-chat-dock, set by App while the tray is open in a tab). */
-        .ws-tab { height: 100%; display: flex; flex-direction: column; overflow: hidden; color: #dbe6f5;
+        .ws-tab { height: 100%; display: flex; flex-direction: column; overflow: hidden; color: var(--fr-text);
             padding-top: var(--fr-topbar-h, 36px); padding-right: var(--fr-chat-dock, 0px); box-sizing: border-box;
             transition: padding-right 0.3s ease; }
         html.ws-standalone .chat-panel { bottom: 0; }
@@ -56,6 +56,13 @@
         .ws-tab-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; }
         .ws-tab-name img { width: 18px; height: 18px; }
         .ws-tab-name .ws-tab-link { margin-left: 6px; font-size: 11px; padding: 2px 8px; }
+        /* The workspace's own tools, as a desktop window's title bar has them. */
+        .ws-tab-name .ws-tab-tools { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; }
+        .ws-tab-name .ws-tab-tools button { background: none; border: none; color: rgba(255,255,255,0.6); cursor: pointer;
+            font-size: 13px; line-height: 1; padding: 3px 4px; transition: color 0.2s; }
+        .ws-tab-name .ws-tab-tools button:hover { color: #fff; }
+        /* A tab's version history covers the workspace, under the bar and beside a docked tray. */
+        .ws-tab-hist { position: fixed; top: var(--fr-topbar-h, 36px); left: 0; right: var(--fr-chat-dock, 0px); bottom: 0; z-index: 60; }
         .ws-tab-link { font-size: 12px; color: #9fd0ff; text-decoration: none; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.3); border-radius: 7px; background: transparent; cursor: pointer; }
         .ws-tab-link:hover { border-color: #00d4ff; color: #e6f9ff; }
         .ws-tab-ask { font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(245,158,11,0.6); background: rgba(245,158,11,0.12); color: #ffd699; }
@@ -124,7 +131,6 @@
         }
         .ws-tab-drawer { position: fixed; top: calc(var(--fr-topbar-h, 36px) + 10px); right: 14px; width: min(460px, 94vw); max-height: 78vh; overflow: auto; z-index: 70;
             background: rgba(8,12,22,0.98); border: 1px solid rgba(245,158,11,0.45); border-radius: 12px; padding: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
-        .ws-tab-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; padding: 10px; margin-bottom: 10px; background: rgba(255,255,255,0.02); }
         .ws-tab-toast { position: fixed; right: 16px; bottom: 16px; z-index: 80; display: flex; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 9px;
             background: rgba(8,12,22,0.97); border: 1px solid rgba(245,158,11,0.6); color: #ffe2ad; font-size: 12.5px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
 

@@ -1,6 +1,9 @@
 # One shell: the product name, one top bar everywhere, and fullscreen with chat
 
-> **Status:** accepted for build (owner request, 2026-09-30). Nothing below is built yet.
+> **Status:** built on branch `feat/unified-shell`, not yet on main: piece 1 (the name and
+> ™) `a64cad50`, piece 2 (one top bar) `24c27eb8`, piece 3 (fullscreen with chat)
+> `0015567e`, and piece 4 (the audit and its fixes, recorded in
+> [`docs/brand/fidelity-audit.md`](../../brand/fidelity-audit.md)).
 > **Last verified:** 2026-09-30 against main `e27ba160` plus `piece/P-BRAND-0` (brand
 > source of truth: `src/agent_friday/brand.py`, `docs/brand/BRAND.md`,
 > `scripts/check_brand_tokens.py`), rebased as branch `feat/unified-shell`.
@@ -128,7 +131,9 @@ side by side, never over it.
   `_governed`, internal (the owner's own screen, ring 1). No workspace named means the
   focused one. It saves the choice and sends a `layout` action to the page the user is
   looking at (the bus ranks the focused page first for this), and says LAYOUT_OK only when
-  the page reports that it applied it.
+  the page reports that it applied it. A page hears it on the chat stream it holds while a
+  conversation is active; a page without one applies the remembered choice when the
+  workspace opens, and the tool says LAYOUT_SAVED.
 
 "Fullscreen" means filling Friday's screen, not the browser's F11 mode: a spoken command is
 not a user gesture, so a page may not enter browser fullscreen on its behalf. F11 composes
@@ -150,9 +155,14 @@ consistency, and the brand check in BRAND.md.
 Decisions taken here, for the owner's veto:
 
 - **Favicon:** the rocket on every Friday page; tabs are told apart by their titles, which
-  start with the workspace or the item. (Tabs showed the workspace icon until now.)
+  start with the workspace or the item.
 - **Tab lockup click:** goes to the desktop; on the desktop it still opens System.
 - **Camera and the scene menu** stay desktop-only.
+- **What is waiting** shows as a pill in the bar only when something is waiting.
+- **Narrow bar (900px and below):** the lockup drops "by FutureSpeak.AI", and the clock and
+  resource chips go (GPU HELD stays), so the menus in the bar's left half stay clickable.
+- **Buttons:** a selected segment is `.btn.active`; deny magenta only on a refusal or a stop;
+  approve green on an approve step (BRAND.md, "Workspaces and controls").
 
 ## 7. Verification
 

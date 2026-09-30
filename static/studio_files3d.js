@@ -2502,7 +2502,7 @@
     const selIt = preview && preview.it;
     const rawURL = selIt ? '/api/studio-files/raw?' + qs(root, selIt.rel) : '';
 
-    const chip = (on, onClick, label, color, title) => h('button', { key: label, className: 'btn' + (on ? '' : ' btn-magenta'), onClick, title, style: Object.assign({}, BTN, color && on ? { borderColor: color, color } : null) }, label);
+    const chip = (on, onClick, label, color, title) => h('button', { key: label, className: 'btn' + (on ? ' active' : ''), 'aria-pressed': !!on, onClick, title, style: Object.assign({}, BTN, color && on ? { borderColor: color, color } : null) }, label);
 
     const skip = () => { const e = engRef.current; if (e && e.isAnimating()) e.skipFx(); };
     return h('div', { ref: boxRef, tabIndex: 0, onKeyDown: e => { skip(); onKey(e); }, onPointerDownCapture: skip, style: full ? { outline: 'none', display: 'flex', flexDirection: 'column', height: '100vh', padding: 10, boxSizing: 'border-box', background: '#02040a' }
@@ -2512,16 +2512,16 @@
         h('select', { value: root, onChange: e => { setPath(''); setRoot(e.target.value); }, 'aria-label': 'Folder', style: { background: '#0b1220', color: '#cfe3ff', border: '1px solid #24406a', borderRadius: 6, padding: '5px 6px', fontSize: 12, minHeight: 30 } },
           roots.map(r => h('option', { key: r.id, value: r.id }, r.label))),
         h('div', { style: { display: 'flex', gap: 2, alignItems: 'center', fontSize: 12, color: '#8fb2dd', flexWrap: 'wrap' } },
-          h('button', { className: 'btn btn-magenta', style: BTN, onClick: () => setPath(''), title: 'Top of ' + rootLabel }, rootLabel),
-          crumbs.map((c, i) => h(React.Fragment, { key: i }, h('span', null, '›'), h('button', { className: 'btn btn-magenta', style: BTN, onClick: () => setPath(crumbs.slice(0, i + 1).join('/')) }, c))),
+          h('button', { className: 'btn', style: BTN, onClick: () => setPath(''), title: 'Top of ' + rootLabel }, rootLabel),
+          crumbs.map((c, i) => h(React.Fragment, { key: i }, h('span', null, '›'), h('button', { className: 'btn', style: BTN, onClick: () => setPath(crumbs.slice(0, i + 1).join('/')) }, c))),
           path && h('button', { className: 'btn', style: BTN, onClick: goUp, title: 'Up one folder (Backspace)' }, '↑ Up')),
-        h('button', { className: 'btn btn-magenta', style: BTN, onClick: toggleFull, title: full ? 'Leave full screen (Esc)' : 'Full screen' }, full ? '⤡ Exit full screen' : '⛶ Full screen'),
+        h('button', { className: 'btn' + (full ? ' active' : ''), 'aria-pressed': !!full, style: BTN, onClick: toggleFull, title: full ? 'Leave full screen (Esc)' : 'Full screen' }, full ? '⤡ Exit full screen' : '⛶ Full screen'),
         h('label', { title: 'Dazzle: how much holographic polish the 3D view uses (also in Settings › Appearance)', style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#8fb2dd', fontFamily: 'Orbitron, Inter, sans-serif', letterSpacing: '.08em' } }, '✨ DAZZLE',
           h('select', { value: dazzle, onChange: e => saveDazzle(e.target.value), 'aria-label': 'Dazzle', style: { background: '#0b1220', color: '#cfe3ff', border: '1px solid #24406a', borderRadius: 6, padding: '4px 6px', fontSize: 11, minHeight: 30 } },
             h('option', { value: 'off' }, 'Off'), h('option', { value: 'subtle' }, 'Subtle'), h('option', { value: 'full' }, 'Full'))),
         h('input', { ref: searchRef, value: query, onChange: e => setQuery(e.target.value), placeholder: 'Search names…  (.png for a type)', 'aria-label': 'Search files', style: { flex: '1 1 180px', minWidth: 140, background: '#0b1220', color: '#e6f0ff', border: '1px solid #24406a', borderRadius: 6, padding: '6px 8px', fontSize: 12, minHeight: 30 } })),
       h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6, alignItems: 'center' } },
-        VIEWS.map((v, i) => h('button', { key: v.id, className: 'btn' + (view === v.id ? '' : ' btn-magenta'), style: Object.assign({}, BTN, { fontWeight: view === v.id ? 700 : 400 }), title: v.tip + ' (' + (i + 1) + ')', onClick: () => setView(v.id), 'aria-pressed': view === v.id }, v.ico + ' ' + v.label)),
+        VIEWS.map((v, i) => h('button', { key: v.id, className: 'btn' + (view === v.id ? ' active' : ''), style: Object.assign({}, BTN, { fontWeight: view === v.id ? 700 : 400 }), title: v.tip + ' (' + (i + 1) + ')', onClick: () => setView(v.id), 'aria-pressed': view === v.id }, v.ico + ' ' + v.label)),
         view === 'cluster' && h('span', { style: { marginLeft: 6, display: 'flex', gap: 3 } },
           chip(groupBy === 'type', () => setGroupBy('type'), 'by type'), chip(groupBy === 'folder', () => setGroupBy('folder'), 'by folder'))),
       h('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 6 } },
@@ -2562,9 +2562,9 @@
           h('details', { style: { fontSize: 11, color: '#9fb0c8' } },
             h('summary', { style: { cursor: 'pointer', padding: '4px 0' } }, 'Change this file… (needs your approval)'),
             h('div', { style: { display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' } },
-              h('button', { className: 'btn btn-magenta', style: BTN, onClick: () => change('rename', selIt) }, 'Rename…'),
-              h('button', { className: 'btn btn-magenta', style: BTN, onClick: () => change('move', selIt) }, 'Move…'),
-              !selIt.dir && h('button', { className: 'btn btn-magenta', style: BTN, onClick: () => change('copy', selIt) }, 'Copy to…'),
+              h('button', { className: 'btn', style: BTN, onClick: () => change('rename', selIt) }, 'Rename…'),
+              h('button', { className: 'btn', style: BTN, onClick: () => change('move', selIt) }, 'Move…'),
+              !selIt.dir && h('button', { className: 'btn', style: BTN, onClick: () => change('copy', selIt) }, 'Copy to…'),
               h('button', { className: 'btn btn-magenta', style: Object.assign({}, BTN, { color: '#ff9a9a' }), onClick: () => change('delete', selIt) }, 'Delete…')),
             h('div', { style: { marginTop: 6, color: '#6f86a6' } }, 'These file an approval card in System › Approvals. Nothing changes until you approve it there; delete goes to the Recycle Bin.'))),
         toast && h('div', { role: 'status', style: { position: 'absolute', left: '50%', bottom: 44, transform: 'translateX(-50%)', padding: '8px 12px', borderRadius: 8, background: PANEL_BG, border: '1px solid #2e5a8f', color: '#e6f0ff', fontSize: 12, display: 'flex', gap: 8, alignItems: 'center', maxWidth: '80%' } },

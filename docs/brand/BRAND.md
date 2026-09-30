@@ -234,6 +234,31 @@ reserved status hues are never used as a workspace accent. The scoped sets that
 exist now (`.news-ws`, `.msg-ws`, `.cal-ws`, `.st-root`) already point at the
 tokens.
 
+## Workspaces and controls
+
+A workspace is the same thing in a desktop window and in its own tab
+([fidelity-audit.md](fidelity-audit.md)).
+
+- **One frame.** A workspace's own tools (💬 chat with Friday about it, 🎤 talk to her
+  about it, 🕒 its earlier versions), the mark that Friday has customized it, and its body
+  with that customization applied are one set of components (`WsTools`,
+  `WsCustomizedMark`, `WsCustomBody`). A window draws the tools in its title bar; a tab
+  draws them in the top bar, beside the workspace's name.
+- **One ink, one face.** A window's text and a tab's text are `--fr-text`; a button, field
+  or menu without a face of its own takes the page's (Inter).
+- **Buttons.** `.btn` is an ordinary action. The selected segment of a group is
+  `.btn.active` (cyan) with `aria-pressed`, and the others stay plain. Deny magenta
+  (`.btn-magenta`) is for refusing or stopping: Cancel, Stop, Kill, Remove, Disconnect.
+  Approve is ok green (`.btn-ok`). A hover never takes a status hue.
+- **Approvals.** Wherever an approval is decided (the popup, System, a tab's bar) it is the
+  one card, `ApprovalCardBody`: Approve in ok green, Deny in deny magenta. Reject, for a
+  suggested change, is deny magenta too; a destructive Delete is error red (B8).
+- **Notices.** A passing notice is Friday's one toast, `fridayToast`; a workspace calls it
+  through `useFridayToast`, and a failure reads as one.
+- **The rocket** is the icon of every Friday page, tabs included. Tabs are told apart by
+  their titles.
+- **The keyboard.** Every control in the top bar is also in the command palette (Ctrl+K).
+
 ## Consolidations
 
 Where the shipped UI had several values for one role, they now share one token.
@@ -262,9 +287,12 @@ places below; the semantic migration (with its own before and after captures)
 is the next brand piece, and nothing here is changed by this one. Counts are
 occurrences in `index.html`.
 
-- **Failure that is not error red.** Failure and error text is spelled in other reds and pinks: `#ff6b8a` (11), `#ff5470` (13), `#f87171` (16), `#ff3c5a` (7), `#ff8fae` (3), `#ff8fb0` (1). The connector dot in a workspace title bar (`ConnectorDot`) uses `#ff5470` for its failing state.
+- **Failure that is not error red.** Failure and error text is spelled in other reds and pinks: `#ff6b8a` (11), `#ff5470` (13), `#f87171` (16), `#ff3c5a` (7), `#ff8fae` (3). The connector dot in a workspace title bar (`ConnectorDot`) uses `#ff5470` for its failing state.
 - **Failure that is deny magenta.** Task cards mark `failed` and `stalled` in `#ff0080`, and workflow runs mark `failed` the same way. A failure is error red; magenta is for a refusal.
 - **Amber that means running.** `.task-card.running`, `.thread-status-badge.running`, the `connecting` state of `ConnectorDot` and the `EXECUTING` mood all use amber for work that needs nothing from you. Working is violet.
 - **Green that is not ok.** `#3effa1` (11) and the camera indicator's `#00ff66` (2) stand in for ok green.
-- **Other one-offs.** The decorative amber `#e0a030` (1) and the knowledge workspace's `kw-danger` pink sit outside the token set.
+- **Other one-offs.** The decorative amber `#e0a030` (1) sits outside the token set.
+- **Destructive buttons.** A destructive button is deny magenta in some places (Remove, Delete Range, Clear) and error red in others (Settings danger, Knowledge's Delete, the 3D view's Trash). One of the two is the rule; the semantic migration decides which.
+- **Her name.** About 250 UI strings write her name as "Friday". For the owner that is her name; for anyone who named her otherwise it is not. Conversation uses her name, so these are to read `settings.agent_name`.
+- **States, headings, shortcuts.** Empty and loading lines have no shared component, section headings mix case, and there is no list of the global shortcuts. See [fidelity-audit.md](fidelity-audit.md).
 - **Literals in general.** `#00d4ff`, `rgba(0,212,255,…)`, `#f59e0b`, `#00ff80` and `#ff0080` are still spelled as literals throughout `index.html` and `ui_parts/app.html`. The tokens exist so those can move to `var(--fr-*)` without a value changing.

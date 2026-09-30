@@ -171,7 +171,7 @@ _PAGE = """<!doctype html>
  code {{ font-size:.9em; }}
  table {{ display:block; overflow-x:auto; }}
 </style>
-<main>{body}</main>
+<main>{body}<p class="colophon">{made_with}</p></main>
 """
 
 
@@ -231,7 +231,9 @@ def style(c, markdown: str) -> str | None:
     """Render the landed markdown into Friday's page style."""
     try:
         title = (c.plan.working_title if c.plan else c.question) or "Research"
-        page = _PAGE.format(title=html.escape(title), body=_md_to_html(markdown))
+        from agent_friday import brand
+        page = _PAGE.format(title=html.escape(title), body=_md_to_html(markdown),
+                            made_with=html.escape(brand.MADE_WITH))
         out = c.dir / "report.html"
         out.write_text(page, encoding="utf-8")
         c.styled_path = str(out)

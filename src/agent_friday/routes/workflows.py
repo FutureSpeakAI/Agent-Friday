@@ -762,13 +762,17 @@ def content_item_export(item_id):
     safe = re.sub(r'[^a-z0-9]+', '-', (item.get('title') or 'draft').lower()).strip('-')[:50] or 'draft'
     fname = f"{datetime.now():%Y%m%d-%H%M}-{safe}.html"
     esc = html.escape(body)
+    from agent_friday import brand
     doc = (
-        f"<!doctype html><meta charset='utf-8'><title>{html.escape(item.get('title') or 'Draft')}</title>"
+        f"<!doctype html><meta charset='utf-8'>"
+        f"<title>{html.escape(item.get('title') or 'Draft')} · {brand.PRODUCT_NAME}</title>"
         f"<style>body{{font:16px/1.6 -apple-system,Segoe UI,Inter,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#1a1a2e}}"
-        f"h1{{font-size:22px}}.meta{{color:#888;font-size:13px;margin-bottom:20px}}pre{{white-space:pre-wrap;font-family:inherit}}</style>"
+        f"h1{{font-size:22px}}.meta{{color:#888;font-size:13px;margin-bottom:20px}}pre{{white-space:pre-wrap;font-family:inherit}}"
+        f"footer{{margin-top:32px;color:#888;font-size:12px}}</style>"
         f"<h1>{html.escape(item.get('title') or 'Draft')}</h1>"
         f"<div class='meta'>{html.escape(item.get('type') or '')} · {html.escape(item.get('channel') or '')} · "
         f"{datetime.now():%Y-%m-%d %H:%M}</div><pre>{esc}</pre>"
+        f"<footer>{brand.MADE_WITH}</footer>"
     )
     (CONTENT_DRAFTS_DIR / fname).write_text(doc, encoding='utf-8')
     return jsonify({"status": "ok", "filename": fname})

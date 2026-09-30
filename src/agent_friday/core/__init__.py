@@ -689,7 +689,8 @@ LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FRIDAY — Authenticate</title>
+<title>Sign in · {{ product }}</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
 <link href="/static/fonts/fonts.css" rel="stylesheet">
 <style>
 /*BRAND_TOKENS*/
@@ -698,7 +699,9 @@ body{background:var(--fr-surface);color:var(--fr-text);font-family:var(--fr-font
 body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 50% 50%,rgba(0,212,255,.10) 0%,transparent 70%);pointer-events:none}
 .login-box{background:var(--fr-glass);border:1px solid rgba(0,212,255,.3);border-radius:12px;padding:40px 36px;width:340px;backdrop-filter:var(--fr-glass-blur);box-shadow:0 0 40px rgba(0,212,255,.12),inset 0 0 30px rgba(0,212,255,.04);position:relative}
 .login-box::before{content:'';position:absolute;top:-1px;left:20%;right:20%;height:2px;background:linear-gradient(90deg,var(--fr-cyan),var(--fr-violet),var(--fr-magenta));opacity:.8;border-radius:2px}
-h1{font-family:var(--fr-font-display);font-size:14px;letter-spacing:.25em;text-align:center;color:var(--fr-cyan);margin-bottom:8px}
+h1{font-family:var(--fr-font-display);font-size:14px;letter-spacing:.25em;text-align:center;color:var(--fr-cyan);margin-bottom:6px}
+.maker{font-size:var(--fr-text-2xs);text-align:center;color:var(--fr-dim);margin-bottom:10px}
+.maker b{font-family:var(--fr-font-display);font-weight:700;color:var(--fr-wordmark-amber)}
 .subtitle{font-size:var(--fr-text-2xs);letter-spacing:var(--fr-track-label);text-align:center;color:var(--fr-dim);margin-bottom:32px}
 .field{margin-bottom:12px}
 input[type=email],input[type=text],input[type=password]{width:100%;padding:12px 16px;background:var(--fr-cyan-soft);border:1px solid rgba(0,212,255,.25);border-radius:6px;color:var(--fr-text);font-family:var(--fr-font-body);font-size:var(--fr-text-md);outline:none;transition:border-color .3s}
@@ -714,7 +717,8 @@ button:hover{background:rgba(0,212,255,.22);border-color:rgba(0,212,255,.7);box-
 <body>
 <div class="scan-line"></div>
 <div class="login-box">
-<h1>FRIDAY</h1>
+<h1>{{ product_upper }}</h1>
+<div class="maker">by <b>{{ maker }}</b></div>
 <div class="subtitle">AUTHENTICATION REQUIRED</div>
 <form method="POST">
 <div class="field"><input type="email" name="username" placeholder="EMAIL / USERNAME" autofocus autocomplete="username"></div>
@@ -724,7 +728,9 @@ button:hover{background:rgba(0,212,255,.22);border-color:rgba(0,212,255,.7);box-
 {{ error }}
 </div>
 </body>
-</html>""".replace("/*BRAND_TOKENS*/", brand.css_root_block())
+</html>""".replace("/*BRAND_TOKENS*/", brand.css_root_block()).replace(
+    "{{ product }}", brand.PRODUCT_NAME).replace(
+    "{{ product_upper }}", brand.PRODUCT_NAME.upper()).replace("{{ maker }}", brand.MAKER)
 
 # The two login banners are fixed, code-owned strings — no user input reaches
 # them today, so there is no live XSS. But LOGIN_HTML.replace('{{ error }}', error)
@@ -2440,7 +2446,7 @@ DEFAULT_SETTINGS = {
                                            # default. Even when True, each runtime grant is a
                                            # separate Ring-3 step (/api/control/permission).
     # ── Agent Identity & Model Selection ──
-    "agent_name": "AGENT FRIDAY",
+    "agent_name": "AGENT FRIDAY",  # brand: plain (her default name, not the product)
     # The workspaces the owner set to fill the screen with the chat tray docked
     # beside them (docs/design/active/unified-shell.md §5): id -> "fullscreen_chat".
     "workspace_layouts": {},
