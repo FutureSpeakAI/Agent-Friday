@@ -1,9 +1,11 @@
 """The Settings switch, and the safety property in its SHIPPED position.
 
-Laya ships ON, a decision made with the eval in hand. That
-moves the burden: the property that made the union safe to offer now has to
-hold in the configuration that actually leaves the building, not in one a test
-constructs for itself.
+Laya ships in SHADOW: the keyword scan decides and Laya scores the same
+actions beside it. The week-one review found too few real actions Laya had
+actually judged to promote it, so it earns the seat on logged evidence first.
+The union's property still has to hold in the configuration that leaves the
+building, and it does trivially in shadow; the "on" position keeps its own
+tests below for the day it is promoted.
 
 So `TestTheShippedConfiguration` forces nothing. No env var, no monkeypatched
 backend name. It reads `DEFAULT_SETTINGS`, puts the gate in the state those
@@ -61,16 +63,18 @@ def _settings_are(monkeypatch, settings: dict):
 
 class TestTheShippedConfiguration:
 
-    def test_the_defaults_really_do_ship_it_on(self):
-        assert core.DEFAULT_SETTINGS["decision_backend"] == "laya-union"
-        assert laya_backend.current_mode(core.DEFAULT_SETTINGS) == "on"
+    def test_the_defaults_ship_it_in_shadow(self):
+        assert core.DEFAULT_SETTINGS["decision_backend"] == "keyword"
+        assert core.DEFAULT_SETTINGS["decision_shadow"] == "laya"
+        assert laya_backend.current_mode(core.DEFAULT_SETTINGS) == "shadow"
 
-    def test_the_shipped_defaults_select_the_union_and_not_laya_alone(self, monkeypatch):
+    def test_the_shipped_defaults_never_select_laya_alone(self, monkeypatch):
         """`laya` alone would REPLACE the keyword scan and give up the
         structural guarantee. It stays reachable by hand for evaluation; it
         must never be what ships."""
         _settings_are(monkeypatch, core.DEFAULT_SETTINGS)
-        assert decisions.active_backend() == "laya-union"
+        assert decisions.active_backend() == "keyword"
+        assert decisions.shadow_backend() == "laya"
 
     @pytest.mark.parametrize("adversary", sorted(ADVERSARIES))
     def test_no_card_is_lost_in_the_shipped_state(self, adversary, monkeypatch):
@@ -102,19 +106,24 @@ class TestTheShippedConfiguration:
 #  IT MUST NOT BLOCK, AND MUST NOT FAIL CLOSED ON HIS MAIL
 # ═══════════════════════════════════════════════════════════════════════════
 
+#: The union position. TestDegradation is about how "on" falls back; the
+#: shipped default is now shadow, whose own tests live elsewhere.
+_UNION = laya_backend.settings_for_mode("on")
+
+
 class TestDegradation:
     """If the model is missing, corrupt, or mid-load, Friday must fall back to
     the keyword scanner and say so, never stall the gate and never fail closed
     on the user's mail. Each clause is a test."""
 
     def test_a_missing_model_behaves_exactly_like_today(self, monkeypatch):
-        _settings_are(monkeypatch, core.DEFAULT_SETTINGS)
+        _settings_are(monkeypatch, _UNION)
         for text in CASE_TEXTS:
             monkeypatch.setattr(laya_backend, "_agent", None)
             got = approvals.classify(text)["gated"]
             _settings_are(monkeypatch, laya_backend.settings_for_mode("off"))
             want = approvals.classify(text)["gated"]
-            _settings_are(monkeypatch, core.DEFAULT_SETTINGS)
+            _settings_are(monkeypatch, _UNION)
             assert got == want, "a missing model changed the verdict for %r" % text
 
     def test_a_corrupt_model_behaves_exactly_like_today(self, monkeypatch):
@@ -122,7 +131,7 @@ class TestDegradation:
             _settings_are(monkeypatch, laya_backend.settings_for_mode("off"))
             monkeypatch.setattr(laya_backend, "_agent", None)
             want = approvals.classify(text)["gated"]
-            _settings_are(monkeypatch, core.DEFAULT_SETTINGS)
+            _settings_are(monkeypatch, _UNION)
             monkeypatch.setattr(laya_backend, "_agent", _ExplodingAgent())
             assert approvals.classify(text)["gated"] == want
 
@@ -130,7 +139,7 @@ class TestDegradation:
         """Failing CLOSED would mean every harmless request grows an approval
         card the moment the model is missing. That is not safety, it is an
         unusable assistant, and it is the other way this could go wrong."""
-        _settings_are(monkeypatch, core.DEFAULT_SETTINGS)
+        _settings_are(monkeypatch, _UNION)
         monkeypatch.setattr(laya_backend, "_agent", None)
         assert not approvals.classify("Summarise my notes from today")["gated"]
         assert not approvals.classify("Search my wiki for the pitch")["gated"]
@@ -145,7 +154,7 @@ class TestDegradation:
         monkeypatch.setattr(laya_backend, "_agent", None)
         monkeypatch.setattr(laya_backend, "_load_error", None)
         monkeypatch.setattr(laya_backend, "_loading", False)
-        _settings_are(monkeypatch, core.DEFAULT_SETTINGS)
+        _settings_are(monkeypatch, _UNION)
 
         approvals.classify("Send an email to the whole team")
         assert started, "selecting Laya did not kick a background load"
@@ -177,7 +186,9 @@ class TestDegradation:
         monkeypatch.setattr(laya_backend, "_load_attempts", 1)
         monkeypatch.setattr(laya_backend, "_last_attempt_ts", _t.time())
         monkeypatch.delenv("FRIDAY_TESTING", raising=False)
-        _settings_are(monkeypatch, core.DEFAULT_SETTINGS)
+        # The union position: its load retry is what is under test, and the
+        # shipped shadow would count its own scoring threads here.
+        _settings_are(monkeypatch, laya_backend.settings_for_mode("on"))
 
         for _ in range(5):
             approvals.classify("Send an email to the whole team")

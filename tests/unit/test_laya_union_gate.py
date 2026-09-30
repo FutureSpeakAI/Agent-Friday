@@ -300,7 +300,8 @@ def test_shadow_rows_are_marked_and_never_mistaken_for_decisions(tmp_path,
 
 
 def test_a_shadow_that_explodes_is_invisible_to_the_caller(tmp_path, monkeypatch):
-    """Fire-and-forget means exactly that: no raise, no delay, no row."""
+    """No raise and no delay for the caller, and not silent either: the row
+    says the shadow was skipped and why, so missing evidence is visible."""
     monkeypatch.setattr(laya_backend, "_agent", _ExplodingAgent())
     monkeypatch.setenv("FRIDAY_DECISION_SHADOW", "laya")
     monkeypatch.setenv("FRIDAY_DECISION_BACKEND", "keyword")
@@ -309,7 +310,9 @@ def test_a_shadow_that_explodes_is_invisible_to_the_caller(tmp_path, monkeypatch
     _drain()
 
     assert out["gated"] is True
-    assert not [r for r in _rows(tmp_path) if r.get("shadow")]
+    shadows = [r for r in _rows(tmp_path) if r.get("shadow")]
+    assert shadows and all(r.get("skipped") for r in shadows)
+    assert not any("agreed" in r for r in shadows)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

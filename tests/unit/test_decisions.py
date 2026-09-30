@@ -25,6 +25,9 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(dissent_gate, "EVENTS_PATH", tmp_path / "dissent.jsonl")
     monkeypatch.delenv("FRIDAY_DECISION_BACKEND", raising=False)
+    # These tests count governing rows; the shipped shadow would add its own
+    # on a background thread. Shadow behaviour has its own tests.
+    monkeypatch.setattr(decisions, "shadow_backend", lambda: None)
     yield
 
 
@@ -321,15 +324,22 @@ def test_the_fallback_backend_is_keyword_and_stays_that_way():
     assert decisions._BACKENDS[decisions.DEFAULT_BACKEND] is decisions._keyword_backend
 
 
-def test_the_shipped_default_is_the_union_and_is_selectable(monkeypatch):
-    """The other half of the old assertion, restated as what is true now."""
+def test_the_shipped_default_is_shadow_and_the_union_is_selectable(monkeypatch):
+    """The other half of the old assertion, restated as what is true now:
+    the keyword scan decides, Laya scores beside it, and the union stays one
+    switch away for when the evidence promotes it."""
     from agent_friday import core
-    assert core.DEFAULT_SETTINGS["decision_backend"] == "laya-union"
+    assert core.DEFAULT_SETTINGS["decision_backend"] == "keyword"
+    assert core.DEFAULT_SETTINGS["decision_shadow"] == "laya"
 
     from agent_friday.services import laya_backend
     laya_backend.register()
     monkeypatch.setattr("agent_friday.core._load_settings",
                         lambda: dict(core.DEFAULT_SETTINGS), raising=False)
+    assert decisions.active_backend() == "keyword"
+    assert laya_backend.current_mode(core.DEFAULT_SETTINGS) == "shadow"
+    monkeypatch.setattr("agent_friday.core._load_settings",
+                        lambda: laya_backend.settings_for_mode("on"), raising=False)
     assert decisions.active_backend() == "laya-union"
 
 

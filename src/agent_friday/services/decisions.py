@@ -54,6 +54,7 @@ import os
 import re
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable, Dict, Optional
 
@@ -183,6 +184,76 @@ def _record(row: dict) -> None:
         _log.warning("could not record a decision: %s", e)
 
 
+# ---------------------------------------------------------------------------
+#  GATE EVENTS - what guards outward actions, and every change to it
+# ---------------------------------------------------------------------------
+#
+# A separate file from the decision log because it holds no conversation
+# content: which scanner is selected, when that changed, by which route, and
+# why when the caller said. That makes it safe to keep off the record, and a
+# gate whose switch-off leaves no trace is one whose history cannot be read.
+
+GATE_EVENTS_NAME = "gate_events.jsonl"
+_GATE_KEYS = ("decision_backend", "decision_shadow")
+
+
+def gate_events_path():
+    from agent_friday.core import FRIDAY_DIR
+    return FRIDAY_DIR / GATE_EVENTS_NAME
+
+
+def _mode_name(pair: dict) -> str:
+    try:
+        from agent_friday.services import laya_backend
+        return laya_backend.current_mode(pair)
+    except Exception:
+        return "custom"
+
+
+def _change_source() -> tuple:
+    """(source, reason) of the settings write in progress."""
+    try:
+        from flask import has_request_context, request
+        if has_request_context():
+            reason = (request.headers.get("X-Friday-Change-Reason") or "").strip()
+            return "%s %s" % (request.method, request.path), reason[:300] or None
+    except Exception:
+        pass
+    return "python", None
+
+
+def record_gate_event(event: str, **fields) -> None:
+    """Append one gate event. Never raises; kept off the record too."""
+    row = {"at": time.time(), "event": event}
+    row.update(fields)
+    try:
+        p = gate_events_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    except Exception as e:
+        _log.warning("could not record a gate event: %s", e)
+
+
+def on_settings_change(before: dict, after: dict) -> None:
+    """Called by core._save_settings after every write. Records gate changes."""
+    try:
+        old = {k: str((before or {}).get(k) or "") for k in _GATE_KEYS}
+        new = {k: str((after or {}).get(k) or "") for k in _GATE_KEYS}
+        if old == new:
+            return
+        source, reason = _change_source()
+        record_gate_event("gate_mode", **{
+            "from": old, "to": new,
+            "from_mode": _mode_name(old), "to_mode": _mode_name(new),
+            "source": source, "reason": reason})
+        _log.warning("approval scanner changed %s -> %s (%s%s)",
+                     _mode_name(old), _mode_name(new), source,
+                     ": " + reason if reason else "")
+    except Exception as e:
+        _log.warning("could not record an approval scanner change: %s", e)
+
+
 def _clip(state: str) -> tuple:
     s = "" if state is None else str(state)
     if len(s) <= MAX_LOGGED_STATE:
@@ -277,55 +348,203 @@ def shadow_backend() -> Optional[str]:
     return name or None
 
 
+#: How many skipped shadow questions are kept for catch-up. Bounded: the oldest
+#: goes first, and dropping one is itself written down.
+_SHADOW_BACKLOG_MAX = 256
+#: How often the catch-up worker looks at the backlog, and how many tries one
+#: question gets before it is recorded as given up.
+_SHADOW_RETRY_S = 20.0
+_SHADOW_MAX_TRIES = 30
+#: Tests run shadows on the calling thread; the thread is not what they test.
+_SHADOW_SYNC_FOR_TESTS = False
+
+_shadow_backlog: "deque" = deque()
+_shadow_backlog_lock = threading.Lock()
+_shadow_worker: Optional[threading.Thread] = None
+
+
+def shadow_backlog_size() -> int:
+    with _shadow_backlog_lock:
+        return len(_shadow_backlog)
+
+
+def clear_shadow_backlog() -> None:
+    with _shadow_backlog_lock:
+        _shadow_backlog.clear()
+
+
+def _shadow_row(name, question, state, *, decided, decided_by, context,
+                started, answer=None, confidence=None, detail=None,
+                skipped=None, catch_up=False, asked_at=None) -> dict:
+    clipped, was_clipped = _clip(_scrub(state))
+    row = {
+        "at": time.time(),
+        "question": question,
+        "state": clipped,
+        "state_truncated": was_clipped,
+        "state_sha256": _state_digest(state),
+        "answer": answer,
+        "confidence": confidence,
+        "method": name,
+        "detail": detail or {},
+        "elapsed_ms": round((time.time() - started) * 1000.0, 2),
+        # THE FIELD THAT MAKES THIS A SHADOW. Neither a reader nor a later
+        # scoring pass may mistake one of these rows for a decision that
+        # governed anything.
+        "shadow": True,
+        "decided": decided,
+        "decided_by": decided_by,
+        "context": dict(context or {}, shadow_of=decided_by),
+    }
+    if skipped:
+        row["skipped"] = skipped
+    else:
+        row["agreed"] = (answer == decided)
+    if catch_up:
+        row["catch_up"] = True
+        row["lag_s"] = round(time.time() - float(asked_at or time.time()), 2)
+    return row
+
+
+def _off_record_now() -> bool:
+    try:
+        from agent_friday.services import off_record
+        return bool(off_record.skip("decisions"))
+    except Exception:
+        return False
+
+
+def _keep_for_catch_up(item: dict) -> None:
+    """Hold a skipped question for later. Never off the record."""
+    if _off_record_now():
+        return
+    dropped = None
+    with _shadow_backlog_lock:
+        _shadow_backlog.append(item)
+        while len(_shadow_backlog) > max(1, int(_SHADOW_BACKLOG_MAX)):
+            dropped = _shadow_backlog.popleft()
+    if dropped is not None:
+        _record(_shadow_row(dropped["name"], dropped["question"], dropped["state"],
+                            decided=dropped["decided"], decided_by=dropped["decided_by"],
+                            context=dropped["context"], started=time.time(),
+                            skipped="dropped from a full catch-up backlog",
+                            catch_up=True, asked_at=dropped["asked_at"]))
+    _ensure_shadow_worker()
+
+
+def _score_shadow(name, question, state, *, decided, decided_by, context,
+                  catch_up=False, asked_at=None) -> bool:
+    """One shadow attempt. True when Laya answered and the row is written."""
+    with _LOCK:
+        fn = _BACKENDS.get(name)
+    if fn is None:
+        return True
+    t0 = time.time()
+    try:
+        # `background` lets a backend wait for capacity rather than skip:
+        # nothing is waiting on a shadow.
+        answer, confidence, detail = fn(question, state, background=True)
+    except Exception as e:
+        why = "%s: %s" % (type(e).__name__, e)
+        if not catch_up:
+            _record(_shadow_row(name, question, state, decided=decided,
+                                decided_by=decided_by, context=context,
+                                started=t0, skipped=why[:300]))
+        return False
+    _record(_shadow_row(name, question, state, decided=decided,
+                        decided_by=decided_by, context=context, started=t0,
+                        answer=answer, confidence=confidence, detail=detail,
+                        catch_up=catch_up, asked_at=asked_at))
+    return True
+
+
+def drain_shadow_backlog() -> int:
+    """Score what the backlog holds, oldest first. Returns how many answered."""
+    answered = 0
+    with _shadow_backlog_lock:
+        items = list(_shadow_backlog)
+        _shadow_backlog.clear()
+    keep = []
+    for i, it in enumerate(items):
+        ok = _score_shadow(it["name"], it["question"], it["state"],
+                           decided=it["decided"], decided_by=it["decided_by"],
+                           context=it["context"], catch_up=True,
+                           asked_at=it["asked_at"])
+        if ok:
+            answered += 1
+            continue
+        it["tries"] = it.get("tries", 0) + 1
+        if it["tries"] >= _SHADOW_MAX_TRIES:
+            _record(_shadow_row(it["name"], it["question"], it["state"],
+                                decided=it["decided"], decided_by=it["decided_by"],
+                                context=it["context"], started=time.time(),
+                                skipped="gave up after %d catch-up tries" % it["tries"],
+                                catch_up=True, asked_at=it["asked_at"]))
+            continue
+        # The backend is still not answering; the rest will fare no better now.
+        keep.append(it)
+        keep.extend(items[i + 1:])
+        break
+    if keep:
+        with _shadow_backlog_lock:
+            for it in reversed(keep):
+                _shadow_backlog.appendleft(it)
+    return answered
+
+
+def _ensure_shadow_worker() -> None:
+    global _shadow_worker
+    if _SHADOW_SYNC_FOR_TESTS or os.environ.get("FRIDAY_TESTING") == "1":
+        return
+    with _shadow_backlog_lock:
+        if _shadow_worker is not None and _shadow_worker.is_alive():
+            return
+
+        def _loop():
+            while True:
+                time.sleep(_SHADOW_RETRY_S)
+                try:
+                    drain_shadow_backlog()
+                except Exception as e:
+                    _log.debug("shadow catch-up pass failed: %s", e)
+                if shadow_backlog_size() == 0:
+                    return
+
+        _shadow_worker = threading.Thread(target=_loop, name="decision-shadow-catch-up",
+                                          daemon=True)
+        _shadow_worker.start()
+
+
 def _run_shadow(name: str, question: str, state: str, *, decided: Any,
                 decided_by: str, context: Optional[dict] = None) -> None:
     """Score `state` with `name` and record it BESIDE the real verdict.
 
-    Fire-and-forget on a daemon thread. Three properties, all deliberate:
+    Off the calling thread, and never raising into the gate: the verdict has
+    already been returned by the time this runs.
 
-      * It never blocks. The verdict has already been returned to the caller
-        by the time this runs; a 400 ms encoder must not be in front of an
-        approval card, and a model still loading must not be either.
-      * It never raises into the gate. A shadow that failed is indistinguish-
-        able, from the caller's side, from one that never ran.
-      * It never queues. A backend that is still warming raises, and the row
-        is simply not written. Queueing would mean a burst of decisions during
-        warm-up all landing at once, scored against a moment that has passed.
+    NEVER SILENT. A shadow that cannot score right now (the model is still
+    loading, or its scoring slots are busy) writes a row saying it was skipped
+    and why, and the question is kept, bounded, to be scored once the backend
+    can answer, in a row marked `catch_up` with how late it was. Shadow rows
+    are the evidence that decides whether a candidate is promoted; a missing
+    row is missing evidence exactly where the candidate was weakest. The answer
+    is about the state, not the moment, so scoring it late loses nothing.
     """
-    with _LOCK:
-        fn = _BACKENDS.get(name)
-    if fn is None:
-        return
+    item = {"name": name, "question": question, "state": state,
+            "decided": decided, "decided_by": decided_by,
+            "context": dict(context or {}), "asked_at": time.time()}
 
     def _go():
         try:
-            t0 = time.time()
-            answer, confidence, detail = fn(question, state, **{})
-            clipped, was_clipped = _clip(_scrub(state))
-            _record({
-                "at": time.time(),
-                "question": question,
-                "state": clipped,
-                "state_truncated": was_clipped,
-                "state_sha256": _state_digest(state),
-                "answer": answer,
-                "confidence": confidence,
-                "method": name,
-                "detail": detail,
-                "elapsed_ms": round((time.time() - t0) * 1000.0, 2),
-                # THE FIELD THAT MAKES THIS A SHADOW. Neither a reader nor a
-                # later scoring pass may mistake one of these rows for a
-                # decision that governed anything.
-                "shadow": True,
-                "decided": decided,
-                "decided_by": decided_by,
-                "agreed": (answer == decided),
-                "context": dict(context or {}, shadow_of=decided_by),
-            })
+            if not _score_shadow(name, question, state, decided=decided,
+                                 decided_by=decided_by, context=context):
+                _keep_for_catch_up(item)
         except Exception as e:
-            _log.debug("shadow backend %r did not score (harmless): %s",
-                       name, e)
+            _log.debug("shadow backend %r did not score: %s", name, e)
 
+    if _SHADOW_SYNC_FOR_TESTS:
+        _go()
+        return
     try:
         threading.Thread(target=_go, name="decision-shadow",
                          daemon=True).start()

@@ -655,12 +655,28 @@ def reset_missed() -> None:
         _last_missed_ts = _last_missed_reason = None
 
 
-def _answer(state: str) -> tuple:
-    """Direct and shadow scoring share admission with bounded approvals."""
+#: How long a BACKGROUND scoring (a shadow) waits for a free slot. Nothing is
+#: waiting on it, so it queues briefly instead of giving up.
+_BACKGROUND_WAIT_S = 60.0
+
+
+def _answer(state: str, *, wait_s: float = 0.0) -> tuple:
+    """Direct and shadow scoring share admission with bounded approvals.
+
+    `wait_s` > 0 waits that long for a slot, polling; the default never waits.
+    """
     hit = _remembered(state)
     if hit is not None:
         return hit
+    if _agent is None:
+        if wait_s and not _loading:
+            start_warming()
+        raise RuntimeError("laya not loaded yet")
     release = _reserve_scoring(pilot=False)
+    deadline = time.monotonic() + max(0.0, float(wait_s))
+    while release is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+        release = _reserve_scoring(pilot=False)
     if release is None:
         raise LayaBusy("laya is still busy with earlier actions")
     try:
@@ -722,10 +738,11 @@ def laya_backend(question: str, state: str, **kw):
     and `decide` falls back to keyword and records that it did - which is the
     wanted behaviour for a question this model was never given.
     """
+    wait_s = _BACKGROUND_WAIT_S if kw.get("background") else 0.0
     if question == "action_severity":
-        return _answer(state)
+        return _answer(state, wait_s=wait_s)
     if question == "policy_class":
-        severity, conf, detail = _answer(state)
+        severity, conf, detail = _answer(state, wait_s=wait_s)
         if severity == "soft":
             return "internal", conf, dict(detail, severity=severity)
         # The LABEL for a hard action stays with the incumbent. It is

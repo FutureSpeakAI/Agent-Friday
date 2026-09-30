@@ -2500,7 +2500,12 @@ DEFAULT_SETTINGS = {
     # vs Laya's 23) and is still the right mode, because a missed gate sends
     # mail with no human in the loop and a false gate costs one approval card.
     #
-    # ON BY DEFAULT. What makes that safe is structural rather than statistical: `keyword` is
+    # SHIPPED IN SHADOW (below), not on. The week-one review (09-22..09-29)
+    # found Laya had judged only 6 of ~35 real actions - the rest were skipped
+    # as too slow or it was switched off - so there is not yet the evidence to
+    # let it add cards. Shadow scores everything and changes nothing.
+    #
+    # When it is promoted, what makes "on" safe is structural rather than statistical: `keyword` is
     # one of the two inputs to the OR, so there is no input on which this
     # REMOVES a card the substring scan would have raised. A missing model, a
     # corrupt download or a load still in progress costs approval cards, never
@@ -2509,11 +2514,11 @@ DEFAULT_SETTINGS = {
     #
     # An unregistered name here falls back to `keyword` loudly rather than
     # raising, so a typo cannot take the approval gate offline.
-    "decision_backend": "laya-union",
+    "decision_backend": "keyword",
     # Score a second backend alongside the deciding one and write both answers
     # to ~/.friday/decisions.jsonl, changing no verdict. "" is off. This is how
     # a candidate earns the seat above; it is not itself a gate.
-    "decision_shadow": "",
+    "decision_shadow": "laya",
     # Optional chat preparation experiment. Alternate ordinary and assisted
     # turns; Laya only prepares read schemas/context and never grants actions.
     "laya_pilot_enabled": False,
@@ -3169,6 +3174,12 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
     try:
         from agent_friday.services import off_record as _off
         _off.on_settings_change({**DEFAULT_SETTINGS, **existing}, merged)
+    except Exception:
+        pass
+    # A change to what guards outward actions is recorded where it happens.
+    try:
+        from agent_friday.services import decisions as _dec
+        _dec.on_settings_change({**DEFAULT_SETTINGS, **existing}, merged)
     except Exception:
         pass
     return merged

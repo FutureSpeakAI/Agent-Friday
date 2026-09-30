@@ -16,6 +16,10 @@ def _serving(monkeypatch, slow: int):
     monkeypatch.setattr(laya_backend, "_agent", object())
     monkeypatch.setattr(laya_backend, "_loading", False)
     monkeypatch.setattr(laya_backend, "_slow_answers", slow, raising=False)
+    # Misses are process-wide; another test on this worker may have left one.
+    monkeypatch.setattr(laya_backend, "_missed",
+                        dict.fromkeys(laya_backend.MISS_REASONS, 0))
+    monkeypatch.setattr(laya_backend, "_last_missed_ts", None)
 
 
 def test_a_slow_laya_is_named_in_the_status_text(client, monkeypatch):
