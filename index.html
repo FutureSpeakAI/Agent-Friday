@@ -8312,23 +8312,7 @@ function ChatSurface(props) {
   },
   /* A long turn stays the user's and says what it is doing, rather than
      handing the chat back and pointing at another view. */
-  (() => {
-    if (!turnStatus) return "Friday is thinking";
-    const m = Math.floor((turnStatus.elapsed_s || 0) / 60);
-    const el = m >= 1 ? m + "m" : Math.round(turnStatus.elapsed_s) + "s";
-    if (turnStatus.quiet) {
-      return "Still working (" + el + ") — nothing reported for "
-        + Math.round(turnStatus.quiet_for_s) + "s. A single model call can "
-        + "run this long in silence; still holding the thread.";
-    }
-    /* A long run should look like work, not like a hang. `step` and
-       `elapsed_s` already come back from /api/chat/turn/<id>/liveness; with
-       the round cap gone they are the only things that say how far along a
-       turn is, so they are shown rather than left in the payload. */
-    return "Still working (" + el
-      + (turnStatus.step ? ", round " + turnStatus.step : "") + ")"
-      + (turnStatus.label ? " \u2014 " + turnStatus.label : "");
-  })()), /*#__PURE__*/React.createElement("span", {
+  fridayTurnStatusText(turnStatus)), /*#__PURE__*/React.createElement("span", {
     className: "dot"
   }), /*#__PURE__*/React.createElement("span", {
     className: "dot"
@@ -8745,6 +8729,29 @@ function ChatSurface(props) {
     onClick: () => sendChat()
   }, "Send"))));
 }
+
+/* The typing-indicator line for a long chat turn, from the liveness poll.
+   A long run should look like work, not like a hang: `elapsed_s`, the round
+   (`step`) and the `label` are what say how far along a turn is. The round is
+   shown only when it is a whole number and the label only when it is text, so
+   an unexpected payload shape can never print "[object Object]". */
+function fridayTurnStatusText(turnStatus) {
+  if (!turnStatus) return "Friday is thinking";
+  const secs = Number(turnStatus.elapsed_s) || 0;
+  const m = Math.floor(secs / 60);
+  const el = m >= 1 ? m + "m" : Math.round(secs) + "s";
+  if (turnStatus.quiet) {
+    return "Still working (" + el + ") — nothing reported for "
+      + Math.round(Number(turnStatus.quiet_for_s) || 0) + "s. A single model call can "
+      + "run this long in silence; still holding the thread.";
+  }
+  const step = turnStatus.step;
+  const label = turnStatus.label;
+  return "Still working (" + el
+    + (Number.isInteger(step) && step > 0 ? ", round " + step : "") + ")"
+    + (typeof label === "string" && label ? " — " + label : "");
+}
+// End turn status text
 
 // ═══ CONVERSATION WINDOW ═══
 //

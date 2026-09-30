@@ -143,6 +143,48 @@ def test_every_orb_update_pets_the_turn_on_that_thread():
         core.process_remove("orb-pet")
 
 
+def _local_round_with_tool_calls(turn_id, orb_id):
+    """What the local seat's loop reports during one round: the round number
+    and its label, then a step record for each tool the round runs."""
+    def _work():
+        core.turn_begin(turn_id)
+        core.process_register(orb_id, label="Reasoning…", model="local-model")
+        core.process_update(orb_id, label="Reasoning (step 4)", step_n=4)
+        core.process_update(orb_id, step={
+            "type": "tool", "name": "search_wiki", "status": "ok",
+            "args": "query text", "result": "three pages", "ts": time.time()})
+    return _work
+
+
+def test_liveness_step_is_the_integer_round_not_a_step_record():
+    """`step` is the round number and `label` is text. A tool-step record is
+    richer tray data; it never replaces the round, or the chat line reads
+    "round [object Object]"."""
+    t, release = _in_thread(_local_round_with_tool_calls("t-shape", "orb-shape"))
+    try:
+        v = core.turn_liveness("t-shape")
+        assert type(v["step"]) is int and v["step"] == 4
+        assert isinstance(v["label"], str) and v["label"] == "Reasoning (step 4)"
+        assert v["detail"] == {"type": "tool", "name": "search_wiki", "status": "ok"}
+    finally:
+        release.set()
+        t.join(5)
+        core.process_remove("orb-shape")
+
+
+def test_a_non_integer_step_never_becomes_the_round():
+    t, release = _in_thread(lambda: core.turn_begin("t-coerce"))
+    try:
+        for bad in ({"type": "reason"}, "4", 4.5, True, [4]):
+            core._TURN_LOCAL.turn_id = "t-coerce"
+            core.turn_pet(step=bad)
+        assert core.turn_liveness("t-coerce")["step"] is None
+    finally:
+        core._TURN_LOCAL.turn_id = None
+        release.set()
+        t.join(5)
+
+
 def test_progress_on_another_thread_does_not_pet_this_turn():
     """A test that could pass for the wrong reason otherwise: the petting is
     thread-scoped, so a busy background task must not keep a dead chat turn
@@ -227,6 +269,19 @@ def test_the_liveness_endpoint_answers_working_for_a_live_turn(client):
     finally:
         release.set()
         t.join(5)
+
+
+def test_the_liveness_endpoint_carries_the_round_as_a_number(client):
+    t, release = _in_thread(_local_round_with_tool_calls("t-json", "orb-json"))
+    try:
+        body = client.get("/api/chat/turn/t-json/liveness").get_json()
+        assert body["step"] == 4 and type(body["step"]) is int
+        assert isinstance(body["label"], str)
+        assert "[object Object]" not in str(body)
+    finally:
+        release.set()
+        t.join(5)
+        core.process_remove("orb-json")
 
 
 def test_the_liveness_endpoint_answers_gone_for_an_unknown_turn(client):

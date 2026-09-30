@@ -1754,8 +1754,15 @@ def turn_end(turn_id=None):
         _TURNS.pop(tid, None)
 
 
-def turn_pet(label=None, step=None, model=None):
-    """Record progress on the turn running on this thread. Never raises."""
+def turn_pet(label=None, step=None, model=None, detail=None):
+    """Record progress on the turn running on this thread. Never raises.
+
+    The liveness contract the chat UI renders: ``step`` is the integer round
+    and ``label`` is text. Anything else offered as a step is ignored, so a
+    step record can never be printed as the round. ``detail`` carries the
+    latest step record's type, name and status, and nothing more: arguments
+    and results stay in the process tray, where tier-safe summaries live.
+    """
     tid = getattr(_TURN_LOCAL, "turn_id", None)
     if not tid:
         return
@@ -1768,8 +1775,12 @@ def turn_pet(label=None, step=None, model=None):
             rec["pets"] += 1
             if label:
                 rec["label"] = str(label)[:120]
-            if step is not None:
+            if type(step) is int:
                 rec["step"] = step
+            if isinstance(detail, dict):
+                rec["detail"] = {k: str(detail[k])[:80]
+                                 for k in ("type", "name", "status")
+                                 if detail.get(k) is not None}
             if model:
                 rec["model"] = model
     except Exception:
@@ -1850,6 +1861,7 @@ def turn_liveness(turn_id, now=None):
         "quiet_after_s": TURN_QUIET_AFTER_S,
         "label": rec.get("label"),
         "step": rec.get("step"),
+        "detail": rec.get("detail"),
         "model": rec.get("model"),
         "progress_events": rec.get("pets", 0),
     }
@@ -1956,7 +1968,8 @@ def process_update(pid, *, status=None, progress=None, label=None,
         p["updated"] = _time.time()
         if status in ("completed", "error"):
             p["ended"] = _time.time()
-    turn_pet(label=label, step=step)
+    # `step` here is a tray step record; the turn's round is `step_n`.
+    turn_pet(label=label, step=step_n, detail=step)
 
 
 def process_log(pid, line: str):
