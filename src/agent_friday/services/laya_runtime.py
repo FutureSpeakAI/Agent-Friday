@@ -60,10 +60,12 @@ def checkpoint_revision(agent=None) -> str:
     rev = getattr(agent, "_friday_revision", None)
     if rev:
         return str(rev)
+    # A file read, never an import: this is on the ask() path, and importing
+    # the ML stack from a request thread is the boot race ml_imports exists
+    # to prevent. apply_engine stores the answer on the agent once.
     try:
-        from huggingface_hub import scan_cache_dir  # noqa: F401 - presence only
-        ref = (Path.home() / ".cache" / "huggingface" / "hub"
-               / "models--convaiinnovations--laya" / "refs" / "main")
+        ref = (Path(os.environ.get("HF_HOME") or (Path.home() / ".cache" / "huggingface"))
+               / "hub" / "models--convaiinnovations--laya" / "refs" / "main")
         return ref.read_text(encoding="utf-8").strip()[:12] or "unknown"
     except Exception:
         return "unknown"
@@ -154,6 +156,7 @@ def apply_engine(agent, engine: str, *, threads: Optional[int] = None):
         raise ValueError("unknown laya engine %r" % engine)
     agent._friday_engine = engine
     agent._friday_threads = threads
+    agent._friday_revision = checkpoint_revision(agent)
     return agent
 
 
