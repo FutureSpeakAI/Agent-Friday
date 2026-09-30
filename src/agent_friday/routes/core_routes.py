@@ -305,6 +305,25 @@ def laya_pilot_status():
         return api_error(e, "Couldn't read the Laya chat pilot")
 
 
+@core_bp.route('/api/reflex/resolve', methods=['POST'])
+def reflex_resolve():
+    """Resolve one request to one item: {text} -> services/laya_resolver.Resolution.
+
+    Decides only. The command it returns (navigate_to {kind, id}, or open_url
+    for a news story) is run by the caller through the ordinary governed tool
+    path, so governance and receipts are exactly those of the tool itself.
+    """
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()[:500]
+    if not text:
+        return jsonify({"status": "error", "message": "text is required"}), 400
+    try:
+        from agent_friday.services import laya_resolver
+        return jsonify(dict(laya_resolver.resolve(text).to_dict(), ok=True))
+    except Exception as e:
+        return api_error(e, "Couldn't resolve that request")
+
+
 @core_bp.route('/api/decisions/label_queue')
 def decisions_label_queue():
     """What to ask the owner next: "does this reach outside my machine?"."""

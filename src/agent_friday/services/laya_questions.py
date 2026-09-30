@@ -109,6 +109,42 @@ CARRIES_PRIVATE = {
     },
 }
 
+#: The item resolver's gate and first choice (services/laya_resolver), asked
+#: in one pass. Measured on the owner's own phrasing (88 real requests) plus
+#: 50 requests over his real items, 2026-09-30:
+#:   gate wording                        items caught   non-requests let in
+#:   direct_command (device commands)        45%              20%
+#:   "opens one specific thing" (noul)       55%               8%
+#:   OPEN_REQUEST (this choice)              98%              47%
+#: No wording is both; the resolver pairs this high-recall choice with a
+#: deterministic opening-verb check, and its confidence rule and ask-back
+#: guard the rest. ITEM_KIND in this short form scored 42/64 (the longer
+#: descriptive form 33/64) and runs in 0.49 s p50 against 0.71 s.
+OPEN_REQUEST = {
+    "type": "choice",
+    "instructions": "What is the user asking for?",
+    "criteria": {
+        "open": ("to open or show one specific thing: an email, a page, a note, "
+                 "a file, a story, an event or a workspace"),
+        "other": "an answer, a conversation, writing, or a task",
+    },
+}
+
+ITEM_KIND = {
+    "type": "choice",
+    "instructions": "What should Friday open?",
+    "criteria": {
+        "email": "an email",
+        "wiki_page": "a wiki page or note or article",
+        "file": "a file or document",
+        "news": "a news story",
+        "calendar": "a calendar day or event",
+        "contact": "a contact",
+        "workspace": "a workspace or screen",
+        "other": "none of these",
+    },
+}
+
 #: The chat pilot's question (services/laya_pilot), registered here so every
 #: question Friday asks has one home.
 SOURCE = {
@@ -131,6 +167,8 @@ QUESTIONS: Dict[str, dict] = {
     "changes_outside": CHANGES_OUTSIDE,
     "touches_private": TOUCHES_PRIVATE,
     "carries_private": CARRIES_PRIVATE,
+    "item_kind": ITEM_KIND,
+    "open_request": OPEN_REQUEST,
     "direct_command": DIRECT_COMMAND,
     "source": SOURCE,
 }

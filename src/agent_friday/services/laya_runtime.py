@@ -402,3 +402,47 @@ def _done(t0, status, answers, cached, reason, engine) -> dict:
         _log.info("laya ask missing: %s (%.0f ms)", reason, ms)
     return {"status": status, "answers": answers, "cached": cached,
             "reason": reason, "elapsed_ms": ms, "engine": engine}
+
+
+def predict_bounded(state: str, questions: Dict[str, dict], *,
+                    budget_ms: float) -> dict:
+    """One forward pass for questions built at call time (an item choice over
+    a shortlist cannot be registered in laya_questions), within a budget.
+
+    Same admission and budget as ask(), no cache: a shortlist is different
+    every time. Returns {"status": "ok"|"missing", "result": laya result or
+    None, "reason": str|None, "elapsed_ms": float}.
+    """
+    from agent_friday.services import laya_backend
+    t0 = time.monotonic()
+    agent = laya_backend._agent
+
+    def done(status, result=None, reason=None):
+        ms = round((time.monotonic() - t0) * 1000.0, 2)
+        if status != "ok":
+            _stats["missing"] += 1
+        return {"status": status, "result": result, "reason": reason, "elapsed_ms": ms}
+
+    if agent is None:
+        return done("missing", reason="laya not loaded")
+    release = laya_backend._reserve_scoring(pilot=False)
+    if release is None:
+        return done("missing", reason="laya busy")
+    box: Dict[str, Any] = {}
+    ev = threading.Event()
+
+    def _run():
+        try:
+            box["r"] = agent.predict(str(state or ""), questions)
+        except BaseException as e:  # noqa: BLE001 - reported to the caller
+            box["e"] = e
+        finally:
+            release()
+            ev.set()
+
+    threading.Thread(target=_run, name="laya-predict", daemon=True).start()
+    if not ev.wait(max(0.0, float(budget_ms)) / 1000.0):
+        return done("missing", reason="over budget (%.0f ms)" % budget_ms)
+    if "e" in box:
+        return done("missing", reason="laya error: %s" % type(box["e"]).__name__)
+    return done("ok", result=box["r"])
