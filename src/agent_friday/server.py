@@ -296,6 +296,8 @@ def _register_decision_backends():
                  "outward_reads": str((_load_settings() or {}).get("outward_reads") or "")}
         decisions.record_gate_event("boot", to=_gate,
                                     to_mode=decisions._mode_name(_gate))
+        from agent_friday.governance import action_gate as _ag
+        decisions.record_policy_if_changed(_ag._outward_reads_policy())
         pilot_enabled = (_load_settings() or {}).get("laya_pilot_enabled") is True
         if wanted & {"laya", "laya-union"} or pilot_enabled:
             laya_backend.start_warming()

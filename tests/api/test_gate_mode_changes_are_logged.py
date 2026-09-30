@@ -82,6 +82,23 @@ def test_a_boot_records_where_the_gate_starts(monkeypatch):
     monkeypatch.setattr(server, "_TESTING", False)
     monkeypatch.setattr(laya_backend, "start_warming", lambda *a, **k: None)
     server._register_decision_backends()
-    ev = _events()
-    assert [e["event"] for e in ev] == ["boot"]
+    ev = [e for e in _events() if e["event"] == "boot"]
+    assert len(ev) == 1
     assert ev[0]["to_mode"] == "shadow"
+
+
+def test_a_new_reads_policy_is_receipted_once_at_boot(monkeypatch):
+    """"observe" reaches a machine as a new default, not as a settings write,
+    so the boot that first runs it records the change, with the owner's
+    direction as the reason, and later boots do not repeat it."""
+    from agent_friday import server
+    from agent_friday.services import laya_backend
+    _reset({"decision_backend": "laya-union", "decision_shadow": ""})
+    monkeypatch.setattr(server, "_TESTING", False)
+    monkeypatch.setattr(laya_backend, "start_warming", lambda *a, **k: None)
+    server._register_decision_backends()
+    server._register_decision_backends()
+    policy = [e for e in _events() if e["event"] == "policy"]
+    assert len(policy) == 1
+    assert policy[0]["to"] == {"outward_reads": "observe"}
+    assert "pester" in policy[0]["reason"]

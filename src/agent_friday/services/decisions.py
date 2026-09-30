@@ -289,6 +289,40 @@ def record_gate_event(event: str, **fields) -> None:
         _log.warning("could not record a gate event: %s", e)
 
 
+#: Why connector reads became observe by default. Recorded on the boot that
+#: first runs the policy, because a new default arrives without a settings
+#: write for on_settings_change to see.
+OUTWARD_READS_REASON = (
+    "owner direction 2026-09-29: \"I think it should also be a high priority "
+    "that we don't constantly pester the user with approval cards for every "
+    "single command.\" Reads at connected services run as observe unless "
+    "private data would leave (governance/action_gate._connector_read)")
+
+
+def record_policy_if_changed(outward_reads: str) -> None:
+    """Record the reads policy in force when it differs from the last one
+    recorded (by a policy event or a settings change). Never raises."""
+    try:
+        last = None
+        p = gate_events_path()
+        if p.exists():
+            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                to = row.get("to") or {}
+                if row.get("event") in ("policy", "gate_mode") and "outward_reads" in to:
+                    last = to.get("outward_reads")
+        if last != outward_reads:
+            record_gate_event("policy", **{
+                "from": {"outward_reads": last}, "to": {"outward_reads": outward_reads},
+                "reason": OUTWARD_READS_REASON if outward_reads == "observe"
+                else "outward_reads set to %r" % outward_reads})
+    except Exception as e:
+        _log.warning("could not record the reads policy: %s", e)
+
+
 def on_settings_change(before: dict, after: dict) -> None:
     """Called by core._save_settings after every write. Records gate changes."""
     try:
