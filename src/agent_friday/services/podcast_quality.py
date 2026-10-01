@@ -103,7 +103,12 @@ OUTLET_NAMES = {
     "cbsnews.com": ["CBS News"], "foxnews.com": ["Fox News"], "salon.com": ["Salon"],
     "theatlantic.com": ["The Atlantic"], "latimes.com": ["The Los Angeles Times"],
     "usatoday.com": ["USA Today"], "engadget.com": ["Engadget"], "zdnet.com": ["ZDNet"],
+    "thehill.com": ["The Hill"], "talkingpointsmemo.com": ["Talking Points Memo", "TPM"],
+    "platformer.news": ["Platformer"], "businessinsider.com": ["Business Insider"],
 }
+#: Sites that relay other outlets' stories, naming the original in the headline.
+_AGGREGATORS = {"techmeme.com", "news.google.com", "memeorandum.com"}
+
 #: Labels of a host name that are never the outlet's name.
 _HOST_NOISE = {"www", "m", "amp", "go", "news", "co", "com", "org", "net", "uk", "rss", "feeds"}
 
@@ -161,6 +166,9 @@ def outlet_aliases(story: dict) -> list[str]:
     title = story.get("title") or ""
     m = re.search(r"\s[-–—]\s([^-–—]{2,60})$", title)     # "Headline - Outlet"
     if m:
+        names.append(m.group(1).strip().lower())
+    m = re.search(r"\((?:[^()/]{1,60}/\s*)?([^()/]{2,60})\)\s*$", title)   # "Headline (Author / Outlet)"
+    if m and (story.get("outlet") or "").lower().removeprefix("www.") in _AGGREGATORS:
         names.append(m.group(1).strip().lower())
     dom = (story.get("outlet") or "").lower().removeprefix("www.")
     if dom:
@@ -854,18 +862,24 @@ def misattribution_problems(lines: list[dict], story_list: list[dict], docs: lis
     out = []
     for i, ln in _spoken(lines):
         for sent in _SENT_RE.split(ln["text"]):
-            for s in story_list:
+            if not re.search(_ATTRIB_VERB, sent, re.I):
+                continue
+            credited = [s for s in story_list if outlet_aliases(s) and said_outlet(sent, outlet_aliases(s))]
+            # Several outlets credited together ("X and Y report"): the
+            # sentence is checked against all of their items, and the
+            # outlets' own names are not facts.
+            pool = set()
+            for c in credited:
+                pool |= set(_words("%s %s" % (c["title"], c["text"])))
+                pool |= {w for a in outlet_aliases(c) for w in a.split()}
+            for s in credited[:1]:
                 al = outlet_aliases(s)
-                if not al or not said_outlet(sent, al):
-                    continue
-                if not re.search(_ATTRIB_VERB, sent, re.I):
-                    continue
-                story = set(_words("%s %s" % (s["title"], s["text"])))
+                story = pool
                 words = {w for w in _words(sent) if len(w) >= 6 and w not in _STOP}
                 foreign = sorted(w for w in words - story if w in own_words)
                 foreign += sorted(f for f in _hard_facts(sent) - story - {a for a in al}
                                   if any(f in set(_words("%s %s" % (o["title"], o["text"])))
-                                         for o in story_list if o is not s))
+                                         for o in story_list if o not in credited))
                 if foreign:
                     out.append(_p("misattributed", "\"%s\" is attributed to %s, but %s is not in "
                                   "that report; Friday's own analysis is hers, said as \"my read\"."

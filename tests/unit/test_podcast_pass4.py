@@ -299,3 +299,58 @@ def test_retelling_a_story_in_the_close_is_a_split(ds):
     lines.insert(11, {"speaker": "a", "chapter": 2, "cites": [pledge],
                       "text": "So the pledge is back: six chief executives signed it in Washington on Tuesday."})
     assert "story_split" in _codes(_check(lines, ds))
+
+
+# ── from the first real pass-four Front Page ────────────────────────────────
+
+def test_the_front_page_overview_is_not_a_news_story():
+    docs_ = podcast_news._front_page_docs({"id": "x", "headline": "The Agent's Dirty Secret",
+                                           "lead": {"title": "Council passes the budget", "source": "examplewire.com",
+                                                    "url": "https://examplewire.com/a", "snippet": "7-2."}})
+    sids = [d for d in docs_ if d.get("role") == "overview"]
+    assert sids and all(s["title"].startswith("Today's front page") for s in sids)
+    from agent_friday.services import podcast_sources
+    assert [s["title"] for s in q.stories(podcast_sources.number(docs_))] == ["Council passes the budget"]
+
+
+def test_a_sentence_crediting_two_outlets_is_checked_against_both(ds):
+    two = ds + [dict(next(d for d in ds if d["title"].startswith("Tech chiefs")), sid="S98",
+                     outlet="exampleledger.com", title="Six firms promise to police their AI",
+                     text="Six firms promise to police their AI\nOutlet: exampleledger.com\nThe pledge "
+                          "was signed in Washington by six chief executives; it has no enforcement.")]
+    lines = good_lines(two)
+    lines[2] = dict(lines[2], text="Example Wire and Example Ledger report that six chief executives "
+                                   "signed a voluntary pledge in Washington on Tuesday, with no enforcement.",
+                    cites=[lines[2]["cites"][0], "S98"])
+    assert "misattributed" not in _codes(_check(lines, two))
+
+
+def test_an_aggregator_s_item_credits_its_original_outlet():
+    s = {"outlet": "techmeme.com", "title": "Execs asked a lab chief why he was so outspoken (Jane Roe / Example Journal)"}
+    assert "example journal" in q.outlet_aliases(s)
+
+
+def test_a_rejected_script_is_kept_for_review(home, monkeypatch):
+    import podcast_briefing_fixture as fx
+    (home / "wiki" / "briefings").mkdir(parents=True)
+    (home / "wiki" / "briefings" / (fx.DATE + ".md")).write_text(fx.digest_markdown(), encoding="utf-8")
+    (home / "briefing_runs").mkdir()
+    (home / "briefing_runs" / (fx.DATE + ".json")).write_text(json.dumps(fx.sidecar()), encoding="utf-8")
+    ds = fx.docs()
+    bad = good_lines(ds)
+    bad[2] = dict(bad[2], text=bad[2]["text"] + " Example Wire reports that Brightline Bank "
+                  "estimates $400B of spending next year.")
+
+    def llm(system, user, *, max_tokens=3000):
+        if "Plan an episode" in user:
+            return {"title": "T", "chapters": [{"title": "A"}, {"title": "B"}, {"title": "C"}]}, "m"
+        if "PROBLEMS FOUND" in user:
+            return {"lines": [dict(chapter=ln["chapter"], **{k: ln[k] for k in ("speaker", "text", "cites")})
+                              for ln in bad if not ln.get("signature")]}, "m"
+        ch = int(user.split("Chapter ", 1)[1].split(" ", 1)[0]) - 1
+        return {"lines": [{k: ln[k] for k in ("speaker", "text", "cites")} for ln in bad
+                          if not ln.get("signature") and ln["chapter"] == ch]}, "m"
+    monkeypatch.setattr(pe, "_llm_json", llm)
+    done = pe.produce(podcast_news.queue_for_run("briefing", fx.DATE)["id"])
+    assert done["status"] == "failed" and not done.get("lines")
+    assert any("Brightline" in ln["text"] for ln in done["draft_lines"])

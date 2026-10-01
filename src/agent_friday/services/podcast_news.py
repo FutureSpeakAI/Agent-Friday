@@ -110,8 +110,10 @@ def _front_page_docs(ed: dict) -> list[dict]:
         if v:
             overview.append(str(v))
     if any(overview):
-        docs.append(_doc("Today's front page: %s" % (ed.get("headline") or ed.get("id")),
-                         "\n".join(overview), origin="front_page:" + str(ed.get("id"))))
+        d = _doc("Today's front page: %s" % (ed.get("headline") or ed.get("id")),
+                 "\n".join(overview), origin="front_page:" + str(ed.get("id")))
+        d["role"] = "overview"           # the edition's framing, not a news story
+        docs.append(d)
     stories = []
     if ed.get("lead"):
         stories.append(ed["lead"])

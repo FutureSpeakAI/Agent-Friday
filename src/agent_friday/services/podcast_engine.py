@@ -983,7 +983,10 @@ def produce(eid: str, *, should_stop=None) -> dict:
                 return load(eid)
             hard = [p for p in script["script_check"]["problems"] if p["code"] in quality.HARD_CODES]
             if hard:
-                _update(eid, script_check=script["script_check"], rejected=script["rejected"])
+                # Kept for review as a draft: never as `lines`, which mean an
+                # episode that can be played.
+                _update(eid, script_check=script["script_check"], rejected=script["rejected"],
+                        draft_lines=script["lines"], sources=_public_sources(docs))
                 raise render.RenderError(
                     "script_rejected", "The script failed the script check and was not spoken: "
                     + "; ".join("%s (%s)" % (p["code"], p["message"][:80]) for p in hard[:4]))
