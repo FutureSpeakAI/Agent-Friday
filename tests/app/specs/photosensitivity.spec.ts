@@ -52,12 +52,14 @@ test.use({
 });
 
 type Segment = { name: string; ok: boolean; flashesPerSecond: number; redFlashesPerSecond: number;
-                 transitionsPerSecond: number; swing: number; frames: number; wholeFrameRatio: number };
+                 transitionsPerSecond: number; swing: number; frames: number; wholeFrameRatio: number;
+                 contextLost?: boolean };
 
 function explain(bad: Segment[]): string {
   return bad.map(s => `  ${s.name}: ${s.flashesPerSecond} flashes/s (${s.transitionsPerSecond} transitions), `
     + `${s.redFlashesPerSecond} red flashes/s, largest 100 ms lightness swing in a 10-degree field `
-    + `${s.swing} L* (limit 6), over ${s.frames} frames`).join('\n');
+    + `${s.swing} L* (limit 6), over ${s.frames} frames`
+    + (s.contextLost ? ' (the GPU took the scene away during this segment)' : '')).join('\n');
 }
 
 /** Open the app with the given genome, the meter installed and the clock faked. */
@@ -111,6 +113,16 @@ async function openScene(page: Page, view: any, structureIndex = 0) {
   await page.evaluate(DRIVER);
   // Sampled inside the scene's own render: see flash_meter.js.
   await page.evaluate(() => (window as any).__flashMeter.start(document.getElementById('friday-scene-canvas'), { drawnBy: composer }));
+  // When the GPU gives the scene back, the page rebuilds it (a new canvas, a
+  // new composer): the meter follows, every time.
+  await page.evaluate(() => {
+    const follow = (c: any) => c && c.addEventListener('webglcontextrestored', () => setTimeout(() => {
+      const next = document.getElementById('friday-scene-canvas');
+      (window as any).__flashMeter.rehook(next, composer);
+      follow(next);
+    }, 0));
+    follow(document.getElementById('friday-scene-canvas'));
+  });
   return watcher;
 }
 
@@ -237,4 +249,49 @@ test('Giga Earth does not flash at any form of its track, nor when a step lands'
   }
   const bad = segs.filter(s => !s.ok);
   expect(bad, `Giga Earth flashed:\n${explain(bad)}`).toEqual([]);
+});
+
+test('the scene fades back in when the GPU gives it back', async ({ page }) => {
+  // The GPU can take the scene away (a voice model loading fills it). The
+  // canvas goes black at once; the browser does that, not the page. When the
+  // GPU gives it back the page rebuilds the scene, and the rebuilt scene must
+  // fade in from black, not appear in one frame.
+  test.setTimeout(10 * 60_000);
+  await openScene(page, GENOMES.v1, EDEN_INDEX);
+  await mark(page, 'the GPU takes the scene away');
+  await page.evaluate(() => {
+    const c = document.getElementById('friday-scene-canvas') as HTMLCanvasElement;
+    const gl = (c.getContext('webgl2') || c.getContext('webgl')) as WebGLRenderingContext;
+    (window as any).__lose = gl.getExtension('WEBGL_lose_context');
+    (window as any).__lose.loseContext();
+  });
+  await run(page, 1000);
+  await mark(page, 'the GPU gives the scene back');
+  await page.evaluate(() => (window as any).__lose.restoreContext());
+  await run(page, 6000);
+  const segs = await finish(page);
+  const away = segs.find(x => x.name === 'the GPU takes the scene away')!;
+  const back = segs.find(x => x.name === 'the GPU gives the scene back')!;
+  expect(away.contextLost, 'the context was really lost').toBe(true);
+  expect(back.frames, 'frames drawn after the scene came back').toBeGreaterThan(200);
+  expect(back.ok, explain([back])).toBe(true);
+});
+
+test('a window resize keeps the picture', async ({ page }) => {
+  // A resize gives the scene new buffers. The picture must carry over at the
+  // new size, not drop to black and fade back in as a fresh scene does.
+  test.setTimeout(10 * 60_000);
+  await openScene(page, GENOMES.v1, EDEN_INDEX);
+  await mark(page, 'the window is resized');
+  await run(page, 500);
+  await page.setViewportSize({ width: 1100, height: 680 });
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+  await run(page, 2000);
+  const segs = await finish(page);
+  const s = segs.find(x => x.name === 'the window is resized')!;
+  expect(s.frames, 'frames drawn after the resize').toBeGreaterThan(60);
+  expect(s.ok, explain([s])).toBe(true);
+  // Dropping to black and fading back would take two seconds and halve the
+  // frame's light from one frame to the next as it fell.
+  expect(s.wholeFrameRatio, `the whole frame kept its light through the resize: ${JSON.stringify(s)}`).toBeLessThan(1.25);
 });

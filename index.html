@@ -4796,8 +4796,9 @@ window.addEventListener('DOMContentLoaded',function(){
         // new image instead of jumping. Below that rate nothing is kept and the
         // pass changes nothing: it acts only on a flash (a structure arriving
         // through the camera, bright geometry sweeping past close up, a glow
-        // that pumps). It runs on the GPU with no read-back, so it never
-        // stalls a frame.
+        // that pumps). A fresh scene (the page loading, or the GPU giving the
+        // scene back) starts from black and fades in at the same rate. It runs
+        // on the GPU with no read-back, so it never stalls a frame.
         const BrightnessGovernor = (function () {
             const GX = 32, GY = 20, SAMPLES = 8;
             const FW = 11, FH = 7;                  // a 10-degree field (341 x 256 of 1024 x 768), in cells
@@ -4824,7 +4825,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 }`;
             // Per cell: how much of the frame shown before the field centred
             // on it (kept inside the screen) must keep to change at the rate.
-            const KEEP_FS = `uniform sampler2D tCells; uniform float stepL; uniform float prime; varying vec2 vUv;
+            const KEEP_FS = `uniform sampler2D tCells; uniform float stepL; varying vec2 vUv;
                 void main() {
                     vec2 cell = floor(vUv * vec2(${GX}.0, ${GY}.0));
                     vec2 o = clamp(cell - vec2(${(FW - 1) / 2}.0, ${(FH - 1) / 2}.0), vec2(0.0), vec2(${GX - FW}.0, ${GY - FH}.0));
@@ -4836,7 +4837,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     }
                     d /= ${FW * FH}.0; s /= ${FW * FH}.0;
                     float keep = 0.0;
-                    if (prime < 0.5 && stepL > 0.0 && abs(d - s) > stepL) keep = clamp(1.0 - stepL / abs(d - s), 0.0, 1.0);
+                    if (stepL > 0.0 && abs(d - s) > stepL) keep = clamp(1.0 - stepL / abs(d - s), 0.0, 1.0);
                     gl_FragColor = vec4(keep, 0.0, 0.0, 1.0);
                 }`;
             // Per cell: the most any field containing it must keep.
@@ -4866,10 +4867,10 @@ window.addEventListener('DOMContentLoaded',function(){
                     this.cells = rt(GX, 2 * GY, THREE.NearestFilter);
                     this.keep = rt(GX, GY, THREE.NearestFilter);
                     this.most = rt(GX, GY, THREE.LinearFilter);
-                    this.shown = []; this.shownAt = 0; this.primed = false; this.last = null;
+                    this.shown = []; this.shownAt = 0; this.last = null;
                     const mat = (fs, uniforms) => new THREE.ShaderMaterial({ uniforms, vertexShader: VS, fragmentShader: fs, depthTest: false, depthWrite: false });
                     this.cellMat = mat(CELL_FS, { tDrawn: { value: null }, tShown: { value: null } });
-                    this.keepMat = mat(KEEP_FS, { tCells: { value: null }, stepL: { value: 0 }, prime: { value: 1 } });
+                    this.keepMat = mat(KEEP_FS, { tCells: { value: null }, stepL: { value: 0 } });
                     this.mostMat = mat(MOST_FS, { tKeep: { value: null } });
                     this.applyMat = mat(APPLY_FS, { tDrawn: { value: null }, tShown: { value: null }, tKeep: { value: null } });
                     this.copyMat = mat(COPY_FS, { tDiffuse: { value: null } });
@@ -4877,14 +4878,25 @@ window.addEventListener('DOMContentLoaded',function(){
                 }
                 render(renderer, writeBuffer, readBuffer) {
                     const now = performance.now() / 1000;
-                    const dt = this.last === null ? 0 : Math.max(0, Math.min(0.1, now - this.last));
+                    const dt = this.last === null ? 1 / 60 : Math.max(0, Math.min(0.1, now - this.last));
                     this.last = now;
                     const w = readBuffer.width, h = readBuffer.height;
                     if (!this.shown.length || this.shown[0].width !== w || this.shown[0].height !== h) {
-                        this.shown.forEach(s => s.dispose());
-                        this.shown = [0, 1].map(() => new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.LinearFilter,
+                        // A new size keeps the picture: the frame last shown,
+                        // scaled. A fresh governor (the page loading, or the
+                        // GPU giving the scene back) has shown nothing, so it
+                        // starts from black and fades the scene in at the rate.
+                        const last = this.shown.length ? this.shown[1 - this.shownAt] : null;
+                        const next = [0, 1].map(() => new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.LinearFilter,
                             magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false }));
-                        this.primed = false;                 // nothing shown at this size yet
+                        renderer.setRenderTarget(next[1]);
+                        if (last) {
+                            this.quad.material = this.copyMat;
+                            this.copyMat.uniforms.tDiffuse.value = last.texture;
+                            this.quad.render(renderer);
+                        } else renderer.clear();
+                        this.shown.forEach(s => s.dispose());
+                        this.shown = next; this.shownAt = 0;
                     }
                     const out = this.shown[this.shownAt], before = this.shown[1 - this.shownAt];
                     this.quad.material = this.cellMat;
@@ -4894,7 +4906,6 @@ window.addEventListener('DOMContentLoaded',function(){
                     this.quad.material = this.keepMat;
                     this.keepMat.uniforms.tCells.value = this.cells.texture;
                     this.keepMat.uniforms.stepL.value = MAX_L_PER_S * dt;
-                    this.keepMat.uniforms.prime.value = this.primed ? 0 : 1;
                     renderer.setRenderTarget(this.keep); this.quad.render(renderer);
                     this.quad.material = this.mostMat;
                     this.mostMat.uniforms.tKeep.value = this.keep.texture;
@@ -4904,7 +4915,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     this.applyMat.uniforms.tShown.value = before.texture;
                     this.applyMat.uniforms.tKeep.value = this.most.texture;
                     renderer.setRenderTarget(out); this.quad.render(renderer);
-                    this.shownAt = 1 - this.shownAt; this.primed = true;
+                    this.shownAt = 1 - this.shownAt;
                     this.quad.material = this.copyMat;
                     this.copyMat.uniforms.tDiffuse.value = out.texture;
                     renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);

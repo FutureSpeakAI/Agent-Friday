@@ -863,6 +863,9 @@ simply never grows, and everything else works.
     - A small bright thing moving within a field barely changes the field's
       average, so it is left alone and stays crisp.
     - Below the rate, it changes nothing.
+    - A fresh scene, when the page loads or the GPU gives the scene back
+      after taking it, starts from black and fades in at the same rate. A
+      window resize carries the picture over at the new size.
 
     It runs on the GPU with no read-back. Frame time p95 on the Mandelbrot
     set is unchanged within measurement: 24.7 ms against 24.1 ms without the
@@ -873,7 +876,9 @@ simply never grows, and everything else works.
   her), through every gesture, and while the user talks. It runs:
   - at v1;
   - with an evolved genome at the brightest corner of every gene;
-  - on Giga Earth at all seven forms, and on a step landing on screen.
+  - on Giga Earth at all seven forms, and on a step landing on screen;
+  - when the GPU takes the scene away and gives it back, and through a
+    window resize.
 - **Reduced motion is honoured** (Phase A0 adds it to the scene, §11). Under
   `prefers-reduced-motion: reduce`, or the Friday override:
   - a step uses a 2 s opacity-only crossfade;

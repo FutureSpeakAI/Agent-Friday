@@ -100,10 +100,22 @@
     return out;
   }
 
-  let canvas = null, ctx = null, running = false, label = '';
+  let canvas = null, ctx = null, running = false, label = '', lost = false, dark = false;
+  // While the GPU has the scene's context the canvas shows nothing, and the
+  // page draws nothing to sample. The meter records what the user sees: a
+  // black frame when the context goes and another when it comes back, so the
+  // first frames after the restore are measured against black. A segment in
+  // which the context went says so in its report.
+  function watch(c) {
+    if (!c || c.__flashWatched) return;
+    c.__flashWatched = true;
+    c.addEventListener('webglcontextlost', () => { lost = true; dark = true; sample(); });
+    c.addEventListener('webglcontextrestored', () => { sample(); dark = false; });
+  }
   let lumT, redT, events, frames, means, meanHist, segments = [];
 
   function reset() {
+    lost = false;
     lumT = makeTracker(); redT = makeTracker();
     events = { lum: [], red: [] }; frames = 0; means = []; meanHist = [];
   }
@@ -125,8 +137,9 @@
   function sample() {
     if (!running) return;
     const t = performance.now() / 1000;
-    ctx.drawImage(canvas, 0, 0, W, H);
-    const d = ctx.getImageData(0, 0, W, H).data;
+    let d;
+    if (dark) d = new Uint8ClampedArray(W * H * 4);
+    else { ctx.drawImage(canvas, 0, 0, W, H); d = ctx.getImageData(0, 0, W, H).data; }
     const L = new Float32Array(W * H), Ls = new Float32Array(W * H), Rd = new Float32Array(W * H);
     let sum = 0;
     for (let i = 0, p = 0; i < d.length; i += 4, p++) {
@@ -158,15 +171,22 @@
   window.__flashMeter = {
     limits: { transitionsPerSecond: 6, gentleLightness: GENTLE_L, field: [FIELD_W, FIELD_H], grid: [W, H] },
     start(c, options) {
-      canvas = c; const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
       ctx = cv.getContext('2d', { willReadFrequently: true });
       reset(); running = true;
       const drawer = options && options.drawnBy;
-      if (drawer) {
-        onFrame = false;
+      if (drawer) { onFrame = false; this.rehook(c, drawer); }
+      else { canvas = c; watch(c); onFrame = true; requestAnimationFrame(tick); }
+    },
+    // After the page rebuilds its scene (the GPU took the context away and
+    // gave it back), follow the new canvas and the new drawer.
+    rehook(c, drawer) {
+      canvas = c; watch(c);
+      if (drawer && !drawer.__flashHooked) {
         const render = drawer.render;
         drawer.render = function () { const r = render.apply(this, arguments); sample(); return r; };
-      } else { onFrame = true; requestAnimationFrame(tick); }
+        drawer.__flashHooked = true;
+      }
     },
     // Close the current segment of measurement and start another.
     mark(name) {
@@ -186,6 +206,7 @@
                transitionsPerSecond: lumMax, redTransitionsPerSecond: redMax,
                flashesPerSecond: Math.floor(lumMax / 2), redFlashesPerSecond: Math.floor(redMax / 2),
                swing: +swing.toFixed(2), wholeFrameRatio: +worstRatio.toFixed(3),
+               contextLost: lost,
                ok: lumMax <= 6 && redMax <= 6 && swing < GENTLE_L };
     },
     finish() { if (label) segments.push(this.report(label)); label = ''; running = false; return segments; },
