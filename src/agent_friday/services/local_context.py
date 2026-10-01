@@ -373,30 +373,40 @@ def request(question: str, *, conversation_id, cloud_model: str,
         return {"status": "unavailable", "reason": "no question"}
     unavailable = ("Friday's local model is not running, so private context "
                    "cannot be reached.")
-    # The lattice frosts while the local model works on it (§13).
+    # The lattice frosts while the local model works on it, and thaws when
+    # that work is over, whatever came of it: sent, a card raised for the
+    # user, withheld or unavailable (§13). The summary floats out only when
+    # it is really sent.
     try:
         from agent_friday.services import presence as _presence
         _presence.emit("handoff", "start")
     except Exception:
         pass
-    if answer_fn is not None:
-        raw, local_model = answer_fn(question)
-    else:
-        # Choose the seat and SAY SO before the slow part: summoning a cold
-        # local model can take a minute, and an unexplained minute of silence
-        # is how a working feature gets reported as broken.
-        seat, note = pick_local_seat()
-        if note:
-            _deliver(conversation_id, note, "notice")
-        if not seat:
-            return {"status": "unavailable", "reason": note}
-        raw, local_model = local_answer(question, seat=seat)
+    try:
+        if answer_fn is not None:
+            raw, local_model = answer_fn(question)
+        else:
+            # Choose the seat and SAY SO before the slow part: summoning a cold
+            # local model can take a minute, and an unexplained minute of silence
+            # is how a working feature gets reported as broken.
+            seat, note = pick_local_seat()
+            if note:
+                _deliver(conversation_id, note, "notice")
+            if not seat:
+                return {"status": "unavailable", "reason": note}
+            raw, local_model = local_answer(question, seat=seat)
+            if not local_model:
+                unavailable = note or unavailable
         if not local_model:
-            unavailable = note or unavailable
-    if not local_model:
-        return {"status": "unavailable", "reason": unavailable}
-    return offer(raw, conversation_id=conversation_id, cloud_model=cloud_model,
-                 local_model=local_model, question=question)
+            return {"status": "unavailable", "reason": unavailable}
+        return offer(raw, conversation_id=conversation_id, cloud_model=cloud_model,
+                     local_model=local_model, question=question)
+    finally:
+        try:
+            from agent_friday.services import presence as _presence
+            _presence.emit("handoff", "end")
+        except Exception:
+            pass
 
 
 def offer(raw_text: str, *, conversation_id, cloud_model: str, local_model: str,

@@ -165,7 +165,24 @@ def test_the_private_handoff_frosts_then_sends_only_the_scrubbed_summary(frames,
     out = lc.request("What is my address?", conversation_id="c1", cloud_model="m",
                      answer_fn=lambda q: ("You live at a place.", "local-seat"))
     assert out["status"] == "sent"
-    assert [f["phase"] for f in frames("handoff")] == ["start", "sent"]
+    assert [f["phase"] for f in frames("handoff")] == ["start", "sent", "end"]
+
+
+def test_the_frost_ends_when_the_local_work_does_whatever_came_of_it(frames, monkeypatch):
+    # No local model: nothing to send, and the lattice must not stay frosted.
+    from agent_friday.services import local_context as lc
+    out = lc.request("What is my address?", conversation_id="c1", cloud_model="m",
+                     answer_fn=lambda q: ("", None))
+    assert out["status"] == "unavailable"
+    assert [f["phase"] for f in frames("handoff")] == ["start", "end"]
+    # A card raised for the user to decide: the local work is over; the
+    # summary floats out later, only if it is approved and really sent.
+    monkeypatch.setattr(lc, "_use_conversation_grant", lambda cid: None)
+    monkeypatch.setattr(lc, "offer", lambda raw, **kw: {"status": "pending", "approval_id": "a1"})
+    out = lc.request("What is my address?", conversation_id="c1", cloud_model="m",
+                     answer_fn=lambda q: ("You live at a place.", "local-seat"))
+    assert out["status"] == "pending"
+    assert [f["phase"] for f in frames("handoff")] == ["start", "end"]
 
 
 def test_a_handoff_that_could_not_be_delivered_sends_nothing(frames, monkeypatch):
