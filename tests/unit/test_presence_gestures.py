@@ -176,6 +176,25 @@ for (let i = 0; i < 300; i++) { const q = G.step(dt, an);
   if (k !== undefined && q.units[k].d[2] > 0.6) seen = true; else if (seen && k === undefined) hueAll = false; }
 out.loop_approval = peaks(ser, 0.6); out.loop_approval_held = ser[ser.length - 1] > 0.6; out.loop_approval_hue_kept = hueAll;
 
+// 11. a failed step: the scene is concerned, not silent. A tool that fails
+// knocks its block out of alignment and corrects it, three times; an error
+// does the same to the block facing the user. No colour, no flash.
+const knockSeries = (setup, sec) => { G.reset(); G.setReduced(REDUCED); setup(); const s = []; let hue = false, status = '';
+  for (let i = 0; i < Math.round(sec / dt); i++) { const q = G.step(dt, an);
+    const tilt = Math.max(0, ...Object.values(q.units).map(u => Math.abs(u.r[0])));   // about 'across' (x): not a twist
+    const dim = Math.max(0, ...Object.values(q.units).map(u => 1 - u.b));
+    s.push(REDUCED ? dim : tilt); if (Object.values(q.units).some(u => u.hue)) hue = true;
+    if (!status && q.status) status = q.status; }
+  return { s, hue, status }; };
+let ks = knockSeries(() => { G.frame(P('tool', 'start', { ref: 'f1' })); run(2.2); G.frame(P('tool', 'end', { ref: 'f1', ok: false })); }, 4.0);
+out.knock_tool = peaks(ks.s, REDUCED ? 0.15 : 0.12); out.knock_tool_hue = ks.hue; out.knock_tool_status = ks.status;
+out.knock_tool_rest = moving(run(1.5)).length;
+ks = knockSeries(() => { G.frame(P('tool', 'start', { ref: 'f2' })); run(2.2); G.frame(P('tool', 'end', { ref: 'f2', ok: true })); }, 4.0);
+out.knock_ok = peaks(ks.s, REDUCED ? 0.15 : 0.12);
+ks = knockSeries(() => { G.frame(P('error', 'once', {})); }, 4.0);
+out.knock_error = peaks(ks.s, REDUCED ? 0.15 : 0.12); out.knock_error_status = ks.status;
+out.knock_error_rest = moving(run(1.5)).length;
+
 // 9. the same events make the same moves
 const trace = () => { G.reset(); G.setReduced(REDUCED); G.frame(P('tool', 'start', { ref: 'z' }));
   G.frame(P('round', 'step', { n: 3 })); return JSON.stringify(run(0.8)); };
@@ -238,6 +257,21 @@ def test_each_one_shot_gesture_plays_three_times_per_trigger(path):
     assert o["loop_twist_rest"] == 0
     assert o["loop_approval"] == 3 and o["loop_approval_held"] is True   # an approval's step
     assert o["loop_approval_hue_kept"] is True                       # amber throughout, no blinking
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_a_failed_step_knocks_and_corrects_three_times_without_colour(path):
+    # A failed tool or an error is shown, never ignored: a block knocks out
+    # of alignment and corrects, three times (the three-times rule), then rests.
+    o = _run(path, reduced=False)
+    assert o["knock_tool"] == 3 and o["knock_tool_hue"] is False and o["knock_tool_rest"] == 0
+    assert o["knock_tool_status"] == "That step failed"
+    assert o["knock_ok"] == 0                       # a tool that works does not knock
+    assert o["knock_error"] == 3 and o["knock_error_rest"] == 0
+    assert o["knock_error_status"] == "That step failed"
+    r = _run(path, reduced=True)                    # reduced motion: a dimming, three times
+    assert r["knock_tool"] == 3 and r["knock_error"] == 3 and r["knock_ok"] == 0
 
 
 @pytest.mark.skipif(not node, reason="node is not installed")

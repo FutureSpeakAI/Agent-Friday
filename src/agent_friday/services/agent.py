@@ -10586,7 +10586,10 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
                           duration_ms=int(duration_ms or 0))
     try:
         from agent_friday.services import presence as _presence
-        _presence.tool_finished(name, ok=(_tool_call_status(result) == "ok"))
+        # The scene shows a failed step (avatar-visual-genome.md §13.3): only an
+        # error is one. A call waiting for the owner's card, or declined by the
+        # owner or a policy, did not fail.
+        _presence.tool_finished(name, ok=(_tool_call_status(result) != "error"))
     except Exception:
         pass
     try:

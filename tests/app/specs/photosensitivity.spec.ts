@@ -143,6 +143,10 @@ async function exercise(page: Page, index: number) {
   await run(page, 1500);
   await emit(page, { type: 'resolved', approval_id: 'flash-1', status: 'approved' }); await run(page, 800);
   await emit(page, P('verify', 'once', { ok: true })); await run(page, 1800);
+  // A failed step: the block knocks and corrects (three times).
+  await emit(page, P('tool', 'start', { ref: 'f1' })); await run(page, 600);
+  await emit(page, P('tool', 'end', { ref: 'f1', ok: false })); await run(page, 1200);
+  await emit(page, P('error', 'once')); await run(page, 1500);
   await mark(page, `${id} listening`);
   await page.evaluate(() => { const w = window as any; w.__mic = 1; w.__room = 1; setSystemMood('LISTENING'); });
   await run(page, 3000);

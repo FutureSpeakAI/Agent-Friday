@@ -1403,7 +1403,7 @@ that it doesn't exist yet. "Reduced motion" is the swap required by §13.7.
 | **Long generation** | The lattice builds layer by layer, filled in proportion to **true** progress | A process registered with a real `progress` fraction | Filled units = round(progress × units). No fraction, no build: the status line shows stages instead (north-star §29.3) | Filled units lit, the rest dim |
 | **Saving to memory** | A cube drifts into the core and dims into place | A memory fact was written (`ingest_fact` succeeded) | One per fact | A cube at the core brightens, then dims |
 | **Private handoff** | The outer shell frosts while the core works, then one small cube floats out. That cube is the scrubbed summary, the only thing that leaves | Local-context request started; later, the scrubbed text was actually sent | Frost on request, and the float-out only on the send event | Shell opacity up during the work; one small static cube at the edge on send |
-| **Error** | A cube knocks out of alignment and slowly corrects. **No red, no flash** | A turn, tool or process ended in error | One knock per error | A cube dims to 40%, then recovers over 2 s |
+| **Error** | A block knocks out of alignment (a tilt across the view and a sag) and slowly corrects. **No red, no flash.** Built 2026-10-01 | A turn or process ended in error, or a tool call failed (its own block knocks) | Three knocks per error (§13.3, three times per trigger); the status line says "That step failed" | The block dims and recovers, three times |
 | **Background or scheduled work** | One faint cube orbits the lattice | A scheduled or background process is registered, then ends | One orbiter per process, up to 4 (a count after that) | A faint static satellite, one per process |
 | **Subagents or helpers** | Small clusters split off and return | A subagent task started, then ended, with a parent in this turn | One cluster per live subagent, up to 4 | Clusters shown as dimmed satellite groups |
 
@@ -1424,6 +1424,23 @@ everything else.
 
 **Speaking** keeps its existing behaviour (§1.4). It layers on top of
 whatever else is showing.
+
+**Speech reactions (2026-10-01).** The scene reacts to speech the moment
+it changes, and only to real speech:
+- When Friday is interrupted (the user talks over her, or presses
+  Escape), the speaking signals clear at once, the analyser's fading
+  tail is ignored for a quarter of a second, and the scene takes the
+  LISTENING mood.
+- Stopping a read-aloud ends the speaking mood.
+- Stopping voice zeroes the mic level the scene reads, so no listening
+  ripple carries on with nobody talking.
+- A voice session's open mic counts as listening.
+- Friday's own voice, heard back through the mic, never drives the
+  listening ripple.
+
+Mouth shapes (visemes) are deliberately not used. Friday's avatars have no
+mouth, and following speech syllable by syllable is what made the scene
+flash (§6.3).
 
 ### 13.4 How the other 12 structures say it
 
@@ -1515,7 +1532,7 @@ approvals snapshot; they are momentary.
 | Long generation | `process_update(progress=)` from `local_image.py:1067`, `local_video.py:684`, `creative_pipeline.py:806` | `/api/processes` poll, 2 s | Yes, polled | **Emit** `progress` on change. Podcast and report have no progress today, so they stay dormant (stages only) |
 | Saving to memory | `ingest_fact` (`services/knowledge_graph/integration.py:89`) → `node_ignited` | KG SSE; only the Knowledge view listens | Not to the scene | **Emit** `memory_saved` at `ingest_fact` success |
 | Private handoff | `local_context.request` (`services/local_context.py:247`) and `_send` (`:224`) | The card via the feed; the send emits nothing | Card only | **Emit** `handoff` start at `request`, and `handoff` sent at `_send` success |
-| Error | Chat stream `{error}` (`routes/chat.py:771`); process error; voice `error` | Various, sending tab only | Partial | **Emit** `error` at turn end with failure, and at process error |
+| Error | Chat stream `{error}` (`routes/chat.py:771`); process error; voice `error`; a tool call ending `ok: false` | Various, sending tab only | Built | `error` is emitted at turn end with failure and at process error. A tool's end frame carries `ok: false` only for a real error (`_tool_call_status == "error"`): a call waiting for the owner's card, or declined by the owner or a policy, did not fail |
 | Background or scheduled | `scheduler.dispatch` (`services/scheduler.py:1000`) → `sched-*` process | `/api/processes` poll | Yes, polled | **Emit** `background` start and end at `process_register` for background categories |
 | Subagents | `_spawn_task` (`services/agent.py:4225`); the worker end | `/api/tasks` poll; trace parents | Polled | **Emit** `subagent` start and end with the parent turn |
 
@@ -1880,9 +1897,9 @@ brightness only (§13.7), and no tile is thrown.
   moves by at most 1.15×.
 
 - **Not built:** the §13.3 states that are not built anywhere yet
-  (subagents, background work, errors, blocked, saving to memory, private
-  handoff). Giga Earth will express them when the engine does, without
-  changing this section.
+  (subagents, background work, blocked, saving to memory, private handoff).
+  Giga Earth will express them when the engine does, without changing this
+  section. Errors are built (§13.3): its tiles knock like any structure's.
 
 ---
 

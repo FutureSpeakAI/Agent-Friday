@@ -5498,7 +5498,9 @@ window.addEventListener('DOMContentLoaded',function(){
             const B_MIN = 0.6, B_MAX = 1.5, B_RATE = 0.08;     // brightness per frame
             const G_RATE = 0.08, ALIGN_IN = 0.8, ALIGN_OUT = 1.2, LIFT = 0.35;
             let reduced = false, now = 0;
-            let twists = [], queue = [], waves = [], vents = [], scans = [];
+            let twists = [], queue = [], waves = [], vents = [], scans = [], knocks = [];
+            // A knock: out of alignment fast, back slowly; LOOPS of them per failure.
+            const KNOCK_S = 0.9, KNOCK_OUT = 0.2, KNOCK_TILT = 0.24, KNOCK_SAG = 0.14;
             let approvals = 0, approvalEnv = [], approvalLoop = [], mic = 0, micS = 0, micPhase = 0;
             let route = null, round = 0, verifyOk = null, lastB = {}, lastG = {}, align = 0;
             const ease = t => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
@@ -5525,6 +5527,10 @@ window.addEventListener('DOMContentLoaded',function(){
                     // Home from wherever the twist is, never a snap.
                     if (tw) { tw.from = tw.a === undefined ? 0 : tw.a; tw.phase = 'out'; tw.t = 0; }
                     else queue = queue.filter(r => r !== f.ref);
+                    // A tool that failed: its block knocks out of alignment.
+                    if (f.ok === false) knocks.push({ t: 0, block: tw && tw.block !== null ? tw.block : null });
+                } else if (st === 'error') {
+                    knocks.push({ t: 0, block: null });
                 } else if (st === 'round' && ph === 'step' && Number.isInteger(f.n)) {
                     round = f.n;
                     waves.push({ n: f.n, t: 0 });
@@ -5642,6 +5648,25 @@ window.addEventListener('DOMContentLoaded',function(){
                 }
                 waves = waves.filter(w => w.t < WAVE_S * LOOPS);
 
+                // A failed step: a block knocks out of alignment (a tilt about
+                // the axis across the view, and a sag) and slowly corrects,
+                // three times. Concern without colour: no hue, no flash.
+                for (const k of knocks) {
+                    k.t += dt;
+                    if (k.block === null || !an.blocks[k.block]) k.block = allocate(an, busy);
+                    if (k.block === null) continue;
+                    const p = (k.t % KNOCK_S) / KNOCK_S;
+                    const amp = k.t >= KNOCK_S * LOOPS ? 0 : (p < KNOCK_OUT ? ease(p / KNOCK_OUT) : 1 - ease((p - KNOCK_OUT) / (1 - KNOCK_OUT)));
+                    for (const i of an.blocks[k.block].units) {
+                        busy.add(i);
+                        const u = unit(i);
+                        if (reduced) { u.b *= 1 - 0.3 * amp; continue; }
+                        u.r = add(u.r, scl(norm(an.across), KNOCK_TILT * amp));
+                        u.d = add(u.d, scl(an.up, -KNOCK_SAG * amp));
+                    }
+                }
+                knocks = knocks.filter(k => k.t < KNOCK_S * LOOPS);
+
                 // A sealed cloud send: the top opens and a thread leaves.
                 let thread = 0;
                 for (const v of vents) {
@@ -5728,7 +5753,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 // alignment so a twist or a step reads as structure, and drift
                 // again once nothing is happening. Motion, so not when reduced.
                 const busyNow = twists.length || queue.length || waves.length || vents.length
-                    || scans.length || approvals || micS > 0.02;
+                    || scans.length || knocks.length || approvals || micS > 0.02;
                 align = Math.max(0, Math.min(1, align + (busyNow ? dt / ALIGN_IN : -dt / ALIGN_OUT)));
                 return { units: out, thread: thread, scan: scan, status: status(), dt: dt,
                          align: reduced ? 0 : ease(align) };
@@ -5737,6 +5762,7 @@ window.addEventListener('DOMContentLoaded',function(){
             function status() {
                 const running = twists.filter(t => t.phase !== 'out').length;
                 if (approvals) return 'Waiting for your OK' + (approvals > 1 ? ' (' + approvals + ')' : '');
+                if (knocks.length) return 'That step failed';
                 if (running) return 'Using a tool' + (queue.length ? ' (' + queue.length + ' waiting)' : '');
                 if (vents.length) return 'Round ' + round + ' sent to the cloud';
                 if (waves.length) return 'Thinking, round ' + round + (route === 'local' ? ' on this computer' : '');
@@ -5746,7 +5772,7 @@ window.addEventListener('DOMContentLoaded',function(){
             }
             function idle() {
                 return !twists.length && !queue.length && !waves.length && !vents.length
-                    && !scans.length && !approvals && !approvalEnv.length && mic <= 0.02 && micS <= 0.02;
+                    && !scans.length && !knocks.length && !approvals && !approvalEnv.length && mic <= 0.02 && micS <= 0.02;
             }
             // Nothing active, nothing still fading, the lattice not aligned:
             // the scene can skip gesture work entirely this frame.
@@ -5754,7 +5780,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 return idle() && align === 0 && !Object.keys(lastB).length && !Object.keys(lastG).length;
             }
             function reset() {
-                twists = []; queue = []; waves = []; vents = []; scans = [];
+                twists = []; queue = []; waves = []; vents = []; scans = []; knocks = [];
                 approvals = 0; approvalEnv = []; approvalLoop = []; mic = 0; micS = 0; lastB = {}; lastG = {}; align = 0;
                 round = 0; route = null; now = 0;
             }
@@ -6226,7 +6252,9 @@ window.addEventListener('DOMContentLoaded',function(){
                 subscribe();
                 FridayGenome.sample(dt, FridayGestures.settled());
                 FridayGestures.setReduced(typeof SceneMotion !== 'undefined' && SceneMotion.reduced());
-                FridayGestures.setMic(window._fridayMicLevel || 0);
+                // Friday's own voice heard back through the mic is not the
+                // user talking: the ripple follows the mic only while she is quiet.
+                FridayGestures.setMic(window._fridayMoodSignals && window._fridayMoodSignals.ttsActive ? 0 : (window._fridayMicLevel || 0));
                 FridayGestures.setApprovals(window.__fridayPendingApprovals || 0);
                 ensureObjects();
                 if (FridayGestures.settled()) {
@@ -7877,7 +7905,8 @@ window.fridayVibe = {
         if (typeof clearMoodOverride === 'function') clearMoodOverride();
     },
     isMicActive: function() {
-        return typeof micActive !== 'undefined' ? micActive : false;
+        // The scene's own microphone, or a voice session's.
+        return (typeof micActive !== 'undefined' && micActive) || !!window.__fridayVoiceMicOpen;
     },
     nextStructure: function() {
         if (typeof setEvolution === 'function' && typeof currentEvolutionIdx !== 'undefined' && typeof EVOLUTION_PATH !== 'undefined') {
@@ -30388,6 +30417,8 @@ function NewsWS() {
       ttsAudio.current.currentTime = 0;
       ttsAudio.current = null;
       window._fridayHoloAmplitude = 0;
+      // Stopped is not speaking: without this the scene stayed in the speaking mood.
+      if (window._fridayMoodSignals) window._fridayMoodSignals.ttsActive = false;
     }
   };
 
@@ -56880,6 +56911,18 @@ function App() {
       } catch (_) {}
     }
     v.fridaySpeaking = false;
+    // The avatar reacts at once: Friday stopped, so the scene stops showing
+    // her speaking now (ignoring the analyser's fading tail for a quarter of
+    // a second), and shows that it is listening.
+    window._fridayHoloAmplitude = 0;
+    if (window._fridayMoodSignals) window._fridayMoodSignals.ttsActive = false;
+    v._voiceSpokeAt = 0;
+    v._ampQuietUntil = performance.now() + 250;
+    if (!/^voiceStop/.test(caller || '')) {
+      try {
+        window.fridayVibe && window.fridayVibe.setSystemMood && window.fridayVibe.setSystemMood('LISTENING');
+      } catch (_) {}
+    }
     if (v._drainT) {
       try {
         clearTimeout(v._drainT);
@@ -57057,7 +57100,7 @@ function App() {
         v.holoAnalyser.getByteFrequencyData(v.holoAmpBuf);
         let s = 0;
         for (let i = 0; i < v.holoAmpBuf.length; i++) s += v.holoAmpBuf[i];
-        const _amp = Math.min(1, s / v.holoAmpBuf.length / 128);
+        const _amp = performance.now() < (v._ampQuietUntil || 0) ? 0 : Math.min(1, s / v.holoAmpBuf.length / 128);
         window._fridayHoloAmplitude = _amp;
         // Flip the scene to the SPEAKING mood (green energy, faster particles, brighter
         // bloom) whenever Friday is actually emitting voice audio. holoAnalyser taps the
@@ -57213,6 +57256,7 @@ function App() {
         console.log('[voice] mic="' + (v.micLabel || '?').slice(0, 30) + '" peak=' + v.micPeak.toFixed(4) + ' recent=' + v.micPeakRecent.toFixed(4) + ' chunks=' + v.chunksSent + ' bytes=' + v.bytesSent);
       }, 1000);
       // UI level-meter sampler — pumps the green pulse-dot next to the mic button.
+      window.__fridayVoiceMicOpen = true;
       v.meterTimer = setInterval(() => {
         setMicLevel(v.micPeakRecent || 0);
         // The lattice's listening ripple follows the same level.
@@ -57759,6 +57803,8 @@ function App() {
       } catch (_) {}
       window._fridayHoloAmplitude = 0;
       if (window._fridayMoodSignals) window._fridayMoodSignals.ttsActive = false;
+      window._fridayMicLevel = 0;
+      window.__fridayVoiceMicOpen = false;
       voiceRef.current = {
         ws: null,
         audioCtx: null,
@@ -57900,6 +57946,9 @@ function App() {
     } catch (_) {}
     window._fridayHoloAmplitude = 0;
     if (window._fridayMoodSignals) window._fridayMoodSignals.ttsActive = false;
+    // The scene reads the mic level: zero it, or the listening ripple goes on.
+    window._fridayMicLevel = 0;
+    window.__fridayVoiceMicOpen = false;
     voiceRef.current = {
       ws: null,
       audioCtx: null,

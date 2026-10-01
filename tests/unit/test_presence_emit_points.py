@@ -232,3 +232,22 @@ def test_no_retrieval_frame_when_nothing_was_retrieved(frames, assembly):
     mp.setattr(mr, "_detect_context_needs", lambda message, workspace: set())
     mr._build_context_prompt("hello", workspace="chat", vault_control=None)
     assert frames("retrieval") == []
+
+
+# ── a tool's end: only a real failure reads as one ────────────────────────────
+
+@pytest.mark.parametrize("result,ok", [
+    ("42 results", True),
+    ("Tool error (timeout)", False),
+    ("TOOL CALL FAILED: no such tool", False),
+    # Waiting for the owner's card, or declined by the owner or a policy, is
+    # not a failed step: the scene must not look concerned about either.
+    ("[APPROVAL CARD RAISED] waiting", True),
+    ("[GOVERNANCE DENY] not allowed", True),
+], ids=["ok", "error", "unknown-tool", "pending", "deny"])
+def test_a_tool_end_says_failed_only_for_a_real_failure(frames, result, ok):
+    from agent_friday.services import agent
+    presence.tool_started("web_search")
+    agent._orb_tool_trace(None, "web_search", {}, result, 10)
+    ends = [f for f in frames("tool") if f["phase"] == "end"]
+    assert len(ends) == 1 and ends[0]["ok"] is ok
