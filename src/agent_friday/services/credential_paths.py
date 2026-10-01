@@ -596,7 +596,7 @@ def _names_only_listing(cmd: str) -> bool:
     if not cmd.strip() or _NOT_A_PLAIN_LISTING.search(cmd):
         return False
     words = list(_tokens(cmd))
-    return _verb(words) in _LISTERS and not _RECURSE_RE.search(_flat(cmd))
+    return _verb(words) in _LISTERS and not _asks_recursion(cmd)
 
 
 def _use_indexes(tokens: list[str]) -> set[int]:
@@ -650,7 +650,11 @@ def _from_cwd(path: str, cwd: str) -> str:
 
 def _cd_target(words: list[str], cwd: str) -> str | None:
     """Where `cd X`, `Set-Location X` or `pushd X` leaves the shell, when X is
-    a folder that exists; None when it names no folder or none that exists."""
+    a folder that exists; None when it names a folder that does not exist.
+
+    With no target at all it leaves the shell in the home folder: Git Bash,
+    pwsh 7 and POSIX shells do that, and the walk check judges the widest
+    reach a shell on this machine could have."""
     at = _verb_index(words)
     for t in words[at + 1:]:
         if t.startswith("-") or t.lower() == "/d":
@@ -658,7 +662,7 @@ def _cd_target(words: list[str], cwd: str) -> str | None:
         raw = t.strip(",;()").replace(_SPACE, " ")
         target = _from_cwd(_expand(raw), cwd)
         return target if _is_dir(target) else None
-    return None
+    return str(_home())
 
 
 def _segments(cmd: str) -> list[list[tuple[int, int, str]]]:
@@ -684,11 +688,21 @@ _READER_RE = re.compile(
 #: -recursive, -Depth, and the robocopy/xcopy switches /S /E /MIR.
 _RECURSE_RE = re.compile(
     r"(?<![a-z0-9_-])(?:-r(?:e(?:c[a-z]*)?)?|-recursive|-depth)(?![a-z0-9_-])"
+    r"|(?<![a-z0-9_-])--recursive(?![a-z0-9_-])"
     r"|(?<=\s)/(?:s|e|mir)(?=\s|$)", re.I)
 #: Commands that descend into a directory they are given without being asked.
 _IMPLICIT_RECURSION_RE = re.compile(
     r"(?<![a-z0-9_-])(?:tar|zip|7z|7za|rar|compress-archive|find|rsync)(?![a-z0-9_-])")
+#: GNU short flags combined with a capital R (`-laR`, `-Ra`), read on the text
+#: as typed because `_flat` lowercases: capital only, so PowerShell's `-Force`
+#: and `-Filter` are not taken for recursion.
+_GNU_RECURSE_RE = re.compile(r"(?<=\s)-[A-Za-z]{0,4}R[A-Za-z]{0,4}(?=\s|$)")
 _MAX_DIR_ENTRIES = 300
+
+
+def _asks_recursion(typed: str) -> bool:
+    """True when `typed` (a command as written) asks for recursion by a flag."""
+    return bool(_RECURSE_RE.search(_flat(typed)) or _GNU_RECURSE_RE.search(typed))
 
 #: What a refused walk is called; `refusal_command` reads this to word the
 #: refusal, since no single file was named.
@@ -908,8 +922,9 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
     # root of the next, and cd / Set-Location / pushd move where a statement
     # that names no folder starts its walk.
     for stmt in _statements(cmd_r):
-        stmt_text = _flat(" ".join(" ".join(seg) for seg in stmt))
-        recurse = bool(_RECURSE_RE.search(stmt_text)
+        typed = " ".join(" ".join(seg) for seg in stmt)
+        stmt_text = _flat(typed)
+        recurse = bool(_asks_recursion(typed)
                        or _IMPLICIT_RECURSION_RE.search(stmt_text))
         walks = reads and recurse
         named_root = False

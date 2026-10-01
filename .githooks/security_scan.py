@@ -221,7 +221,7 @@ def _safe(fn):
 #: never exempts a value these match.
 SHAPE_RULES = [
     ("Google/Gemini API key", re.compile(r"AIza[0-9A-Za-z_\-]{35}"), None),
-    ("OpenAI/Anthropic/OpenRouter API key", re.compile(r"sk-(?:ant-|or-(?:v1-)?|proj-)?[A-Za-z0-9_\-]{20,}"), None),
+    ("OpenAI/Anthropic/OpenRouter API key", re.compile(r"\bsk-(?:ant-|or-(?:v1-)?|proj-)?[A-Za-z0-9_\-]{20,}"), None),
     ("Google AI Studio (AQ.) key", re.compile(r"\bAQ\.[A-Za-z0-9_\-]{20,}"), None),
     ("Google OAuth client secret", re.compile(r"\bGOCSPX-[A-Za-z0-9_\-]{20,}"), None),
     ("Google OAuth refresh token", re.compile(r"\b1//0[0-9A-Za-z_\-]{30,}"), None),
