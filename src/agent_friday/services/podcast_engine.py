@@ -575,7 +575,7 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
     for i, ch in enumerate(chapters):
         use = {s for s in (ch.get("sources") or []) if s in valid} or valid
         tail = "\n".join("%s: %s" % (ep["hosts"][ln["speaker"]]["name"], ln["text"])
-                         for ln in lines[-6:])
+                         for ln in lines[-3:])
         opening = ("naming the show and %s" % ("Friday" if solo else "both hosts"))
         where = ("This is the opening. The show's fixed opening, %s, plays just "
                  "before it: do not greet or introduce anyone. Start with the "
@@ -587,7 +587,7 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
         raw, _m = _llm_json(system, (
             "SOURCES FOR THIS CHAPTER:\n\n%s\n\n"
             "Chapter %d of %d: \"%s\". Points: %s\n"
-            "The script so far ended with:\n%s\n\n%s\n"
+            "ALREADY WRITTEN, for continuity only (never repeat these lines):\n%s\n\n%s\n"
             "Write about %d words. %s Never mention chapters, sections or these "
             "instructions in the dialogue. "
             "Return {\"lines\": [{\"speaker\": \"a\"%s, "
@@ -598,8 +598,9 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
             max_tokens=3000)
         got, bad = clean_lines(raw.get("lines") or [], valid, chapter=i,
                                facts=ep.get("_facts"), solo=solo)
+        got, echoed = _drop_echoes(got, lines)
         lines += got
-        rejected += bad
+        rejected += bad + echoed
         if progress:
             progress(i + 1, len(chapters))
     lines = merge_turns(lines)
@@ -698,9 +699,45 @@ def _revise(ep: dict, system: str, docs: list[dict], lines: list[dict], problems
         except (TypeError, ValueError):
             ch = 0
         got, cut = clean_lines([item], valid, chapter=ch, facts=ep.get("_facts"), solo=solo)
+        got, echoed = _drop_echoes(got, out)
         out += got
-        bad += cut
+        bad += cut + echoed
     return merge_turns(out), bad
+
+
+def _drop_echoes(new: list[dict], before: list[dict]) -> tuple[list, list]:
+    """Lines that repeat one already written. A writer shown the script so far
+    as continuity can hand it back as new output (contractions expanded,
+    sources dropped); the stitch never appends it twice."""
+    kept, cut = [], []
+    for ln in new:
+        if any(quality.is_duplicate(ln["text"], b["text"]) for b in before + kept):
+            cut.append({"text": ln["text"], "chapter": ln.get("chapter", 0),
+                        "reason": "echo of an earlier line (the writer repeated the script it was shown)"})
+        else:
+            kept.append(ln)
+    return kept, cut
+
+
+def stamp_open(ep: dict) -> dict:
+    """The anchor's open for a News routine's episode: where Friday is (the
+    owner's city), the day and date, the local time the run was made, and the
+    weather there, if it could be fetched (city level, keyless public source)."""
+    from agent_friday.services import podcast_weather
+    when = time.localtime(ep.get("created_at") or time.time())
+    h = when.tm_hour
+    city = ep.get("home") or home_city()
+    got = podcast_weather.current(city) if city else None
+    ep["open"] = {
+        "greeting": "morning" if h < 12 else "afternoon" if h < 17 else "evening",
+        "place": podcast_weather.spoken_place(city) if city else "",
+        "day": "%s, %s %d" % (time.strftime("%A", when), time.strftime("%B", when), when.tm_mday),
+        "time": "%d:%02d %s" % ((h % 12) or 12, when.tm_min, "AM" if h < 12 else "PM"),
+        "weather": (got or {}).get("text") or "",
+        "weather_source": (got or {}).get("source") or "",
+        "weather_url": (got or {}).get("url") or "",
+    }
+    return ep
 
 
 def signature_lines(ep: dict, *, link_claim: bool = False) -> tuple[list[dict], list[dict]]:
@@ -721,8 +758,15 @@ def signature_lines(ep: dict, *, link_claim: bool = False) -> tuple[list[dict], 
                  else "The transcript shows what each line came from.")
     else:
         where = "Every claim you heard has its source in the transcript."
-    opening = [{"speaker": "a", "text": "This is %s. I'm %s." % (show, a), "cites": [],
-                "signature": True}]
+    op = ep.get("open") or {}
+    if op and (ep.get("attached") or {}).get("routine"):
+        first = "%s. It's %s, %s%s. This is %s. I'm %s." % (
+            ("Good %s from %s" % (op["greeting"], op["place"])) if op.get("place")
+            else "Good %s" % op["greeting"],
+            op["day"], op["time"], (", and " + op["weather"]) if op.get("weather") else "", show, a)
+    else:
+        first = "This is %s. I'm %s." % (show, a)
+    opening = [{"speaker": "a", "text": first, "cites": [], "signature": True}]
     if ep.get("format") != "solo":
         opening.append({"speaker": "b", "text": "And I'm %s." % b, "cites": [], "signature": True})
     closing = [{"speaker": "a", "text": "That's %s. %s I'm %s." % (show, where, a),
@@ -765,6 +809,7 @@ def _clean_text(t: str) -> str:
     t = brand.spoken(str(t or ""))
     t = _HEADING_TEXT_RE.sub(" ", str(t or ""))
     t = quality.META_RE.sub(" ", t)          # the writer narrating its process
+    t = quality.REASONING_RE.sub(" ", t)     # its reasoning read aloud
     for rx, rep in _STRIP_RE:
         t = rx.sub(rep, t)
     return t.strip()
@@ -929,11 +974,19 @@ def produce(eid: str, *, should_stop=None) -> dict:
             docs = _gather(ep)
             if not docs:
                 raise render.RenderError("no_sources", "There was nothing to talk about.")
+            if (ep.get("attached") or {}).get("routine") and not ep.get("open"):
+                ep = _update(eid, open=stamp_open(dict(ep))["open"])
             script = write_script(ep, docs, progress=lambda i, n: (
                 _update(eid, progress={"stage": "writing", "done": i, "of": n}),
                 _orb(orb, "progress", ep, (i / n) * 0.4)))
             if stop():
                 return load(eid)
+            hard = [p for p in script["script_check"]["problems"] if p["code"] in quality.HARD_CODES]
+            if hard:
+                _update(eid, script_check=script["script_check"], rejected=script["rejected"])
+                raise render.RenderError(
+                    "script_rejected", "The script failed the script check and was not spoken: "
+                    + "; ".join("%s (%s)" % (p["code"], p["message"][:80]) for p in hard[:4]))
             # Counted in words: a solo show merges her sentences into few lines.
             if sum(len(ln["text"].split()) for ln in script["lines"] if not ln.get("signature")) < MIN_SCRIPT_WORDS:
                 raise render.RenderError(
@@ -1067,6 +1120,9 @@ def transcript_bytes(ep: dict) -> bytes:
         out.append("Script check: " + ("passed" if sc.get("ok") else
                                        "%d problem(s):" % len(sc.get("problems") or [])))
         out += ["  - " + p["message"] for p in sc.get("problems") or []]
+    op = ep.get("open") or {}
+    if op.get("weather_source"):
+        out.append("Weather: %s (%s), city level." % (op["weather_source"], op.get("weather_url") or ""))
     out += ["", "TRANSCRIPT"]
     chapters = ep.get("chapters") or []
     chap = None

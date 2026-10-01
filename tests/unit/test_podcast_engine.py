@@ -47,11 +47,18 @@ def _fake_writer(script_for_chapter=None, outline=None):
                 {"title": "Middle", "sources": ["S1", "S2"]},
                 {"title": "Close", "sources": ["S2"]}]}, "bonsai2:27b")
         n = sum(1 for c in calls if "Chapter " in c["user"])
-        lines = (script_for_chapter(n) if script_for_chapter else [
-            {"speaker": "a", "text": "Good evening, this is the show.", "cites": []},
-            {"speaker": "b", "text": "The council voted 7 to 2 on Tuesday.", "cites": ["S1"]},
-            {"speaker": "a", "text": "And the budget rose by 12 percent.", "cites": ["S2"]},
-        ])
+        # A different passage per chapter: a real writer does not repeat a
+        # chapter, and the stitch drops a line that repeats an earlier one.
+        lines = (script_for_chapter(n) if script_for_chapter else {
+            1: [{"speaker": "a", "text": "Good evening, this is the show.", "cites": []},
+                {"speaker": "b", "text": "The council voted 7 to 2 on Tuesday.", "cites": ["S1"]},
+                {"speaker": "a", "text": "And the budget rose by 12 percent.", "cites": ["S2"]}],
+            2: [{"speaker": "a", "text": "Here is what happened next.", "cites": []},
+                {"speaker": "b", "text": "Councillors argued for an hour before the 7 to 2 result.", "cites": ["S1"]},
+                {"speaker": "a", "text": "Roads take most of the 12 percent rise.", "cites": ["S2"]}],
+        }.get(n, [{"speaker": "a", "text": "That is the shape of the week.", "cites": []},
+                  {"speaker": "b", "text": "Watch the final vote on the 12 percent increase.", "cites": ["S2"]},
+                  {"speaker": "a", "text": "We will be back.", "cites": []}]))
         return {"lines": lines}, "bonsai2:27b"
     llm.calls = calls
     return llm

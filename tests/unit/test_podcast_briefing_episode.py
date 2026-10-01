@@ -169,7 +169,8 @@ def test_a_briefing_is_friday_alone_by_default(home, monkeypatch, speaker):
     done = pe.produce(_briefing()["id"])
     assert done["format"] == "solo"
     assert {ln["speaker"] for ln in done["lines"]} == {"a"}
-    assert done["lines"][0]["text"] == "This is The Briefing. I'm Friday."
+    assert done["lines"][0]["text"].startswith("Good ")             # an anchor's open
+    assert done["lines"][0]["text"].endswith("This is The Briefing. I'm Friday.")
     assert "Emma" not in " ".join(ln["text"] for ln in done["lines"])
     assert {v for v, _t in speaker} == {"af_heart"}
 

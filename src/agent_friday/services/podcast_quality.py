@@ -723,7 +723,161 @@ def link_claim_problems(lines: list[dict], story_list: list[dict]) -> list[dict]
     return []
 
 
-CHECKS = ("ledes", "safety stories", "home city", "facts stay with their story",
+# ── pass four: reasoning, echoes, one place per story, attribution ──────────
+
+#: The writer's epistemic scaffolding read aloud: what it did not check, how
+#: thin its evidence is, and talk between hosts about the talk. Never speech.
+REASONING_RE = re.compile(
+    r"[^.!?]*\b(?:"
+    r"I (?:did not|didn't|have not|haven't|could not|couldn't) (?:check|verify|confirm|see|read|look)\w*"
+    r"|(?:the )?evidence (?:is|was|remains) (?:thin|limited|scant|light)"
+    r"|(?:a )?gap (?:I|we) (?:need|want|have) to flag|I need to flag|worth flagging"
+    r"|(?:you're|you are) right to push back|push(?:ing)? back on that"
+    r"|(?:that's|that is) a (?:fair|good|sharp) (?:read|point|question)|good (?:point|question)|fair point"
+    r"|a sharp listener|the listener (?:would|might) want"
+    r"|I only have (?:the )?\w+"
+    r")\b[^.!?]*[.!?]", re.I)
+
+HARD_CODES = frozenset({"reasoning_leak", "duplicate_line", "misattributed"})
+
+
+def reasoning_problems(lines: list[dict]) -> list[dict]:
+    return [_p("reasoning_leak", "The writer's reasoning is read aloud instead of the news: \"%s\". "
+               "Say an unknown once, as a fact about the reporting (\"the company hasn't responded\")."
+               % m.group(0).strip()[:100], i)
+            for i, ln in _spoken(lines) for m in [REASONING_RE.search(ln["text"])] if m]
+
+
+_CONTRACTIONS = [(r"\bit's\b", "it is"), (r"\bthat's\b", "that is"), (r"\byou're\b", "you are"),
+                 (r"\bwe're\b", "we are"), (r"\bthey're\b", "they are"), (r"\bdon't\b", "do not"),
+                 (r"\bdoesn't\b", "does not"), (r"\bdidn't\b", "did not"), (r"\bisn't\b", "is not"),
+                 (r"\baren't\b", "are not"), (r"\bcan't\b", "cannot"), (r"\bwon't\b", "will not"),
+                 (r"\bI'm\b", "I am"), (r"\bhasn't\b", "has not"), (r"\bhaven't\b", "have not")]
+
+
+def _normal(text: str) -> str:
+    t = (text or "").lower().replace("’", "'")
+    for a, b in _CONTRACTIONS:
+        t = re.sub(a, b.lower(), t, flags=re.I)
+    return re.sub(r"[^a-z0-9$% ]+", "", re.sub(r"\s+", " ", t)).strip()
+
+
+def is_duplicate(a: str, b: str) -> bool:
+    """The same line twice, allowing for expanded contractions and small edits."""
+    na, nb = _normal(a), _normal(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    wa, wb = set(na.split()), set(nb.split())
+    if min(len(wa), len(wb)) < 6:
+        return False
+    common = len(wa & wb)
+    return common / len(wa) >= 0.85 and common / len(wb) >= 0.85
+
+
+def duplicate_problems(lines: list[dict]) -> list[dict]:
+    out = []
+    spoken = _spoken(lines)
+    for k, (i, ln) in enumerate(spoken):
+        for j, prev in spoken[:k]:
+            if is_duplicate(ln["text"], prev["text"]):
+                out.append(_p("duplicate_line", "Line %d repeats line %d: \"%s\"" % (i, j, ln["text"][:90]), i))
+                break
+    return out
+
+
+_HEADLINE_RE = re.compile(r"\b(the headline|the (?:single )?(?:most important|biggest) (?:thing|story)|"
+                          r"(?:the )?top story|(?:the )?lead story|the big story)\b", re.I)
+
+
+def placement_problems(lines: list[dict], story_list: list[dict]) -> list[dict]:
+    """Each story in one place; the headline named once, at the top."""
+    out = []
+    spoken = _spoken(lines)
+    at = {}
+    for pos, (i, ln) in enumerate(spoken):
+        for s in story_list:
+            if s["sid"] in (ln.get("cites") or []) or _mentions(ln, s):
+                at.setdefault(s["sid"], []).append((pos, i))
+    last = max([ln.get("chapter", 0) for _i, ln in spoken] or [0])
+    for s in story_list:
+        hits = at.get(s["sid"]) or []
+        # The close may point back at one story in a single "what to watch"
+        # line; re-telling it there is a split like any other.
+        close = [h for h in hits if spoken[h[0]][1].get("chapter", 0) == last and last > 0]
+        if len(close) == 1 and re.search(r"\bwatch\b", spoken[close[0][0]][1]["text"], re.I):
+            hits = [h for h in hits if h not in close]
+        for (p1, _i1), (p2, i2) in zip(hits, hits[1:]):
+            between = [spoken[x][1] for x in range(p1 + 1, p2)]
+            others = [b for b in between if any(o["sid"] in (b.get("cites") or []) or _mentions(b, o)
+                                                for o in story_list if o["sid"] != s["sid"])]
+            if len(others) >= 2:
+                out.append(_p("story_split", "\"%s\" is covered in two places; tell each story once, "
+                              "in one place." % s["title"][:80], i2, s["sid"]))
+                break
+    heads = [(pos, i) for pos, (i, ln) in enumerate(spoken) if _HEADLINE_RE.search(ln["text"])]
+    if len(heads) > 1:
+        out.append(_p("two_headlines", "The headline is named %d times; name it once, at the top."
+                      % len(heads), heads[1][1]))
+    elif heads and heads[0][0] > 2:
+        out.append(_p("two_headlines", "The headline is named late; name it once, at the top.",
+                      heads[0][1]))
+    return out
+
+
+def read_cap_problems(lines: list[dict], story_list: list[dict]) -> list[dict]:
+    """At most one "my read" per story."""
+    count: dict = {}
+    out = []
+    sids = {s["sid"] for s in story_list}
+    for i, ln in _spoken(lines):
+        n = sum(1 for sent in _SENT_RE.split(ln["text"]) if _OPINION_RE.search(sent))
+        for sid in set(ln.get("cites") or []) & sids:
+            count[sid] = count.get(sid, 0) + n
+            if count[sid] > 1 and n:
+                out.append(_p("read_cap", "More than one read on the same story; one is enough.", i, sid))
+                count[sid] = -99
+    return out
+
+
+_ATTRIB_VERB = r"(?:reports?|reported|says|said|notes|noted|writes|wrote|according to|confirms|confirmed)"
+
+
+def misattribution_problems(lines: list[dict], story_list: list[dict], docs: list[dict]) -> list[dict]:
+    """A clause attributed to an outlet comes from that outlet's item. Friday's
+    own analysis (her written notes) is hers, never a publisher's."""
+    own_words = set()
+    for d in docs:
+        if d.get("role") == "digest" or d.get("kind") == "digest":
+            own_words |= {w for w in _words(d.get("text") or "") if len(w) >= 6 and w not in _STOP}
+    out = []
+    for i, ln in _spoken(lines):
+        for sent in _SENT_RE.split(ln["text"]):
+            for s in story_list:
+                al = outlet_aliases(s)
+                if not al or not said_outlet(sent, al):
+                    continue
+                if not re.search(_ATTRIB_VERB, sent, re.I):
+                    continue
+                story = set(_words("%s %s" % (s["title"], s["text"])))
+                words = {w for w in _words(sent) if len(w) >= 6 and w not in _STOP}
+                foreign = sorted(w for w in words - story if w in own_words)
+                foreign += sorted(f for f in _hard_facts(sent) - story - {a for a in al}
+                                  if any(f in set(_words("%s %s" % (o["title"], o["text"])))
+                                         for o in story_list if o is not s))
+                if foreign:
+                    out.append(_p("misattributed", "\"%s\" is attributed to %s, but %s is not in "
+                                  "that report; Friday's own analysis is hers, said as \"my read\"."
+                                  % (sent[:90], spoken_outlet(s) or s["outlet"],
+                                     ", ".join(w.title() for w in foreign[:4])), i, s["sid"]))
+                break
+    return out
+
+
+CHECKS = ("no reasoning read aloud", "no repeated lines", "one story in one place",
+          "one headline", "one read per story", "outlet attribution",
+          "ledes", "safety stories", "home city", "facts stay with their story",
           "no opinion on violence", "grounded reads", "no process narration",
           "calendar times", "repetition", "restated close", "headings",
           "digest references", "refrains", "addresses", "fragments", "link claim",
@@ -744,6 +898,12 @@ def script_problems(lines: list[dict], docs: list[dict], *, n_chapters: int = 1,
         probs += attribution_problems(lines, story_list, docs, home)
         probs += opinion_problems(lines, story_list, docs)
     probs += meta_problems(lines)
+    probs += reasoning_problems(lines)
+    probs += duplicate_problems(lines)
+    if news:
+        probs += placement_problems(lines, story_list)
+        probs += read_cap_problems(lines, story_list)
+        probs += misattribution_problems(lines, story_list, docs)
     probs += time_problems(lines, event_list, docs)
     probs += repetition_problems(lines, docs, n_chapters)
     probs += heading_problems(lines, docs)
