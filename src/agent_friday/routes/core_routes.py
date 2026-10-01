@@ -513,9 +513,61 @@ def decisions_gate_status():
     return jsonify(public_result(out, "Couldn't read the decision gate"))
 
 
+#: How long one health payload is served to every caller. The UI, the tray
+#: watchdog and the settings panels poll /api/health about 16 times a minute;
+#: each computation reads the vault, memory and creations directories and
+#: sweeps the providers. Five seconds is shorter than any poller's interval
+#: that acts on the answer.
+_HEALTH_TTL_S = 5.0
+_health_lock = threading.Lock()
+_health_cache = {"at": 0.0, "payload": None, "inflight": None}
+
+
+def _reset_health_cache_for_tests():
+    with _health_lock:
+        _health_cache.update(at=0.0, payload=None, inflight=None)
+
+
+def _health_cached():
+    """The health payload, computed at most once per ``_HEALTH_TTL_S``.
+
+    Single flight: a caller that arrives while a computation is running waits
+    for it and shares its result instead of starting a second one. When the
+    computation fails, the next waiter computes; nothing failed is cached.
+    """
+    while True:
+        with _health_lock:
+            payload = _health_cache["payload"]
+            if payload is not None and _time.monotonic() - _health_cache["at"] < _HEALTH_TTL_S:
+                return payload
+            ev = _health_cache["inflight"]
+            leader = ev is None
+            if leader:
+                ev = threading.Event()
+                _health_cache["inflight"] = ev
+        if not leader:
+            ev.wait(timeout=60.0)
+            continue
+        try:
+            payload = _health_payload()
+            with _health_lock:
+                _health_cache["payload"] = payload
+                _health_cache["at"] = _time.monotonic()
+            return payload
+        finally:
+            with _health_lock:
+                _health_cache["inflight"] = None
+            ev.set()
+
+
 @core_bp.route('/api/health')
 def friday_health():
     """Return server uptime and system health snapshot for the demo UI."""
+    return jsonify(_health_cached())
+
+
+def _health_payload():
+    """One full health computation; served through ``_health_cached``."""
     uptime_s = int(_time.time() - SERVER_START_TS)
     creations_today = 0
     if CREATIONS_DIR.exists():
@@ -666,7 +718,7 @@ def friday_health():
     except Exception as _pe:
         _privacy = {"summary": "unknown", "error": error_text(_pe, "Could not read the privacy classifier state"), "degraded": True}
 
-    return jsonify(public_result({
+    return public_result({
         "status": _status,
         "inference": _inference,
         "privacy_classifier": _privacy,
@@ -725,7 +777,7 @@ def friday_health():
             # that fact, where a person and a boot check can see it.
             "laya_calibration": _laya_calibration(),
         },
-    }, "Couldn't check Friday's health"))
+    }, "Couldn't check Friday's health")
 
 
 # ═══════════════════════════════════════════════════════════════

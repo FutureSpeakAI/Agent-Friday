@@ -46,6 +46,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Any, Callable
 
 from agent_friday.services import swr_cache
@@ -183,6 +185,24 @@ def _kick(key: str, compute: Callable[[], Any],
     return ev, True
 
 
+#: Worker ceiling for the one executor every ``probe_all`` sweep shares. It
+#: bounds the threads probing can hold at once, however often health is polled.
+PROBE_POOL_WORKERS = 16
+
+_pool: ThreadPoolExecutor | None = None
+_pool_lock = threading.Lock()
+
+
+def _probe_pool() -> ThreadPoolExecutor:
+    """The process-wide probe executor, created on first use."""
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ThreadPoolExecutor(max_workers=PROBE_POOL_WORKERS,
+                                       thread_name_prefix="probe_all")
+        return _pool
+
+
 def probe_all(probes: dict[str, Callable[[], Any]], *,
               timeout: float = DEFAULT_PROBE_TIMEOUT_S) -> dict[str, dict]:
     """Run every probe in PARALLEL with a hard per-probe ceiling.
@@ -196,43 +216,38 @@ def probe_all(probes: dict[str, Callable[[], Any]], *,
     about 2 seconds, and a probe that overruns is reported as unreachable
     instead of being waited on.
 
-    A timed-out probe's thread is left running rather than killed -- Python
-    cannot safely interrupt a blocking socket read -- but it is a daemon thread
-    and nothing waits on its result, so it cannot hold up a response.
+    Every sweep shares one bounded executor (``PROBE_POOL_WORKERS``) rather
+    than building one per call. A timed-out probe keeps its worker until its
+    own socket timeout ends it -- Python cannot safely interrupt a blocking
+    read -- but nothing waits on its result; a probe still queued when the
+    ceiling passes is cancelled, so it never runs late.
     """
-    from concurrent.futures import ThreadPoolExecutor
-
     out: dict[str, dict] = {}
     if not probes:
         return out
     started: dict[str, float] = {}
-    ex = ThreadPoolExecutor(max_workers=max(1, min(len(probes), 12)),
-                            thread_name_prefix="probe_all")
-    try:
-        futures = {}
-        for name, fn in probes.items():
-            started[name] = time.time()
-            futures[name] = ex.submit(fn)
-        deadline = time.time() + max(0.0, timeout)
-        for name, fut in futures.items():
-            remaining = max(0.0, deadline - time.time())
-            try:
-                value = fut.result(timeout=remaining)
-                out[name] = {"ok": True, "value": value, "error": None,
-                             "timed_out": False,
-                             "seconds": round(time.time() - started[name], 3)}
-            except TimeoutError:
-                out[name] = {"ok": False, "value": None, "timed_out": True,
-                             "error": "did not answer within %.1fs" % timeout,
-                             "seconds": round(time.time() - started[name], 3)}
-            except Exception as e:  # noqa: BLE001 - a failure is a verdict
-                out[name] = {"ok": False, "value": None, "timed_out": False,
-                             "error": ExceptionText("%s: %s" % (type(e).__name__, str(e)[:120])),
-                             "seconds": round(time.time() - started[name], 3)}
-    finally:
-        # Do not join: a probe blocked on a refused connection would otherwise
-        # make shutdown as slow as the thing we are avoiding.
-        ex.shutdown(wait=False)
+    ex = _probe_pool()
+    futures = {}
+    for name, fn in probes.items():
+        started[name] = time.time()
+        futures[name] = ex.submit(fn)
+    deadline = time.time() + max(0.0, timeout)
+    for name, fut in futures.items():
+        remaining = max(0.0, deadline - time.time())
+        try:
+            value = fut.result(timeout=remaining)
+            out[name] = {"ok": True, "value": value, "error": None,
+                         "timed_out": False,
+                         "seconds": round(time.time() - started[name], 3)}
+        except FutureTimeout:
+            fut.cancel()
+            out[name] = {"ok": False, "value": None, "timed_out": True,
+                         "error": "did not answer within %.1fs" % timeout,
+                         "seconds": round(time.time() - started[name], 3)}
+        except Exception as e:  # noqa: BLE001 - a failure is a verdict
+            out[name] = {"ok": False, "value": None, "timed_out": False,
+                         "error": ExceptionText("%s: %s" % (type(e).__name__, str(e)[:120])),
+                         "seconds": round(time.time() - started[name], 3)}
     return out
 
 

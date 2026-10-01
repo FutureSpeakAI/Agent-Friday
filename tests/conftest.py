@@ -340,6 +340,16 @@ def _fresh_warm_cache():
 
 
 @pytest.fixture(autouse=True)
+def _fresh_health_cache():
+    """/api/health serves one payload for five seconds; each test computes
+    its own from the state it set up."""
+    cr = sys.modules.get("agent_friday.routes.core_routes")
+    if cr is not None and hasattr(cr, "_reset_health_cache_for_tests"):
+        cr._reset_health_cache_for_tests()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_local_seat_is_serving(monkeypatch):
     """By default, no local seat is serving.
 
