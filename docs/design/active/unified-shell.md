@@ -399,8 +399,8 @@ The conventions are Windows Snap Layouts and macOS window tiling, in Friday's lo
 ### 11.3 How a window is snapped
 
 - **Drag:** drag a window by its title bar toward the left or right edge of the snap area and a
-  preview outline shows the slot before release: a half first, then, holding at the edge, a
-  third, then two thirds. The top edge previews `full`. Away from the edges, a window's edges
+  preview outline shows the slot before release: a half first, then, holding at the edge, two
+  thirds, then a third (the keys step in the same order). The top edge previews `full`. Away from the edges, a window's edges
   are magnetic within 10px of the snap area's edges. Release in a preview to snap; drag a
   snapped window away to free it at its own size.
 - **The layout menu:** resting on a window's maximise button opens a small menu of layouts
@@ -438,7 +438,7 @@ width. A layout applies when its workspace comes to the front or its tab opens.
 - Ctrl+Alt+arrow chords and Ctrl+Alt+C (Windows keeps the Windows key; Ctrl+Alt is the
   common stand-in, and letters are matched by the character typed, so a keyboard whose AltGr
   writes a character there is left alone).
-- Holding at an edge steps a half, then a third, then two thirds.
+- Holding at an edge steps a half, then two thirds, then a third, as the keys do.
 - A window snapped beside the tray hides the dock until the bottom edge is touched, as
   fullscreen with chat does.
 - Hidden chat stays hidden across reloads until the owner shows it.

@@ -375,12 +375,14 @@ _VOICE_LIVE_TOOLS = [
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
     ("set_chat_tray",
-     "Show or hide the chat tray ('show chat', 'hide chat'), or dock it on the left or "
-     "the right. Hidden, it leaves a slim pill on its edge and the workspace takes the "
-     "full width. Their own screen, so no approval is needed. CHAT_OK: say what changed "
+     "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or "
+     "the right in a third, a half or two thirds of the screen ('put chat on the right "
+     "third'); the workspace beside it takes the rest. Hidden, it leaves a slim pill on "
+     "its edge and the workspace takes the full width. Their own screen, so no approval is needed. CHAT_OK: say what changed "
      "in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
      {"visible": ("boolean", "true to show the chat, false to hide it."),
-      "side": ("string", "left or right: the edge it docks on.")}, []),
+      "side": ("string", "left or right: the edge it docks on."),
+      "size": ("string", "third, half or two_thirds: how much of the screen it takes.")}, []),
     ("show_my_day",
      "Show the start screen's cluster now ('show my day'): their countdowns, the "
      "chat field, the mic and Start my day. With mode, set when it shows on its own "
@@ -391,14 +393,18 @@ _VOICE_LIVE_TOOLS = [
      {"mode": ("string", "smart, always or never; empty to show it now.")}, []),
     ("set_workspace_layout",
      "Show a workspace fullscreen with the chat tray docked beside it ('make this "
-     "fullscreen with chat'), or back to normal. It is their own screen, so no "
+     "fullscreen with chat'), or back to normal, or, with fullscreen_chat false and a "
+     "position, in part of the screen ('put News on the left two thirds'). It is their "
+     "own screen, so no "
      "approval is needed, and the choice is remembered for that workspace. Leave "
      "workspace empty for the one in front. LAYOUT_OK means the screen did it: say "
      "so in a few words. LAYOUT_SAVED means it is remembered and applies when that "
      "workspace is open: say that, not that it changed. On LAYOUT_FAIL, ask which "
      "workspace.",
      {"workspace": ("string", "Workspace id or name; empty for the one in front."),
-      "fullscreen_chat": ("boolean", "true: fullscreen with the chat beside it; false: normal.")},
+      "fullscreen_chat": ("boolean", "true: fullscreen with the chat beside it; false: normal."),
+      "position": ("string", "With fullscreen_chat false: left_half, right_half, left_third, "
+                   "middle_third, right_third, left_two_thirds, right_two_thirds or full.")},
      ["fullscreen_chat"]),
     # Organizing mail, files and wiki pages (services/item_actions). A result
     # meant for this cloud session names counts, never a subject, sender,

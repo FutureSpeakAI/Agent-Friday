@@ -441,7 +441,9 @@ def test_the_cluster_fades_away_and_a_key_brings_it_back(browser_page):
     page.keyboard.press("Control+/")
     page.wait_for_function("document.querySelector('[data-testid=\"landing-cluster\"]').dataset.landing === 'shown'",
                            timeout=10000)
-    page.wait_for_timeout(300)                   # the cursor lands a moment after it shows
+    # the cursor lands a moment after it shows
+    page.wait_for_function("document.querySelector('[data-testid=\"landing-cluster\"]').contains(document.activeElement)",
+                           timeout=10000)
     c = _cluster(page)
     assert c["focusInside"] and not c["inert"], c
     assert "[landing] shown: you asked" in logs and "[keys] chat field" in logs

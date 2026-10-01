@@ -567,6 +567,42 @@ window.addEventListener('DOMContentLoaded',function(){
         .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 22px; outline: none; }
         .chat-edge-pill.left { right: auto; left: 0; border-left: none;
             border-right: 1px solid rgba(0,212,255,0.28); border-radius: 0 10px 10px 0; }
+        /* Snap layouts (unified-shell.md §11): the outline a release would
+           fill, and the menu of layouts drawn as zones. */
+        .snap-preview {
+            position: fixed; z-index: 140; pointer-events: none; box-sizing: border-box;
+            display: flex; align-items: center; justify-content: center;
+            border: 2px solid rgba(0,212,255,0.85); border-radius: 10px;
+            background: rgba(0,212,255,0.10);
+            box-shadow: inset 0 0 40px rgba(0,212,255,0.14), 0 0 24px rgba(0,212,255,0.25);
+            color: var(--fr-cyan); font-family: var(--fr-font-body); font-size: var(--fr-text-base);
+            font-weight: 600; letter-spacing: 0.02em;
+            transition: left 0.12s ease, top 0.12s ease, width 0.12s ease, height 0.12s ease;
+        }
+        .snap-preview span { padding: 4px 10px; border-radius: 999px; background: rgba(10,14,26,0.82); }
+        .snap-menu {
+            position: fixed; z-index: 150; box-sizing: border-box; padding: 8px 12px 12px;
+            border-radius: 10px; background: rgba(10,14,26,0.96);
+            border: 1px solid rgba(0,212,255,0.25); box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+        }
+        .snap-menu-title { font-family: var(--fr-font-body); font-size: var(--fr-text-2xs); font-weight: 600;
+            letter-spacing: var(--fr-track-label); text-transform: uppercase; color: var(--fr-dim); margin: 6px 0; }
+        .snap-menu-row { display: flex; gap: 8px; flex-wrap: wrap; }
+        .snap-tile { display: flex; gap: 2px; width: 52px; height: 34px; padding: 2px; box-sizing: border-box;
+            border-radius: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.03); }
+        .snap-zone { border: none; padding: 0; min-width: 0; border-radius: 3px; cursor: pointer;
+            background: rgba(255,255,255,0.12); }
+        .snap-zone.chat { background: rgba(0,212,255,0.22); }
+        .snap-zone.current { background: rgba(0,212,255,0.45); }
+        .snap-zone:hover, .snap-zone:focus-visible { background: rgba(0,212,255,0.7); outline: none; }
+        .snap-menu-hide { margin-top: 10px; width: 100%; }
+        .chat-win-snap { margin-left: auto; background: none; border: none; color: #9fb4c8; cursor: pointer;
+            font-size: 13px; line-height: 1; padding: 2px 4px; }
+        @media (prefers-reduced-motion: reduce) { .snap-preview { transition: none !important; } }
+        /* A snapped window and the docked tray are exactly their boxes: the
+           border is inside, so neighbours meet without overlapping. */
+        .fwin.snapped, .chat-win.snapped, .chat-panel { box-sizing: border-box; }
         @media (prefers-reduced-motion: reduce) {
             .chat-panel, .chat-panel.open, .chat-edge-pill { transition: none !important; }
         }

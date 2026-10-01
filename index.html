@@ -718,6 +718,42 @@ window.addEventListener('DOMContentLoaded',function(){
         .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 22px; outline: none; }
         .chat-edge-pill.left { right: auto; left: 0; border-left: none;
             border-right: 1px solid rgba(0,212,255,0.28); border-radius: 0 10px 10px 0; }
+        /* Snap layouts (unified-shell.md §11): the outline a release would
+           fill, and the menu of layouts drawn as zones. */
+        .snap-preview {
+            position: fixed; z-index: 140; pointer-events: none; box-sizing: border-box;
+            display: flex; align-items: center; justify-content: center;
+            border: 2px solid rgba(0,212,255,0.85); border-radius: 10px;
+            background: rgba(0,212,255,0.10);
+            box-shadow: inset 0 0 40px rgba(0,212,255,0.14), 0 0 24px rgba(0,212,255,0.25);
+            color: var(--fr-cyan); font-family: var(--fr-font-body); font-size: var(--fr-text-base);
+            font-weight: 600; letter-spacing: 0.02em;
+            transition: left 0.12s ease, top 0.12s ease, width 0.12s ease, height 0.12s ease;
+        }
+        .snap-preview span { padding: 4px 10px; border-radius: 999px; background: rgba(10,14,26,0.82); }
+        .snap-menu {
+            position: fixed; z-index: 150; box-sizing: border-box; padding: 8px 12px 12px;
+            border-radius: 10px; background: rgba(10,14,26,0.96);
+            border: 1px solid rgba(0,212,255,0.25); box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+        }
+        .snap-menu-title { font-family: var(--fr-font-body); font-size: var(--fr-text-2xs); font-weight: 600;
+            letter-spacing: var(--fr-track-label); text-transform: uppercase; color: var(--fr-dim); margin: 6px 0; }
+        .snap-menu-row { display: flex; gap: 8px; flex-wrap: wrap; }
+        .snap-tile { display: flex; gap: 2px; width: 52px; height: 34px; padding: 2px; box-sizing: border-box;
+            border-radius: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.03); }
+        .snap-zone { border: none; padding: 0; min-width: 0; border-radius: 3px; cursor: pointer;
+            background: rgba(255,255,255,0.12); }
+        .snap-zone.chat { background: rgba(0,212,255,0.22); }
+        .snap-zone.current { background: rgba(0,212,255,0.45); }
+        .snap-zone:hover, .snap-zone:focus-visible { background: rgba(0,212,255,0.7); outline: none; }
+        .snap-menu-hide { margin-top: 10px; width: 100%; }
+        .chat-win-snap { margin-left: auto; background: none; border: none; color: #9fb4c8; cursor: pointer;
+            font-size: 13px; line-height: 1; padding: 2px 4px; }
+        @media (prefers-reduced-motion: reduce) { .snap-preview { transition: none !important; } }
+        /* A snapped window and the docked tray are exactly their boxes: the
+           border is inside, so neighbours meet without overlapping. */
+        .fwin.snapped, .chat-win.snapped, .chat-panel { box-sizing: border-box; }
         @media (prefers-reduced-motion: reduce) {
             .chat-panel, .chat-panel.open, .chat-edge-pill { transition: none !important; }
         }
@@ -756,8 +792,9 @@ window.addEventListener('DOMContentLoaded',function(){
            docked chat tray takes its width from the tab instead of covering
            it (--fr-chat-dock, set by App while the tray is open in a tab). */
         .ws-tab { height: 100%; display: flex; flex-direction: column; overflow: hidden; color: var(--fr-text);
-            padding-top: var(--fr-topbar-h, 36px); padding-right: var(--fr-chat-dock, 0px); box-sizing: border-box;
-            transition: padding-right 0.3s ease; }
+            padding-top: var(--fr-topbar-h, 36px); padding-right: var(--fr-chat-dock, 0px);
+            padding-left: var(--fr-chat-dock-left, 0px); box-sizing: border-box;
+            transition: padding-right 0.3s ease, padding-left 0.3s ease; }
         html.ws-standalone .chat-panel { bottom: 0; }
         /* the workspace's name in the top bar's context slot, in a tab */
         .ws-tab-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; }
@@ -769,7 +806,7 @@ window.addEventListener('DOMContentLoaded',function(){
             font-size: 13px; line-height: 1; padding: 3px 4px; transition: color 0.2s; }
         .ws-tab-name .ws-tab-tools button:hover { color: #fff; }
         /* A tab's version history covers the workspace, under the bar and beside a docked tray. */
-        .ws-tab-hist { position: fixed; top: var(--fr-topbar-h, 36px); left: 0; right: var(--fr-chat-dock, 0px); bottom: 0; z-index: 60; }
+        .ws-tab-hist { position: fixed; top: var(--fr-topbar-h, 36px); left: var(--fr-chat-dock-left, 0px); right: var(--fr-chat-dock, 0px); bottom: 0; z-index: 60; }
         .ws-tab-link { font-size: 12px; color: #9fd0ff; text-decoration: none; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.3); border-radius: 7px; background: transparent; cursor: pointer; }
         .ws-tab-link:hover { border-color: #00d4ff; color: #e6f9ff; }
         .ws-tab-ask { font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(245,158,11,0.6); background: rgba(245,158,11,0.12); color: #ffd699; }
@@ -8376,6 +8413,358 @@ function fridayTrayKey(e) {
   return e.key === 'c' || e.key === 'C' ? 'toggle' : null;
 }
 /* fridayTrayKeys:end */
+/* fridaySnap:begin */
+// ═══ SNAP LAYOUTS ═══
+// Workspace windows, chat windows and the chat tray share the screen in exact
+// fractions (docs/design/active/unified-shell.md §11): halves, thirds and two
+// thirds of the snap area, the window between the top bar and the floor less
+// the docked tray. One pure function gives a slot's box, so two slots that
+// meet share an edge to the pixel.
+const FRIDAY_SNAP_SLOTS = {
+  full: [0, 1],
+  left_half: [0, 1 / 2],
+  right_half: [1 / 2, 1],
+  left_third: [0, 1 / 3],
+  middle_third: [1 / 3, 2 / 3],
+  right_third: [2 / 3, 1],
+  left_two_thirds: [0, 2 / 3],
+  right_two_thirds: [1 / 3, 1]
+};
+const FRIDAY_SNAP_NAMES = {
+  full: 'Fill',
+  left_half: 'Left half',
+  right_half: 'Right half',
+  left_third: 'Left third',
+  middle_third: 'Middle third',
+  right_third: 'Right third',
+  left_two_thirds: 'Left two thirds',
+  right_two_thirds: 'Right two thirds'
+};
+// The tray's sizes, as fractions of the window's width.
+const FRIDAY_TRAY_SIZES = {
+  third: 1 / 3,
+  half: 1 / 2,
+  two_thirds: 2 / 3
+};
+const FRIDAY_SNAP_EDGE_PX = 24; // how near an edge a dragged pointer previews a snap
+const FRIDAY_SNAP_HOLD_MS = 700; // holding at an edge steps to the next size
+const FRIDAY_SNAP_MAGNET_PX = 10; // a free window's edge sticks to the area's within this
+// The snap area for a window of vw x vh, between `top` and `floor`, less the
+// docked tray ({side, w}) when it is shown.
+function fridaySnapArea(vw, vh, top, floor, tray) {
+  const left = tray && tray.side === 'left' ? tray.w : 0;
+  const right = vw - (tray && tray.side !== 'left' ? tray.w : 0);
+  return { x: left, y: top, w: Math.max(0, right - left), h: Math.max(0, Math.min(vh, floor) - top) };
+}
+// A slot's exact box in the area. Each edge is rounded once, from its own
+// fraction, so neighbouring slots meet without a gap or an overlap.
+function fridaySnapBox(area, slot) {
+  const f = FRIDAY_SNAP_SLOTS[slot];
+  if (!f || !area) return null;
+  const at = q => area.x + Math.round(area.w * q);
+  const x0 = at(f[0]), x1 = at(f[1]);
+  return { x: x0, y: area.y, w: x1 - x0, h: area.h };
+}
+// Where a dragged window would snap: near the area's left or right edge a
+// half, then, held there, two thirds, then a third; near its top, full.
+function fridaySnapTarget(area, px, py, held) {
+  const E = FRIDAY_SNAP_EDGE_PX;
+  const step = Math.floor(Math.max(0, held || 0) / FRIDAY_SNAP_HOLD_MS) % 3;
+  if (px <= area.x + E) return ['left_half', 'left_two_thirds', 'left_third'][step];
+  if (px >= area.x + area.w - E) return ['right_half', 'right_two_thirds', 'right_third'][step];
+  if (py <= area.y + E) return 'full';
+  return null;
+}
+// A free window's edges stick to the area's edges within the magnet's reach.
+function fridaySnapMagnet(area, box) {
+  const M = FRIDAY_SNAP_MAGNET_PX, right = area.x + area.w;
+  let x = box.x, y = box.y;
+  if (Math.abs(x - area.x) <= M) x = area.x;else if (Math.abs(x + box.w - right) <= M) x = right - box.w;
+  if (Math.abs(y - area.y) <= M) y = area.y;
+  return { x, y, w: box.w, h: box.h };
+}
+// Ctrl+Alt+arrows (the Windows key belongs to Windows): which way, or null.
+function fridaySnapKey(e) {
+  if (!e || !e.ctrlKey || !e.altKey || e.shiftKey || e.metaKey) return null;
+  return { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key] || null;
+}
+// A window's next slot for a key: Left and Right step a half, two thirds and a
+// third on that side; Up fills; Down frees (null).
+function fridaySnapStep(current, dir) {
+  if (dir === 'up') return 'full';
+  if (dir !== 'left' && dir !== 'right') return null;
+  const order = [dir + '_half', dir + '_two_thirds', dir + '_third'];
+  return order[(order.indexOf(current) + 1) % order.length];
+}
+// The tray's next place for a key: to that side at a third, then a half, then
+// two thirds on each press.
+function fridayTrayStep(frac, side, dir) {
+  const sizes = [1 / 3, 1 / 2, 2 / 3];
+  if (dir !== side) return { side: dir, frac: sizes[0] };
+  const i = sizes.findIndex(f => Math.abs(f - (frac || 0)) < 0.02);
+  return { side, frac: sizes[(i + 1) % sizes.length] };
+}
+// A remembered layout as {window, chat}: "fullscreen_chat" is the window
+// filling the area beside the tray at the tray's own width.
+function fridayLayoutOf(v) {
+  if (v === 'fullscreen_chat') return { window: 'full', chat: {} };
+  if (!v || typeof v !== 'object') return null;
+  const window_ = FRIDAY_SNAP_SLOTS[v.window] ? v.window : null;
+  const chat = v.chat && typeof v.chat === 'object' ? {
+    side: v.chat.side === 'left' ? 'left' : v.chat.side === 'right' ? 'right' : undefined,
+    frac: typeof v.chat.frac === 'number' && v.chat.frac > 0.1 && v.chat.frac < 0.9 ? v.chat.frac : undefined
+  } : null;
+  return window_ || chat ? { window: window_ || 'full', chat } : null;
+}
+// The snap area on this page now: the docked tray's width is published as
+// --fr-chat-dock (right) and --fr-chat-dock-left.
+function fridayDesktopArea() {
+  const vw = window.innerWidth || 1280, vh = window.innerHeight || 800;
+  const cs = getComputedStyle(document.documentElement);
+  const right = parseFloat(cs.getPropertyValue('--fr-chat-dock')) || 0;
+  const left = parseFloat(cs.getPropertyValue('--fr-chat-dock-left')) || 0;
+  const top = parseFloat(cs.getPropertyValue('--fr-topbar-h')) || 36;
+  const dock = document.querySelector('.dock:not(.hidden)');
+  const dr = dock && dock.getBoundingClientRect();
+  const floor = dr && dr.height ? Math.round(dr.top) : vh;
+  return fridaySnapArea(vw, vh, top, floor, left ? { side: 'left', w: left } : right ? { side: 'right', w: right } : null);
+}
+// One window's snap state. `key` names it for the keys and for Friday
+// ('news', 'chat:<id>'); a slot the owner chose is announced so App can
+// remember it per workspace.
+function useFridaySnap(key, initial) {
+  const [slot, setSlotRaw] = useState(initial || null);
+  const slotRef = useRef(initial || null);
+  const [area, setArea] = useState(() => fridayDesktopArea());
+  const [preview, setPreview] = useState(null);
+  const drag = useRef({ zone: null, since: 0, x: 0, y: 0, timer: null, target: null });
+  const setSlot = (s, by) => {
+    slotRef.current = s;
+    setSlotRaw(s);
+    setArea(fridayDesktopArea());
+    if (by === 'owner') try {
+      window.dispatchEvent(new CustomEvent('friday:snapped', { detail: { key, slot: s } }));
+    } catch (_) {}
+  };
+  // The area moves with the browser window, the tray and the dock.
+  useEffect(() => {
+    const fit = () => setArea(fridayDesktopArea());
+    const later = () => setTimeout(fit, 420);
+    addEventListener('resize', fit);
+    addEventListener('friday:chat-dock', fit);
+    const dock = document.querySelector('.dock');
+    let obs = null;
+    if (dock && window.MutationObserver) {
+      obs = new MutationObserver(later);
+      obs.observe(dock, { attributes: true, attributeFilter: ['class'] });
+    }
+    return () => {
+      removeEventListener('resize', fit);
+      removeEventListener('friday:chat-dock', fit);
+      if (obs) obs.disconnect();
+    };
+  }, []);
+  // The keys and Friday reach the window they name.
+  useEffect(() => {
+    const on = e => {
+      const d = e && e.detail || {};
+      if (d.key !== key) return;
+      // A key steps from where the window is now; Friday names the slot.
+      if (d.dir) setSlot(fridaySnapStep(slotRef.current, d.dir), 'owner');else if ('slot' in d) setSlot(FRIDAY_SNAP_SLOTS[d.slot] ? d.slot : null);
+    };
+    addEventListener('friday:snap', on);
+    return () => removeEventListener('friday:snap', on);
+  }, [key]);
+  // While dragging: what a release here would do, previewed; holding at an
+  // edge steps to the next size without moving.
+  const judge = () => {
+    const d = drag.current, a = fridayDesktopArea();
+    const zone = d.x <= a.x + FRIDAY_SNAP_EDGE_PX ? 'left' : d.x >= a.x + a.w - FRIDAY_SNAP_EDGE_PX ? 'right' : d.y <= a.y + FRIDAY_SNAP_EDGE_PX ? 'top' : null;
+    const now = Date.now();
+    if (zone !== d.zone) {
+      d.zone = zone;
+      d.since = now;
+    }
+    d.target = zone ? fridaySnapTarget(a, d.x, d.y, now - d.since) : null;
+    clearTimeout(d.timer);
+    if (zone === 'left' || zone === 'right') d.timer = setTimeout(judge, FRIDAY_SNAP_HOLD_MS - (now - d.since) % FRIDAY_SNAP_HOLD_MS + 5);
+    setArea(a);
+    setPreview(d.target);
+  };
+  const dragMove = (px, py) => {
+    drag.current.x = px;
+    drag.current.y = py;
+    judge();
+  };
+  const dragEnd = () => {
+    const d = drag.current, t = d.target;
+    clearTimeout(d.timer);
+    d.zone = null;
+    d.target = null;
+    setPreview(null);
+    if (t) setSlot(t, 'owner');
+    return t;
+  };
+  return {
+    slot,
+    setSlot,
+    area,
+    box: slot ? fridaySnapBox(area, slot) : null,
+    preview,
+    previewBox: preview ? fridaySnapBox(area, preview) : null,
+    dragMove,
+    dragEnd
+  };
+}
+// The outline a release would fill, drawn over everything.
+function SnapPreview({
+  box,
+  slot
+}) {
+  if (!box) return null;
+  return ReactDOM.createPortal( /*#__PURE__*/React.createElement("div", {
+    className: "snap-preview",
+    "data-testid": "snap-preview",
+    "data-slot": slot,
+    style: {
+      left: box.x,
+      top: box.y,
+      width: box.w,
+      height: box.h
+    }
+  }, /*#__PURE__*/React.createElement("span", null, FRIDAY_SNAP_NAMES[slot] || '')), document.body);
+}
+// The layouts a window can take, each drawn as zones; choosing a zone puts the
+// window there. Workspace windows also get the layouts beside the chat, and
+// the tray gets its own places.
+const FRIDAY_SNAP_LAYOUTS = [[['left_half', 1], ['right_half', 1]], [['left_two_thirds', 2], ['right_third', 1]], [['left_third', 1], ['right_two_thirds', 2]], [['left_third', 1], ['middle_third', 1], ['right_third', 1]], [['full', 1]]];
+const FRIDAY_CHAT_LAYOUTS = [2 / 3, 1 / 2, 1 / 3];
+// Opens a layout menu from a control: resting on it opens the menu, leaving
+// both the control and the menu closes it, a click opens it at once.
+function useSnapMenuOpener() {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef(null);
+  const t = useRef({ open: null, close: null });
+  const keep = () => clearTimeout(t.current.close);
+  const closeSoon = () => {
+    clearTimeout(t.current.open);
+    clearTimeout(t.current.close);
+    t.current.close = setTimeout(() => setOpen(false), 280);
+  };
+  const openSoon = () => {
+    keep();
+    clearTimeout(t.current.open);
+    t.current.open = setTimeout(() => setOpen(true), 320);
+  };
+  useEffect(() => () => {
+    clearTimeout(t.current.open);
+    clearTimeout(t.current.close);
+  }, []);
+  return {
+    open,
+    setOpen,
+    anchor,
+    bind: { ref: anchor, onMouseEnter: openSoon, onMouseLeave: closeSoon },
+    menu: {
+      anchor: anchor.current,
+      onMouseEnter: keep,
+      onMouseLeave: closeSoon,
+      onClose: () => {
+        clearTimeout(t.current.open);
+        setOpen(false);
+      }
+    }
+  };
+}
+function SnapMenu({
+  anchor,
+  kind,
+  current,
+  traySide,
+  trayFrac,
+  onPick,
+  onChat,
+  onTray,
+  onHide,
+  onClose,
+  onMouseEnter,
+  onMouseLeave
+}) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const away = e => {
+      if (ref.current && !ref.current.contains(e.target) && !(anchor && anchor.contains && anchor.contains(e.target))) onClose();
+    };
+    const esc = e => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', away, true);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', away, true);
+      document.removeEventListener('keydown', esc);
+    };
+  }, []);
+  const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { left: 0, right: 0, bottom: 40 };
+  const width = 312;
+  const left = Math.max(8, Math.min((window.innerWidth || 1280) - width - 8, r.right - width));
+  const zone = (slot, grow, label, pick, on, extra) => /*#__PURE__*/React.createElement("button", {
+    key: label,
+    type: "button",
+    className: 'snap-zone' + (on ? ' current' : '') + (extra || ''),
+    style: { flex: grow },
+    title: label,
+    "aria-label": label,
+    "data-snap": slot,
+    onClick: e => {
+      e.stopPropagation();
+      pick();
+      onClose();
+    }
+  });
+  const rows = [];
+  if (kind !== 'tray') {
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "t1", className: "snap-menu-title" }, "Snap"));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "r1", className: "snap-menu-row" }, FRIDAY_SNAP_LAYOUTS.map((zones, i) => /*#__PURE__*/React.createElement("div", { key: i, className: "snap-tile" }, zones.map(([slot, grow]) => zone(slot, grow, FRIDAY_SNAP_NAMES[slot], () => onPick(slot), current === slot))))));
+  }
+  if (kind === 'workspace' && onChat) {
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "t2", className: "snap-menu-title" }, "Beside the chat"));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "r2", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.map(f => {
+      const chatF = 1 - f, name = Math.round(f * 3) === 2 ? 'two thirds' : Math.abs(f - 0.5) < 0.01 ? 'a half' : 'a third';
+      return /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('full', f, 'This window in ' + name + ', the chat beside it', () => onChat(chatF), false), zone('chat', chatF, 'The chat in the rest', () => onChat(chatF), false, ' chat'));
+    })));
+  }
+  if (kind === 'tray') {
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "t3", className: "snap-menu-title" }, "Chat on the left"));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "r3", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('chat_left', f, 'Chat on the left, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('left', f), traySide === 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat'), zone('rest', 1 - f, 'The workspace in the rest', () => onTray('left', f), false)))));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "t4", className: "snap-menu-title" }, "Chat on the right"));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "r4", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('rest', 1 - f, 'The workspace in the rest', () => onTray('right', f), false), zone('chat_right', f, 'Chat on the right, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('right', f), traySide !== 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat')))));
+    if (onHide) rows.push( /*#__PURE__*/React.createElement("button", { key: "hide", type: "button", className: "btn snap-menu-hide", onClick: e => {
+        e.stopPropagation();
+        onHide();
+        onClose();
+      } }, "Hide chat"));
+  }
+  return ReactDOM.createPortal( /*#__PURE__*/React.createElement("div", {
+    ref: ref,
+    className: "snap-menu",
+    role: "menu",
+    "aria-label": kind === 'tray' ? 'Where the chat goes' : 'Snap layouts',
+    "data-testid": "snap-menu",
+    style: {
+      left,
+      top: Math.round(r.bottom + 6),
+      width
+    },
+    onMouseEnter,
+    onMouseLeave,
+    // A portal's events reach the window's own handlers in React: a press in
+    // the menu must not start dragging the window it sits over.
+    onMouseDown: e => e.stopPropagation(),
+    onDoubleClick: e => e.stopPropagation()
+  }, rows), document.body);
+}
+/* fridaySnap:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
 function FridayCountdowns({
@@ -9227,13 +9616,31 @@ function FWin({
     w: 0,
     h: 0
   });
+  // Dragging: a snapped window is freed at its own size once it moves; near an
+  // edge the slot a release would fill is previewed, and the window's edges
+  // are magnetic to the snap area's (unified-shell.md §11.3).
   useEffect(() => {
     if (!dragging) return;
-    const mv = e => setPos({
-      x: clampX(e.clientX - dOff.current.x),
-      y: clampY(e.clientY - dOff.current.y)
-    });
-    const up = () => setDragging(false);
+    const mv = e => {
+      const o = dOff.current, sn = snapRef.current;
+      if (o.free) {
+        if (Math.abs(e.clientX - o.sx) + Math.abs(e.clientY - o.sy) < 6) return;
+        o.free = false;
+        sn.setSlot(null, 'owner');
+      }
+      sn.dragMove(e.clientX, e.clientY);
+      const p = fridaySnapMagnet(fridayDesktopArea(), {
+        x: clampX(e.clientX - o.x),
+        y: clampY(e.clientY - o.y),
+        w: sizeRef.current.w,
+        h: sizeRef.current.h
+      });
+      setPos({ x: p.x, y: p.y });
+    };
+    const up = () => {
+      setDragging(false);
+      if (dOff.current.free) dOff.current.free = false;else snapRef.current.dragEnd();
+    };
     addEventListener('mousemove', mv);
     addEventListener('mouseup', up);
     return () => {
@@ -9244,7 +9651,7 @@ function FWin({
   // Resize from any edge or corner (fridayEdgeHandles); the dragged side
   // moves and the opposite one stays where it is.
   const startResize = (e, dir) => {
-    if (maxed) return;
+    if (snap.slot) return;
     rStart.current = { px: e.clientX, py: e.clientY, x: pos.x, y: pos.y, w: size.w, h: size.h, dir };
     setResizing(dir);
     onFocus();
@@ -9290,38 +9697,29 @@ function FWin({
   // (the ⤢ button, a double-click on the title bar, or Friday opening one
   // item with max). Its own size and place are kept for when it is restored.
   // A flag covers a window mounted by that open; the event, one already open.
-  const [maxed, setMaxed] = useState(() => window.__fridayMaxFor === id);
-  const [maxBox, setMaxBox] = useState(null);
+  // SNAPPED: the window fills a slot of the snap area, edge to edge
+  // (unified-shell.md §11): maximised is the whole of it, beside a shown tray.
+  // Its own size and place are kept for when it is freed.
+  const snap = useFridaySnap(id, window.__fridayMaxFor === id ? 'full' : null);
+  const snapRef = useRef(snap);
+  snapRef.current = snap;
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
+  const maxed = snap.slot === 'full';
+  const toggleMax = () => snap.setSlot(maxed ? null : 'full', 'owner');
+  const menu = useSnapMenuOpener();
   useEffect(() => {
     if (window.__fridayMaxFor === id) delete window.__fridayMaxFor;
     const on = e => {
       if (e && e.detail && e.detail.workspace === id) {
         delete window.__fridayMaxFor;
-        setMaxed(e.detail.max !== false);
+        snapRef.current.setSlot(e.detail.max !== false ? 'full' : null);
       }
     };
     window.addEventListener('friday:fwin-max', on);
     return () => window.removeEventListener('friday:fwin-max', on);
   }, [id]);
-  useEffect(() => {
-    if (!maxed) return;
-    const fit = () => {
-      const dock = document.querySelector('.dock:not(.hidden)');
-      const dr = dock && dock.getBoundingClientRect();
-      const floor = (dr && dr.height ? dr.top : vh()) - 6;
-      // A docked chat tray (fullscreen with chat) takes its width off the right.
-      const tray = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fr-chat-dock')) || 0;
-      setMaxBox({ x: 6, y: 34, w: vw() - 12 - tray, h: Math.max(280, floor - 34) });
-    };
-    fit();
-    addEventListener('resize', fit);
-    addEventListener('friday:chat-dock', fit);
-    return () => {
-      removeEventListener('resize', fit);
-      removeEventListener('friday:chat-dock', fit);
-    };
-  }, [maxed]);
-  const box = maxed && maxBox ? maxBox : { x: pos.x, y: pos.y, w: size.w, h: size.h };
+  const box = snap.box || { x: pos.x, y: pos.y, w: size.w, h: size.h };
   const [histOpen, setHistOpen] = useState(false);
   // The browser refused the tab (pop-ups blocked for this site): the window
   // stays, with a line under its title bar saying how to allow it.
@@ -9346,7 +9744,8 @@ function FWin({
     return () => window.removeEventListener('friday:open-ws-history', onOpen);
   }, [id]);
   return /*#__PURE__*/React.createElement("div", {
-    className: 'fwin' + (closing ? ' closing' : '') + (maxed ? ' maxed' : ''),
+    className: 'fwin' + (closing ? ' closing' : '') + (maxed ? ' maxed' : '') + (snap.slot ? ' snapped' : ''),
+    "data-snap": snap.slot || undefined,
     ref: fwinRef,
     style: {
       left: box.x,
@@ -9360,20 +9759,20 @@ function FWin({
     className: "fwin-bar",
     onDoubleClick: e => {
       if (e.target.closest('.fwin-btns')) return;
-      setMaxed(v => !v);
+      toggleMax();
     },
     onMouseDown: e => {
-      if (e.target.closest('.fwin-btns')) return;
-      if (maxed) {
-        onFocus();
-        return;
+      if (e.target.closest('.fwin-btns') || e.button !== 0) return;
+      onFocus();
+      if (snap.slot) {
+        // Dragged away, a snapped window is freed at its own size, with the
+        // pointer at the same place along its title bar.
+        const rel = box.w ? (e.clientX - box.x) / box.w : 0.5;
+        dOff.current = { x: Math.round(rel * size.w), y: e.clientY - box.y, free: true, sx: e.clientX, sy: e.clientY };
+      } else {
+        dOff.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
       }
       setDragging(true);
-      dOff.current = {
-        x: e.clientX - pos.x,
-        y: e.clientY - pos.y
-      };
-      onFocus();
     }
   }, /*#__PURE__*/React.createElement("span", {
     className: "fwin-title"
@@ -9392,19 +9791,27 @@ function FWin({
     emoji: emoji,
     histOpen: histOpen,
     onHistory: () => setHistOpen(v => !v)
-  }), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", Object.assign({}, menu.bind, {
+    // Resting here opens the snap layouts (unified-shell.md §11.3).
     title: maxed ? `Restore ${title} to its own size` : `Maximize ${title}`,
     "aria-label": maxed ? `Restore ${title}` : `Maximize ${title}`,
     "aria-pressed": maxed,
+    "aria-haspopup": "menu",
     "data-fwin-max": id,
     onClick: e => {
       e.stopPropagation();
-      setMaxed(v => !v);
+      toggleMax();
     },
     style: {
       fontSize: 12
     }
-  }, maxed ? "\u2921" : "\u2922"), /*#__PURE__*/React.createElement("button", {
+  }), maxed ? "\u2921" : "\u2922"), menu.open && /*#__PURE__*/React.createElement(SnapMenu, Object.assign({}, menu.menu, {
+    anchor: menu.anchor.current,
+    kind: 'workspace',
+    current: snap.slot,
+    onPick: s => snap.setSlot(s, 'owner'),
+    onChat: f => window.dispatchEvent(new CustomEvent('friday:beside-chat', { detail: { workspace: id, frac: f } }))
+  })), /*#__PURE__*/React.createElement("button", {
     /* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id>, the workspace
        alone, full-tab (see StandaloneShell). Not shown for Settings, which
        lives in the desktop. */
@@ -9461,7 +9868,10 @@ function FWin({
       e.preventDefault();
       startResize(e, 'se');
     }
-  }), fridayEdgeHandles(startResize));
+  }), fridayEdgeHandles(startResize), /*#__PURE__*/React.createElement(SnapPreview, {
+    box: snap.previewBox,
+    slot: snap.preview
+  }));
 }
 
 // ═══ WORKSPACE STUDIO CHAT ═══
@@ -10191,6 +10601,7 @@ function ChatSurface(props) {
     voiceStages,
     voiceStatus
   } = props;
+  const trayMenu = useSnapMenuOpener();
   return /*#__PURE__*/React.createElement(React.Fragment, null, React.createElement("div", {
     "data-chat-head": "",
     style: {
@@ -10366,7 +10777,31 @@ function ChatSurface(props) {
       borderRadius: 4,
       fontFamily: 'Inter'
     }
-  }, "↗ New tab"), mode === 'panel' ? /*#__PURE__*/React.createElement("button", {
+  }, "↗ New tab"), mode === 'panel' && props.onTrayPlace && /*#__PURE__*/React.createElement("button", Object.assign({}, trayMenu.bind, {
+    // Where the tray goes: an edge and a size (unified-shell.md §11.3).
+    type: "button",
+    title: "Where the chat goes",
+    "aria-label": "Where the chat goes",
+    "aria-haspopup": "menu",
+    "data-testid": "chat-layout",
+    onClick: () => trayMenu.setOpen(o => !o),
+    style: {
+      background: 'none',
+      border: 'none',
+      color: '#9fb4c8',
+      cursor: 'pointer',
+      fontSize: 14,
+      lineHeight: 1,
+      padding: '2px 4px'
+    }
+  }), "\u25A5"), mode === 'panel' && trayMenu.open && /*#__PURE__*/React.createElement(SnapMenu, Object.assign({}, trayMenu.menu, {
+    anchor: trayMenu.anchor.current,
+    kind: 'tray',
+    traySide: props.traySide,
+    trayFrac: props.trayFrac,
+    onTray: props.onTrayPlace,
+    onHide: () => setChatOpen(false)
+  })), mode === 'panel' ? /*#__PURE__*/React.createElement("button", {
     // The docked tray hides fully in one motion (unified-shell.md §11.1).
     onClick: () => setChatOpen(false),
     title: "Hide chat (Ctrl+Alt+C)",
@@ -11229,10 +11664,25 @@ function ConversationWindow({
   const vwNow = window.innerWidth || 1280;
   const shownW = Math.min(size.w, vwNow - 8);
   const shownH = Math.min(size.h, roomBelow);
+  // Snapped to a slot of the snap area, as a workspace window can be.
+  const snap = useFridaySnap('chat:' + convId, null);
+  const snapRef = useRef(snap);
+  snapRef.current = snap;
+  const menu = useSnapMenuOpener();
 
   useEffect(() => {
     if (!dragging) return;
-    const mv = e => setPos({
+    const mv = e => {
+      const o = dOff.current, sn = snapRef.current;
+      if (o.free) {
+        if (Math.abs(e.clientX - o.sx) + Math.abs(e.clientY - o.sy) < 6) return;
+        o.free = false;
+        sn.setSlot(null, 'owner');
+      }
+      sn.dragMove(e.clientX, e.clientY);
+      move(e);
+    };
+    const move = e => setPos({
       x: Math.min(Math.max(0, e.clientX - dOff.current.x),
                   (window.innerWidth || 1280) - 120),
       // Never draggable under the dock: the title bar has to stay reachable
@@ -11243,7 +11693,10 @@ function ConversationWindow({
       y: Math.min(Math.max(0, e.clientY - dOff.current.y),
                   Math.max(0, (window.innerHeight || 800) - floor - 234))
     });
-    const up = () => setDragging(false);
+    const up = () => {
+      setDragging(false);
+      if (dOff.current.free) dOff.current.free = false;else snapRef.current.dragEnd();
+    };
     window.addEventListener('mousemove', mv);
     window.addEventListener('mouseup', up);
     return () => {
@@ -11508,17 +11961,18 @@ function ConversationWindow({
   const winTitle = (conv && conv.title) || title || 'Conversation';
 
   return /*#__PURE__*/React.createElement("div", {
-    className: "chat-win",
+    className: "chat-win" + (snap.slot ? ' snapped' : ''),
     "data-chat-window": cid,
+    "data-snap": snap.slot || undefined,
     role: "dialog",
     "aria-label": winTitle,
     onMouseDown: onFocus,
     style: {
-      position: 'fixed', left: pos.x, top: pos.y,
-      width: shownW,
+      position: 'fixed', left: snap.box ? snap.box.x : pos.x, top: snap.box ? snap.box.y : pos.y,
+      width: snap.box ? snap.box.w : shownW,
       // Never taller than the gap above the dock. The composer is the bottom
       // row of this box, so this is what keeps the input reachable.
-      height: shownH,
+      height: snap.box ? snap.box.h : shownH,
       zIndex: zIndex || 132,
       display: 'flex', flexDirection: 'column',
       background: 'rgba(10,14,24,0.97)',
@@ -11534,12 +11988,35 @@ function ConversationWindow({
       title: "Drag to move",
       onMouseDown: e => {
         if (e.button !== 0 || e.target.closest('button')) return;
+        if (snap.box) {
+          const rel = snap.box.w ? (e.clientX - snap.box.x) / snap.box.w : 0.5;
+          dOff.current = { x: Math.round(rel * shownW), y: e.clientY - snap.box.y, free: true, sx: e.clientX, sy: e.clientY };
+        } else {
+          dOff.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+        }
         setDragging(true);
-        dOff.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+      },
+      onDoubleClick: e => {
+        if (!e.target.closest('button')) snap.setSlot(snap.slot === 'full' ? null : 'full', 'owner');
       },
       style: { cursor: dragging ? 'grabbing' : 'grab' }
     }, /*#__PURE__*/React.createElement("span", { className: "chat-win-grip", "aria-hidden": "true" }, "⠿"),
-       /*#__PURE__*/React.createElement("span", { className: "chat-win-title" }, winTitle)),
+       /*#__PURE__*/React.createElement("span", { className: "chat-win-title" }, winTitle),
+       /*#__PURE__*/React.createElement("button", Object.assign({}, menu.bind, {
+         type: "button",
+         className: "chat-win-snap",
+         title: "Snap layouts",
+         "aria-label": "Snap layouts",
+         "aria-haspopup": "menu",
+         "data-testid": "chat-win-snap",
+         onClick: () => menu.setOpen(o => !o)
+       }), "\u229E"),
+       menu.open && /*#__PURE__*/React.createElement(SnapMenu, Object.assign({}, menu.menu, {
+         anchor: menu.anchor.current,
+         kind: 'window',
+         current: snap.slot,
+         onPick: s => snap.setSlot(s, 'owner')
+       }))),
     /*#__PURE__*/React.createElement(ChatSurface, {
       ...SH,
       mode: 'window',
@@ -11559,7 +12036,8 @@ function ConversationWindow({
       voiceOn: voiceHere,
       setChatOpen: v => { if (!v && onClose) onClose(); }
     }),
-    fridayEdgeHandles(startResize));
+    snap.slot ? null : fridayEdgeHandles(startResize),
+    /*#__PURE__*/React.createElement(SnapPreview, { box: snap.previewBox, slot: snap.preview }));
 }
 
 // Attach a file to a chat: /api/analyze decides on the server whether the
@@ -54682,6 +55160,9 @@ function App() {
   const clampChatH = h => Math.max(CHAT_MINH, Math.min(Math.round(vh() * 0.8), h));
   const [chatW, setChatW] = useState(() => {
     try {
+      // A fraction the owner chose (or dragged to) holds as the window resizes.
+      const f = parseFloat(localStorage.getItem('friday_chat_frac'));
+      if (f > 0.1 && f < 0.9) return clampChatW(Math.round(vw() * f));
       const v = parseInt(localStorage.getItem('friday_chat_w'), 10);
       return v ? clampChatW(v) : 320;
     } catch (_) {
@@ -54718,6 +55199,29 @@ function App() {
     try {
       if (on) localStorage.removeItem('friday_chat_hidden');else localStorage.setItem('friday_chat_hidden', '1');
     } catch (_) {}
+  };
+  // The tray's width as a fraction of the window's, once the owner chose one
+  // (a snap layout, a key, Friday) or dragged it (unified-shell.md §11.2).
+  const [chatFrac, setChatFrac] = useState(() => {
+    try {
+      const f = parseFloat(localStorage.getItem('friday_chat_frac'));
+      return f > 0.1 && f < 0.9 ? f : 0;
+    } catch (_) {
+      return 0;
+    }
+  });
+  useEffect(() => {
+    try {
+      if (chatFrac) localStorage.setItem('friday_chat_frac', String(chatFrac));else localStorage.removeItem('friday_chat_frac');
+    } catch (_) {}
+  }, [chatFrac]);
+  // Where the tray goes: an edge, and a fraction of the window's width.
+  const placeTray = (side, frac) => {
+    if (side === 'left' || side === 'right') setChatSide(side);
+    if (frac > 0.1 && frac < 0.9) {
+      setChatFrac(frac);
+      setChatW(clampChatW(Math.round(vw() * frac)));
+    }
   };
   const chatHiddenByOwner = () => {
     try {
@@ -54756,6 +55260,15 @@ function App() {
         setChatW(clampChatW(s.w));
         showChat(false);
       }
+      else if (chatResize === 'w') {
+        const el = document.querySelector('.chat-panel');
+        const w = el ? el.getBoundingClientRect().width : 0;
+        if (w) {
+          const f = Math.round(w / vw() * 1000) / 1000;
+          setChatFrac(f);
+          if (trayDo.current.remember) trayDo.current.remember(null, f);
+        }
+      }
       s.dismiss = false;
       const el = document.querySelector('.chat-panel');
       if (el) el.classList.remove('dismissing');
@@ -54781,7 +55294,11 @@ function App() {
   // Keep within viewport when the window is resized.
   useEffect(() => {
     const on = () => {
-      setChatW(w => clampChatW(w));
+      let f = 0;
+      try {
+        f = parseFloat(localStorage.getItem('friday_chat_frac')) || 0;
+      } catch (_) {}
+      setChatW(w => clampChatW(f > 0.1 && f < 0.9 ? Math.round(vw() * f) : w));
       setChatH(h => h ? clampChatH(h) : 0);
     };
     addEventListener('resize', on);
@@ -58496,6 +59013,77 @@ function App() {
   };
   const layoutRef = useRef({});
   layoutRef.current = { applyLayout, toggleLayout };
+  // Remembered per workspace and per tab (unified-shell.md §11.4): a tab's
+  // layout is its own (tab:<id>), falling back to the workspace's.
+  const rememberLayout = (ws, value) => {
+    if (!ws || ws === 'settings') return;
+    const key = layoutTab ? 'tab:' + ws : ws;
+    const next = Object.assign({}, agentSettings.workspace_layouts || {});
+    if (value) next[key] = value;else delete next[key];
+    saveAgentSettings({ workspace_layouts: next });
+  };
+  // The tray placed by the owner while a workspace is laid out beside it.
+  const rememberTray = (side, frac) => {
+    const ws = layoutTab || fsOn;
+    if (!ws) return;
+    const f = frac || chatFrac || chatW / vw();
+    rememberLayout(ws, { window: 'full', chat: { side: side || chatSide, frac: Math.round(f * 1000) / 1000 } });
+  };
+  // Ctrl+Alt+arrows on the tray (in a tab, or with the cursor in it): Left
+  // and Right dock it to that side and step a third, a half, two thirds; Up
+  // shows it; Down hides it.
+  const trayKey = dir => {
+    if (dir === 'up') return showChat(true);
+    if (dir === 'down') return showChat(false);
+    const n = fridayTrayStep(chatFrac || chatW / vw(), chatSide, dir);
+    placeTray(n.side, n.frac);
+    showChat(true);
+    rememberTray(n.side, n.frac);
+  };
+  const snapDo = useRef({});
+  snapDo.current = {
+    rememberLayout,
+    rememberTray,
+    placeTray,
+    applyLayout,
+    trayKey,
+    side: chatSide,
+    front: () => focusWin && (openWinsRef.current.has(focusWin) || String(focusWin).indexOf('chat:') === 0) ? focusWin : null
+  };
+  useEffect(() => {
+    if (window.__FRIDAY_CHROME__ === 'chat') return;
+    // A window the owner snapped is remembered for its workspace.
+    const onSnapped = e => {
+      const d = e && e.detail || {};
+      if (!d.key || String(d.key).indexOf('chat:') === 0) return;
+      snapDo.current.rememberLayout(d.key, d.slot ? { window: d.slot } : null);
+    };
+    // A window placed beside the chat from its menu.
+    const onBeside = e => {
+      const d = e && e.detail || {};
+      if (!d.workspace || !(d.frac > 0.1)) return;
+      const t = snapDo.current;
+      t.placeTray(null, d.frac);
+      t.applyLayout(d.workspace, true);
+      t.rememberLayout(d.workspace, { window: 'full', chat: { side: t.side, frac: Math.round(d.frac * 1000) / 1000 } });
+    };
+    const onKey = e => {
+      const dir = fridaySnapKey(e);
+      if (!dir) return;
+      e.preventDefault();
+      const t = snapDo.current, tray = document.querySelector('.chat-panel');
+      const key = t.front();
+      if (STANDALONE_WS || !key || tray && tray.contains(document.activeElement)) t.trayKey(dir);else window.dispatchEvent(new CustomEvent('friday:snap', { detail: { key, dir } }));
+    };
+    window.addEventListener('friday:snapped', onSnapped);
+    window.addEventListener('friday:beside-chat', onBeside);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('friday:snapped', onSnapped);
+      window.removeEventListener('friday:beside-chat', onBeside);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
   // The top bar's panels: the one that opens closes the ones it would cover.
   // The bar's buttons and the command palette both open them through these.
   const toggleNotifs = () => {
@@ -58527,7 +59115,9 @@ function App() {
     open: chatOpen,
     side: chatSide,
     showChat,
-    setChatSide
+    setChatSide,
+    placeTray,
+    remember: (side, frac) => snapDo.current.rememberTray && snapDo.current.rememberTray(side, frac)
   };
   useEffect(() => {
     if (window.__FRIDAY_CHROME__ === 'chat') return;
@@ -58542,6 +59132,15 @@ function App() {
       const t = trayDo.current;
       if (d.side === 'left' || d.side === 'right') t.setChatSide(d.side);
       let shown = t.open;
+      const frac = FRIDAY_TRAY_SIZES[d.size];
+      if (frac) {
+        t.placeTray(d.side || t.side, frac);
+        t.remember(d.side || t.side, frac);
+        if (d.visible !== false) {
+          t.showChat(true);
+          shown = true;
+        }
+      }
       if (typeof d.visible === 'boolean') {
         t.showChat(d.visible);
         shown = d.visible;
@@ -58549,7 +59148,7 @@ function App() {
       if (d.id) apiFetch('/api/desktop/ack', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: d.id, result: { applied: true, shown, side: d.side || t.side } })
+        body: JSON.stringify({ id: d.id, result: { applied: true, shown, side: d.side || t.side, size: frac ? d.size : undefined } })
       }).catch(() => {});
     };
     window.addEventListener('keydown', onKey);
@@ -58592,10 +59191,24 @@ function App() {
   }];
   // A workspace that remembers the layout opens that way: in its tab, and on
   // the desktop when its window comes to the front.
+  // A remembered layout applies when its workspace comes to the front, its tab
+  // opens, or the settings first arrive; not as the echo of a save, which
+  // could land after a newer snap and undo it.
+  const layoutsLoaded = !!agentSettings.workspace_layouts;
   useEffect(() => {
     const ws = frontWs();
-    if (ws && layouts[ws] === 'fullscreen_chat' && fsOn !== ws) applyLayout(ws, true, true);
-  }, [focusWin, layoutTab, agentSettings.workspace_layouts]);
+    if (!ws) return;
+    const lay = fridayLayoutOf(layoutTab ? layouts['tab:' + ws] || layouts[ws] : layouts[ws]);
+    if (!lay) return;
+    if (lay.chat) {
+      placeTray(lay.chat.side, lay.chat.frac);
+      if (fsOn !== ws) applyLayout(ws, true, true);
+    } else if (!layoutTab) {
+      try {
+        window.dispatchEvent(new CustomEvent('friday:snap', { detail: { key: ws, slot: lay.window } }));
+      } catch (_) {}
+    }
+  }, [focusWin, layoutTab, layoutsLoaded]);
   // Its window closed: the dock, and the chat as it was, come back.
   useEffect(() => {
     if (fsOn && !layoutTab && !openWins.has(fsOn)) applyLayout(fsOn, false);
@@ -58619,18 +59232,24 @@ function App() {
     const on = e => {
       const d = e && e.detail || {};
       if (!d.workspace) return;
+      const slot = !d.fullscreen_chat && FRIDAY_SNAP_SLOTS[d.position] ? d.position : null;
       setAgentSettings(a => {
         const n = Object.assign({}, a.workspace_layouts || {});
-        if (d.fullscreen_chat) n[d.workspace] = 'fullscreen_chat';else delete n[d.workspace];
+        if (d.fullscreen_chat) n[d.workspace] = 'fullscreen_chat';else if (slot) n[d.workspace] = { window: slot };else delete n[d.workspace];
         return Object.assign({}, a, { workspace_layouts: n });
       });
       const mine = layoutTab ? layoutTab === d.workspace : openWinsRef.current.has(d.workspace) || document.visibilityState === 'visible';
       if (!mine) return;
-      layoutRef.current.applyLayout(d.workspace, !!d.fullscreen_chat);
+      let applied = true;
+      if (slot) {
+        // A tab fills its own window; on the desktop the window takes the slot.
+        applied = !layoutTab && openWinsRef.current.has(d.workspace);
+        if (applied) window.dispatchEvent(new CustomEvent('friday:snap', { detail: { key: d.workspace, slot } }));
+      } else layoutRef.current.applyLayout(d.workspace, !!d.fullscreen_chat);
       if (d.id) apiFetch('/api/desktop/ack', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: d.id, result: { applied: true, workspace: d.workspace, page: layoutTab ? 'tab' : 'desktop' } })
+        body: JSON.stringify({ id: d.id, result: { applied, workspace: d.workspace, page: layoutTab ? 'tab' : 'desktop' } })
       }).catch(() => {});
     };
     window.addEventListener('friday:layout', on);
@@ -59367,6 +59986,12 @@ function App() {
   }), /*#__PURE__*//*#__PURE__*/React.createElement(ChatSurface, {
     mode: 'panel',
     traySide: chatSide,
+    trayFrac: chatFrac || chatW / vw(),
+    onTrayPlace: (side, frac) => {
+      placeTray(side, frac);
+      showChat(true);
+      if (trayDo.current.remember) trayDo.current.remember(side, frac);
+    },
     agentSettings: agentSettings,
     audioDevicePopup: audioDevicePopup,
     audioDevicePopupRef: audioDevicePopupRef,
@@ -60456,11 +61081,16 @@ function App() {
   // A docked chat tray takes its width from a workspace tab, and from the
   // desktop's window fullscreen with chat, rather than covering it.
   useEffect(() => {
-    document.documentElement.style.setProperty('--fr-chat-dock', (shellTab || fsOn) && chatOpen ? chatW + 'px' : '0px');
+    // The shown tray is docked: its width comes off its side for a workspace in
+    // a tab and for every window snapped or maximised beside it (unified-shell.md
+    // §11.2). A phone's tray is a sheet, not a side.
+    const docked = chatOpen && window.__FRIDAY_CHROME__ !== 'chat' && (window.innerWidth || 1280) > 768;
+    document.documentElement.style.setProperty('--fr-chat-dock', docked && chatSide !== 'left' ? chatW + 'px' : '0px');
+    document.documentElement.style.setProperty('--fr-chat-dock-left', docked && chatSide === 'left' ? chatW + 'px' : '0px');
     try {
       window.dispatchEvent(new Event('friday:chat-dock'));
     } catch (_) {}
-  }, [shellTab, fsOn, chatOpen, chatW, dockHidden]);
+  }, [shellTab, fsOn, chatOpen, chatW, chatSide, dockHidden]);
   // A workspace in its own tab: that workspace, full-tab, under the same shell
   // as the desktop (top bar, chat tray, notifications, settings, palette); no
   // dock, windows, HUD or scene. Settings never gets here (the server sends

@@ -720,21 +720,26 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "pin": {"type": "boolean"}}}},
-    {"name": "set_chat_tray", "description": "Show or hide the chat tray ('show chat', 'hide chat'), or dock it on the left or the right ('put chat on the left'). Hidden, it leaves a slim pill on its edge and the workspace takes the full width. It is the owner's own screen, so no approval is needed. CHAT_OK: say what changed in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
+    {"name": "set_chat_tray", "description": "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or the right in a third, a half or two thirds of the screen ('put chat on the right third'); the workspace beside it takes the rest. Hidden, it leaves a slim pill on its edge and the workspace takes the full width. It is the owner's own screen, so no approval is needed. CHAT_OK: say what changed in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
      "input_schema": {"type": "object", "properties": {
          "visible": {"type": "boolean", "description": "true to show the chat, false to hide it."},
          "side": {"type": "string", "enum": ["left", "right"],
-                  "description": "The edge the tray docks on."}},
+                  "description": "The edge the tray docks on."},
+         "size": {"type": "string", "enum": ["third", "half", "two_thirds"],
+                  "description": "How much of the screen's width the tray takes."}},
          "required": []}},
     {"name": "show_my_day", "description": "Show the start screen's cluster now: the owner's countdowns (from their calendar, commitments and wiki), the chat field, the mic and Start my day ('show my day'). With mode, set when it shows on its own: smart (when useful, fading while they work or talk; the default), always, or never (only when asked). It is the owner's own screen, so no approval is needed. DAY_SHOWN: say so in a few words. DAY_NOT_SHOWN: say why, in plain words. DAY_MODE: say what it will do now. The countdowns are not in the result; do not invent them.",
      "input_schema": {"type": "object", "properties": {
          "mode": {"type": "string", "enum": ["smart", "always", "never"],
                   "description": "Leave empty to show it now; set to change when it shows on its own."}},
          "required": []}},
-    {"name": "set_workspace_layout", "description": "Show a workspace fullscreen with the chat tray docked beside it, or back to its normal layout. It is the owner's own screen, so no approval is needed, and the choice is remembered for that workspace. Leave workspace empty for the one in front. LAYOUT_OK means the screen applied it; LAYOUT_SAVED means it is remembered and applies when that workspace is next open.",
+    {"name": "set_workspace_layout", "description": "Show a workspace fullscreen with the chat tray docked beside it, or back to its normal layout, or (with fullscreen_chat false and a position) in part of the screen: a half, a third or two thirds ('put News on the left two thirds'). It is the owner's own screen, so no approval is needed, and the choice is remembered for that workspace. Leave workspace empty for the one in front. LAYOUT_OK means the screen applied it; LAYOUT_SAVED means it is remembered and applies when that workspace is next open.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id or name; empty for the one in front."},
-         "fullscreen_chat": {"type": "boolean", "description": "true: fullscreen with the chat beside it; false: the normal layout."}},
+         "fullscreen_chat": {"type": "boolean", "description": "true: fullscreen with the chat beside it; false: the normal layout, or the position given."},
+         "position": {"type": "string", "enum": ["full", "left_half", "right_half", "left_third", "middle_third",
+                                                  "right_third", "left_two_thirds", "right_two_thirds"],
+                      "description": "With fullscreen_chat false: the part of the screen the window takes."}},
       "required": ["fullscreen_chat"]}},
     {"name": "organize_email", "description": "Archive, label, move, star, mark read or unread, Trash, restore or report spam on the user's Gmail. Pick the mail with a Gmail search in query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or thread_ids from search_email. Nothing changes yet: it raises ONE approval card for the whole batch and returns a readback; say it to the user in one sentence and ask: yes, no, or change it (call again with replaces=the card_id). They approve on the card, or by saying yes (then call answer_card). Every change can be undone (undo_action).",
      "input_schema": {"type": "object", "properties": {
@@ -2892,6 +2897,13 @@ def _tool_check_situation(inp):
 
 #: How long set_workspace_layout waits for a page to say it applied the layout.
 LAYOUT_ACK_S = 5.0
+#: Where a workspace window can sit (unified-shell.md §11.2), as it is said.
+LAYOUT_POSITIONS = {
+    "full": "the whole screen", "left_half": "the left half", "right_half": "the right half",
+    "left_third": "the left third", "middle_third": "the middle third",
+    "right_third": "the right third", "left_two_thirds": "the left two thirds",
+    "right_two_thirds": "the right two thirds",
+}
 
 
 def _tool_set_workspace_layout(inp):
@@ -2908,6 +2920,11 @@ def _tool_set_workspace_layout(inp):
     from agent_friday.services import desktop_bus, workspace_registry
     inp = inp or {}
     on = bool(inp.get("fullscreen_chat"))
+    position = str(inp.get("position") or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if position and position not in LAYOUT_POSITIONS:
+        return "LAYOUT_FAIL: a position is one of %s." % ", ".join(LAYOUT_POSITIONS)
+    if on:
+        position = ""
     words = str(inp.get("workspace") or "").strip()
     if words:
         ws = workspace_registry.resolve(words)
@@ -2923,15 +2940,20 @@ def _tool_set_workspace_layout(inp):
     layouts = dict((_load_settings() or {}).get("workspace_layouts") or {})
     if on:
         layouts[ws] = "fullscreen_chat"
+    elif position:
+        layouts[ws] = {"window": position}
     else:
         layouts.pop(ws, None)
     _save_settings({"workspace_layouts": layouts})
     label = workspace_registry.label(ws)
-    how = "fills the screen with the chat beside it" if on else "is back to its normal layout"
+    how = ("fills the screen with the chat beside it" if on else
+           "takes %s" % LAYOUT_POSITIONS[position] if position else "is back to its normal layout")
     cid = "layout-%d-%s" % (int(_t.time()), secrets.token_hex(3))
     waiter = desktop_bus.expect(cid)
-    sent = desktop_bus.broadcast({"type": "layout", "id": cid, "workspace": ws,
-                                  "fullscreen_chat": on}, kind="chat")
+    event = {"type": "layout", "id": cid, "workspace": ws, "fullscreen_chat": on}
+    if position:
+        event["position"] = position
+    sent = desktop_bus.broadcast(event, kind="chat")
     got = desktop_bus.wait(cid, waiter, LAYOUT_ACK_S if sent else 0)
     if got.get("acked") and (got.get("ack") or {}).get("applied"):
         return "LAYOUT_OK:%s — %s %s." % (ws, label, how)
@@ -2942,6 +2964,7 @@ def _tool_set_workspace_layout(inp):
 #: How long set_chat_tray waits for the page in front to say it applied it.
 CHAT_TRAY_ACK_S = 4.0
 CHAT_TRAY_SIDES = ("left", "right")
+CHAT_TRAY_SIZES = {"third": "a third", "half": "a half", "two_thirds": "two thirds"}
 
 
 def _tool_set_chat_tray(inp):
@@ -2960,16 +2983,21 @@ def _tool_set_chat_tray(inp):
     if isinstance(visible, str):
         visible = {"true": True, "false": False}.get(visible.strip().lower())
     side = str(inp.get("side") or "").strip().lower()
-    if visible is None and not side:
-        return "CHAT_FAIL: say whether to show or hide the chat, or which side to put it on."
+    size = str(inp.get("size") or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if visible is None and not side and not size:
+        return "CHAT_FAIL: say whether to show or hide the chat, or where to put it."
     if side and side not in CHAT_TRAY_SIDES:
         return "CHAT_FAIL: the chat docks on the left or the right."
+    if size and size not in CHAT_TRAY_SIZES:
+        return "CHAT_FAIL: the chat takes a third, a half or two thirds of the screen."
     cid = "chat-%d-%s" % (int(_t.time()), secrets.token_hex(3))
     event = {"type": "chat_tray", "id": cid}
     if visible is not None:
         event["visible"] = bool(visible)
     if side:
         event["side"] = side
+    if size:
+        event["size"] = size
     waiter = desktop_bus.expect(cid)
     sent = desktop_bus.broadcast(event, kind="chat")
     got = desktop_bus.wait(cid, waiter, CHAT_TRAY_ACK_S if sent else 0)
@@ -2977,7 +3005,9 @@ def _tool_set_chat_tray(inp):
     if got.get("acked") and ack.get("applied"):
         where = ack.get("side") or side or "right"
         if ack.get("shown"):
-            return "CHAT_OK — the chat is open on the %s." % where
+            took = ack.get("size") or size
+            return "CHAT_OK — the chat is open on the %s%s." % (
+                where, ", %s of the screen" % CHAT_TRAY_SIZES[took] if took in CHAT_TRAY_SIZES else "")
         return "CHAT_OK — the chat is hidden; the pill on the %s edge brings it back." % where
     if not sent:
         return "CHAT_NOT_APPLIED — no Friday page is open, so nothing changed."

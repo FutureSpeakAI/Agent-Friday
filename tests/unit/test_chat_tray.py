@@ -52,8 +52,8 @@ def test_a_hidden_tray_moves_by_its_own_width(rel):
     assert "transform: translateX(calc(100% + 40px))" in base and "visibility: hidden" in base, rel
     assert re.search(r"\.chat-panel\.open \{ transform: none; visibility: visible;", css), rel
     assert re.search(r"\.chat-panel\.left \{[^}]*transform: translateX\(calc\(-100% - 40px\)\)", css), rel
-    reduced = css[css.index("@media (prefers-reduced-motion: reduce)"):]
-    assert ".chat-panel, .chat-panel.open, .chat-edge-pill { transition: none !important; }" in reduced[:300], rel
+    assert re.search(r"@media \(prefers-reduced-motion: reduce\) \{\s*\.chat-panel, \.chat-panel\.open, "
+                     r"\.chat-edge-pill \{ transition: none !important; \}", css), rel
     assert re.search(r"\.chat-edge-pill \{[^}]*position: fixed", css), rel
 
 
