@@ -22,6 +22,8 @@ Output follows the graphrag-workbench Entity/Relationship/Community contract
 from __future__ import annotations
 
 import re
+import sys
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -222,6 +224,68 @@ def build_wiki_index(wiki_dir: Optional[Path] = None,
     if mention_edges:
         _extract_mentions(pages, bodies)
     return pages
+
+
+# A parse reads and decrypts every page and builds a mention trie with a state
+# per title character: hundreds of megabytes of short-lived objects on a large
+# wiki. The ambient knowledge block asks for the index on every system prompt,
+# so the parsed index is kept until something it was built from changes.
+_index_cache: dict[str, Any] = {"key": None, "index": None}
+_index_cache_lock = threading.Lock()
+
+
+def _vault_unlocked() -> bool:
+    """Whether encrypted pages read as plaintext right now. The agent module is
+    only consulted once something has imported it (reading an encrypted page
+    does); before that no page can have been decrypted."""
+    agent = sys.modules.get("agent_friday.services.agent")
+    if agent is None:
+        return False
+    try:
+        return agent._get_vault_key() is not None
+    except Exception:
+        return False
+
+
+def _index_fingerprint(root: Path, include_soul: bool, mention_edges: bool) -> tuple:
+    """Everything a parse depends on, from stat() alone: no page is read."""
+    pages = []
+    for p in list_wiki_pages(root):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        pages.append((str(p), st.st_mtime_ns, st.st_size))
+    soul = None
+    if include_soul:
+        try:
+            st = SOUL_FILE.stat()
+            soul = (str(SOUL_FILE), st.st_mtime_ns, st.st_size)
+        except OSError:
+            soul = None
+    return (str(root), include_soul, mention_edges, _vault_unlocked(), soul, tuple(pages))
+
+
+def cached_wiki_index() -> dict[str, dict]:
+    """The index of the live wiki, parsed again only when a page, SOUL.md, the
+    graph settings or the vault's unlock state changed since the last parse.
+    Callers treat the result as read-only."""
+    settings = kg_settings()
+    include_soul = bool(settings["index_sources"].get("soul", True))
+    mention_edges = bool(settings.get("mention_edges", True))
+    key = _index_fingerprint(WIKI_DIR, include_soul, mention_edges)
+    with _index_cache_lock:
+        if _index_cache["key"] == key and _index_cache["index"] is not None:
+            return _index_cache["index"]
+    index = build_wiki_index(include_soul=include_soul, mention_edges=mention_edges)
+    with _index_cache_lock:
+        _index_cache["key"], _index_cache["index"] = key, index
+    return index
+
+
+def clear_wiki_index_cache() -> None:
+    with _index_cache_lock:
+        _index_cache["key"], _index_cache["index"] = None, None
 
 
 def _first_paragraph(body: str) -> str:

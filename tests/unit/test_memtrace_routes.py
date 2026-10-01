@@ -90,7 +90,7 @@ def test_growth_is_attributed_to_the_line_that_keeps_it(client):
 
     _grow()
 
-    r = client.get("/api/debug/memtrace/top?limit=30", headers=_token())
+    r = client.get("/api/debug/memtrace/top?limit=30&types=1", headers=_token())
     assert r.status_code == 200, r.get_data(as_text=True)
     body = r.get_json()
     text = r.get_data(as_text=True)
@@ -126,6 +126,51 @@ def test_no_frame_names_a_home_directory(client):
     for g in body["top"]:
         for f in g["frames"]:
             assert home not in f["file"].replace("\\", "/").lower()
+
+
+def test_top_never_runs_a_per_trace_python_filter(client, monkeypatch):
+    # Snapshot.filter_traces fnmatches every live trace in Python: on a server
+    # holding millions of traces it ran for minutes with the census lock held.
+    def refuse(self, *a, **k):
+        raise AssertionError("filter_traces walks every trace")
+    client.post("/api/debug/memtrace/start", headers=_token())
+    monkeypatch.setattr(tracemalloc.Snapshot, "filter_traces", refuse)
+    _grow()
+    r = client.get("/api/debug/memtrace/top?limit=200", headers=_token())
+    assert r.status_code == 200, r.get_data(as_text=True)
+    for g in r.get_json()["top"]:
+        assert not g["top_frame"]["file"].endswith("tracemalloc.py")
+        assert not g["top_frame"]["file"].startswith("<frozen importlib")
+
+
+def test_the_comparison_runs_outside_the_census_lock(client, monkeypatch):
+    # The auto-stop timer takes the same lock: a long comparison under it
+    # kept tracing on past its deadline.
+    from agent_friday.routes import memtrace
+    real = tracemalloc.Snapshot.compare_to
+    held = []
+
+    def spy(self, *a, **k):
+        held.append(memtrace._lock.locked())
+        return real(self, *a, **k)
+    client.post("/api/debug/memtrace/start", headers=_token())
+    monkeypatch.setattr(tracemalloc.Snapshot, "compare_to", spy)
+    _grow()
+    assert client.get("/api/debug/memtrace/top", headers=_token()).status_code == 200
+    assert held == [False]
+
+
+def test_object_types_are_counted_only_when_asked(client, monkeypatch):
+    # gc.get_objects() walks the whole heap; the default census never does.
+    from agent_friday.routes import memtrace
+
+    def refuse():
+        raise AssertionError("walked the heap without being asked")
+    client.post("/api/debug/memtrace/start", headers=_token())
+    monkeypatch.setattr(memtrace.gc, "get_objects", refuse)
+    r = client.get("/api/debug/memtrace/top", headers=_token())
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["gc_types"] == []
 
 
 class _FakeTimer:
