@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio Viewer · Agent Friday™ prototype</title>
+<link rel="stylesheet" href="friday.css">
+<style>
+  .pane .img { width: 70%; aspect-ratio: 3/2; border-radius: 8px; background: linear-gradient(160deg, #0a2a3a, #07131c 55%, #1a1230); box-shadow: 0 0 40px rgba(0,212,255,0.12) inset; display: grid; place-items: center; color: var(--fr-dim); font-family: var(--fr-font-mono); font-size: var(--fr-text-xs); }
+  .pane .slides { display: grid; grid-template-columns: 1fr 120px; gap: 10px; width: 90%; }
+  .pane .slide { aspect-ratio: 16/9; background: #fff; color: #111; border-radius: 6px; padding: 18px; font-family: var(--fr-font-body); display: grid; align-content: center; }
+  .pane .slide h4 { margin: 0 0 6px; font-size: 18px; }
+  .pane .thumbs { display: grid; gap: 6px; align-content: start; }
+  .pane .thumbs div { aspect-ratio: 16/9; background: #fff; border-radius: 4px; opacity: .6; }
+  .pane .thumbs div:first-child { opacity: 1; outline: 2px solid var(--fr-cyan); }
+  .pane pre { font-family: var(--fr-font-mono); font-size: var(--fr-text-md); color: var(--fr-label); text-align: left; width: 80%; margin: 0; white-space: pre-wrap; }
+  .pane .doc { width: min(72ch, 90%); text-align: left; color: var(--fr-text); font-size: var(--fr-text-lg); line-height: 1.6; }
+  .pane .cube { width: 180px; height: 180px; border: 1px solid var(--fr-cyan); transform: rotate3d(1,1,0,30deg); box-shadow: 0 0 30px rgba(0,212,255,0.25); }
+  .chapters li { display: flex; gap: 8px; padding: 4px 0; font-size: var(--fr-text-md); }
+  .chapters li span:first-child { font-family: var(--fr-font-mono); color: var(--fr-dim); }
+  .chapters { list-style: none; padding: 0; margin: 0; }
+  .transcript { font-size: var(--fr-text-md); color: var(--fr-label); max-height: 140px; overflow: auto; padding-right: 6px; }
+  .transcript b { color: var(--fr-cyan); font-weight: 600; }
+  .vside .actions .btn { flex: 1 1 46%; }
+  .edit { display: flex; gap: 6px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<main id="main">
+  <div class="st-root">
+    <div class="st-head">
+      <a class="btn sm" href="library.html" aria-label="Back to the Library">← Library</a>
+      <div class="seg" role="group" aria-label="Show this frame with">
+        <button class="btn sm active" data-k="image" aria-pressed="true">Image</button>
+        <button class="btn sm" data-k="podcast" aria-pressed="false">Podcast</button>
+        <button class="btn sm" data-k="video" aria-pressed="false">Video</button>
+        <button class="btn sm" data-k="office" aria-pressed="false">Deck</button>
+        <button class="btn sm" data-k="doc" aria-pressed="false">Document</button>
+        <button class="btn sm" data-k="chart" aria-pressed="false">Chart</button>
+        <button class="btn sm" data-k="model3d" aria-pressed="false">3D</button>
+        <button class="btn sm" data-k="page" aria-pressed="false">Page</button>
+        <button class="btn sm" data-k="code" aria-pressed="false">Code</button>
+      </div>
+      <span class="small muted">One frame for every medium: the stage changes, the sides do not.</span>
+    </div>
+
+    <div class="viewer">
+      <section class="vmain" aria-label="Viewer">
+        <div class="vhead">
+          <span id="vType"></span>
+          <h2 id="vTitle">Harbour at blue hour, take 3</h2>
+          <span class="muted small" id="vDate">Today 08:12</span>
+          <span class="spacer" style="flex:1"></span>
+          <button class="btn sm" aria-label="Previous" onclick="toast('Previous item in the Library order.')">←</button>
+          <button class="btn sm" aria-label="Next" onclick="toast('Next item in the Library order.')">→</button>
+        </div>
+        <div class="stagebox" id="stage">
+          <div class="pane on" data-k="image"><div class="img">1536 × 1024 · take 3 of 4</div></div>
+          <div class="pane" data-k="podcast"><div style="width:80%"><div class="wave" style="width:100%" id="wave"></div><div class="transport" style="margin-top:10px"><button class="btn sm" id="play" aria-label="Play">▶</button><span class="mono small">3:41</span><div class="bar"><span></span></div><span class="mono small">9:40</span><button class="btn sm" aria-label="Captions on" aria-pressed="true">CC</button></div></div></div>
+          <div class="pane" data-k="video"><div class="img" style="aspect-ratio:16/9">Harbour loop · 0:08 · plays in place</div></div>
+          <div class="pane" data-k="office"><div class="slides"><div class="slide"><h4>The ferry story</h4><p style="margin:0;font-size:13px">Three numbers, one morning, and what changed.</p></div><div class="thumbs"><div></div><div></div><div></div><div></div></div></div></div>
+          <div class="pane" data-k="doc"><div class="doc"><h3>Field notes: the ferry story</h3><p>The 06:40 left on time for the first morning in a week. On the quay, the count was lower than the board said…</p><p class="muted small">Rendered Markdown, editable in place.</p></div></div>
+          <div class="pane" data-k="chart"><div class="img" style="aspect-ratio:16/9;background:#07131c"><svg viewBox="0 0 320 160" width="80%" aria-label="Bars: Q3 subscriptions by channel"><g stroke="rgba(255,255,255,.1)"><line x1="30" y1="130" x2="300" y2="130"/></g><rect x="50" y="60" width="40" height="70" fill="#00d4ff"/><rect x="120" y="40" width="40" height="90" fill="#7b61ff"/><rect x="190" y="85" width="40" height="45" fill="#2dd4bf"/><rect x="260" y="100" width="30" height="30" fill="#60a5fa"/><text x="30" y="150" fill="rgba(255,255,255,.5)" font-size="10" font-family="JetBrains Mono">web · app · partners · other</text></svg></div></div>
+          <div class="pane" data-k="model3d"><div><div class="cube"></div><p class="small muted" style="text-align:center;margin-top:16px">Orbit with the mouse or arrows · .glb</p></div></div>
+          <div class="pane" data-k="page"><div class="img" style="aspect-ratio:16/9;background:#fff;color:#111;font-family:Inter"><div><b>Ferry story</b> · showcase page · rendered in a sandboxed frame</div></div></div>
+          <div class="pane" data-k="code"><pre>tide-table/
+  README.md
+  app.py          # the salon's Claude seat wrote this
+  tests/test_tides.py
+  static/index.html
+
+Open in the salon to run or change it.</pre></div>
+        </div>
+        <div class="card" id="below">
+          <div class="label" id="belowLabel">Prompt</div>
+          <p class="small" id="belowBody">harbour at blue hour, long exposure, editorial photo, no people · negative: text, watermark</p>
+        </div>
+      </section>
+
+      <aside class="vside" aria-label="Details and actions">
+        <div class="card">
+          <h3>Credentials</h3>
+          <dl class="kv">
+            <dt>Made by</dt><dd id="sBy">Local image model · this PC</dd>
+            <dt>From</dt><dd id="sFrom">Create · prompt, 2 references</dd>
+            <dt>Signed</dt><dd><span class="pill ok">Signed</span> <span class="mono small">c2pa · 3f9a…e1</span></dd>
+            <dt>Cost</dt><dd>None</dd>
+            <dt>License</dt><dd>Yours · <a href="#" onclick="toast('Change the license terms on the credential.');return false">change</a></dd>
+          </dl>
+        </div>
+        <div class="card">
+          <h3>Privacy</h3>
+          <dl class="kv">
+            <dt>Now</dt><dd><span class="pill private">Private</span> on this PC only</dd>
+            <dt>Left this PC</dt><dd>Never · <a href="#" onclick="toast('The egress ledger for this item: empty.');return false">ledger</a></dd>
+          </dl>
+        </div>
+        <div class="card">
+          <h3>Related</h3>
+          <ul class="chapters" id="related"><li><span>used in</span><span>Post draft "Monday"</span></li><li><span>from</span><span>harbour-01, palette</span></li></ul>
+        </div>
+        <div class="card">
+          <h3>Actions</h3>
+          <div class="actions">
+            <button class="btn" onclick="toast('Opens in its own tab.')">Open in tab</button>
+            <button class="btn" onclick="toast('Export: the file and its credential sidecar.')">Export</button>
+            <button class="btn" onclick="toast('Send to… the shared menu.')">Send to…</button>
+            <button class="btn" onclick="toast('Queued: a Studio podcast about this.')">Make a podcast of it</button>
+            <button class="btn" onclick="toast('Add to a project.')">Add to project</button>
+            <button class="btn" onclick="toast('Publishing leaves this computer: a card asks you first.')">Publish…</button>
+            <button class="btn deny" onclick="toast('Delete asks on a card; the receipt stays.')">Delete</button>
+          </div>
+          <div class="label" style="margin-top:10px">Edit</div>
+          <div class="edit" id="edit"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</main>
+<script src="friday.js"></script>
+<script>
+  protoNav('viewer.html');
+  shell({ title: 'Studio' });
+  var W = document.getElementById('wave'); for (var i = 0; i < 64; i++) { var b = document.createElement('i'); b.style.height = (20 + Math.abs(Math.sin(i * 0.7)) * 80) + '%'; W.appendChild(b); }
+  var K = {
+    image:   { t:'Harbour at blue hour, take 3', w:'Image', by:'Local image model · this PC', from:'Create · prompt, 2 references', below:['Prompt', 'harbour at blue hour, long exposure, editorial photo, no people · negative: text, watermark'], edit:['Remix', 'Upscale', 'Crop', 'Make a video of it'] },
+    podcast: { t:'Three charts, one morning', w:'Podcast', by:'Local 27B · Kokoro · this PC', from:'Chat · 3 Library charts', below:['Chapters and transcript', '00:00 What changed overnight · 02:10 Web vs app · 05:30 The partner line · 08:20 What to watch — <b>A:</b> The web line moved first… <b>B:</b> And the app number is computed, not guessed…'], edit:['Rewrite a chapter', 'Change the voices', 'Shorter'] },
+    video:   { t:'Harbour loop, 8 s', w:'Video', by:'Local video · this PC', from:'Create · from "Harbour at blue hour, take 3"', below:['Prompt', 'slow push in, water moving, lights steady'], edit:['Trim', 'Loop', 'Add to timeline'] },
+    office:  { t:'Pitch deck v3.pptx', w:'Office', by:'Office engine · this PC', from:'Chat · office tool · from "Field notes"', below:['Pages', 'Rendered pages are the preview of this one file. The pages are not separate items.'], edit:['Open in PowerPoint', 'Ask Friday to change a slide', 'Export PDF'] },
+    doc:     { t:'Field notes: the ferry story', w:'Document', by:'Local 27B · this PC', from:'Create · text', below:['Versions', 'v3 today 07:40 · v2 yesterday · v1 Mon'], edit:['Edit in place', 'Tighten', 'Make it a deck', 'Make it a page'] },
+    chart:   { t:'Q3 subscriptions by channel', w:'Chart', by:'Data mode · this PC', from:'Create · dataset "subs-q3.csv"', below:['Data and code', 'web 1,240 · app 1,610 · partners 820 · other 410 · computed from 4,080 rows · the chart code is attached'], edit:['Change the form', 'Swap the data', 'Make a podcast of it'] },
+    model3d: { t:'Lighthouse, low poly', w:'3D', by:'Remesh (cloud) · asked first', from:'Create · from "Lighthouse sketch"', below:['Mesh', '2,140 triangles · 1 material · .glb 410 KB'], edit:['Re-mesh', 'Render a still'] },
+    page:    { t:'Ferry story · showcase page', w:'Page', by:'Showcase engine · this PC', from:'Chat · create_website', below:['Published', 'Sun 18:20 to this PC\'s publish host · 1 egress line · <a href="#">unpublish</a>'], edit:['Edit the page', 'Open in the salon'] },
+    code:    { t:'tide-table', w:'Code', by:'Salon · Claude seat', from:'Salon · brief "a tide table for the harbour"', below:['Last run', 'tests 6 passed · served at the salon preview'], edit:['Open in the salon', 'Run', 'Publish…'] }
+  };
+  function show(k) {
+    var d = K[k];
+    document.querySelectorAll('.st-head [data-k]').forEach(function (b) { var on = b.dataset.k === k; b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on)); });
+    document.querySelectorAll('.pane').forEach(function (p) { p.classList.toggle('on', p.dataset.k === k); });
+    document.getElementById('vTitle').textContent = d.t; document.getElementById('vType').innerHTML = glyph(k, d.w);
+    document.getElementById('sBy').textContent = d.by; document.getElementById('sFrom').textContent = d.from;
+    document.getElementById('belowLabel').textContent = d.below[0]; document.getElementById('belowBody').innerHTML = d.below[1];
+    var REL = { image: [['used in', 'Post draft "Monday"'], ['from', 'harbour-01, palette']], podcast: [['from', 'Q3 subscriptions by channel, +2 charts'], ['used in', 'Field notes v3 (transcript)']], video: [['from', 'Harbour at blue hour, take 3'], ['used in', 'Teaser (timeline)']], office: [['from', 'Field notes: the ferry story'], ['versions', 'v3 · v2 · v1']], doc: [['used in', 'Pitch deck v3, Three charts, one morning'], ['versions', 'v3 · v2 · v1']], chart: [['from', 'subs-q3.csv'], ['used in', 'Three charts, one morning']], model3d: [['from', 'Lighthouse sketch'], ['used in', '—']], page: [['from', 'Field notes: the ferry story'], ['published', 'Sun 18:20']], code: [['from', 'brief: a tide table'], ['used in', '—']] };
+    document.getElementById('related').innerHTML = (REL[k] || []).map(function (r) { return '<li><span>' + r[0] + '</span><span>' + r[1] + '</span></li>'; }).join('');
+    document.getElementById('edit').innerHTML = d.edit.map(function (e) { return '<button class="btn sm" onclick="toast(\'' + e + '\')">' + e + '</button>'; }).join('');
+  }
+  document.querySelectorAll('.st-head [data-k]').forEach(function (b) { b.addEventListener('click', function () { show(b.dataset.k); }); });
+  document.getElementById('play').addEventListener('click', function () { var on = this.textContent === '▶'; this.textContent = on ? '❚❚' : '▶'; this.setAttribute('aria-label', on ? 'Pause' : 'Play'); toast(on ? 'Playing in the global mini player; it keeps playing when you leave Studio.' : 'Paused.'); });
+  document.addEventListener('keydown', function (e) { if (e.key === ' ' && document.activeElement.tagName !== 'INPUT') { e.preventDefault(); document.getElementById('play').click(); } });
+  show('image');
+</script>
+</body>
+</html>

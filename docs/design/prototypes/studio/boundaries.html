@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio and News · Agent Friday™ prototype</title>
+<link rel="stylesheet" href="friday.css">
+<style>
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .wsbox { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; background: var(--panel); min-height: 420px; display: flex; flex-direction: column; gap: 10px; }
+  .wsbox h2 { font-size: var(--fr-text-lg); display: flex; align-items: center; gap: 8px; }
+  .wsbox.news { border-color: rgba(45,212,191,0.35); }
+  .wsbox.studio { border-color: var(--line-strong); }
+  .shows { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .show { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: var(--fr-text-md); }
+  .show b { display: block; }
+  .show .ep { color: var(--fr-dim); font-size: var(--fr-text-sm); }
+  .run { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; gap: 10px; align-items: center; font-size: var(--fr-text-md); }
+  .run .chip { margin-left: auto; }
+  .rule { border-left: 2px solid var(--line-strong); padding-left: 10px; font-size: var(--fr-text-md); color: var(--fr-label); }
+  .arrow { text-align: center; color: var(--fr-dim); font-size: var(--fr-text-md); padding: 6px; }
+  .player { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); width: min(620px, 92vw); background: var(--fr-glass); backdrop-filter: var(--fr-glass-blur); border: 1px solid var(--line-strong); border-radius: 12px; padding: 8px 12px; display: flex; gap: 10px; align-items: center; font-size: var(--fr-text-md); z-index: 60; }
+  .player[hidden] { display: none; }
+  .player .bar { flex: 1; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; position: relative; }
+  .player .bar span { position: absolute; left: 0; top: 0; bottom: 0; width: 22%; background: var(--fr-cyan); border-radius: 2px; }
+  @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main id="main">
+  <div class="st-root">
+    <div class="st-head"><h1>Where a podcast lives</h1><span class="small muted">An item lives in one place. The News shows are News; anything made from any sources is Studio. One mini player plays either.</span></div>
+
+    <div class="two">
+      <section class="wsbox news" aria-label="News workspace">
+        <h2>News <span class="pill dim">the routines</span></h2>
+        <div class="rule">Every News run comes with its episode, on the run itself. The four shows have a shelf here, with their archive, grouped by show.</div>
+        <div class="label">Shows</div>
+        <div class="shows">
+          <div class="show"><b>Friday's Front Page</b><span class="ep">Today 06:30 · 8:12</span></div>
+          <div class="show"><b>The Briefing</b><span class="ep">Today 07:00 · 5:40</span></div>
+          <div class="show"><b>The Week</b><span class="ep">Sun · 14:05</span></div>
+          <div class="show"><b>The Editorial</b><span class="ep">Sun · 6:22</span></div>
+        </div>
+        <div class="label">Today's runs</div>
+        <div class="run">Front page · 06:30 <button class="btn sm chip" onclick="play('Friday’s Front Page · today')">▶ 8:12</button></div>
+        <div class="run">Briefing · 07:00 <button class="btn sm chip" onclick="play('The Briefing · today')">▶ 5:40</button></div>
+        <p class="small muted">Owned by the podcast session: the move of the routine shows and their shelf into News, and the player. Studio links here, never duplicates it.</p>
+      </section>
+
+      <section class="wsbox studio" aria-label="Studio workspace">
+        <h2>Studio <span class="pill dim">creation</span></h2>
+        <div class="rule">Create → Podcast makes an episode from any sources: Library items, files, wiki pages, conversations, datasets, web pages, text. The Library lists what Studio made under Audio and podcasts.</div>
+        <div class="label">Audio and podcasts · Library</div>
+        <div class="run">Three charts, one morning · 9:40 <span class="pill private">Private</span><button class="btn sm chip" onclick="play('Three charts, one morning')">▶</button></div>
+        <div class="run">Field notes, talked through · 6:05 <span class="pill private">Private</span><button class="btn sm chip" onclick="play('Field notes, talked through')">▶</button></div>
+        <div class="run">Read aloud: ferry story · 4:12 <span class="pill neutral">Unsigned</span><button class="btn sm chip" onclick="play('Read aloud: ferry story')">▶</button></div>
+        <div class="label">When you search Studio for a News show</div>
+        <div class="run">The Briefing · today <span class="pill dim">In News</span><a class="btn sm chip" href="#" onclick="toast('Opens News on that run.');return false">Open in News →</a></div>
+        <p class="small muted">Found, not duplicated: the result is a link into News, not a second copy.</p>
+      </section>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h3>The rules, in four lines</h3>
+      <ol class="small" style="margin:0;padding-left:18px">
+        <li>A routine episode (<span class="mono">origin: routine</span>) belongs to its News run and to its show's shelf in News.</li>
+        <li>A user episode (<span class="mono">origin: user</span>) belongs to the Studio Library, whichever surface asked for it: Create, chat, voice, or Send to.</li>
+        <li>Studio search can find a routine episode; the result opens News. News never lists user episodes.</li>
+        <li>One mini player, global; one <span class="mono">/api/podcasts</span>; the <span class="mono">routine</span> filter it already has is the line between the two.</li>
+      </ol>
+    </div>
+  </div>
+</main>
+<div class="player" role="region" aria-label="Now playing" id="player" hidden>
+  <button class="btn sm" aria-label="Pause" onclick="toast('Paused.')">❚❚</button><span id="pTitle">—</span><div class="bar"><span></span></div><span class="mono">2:10</span><button class="btn sm" aria-label="Captions">CC</button>
+</div>
+<script src="friday.js"></script>
+<script>
+  protoNav('boundaries.html');
+  shell({ title: 'Studio' });
+  function play(t) { document.getElementById('pTitle').textContent = t; document.getElementById('player').hidden = false; toast('Playing in the global mini player.'); }
+</script>
+</body>
+</html>

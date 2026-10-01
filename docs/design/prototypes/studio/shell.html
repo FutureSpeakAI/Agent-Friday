@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio in the shell · Agent Friday™ prototype</title>
+<link rel="stylesheet" href="friday.css">
+<style>
+  .measure { position: fixed; left: 12px; bottom: 12px; z-index: 60; background: var(--fr-glass); backdrop-filter: var(--fr-glass-blur); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-family: var(--fr-font-mono); font-size: var(--fr-text-xs); color: var(--fr-dim); }
+  .measure b { color: var(--fr-cyan); font-weight: 500; }
+</style>
+</head>
+<body>
+<main id="main">
+  <div class="st-root" id="root">
+    <div class="st-head">
+      <h1>Studio</h1>
+      <div class="seg" role="tablist" aria-label="Studio views">
+        <button class="btn active" role="tab" aria-selected="true">Library</button>
+        <a class="btn" role="tab" href="create.html">Create</a>
+        <button class="btn" role="tab">Projects</button>
+      </div>
+      <span class="small muted">The workspace fills whatever frame the shell gives it. Open the chat tray, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>, and watch the grid reflow instead of hiding under the tray.</span>
+    </div>
+    <div class="lib-toolbar"><input type="search" placeholder="Search…" aria-label="Search" style="max-width:360px"><span class="spacer" style="flex:1"></span><button class="btn sm active" aria-pressed="true">Grid</button><button class="btn sm" aria-pressed="false">List</button><button class="btn sm" aria-pressed="false">3D</button></div>
+    <div class="lib-grid" id="grid"></div>
+    <p class="small muted">Rule from the shell: the tab body is full-bleed with 18px of padding, the tray is a docked column (<span class="mono">--fr-chat-dock</span>), and a workspace never sets its own width or top offset. A readable measure goes on text (the intro paragraph of Podcasts keeps 80ch), never on the root.</p>
+  </div>
+</main>
+<div class="measure" id="measure">root <b>—</b> of <b>—</b> px · tray <b>closed</b></div>
+<script src="friday.js"></script>
+<script>
+  protoNav('shell.html');
+  shell({ title: 'Studio', chatOpen: false });
+  var K = ['image', 'podcast', 'chart', 'doc', 'video', 'music', 'office', 'page', 'code', 'model3d', 'post', 'image', 'image', 'doc', 'chart', 'video', 'podcast', 'image'];
+  var W = { image:'Image', video:'Video', podcast:'Podcast', music:'Music', doc:'Document', office:'Office', chart:'Chart', model3d:'3D', page:'Page', code:'Code', post:'Post' };
+  document.getElementById('grid').innerHTML = K.map(function (k, i) {
+    return '<button class="item"><div class="thumb">' + W[k] + '</div><div class="body"><div class="title">' + W[k] + ' ' + (i + 1) + '</div><div class="meta">' + glyph(k, W[k]) + '<span>·</span><span>today</span><span class="pill private">Private</span></div></div></button>';
+  }).join('');
+  function measure() {
+    var r = document.getElementById('root').getBoundingClientRect().width, v = window.innerWidth;
+    var open = document.querySelector('.shell').classList.contains('chat-open');
+    document.getElementById('measure').innerHTML = 'root <b>' + Math.round(r) + '</b> of <b>' + v + '</b> px · tray <b>' + (open ? 'docked 320' : 'closed') + '</b>' + (document.body.classList.contains('fr-fs-chat') ? ' · <b>fullscreen with chat</b>' : '');
+  }
+  new MutationObserver(measure).observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class'] });
+  window.addEventListener('resize', measure);
+  measure();
+</script>
+</body>
+</html>
