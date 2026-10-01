@@ -10445,7 +10445,7 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
       else if(action==='now'){
         const r=await fetch('/api/content/posts/'+id+'/publish-now',{method:'POST'});
         const d=await r.json().catch(()=>({}));
-        flash(d&&d.ok===false?(d.message||d.reason||'Publish failed'):'🚀 Publishing — watch the Queue tab');
+        flash(d&&d.ok===false?(d.message||d.reason||'Publish failed'):'Approve the card to publish — it shows the exact text and where it goes');
       }else if(action==='schedule'){
         const sc={timezone:Intl.DateTimeFormat().resolvedOptions().timeZone};
         if(schedAt)sc.publish_at=new Date(schedAt).toISOString();else sc.optimal_time=true;
@@ -10641,7 +10641,7 @@ function ContentQueueTab({onEdit}){
         <div style={{fontSize:9.5,color:'#8891a8',fontFamily:'JetBrains Mono'}}>{cpTime(t.publish_at||t.at)}{t.variant_id?(' · variant '+t.variant_id):''}{t.attempt?(' · attempt '+t.attempt):''}</div>
       </div>
       <Chip s={t.status||'PENDING'}/>
-      <button className="btn" style={{fontSize:10,padding:'2px 7px'}} title="Publish this post immediately (still fully gated)" onClick={()=>post('/api/content/posts/'+(t.post_id||t.id)+'/publish-now',{},'🚀 Dispatched')}>▶ now</button>
+      <button className="btn" style={{fontSize:10,padding:'2px 7px'}} title="Publish this post now, once you approve its card" onClick={()=>post('/api/content/posts/'+(t.post_id||t.id)+'/publish-now',{},'Approve the card to publish')}>▶ now</button>
       <button aria-label="Reschedule" className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px'}} title="Reschedule" onClick={()=>{const v=window.prompt('New time (YYYY-MM-DD HH:MM, your local time):');if(!v)return;const d=new Date(v.replace(' ','T'));if(isNaN(d)){flash('Could not parse that time');return}post('/api/content/posts/'+(t.post_id||t.id)+'/schedule',{publish_at:d.toISOString()},'📅 Rescheduled')}}>↺</button>
       <button aria-label="Cancel this target" className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px',color:'#ff8aa0'}} title="Cancel this target" onClick={()=>post('/api/content/posts/'+(t.post_id||t.id)+'/cancel',{target_id:t.id},'Cancelled')}>✕</button>
     </div>)};
@@ -10913,7 +10913,7 @@ function QuickPostModal({payload,onClose}){
         fridayNavigate({workspace:'content',tab:'compose',post:id});onClose();return;
       }
       await fetch('/api/content/posts/'+id+'/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platforms:sel})}).catch(()=>{});
-      if(mode==='now'){await fetch('/api/content/posts/'+id+'/publish-now',{method:'POST'});flash('🚀 Publishing — check Content → Queue')}
+      if(mode==='now'){await fetch('/api/content/posts/'+id+'/publish-now',{method:'POST'});flash('Approve the card to publish — it shows the exact text and where it goes')}
       else{await fetch('/api/content/posts/'+id+'/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({optimal_time:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone})});flash('📅 Scheduled at the next optimal slot')}
       setTimeout(onClose,1200);
     }catch(e){flash('Request failed')}

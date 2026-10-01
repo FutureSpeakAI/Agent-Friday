@@ -172,7 +172,11 @@ class TestPublisherTickHoldsWhilePaused:
     def test_unpausing_lets_the_already_due_target_through_on_the_next_tick(
             self, client):
         post = _mk_mock_post(client)
-        client.post(f"/api/content/posts/{post['id']}/publish-now", json={})
+        res = client.post(f"/api/content/posts/{post['id']}/publish-now", json={})
+        # The owner approves the post's card, so only the pause holds it back.
+        from agent_friday.services import approvals
+        aid = res.get_json()["approval"]["targets"][0]["approval_id"]
+        approvals.decide(aid, "approve", decided_by="owner")
         client.post("/api/content/pause", json={"paused": True})
         adapter = pr.get_adapter("mock")
         adapter.reset()

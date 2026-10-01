@@ -36055,7 +36055,7 @@ function ContentComposeTab({
           method: 'POST'
         });
         const d = await r.json().catch(() => ({}));
-        flash(d && d.ok === false ? d.message || d.reason || 'Publish failed' : '🚀 Publishing — watch the Queue tab');
+        flash(d && d.ok === false ? d.message || d.reason || 'Publish failed' : 'Approve the card to publish — it shows the exact text and where it goes');
       } else if (action === 'schedule') {
         const sc = {
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -36986,8 +36986,8 @@ function ContentQueueTab({
         fontSize: 10,
         padding: '2px 7px'
       },
-      title: "Publish this post immediately (still fully gated)",
-      onClick: () => post('/api/content/posts/' + (t.post_id || t.id) + '/publish-now', {}, '🚀 Dispatched')
+      title: "Publish this post now, once you approve its card",
+      onClick: () => post('/api/content/posts/' + (t.post_id || t.id) + '/publish-now', {}, 'Approve the card to publish')
     }, "\u25B6 now"), /*#__PURE__*/React.createElement("button", { "aria-label": "Reschedule", 
       className: "btn btn-magenta",
       style: {
@@ -38177,7 +38177,7 @@ function QuickPostModal({
         await fetch('/api/content/posts/' + id + '/publish-now', {
           method: 'POST'
         });
-        flash('🚀 Publishing — check Content → Queue');
+        flash('Approve the card to publish — it shows the exact text and where it goes');
       } else {
         await fetch('/api/content/posts/' + id + '/schedule', {
           method: 'POST',

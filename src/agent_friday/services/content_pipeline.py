@@ -1176,6 +1176,20 @@ def defer_target(target_id: str, not_before: float) -> Dict[str, Any]:
         return {"ok": False, "error": exception_text(e)}
 
 
+def wake_target(target_id: str) -> Dict[str, Any]:
+    """Clear a PENDING target's backoff gate so the next tick claims it as
+    soon as its publish_at has passed. Touches nothing that is not PENDING,
+    so a claimed or finished target is never reopened."""
+    try:
+        with _LOCK, _connect() as con:
+            cur = con.execute(
+                "UPDATE targets SET not_before=0, updated_at=? "
+                "WHERE id=? AND status='PENDING'", (_now_iso(), target_id))
+        return {"ok": True, "woken": bool(cur.rowcount)}
+    except Exception as e:
+        return {"ok": False, "error": exception_text(e)}
+
+
 STALE_CLAIM_S = 15 * 60               # a PREPARING claim older than this with
                                       # no live worker is a crashed run
 

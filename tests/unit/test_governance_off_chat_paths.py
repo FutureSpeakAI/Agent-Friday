@@ -310,7 +310,14 @@ def test_a_rewritten_recurring_post_waits_for_a_card(tmp_path, monkeypatch):
                                  publish_at="2026-07-01T09:00:00Z", recurrence="daily"))["post"]
     parent = cpl.schedule_post(parent["id"])["post"]
     out = pub.tick(now="2026-07-01T09:05:00Z")
-    assert out["outcomes"] == {"confirmed": 1}
+    assert adapter.publish_calls == 0, "a scheduled post went out with no decision"
+    assert out["outcomes"] == {"awaiting_approval": 1}, out
+    first = [a for a in approvals.list_approvals() if a.get("kind") == "governed_action"
+             and (a.get("payload") or {}).get("post_id") == parent["id"]]
+    assert first and "The approved words." in first[0]["description"]
+    approvals.decide(first[0]["approval_id"], "approve", decided_by="owner")
+    out = pub.tick(now="2026-07-01T09:06:00Z")
+    assert out["outcomes"] == {"confirmed": 1}, out
     assert adapter.publish_calls == 1
 
     clone = [p for p in cpl.list_posts(source_kind="recurrence")["posts"]
@@ -374,7 +381,8 @@ REVIEWED_BUILTINS = {
     "approvals_expiry_sweep": "expires stale approval cards",
     "update_check": "reads the public releases list; sends nothing about the user",
     "context_log_retention": "deletes local logs past the owner's retention setting",
-    "content_publisher": "publishes posts the owner scheduled; new text needs a card",
+    "content_publisher": "publishes a post only on an approved card for its exact "
+                         "text, media and platform, or a still-valid scoped grant",
     "content_analytics": "reads post metrics from connected platforms",
     "content_insights": "summarises local post metrics",
     "relationship_sync": "reads the owner's mail and calendar headers, writes the "
@@ -519,7 +527,8 @@ REVIEWED_SINKS = {
     ("routes/calendar.py", "api_calendar_quick_add"):
         "the owner's click in the calendar",
     ("services/publisher.py", "_run_target"):
-        "a post the owner scheduled; rewritten text needs a card",
+        "every target waits on _authorize_publish: an approved card for its "
+        "exact text, media and platform, or a still-valid scoped grant",
     ("services/google_contacts_write.py", "save_contact"):
         "the save_google_contact tool, which is outward; refuses accounts without the contacts scope",
 }

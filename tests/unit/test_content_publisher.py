@@ -43,6 +43,10 @@ def _iso(tmp_path, monkeypatch):
     monkeypatch.setattr(pub, "_moderation_scan",
                         lambda text: {"ok": True, "blocked": False})
     monkeypatch.setattr(pub, "_gate", lambda text, provider, field: text)
+    # The owner's publish decision is covered by test_content_publish_gate.py;
+    # these tests cover what the engine does once a post has been approved.
+    monkeypatch.setattr(pub, "_authorize_publish",
+                        lambda target, post, texts, rewritten=False: "allow")
     notes = []
     monkeypatch.setattr(pub, "_notify",
                         lambda title, body="", **kw: notes.append((title, body, kw)))

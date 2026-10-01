@@ -16,6 +16,9 @@ store (mark-before-run, §7.2) and runs each through the §7.1 gate chain:
     3 PREPARE adapter.prepare (media, hard validation)
     4 BUDGET  adapter.rate_budget              would exceed → defer, no
                                                attempt burned (§7.1 step 5)
+    D DECIDE  the owner's card (or a still-   not decided → wait; declined
+              valid scoped grant) for exactly    → FAILED (see "The publish
+              this target, text and media        gate" below)
     5 PUBLISH adapter.publish → post_url + platform_post_id
     6 RECORD  target SENT→CONFIRMED · publish_log.jsonl · provenance
               publication entry (best-effort) · ψ earn once per post (§8.7)
@@ -285,6 +288,7 @@ def start() -> Dict[str, Any]:
             default_trigger="interval", default_spec={"every_minutes": 15},
             notify="silent", default_enabled=False)
         out["registered"].append("content_publisher")
+        _ensure_decision_hook()
     except Exception as e:
         out["ok"] = False
         out["error"] = str(e)
@@ -418,7 +422,7 @@ def _dispatch_target(target: Dict[str, Any]) -> str:
             return "in_flight"
         _RUNNING.add(tid)
     try:
-        return _run_target(target)
+        outcome = _run_target(target)
     except Exception as e:
         # Belt-and-suspenders: _run_target shouldn't raise, but a surprise
         # must not leave the target stuck PREPARING (finding: crash limbo).
@@ -426,7 +430,11 @@ def _dispatch_target(target: Dict[str, Any]) -> str:
             store.set_target_status(tid, "FAILED", error=f"publisher error: {e}")
         except Exception:
             pass
-        return "failed"
+        outcome = "failed"
+    try:
+        if outcome == "failed":
+            _spend_authorization(tid)       # a re-arm asks again
+        return outcome
     finally:
         with _RUNNING_LOCK:
             _RUNNING.discard(tid)
@@ -484,6 +492,7 @@ def _recover_sent_limbo(now=None, exclude=None):
                   + ("; retries exhausted" if callable(probe)
                      else "; no verify probe, refusing blind retry (§7.2)"))
         store.set_target_status(tid, "FAILED", error=reason)
+        _spend_authorization(tid)
         _log_attempt(target, "failed", error=reason)
         _notify(f"Publish failed — {platform}", reason, priority="high",
                 actions=_queue_action(), dedupe=f"content-failed:{tid}")
@@ -547,23 +556,334 @@ def _regenerated_since_approval(target: Dict[str, Any], post: Dict[str, Any],
     return True
 
 
-def _decide_new_text(target: Dict[str, Any], post: Dict[str, Any],
-                     texts: List[str]) -> str:
-    """allow | card | deny, from the governance checkpoint's card for exactly
-    this target and exactly this text."""
-    import hashlib
+# ─────────────────────────────────────────────────────────────────────────────
+#  The publish gate — every target, every path
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Invariant: nothing reaches a platform adapter (publish, or a native
+# platform-side schedule) unless the owner decided exactly that target, those
+# words and that media: an approval card raised through the governance
+# checkpoint (action_gate.authorize_external), or a still-valid scoped grant
+# that covered the tool call which scheduled it. Post now, schedule, release,
+# re-arm, the model's tools, native delegation, recurrence and retries all
+# meet this one gate in _run_target, because they all dispatch through it.
+#
+# A decision is remembered per target in publish_authorizations.json, which
+# only this module writes. It covers retries of the same words after a
+# transient failure; a permanent failure or a decline spends it (the round
+# moves on, so a re-armed post raises a fresh card). A recurring series'
+# card names the series, and an occurrence whose words are unchanged from the
+# approved one goes out under it; changed words raise their own card.
+
+PUBLISH_ACTION = "content: publish"
+#: Tools whose scoped grant, used for the call that scheduled a post, covers
+#: that post's publish while the grant stays unexpired and unrevoked.
+GRANT_TOOLS = frozenset({"content_create_post", "content_schedule_post"})
+#: The card's description is capped by the approvals store.
+_CARD_TEXT_MAX = 2000
+
+_AUTH_LOCK = threading.Lock()
+_HOOKED = False
+
+
+def _auth_path():
+    from pathlib import Path
+    return Path(store.CONTENT_DIR) / "publish_authorizations.json"
+
+
+def _auth_read() -> Dict[str, Any]:
+    import json
+    try:
+        data = json.loads(_auth_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _auth_update(tid: str, **fields) -> Dict[str, Any]:
+    import json
+    with _AUTH_LOCK:
+        data = _auth_read()
+        rec = dict(data.get(tid) or {})
+        rec.update(fields)
+        rec["at"] = time.time()
+        data[tid] = rec
+        path = _auth_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=1, default=str), encoding="utf-8")
+        os.replace(tmp, path)
+    return rec
+
+
+def _auth_get(tid: str) -> Dict[str, Any]:
+    with _AUTH_LOCK:
+        return dict(_auth_read().get(tid) or {})
+
+
+def _spend_authorization(tid: str) -> None:
+    """A permanent failure or a decline: the decision is spent and the next
+    arming of this target is a new round with a new card."""
+    try:
+        rec = _auth_get(tid)
+        _auth_update(tid, round=int(rec.get("round") or 0) + 1, sha=None, via=None)
+    except Exception:
+        _log.debug("could not spend the publish authorization", exc_info=True)
+
+
+def _grant_valid(grant_id: str) -> bool:
     from agent_friday.governance import action_gate
+    for g in action_gate.list_grants():
+        if g.get("grant_id") == grant_id and GRANT_TOOLS & set(g.get("tools") or []):
+            return True
+    return False
+
+
+def _covered(rec: Dict[str, Any], sha: str) -> bool:
+    via = str(rec.get("via") or "")
+    if not via or rec.get("sha") != sha:
+        return False
+    if via.startswith("grant_"):
+        return _grant_valid(via)
+    return True
+
+
+def _text_sha(texts: List[str]) -> str:
+    import hashlib
+    return hashlib.sha256("\n\n".join(texts).encode("utf-8")).hexdigest()
+
+
+def _media(target: Dict[str, Any], post: Dict[str, Any]) -> List[Dict[str, str]]:
+    assets = target.get("adapted_assets") or post.get("assets") or []
+    return [{"filename": str(a.get("filename") or ""), "kind": str(a.get("kind") or ""),
+             "content_hash": str(a.get("content_hash") or "")}
+            for a in assets if isinstance(a, dict)]
+
+
+def _series(post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    sched = post.get("schedule") or {}
+    rec = str(sched.get("recurrence") or "none")
+    if rec == "none":
+        return None
+    return {"recurrence": rec, "recurrence_spec": sched.get("recurrence_spec"),
+            "expires_at": sched.get("expires_at")}
+
+
+def _detail(target: Dict[str, Any], post: Dict[str, Any], texts: List[str]) -> Dict[str, Any]:
+    """What the card decides: this target, these words, this media, this
+    series, this round. Any change is a different card."""
+    tid = str(target.get("id"))
+    return {"target_id": tid, "post_id": str(target.get("post_id") or post.get("id")),
+            "platform": str(target.get("platform") or ""),
+            "text_sha256": _text_sha(texts), "media": _media(target, post),
+            "series": _series(post),
+            "round": int(_auth_get(tid).get("round") or 0)}
+
+
+def _destination(platform: str) -> str:
+    label, account = platform, ""
+    try:
+        adapter = platform_registry.get_adapter(platform)
+        if adapter is not None:
+            label = str(getattr(adapter, "label", "") or platform)
+            account = str((adapter.status() or {}).get("account") or "")
+    except Exception:
+        pass
+    return f"{label} ({platform})" + (f", account {account}" if account else "")
+
+
+def _card_words(target: Dict[str, Any], post: Dict[str, Any], texts: List[str],
+                rewritten: bool) -> Dict[str, str]:
     platform = str(target.get("platform") or "")
+    dest = _destination(platform)
+    media = _media(target, post)
+    series = _series(post)
+    head = [f"Goes to: {dest}"]
+    when = target.get("publish_at") or (post.get("schedule") or {}).get("publish_at")
+    head.append(f"When: {when} (UTC), once you approve" if when
+                else "When: as soon as you approve")
+    if series:
+        until = series.get("expires_at") or "you stop the series"
+        head.append(f"Repeats: {series['recurrence']} until {until}. Each later post "
+                    "in this series with exactly these words and media goes out "
+                    "under this approval; changed words ask again.")
+    head.append("Media: " + (", ".join(
+        f"{m['filename']} ({m['kind']})" for m in media) if media else "none"))
+    header = "\n".join(head) + "\n\nText:\n"
     joined = "\n\n".join(texts)
-    detail = {"target_id": str(target.get("id")), "post_id": str(target.get("post_id")),
-              "platform": platform,
-              "text_sha256": hashlib.sha256(joined.encode("utf-8")).hexdigest()}
+    room = _CARD_TEXT_MAX - len(header)
+    if len(joined) > room:
+        note = ("\n\n[{} more characters are not shown here; the full text is in "
+                "Content, Queue.]")
+        cut = max(0, room - len(note.format(len(joined))) - 4)
+        shown = joined[:cut] + note.format(len(joined) - cut)
+    else:
+        shown = joined
+    noun = "rewritten post" if rewritten else "post"
+    return {"title": f"Publish this {noun} to {dest}?",
+            "description": header + shown,
+            "action_description": f"Publish to {dest}: {joined[:200]}"}
+
+
+def _latest_card(subject: str) -> Optional[Dict[str, Any]]:
+    """The newest card filed for this subject, including one raised again
+    after an earlier card expired."""
+    from agent_friday.services import approvals
+    for r in approvals.list_approvals(kind="governed_action",
+                                      subject_type="external_action"):
+        sid = str(r.get("subject_id") or "")
+        if sid == subject or sid.startswith(subject + ":"):
+            return r
+    return None
+
+
+def _ask(target: Dict[str, Any], post: Dict[str, Any], texts: List[str],
+         rewritten: bool):
+    """(verdict, card id): the checkpoint's verdict on this target's card,
+    raising the card when none is open. Uses the open card when there is one,
+    so a recheck never files a second card for the same decision."""
+    from agent_friday.governance import action_gate
+    _ensure_decision_hook()
+    detail = _detail(target, post, texts)
+    latest = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
+    named = None
+    if latest and not latest.get("consumed") and latest.get("status") != "expired":
+        named = latest.get("approval_id")
+    words = _card_words(target, post, texts, rewritten)
     v = action_gate.authorize_external(
-        "content: publish", detail, requested_by="publisher",
-        title=f"Publish this rewritten post to {platform}?",
-        description=joined[:600],
-        action_description=f"Publish to {platform}")
+        PUBLISH_ACTION, detail, requested_by="publisher", approval_id=named, **words)
+    card = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
+    return v, str((card or {}).get("approval_id") or "card")
+
+
+def _parent_covers(target: Dict[str, Any], post: Dict[str, Any], sha: str) -> Optional[str]:
+    """A recurrence occurrence with unchanged words goes out under the series'
+    approval: the parent's same-platform target was decided for exactly these
+    words in exactly this series. Returns the parent target id, or None."""
+    src = post.get("source") or {}
+    series = _series(post)
+    if str(src.get("kind") or "") != "recurrence" or not series:
+        return None
+    got = store.get_post(str(src.get("ref") or ""))
+    if not got.get("ok"):
+        return None
+    platform = str(target.get("platform") or "")
+    for pt in (got["post"].get("targets") or []):
+        if str(pt.get("platform") or "") != platform:
+            continue
+        rec = _auth_get(str(pt.get("id")))
+        if _covered(rec, sha) and rec.get("series") == series:
+            return str(pt.get("id"))
+    return None
+
+
+def _authorize_publish(target: Dict[str, Any], post: Dict[str, Any],
+                       texts: List[str], *, rewritten: bool = False) -> str:
+    """allow | card | deny for sending exactly `texts` to this target now."""
+    from agent_friday.governance import action_gate
+    tid = str(target.get("id"))
+    platform = str(target.get("platform") or "")
+    sha = _text_sha(texts)
+    rec = _auth_get(tid)
+    via = None
+    if _covered(rec, sha):
+        via = str(rec.get("via"))
+    elif not rewritten:
+        parent_tid = _parent_covers(target, post, sha)
+        if parent_tid:
+            via = f"series:{parent_tid}"
+    if via:
+        try:
+            action_gate.record_external(PUBLISH_ACTION, surface="publisher",
+                                        approval_id=via, target=platform)
+        except action_gate.Held:
+            return "deny"
+        if rec.get("via") != via:
+            _auth_update(tid, sha=sha, via=via, series=_series(post),
+                         post_id=str(target.get("post_id")), platform=platform)
+        return "allow"
+    v, card_id = _ask(target, post, texts, rewritten)
+    if v.action == "allow":
+        _auth_update(tid, sha=sha, via=card_id, series=_series(post),
+                     post_id=str(target.get("post_id")), platform=platform)
     return v.action
+
+
+def request_publish_approval(post_id: str) -> Dict[str, Any]:
+    """Raise the publish card for each armed target of a post now, when the
+    owner (or a tool) arms it, instead of when the publisher reaches it.
+
+    Nothing is approved here and no approved card is spent: dispatch still
+    decides through _authorize_publish. When the call that armed the post ran
+    under a scoped grant for scheduling posts, that grant covers these words
+    for as long as it stays valid. Never raises."""
+    out: Dict[str, Any] = {"ok": True, "targets": []}
+    try:
+        from agent_friday.governance import action_gate
+        got = store.get_post(post_id)
+        if not got.get("ok"):
+            return {"ok": False, "error": got.get("error")}
+        post = got["post"]
+        decided = str(action_gate.owner_decision() or "")
+        for target in post.get("targets") or []:
+            if target.get("status") != "PENDING":
+                continue
+            tid = str(target.get("id"))
+            platform = str(target.get("platform") or "")
+            texts = _final_texts(target, post)
+            sha = _text_sha(texts)
+            row = {"target_id": tid, "platform": platform}
+            if _covered(_auth_get(tid), sha):
+                row["state"] = "approved"
+            elif decided.startswith("grant_") and _grant_valid(decided):
+                _auth_update(tid, sha=sha, via=decided, series=_series(post),
+                             post_id=post_id, platform=platform)
+                row["state"] = "covered by a grant"
+            else:
+                detail = _detail(target, post, texts)
+                latest = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
+                if latest is None or latest.get("consumed") or latest.get("status") == "expired":
+                    _ensure_decision_hook()
+                    action_gate.authorize_external(
+                        PUBLISH_ACTION, detail, requested_by="publisher",
+                        **_card_words(target, post, texts, False))
+                    latest = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
+                row["state"] = {"approved": "approved", "denied": "declined",
+                                "blocked": "declined"}.get(
+                    str((latest or {}).get("status")),
+                    "waiting for your approval" if latest else "unavailable")
+                if latest:
+                    row["approval_id"] = latest.get("approval_id")
+            out["targets"].append(row)
+    except Exception as e:
+        _log.debug("raising publish cards failed", exc_info=True)
+        return {"ok": False, "error": exception_text(e), "targets": out["targets"]}
+    return out
+
+
+def _on_card_decided(record: Dict[str, Any]) -> None:
+    """A publish card was decided or expired: let its target be reconsidered
+    now rather than at its next recheck. The decision itself is read again by
+    _authorize_publish; nothing here publishes."""
+    if record.get("subject_type") != "external_action":
+        return
+    if not str(record.get("subject_id") or "").startswith(PUBLISH_ACTION + ":"):
+        return
+    tid = str((record.get("payload") or {}).get("target_id") or "")
+    if tid and store.wake_target(tid).get("woken"):
+        kick()
+
+
+def _ensure_decision_hook() -> None:
+    global _HOOKED
+    if _HOOKED:
+        return
+    try:
+        from agent_friday.services import approvals
+        approvals.register_decision_hook("governed_action", _on_card_decided)
+        _HOOKED = True
+    except Exception:
+        _log.debug("publish card hook unavailable", exc_info=True)
 
 
 def _hold(target: Dict[str, Any], reason: str) -> str:
@@ -670,20 +990,21 @@ def _run_target(target: Dict[str, Any]) -> str:
     # (3 STALENESS — see module notes: content edits pull SCHEDULED posts back
     #  to DRAFT in the store, so a claimed payload cannot be stale.)
 
-    # DECISION — text the owner never saw. Scheduling a post is the owner's
-    # decision about THAT text. A recurrence clone whose wording the composer
-    # regenerated, or a target recomposed before dispatch, is new text, so it
-    # goes out only after a card for exactly that text is approved.
-    if recomposed or _regenerated_since_approval(target, post, texts):
-        decision = _decide_new_text(target, post, texts)
-        if decision == "card":
-            store.defer_target(tid, time.time() + DECISION_RECHECK_S)
-            return "awaiting_approval"
-        if decision != "allow":
-            store.set_target_status(tid, "FAILED",
-                                    error="regenerated text was not approved")
-            _log_attempt(target, "failed", error="regenerated text was not approved")
-            return "failed"
+    # DECISION — the owner's, for exactly this target, these words and this
+    # media (see "The publish gate" above). Every path to a platform passes
+    # here; a target recomposed before dispatch or a recurrence occurrence
+    # whose words were regenerated is new text and gets its own card.
+    rewritten = recomposed or _regenerated_since_approval(target, post, texts)
+    decision = _authorize_publish(target, post, texts, rewritten=rewritten)
+    if decision == "card":
+        store.defer_target(tid, time.time() + DECISION_RECHECK_S)
+        return "awaiting_approval"
+    if decision != "allow":
+        reason = ("the rewritten text was not approved" if rewritten
+                  else "the post was not approved")
+        store.set_target_status(tid, "FAILED", error=reason)
+        _log_attempt(target, "failed", error=reason)
+        return "failed"
 
     adapter = platform_registry.get_adapter(platform)
     if adapter is None:

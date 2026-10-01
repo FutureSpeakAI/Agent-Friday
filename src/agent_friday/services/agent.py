@@ -7229,9 +7229,27 @@ def _content_apply_schedule(post_id, when_text, optimal, tz_name):
             platforms, publish_at, cs["conflict_window_hours"],
             exclude_post=post_id)
         res["warnings"] = warnings
+        # The owner's card for the exact words, media and destination; the
+        # publisher sends nothing until it (or a still-valid scoped grant
+        # behind this call) decides each target.
+        from agent_friday.services import publisher as _pub
+        res["approval"] = _pub.request_publish_approval(post_id)
         return res
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def _content_approval_note(approval):
+    """One sentence on where each target's publish decision stands."""
+    rows = (approval or {}).get("targets") or []
+    if not rows:
+        return "Nothing goes out until the owner approves the card with the exact text."
+    states = {str(r.get("state") or "") for r in rows}
+    if states <= {"approved", "covered by a grant"}:
+        return "The owner's decision already covers this text."
+    return ("Nothing goes out until the owner approves the card showing the "
+            "exact text, media and destination (" + ", ".join(
+                f"{r.get('platform')}: {r.get('state')}" for r in rows) + ").")
 
 
 def _content_coerce_assets(raw):
@@ -7294,9 +7312,11 @@ def _tool_content_create_post(inp):
             if sched.get("conflicts"):
                 warnings.append(f"{len(sched['conflicts'])} same-platform "
                                 "post(s) within the conflict window")
+            out["approval"] = _content_approval_note(sched.get("approval"))
             out["message"] = (f"Scheduled for {sched.get('publish_at')} "
-                              f"({out['time_source']}) — review or reschedule "
-                              f"in the Queue: {out['queue_link']}")
+                              f"({out['time_source']}). {out['approval']} "
+                              f"Review or reschedule in the Queue: "
+                              f"{out['queue_link']}")
         else:
             warnings.append(f"schedule failed: {sched.get('error')}")
             out["message"] = ("Draft created and composed, but not scheduled — "
@@ -7342,13 +7362,15 @@ def _tool_content_schedule_post(inp):
     if res.get("conflicts"):
         warnings.append(f"{len(res['conflicts'])} same-platform post(s) "
                         "within the conflict window")
+    approval = _content_approval_note(res.get("approval"))
     out = {"status": "ok", "post_id": post_id, "post_status": "SCHEDULED",
            "publish_at": res.get("publish_at"),
            "timezone": res.get("timezone"),
            "time_source": res.get("resolved"),
+           "approval": approval,
            "queue_link": _content_deeplink("queue", post_id),
            "message": (f"Scheduled for {res.get('publish_at')} "
-                       f"({res.get('resolved')}) — Queue: "
+                       f"({res.get('resolved')}). {approval} Queue: "
                        + _content_deeplink("queue", post_id))}
     if warnings:
         out["warnings"] = warnings
@@ -7465,9 +7487,11 @@ CLAUDE_TOOLS.extend([
             "this to LinkedIn and Bluesky tomorrow morning'. publish_at takes "
             "ISO-8601 UTC or a natural phrase ('tomorrow morning', 'tonight', "
             "'friday 3pm'); or set optimal_time to let the best-times engine "
-            "pick the slot. Nothing ships silently — every publish still "
-            "passes moderation and the egress gate (private data → HELD for "
-            "the user's review). Returns the post id and a Queue deep link."),
+            "pick the slot. Nothing ships silently — every publish waits for "
+            "the user's approval card showing the exact text, media and "
+            "platform, and still passes moderation and the egress gate "
+            "(private data → HELD for the user's review). Returns the post "
+            "id and a Queue deep link."),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -7490,8 +7514,9 @@ CLAUDE_TOOLS.extend([
             "any platform target that hasn't been adapted yet, then sets the "
             "publish time: publish_at (ISO-8601 UTC or a natural phrase) or "
             "optimal_time (default when no time is given — the best-times "
-            "engine picks). Returns the resolved instant and a Queue deep "
-            "link; warns about same-platform conflicts."),
+            "engine picks). The post goes out only after the user approves "
+            "the card showing its exact text. Returns the resolved instant "
+            "and a Queue deep link; warns about same-platform conflicts."),
         "input_schema": {
             "type": "object",
             "properties": {

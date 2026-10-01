@@ -991,6 +991,15 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
         raise Held(f"the signed receipt could not be written ({e})")
 
 
+def external_subject(action: str, detail: dict) -> str:
+    """The approval subject `authorize_external` files a card under for this
+    exact action and detail. A caller may look the card up by it (to raise a
+    card early without spending an approved one); it decides nothing."""
+    fp = hashlib.sha256(json.dumps({"a": action, "d": detail}, sort_keys=True,
+                                   default=str).encode()).hexdigest()[:16]
+    return f"{action}:{fp}"
+
+
 def authorize_external(action: str, detail: dict, *, requested_by: str,
                        title: Optional[str] = None, description: Optional[str] = None,
                        action_description: Optional[str] = None,
@@ -1014,18 +1023,17 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
         ok, integrity = verify_claws()
         if not ok:
             return Verdict("deny", OUTWARD, f"held: {integrity}")
-        fp = hashlib.sha256(json.dumps({"a": action, "d": detail}, sort_keys=True,
-                                       default=str).encode()).hexdigest()[:16]
+        subject = external_subject(action, detail)
         rec = None
         if approval_id:
             named = _ap.get_approval(approval_id)
             sid = str((named or {}).get("subject_id") or "")
             if (named and named.get("kind") == "governed_action"
                     and named.get("subject_type") == "external_action"
-                    and (sid == f"{action}:{fp}" or sid.startswith(f"{action}:{fp}:"))):
+                    and (sid == subject or sid.startswith(f"{subject}:"))):
                 rec = named
         if rec is None:
-            rec = _ap.find_for_subject("external_action", f"{action}:{fp}", "governed_action")
+            rec = _ap.find_for_subject("external_action", subject, "governed_action")
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
             _ap.mark_used(rec["approval_id"], requested_by)
             v = Verdict("allow", OUTWARD, "approved on a card")
@@ -1035,7 +1043,7 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
             if rec is None or rec.get("status") == "expired" or rec.get("consumed"):
                 _ap.create_approval(
                     kind="governed_action", subject_type="external_action",
-                    subject_id=f"{action}:{fp}" + (f":{uuid.uuid4().hex[:6]}" if rec else ""),
+                    subject_id=subject + (f":{uuid.uuid4().hex[:6]}" if rec else ""),
                     title=title or f"Allow {action}",
                     description=description or json.dumps(detail, default=str)[:600],
                     action_description=action_description or action, force_gate=True,

@@ -113,6 +113,18 @@ def _now_dt() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _raise_publish_cards(post_id: str) -> Dict[str, Any]:
+    """Raise the owner's publish card for each armed target as the post is
+    armed, showing the exact words, media and destination. The publisher
+    sends nothing until that card (or a still-valid scoped grant) decides it;
+    this only makes the card appear now rather than at dispatch."""
+    try:
+        from agent_friday.services import publisher as _pub
+        return _pub.request_publish_approval(post_id)
+    except Exception as e:
+        return {"ok": False, "error": error_text(e, "Couldn't raise the approval card")}
+
+
 def _kick_publisher() -> Dict[str, Any]:
     """Best-effort immediate dispatch after publish-now / release. The
     publisher tick (§6.2) is authoritative; kick() runs a one-shot background
@@ -411,15 +423,18 @@ def content_post_schedule(post_id):
         platforms, sched.get("publish_at"), cs["conflict_window_hours"],
         exclude_post=post_id)
     res["resolved_optimal"] = resolved_optimal
+    res["approval"] = _raise_publish_cards(post_id)
     return jsonify(public_result(res, "Couldn't schedule the post"))
 
 
 @content_pipeline_bp.route("/api/content/posts/<post_id>/publish-now", methods=["POST"])
 def content_post_publish_now(post_id):
-    """Immediate dispatch — still fully gated: the publisher runs the H1-H4
-    scan and the egress classifier on every claimed target (§7.1)."""
+    """Immediate dispatch — still fully gated: the owner's approval card for
+    the exact words raises here, and the publisher runs the H1-H4 scan, the
+    egress classifier and that card's decision on every claimed target (§7.1)."""
     res = store.publish_now(post_id)
     if res.get("ok"):
+        res["approval"] = _raise_publish_cards(post_id)
         res["dispatch"] = _kick_publisher()
     return jsonify(public_result(res, "Couldn't publish the post"))
 
@@ -441,6 +456,7 @@ def content_post_release(post_id):
                                  "flagged content before publishing"})
     res = store.release_held(post_id, target_id=data.get("target_id"))
     if res.get("ok"):
+        res["approval"] = _raise_publish_cards(post_id)
         res["dispatch"] = _kick_publisher()
     return jsonify(public_result(res, "Couldn't release the post"))
 
