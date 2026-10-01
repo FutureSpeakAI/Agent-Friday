@@ -1,11 +1,11 @@
 # S5: floci as the salon's local cloud emulator, the spike
 
 **Status:** code audit, coverage map and licence check done 2026-09-30, from the
-source at commit 865dd1d (2026-10-01 UTC) and the project's docs. **Not yet
-run on this PC:** the RAM measurement, the egress-blocked run and the parity
-tests need a Java 25 toolchain that is not installed here (see "What stands
-between this and a run"). Recommendation below is conditional on those.
-Report only; nothing installed, nothing bundled.
+source at commit 865dd1d (2026-10-01 UTC) and the project's docs. **Run on
+this PC 2026-09-30** (JVM build, user-level JDK 25 in a scratch folder,
+nothing system-wide): connection log, RAM, and the parity suites for the six
+in-process services, all under "The run" below. The recommendation holds.
+Report only; nothing bundled.
 
 **Question.** Spec §4.6.1 sizes Phase 5, Friday's own local cloud emulator, at
 24–34 agent-days. floci (https://github.com/floci-io/floci) claims to be a
@@ -37,7 +37,7 @@ most of Phase 5? The rule it must pass first: no component ever phones home.
   images such as `postgres:16-alpine`, each under its own licence; those
   are the user's choice per service, not part of floci.)
 
-## 1. Telemetry and phone-home (code audit; run pending)
+## 1. Telemetry and phone-home (code audit, confirmed by the run)
 
 Method: every `.java`, `.properties`, `.yml` under `src/main` was searched
 for telemetry-shaped words, for URLs, for HTTP clients and for Docker image
@@ -65,10 +65,12 @@ pulls; the Quarkus config (`application.yml`) was read for exporters.
   registries: expected, and off by not using those services.
 - The docs state it: "No auth tokens, no sign-ups, no telemetry."
 
-**Still owed:** the run under a per-process connection log (and, when the
-owner allows, a packet capture) to prove that the running process opens no
-outbound socket while the stateless services are exercised. The code says it
-will not; the rule wants it seen.
+**Seen in the run:** two starts, about four and five minutes of life each,
+the six in-process services exercised by their own parity suites; the only
+TCP endpoints the Java process ever owned were its listener on
+`127.0.0.1:4566` and the suites' loopback connections to it. Zero remote
+addresses, zero DNS. A packet capture (admin) remains the stronger proof if
+the owner wants it; see "The run" for the method and its limit.
 
 ## 2. Windows, Docker and RAM
 
@@ -91,9 +93,26 @@ will not; the rule wants it seen.
   build will sit far higher (a Quarkus app on JDK 25 idles in the low
   hundreds of MB; UNMEASURED here). For ordinary users the honest path is a
   Friday-built native binary per platform, or `mock` modes.
-- **RAM on this PC: UNMEASURED** until the run (see below).
+- **RAM on this PC, JVM build (measured):** 250–279 MB resident idle, 300–319
+  MB after the suites, 333 MB peak working set, with `-Xmx1024m`. Ready in
+  38–48 s from the launch command (JVM start, 60+ services, 4800 classes),
+  against the 24 ms the native binary claims. An ordinary user would need the
+  native build; the JVM figure is what this PC can measure.
+- **Two listeners on all interfaces by default.** Besides `127.0.0.1:4566`
+  (honouring `QUARKUS_HTTP_HOST`), the default start also binds `0.0.0.0` and
+  `[::]` on **9169** (the EC2 instance-metadata server) and **12000** (the
+  Lambda runtime API). Neither honours the HTTP host setting; both go away
+  with `FLOCI_SERVICES_EC2_ENABLED=false` and `FLOCI_SERVICES_LAMBDA_ENABLED=false`,
+  after which the process holds exactly one socket, `127.0.0.1:4566`
+  (verified by listing the process's listeners). Friday's wrapper must set
+  both, or the box is reachable from the LAN.
+- **Memory mode still writes to disk:** three small `resourceexplorer2-*.json`
+  files (11 KB) land under `./data` because that service's storage is
+  "hybrid" regardless of `FLOCI_STORAGE_MODE=memory`. Harmless, but the
+  wrapper should give floci a per-codebase working directory so nothing
+  lands in the codebase itself.
 
-## 3. Coverage against the salon's needs (docs and code; parity run pending)
+## 3. Coverage against the salon's needs (docs and code; parity run below)
 
 | Salon needs | floci | How it runs | Notes |
 |---|---|---|---|
@@ -109,24 +128,71 @@ will not; the rule wants it seen.
 **Parity tests exist in the tree** for exactly these seven services
 (`compatibility-tests/sdk-test-go/tests/{s3,dynamodb,sqs,sns,lambda,cognito,secretsmanager}_test.go`,
 986 lines, Go SDK v2; Go 1.26 is installed here) plus AWS CLI, Java, CDK,
-Terraform and OpenTofu suites. Running them against a local floci is the
-parity step; it waits on the toolchain below.
+Terraform and OpenTofu suites. Their results against this PC's floci are in
+"The run".
 
-## What stands between this and a run
+## The run (2026-09-30, this PC)
 
-- This PC has **Java 17**; floci needs **Java 25** and Maven 3.9+ (the tree
-  ships `mvnw`, which downloads Maven itself). A JDK 25 is a user-level
-  unzip (~200 MB) plus the Maven wrapper's downloads (Maven ~10 MB and a
-  dependency tree of several hundred MB). Nothing system-level, no admin, no
-  reboot, but a large download and a first build of several minutes.
-- The native binary additionally needs GraalVM or Mandrel 25 (~400 MB) and
-  about four minutes of CPU per build.
-- Docker is not needed for the stateless run, and the spike would not use it.
+**Toolchain, all user-level in a scratch folder, nothing system-wide:** Temurin
+JDK 25.0.4.1 (SHA-256 checked against the published value), the tree's Maven
+wrapper and its dependency tree (~190 MB in `~/.m2`), Go 1.26 already present.
+`./mvnw package -DskipTests` built the JVM app in 9 min 39 s; `quarkus-app/`
+is 91 MB. Docker was never started. The native binary (GraalVM/Mandrel 25,
+~400 MB more) was not built.
 
-## Recommendation (conditional on the run)
+**Method.** floci started by PowerShell with `-PassThru`, so its real process
+id is known; a logger polled that process's TCP connections and UDP endpoints
+every 500 ms (`Get-NetTCPConnection -OwningProcess`) and wrote each new
+endpoint once. Settings: `FLOCI_STORAGE_MODE=memory`,
+`QUARKUS_HTTP_HOST=127.0.0.1`, `-Xmx1024m`; pass two added the EC2 and Lambda
+switches above. The seven suites ran from
+`compatibility-tests/sdk-test-go` with `FLOCI_ENDPOINT=http://127.0.0.1:4566`
+and the dummy `test`/`test` credentials. A positive control ran the same
+logger against a PowerShell process making one HEAD request to GitHub: it
+caught the connection (one `Established` line to a `:443` remote). The
+method's limit: a connection that opens and fully closes inside one 500 ms
+poll could escape it; the code audit is the answer to that gap, and a packet
+capture would close it.
 
-**Wrap it, don't rebuild it.** If the run confirms what the code says (no
-outbound socket, RAM within reason), floci should become the Phase 5
+**Egress.** Pass one and pass two together: the Java process owned
+`127.0.0.1:4566 Listen`, loopback `Established` connections from the suites,
+and (pass one only) the two all-interface listeners on 9169 and 12000. No
+remote address, no DNS, nothing on UDP. **Zero egress.**
+
+**RAM.** Idle 279 MB (pass one, all services), 250 MB (pass two, EC2 and
+Lambda off); after the suites 319 / 300 MB; peak working set 333 MB.
+
+**Parity, Go SDK v2 suites, pass two (`go test -v`, each suite's tests run
+by name, `-count=1`):**
+
+| Suite | Result | Tests | Subtests | Wall time |
+|---|---|---|---|---|
+| s3 (TestS3, LocationConstraint, NonASCIIKey, MultipartCopyNonASCIIKey, LargeObject) | ok | 5 pass | 11 pass | 4.6 s |
+| dynamodb | ok | 1 pass | 10 pass | 0.5 s |
+| sqs | ok | 1 pass | 11 pass | 0.4 s |
+| sns | ok | 1 pass | 9 pass | 0.5 s |
+| secretsmanager | ok | 1 pass | 6 pass | 0.8 s |
+| cognito | ok | 2 pass | none | 2.9 s |
+| lambda (pass one) | **FAIL** | 1 fail | 1 fail | n/a |
+
+Six of seven green with no failures or skips. Lambda fails exactly as the
+code predicted: `ContainerLauncher` tries Docker Desktop's named pipe
+(`dockerDesktopLinuxEngine`), finds nothing, and the function never runs.
+The same missing pipe produces one WARN at startup from the ECS container
+sweep; it is logged and ignored. The suites in the tree are smoke-depth (5 to
+11 checks per service), not the AWS conformance suite; they prove the SDK
+wire format and the common paths, not every edge.
+
+**Disk.** C: stayed between 24 and 18 GB free through the build and both
+runs, above the 15 GB floor. Build outputs and the JDK live in the session's
+scratch folder and can be deleted.
+
+## Recommendation (the run confirms it)
+
+**Wrap it, don't rebuild it.** The run confirmed what the code said: no
+outbound socket, RAM in the low hundreds of MB for the JVM build, six of six
+in-process services passing their suites, and Lambda Docker-only. floci
+should become the Phase 5
 backend for S3, DynamoDB, SQS, SNS, Secrets Manager, Cognito/OIDC, IAM/STS,
 KMS, SSM, EventBridge and Step Functions, sitting behind Friday's own
 gateway from §4.6.1 (service detection, the Backstage status panel, the
@@ -145,10 +211,19 @@ JVM footprint is unacceptable and a native build cannot be shipped for
 Windows, or if the project's health changes; the MIT licence means a fork
 is always available.
 
-**Open items for the owner:** the JDK 25 install for the run; whether Friday
-ships a Friday-built native binary per platform (a build pipeline, not a
-dependency on floci's releases); and whether Lambda-style functions stay
-Friday's own runner (recommended) or require Docker.
+Three findings from the run shape the wrapper and are already inside the
+10–14 days: it must set `FLOCI_SERVICES_EC2_ENABLED=false` and
+`FLOCI_SERVICES_LAMBDA_ENABLED=false` (or the box listens on the LAN), give
+floci a working directory outside the codebase (memory mode still writes
+three files), and expect 40–50 s to ready on the JVM build, so Friday starts
+it when a codebase opens, not when a request arrives.
+
+**Open items for the owner:** whether Friday ships a Friday-built native
+binary per platform (a build pipeline, not a dependency on floci's releases;
+the JVM build needs a 300 MB JDK on the user's PC and idles near 300 MB);
+and whether Lambda-style functions stay Friday's own runner (recommended) or
+require Docker. A packet capture (admin) is available as the stronger egress
+proof if wanted.
 
 ## Sources
 
