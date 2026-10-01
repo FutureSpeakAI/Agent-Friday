@@ -396,9 +396,14 @@ def _scan_drafts(con: sqlite3.Connection) -> int:
 
 
 def _scan_legacy(con: sqlite3.Connection) -> int:
+    # The Ideas kanban's file lives under the Friday home. It is read from there
+    # at call time (misc_engine binds its path at first import, which is a
+    # different home under tests, and would leak one test's items into another).
+    pf = Path(core.FRIDAY_DIR) / "content" / "pipeline.json"
+    if not pf.exists():
+        return 0
     try:
-        from agent_friday.services.misc_engine import _load_content_pipeline
-        pipe = _load_content_pipeline() or {}
+        pipe = json.loads(pf.read_text(encoding="utf-8")) or {}
     except Exception:
         return 0
     n = 0

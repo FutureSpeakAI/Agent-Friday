@@ -46,6 +46,13 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(cp, "DB_PATH", fd / "content_pipeline.db")
     monkeypatch.setattr(cp, "PUBLISH_LOG", fd / "content" / "publish_log.jsonl")
     (fd / "content").mkdir()
+    # Every store this test reads or writes lives under its own home: nothing from an
+    # earlier test's home can leak in, and nothing leaks out.
+    from agent_friday.services import misc_engine, provenance, approvals
+    monkeypatch.setattr(misc_engine, "CONTENT_DIR", fd / "content")
+    monkeypatch.setattr(misc_engine, "CONTENT_PIPELINE_FILE", fd / "content" / "pipeline.json")
+    monkeypatch.setattr(provenance, "PROVENANCE_DIR", fd / "provenance", raising=False)
+    monkeypatch.setattr(approvals, "APPROVALS_FILE", fd / "approvals.json", raising=False)
 
     # a creation with its sidecar
     (creations / "friday-image-harbour.png").write_bytes(b"\x89PNG fake")
