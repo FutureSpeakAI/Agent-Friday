@@ -113,7 +113,14 @@ def command_for(c: Candidate) -> dict:
     if c.kind == "news":
         return {"tool": "open_url", "input": {"url": c.extra["url"]}}
     if c.kind == "workspace":
-        return {"tool": "navigate_to", "input": {"kind": "workspace", "workspace": c.id}}
+        # A workspace that folded into another (Studio into Media) keeps its old
+        # name as an alias: the command opens the workspace that exists today.
+        try:
+            from agent_friday.services import agent
+            ws = agent._resolve_workspace(c.id) or c.id
+        except Exception:
+            ws = c.id
+        return {"tool": "navigate_to", "input": {"kind": "workspace", "workspace": ws}}
     inp = {"kind": c.kind, "id": c.id}
     if c.kind == "email" and c.extra.get("account"):
         inp["account"] = c.extra["account"]

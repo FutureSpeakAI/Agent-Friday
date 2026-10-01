@@ -135,7 +135,8 @@ def test_a_single_exact_match_opens_without_a_choice(monkeypatch):
     laya = _with(monkeypatch, _Laya(kind="workspace"))
     r = laya_resolver.resolve("open the studio", sources={
         "workspace": lambda t: [Candidate("workspace", "studio", "Studio", "workspace", 1.0)]})
-    assert r.command == {"tool": "navigate_to", "input": {"kind": "workspace", "workspace": "studio"}}
+    # Studio folded into Media (2026-09-30): the old name still opens, the command names the workspace that exists.
+    assert r.command == {"tool": "navigate_to", "input": {"kind": "workspace", "workspace": "media"}}
     assert not [c for c in laya.calls if "item" in c]
 
 
@@ -177,7 +178,8 @@ def test_resolve_never_raises(monkeypatch):
     assert r.status == "brain" and r.reason.startswith("error")
 
 
-@pytest.mark.parametrize("text,ws", [("open news", "news"), ("Open the Studio workspace for me.", "studio"),
+@pytest.mark.parametrize("text,ws", [("open news", "news"), ("Open the Studio workspace for me.", "media"),
+                                     ("open media", "media"), ("open my drafts", "media"),
                                      ("open the wiki workspace please", "knowledge"),
                                      ("Yeah, I mean go ahead and open the inbox.", "messages")])
 def test_a_workspace_by_name_opens_without_laya(monkeypatch, text, ws):
