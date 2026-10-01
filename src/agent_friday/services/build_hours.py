@@ -12,8 +12,8 @@ that restore is that nothing is listening on the seat's port.
 The window is a flag file the daemon writes, with optional `start:` and
 `end:` lines (ISO minutes). No `end:` means the next 07:00 after the file's
 modification time, which is the daemon's own rule. The path is configurable
-with `FRIDAY_BUILD_HOURS_FLAG`; the default is the daemon's location under the
-home directory.
+with `FRIDAY_BUILD_HOURS_FLAG`; the default is `BUILD_HOURS` in Friday's home,
+where the build-hours daemon mirrors its flag while the window is open.
 """
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ def flag_path() -> Path:
     override = os.environ.get("FRIDAY_BUILD_HOURS_FLAG")
     if override:
         return Path(override)
-    return Path.home() / "ftv" / "program" / "BUILD_HOURS"
+    from agent_friday.paths import friday_home
+    return Path(friday_home()) / "BUILD_HOURS"
 
 
 def _next_seven(after: dt.datetime) -> dt.datetime:
