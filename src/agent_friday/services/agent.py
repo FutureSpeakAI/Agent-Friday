@@ -321,7 +321,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # configured CLOUD model, never a foreign id.
         from agent_friday.services.model_router import _claude_safe_model
         return _call_claude_agent(
-            messages, system=_system_for('cloud'),
+            messages, workspace=workspace, system=_system_for('cloud'),
             model=_claude_safe_model(use_model or model, settings),
             max_tokens=max_tokens, temperature=temperature,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
@@ -335,7 +335,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         return _call_openai(
             messages, system=_system_for('openai'), model=use_model,
             max_tokens=max_tokens, temperature=temperature,
-            orb_label=orb_label, tools=(tools or CLAUDE_TOOLS),
+            orb_label=orb_label, tools=(tools or tools_for_workspace(workspace)),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             provider=routed_provider_name if use_model else None,
         )
@@ -363,10 +363,11 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # nothing left for it to drop, which is the point.
         from agent_friday.services import tool_catalogue as _TCat
         if _TCat.enabled() and CLAUDE_TOOLS:
+            _turn_tools = tools or tools_for_workspace(workspace)
             _open = _TCat.opening_set(
-                CLAUDE_TOOLS, pilot=(session_ctx or {}).get("_laya_pilot"))
+                _turn_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
             try:
-                _s = _TCat.savings(CLAUDE_TOOLS, opening=_open)
+                _s = _TCat.savings(_turn_tools, opening=_open)
                 print("  [tools] catalogue on: %d tools -> %d opening tokens "
                       "(saved %d, %.0f%%)"
                       % (_s["tools"], _s["opening_tokens"],
@@ -378,7 +379,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
                 max_tokens=max_tokens, temperature=temperature,
                 orb_label=orb_label, tools=_open,
                 pii_lookup=pii_lookup, session_ctx=session_ctx,
-                catalogue_all=CLAUDE_TOOLS,
+                catalogue_all=_turn_tools,
             )
 
         try:
@@ -6095,6 +6096,19 @@ def _tool_personality_check_sycophancy(inp):
     return personality_check_sycophancy(limit=(inp or {}).get("limit", 20))
 
 
+#: Tools a workspace brings with it. They are sent only when that workspace is
+#: the one the turn runs in, or when the loader is asked for them by name, so
+#: they stay out of the always-on catalogue and its latency budget
+#: (tests/unit/test_latency_budget.py). {workspace id: [tool schema, ...]}
+WORKSPACE_TOOLS: dict = {}
+
+
+def tools_for_workspace(workspace=None, base=None):
+    """The catalogue for one turn: the always-on tools plus the front workspace's own."""
+    extra = WORKSPACE_TOOLS.get(str(workspace or ""), [])
+    return list(CLAUDE_TOOLS if base is None else base) + list(extra)
+
+
 CLAUDE_TOOL_HANDLERS = {
     "search_web": _tool_search_web,
     "browse_web": _tool_browse_web,
@@ -8106,7 +8120,7 @@ try:
     from agent_friday.services import podcast_tools as _podcast_tools
     _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
     from agent_friday.services import media_card_tools as _media_card_tools
-    _media_card_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+    _media_card_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
 except Exception as _pte:  # never let optional deps break the agent import
     print(f"  [PODCASTS] registration skipped: {_pte}")
 
@@ -10696,7 +10710,7 @@ def _no_empty_text(messages):
     return out
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None):
+def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None, workspace=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
     pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
@@ -10718,7 +10732,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         if _alt:
             return _call_openai(
                 messages, system=system, model=_alt, max_tokens=max_tokens,
-                orb_label=orb_label, orb_icon=orb_icon, tools=CLAUDE_TOOLS,
+                orb_label=orb_label, orb_icon=orb_icon, tools=tools_for_workspace(workspace),
                 pii_lookup=pii_lookup, session_ctx=session_ctx,
                 provider=_one_key.OPENROUTER)
         raise RuntimeError(
@@ -10965,7 +10979,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 "model": model or ANTHROPIC_MODEL_DEFAULT,
                 "max_tokens": max_tokens,
                 "messages": convo,
-                "tools": CLAUDE_TOOLS,
+                "tools": tools_for_workspace(workspace),
             }
             _sys = safe_system
             if _steer_inject:

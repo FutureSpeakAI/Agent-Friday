@@ -677,6 +677,14 @@ def _voice_shared_tool_specs():
         _log.error("voice shared tools unavailable (registry import failed): %s", e)
         return []
     by_name = {t.get("name"): t for t in CLAUDE_TOOLS if isinstance(t, dict)}
+    try:   # a workspace's own tools (Media's) are shared with voice too
+        from agent_friday.services.agent import WORKSPACE_TOOLS
+        for _lst in WORKSPACE_TOOLS.values():
+            for t in _lst:
+                if isinstance(t, dict):
+                    by_name.setdefault(t.get("name"), t)
+    except Exception:
+        pass
     own = {t[0] for t in _VOICE_LIVE_TOOLS}
     out = []
     for name in _VOICE_SHARED_TOOLS:

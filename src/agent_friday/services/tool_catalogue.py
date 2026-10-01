@@ -190,6 +190,15 @@ def expand(all_tools: list, names, already: list) -> tuple:
     """
     have = {_name_of(t) for t in (already or [])}
     by_name = {_name_of(t): t for t in (all_tools or [])}
+    # A workspace's own tools (agent.WORKSPACE_TOOLS) are not in the always-on
+    # catalogue, but the loader hands them over by name from anywhere.
+    try:
+        from agent_friday.services.agent import WORKSPACE_TOOLS as _ws_tools
+        for _lst in _ws_tools.values():
+            for _t in _lst:
+                by_name.setdefault(_name_of(_t), _t)
+    except Exception:
+        pass
     wanted = [str(n).strip() for n in (names or []) if str(n).strip()]
 
     new, dup, missing = [], [], []

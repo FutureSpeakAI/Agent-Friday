@@ -164,10 +164,15 @@ RINGS = {"media_show": 1, "media_cards": 0, "media_turn": 1}
 HANDLERS = {"media_show": _tool_media_show, "media_cards": _tool_media_cards, "media_turn": _tool_media_turn}
 
 
-def register(claude_tools, handlers, rings):
-    known = {t["name"] for t in claude_tools}
+def register(claude_tools, handlers, rings, workspace_tools=None):
+    """Handlers and rings are always registered, so the tools run wherever they
+    are named. Their schemas join the always-on catalogue only when no
+    workspace registry is given; otherwise they are Media's own and travel with
+    a turn in Media or on request (the catalogue's latency budget)."""
+    target = workspace_tools.setdefault("media", []) if workspace_tools is not None else claude_tools
+    known = {t["name"] for t in target}
     for t in TOOLS:
         if t["name"] not in known:
-            claude_tools.append(t)
+            target.append(t)
     handlers.update(HANDLERS)
     rings.update(RINGS)
