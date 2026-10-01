@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 import time
 
 from flask import Blueprint, copy_current_request_context, jsonify, request
@@ -1058,6 +1059,71 @@ def api_intelligence():
         return jsonify({**(payload or {"models": []}), "status": "ok",
                         "catalog_reading": reading, "catalog_read_at": at})
 
+    return jsonify(public_result(_intelligence_card(), "Couldn't load the intelligence card"))
+
+
+# ── One card build for every caller ─────────────────────────────────────────
+#
+# Every open tab polls this route once a minute and a build takes seconds
+# (catalogue, cost ledger, residency), so two tabs used to build the card twice
+# at the same moment. A caller that arrives while a build runs waits for that
+# build -- CARD_WAIT_S at most, then it gets the last card marked stale, never a
+# second build -- and a finished card is reused for CARD_FRESH_S. A settings
+# save changes settings.json, which is part of the card's key, so a pick in
+# Settings shows on the very next read.
+CARD_FRESH_S = 15.0
+CARD_WAIT_S = 45.0
+_card_lock = threading.Lock()
+_card: dict = {"payload": None, "at": 0.0, "key": None, "building": None}
+
+
+def _reset_card_for_tests() -> None:
+    with _card_lock:
+        _card.update(payload=None, at=0.0, key=None, building=None)
+
+
+def _card_key():
+    try:
+        from agent_friday.core import friday_home
+        st = (friday_home() / "settings.json").stat()
+        return (st.st_mtime_ns, st.st_size)
+    except Exception:
+        return None
+
+
+def _intelligence_card() -> dict:
+    key = _card_key()
+    with _card_lock:
+        fresh = (_card["payload"] is not None and _card["key"] == key
+                 and time.time() - _card["at"] < CARD_FRESH_S)
+        if fresh:
+            return {**_card["payload"], "card_age_s": round(time.time() - _card["at"], 1)}
+        building = _card["building"]
+        leader = building is None
+        if leader:
+            building = threading.Event()
+            _card["building"] = building
+    if leader:
+        payload = None
+        try:
+            payload = _intelligence_payload()
+            return payload
+        finally:
+            with _card_lock:
+                if payload is not None:
+                    _card.update(payload=payload, at=time.time(), key=key)
+                _card["building"] = None
+            building.set()
+    building.wait(CARD_WAIT_S)
+    with _card_lock:
+        if _card["payload"] is not None:
+            return {**_card["payload"], "card_age_s": round(time.time() - _card["at"], 1),
+                    "card_stale": _card["key"] != key or time.time() - _card["at"] >= CARD_FRESH_S}
+    return {"status": "reading", "detail": "The intelligence card is still being read. Retry in a moment."}
+
+
+def _intelligence_payload() -> dict:
+    """The intelligence card itself: catalogue, seats, costs, the model card."""
     from agent_friday.services.model_catalog import build_catalog
     from agent_friday.core import _load_settings
 
@@ -1440,7 +1506,7 @@ def api_intelligence():
     except Exception as exc:
         soup = {"error": error_text(exc, "Could not build the model card")}
 
-    return jsonify(public_result({
+    return {
         "status": "ok",
         "serving": costs["serving"],
         "residency_help": RESIDENCY_HELP,
@@ -1481,4 +1547,4 @@ def api_intelligence():
         "residency_reading": _res_state,
         "residency_age": _mp.age_note(_res_at, _res_state),
         "now": time.time(),
-    }, "Couldn't load the intelligence card"))
+    }

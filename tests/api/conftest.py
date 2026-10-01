@@ -229,6 +229,10 @@ def server_module():
 @pytest.fixture
 def app():
     friday_server.app.config.update(TESTING=True)
+    # The intelligence card is cached for a few seconds; one test's card must
+    # never be served to the next.
+    from agent_friday.routes import intelligence as _intelligence
+    _intelligence._reset_card_for_tests()
     return friday_server.app
 
 
