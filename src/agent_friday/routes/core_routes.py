@@ -637,6 +637,67 @@ def _health_cached():
     return _health_fallback()
 
 
+#: How old the memory-file count may be before a background recount starts.
+#: The count walks the whole memory tree, so it never runs on a request path.
+_MEMORY_COUNT_TTL_S = 300.0
+_memory_count_lock = threading.Lock()
+_memory_count = {"dir": None, "value": None, "at": 0.0, "running": False}
+
+
+def _reset_memory_count_for_tests():
+    with _memory_count_lock:
+        _memory_count.update(dir=None, value=None, at=0.0, running=False)
+
+
+def _count_memory_json(mem_dir):
+    """The number of .json files anywhere under ``mem_dir``; None if absent."""
+    if not os.path.isdir(mem_dir):
+        return None
+    n = 0
+    for _root, _dirs, files in os.walk(mem_dir):
+        n += sum(1 for f in files if f.endswith(".json"))
+    return n
+
+
+def _memory_entries_refresh_now():
+    """Count the memory files on the calling thread and store the count."""
+    mem_dir = str(FRIDAY_DIR / "memory")
+    try:
+        value = _count_memory_json(mem_dir)
+    except Exception:
+        value = None
+    with _memory_count_lock:
+        _memory_count.update(dir=mem_dir, value=value, at=_time.monotonic(),
+                             running=False)
+    return value
+
+
+def _memory_entries_cached():
+    """The last memory-file count, never computed on the caller's thread.
+
+    A count older than ``_MEMORY_COUNT_TTL_S`` (or for a different memory
+    directory) starts one background recount and the old value is returned;
+    None until the first count finishes.
+    """
+    mem_dir = str(FRIDAY_DIR / "memory")
+    with _memory_count_lock:
+        same = _memory_count["dir"] == mem_dir
+        value = _memory_count["value"] if same else None
+        due = (not same) or (_time.monotonic() - _memory_count["at"] >= _MEMORY_COUNT_TTL_S)
+        start = due and not _memory_count["running"]
+        if start:
+            _memory_count["running"] = True
+    if start:
+        def _run():
+            try:
+                _memory_entries_refresh_now()
+            finally:
+                with _memory_count_lock:
+                    _memory_count["running"] = False
+        threading.Thread(target=_run, daemon=True, name="memory-count").start()
+    return value
+
+
 @core_bp.route('/api/health')
 def friday_health():
     """Return server uptime and system health snapshot for the demo UI."""
@@ -700,13 +761,7 @@ def _health_payload():
         _mood = (_get_emotional_arc().state() or {}).get("mood")
     except Exception:
         pass
-    _memory_entries = None
-    try:
-        _mem_dir = FRIDAY_DIR / "memory"
-        if _mem_dir.exists():
-            _memory_entries = sum(1 for _f in _mem_dir.rglob("*.json"))
-    except Exception:
-        pass
+    _memory_entries = _memory_entries_cached()
     _vault_count = None
     try:
         _vault_dir = FRIDAY_DIR / "vault"
