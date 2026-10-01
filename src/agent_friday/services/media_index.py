@@ -556,7 +556,7 @@ def _row_to_card(r: sqlite3.Row, ov: Optional[sqlite3.Row]) -> Dict[str, Any]:
         c["file_url"] = "/api/media/" + c["id"] + "/file"
         if c["kind"] in ("image", "imageset", "chart") and c["source_kind"] == "creation":
             c["thumb"] = c["file_url"]
-    c["editable_text"] = c["kind"] in TEXT_KINDS or c["source_kind"] in ("media", "draft_html", "legacy_item")
+    c["editable_text"] = c["kind"] in TEXT_KINDS or (c["source_kind"] in ("draft_html", "legacy_item"))
     return c
 
 
@@ -717,6 +717,8 @@ def _read_body(c: Dict[str, Any], text: str) -> Optional[str]:
     if bp and Path(bp).exists():
         return Path(bp).read_text(encoding="utf-8", errors="ignore")
     if c["source_kind"] == "media" and c.get("path"):
+        if c["kind"] not in TEXT_KINDS:
+            return None            # a spoken file or an image Media owns is not text
         return Path(c["path"]).read_text(encoding="utf-8", errors="ignore") if Path(c["path"]).exists() else ""
     if c["kind"] in TEXT_KINDS or c["source_kind"] in ("draft_html", "legacy_item"):
         return text
@@ -1267,7 +1269,7 @@ def make_deck(c: Dict[str, Any]) -> Dict[str, Any]:
             con.commit()
         finally:
             con.close()
-    _set_override(new_id, status="draft")   # after the connection closes: one writer at a time
+    _set_override(new_id, status="draft", title=c["title"] + " · slides")   # after the connection closes: one writer at a time
     return {"status": "ok", "card": get(new_id)}
 
 

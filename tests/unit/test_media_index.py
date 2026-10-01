@@ -233,6 +233,7 @@ def test_read_aloud_makes_a_signed_audio_card_from_a_text_card(home, monkeypatch
     assert [v for _t, v in spoken] == ["af_heart", "af_heart"] and spoken[0][0].startswith("The 06:40")
     assert any(r["how"] == "made_from" and r["id"] == src["id"] for r in card["relations"])
     assert card["signed"] is True, "a file Media saves carries its credential"
+    assert card["body"] is None and card["editable_text"] is False, "a spoken file is not text to edit"
 
 
 def test_turn_into_slides_makes_a_signed_deck_through_the_office_tool(home, monkeypatch):
@@ -259,6 +260,7 @@ def test_turn_into_slides_makes_a_signed_deck_through_the_office_tool(home, monk
     assert res["status"] == "ok", res
     deck = res["card"]
     assert deck["kind"] == "deck" and deck["status"] == "draft" and deck["source_kind"] == "document"
+    assert deck["title"] == "The ferry story · slides", "the deck is named for the card, not the file"
     assert ran[0] == ["create", Path(deck["path"]).name]
     titles = [a[-1] for a in ran if "phType=title" in a]
     assert titles == ["text=The ferry story", "text=What changed", "text=Three numbers"]

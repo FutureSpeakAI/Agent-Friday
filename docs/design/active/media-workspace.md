@@ -1,13 +1,13 @@
 # Media: one home for everything Friday makes or helps make
 
 > **Status:** built on branch `feat/media-workspace` over `feat/unified-shell`, not yet on main:
-> the Studio tab-width fix (§1.6), the card index and routes (§4.2), the Library, the
-> Pipeline board with the publish gate, the Calendar, the editor frame with "turn this
-> into…" for posts, episodes, pages and articles, pop-out and own tab, the voice tools,
-> and the retirement of Draft, Content and Studio into Media (§4.9, §5.1). Not built:
-> slides and read-aloud as turn-into targets (they answer "not wired yet"), the Calendar
-> workspace overlay (D6), Files 3D as a Library layout (D4), credentials on every save path
-> (P7). The owner decided on 2026-09-30 ("yes to all", §10).
+> the Studio tab-width fix (§1.6), the card index and routes (§4.2), the Library with its
+> grid, list and 3D layouts, the Pipeline board with the publish gate, the Calendar view and
+> the Calendar workspace's Media layer (D6), the editor frame with "turn this into…" for
+> posts, episodes, pages, articles, slides and read-aloud, cards in the records-3D view (D4),
+> pop-out and own tab, the voice tools, a credential on every save path (P7), and the
+> retirement of Draft, Content and Studio into Media (§4.9, §5.1). The owner decided on
+> 2026-09-30 ("yes to all", §10).
 > **Last verified:** 2026-09-30, against main at `321ec490` (merged into the branch; the content gate
 > it carries owns a post card's approval, §4.5) and `feat/unified-shell` at `34e8240d`.
 > **Implementation:** as the status says; §1 cites what existed before the build, line by line, and `tests/unit/test_media_index.py`, `tests/api/test_media_routes.py`, `tests/unit/test_media_card_tools.py` and `tests/unit/test_media_workspace_ui.py` are the proofs.
