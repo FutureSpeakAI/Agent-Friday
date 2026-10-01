@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Library · Agent Friday™ prototype</title>
+<link rel="stylesheet" href="friday.css">
+<style>
+  .detail { position: fixed; right: 0; top: calc(33px + var(--fr-topbar-h)); bottom: 0; width: 360px; background: var(--fr-glass); backdrop-filter: var(--fr-glass-blur); border-left: 1px solid var(--line); padding: 14px; display: none; flex-direction: column; gap: 10px; z-index: 60; overflow: auto; }
+  .detail.on { display: flex; }
+  .detail .actions .btn { flex: 1 1 45%; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  @media (max-width: 900px) { .detail { width: 100%; top: auto; height: 70vh; border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<main id="main">
+  <div class="st-root" id="head"></div>
+  <div class="lib">
+    <aside aria-label="Library rail">
+      <div class="label">Default views</div>
+      <div class="group" aria-label="Default views" id="defaults">
+        <a href="#" aria-current="true" data-f="today">Today <span class="n" id="nToday"></span></a>
+        <a href="#" data-f="progress">In progress <span class="n" id="nProg"></span></a>
+        <a href="#" data-f="review">Needs you <span class="n" id="nRev"></span></a>
+        <a href="#" data-f="published">Published <span class="n" id="nPub"></span></a>
+        <a href="#" data-f="all">Everything <span class="n" id="nAll"></span></a>
+      </div>
+      <div class="label">Projects</div>
+      <div class="group" aria-label="Projects">
+        <a href="#" data-f="proj:Harbour series">Harbour series <span class="n">16</span></a>
+        <a href="#" data-f="proj:Newsletter">Newsletter <span class="n">1</span></a>
+        <a href="#" data-f="proj:none">No project <span class="n">3</span></a>
+        <a href="#" onclick="toast('A project is a folder of cards with a brief and a deadline. New project…');return false">+ New project</a>
+      </div>
+      <div class="label">Type</div>
+      <div class="group" aria-label="Type" id="types">
+        <a href="#" data-f="kind:draft">Drafts</a>
+        <a href="#" data-f="kind:article">Articles</a>
+        <a href="#" data-f="kind:post">Posts</a>
+        <a href="#" data-f="kind:episode">Episodes</a>
+        <a href="#" data-f="kind:imageset">Images</a>
+        <a href="#" data-f="kind:video">Video</a>
+        <a href="#" data-f="kind:audio">Audio and music</a>
+        <a href="#" data-f="kind:deck">Decks and documents</a>
+        <a href="#" data-f="kind:chart">Charts and data</a>
+        <a href="#" data-f="kind:page">Pages</a>
+        <a href="#" data-f="kind:code">Codebases</a>
+      </div>
+      <div class="label">Privacy</div>
+      <div class="group" aria-label="Privacy">
+        <a href="#" data-f="priv:private">Private to this PC</a>
+        <a href="#" data-f="priv:shared">Shared or published</a>
+        <a href="#" data-f="unsigned">Unsigned</a>
+      </div>
+      <div class="rail-note">Not here: the News editions and their shows (in News); your wiki (in Knowledge). Search finds them and links across.</div>
+    </aside>
+
+    <section class="lib-main" aria-label="Cards">
+      <div class="lib-toolbar">
+        <input type="search" id="q" placeholder="Search titles, text, sources, transcripts…  /" aria-label="Search">
+        <div class="chips" id="chips"></div>
+        <span class="spacer" style="flex:1"></span>
+        <select aria-label="Sort" style="width:auto"><option>By what matters next</option><option>Newest first</option><option>By title</option><option>By status</option></select>
+        <div class="seg" role="group" aria-label="Layout"><button class="btn sm active" id="vGrid" aria-pressed="true">Grid</button><button class="btn sm" id="vList" aria-pressed="false">List</button></div>
+      </div>
+      <div class="lib-grid" id="grid" role="listbox" aria-label="Cards"></div>
+      <div class="empty" id="empty" hidden><b>Nothing here.</b><br>Pick another view on the left, or press <kbd>N</kbd> for a new card.</div>
+      <p class="small muted">Keys: <kbd>/</kbd> search · <kbd>N</kbd> new · <kbd>← →</kbd> move · <kbd>Enter</kbd> open · <kbd>T</kbd> turn this into… · <kbd>S</kbd> send to · <kbd>O</kbd> own tab · <kbd>Esc</kbd> close. Say "show my drafts" or "what's published this week" and this view changes.</p>
+    </section>
+  </div>
+</main>
+
+<aside class="detail" id="detail" aria-label="Card details">
+  <div class="card-head"><strong id="dTitle"></strong><button class="btn sm" onclick="closeDetail()" aria-label="Close">Esc</button></div>
+  <div class="meta" id="dMeta"></div>
+  <dl class="kv">
+    <dt>Status</dt><dd id="dStatus"></dd>
+    <dt>Made by</dt><dd id="dBy"></dd>
+    <dt>From</dt><dd id="dFrom"></dd>
+    <dt>Credentials</dt><dd id="dProv"></dd>
+    <dt>Privacy</dt><dd id="dPriv"></dd>
+    <dt>Project</dt><dd id="dProj"></dd>
+  </dl>
+  <div class="label">Actions</div>
+  <div class="actions">
+    <a class="btn primary" id="dOpen" href="card.html">Open</a>
+    <button class="btn" onclick="window.open('popout.html?card=' + sel, '_blank')">Own tab</button>
+    <button class="btn" onclick="toast('Turn this into… opens the list in the editor.')">Turn this into…</button>
+    <button class="btn" onclick="toast('Send to… the shared menu.')">Send to…</button>
+    <button class="btn" id="dPub" onclick="toast('Publishing leaves this computer: a card asks you first.')">Publish…</button>
+    <button class="btn deny" onclick="toast('Delete asks on a card; the receipt stays.')">Delete</button>
+  </div>
+</aside>
+
+<script src="friday.js"></script>
+<script src="media.js"></script>
+<script>
+  protoNav('library.html');
+  document.getElementById('head').innerHTML = mediaHead('library');
+  shell({ title: 'Media' });
+  var filter = 'today', q = '', sel = null;
+  var today = new Date(2026, 8, 30);
+  function sameDay(d) { return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate(); }
+  function match(c) {
+    if (filter === 'today') return sameDay(c.when) || c.status === 'review' || c.held;
+    if (filter === 'progress') return c.status === 'draft' || c.status === 'review';
+    if (filter === 'review') return c.status === 'review' || c.held;
+    if (filter === 'published') return c.status === 'published';
+    if (filter.indexOf('proj:') === 0) { var p = filter.slice(5); return p === 'none' ? !c.project : c.project === p; }
+    if (filter.indexOf('kind:') === 0) { var k = filter.slice(5); if (k === 'audio') return c.kind === 'audio' || c.kind === 'music'; if (k === 'deck') return c.kind === 'deck' || c.kind === 'doc'; if (k === 'imageset') return c.kind === 'imageset' || c.kind === 'image'; return c.kind === k; }
+    if (filter.indexOf('priv:') === 0) { var v = filter.slice(5); return v === 'private' ? c.privacy === 'private' : c.privacy !== 'private'; }
+    if (filter === 'unsigned') return !c.signed;
+    return true;
+  }
+  function counts() {
+    var f = function (p) { return CARDS.filter(p).length; };
+    document.getElementById('nToday').textContent = f(function (c) { return sameDay(c.when) || c.status === 'review' || c.held; });
+    document.getElementById('nProg').textContent = f(function (c) { return c.status === 'draft' || c.status === 'review'; });
+    document.getElementById('nRev').textContent = f(function (c) { return c.status === 'review' || c.held; });
+    document.getElementById('nPub').textContent = f(function (c) { return c.status === 'published'; });
+    document.getElementById('nAll').textContent = CARDS.length;
+  }
+  function render() {
+    var rows = CARDS.filter(match).filter(function (c) { return !q || (c.title + ' ' + c.maker + ' ' + c.sources.join(' ') + ' ' + (c.project || '')).toLowerCase().indexOf(q) >= 0; });
+    rows.sort(function (a, b) { var o = { review: 0, draft: 1, idea: 2, scheduled: 3, published: 4 }; return (o[a.status] - o[b.status]) || (b.when - a.when); });
+    document.getElementById('grid').innerHTML = rows.map(function (c) { return cardHTML(c, { selected: c.id === sel }); }).join('');
+    document.getElementById('empty').hidden = rows.length > 0;
+    var fl = { today: 'Today', progress: 'In progress', review: 'Needs you', published: 'Published', all: 'Everything' }[filter] || filter.replace(/^\w+:/, '');
+    document.getElementById('chips').innerHTML = '<span class="pill dim">' + fl + '</span>' + (q ? '<span class="pill dim">“' + q + '”</span>' : '');
+    document.querySelectorAll('.card-item').forEach(function (b) { b.addEventListener('click', function () { openDetail(b.dataset.id); }); b.addEventListener('dblclick', function () { location.href = 'card.html?card=' + b.dataset.id; }); });
+  }
+  function openDetail(id) {
+    sel = id; var c = cardById(id);
+    document.getElementById('dTitle').textContent = c.title;
+    document.getElementById('dMeta').innerHTML = glyph(KIND_GLYPH[c.kind], KIND_WORD[c.kind]) + ' · ' + fmtWhen(c.when);
+    document.getElementById('dStatus').innerHTML = statusPill(c.status, c.held) + (c.targets ? ' → ' + c.targets.join(', ') : '');
+    document.getElementById('dBy').textContent = c.maker;
+    document.getElementById('dFrom').textContent = c.sources.length ? c.sources.join(', ') : 'Nothing yet';
+    document.getElementById('dProv').innerHTML = c.signed ? '<span class="pill ok">Signed</span> content credentials' : '<span class="pill neutral">Unsigned</span> a draft is signed when it leaves';
+    document.getElementById('dPriv').innerHTML = privacyPill(c) + ' ' + (c.published ? c.published : 'never left this computer');
+    document.getElementById('dProj').textContent = c.project || '—';
+    document.getElementById('dOpen').href = 'card.html?card=' + id;
+    document.getElementById('dPub').textContent = c.status === 'published' ? 'Unpublish…' : 'Publish…';
+    document.getElementById('detail').classList.add('on'); render();
+  }
+  function closeDetail() { document.getElementById('detail').classList.remove('on'); sel = null; render(); }
+  document.querySelectorAll('aside .group a[data-f]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); document.querySelectorAll('aside .group a').forEach(function (x) { x.removeAttribute('aria-current'); }); a.setAttribute('aria-current', 'true'); filter = a.dataset.f; render(); }); });
+  document.getElementById('q').addEventListener('input', function (e) { q = e.target.value.trim().toLowerCase(); render(); });
+  ['vGrid', 'vList'].forEach(function (id) { document.getElementById(id).addEventListener('click', function () { ['vGrid', 'vList'].forEach(function (x) { var b = document.getElementById(x); b.classList.toggle('active', x === id); b.setAttribute('aria-pressed', String(x === id)); }); document.getElementById('grid').classList.toggle('list', id === 'vList'); }); });
+  document.addEventListener('keydown', function (e) {
+    var typing = /INPUT|TEXTAREA/.test(document.activeElement.tagName);
+    if (e.key === '/' && !typing) { e.preventDefault(); document.getElementById('q').focus(); return; }
+    if (e.key === 'Escape') { closeDetail(); return; }
+    if (typing) return;
+    var vis = [].map.call(document.querySelectorAll('.card-item'), function (b) { return b.dataset.id; });
+    var i = vis.indexOf(sel);
+    if (e.key === 'ArrowRight') openDetail(vis[Math.min(vis.length - 1, i + 1)]);
+    if (e.key === 'ArrowLeft') openDetail(vis[Math.max(0, i - 1)]);
+    if (e.key === 'Enter' && sel) location.href = 'card.html?card=' + sel;
+    if ((e.key === 'n' || e.key === 'N')) location.href = 'card.html?new=1';
+    if ((e.key === 'o' || e.key === 'O') && sel) window.open('popout.html?card=' + sel, '_blank');
+    if ((e.key === 't' || e.key === 'T') && sel) toast('Turn "' + cardById(sel).title + '" into… a podcast, slides, a post, a page.');
+    if ((e.key === 's' || e.key === 'S') && sel) toast('Send to… for "' + cardById(sel).title + '".');
+  });
+  /* Voice: the chat tray's sentence changes the view. Illustrative only. */
+  window.voice = function (s) { s = s.toLowerCase(); var f = /draft/.test(s) ? 'kind:draft' : /publish/.test(s) ? 'published' : /progress|working/.test(s) ? 'progress' : /need|review/.test(s) ? 'review' : 'today'; document.querySelector('aside .group a[data-f="' + f + '"]').click(); toast('Showing: ' + document.querySelector('aside .group a[data-f="' + f + '"]').firstChild.textContent.trim()); };
+  counts(); render();
+</script>
+</body>
+</html>

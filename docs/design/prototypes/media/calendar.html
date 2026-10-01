@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Calendar · Agent Friday™ prototype</title>
+<link rel="stylesheet" href="friday.css">
+<style>
+  .calhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: var(--fr-text-sm); color: var(--fr-dim); margin-left: auto; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; border: 1px solid; margin-right: 5px; vertical-align: middle; }
+  .peek { position: fixed; right: 0; top: calc(33px + var(--fr-topbar-h)); bottom: 0; width: 340px; background: var(--fr-glass); backdrop-filter: var(--fr-glass-blur); border-left: 1px solid var(--line); padding: 14px; display: none; flex-direction: column; gap: 10px; z-index: 60; }
+  .peek.on { display: flex; }
+</style>
+</head>
+<body>
+<main id="main">
+  <div class="st-root">
+    <div id="head"></div>
+    <div class="calhead">
+      <button class="btn sm" onclick="shift(-7)" aria-label="Previous week">←</button>
+      <strong id="range"></strong>
+      <button class="btn sm" onclick="shift(7)" aria-label="Next week">→</button>
+      <button class="btn sm" onclick="base=0;render()">This week</button>
+      <div class="seg" role="group" aria-label="Span"><button class="btn sm active" aria-pressed="true">2 weeks</button><button class="btn sm" aria-pressed="false" onclick="toast('Month view: the same cards, smaller.')">Month</button></div>
+      <div class="legend"><span><i style="border-color:rgba(0,255,128,.5)"></i>Published</span><span><i style="border-color:rgba(122,134,153,.6)"></i>Scheduled</span><span><i style="border-color:rgba(245,158,11,.5)"></i>Needs you by</span></div>
+    </div>
+    <div class="cal" id="cal" aria-label="Scheduled and published work"></div>
+    <p class="small muted">Only cards with a time are here: what went out, what is due to go out, and what needs you by when. Drag a scheduled card to another day to move it; Friday asks again before it goes. The Calendar workspace shows these too, as one layer among your events.</p>
+  </div>
+</main>
+<aside class="peek" id="peek" aria-label="Card">
+  <div class="card-head"><strong id="pTitle"></strong><button class="btn sm" onclick="document.getElementById('peek').classList.remove('on')" aria-label="Close">Esc</button></div>
+  <div id="pBody"></div>
+  <div class="actions"><a class="btn primary" id="pOpen" href="card.html">Open</a><button class="btn" onclick="toast('Moved to tomorrow 09:00; Friday asks again before it goes.')">Reschedule…</button><button class="btn" id="pPub" onclick="toast('Publishing leaves this computer: a card asks you first.')">Publish now…</button></div>
+</aside>
+<script src="friday.js"></script>
+<script src="media.js"></script>
+<script>
+  protoNav('calendar.html');
+  document.getElementById('head').innerHTML = mediaHead('calendar', 'what went out, what is due, what needs you by when');
+  shell({ title: 'Media' });
+  var base = 0;
+  var today = new Date(2026, 8, 30);
+  function monday(d) { var x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); x.setHours(0, 0, 0, 0); return x; }
+  function shift(n) { base += n; render(); }
+  function render() {
+    var start = monday(today); start.setDate(start.getDate() + base);
+    var days = []; for (var i = 0; i < 14; i++) { var d = new Date(start); d.setDate(d.getDate() + i); days.push(d); }
+    document.getElementById('range').textContent = days[0].toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' – ' + days[13].toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    var html = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(function (n) { return '<div class="dh">' + n + '</div>'; }).join('');
+    html += days.map(function (d) {
+      var isToday = d.toDateString() === today.toDateString(); var past = d < today && !isToday;
+      var evs = CARDS.filter(function (c) { return (c.status === 'published' || c.status === 'scheduled' || c.status === 'review') && c.when.toDateString() === d.toDateString(); });
+      evs.sort(function (a, b) { return a.when - b.when; });
+      return '<div class="day' + (isToday ? ' today' : '') + (past ? ' past' : '') + '"><div class="dn">' + d.getDate() + (isToday ? ' · today' : '') + '</div>' +
+        evs.map(function (c) { return '<button class="ev ' + c.status + '" data-id="' + c.id + '" title="' + c.title + '"><span class="tm">' + String(c.when.getHours()).padStart(2, '0') + ':00</span>' + glyph(KIND_GLYPH[c.kind], '') + '<span class="t">' + c.title + '</span></button>'; }).join('') + '</div>';
+    }).join('');
+    document.getElementById('cal').innerHTML = html;
+    document.querySelectorAll('.ev').forEach(function (b) { b.addEventListener('click', function () { peek(b.dataset.id); }); });
+  }
+  function peek(id) {
+    var c = cardById(id);
+    document.getElementById('pTitle').textContent = c.title;
+    document.getElementById('pBody').innerHTML = '<div class="meta">' + glyph(KIND_GLYPH[c.kind], KIND_WORD[c.kind]) + ' · ' + fmtWhen(c.when) + '</div><div class="meta" style="margin-top:6px">' + statusPill(c.status, c.held) + privacyPill(c) + '</div><dl class="kv" style="margin-top:8px"><dt>' + (c.status === 'published' ? 'Went to' : c.status === 'scheduled' ? 'Goes to' : 'Due') + '</dt><dd>' + (c.published || (c.targets ? c.targets.join(', ') : 'your review')) + '</dd><dt>Made by</dt><dd>' + c.maker + '</dd><dt>From</dt><dd>' + (c.sources.join(', ') || '—') + '</dd></dl>';
+    document.getElementById('pOpen').href = 'card.html?card=' + id;
+    document.getElementById('pPub').hidden = c.status === 'published';
+    document.getElementById('peek').classList.add('on');
+  }
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') document.getElementById('peek').classList.remove('on'); });
+  render();
+</script>
+</body>
+</html>

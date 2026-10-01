@@ -10,15 +10,15 @@
     var pages = [
       ['index.html', 'Map'],
       ['library.html', '1 Library'],
-      ['create.html', '2 Create'],
-      ['viewer.html', '3 Viewer'],
-      ['actions.html', '4 Actions'],
-      ['boundaries.html', '5 Studio and News'],
-      ['shell.html', '6 In the shell']
+      ['board.html', '2 Pipeline'],
+      ['calendar.html', '3 Calendar'],
+      ['card.html', '4 Card and editor'],
+      ['popout.html', '5 Own tab'],
+      ['boundaries.html', '6 Media, News, Salon']
     ];
     var bar = document.createElement('div');
     bar.className = 'proto-bar';
-    bar.innerHTML = '<span class="tag">Prototype</span><span>Integrated Studio · design prototype, not product code</span>' +
+    bar.innerHTML = '<span class="tag">Prototype</span><span>Media workspace · design prototype, not product code</span>' +
       '<nav aria-label="Prototype screens">' + pages.map(function (p) {
         return '<a href="' + p[0] + '"' + (p[0] === current ? ' aria-current="page"' : '') + '>' + p[1] + '</a>';
       }).join('') + '</nav>';
@@ -76,7 +76,7 @@
     bar.setAttribute('aria-label', 'Top bar');
     bar.innerHTML =
       '<a class="lockup" href="index.html" title="Back to the desktop"><span class="product">Agent Friday™</span><span class="by">by</span><span class="maker">FutureSpeak.AI™</span></a>' +
-      '<span class="context">' + glyph('show', '') + '<span class="ws">' + (opts.title || 'Studio') + '</span>' + (opts.tools || '') + '</span>' +
+      '<span class="context">' + glyph('show', '') + '<span class="ws">' + (opts.title || 'Media') + '</span>' + (opts.tools || '') + '</span>' +
       '<span class="spacer"></span>' +
       '<button class="chip" aria-haspopup="listbox" title="Model selector">Local 27B ▾</button>' +
       '<button class="chip" title="Notifications" aria-label="Notifications">○</button>' +
@@ -94,7 +94,7 @@
     tray.className = 'chat-panel'; tray.setAttribute('aria-label', 'Chat tray');
     tray.innerHTML = '<div class="label">Chat · docked beside the workspace</div>' +
       '<div class="msg me">Make a podcast out of the three charts from this morning.</div>' +
-      '<div class="msg">Queued as a Studio episode, "Three charts, one morning". It reads the computed numbers only; it goes into the Library when it is spoken.</div>' +
+      '<div class="msg">A new card, "Three charts, one morning", an episode made from the three charts. It reads the computed numbers only; it is a draft until it is spoken.</div>' +
       '<input type="text" placeholder="Say or type…" aria-label="Message">';
     wrap.appendChild(tray);
     var chatBtn = bar.querySelector('#chatToggle'), fsBtn = bar.querySelector('#fsToggle');
@@ -107,7 +107,7 @@
     chatBtn.addEventListener('click', function () { wrap.classList.toggle('chat-open'); sync(); });
     fsBtn.addEventListener('click', function () {
       document.body.classList.toggle('fr-fs-chat'); wrap.classList.add('chat-open'); sync();
-      toast(document.body.classList.contains('fr-fs-chat') ? 'Fullscreen with chat. Saved for Studio.' : 'Back to the window.');
+      toast(document.body.classList.contains('fr-fs-chat') ? 'Fullscreen with chat. Saved for Media.' : 'Back to the window.');
     });
     document.addEventListener('keydown', function (e) {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'F' || e.key === 'f')) { e.preventDefault(); fsBtn.click(); }
