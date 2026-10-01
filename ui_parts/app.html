@@ -15186,13 +15186,13 @@ function SettingsTabVoice({s,save}){
       </StRow>}
     </StSection>
     <StSection title="Listening">
-      {gem&&<StRow label="Interrupting Friday" desc="Talk over her and she stops, which works best with headphones. On open speakers her own voice can echo back and cut her off; choose no interruption there and press Esc to stop her instead.">
+      <StRow label="Interrupting Friday" desc={gem?"Talk over her and she stops when you start talking, which works best with headphones: on open speakers her own voice can echo back and cut her off. Speaker-safe stops her only when you are clearly louder than her own voice coming back through the mic. Esc always stops her.":"Talk over her and she stops once you are clearly louder than her own voice coming back through the mic, so open speakers work too. With Esc only, talking over her does nothing. Esc always stops her."}>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-          {[{k:'auto',l:'Talk over her (default)',match:['auto','speaker','headphones','headphone','barge','barge-in','bargein','']},{k:'no-barge',l:'No interruption (open speakers)',match:['no-barge','no_barge','nobarge','speaker-safe','speaker_safe','none','off']}].map(o=>(
+          {[{k:'auto',l:'Talk over her (default)',match:['auto','speaker','headphones','headphone','barge','barge-in','bargein','']},{k:'no-barge',l:gem?'Speaker-safe (open speakers)':'Esc only',match:['no-barge','no_barge','nobarge','speaker-safe','speaker_safe','none','off']}].map(o=>(
             <button key={o.k} className={`settings-btn ${o.match.includes((s.voice_interruption_mode||'auto').toLowerCase())?'active':''}`} onClick={()=>save({voice_interruption_mode:o.k})} style={{fontSize:11}}>{o.l}</button>
           ))}
         </div>
-      </StRow>}
+      </StRow>
       {gem&&<StRow label="Who is talking" desc="With several people in the room, Friday answers only when she is spoken to by name, or when someone replies to her. Takes effect on the next voice session.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {[{k:'one',l:'Just me (default)'},{k:'room',l:'Several people'}].map(o=>(
@@ -19839,6 +19839,10 @@ function App(){
     const _vgen=++voiceGenRef.current;
     const _stale=()=>_vgen!==voiceGenRef.current;
     const PCM_IN_RATE=16000,PCM_OUT_RATE=24000;
+    // Mic samples per frame sent. Gemini Live keeps 4096 (~171 ms at 24 kHz).
+    // The local voice judges talk-over on the server from these frames, so
+    // it sends 2048 (~85 ms): two frames confirm a barge (~171 ms).
+    const MIC_FRAMES=(agentSettings.voice_engine||'local')==='gemini'?4096:2048;
     const v=voiceRef.current;
     const f2pcm=(float32,outRate,inRate)=>{const ratio=inRate/outRate;const outLen=Math.floor(float32.length/ratio);const out=new Int16Array(outLen);for(let i=0;i<outLen;i++){const src=i*ratio,i0=Math.floor(src),i1=Math.min(i0+1,float32.length-1),f=src-i0;const s=Math.max(-1,Math.min(1,float32[i0]*(1-f)+float32[i1]*f));out[i]=s<0?s*0x8000:s*0x7FFF}return out};
     const i16ToB64=(int16)=>{const bytes=new Uint8Array(int16.buffer);let bin='';for(let i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);return btoa(bin)};
@@ -19940,7 +19944,7 @@ function App(){
         try{v.micSource&&v.micSource.disconnect()}catch(_){}
         try{v.micNode&&v.micNode.disconnect()}catch(_){}
         v.micSource=v.audioCtx.createMediaStreamSource(v.micStream);
-        const proc=v.audioCtx.createScriptProcessor(4096,1,1);
+        const proc=v.audioCtx.createScriptProcessor(MIC_FRAMES,1,1);
         v.micNode=proc;
         proc.onaudioprocess=ev=>{
           const input=ev.inputBuffer.getChannelData(0);

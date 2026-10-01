@@ -302,8 +302,8 @@ def _quick_rms(pcm):
 
 
 #: The interruption modes that turn talk-over off on the local path
-#: (Settings → Voice: "No interruption (open speakers)"). Escape still stops
-#: Friday in every mode.
+#: (Settings → Voice → Interrupting Friday: "Esc only"). Escape stops Friday
+#: in every mode.
 _NO_TALK_OVER_MODES = ("no-barge", "no_barge", "nobarge", "speaker-safe",
                        "speaker_safe", "none", "off")
 
@@ -313,8 +313,11 @@ def _local_talk_over_detector(settings):
     no interruption.
 
     The local path has no model-side barge-in, so the echo-aware detector the
-    Live bridge uses is the only one, with the same tuning
-    (``voice_barge_grace_ms`` / ``voice_barge_sustain_ms``).
+    Live bridge uses is the only one: the same grace window
+    (``voice_barge_grace_ms``) and its own sustain
+    (``voice_local_barge_sustain_ms``), sized to two of the ~85 ms mic frames
+    the client sends on the local engine. Live's ``voice_barge_sustain_ms``
+    is sized to its ~171 ms frames and never applies here.
     """
     settings = settings or {}
     mode = str(settings.get("voice_interruption_mode") or "auto").strip().lower()
@@ -325,9 +328,9 @@ def _local_talk_over_detector(settings):
     except (TypeError, ValueError):
         grace_ms = 800
     try:
-        sustain_ms = int(settings.get("voice_barge_sustain_ms") or 200)
+        sustain_ms = int(settings.get("voice_local_barge_sustain_ms") or 170)
     except (TypeError, ValueError):
-        sustain_ms = 200
+        sustain_ms = 170
     return LiveBargeDetector(grace_ms=grace_ms, sustain_ms=sustain_ms)
 
 

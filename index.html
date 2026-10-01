@@ -47691,9 +47691,9 @@ function SettingsTabVoice({
     value: v
   }, l))))), /*#__PURE__*/React.createElement(StSection, {
     title: "Listening"
-  }, gem && /*#__PURE__*/React.createElement(StRow, {
+  }, /*#__PURE__*/React.createElement(StRow, {
     label: "Interrupting Friday",
-    desc: "Talk over her and she stops, which works best with headphones. On open speakers her own voice can echo back and cut her off; choose no interruption there and press Esc to stop her instead."
+    desc: gem ? "Talk over her and she stops when you start talking, which works best with headphones: on open speakers her own voice can echo back and cut her off. Speaker-safe stops her only when you are clearly louder than her own voice coming back through the mic. Esc always stops her." : "Talk over her and she stops once you are clearly louder than her own voice coming back through the mic, so open speakers work too. With Esc only, talking over her does nothing. Esc always stops her."
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -47706,7 +47706,7 @@ function SettingsTabVoice({
     match: ['auto', 'speaker', 'headphones', 'headphone', 'barge', 'barge-in', 'bargein', '']
   }, {
     k: 'no-barge',
-    l: 'No interruption (open speakers)',
+    l: gem ? 'Speaker-safe (open speakers)' : 'Esc only',
     match: ['no-barge', 'no_barge', 'nobarge', 'speaker-safe', 'speaker_safe', 'none', 'off']
   }].map(o => /*#__PURE__*/React.createElement("button", {
     key: o.k,
@@ -55068,6 +55068,10 @@ function App() {
     const _stale = () => _vgen !== voiceGenRef.current;
     const PCM_IN_RATE = 16000,
       PCM_OUT_RATE = 24000;
+    // Mic samples per frame sent. Gemini Live keeps 4096 (~171 ms at 24 kHz).
+    // The local voice judges talk-over on the server from these frames, so
+    // it sends 2048 (~85 ms): two frames confirm a barge (~171 ms).
+    const MIC_FRAMES = (agentSettings.voice_engine || 'local') === 'gemini' ? 4096 : 2048;
     const v = voiceRef.current;
     const f2pcm = (float32, outRate, inRate) => {
       const ratio = inRate / outRate;
@@ -55290,7 +55294,7 @@ function App() {
           v.micNode && v.micNode.disconnect();
         } catch (_) {}
         v.micSource = v.audioCtx.createMediaStreamSource(v.micStream);
-        const proc = v.audioCtx.createScriptProcessor(4096, 1, 1);
+        const proc = v.audioCtx.createScriptProcessor(MIC_FRAMES, 1, 1);
         v.micNode = proc;
         proc.onaudioprocess = ev => {
           const input = ev.inputBuffer.getChannelData(0);

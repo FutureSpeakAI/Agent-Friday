@@ -13,6 +13,8 @@ recording `send`.
 import base64
 import inspect
 import json
+import pathlib
+import re
 import struct
 import threading
 import time
@@ -449,12 +451,18 @@ def test_escape_still_barges_when_talk_over_is_off():
 
 def test_the_local_route_reads_the_interruption_mode_and_barge_tuning():
     from agent_friday.routes import voice as rv
+    import agent_friday.core as core
     d = rv._local_talk_over_detector({})
     assert isinstance(d, rv.LiveBargeDetector)
-    assert (d.grace_ms, d.sustain_ms) == (800, 200)
+    assert (d.grace_ms, d.sustain_ms) == (800, 170)
+    d = rv._local_talk_over_detector(dict(core.DEFAULT_SETTINGS))
+    assert (d.grace_ms, d.sustain_ms) == (800, 170)
     d = rv._local_talk_over_detector({"voice_barge_grace_ms": 500,
-                                      "voice_barge_sustain_ms": 150})
-    assert (d.grace_ms, d.sustain_ms) == (500, 150)
+                                      "voice_local_barge_sustain_ms": 120})
+    assert (d.grace_ms, d.sustain_ms) == (500, 120)
+    # Live's speaker-safe tuning is its own: it never moves the local path.
+    d = rv._local_talk_over_detector({"voice_barge_sustain_ms": 400})
+    assert d.sustain_ms == 170
     for off in ("no-barge", "speaker-safe", "none", "off", "No-Barge"):
         assert rv._local_talk_over_detector({"voice_interruption_mode": off}) is None
     for on in ("auto", "headphones", ""):
@@ -604,3 +612,69 @@ def test_a_cancelled_turn_never_falls_back_to_another_provider(monkeypatch):
         mr.TURN_CANCEL.reset(tok)
     assert legs == ["local"], "a cancelled voice turn was re-run on %s" % legs[1:]
     assert text == ""
+
+
+# ── under 300 ms from the first word, and a setting that says what it does ──
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+_UI = {"index.html": REPO / "index.html", "app.html": REPO / "ui_parts" / "app.html"}
+# One local mic frame: 2048 browser samples at 24 kHz, resampled to 16 kHz
+# PCM16 by the client (`f2pcm`): 1365 samples, 2730 bytes, 85.3 ms.
+LOCAL_FRAME_BYTES = 2 * (2048 * 16000 // 24000)
+LOCAL_FRAME_MS = LOCAL_FRAME_BYTES / 32.0
+
+
+def test_two_local_mic_frames_confirm_a_barge_and_one_does_not():
+    """Onset to silence: the barge confirms on the second ~85 ms local frame
+    (about 171 ms, 256 ms when the first word lands late in a frame), never
+    on one frame alone, which is the echo margin."""
+    import agent_friday.core as core
+    from agent_friday.routes import voice as rv
+    d = rv._local_talk_over_detector(dict(core.DEFAULT_SETTINGS))
+    assert LOCAL_FRAME_MS < d.sustain_ms <= 2 * LOCAL_FRAME_MS
+    assert 3 * LOCAL_FRAME_MS < 300
+    d.reset_turn(now=0.0)
+    t = 0.0
+    for _ in range(10):                               # 853 ms of bleed: the grace window
+        t += LOCAL_FRAME_MS / 1000.0
+        assert not d.feed(300, LOCAL_FRAME_MS, now=t)
+    t += LOCAL_FRAME_MS / 1000.0
+    assert not d.feed(4000, LOCAL_FRAME_MS, now=t), "one frame is not enough"
+    t += LOCAL_FRAME_MS / 1000.0
+    assert d.feed(4000, LOCAL_FRAME_MS, now=t), "two frames must confirm"
+
+
+def test_the_local_voice_default_sustain_is_declared():
+    import agent_friday.core as core
+    assert core.DEFAULT_SETTINGS["voice_local_barge_sustain_ms"] == 170
+    assert core.DEFAULT_SETTINGS["voice_barge_sustain_ms"] == 200     # Live, unchanged
+
+
+@pytest.mark.parametrize("name", sorted(_UI))
+def test_the_local_engine_sends_mic_frames_of_about_85_ms(name):
+    src = _UI[name].read_text(encoding="utf-8")
+    assert re.search(r"createScriptProcessor\(\s*4096", src) is None, (
+        "%s: a fixed 4096-frame mic buffer is 171 ms per frame on the local "
+        "engine, which puts a talk-over barge past 300 ms" % name)
+    assert re.search(r"\(agentSettings\.voice_engine\s*\|\|\s*'local'\)\s*===\s*"
+                     r"'gemini'\s*\?\s*4096\s*:\s*2048", src), (
+        "%s: the local engine must use 2048-frame mic buffers; Gemini Live "
+        "keeps 4096" % name)
+    assert re.search(r"createScriptProcessor\(\s*MIC_FRAMES\s*,", src), name
+
+
+@pytest.mark.parametrize("name", sorted(_UI))
+def test_the_interruption_setting_shows_for_every_engine_and_says_what_it_does(name):
+    src = _UI[name].read_text(encoding="utf-8")
+    flat = re.sub(r"\s+", "", src)
+    i = flat.index("InterruptingFriday")
+    assert "gem&&" not in flat[max(0, i - 90):i], (
+        "%s: the row is still Gemini-only; the local voice reads this setting too" % name)
+    # What each option does, per engine. Gemini Live's no-barge mode keeps an
+    # echo-aware talk-over; the local voice's means Esc only.
+    for words in ("Speaker-safe (open speakers)", "Esc only",
+                  "clearly louder than her own voice coming back through the mic",
+                  "Esc always stops her."):
+        assert words in src, "%s: missing %r" % (name, words)
+    for wrong in ("No interruption (open speakers)", "choose no interruption there"):
+        assert wrong not in src, "%s: still promises %r" % (name, wrong)

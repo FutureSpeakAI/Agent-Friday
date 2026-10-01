@@ -2159,15 +2159,18 @@ DEFAULT_SETTINGS = {
     "voice_proactive": True,               # Live API proactivity.proactive_audio
     "voice_context_compression": True,     # Live API sliding-window compression; ON by default so the context-window cap never silently terminates a long voice session (pairs with session_resumption renewal)
     "voice_barge_grace_ms": 800,           # ignore mic this long after Friday starts speaking (echo-canceller warmup)
-    "voice_barge_sustain_ms": 200,         # deliberate speech must persist this long to interrupt playback
-    # Interruption mode — how the Live API treats detected mic activity while
-    # Friday is speaking. On SPEAKERS the mic re-captures Friday's own audio;
-    # Gemini's VAD mistakes that echo for a barge-in and fires an interruption
-    # that cuts her off mid-sentence. "speaker" = NO_INTERRUPTION (Google's
-    # recommended echo-safe setting — her turn always finishes). "headphones" =
-    # START_OF_ACTIVITY_INTERRUPTS (true barge-in; only safe when there's no
-    # speaker bleed). Default speaker-safe because most users are on speakers.
-    "voice_interruption_mode": "auto",     # "auto"/"headphones" (barge-in, default) | "no-barge" (open-speakers echo-safe: no native interruption)
+    "voice_barge_sustain_ms": 200,         # Gemini Live speaker-safe mode: deliberate speech must persist this long (two of its ~171 ms mic frames) to interrupt playback
+    "voice_local_barge_sustain_ms": 170,   # local voice: the same, over its ~85 ms mic frames (two frames), so she stops within ~300 ms of the first word
+    # Interruption mode — what talking over Friday does. Escape stops her in
+    # every mode. On SPEAKERS the mic re-captures her own voice, which is why
+    # the open-speaker mode exists.
+    #   Gemini Live: "auto" (default; also "headphones", "speaker") =
+    #     START_OF_ACTIVITY_INTERRUPTS, she stops when Gemini hears you start
+    #     talking; "no-barge" = speaker-safe: NO_INTERRUPTION, and Friday's own
+    #     echo-aware detector stops her when you are clearly louder than her
+    #     voice in the mic.
+    #   Local voice: "auto" = that echo-aware detector; "no-barge" = Esc only.
+    "voice_interruption_mode": "auto",     # "auto" (talk over her) | "no-barge" (Gemini Live: speaker-safe; local: Esc only)
     "voice_room_mode": "one",              # "one" person talking to Friday | "room" (several people; she answers only when addressed)
     # ── The two limits that exist only in voice, both the owner's to set ──
     # Policy (2026-09-29): a limit that applies only to voice is the owner's
