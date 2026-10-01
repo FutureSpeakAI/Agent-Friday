@@ -70,7 +70,8 @@ Reuse contract (V6 §2 substrate table — harvest, don't rebuild)
                                (added additively there): goal_milestones_tick
                                (interval — advances due milestones),
                                goals_weekly_review (weekly aggregation +
-                               rollover), and approvals.expire_stale
+                               a rollover proposal for missed dates), and
+                               approvals.expire_stale
                                (interval sweep).
   * services/interest_model.py — register_goals_provider() is called at
                                import time here (see bottom of file) so
@@ -453,41 +454,132 @@ def transition_goal(goal_id: str, new_status: str, *, reason: str = "") -> Dict[
     return goal
 
 
-def rollover_incomplete_milestones(goal_id: str, *, extend_seconds: int = 7 * 86400
-                                    ) -> Optional[Dict[str, Any]]:
-    """Push `due` (and, if also overdue, the goal's own `deadline`) forward
-    by whole extend_seconds increments for every not-yet-done milestone that
-    is overdue. Used by run_weekly_review — "incomplete goals roll over with
-    adjusted deadlines." A no-op (no history entry) when nothing is overdue."""
+#: Approval-card kind for moving a goal's missed dates forward.
+ROLLOVER_KIND = "goal_deadline_rollover"
+
+
+def _plan_rollover(goal: Dict[str, Any], *, extend_seconds: int = 7 * 86400,
+                   now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """The date moves a rollover would make, without making them: every
+    not-done overdue milestone `due` (and an overdue goal `deadline`) pushed
+    forward by whole extend_seconds increments. None when nothing is overdue."""
+    now = time.time() if now is None else now
+    extend_seconds = max(1, int(extend_seconds))
+
+    def _forward(ts: float) -> str:
+        while ts < now:
+            ts += extend_seconds
+        return _iso_from_ts(ts)
+
+    moves = []
+    for m in goal.get("milestones") or []:
+        if m.get("status") == "done":
+            continue
+        due = _parse_ts(m.get("due"))
+        if due is not None and due < now:
+            moves.append({"milestone_id": m.get("milestone_id"), "name": m.get("name"),
+                          "from": m.get("due"), "to": _forward(due)})
+    deadline = None
+    deadline_ts = _parse_ts(goal.get("deadline"))
+    if (deadline_ts is not None and deadline_ts < now
+            and goal.get("status") not in TERMINAL_STATUSES):
+        deadline = {"from": goal.get("deadline"), "to": _forward(deadline_ts)}
+    if not moves and deadline is None:
+        return None
+    return {"milestones": moves, "deadline": deadline}
+
+
+def _apply_rollover_plan(goal_id: str, plan: Dict[str, Any], *, reason: str
+                         ) -> Optional[Dict[str, Any]]:
+    """Move each date in `plan` only if it still reads as the plan's `from`,
+    so a date the owner changed since is never overwritten."""
     def _fn(goal):
-        now = time.time()
         changed = False
-        for m in goal.get("milestones") or []:
-            if m.get("status") == "done":
-                continue
-            due = _parse_ts(m.get("due"))
-            if due is not None and due < now:
-                new_due = due
-                while new_due < now:
-                    new_due += extend_seconds
-                m["due"] = _iso_from_ts(new_due)
+        for mv in plan.get("milestones") or []:
+            m = _find_milestone(goal, mv.get("milestone_id") or "")
+            if m and m.get("status") != "done" and m.get("due") == mv.get("from"):
+                m["due"] = mv.get("to")
                 changed = True
-        deadline_ts = _parse_ts(goal.get("deadline"))
-        if (deadline_ts is not None and deadline_ts < now
-                and goal.get("status") not in TERMINAL_STATUSES):
-            new_deadline = deadline_ts
-            while new_deadline < now:
-                new_deadline += extend_seconds
-            goal["deadline"] = _iso_from_ts(new_deadline)
+        dl = plan.get("deadline")
+        if dl and goal.get("deadline") == dl.get("from"):
+            goal["deadline"] = dl.get("to")
             changed = True
         if changed:
             goal["rollovers"] = int(goal.get("rollovers") or 0) + 1
             goal.setdefault("history", []).append({
                 "at": _now_iso(), "from": goal.get("status"), "to": goal.get("status"),
-                "reason": "rollover: overdue milestone/goal deadlines adjusted",
+                "reason": reason,
             })
         return goal
     return _mutate_goal(goal_id, _fn)
+
+
+def rollover_incomplete_milestones(goal_id: str, *, extend_seconds: int = 7 * 86400
+                                    ) -> Optional[Dict[str, Any]]:
+    """Move a goal's overdue dates forward now. This is the owner's own,
+    explicit rollover; nothing scheduled calls it. The weekly review raises a
+    rollover proposal instead (propose_deadline_rollover). A no-op (no
+    history entry) when nothing is overdue."""
+    goal = get_goal(goal_id)
+    if goal is None:
+        return None
+    plan = _plan_rollover(goal, extend_seconds=extend_seconds)
+    if plan is None:
+        return goal
+    return _apply_rollover_plan(
+        goal_id, plan, reason="rollover: overdue milestone/goal deadlines adjusted")
+
+
+def propose_deadline_rollover(goal_id: str, *, extend_seconds: int = 7 * 86400
+                              ) -> Optional[Dict[str, Any]]:
+    """Raise one approval card proposing new dates for a goal's missed ones.
+
+    Nothing moves until the owner approves the card (_on_rollover_decided).
+    The card's subject is the exact set of missed dates, so the same miss
+    raises one card however many reviews see it, and a declined proposal is
+    not raised again. None when nothing is overdue."""
+    goal = get_goal(goal_id)
+    if goal is None:
+        return None
+    plan = _plan_rollover(goal, extend_seconds=extend_seconds)
+    if plan is None:
+        return None
+    sig_src = json.dumps({"m": [[mv["milestone_id"], mv["from"]] for mv in plan["milestones"]],
+                          "d": (plan["deadline"] or {}).get("from")}, sort_keys=True)
+    sig = hashlib.sha256(sig_src.encode("utf-8")).hexdigest()[:12]
+    lines = [f"- {mv.get('name') or mv.get('milestone_id')}: due {mv['from']} -> {mv['to']}"
+             for mv in plan["milestones"]]
+    if plan["deadline"]:
+        lines.append(f"- Goal deadline: {plan['deadline']['from']} -> {plan['deadline']['to']}")
+    title = goal.get("title") or goal_id
+    return approvals.create_approval(
+        kind=ROLLOVER_KIND, subject_type="goal", subject_id=f"{goal_id}:rollover:{sig}",
+        title=f"Missed dates on {title}: move them forward?",
+        description="\n".join(lines),
+        action_description=f"Move the missed dates on goal {title!r} forward",
+        action_class="internal", force_gate=True,
+        payload={"goal_id": goal_id, "extend_seconds": int(extend_seconds), **plan})
+
+
+def _on_rollover_decided(approval: Dict[str, Any]) -> None:
+    payload = approval.get("payload") or {}
+    goal_id = payload.get("goal_id")
+    if not goal_id:
+        return
+    status = approval.get("status")
+    if status == "approved":
+        _apply_rollover_plan(goal_id, payload,
+                             reason="rollover approved by owner: missed dates moved forward")
+    elif status in ("denied", "expired"):
+        why = "declined by owner" if status == "denied" else "expired"
+
+        def _fn(goal):
+            goal.setdefault("history", []).append({
+                "at": _now_iso(), "from": goal.get("status"), "to": goal.get("status"),
+                "reason": f"rollover {why}: missed dates left as they are",
+            })
+            return goal
+        _mutate_goal(goal_id, _fn)
 
 
 def _maybe_complete_goal(goal_id: str) -> Optional[Dict[str, Any]]:
@@ -1188,12 +1280,13 @@ def latest_review() -> Optional[Dict[str, Any]]:
 
 def run_weekly_review() -> Dict[str, Any]:
     """Aggregate work_log entries by goal_id into a dreams/-style Markdown
-    review doc under ~/.friday/goals/reviews/<date>.md, and roll over any
-    still-incomplete goal's deadlines/milestones. Registered as the weekly
+    review doc under ~/.friday/goals/reviews/<date>.md. Missed dates are
+    written into the review and raised as one rollover approval card per
+    goal; the review itself never moves a date. Registered as the weekly
     scheduler builtin 'goals_weekly_review'."""
     active = list_goals(status="active")
     lines = [f"# Weekly Goal Review — {datetime.now().strftime('%Y-%m-%d')}", ""]
-    rolled: List[str] = []
+    proposed: List[str] = []
     for g in active:
         entries = _work_log_entries_for_goal(g["goal_id"])
         milestones = g.get("milestones") or []
@@ -1204,18 +1297,27 @@ def run_weekly_review() -> Dict[str, Any]:
         lines.append(f"- Spent: {g.get('spent_mψ', 0)} mψ / cap {cap or '∞'} mψ")
         lines.append(f"- Work-log entries: {len(entries)}")
         overdue = [m for m in milestones if m.get("status") != "done" and _is_overdue(m.get("due"))]
-        if overdue:
-            rollover_incomplete_milestones(g["goal_id"])
-            rolled.append(g["goal_id"])
-            lines.append(f"- Rolled over {len(overdue)} overdue milestone(s) with adjusted deadlines.")
+        deadline_missed = _is_overdue(g.get("deadline"))
+        if overdue or deadline_missed:
+            missed = f"{len(overdue)} overdue milestone(s)"
+            if deadline_missed:
+                missed += " and an overdue goal deadline"
+            card = propose_deadline_rollover(g["goal_id"])
+            if card and card.get("status") == "pending":
+                proposed.append(g["goal_id"])
+                lines.append(f"- {missed.capitalize()}. New dates await your approval "
+                             f"({card.get('approval_id')}); nothing was moved.")
+            else:
+                lines.append(f"- {missed.capitalize()}. Dates left as they are.")
         lines.append("")
     doc = "\n".join(lines)
     REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
     path = REVIEWS_DIR / f"{datetime.now().strftime('%Y-%m-%d')}.md"
     path.write_text(doc, encoding="utf-8")
     return {"changed": bool(active),
-            "summary": f"Reviewed {len(active)} active goal(s); rolled over {len(rolled)}.",
-            "path": str(path), "rolled_over": rolled}
+            "summary": (f"Reviewed {len(active)} active goal(s); "
+                        f"{len(proposed)} rollover(s) await approval."),
+            "path": str(path), "rolled_over": [], "rollover_proposed": proposed}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1256,4 +1358,5 @@ def _register_with_interest_model() -> None:
 approvals.register_decision_hook("goal_milestone", _on_milestone_gate_decided)
 approvals.register_decision_hook("goal_milestone_escalation", _on_escalation_decided)
 approvals.register_decision_hook("goal_milestone_confirm", _on_confirm_decided)
+approvals.register_decision_hook(ROLLOVER_KIND, _on_rollover_decided)
 _register_with_interest_model()

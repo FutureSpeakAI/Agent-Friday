@@ -123,15 +123,16 @@ class TestWeeklyReview:
         assert "Draft the roadmap doc" in review["content"]
         assert "1/2 milestones done" in review["content"]
 
-    def test_review_rolls_over_overdue_milestones(self, monkeypatch):
+    def test_review_proposes_rollover_and_moves_nothing(self, monkeypatch):
         _always_pass(monkeypatch)
         past = goals._iso_from_ts(__import__("time").time() - 3600)
         g = goals.create_goal(title="Draft a late-milestone goal", status="active",
                               milestones=[{"name": "Late one", "due": past}])
         result = goals.run_weekly_review()
-        assert g["goal_id"] in result["rolled_over"]
+        assert result["rolled_over"] == []
+        assert g["goal_id"] in result["rollover_proposed"]
         updated = goals.get_goal(g["goal_id"])
-        assert goals._parse_ts(updated["milestones"][0]["due"]) > __import__("time").time()
+        assert updated["milestones"][0]["due"] == past
 
     def test_no_active_goals_still_writes_a_review_doc(self):
         result = goals.run_weekly_review()
