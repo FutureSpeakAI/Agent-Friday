@@ -49,12 +49,6 @@ def home(tmp_path, monkeypatch):
 
     # a creation with its sidecar
     (creations / "friday-image-harbour.png").write_bytes(b"\x89PNG fake")
-    (fd / "creations_meta" / "friday-image-harbour.png.json").write_text(json.dumps({"kind": "image", "prompt": "harbour at blue hour", "model": "local-sdxl"}), encoding="utf-8")
-    (creations / "friday-text-ferry.md").write_text("# The ferry story\n\nThe 06:40 left on time.", encoding="utf-8")
-    # an office document and its render
-    (docs / "pitch.pptx").write_bytes(b"PK fake")
-    (docs / "_renders").mkdir()
-    (docs / "_renders" / "pitch-1.png").write_bytes(b"\x89PNG render")
     # a user episode and a routine episode
     from agent_friday.services import podcast_engine as pe
     for eid, origin in (("20260930T080000-abc123", "user"), ("20260930T063000-def456", "routine")):
@@ -253,6 +247,13 @@ def test_turn_into_slides_makes_a_signed_deck_through_the_office_tool(home, monk
             path.write_bytes(path.read_bytes() + b"|" + argv[-1].encode("utf-8")[:40])
         return {"ok": True, "rc": 0, "stdout": "", "stderr": "", "verb": argv[0], "files": [{"arg": name, "path": str(path), "exists": argv[0] != "create"}], "argv": argv}
 
+    def fake_check(path, *, want_image=True):
+        rd = office_engine.DOCUMENTS_DIR / office_engine.RENDER_DIR
+        rd.mkdir(exist_ok=True)
+        (rd / (Path(path).stem + "-1.png")).write_bytes(b"PNG render")
+        return {"ok": True, "findings": []}
+
+    monkeypatch.setattr(office_engine, "deliver_check", fake_check)
     monkeypatch.setattr(mi, "_office", fake_office)
     mi.reindex()
     src = mi.create_card(kind="article", title="The ferry story", body="# What changed\nThe 06:40 left on time.\n\n# Three numbers\nWeb, app, partners.", status="draft")
@@ -261,6 +262,7 @@ def test_turn_into_slides_makes_a_signed_deck_through_the_office_tool(home, monk
     deck = res["card"]
     assert deck["kind"] == "deck" and deck["status"] == "draft" and deck["source_kind"] == "document"
     assert deck["title"] == "The ferry story · slides", "the deck is named for the card, not the file"
+    assert deck["pages"] == 1 and len(deck["renders"]) == 1, "the delivery check rendered the pages the editor shows"
     assert ran[0] == ["create", Path(deck["path"]).name]
     titles = [a[-1] for a in ran if "phType=title" in a]
     assert titles == ["text=The ferry story", "text=What changed", "text=Three numbers"]

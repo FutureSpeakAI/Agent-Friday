@@ -1259,6 +1259,14 @@ def make_deck(c: Dict[str, Any]) -> Dict[str, Any]:
                     path = f["path"]
     if not path or not Path(path).exists():
         return {"status": "error", "message": "The office tool made no file."}
+    # The delivery check saves the resident session, validates and renders the
+    # pages the editor shows; it runs before signing so the credential covers
+    # the saved bytes. A failed check is a finding on the card, not an error.
+    try:
+        from agent_friday.services import office_engine
+        check = office_engine.deliver_check(path, want_image=True)
+    except Exception:
+        check = {}
     _sign(Path(path), "deck", [{"kind": "card", "ref": c["id"], "title": c["title"]}], "media.make_deck")
     with _LOCK:
         con = _connect()
@@ -1270,7 +1278,10 @@ def make_deck(c: Dict[str, Any]) -> Dict[str, Any]:
         finally:
             con.close()
     _set_override(new_id, status="draft", title=c["title"] + " · slides")   # after the connection closes: one writer at a time
-    return {"status": "ok", "card": get(new_id)}
+    card = get(new_id)
+    if check and not check.get("ok", True) and card is not None:
+        card["findings"] = check.get("findings") or []
+    return {"status": "ok", "card": card}
 
 
 # ── read aloud: one local voice, kept here ───────────────────────────────────
