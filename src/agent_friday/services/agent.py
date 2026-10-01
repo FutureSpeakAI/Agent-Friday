@@ -9113,6 +9113,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     # not happen — which is what makes an unbacked claim detectable later.
     # A credential refusal raised by the handler itself is a denial, not a read.
     if _refused:
+        _receipt_credential_refusal(name, ctx.input, "refused by the handler")
         _receipts.record(name, ok=False, denied=True, detail=result)
     else:
         _receipts.record(name, ok=True)
@@ -9663,30 +9664,63 @@ def _hook_credential_refusal(ctx):
         if ctx.tool_name == "read_file":
             raw = inp.get("path") or ""
             p = Path(raw).expanduser().resolve() if raw else None
-            if p is not None and _cred.check(p):
+            why = _cred.check(p) if p is not None else None
+            if why:
+                _receipt_credential_refusal(ctx.tool_name, inp, why)
                 return _hooks.DENY(_cred.refusal(p))
         elif ctx.tool_name == "open_path":
             target = str(inp.get("path") or inp.get("target") or "").strip()
             if target:
                 p = Path(target).expanduser()
-                if _cred.check(p):
+                why = _cred.check(p)
+                if why:
+                    _receipt_credential_refusal(ctx.tool_name, inp, why)
                     return _hooks.DENY(_cred.refusal(p))
                 # A bare name or alias is judged by what it resolves to, so a
                 # key found by name is refused before any card or narration.
                 resolved = _resolve_open_target(target)
-                if resolved and _cred.check(Path(resolved)):
+                why = _cred.check(Path(resolved)) if resolved else None
+                if why:
+                    _receipt_credential_refusal(ctx.tool_name, inp, why)
                     return _hooks.DENY(_cred.refusal(Path(resolved)))
         elif ctx.tool_name == "run_command":
             why = _cred.scan_command(str(inp.get("command") or ""))
             if why:
+                _receipt_credential_refusal(ctx.tool_name, inp, why)
                 return _hooks.DENY(_cred.refusal_command(why))
         elif ctx.tool_name == "run_sandboxed":
             why = _cred.scan_code(str(inp.get("code") or ""))
             if why:
+                _receipt_credential_refusal(ctx.tool_name, inp, why)
                 return _hooks.DENY(_cred.refusal_command(why))
     except Exception:
         pass
     return _hooks.ALLOW
+
+
+def _receipt_credential_refusal(tool_name: str, args: dict, why: str) -> None:
+    """Write the signed decision-bom entry for a credential refusal.
+
+    Called before the denial is returned, so the receipt exists whatever the
+    caller does with the refusal. It records the tool, a hash of the arguments
+    and the kind of secret that was refused, never the secret and never the
+    arguments themselves. A receipt that cannot be written is logged and the
+    refusal stands: nothing is read because the log is unavailable.
+    """
+    try:
+        from agent_friday.governance import action_gate as _ag
+        args_hash = _hashlib.sha256(
+            json.dumps(args or {}, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        _ag._receipt({
+            "kind": "credential_refusal",
+            "tool": tool_name,
+            "args_hash": args_hash,
+            "policy": "cLaw:CredentialsStayClosed",
+            "decision": "deny",
+            "reason": str(why),
+        })
+    except Exception as err:
+        logging.getLogger(__name__).error("credential refusal receipt failed: %s", err)
 
 
 def _hook_sandbox_policy(ctx):

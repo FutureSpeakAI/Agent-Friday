@@ -73,13 +73,22 @@ def _deny_dirs() -> list[tuple[Path, str]]:
     ]
 
 
+def _app_dir() -> Path:
+    """The folder Friday is installed in: where an older release kept its API
+    keys in `.env` and `secrets.yaml`, and where the installer carries them
+    across an upgrade."""
+    return Path(__file__).resolve().parents[3]
+
+
 def _deny_files() -> list[tuple[Path, str]]:
     """Exact files that are key material rather than the owner's content."""
-    f = _friday()
+    f, a = _friday(), _app_dir()
     return [
         (f / "secret_key", "my web session secret"),
         (f / "vault" / ".vault_config.json", "the vault key-derivation salt"),
         (f / "vault" / ".governance-key", "the governance signing key"),
+        (a / ".env", "the API keys an earlier release kept beside the app"),
+        (a / "secrets.yaml", "the API keys an earlier release kept beside the app"),
     ]
 
 
@@ -157,12 +166,16 @@ def _asis(p: Path) -> str:
     return os.path.normcase(os.path.abspath(str(p)))
 
 
+def _norms():
+    return _deny_norms(str(_home()), str(_friday()), str(_app_dir()))
+
+
 @functools.lru_cache(maxsize=8)
-def _deny_norms(home: str, friday: str):
+def _deny_norms(home: str, friday: str, app: str = ""):
     """Normalised deny directories and files, as written and as they resolve.
 
-    Cached per (home, Friday dir) so judging one more file costs string
-    comparisons, not a fresh round of path resolution.
+    Cached per (home, Friday dir, app dir) so judging one more file costs
+    string comparisons, not a fresh round of path resolution.
     """
     dirs: dict[str, str] = {}
     files: dict[str, str] = {}
@@ -393,7 +406,7 @@ def _verdict(path, sniff: bool = True) -> tuple[str, str] | None:
             rp = Path(rtext)
     except Exception:
         pass
-    dirs, files, lookups = _deny_norms(str(_home()), str(_friday()))
+    dirs, files, lookups = _norms()
     for cand in dict.fromkeys((_asis(p), os.path.normcase(str(rp)))):
         for d, why in dirs:
             if cand == d:
@@ -531,15 +544,59 @@ _ROOT_LEADS = {"get-childitem", "gci", "ls", "dir", "find", "tree", "robocopy",
                "xcopy", "rsync", "-path", "-literalpath", "-lp"}
 
 
-def _verb(tokens: list[str]) -> str:
-    """The command a segment runs: its first word, past sudo-style prefixes."""
-    for t in tokens:
+#: Commands that move the shell's current directory.
+_CD_VERBS = {"cd", "chdir", "set-location", "sl", "pushd", "push-location"}
+#: Commands that list names and nothing else, when run alone without recursion.
+_LISTERS = {"ls", "dir", "gci", "get-childitem"}
+#: Characters that make a command more than one plain listing: another command,
+#: a redirect, a subexpression or a script block.
+_NOT_A_PLAIN_LISTING = re.compile(r"[;&|<>(){}`\n]|\$\(|\$\{")
+
+
+def _verb_index(tokens: list[str]) -> int:
+    """Where the command a segment runs sits: its first word, past sudo-style
+    prefixes. -1 when there is none."""
+    for i, t in enumerate(tokens):
         w = t.strip("&.(").lower()
         if not w or w in _VERB_PREFIXES or ("=" in w and not w.startswith("-")):
             continue
-        base = re.split(r"[\\/]", w)[-1]
-        return base[:-4] if base.endswith(".exe") else base
-    return ""
+        return i
+    return -1
+
+
+def _verb(tokens: list[str]) -> str:
+    """The command a segment runs: its first word, past sudo-style prefixes."""
+    i = _verb_index(tokens)
+    if i < 0:
+        return ""
+    base = re.split(r"[\\/]", tokens[i].strip("&.(").lower())[-1]
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def _prints_kubeconfig(tokens: list[str]) -> bool:
+    """True for `kubectl config view --raw` (or --flatten): it prints the
+    certificates and tokens the kubeconfig holds, so it reads the credential
+    whether or not it names the file."""
+    if _verb(tokens) not in _KUBE_VERBS:
+        return False
+    low = [t.lower() for t in tokens]
+    try:
+        at = low.index("config")
+    except ValueError:
+        return False
+    if "view" not in low[at + 1:]:
+        return False
+    return any(t in ("--raw", "--raw=true", "--flatten", "--flatten=true") for t in low)
+
+
+def _names_only_listing(cmd: str) -> bool:
+    """True when `cmd` is one plain listing (`ls`, `dir`, `Get-ChildItem`)
+    that does not recurse, feed another command or redirect: it shows which
+    files a folder holds and reads none of them."""
+    if not cmd.strip() or _NOT_A_PLAIN_LISTING.search(cmd):
+        return False
+    words = list(_tokens(cmd))
+    return _verb(words) in _LISTERS and not _RECURSE_RE.search(_flat(cmd))
 
 
 def _use_indexes(tokens: list[str]) -> set[int]:
@@ -562,6 +619,46 @@ def _use_indexes(tokens: list[str]) -> set[int]:
             elif low.startswith("--kubeconfig="):
                 out.add(i)
     return out
+
+
+_DOT_FORMS = (".", "..", ".\\", "./", "..\\", "../")
+_STATEMENT_SPLIT = re.compile(r"(\|\||&&|[;&\n]|\|)")
+
+
+def _statements(cmd: str) -> list[list[list[str]]]:
+    """`cmd` as statements, each a list of the commands a pipe joins, each a
+    list of words. ; && || & and a newline end a statement; | does not."""
+    out: list[list[list[str]]] = [[]]
+    for part in _STATEMENT_SPLIT.split(cmd):
+        if part == "|":
+            continue
+        if part in (";", "&", "\n", "&&", "||"):
+            out.append([])
+            continue
+        words = [next(g for g in m.groups() if g) for m in _TOKEN_RE.finditer(part)]
+        if words:
+            out[-1].append(words)
+    return [s for s in out if s]
+
+
+def _from_cwd(path: str, cwd: str) -> str:
+    """`path` made absolute against `cwd`, the directory the chain has reached."""
+    if os.path.isabs(path) or path.startswith(("%", "\\\\")) or (len(path) > 1 and path[1] == ":"):
+        return path
+    return os.path.normpath(os.path.join(cwd, path))
+
+
+def _cd_target(words: list[str], cwd: str) -> str | None:
+    """Where `cd X`, `Set-Location X` or `pushd X` leaves the shell, when X is
+    a folder that exists; None when it names no folder or none that exists."""
+    at = _verb_index(words)
+    for t in words[at + 1:]:
+        if t.startswith("-") or t.lower() == "/d":
+            continue
+        raw = t.strip(",;()").replace(_SPACE, " ")
+        target = _from_cwd(_expand(raw), cwd)
+        return target if _is_dir(target) else None
+    return None
 
 
 def _segments(cmd: str) -> list[list[tuple[int, int, str]]]:
@@ -636,7 +733,7 @@ def _covers_credentials(path: str) -> bool:
         root = Path(text)
         if problem or not root.is_dir():
             return False
-        dirs, files, _lookups = _deny_norms(str(_home()), str(_friday()))
+        dirs, files, _lookups = _norms()
         for cand in {_asis(root), _norm(root)}:
             prefix = cand.rstrip(os.sep) + os.sep
             if any(d.startswith(prefix) and os.path.exists(d) for d, _why in (*dirs, *files)):
@@ -751,7 +848,7 @@ def _is_clean_credential_path(tok: str) -> bool:
             return False
         if _plain_name(target.name).endswith(".pub"):
             return True
-        dirs, _files, _lookups = _deny_norms(str(_home()), str(_friday()))
+        dirs, _files, _lookups = _norms()
         return any(_asis(target).startswith(d + os.sep) for d, _why in dirs)
     except Exception:
         return False
@@ -789,6 +886,8 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
     """
     if not cmd:
         return None
+    if _names_only_listing(_resolve_symbolic(cmd)):
+        return None
     cmd_r = _without_exempt(re.sub(r"[`^]", "", _resolve_symbolic(cmd)))
     flat = _flat(cmd_r)
     for marker, why in _COMMAND_MARKERS:
@@ -800,69 +899,92 @@ def scan_command(cmd: str, _depth: int = 0) -> str | None:
     if any(b in flat for b in _BROWSER_DIR_WORDS) and             any(s in flat for s in _BROWSER_STORE_NAMES):
         return "a browser's saved-login or cookie store"
     reads = bool(_READER_RE.search(flat))
-    implicit = bool(_IMPLICIT_RECURSION_RE.search(flat))
-    recurse = bool(_RECURSE_RE.search(flat)) or implicit
-    walks = reads and recurse
-    named_root = False
-    for seg in _segments(cmd_r):
-        words = [t for _a, _b, t in seg]
-        verb = _verb(words)
-        prev = ""
-        for tok in words:
-            lead, prev = prev, tok.lower()
-            path = _path_token(tok)
-            if path is None:
-                # A folder named without a slash is a folder all the same: it
-                # is judged like a path, and it is the walk root when it stands
-                # where a root stands.
-                bare = tok.strip(",;|()").replace(_SPACE, " ")
-                if not (reads and bare and not bare.startswith("-")):
-                    continue
-                full = os.path.abspath(bare)
-                if not _is_dir(full):
-                    continue
-                if walks and _covers_credentials(full):
-                    return _WALK_WHY
-                why = _directory_holds_credential(full, recurse)
-                if why:
-                    return why
-                if lead in _ROOT_LEADS or verb in _ARCHIVE_VERBS:
-                    named_root = True
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        cwd = str(_home())
+    # A statement is what ; && || & and a newline separate; the commands a
+    # pipe joins are one statement. A folder named in one statement is not the
+    # root of the next, and cd / Set-Location / pushd move where a statement
+    # that names no folder starts its walk.
+    for stmt in _statements(cmd_r):
+        stmt_text = _flat(" ".join(" ".join(seg) for seg in stmt))
+        recurse = bool(_RECURSE_RE.search(stmt_text)
+                       or _IMPLICIT_RECURSION_RE.search(stmt_text))
+        walks = reads and recurse
+        named_root = False
+        for words in stmt:
+            verb = _verb(words)
+            if verb in _CD_VERBS:
+                moved = _cd_target(words, cwd)
+                if moved:
+                    why = check(Path(moved), sniff=False)
+                    if why:
+                        return why
+                    cwd = moved
                 continue
-            expanded = _expand(path)
-            why = check(Path(expanded))
-            if why:
-                return why
-            wild = any(ch in expanded for ch in "*?[")
-            if reads and not wild:
-                if walks and _covers_credentials(expanded):
-                    return _WALK_WHY
-                named_root = named_root or _is_dir(expanded)
-                why = _directory_holds_credential(expanded, recurse)
-                if why:
-                    return why
-            if wild:
-                if walks:
-                    named_root = True
-                    if _covers_credentials(_glob_base(expanded)):
-                        return _WALK_WHY
-                import glob
-                try:
-                    for i, hit in enumerate(glob.iglob(expanded)):
-                        if i >= _MAX_GLOB_HITS:
-                            break
-                        why = check(Path(hit))
+            if _prints_kubeconfig(words):
+                return _DIR_WHY["kube"]
+            prev = ""
+            for tok in words:
+                lead, prev = prev, tok.lower()
+                bare = tok.strip(",;|()").replace(_SPACE, " ")
+                path = None if bare in _DOT_FORMS else _path_token(tok)
+                if path is None:
+                    # A folder named without a slash is a folder all the same:
+                    # it is judged like a path, and it is the walk root when it
+                    # stands where a root stands. A file named without a slash
+                    # is judged like any other file.
+                    if not (reads and bare and not bare.startswith("-")):
+                        continue
+                    full = os.path.normpath(os.path.join(cwd, bare))
+                    if os.path.isfile(full):
+                        why = check(Path(full))
                         if why:
                             return why
-                except Exception:
-                    pass
-    if walks and not named_root:
-        # No folder was named, so the walk starts where the shell already is.
-        try:
-            if _covers_credentials(os.getcwd()):
+                        continue
+                    if not _is_dir(full):
+                        continue
+                    if walks and _covers_credentials(full):
+                        return _WALK_WHY
+                    why = _directory_holds_credential(full, recurse)
+                    if why:
+                        return why
+                    if lead in _ROOT_LEADS or verb in _ARCHIVE_VERBS or bare in _DOT_FORMS:
+                        named_root = True
+                    continue
+                expanded = _from_cwd(_expand(path), cwd)
+                why = check(Path(expanded))
+                if why:
+                    return why
+                wild = any(ch in expanded for ch in "*?[")
+                if reads and not wild:
+                    if walks and _covers_credentials(expanded):
+                        return _WALK_WHY
+                    named_root = named_root or _is_dir(expanded)
+                    why = _directory_holds_credential(expanded, recurse)
+                    if why:
+                        return why
+                if wild:
+                    if walks:
+                        named_root = True
+                        if _covers_credentials(_glob_base(expanded)):
+                            return _WALK_WHY
+                    import glob
+                    try:
+                        for i, hit in enumerate(glob.iglob(expanded)):
+                            if i >= _MAX_GLOB_HITS:
+                                break
+                            why = check(Path(hit))
+                            if why:
+                                return why
+                    except Exception:
+                        pass
+        if walks and not named_root:
+            # No folder was named in this statement, so its walk starts where
+            # the chain of cd commands has left the shell.
+            if _covers_credentials(cwd):
                 return _WALK_WHY
-        except OSError:
-            pass
     if _depth < _MAX_DEPTH:
         for text in _decoded_command_texts(cmd):
             why = scan_command(text, _depth + 1)

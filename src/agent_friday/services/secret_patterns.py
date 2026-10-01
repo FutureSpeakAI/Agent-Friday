@@ -17,6 +17,10 @@ split by how sure they are:
 
 KEY_RES     private-key headers and the leading bytes of encoded key bodies.
 TOKEN_RES   vendor token formats with a distinctive prefix. High precision.
+            The provider-key shapes (`secret_shapes.SHAPES`, the list the setup
+            chat guard also uses) are part of it: that list is the one
+            definition of a provider key, and `PROVIDER_KEY_RE` is built from
+            it for the classifier and the ledger.
 ASSIGN_RES  keyword = value forms (`password: ...`, `"api_key": "..."`). These
             need context, so they gate egress but are not used to redact tool
             output, where the owner's own config files are legitimate reading.
@@ -33,7 +37,89 @@ import re
 import urllib.parse
 import zlib
 
+from agent_friday.services import secret_shapes as _shapes
+
 _WS = r"\s+"
+
+#: Characters handed to a pattern since the last `reset_work`. Detection on the
+#: egress path does bounded work, and a bound on this count holds under any
+#: machine load where a bound on seconds does not.
+_WORK = [0]
+
+
+def reset_work() -> None:
+    _WORK[0] = 0
+
+
+def work_chars() -> int:
+    return _WORK[0]
+
+
+class _Guarded:
+    """A compiled pattern behind a cheap literal test.
+
+    `needles` are substrings at least one of which every match must contain;
+    the pattern is not run over a text that holds none of them, so a large body
+    with no vendor prefix costs a substring search per pattern and not a
+    regular-expression scan. A case-insensitive pattern is tested against the
+    lower-cased text, a case-sensitive one against the text as it is (a
+    needle that must match exactly rules out far more). No needles means
+    always run.
+    """
+    __slots__ = ("rx", "needles", "fold")
+
+    def __init__(self, pattern: str, needles: tuple[str, ...] = (), flags: int = 0):
+        self.rx = re.compile(pattern, flags)
+        self.fold = bool(self.rx.flags & re.I)
+        self.needles = tuple(n.lower() if self.fold else n for n in needles)
+
+    @property
+    def pattern(self) -> str:
+        return self.rx.pattern
+
+    def possible(self, text: str, low: str | None = None) -> bool:
+        if not self.needles:
+            return True
+        hay = (text.lower() if low is None else low) if self.fold else text
+        return any(n in hay for n in self.needles)
+
+    def search(self, text: str, low: str | None = None):
+        if not self.possible(text, low):
+            return None
+        _WORK[0] += len(text)
+        return self.rx.search(text)
+
+    def sub(self, repl, text: str):
+        if not self.possible(text):
+            return text
+        _WORK[0] += len(text)
+        return self.rx.sub(repl, text)
+
+
+class _Union:
+    """Several guarded patterns that read as one: `search`, `sub`, `pattern`."""
+    __slots__ = ("members",)
+
+    def __init__(self, members):
+        self.members = tuple(members)
+
+    @property
+    def pattern(self) -> str:
+        return "|".join("(?:%s)" % m.pattern for m in self.members)
+
+    def search(self, text: str):
+        low = text.lower()
+        for m in self.members:
+            hit = m.search(text, low)
+            if hit:
+                return hit
+        return None
+
+    def sub(self, repl, text: str):
+        for m in self.members:
+            text = m.sub(repl, text)
+        return text
+
 
 #: Leading bytes of DER private keys, as base64, for a body that lost its
 #: armor. Each is a SEQUENCE header followed by the fixed INTEGER version that
@@ -54,61 +140,110 @@ _KEY_BODY_STARTS: tuple[str, ...] = (
     r"b3BlbnNzaC1rZXktdjE",
 )
 _BODY_LEAD = r"(?<![A-Za-z0-9+/])"
+#: The literal prefix each body start opens with (lower-cased by `_Guarded`).
+_START_NEEDLES: tuple[tuple[str, ...], ...] = (
+    ("MII",), ("MIG", "MIH"), ("MHcCAQEE",), ("MC4CAQAwBQYDK2VwBCIEI",),
+    ("b3BlbnNzaC1rZXktdjE",))
 
-KEY_RES: tuple[re.Pattern, ...] = (
+KEY_RES: tuple[_Guarded, ...] = (
     # Any PRIVATE KEY armor header, in any case; whitespace (including
     # newlines) between the words is tolerated so a wrapped header still matches.
-    re.compile(r"-----BEGIN" + _WS + r"(?:[A-Z0-9]+" + _WS + r")*PRIVATE" + _WS
-               + r"KEY(?:" + _WS + r"BLOCK)?-----", re.I),
-    re.compile(r"openssh-key-v1"),
+    _Guarded(r"-----BEGIN" + _WS + r"(?:[A-Z0-9]+" + _WS + r")*PRIVATE" + _WS
+             + r"KEY(?:" + _WS + r"BLOCK)?-----", ("private",), re.I),
+    _Guarded(r"openssh-key-v1", ("openssh-key-v1",)),
     # PuTTY .ppk: the format header and the private-lines marker.
-    re.compile(r"PuTTY-User-Key-File-\d+\s*:", re.I),
-    re.compile(r"(?<![A-Za-z0-9-])Private-Lines\s*:\s*\d", re.I),
-) + tuple(re.compile(_BODY_LEAD + start) for start in _KEY_BODY_STARTS)
+    _Guarded(r"PuTTY-User-Key-File-\d+\s*:", ("putty-user-key-file",), re.I),
+    _Guarded(r"(?<![A-Za-z0-9-])Private-Lines\s*:\s*\d", ("private-lines",), re.I),
+) + tuple(_Guarded(_BODY_LEAD + start, _START_NEEDLES[i])
+          for i, start in enumerate(_KEY_BODY_STARTS))
 
 #: The armor header once every separator a caller might chunk it with is gone.
-_SQUASHED_HEADER = re.compile(r"-----BEGIN[A-Z0-9]*PRIVATEKEY(?:BLOCK)?-----", re.I)
+_SQUASHED_HEADER = _Guarded(r"-----BEGIN[A-Z0-9]*PRIVATEKEY(?:BLOCK)?-----",
+                            ("privatekey",), re.I)
 _SQUASH = re.compile(r"[\s\"'`+,;]")
 
-TOKEN_RES: tuple[re.Pattern, ...] = (
-    re.compile(r"\bgh[posur]_[A-Za-z0-9]{20,}\b"),                 # GitHub
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b"),               # GitHub fine-grained
-    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),                  # AWS key id
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),               # Slack
-    re.compile(r"\bxapp-\d-[A-Za-z0-9-]{10,}\b"),
-    re.compile(r"hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]{20,}"),
-    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),                     # GitLab
-    re.compile(r"\b[sr]k_live_[A-Za-z0-9]{16,}"),                  # Stripe
-    re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),                        # npm
-    re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"),   # SendGrid
-    re.compile(r"\bya29\.[A-Za-z0-9_-]{20,}"),                     # Google OAuth
-    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),  # JWT
-    re.compile(r"\b\d{8,10}:AA[A-Za-z0-9_-]{33}\b"),               # Telegram bot
-    re.compile(r"(?i)(?:twilio|auth[_\s-]?token)[^0-9a-f]{0,24}[0-9a-f]{32}\b"),
-    re.compile(r"(?i)\"?root_key\"?\s*[:=]"),                      # Friday keystore JSON
+#: What every provider-key shape in `secret_shapes.SHAPES` opens with, so the
+#: pattern is not run over text that cannot hold one. A shape not listed here
+#: always runs: a new shape is detected before it is ever given a needle.
+_SHAPE_NEEDLES: dict[str, tuple[str, ...]] = {
+    "anthropic": ("sk-ant-",), "openrouter": ("sk-or-",), "openai": ("sk-",),
+    "gemini": ("AIza",), "gemini_aq": ("AQ.",), "google_client_secret": ("GOCSPX-",),
+    "google_refresh": ("1//0",), "google_access": ("ya29.",), "aws": ("AKIA",),
+    "slack": ("xox",), "github": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"),
+    "huggingface": ("hf_",), "groq_xai_pplx": ("gsk_", "xai-", "pplx-"),
+    "jwt": ("eyJ",), "elevenlabs": ("sk_",), "firecrawl": ("fc-",),
+    "telegram": (":",), "discord": (".",), "linear": ("lin_api_",),
+    "notion": ("secret_", "ntn_"),
+}
+
+#: Provider keys, from the list the setup chat guard shares. The armor header
+#: is KEY_RES' business.
+PROVIDER_RES: tuple[_Guarded, ...] = tuple(
+    _Guarded(pat, _SHAPE_NEEDLES.get(sid, ()))
+    for sid, _label, pat, _target in _shapes.SHAPES if sid != "private_key"
+) + (
+    # The vendor prefixes whose keys are most often pasted in part or in a
+    # shorter form than the shape list's exact length: still a key.
+    _Guarded(r"\b(?:sk-ant-|sk-|AQ\.|AIza)[A-Za-z0-9_\-]{16,}\b",
+             ("sk-", "AQ.", "AIza")),
 )
 
+#: The same provider keys as one searchable pattern, for the classifier and the
+#: ledger's redaction (`sensitivity_classifier._API_KEY_RE`).
+PROVIDER_KEY_RE = _Union(PROVIDER_RES)
+
+#: Vendor tokens the shape list does not carry.
+_VENDOR_RES: tuple[_Guarded, ...] = (
+    _Guarded(r"\bgh[posur]_[A-Za-z0-9]{20,}\b", ("ghp_", "gho_", "ghu_", "ghs_", "ghr_")),
+    _Guarded(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b", ("github_pat_",)),
+    _Guarded(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", ("AKIA", "ASIA")),
+    _Guarded(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", ("xox",)),
+    _Guarded(r"\bxapp-\d-[A-Za-z0-9-]{10,}\b", ("xapp-",)),
+    _Guarded(r"hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]{20,}",
+             ("hooks.slack.com",)),
+    _Guarded(r"\bglpat-[A-Za-z0-9_-]{20,}", ("glpat-",)),
+    _Guarded(r"\b[sr]k_live_[A-Za-z0-9]{16,}", ("k_live_",)),
+    _Guarded(r"\bnpm_[A-Za-z0-9]{36}\b", ("npm_",)),
+    _Guarded(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}", ("SG.",)),
+    _Guarded(r"\b\d{8,10}:AA[A-Za-z0-9_-]{33}\b", (":AA",)),
+    # A JSON Web Token whatever its payload opens with: the shape list holds
+    # the common `{"` payload, this one also the spaced `{ "` form.
+    _Guarded(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}", ("eyJ",)),
+    _Guarded(r"(?i)(?:twilio|auth[_\s-]?token)[^0-9a-f]{0,24}[0-9a-f]{32}\b",
+             ("twilio", "token")),
+    # An AWS secret access key is forty base64 characters with no prefix of its
+    # own; it is recognised by the name it is assigned to.
+    _Guarded(r"(?i)(?:aws_?secret_?(?:access_?)?key|secret_?access_?key)[\"']?\s*[:=]\s*[\"']?"
+             r"[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])", ("secret",)),
+    _Guarded(r"(?i)\"?root_key\"?\s*[:=]", ("root_key",)),   # Friday keystore JSON
+)
+
+TOKEN_RES: tuple[_Guarded, ...] = _VENDOR_RES + PROVIDER_RES
+
 _Q = r"""["']?"""
-ASSIGN_RES: tuple[re.Pattern, ...] = (
+ASSIGN_RES: tuple[_Guarded, ...] = (
     # A password assignment whose value carries a digit or a symbol, so
     # "Password: Required" and `password = request.form.get(...)` are not
     # secrets but "password=hunter2" is. A value that opens like a filesystem
     # path (`PWD=/c/Users/...`) is a directory, not a password. A masked value
     # (`********`) and a policy line (`minimum-8 characters`) are not secrets.
-    re.compile(r"(?i)\b(?:password|passwd|pwd)" + _Q + r"\s*[:=]\s*" + _Q
-               + r"""(?![/~.\\]|[A-Za-z]:[\\/])"""
-               + r"""(?![*•●#x._-]+(?=[\s"',;)]|$))"""
-               + r"""(?!(?:min|max)(?:imum)?-\d+(?=[\s"',;)]|$))"""
-               + r"""(?=[^\s"']{6,})[^\s"']*[0-9!@#$%^&*+=/-][^\s"']*"""),
-    re.compile(r"(?i)(?<![A-Za-z0-9])(?:api[_-]?key|secret[_-]?(?:access[_-]?)?key|"
-               r"client[_-]?secret|access[_-]?token|auth[_-]?token|private[_-]?key)"
-               + _Q + r"\s*[:=]\s*" + _Q + r"(?=[A-Za-z0-9_\-/+=.]*\d)[A-Za-z0-9_\-/+=.]{16,}"),
+    _Guarded(r"(?i)\b(?:password|passwd|pwd)" + _Q + r"\s*[:=]\s*" + _Q
+             + r"""(?![/~.\\]|[A-Za-z]:[\\/])"""
+             + r"""(?![*•●#x._-]+(?=[\s"',;)]|$))"""
+             + r"""(?!(?:min|max)(?:imum)?-\d+(?=[\s"',;)]|$))"""
+             + r"""(?=[^\s"']{6,})[^\s"']*[0-9!@#$%^&*+=/-][^\s"']*""",
+             ("password", "passwd", "pwd")),
+    _Guarded(r"(?i)(?<![A-Za-z0-9])(?:api[_-]?key|secret[_-]?(?:access[_-]?)?key|"
+             r"client[_-]?secret|access[_-]?token|auth[_-]?token|private[_-]?key)"
+             + _Q + r"\s*[:=]\s*" + _Q + r"(?=[A-Za-z0-9_\-/+=.]*\d)[A-Za-z0-9_\-/+=.]{16,}",
+             ("api", "secret", "token", "private")),
     # A bearer token always carries a digit; a hyphenated phrase does not.
-    re.compile(r"(?i)\bbearer\s+(?=[A-Za-z0-9_\-.=+/]*\d)[A-Za-z0-9_\-.=+/]{20,}"),
+    _Guarded(r"(?i)\bbearer\s+(?=[A-Za-z0-9_\-.=+/]*\d)[A-Za-z0-9_\-.=+/]{20,}", ("bearer",)),
     # user:password@host inside a URL
     # Anchored at the start of the scheme and bounded in length, so a long
     # unbroken run of letters and digits is scanned once, not once per offset.
-    re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{1,31}://[^\s/:@]+:[^\s/@]{3,}@[^\s/]+"),
+    _Guarded(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{1,31}://[^\s/:@]+:[^\s/@]{3,}@[^\s/]+",
+             ("://",)),
 )
 
 _ZERO_WIDTH = re.compile("[​‌‍⁠﻿]")
@@ -274,7 +409,8 @@ def _variants(text: str):
 
 
 def _direct(text: str, groups) -> bool:
-    return any(rx.search(text) for g in groups for rx in g)
+    low = text.lower()
+    return any(rx.search(text, low) for g in groups for rx in g)
 
 
 _SQUASHED = ((_SQUASHED_HEADER,),)
