@@ -450,3 +450,29 @@ def test_the_cluster_fades_away_and_a_key_brings_it_back(browser_page):
     page.keyboard.press("Control+Shift+Space")
     page.wait_for_timeout(300)
     assert "[keys] voice" in logs
+
+
+def test_the_key_gives_the_field_the_cursor_when_the_cluster_shows(browser_page):
+    """Ctrl+/ on a hidden cluster: the field can take the cursor only once the
+    cluster is shown and no longer inert, which is a render away. Focusing
+    after a fixed delay lost that race under load; with the page's timers
+    stopped, nothing but the showing itself can give the field the cursor."""
+    page, base, logs = browser_page
+    page.goto(base + "/index.html", wait_until="domcontentloaded")
+    page.wait_for_selector('[data-testid="landing-cluster"]', timeout=60000)
+    page.mouse.move(40, 500)
+    page.clock.fast_forward(61_000)
+    page.clock.fast_forward(31_000)
+    page.wait_for_function("document.querySelector('[data-testid=\"landing-cluster\"]').dataset.landing === 'hidden'",
+                           timeout=10000)
+    page.wait_for_timeout(700)
+    page.clock.pause_at(page.evaluate("Date.now()") + 1)
+    try:
+        page.keyboard.press("Control+/")
+        page.wait_for_function("document.querySelector('[data-testid=\"landing-cluster\"]').dataset.landing === 'shown'",
+                               timeout=10000)
+        page.wait_for_function(
+            "document.querySelector('[data-testid=\"landing-cluster\"]').contains(document.activeElement)",
+            timeout=5000)
+    finally:
+        page.clock.resume()

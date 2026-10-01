@@ -56505,6 +56505,8 @@ function App() {
   // The start screen's cluster: shown or hidden, and why (fridayLandingJudge).
   const [landing, setLanding] = useState({ show: true, reason: 'just opened' });
   const landingElRef = useRef(null);
+  // When a key asked for the cluster's cursor: given once the cluster shows.
+  const landingFocusWanted = useRef(0);
   const landingAreaRef = useRef(null);
   // ── First-run setup: the consent screens, then the setup chat ──
   const [setupDone, setSetupDone] = useState(true); // optimistic — flip after check
@@ -60503,6 +60505,14 @@ function App() {
     const el = landingElRef.current;
     if (el) {
       if (landing.show) el.removeAttribute('inert');else el.setAttribute('inert', '');
+      // A key that summoned it asked for the cursor, which can land only now
+      // that the cluster is no longer inert.
+      const wanted = landingFocusWanted.current;
+      landingFocusWanted.current = 0;
+      if (landing.show && wanted && Date.now() - wanted < 3000) {
+        const f = el.querySelector('[data-chat-input]');
+        if (f) f.focus();
+      }
     }
   }, [landing.show]);
   const summonLanding = () => window.dispatchEvent(new CustomEvent('friday:landing', { detail: { summon: true, via: 'palette' } }));
@@ -60590,10 +60600,15 @@ function App() {
       }
       if (d.summon) st.summonedAt = Date.now();
       judge();
-      if (d.focus) setTimeout(() => {
-        const f = landingElRef.current && landingElRef.current.querySelector('[data-chat-input]');
-        if (f) f.focus();
-      }, 40);
+      // The key asked for the cursor. Shown already, the field takes it now;
+      // hidden, the cluster is a render away from showing, and the effect
+      // that lifts inert gives it the cursor then. (A fixed delay before
+      // focusing lost that race under load.)
+      if (d.focus) {
+        const el = landingElRef.current;
+        const f = el && !el.hasAttribute('inert') && el.querySelector('[data-chat-input]');
+        if (f) f.focus();else landingFocusWanted.current = Date.now();
+      }
     };
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerdown', onInput, true);
