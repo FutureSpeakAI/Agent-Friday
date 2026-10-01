@@ -918,6 +918,17 @@ def _gather(ep: dict) -> list[dict]:
     return numbered
 
 
+def resolve_heard(docs: list[dict], lines: list[dict]) -> list[dict]:
+    """Publisher links, not news.google.com redirects, for the sources the
+    episode actually cites, in every routine: the transcript lists those."""
+    from agent_friday.services import news_links
+    heard = {c for ln in lines for c in ln.get("cites") or []}
+    for d in docs:
+        if d.get("sid") in heard and d.get("url"):
+            d["url"] = news_links.resolve_url(d["url"])
+    return docs
+
+
 def _public_sources(docs: list[dict]) -> list[dict]:
     """What the episode records about each source (no source text)."""
     out = []
@@ -999,7 +1010,8 @@ def produce(eid: str, *, should_stop=None) -> dict:
                          lines=script["lines"], rejected=script["rejected"],
                          script_check=script["script_check"],
                          format=ep.get("format") or "duo",
-                         sources=_public_sources(docs), writer_model=script["model"],
+                         sources=_public_sources(resolve_heard(docs, script["lines"])),
+                         writer_model=script["model"],
                          facts=[{k: f[k] for k in ("id", "text", "expr") if k in f}
                                 for f in ep.get("_facts") or [] if not f.get("names_only")] or None,
                          charts=ep.get("charts"), data=ep.get("data"),

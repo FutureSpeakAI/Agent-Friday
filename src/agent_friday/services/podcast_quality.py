@@ -55,7 +55,8 @@ it's you're we're they're don't isn't aren't doesn't didn't can't won't i'm i'll
 #: does not count them.
 _PLAIN_NEWS = {w[:5] for w in """reports reported report according confirmed confirms
 announced says said adds added story stories interview interviews calendar meeting
-morning afternoon evening tonight tomorrow yesterday week weekend month""".split()}
+morning afternoon evening tonight tomorrow yesterday week weekend month
+read""".split()}
 _MONTHS = ("january february march april may june july august september october "
            "november december").split()
 _DAYS = "monday tuesday wednesday thursday friday saturday sunday".split()

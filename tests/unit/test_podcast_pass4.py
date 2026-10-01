@@ -422,3 +422,22 @@ def test_a_fact_from_an_unrelated_story_is_crossed_not_hard(ds):
                     "pledge the six chief executives signed on Tuesday.")
     codes = _codes(_check(lines, ds))
     assert "crossed_facts" in codes and "misattributed" not in codes
+
+
+def test_every_routine_s_transcript_links_the_publisher_for_the_stories_heard(monkeypatch):
+    from agent_friday.services import news_links
+    monkeypatch.setattr(news_links, "resolve_url", lambda url, fetch=None:
+                        "https://publisher.example/a" if "news.google.com" in url else url)
+    docs_ = [{"sid": "S1", "url": "https://news.google.com/rss/articles/CBMiabc", "title": "A"},
+             {"sid": "S2", "url": "https://news.google.com/rss/articles/CBMidef", "title": "B"}]
+    out = pe.resolve_heard(docs_, [{"text": "x", "cites": ["S1"]}])
+    assert out[0]["url"] == "https://publisher.example/a"
+    assert out[1]["url"].startswith("https://news.google.com/")      # not heard: not looked up
+
+
+def test_my_read_is_not_a_repeated_word(ds):
+    lines = good_lines(ds)
+    for i, k in ((4, "AI data"), (6, "Rowan Hale"), (10, "Tech chiefs")):
+        sid = next(d["sid"] for d in ds if d["title"].startswith(k))
+        lines[i] = dict(lines[i], text=lines[i]["text"] + " My read: it matters.", cites=lines[i]["cites"] + [sid])
+    assert not [p for p in _check(lines, ds) if p["code"] == "repeats_word" and '"read"' in p["message"]]
