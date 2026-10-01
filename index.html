@@ -666,16 +666,29 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Chat panel — frosted glass slide-in.
            bottom must clear the dock (with group labels) + its box-shadow. */
         .chat-panel {
-            position: fixed; top: 36px; right: -340px; bottom: 116px;
+            position: fixed; top: 36px; right: 0; bottom: 116px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
             background: rgba(10,14,26,0.75);
             backdrop-filter: blur(16px) saturate(1.2);
             -webkit-backdrop-filter: blur(16px) saturate(1.2);
             border-left: 1px solid rgba(0,212,255,0.15);
             box-shadow: -4px 0 30px rgba(0,0,0,0.3);
-            transition: right 0.3s ease;
+            /* Hidden, the tray moves past its edge by its own width and its
+               shadow, whatever width the owner gave it, and is invisible once
+               there (unified-shell.md §11.1). */
+            transform: translateX(calc(100% + 40px)); visibility: hidden;
+            transition: transform var(--fr-reveal), visibility 0s linear var(--fr-reveal-time);
         }
-        .chat-panel.open { right: 0; }
+        .chat-panel.open { transform: none; visibility: visible;
+            transition: transform var(--fr-reveal), visibility 0s linear 0s; }
+        /* Docked on the left: the same tray, mirrored. */
+        .chat-panel.left { right: auto; left: 0; border-left: none;
+            border-right: 1px solid rgba(0,212,255,0.15); box-shadow: 4px 0 30px rgba(0,0,0,0.3);
+            transform: translateX(calc(-100% - 40px)); }
+        .chat-panel.left.open { transform: none; }
+        .chat-panel.left .chat-resize-w { left: auto; right: -3px; }
+        /* Dragged far enough past its narrowest width to hide on release. */
+        .chat-panel.dismissing { opacity: 0.55; }
         /* Fullscreen with chat: the dock is away, so the tray runs to the bottom. */
         body.fr-fs-chat .chat-panel { bottom: 0; }
         /* A narrow bar keeps its controls and drops the clock and the resource
@@ -689,6 +702,25 @@ window.addEventListener('DOMContentLoaded',function(){
            toolbar sat on top of the open workspace, 152px of it in view. Only
            the closed state is clipped, so nothing about the open panel changes. */
         .chat-panel:not(.open) { overflow: hidden; }
+        /* All that stays of a hidden tray: a slim pill on its edge, faint
+           until the pointer comes to it. A click brings the tray back. */
+        .chat-edge-pill {
+            position: fixed; top: 50%; right: 0; z-index: 66;
+            width: 14px; height: 76px; margin-top: -38px; padding: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(10,14,26,0.82); color: var(--fr-cyan);
+            border: 1px solid rgba(0,212,255,0.28); border-right: none;
+            border-radius: 10px 0 0 10px; cursor: pointer;
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            font-size: 13px; line-height: 1; opacity: 0.45;
+            transition: opacity 0.2s ease, width 0.2s ease;
+        }
+        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 22px; outline: none; }
+        .chat-edge-pill.left { right: auto; left: 0; border-left: none;
+            border-right: 1px solid rgba(0,212,255,0.28); border-radius: 0 10px 10px 0; }
+        @media (prefers-reduced-motion: reduce) {
+            .chat-panel, .chat-panel.open, .chat-edge-pill { transition: none !important; }
+        }
 
         /* ── Undocked chat (?chrome=chat) ────────────────────────────────
            One conversation in its own browser window, so two models can be
@@ -787,6 +819,7 @@ window.addEventListener('DOMContentLoaded',function(){
             box-shadow: none !important;
             background: rgba(10,14,26,0.96);
             transition: none !important;
+            transform: none !important;
         }
         /* A window that IS the panel cannot be resized by dragging its edge,
            and a handle that does nothing is worse than no handle. */
@@ -814,6 +847,7 @@ window.addEventListener('DOMContentLoaded',function(){
            cannot be clicked through the panel. */
         body.chrome-chat #ui-inner { visibility: hidden !important; }
         body.chrome-chat .chat-panel { visibility: visible !important; }
+        body.chrome-chat .chat-edge-pill { display: none !important; }
 
         /* ── The chat sidebar ─────────────────────────────────────────────
            Every thread you own, down the left of a chat tab.
@@ -2128,8 +2162,10 @@ window.addEventListener('DOMContentLoaded',function(){
             border-top: 1px solid rgba(0,212,255,0.15);
             border-radius: 12px 12px 0 0;
             transition: left 0.3s ease;
+            transform: none !important; visibility: visible !important;
           }
           .chat-panel.open { left: 0 !important; right: 0 !important; }
+          .chat-edge-pill { display: none; }
           /* No edge-drag resizing on mobile — the panel is full-bleed. */
           .chat-resize-w, .chat-resize-h { display: none !important; }
 
@@ -8331,6 +8367,15 @@ function fridayLandingKey(e) {
   return null;
 }
 /* fridayLandingJudge:end */
+/* fridayTrayKeys:begin */
+// Ctrl+Alt+C hides or shows the chat tray (unified-shell.md §11.1). A letter is
+// matched by the character typed, so a keyboard whose AltGr (Ctrl+Alt) writes
+// a character on that key keeps the character.
+function fridayTrayKey(e) {
+  if (!e || !e.ctrlKey || !e.altKey || e.shiftKey || e.metaKey) return null;
+  return e.key === 'c' || e.key === 'C' ? 'toggle' : null;
+}
+/* fridayTrayKeys:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
 function FridayCountdowns({
@@ -10321,7 +10366,22 @@ function ChatSurface(props) {
       borderRadius: 4,
       fontFamily: 'Inter'
     }
-  }, "↗ New tab"), /*#__PURE__*/React.createElement("button", {
+  }, "↗ New tab"), mode === 'panel' ? /*#__PURE__*/React.createElement("button", {
+    // The docked tray hides fully in one motion (unified-shell.md §11.1).
+    onClick: () => setChatOpen(false),
+    title: "Hide chat (Ctrl+Alt+C)",
+    "aria-label": "Hide chat",
+    "data-testid": "chat-collapse",
+    style: {
+      background: 'none',
+      border: 'none',
+      color: '#9fb4c8',
+      cursor: 'pointer',
+      fontSize: 15,
+      lineHeight: 1,
+      padding: '2px 4px'
+    }
+  }, props.traySide === 'left' ? "\u21E4" : "\u21E5") : /*#__PURE__*/React.createElement("button", {
     onClick: () => setChatOpen(false),
     title: "Close chat",
     "aria-label": "Close chat",
@@ -54541,6 +54601,12 @@ function App() {
         } catch (_) {}
         return;
       }
+      if (ev && ev.type === 'chat_tray') {
+        try {
+          window.dispatchEvent(new CustomEvent('friday:chat-tray', { detail: ev }));
+        } catch (_) {}
+        return;
+      }
       if (!ev || ev.type !== 'approval_result') return;
       if (ev.conversation_id && ev.conversation_id !== convId) return;
       apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
@@ -54631,6 +54697,35 @@ function App() {
     }
   }); // 0 = auto (full height between top & dock)
   const [chatResize, setChatResize] = useState(null); // 'w' | 'h' | null
+  const CHAT_DISMISS_PX = 90; // dragged this far past its narrowest width, the tray hides
+  // Which edge the tray docks on, and whether the owner hid it (§11.1).
+  const [chatSide, setChatSide] = useState(() => {
+    try {
+      return localStorage.getItem('friday_chat_side') === 'left' ? 'left' : 'right';
+    } catch (_) {
+      return 'right';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('friday_chat_side', chatSide);
+    } catch (_) {}
+  }, [chatSide]);
+  // Shown or hidden by the owner. Hidden stays hidden: a layout that includes
+  // the chat does not reopen it on its own until the owner shows it again.
+  const showChat = on => {
+    setChatOpen(!!on);
+    try {
+      if (on) localStorage.removeItem('friday_chat_hidden');else localStorage.setItem('friday_chat_hidden', '1');
+    } catch (_) {}
+  };
+  const chatHiddenByOwner = () => {
+    try {
+      return localStorage.getItem('friday_chat_hidden') === '1';
+    } catch (_) {
+      return false;
+    }
+  };
   const chatRStart = useRef({
     x: 0,
     y: 0,
@@ -54643,12 +54738,29 @@ function App() {
     // height: panel is bottom-anchored, so dragging the top edge UP (smaller clientY) grows it.
     const mv = e => {
       if (chatResize === 'w') {
-        setChatW(clampChatW(chatRStart.current.w + (chatRStart.current.x - e.clientX)));
+        // Docked left, the edge is on the right, and dragging it right grows it.
+        const s = chatRStart.current;
+        const raw = s.w + (s.side === 'left' ? e.clientX - s.x : s.x - e.clientX);
+        s.dismiss = raw < CHAT_MINW - CHAT_DISMISS_PX;
+        const el = document.querySelector('.chat-panel');
+        if (el) el.classList.toggle('dismissing', s.dismiss);
+        setChatW(clampChatW(raw));
       } else {
         setChatH(clampChatH(chatRStart.current.h + (chatRStart.current.y - e.clientY)));
       }
     };
-    const up = () => setChatResize(null);
+    const up = () => {
+      const s = chatRStart.current;
+      if (chatResize === 'w' && s.dismiss) {
+        // Hidden in one gesture; its width is kept for the next time.
+        setChatW(clampChatW(s.w));
+        showChat(false);
+      }
+      s.dismiss = false;
+      const el = document.querySelector('.chat-panel');
+      if (el) el.classList.remove('dismissing');
+      setChatResize(null);
+    };
     addEventListener('mousemove', mv);
     addEventListener('mouseup', up);
     return () => {
@@ -58334,11 +58446,13 @@ function App() {
   const [fsOn, setFsOn] = useState(null); // the workspace shown that way now
   const fsOpenedChat = useRef(false);
   const frontWs = () => layoutTab || (focusWin && WS.some(w => w.id === focusWin) && openWinsRef.current.has(focusWin) ? focusWin : null);
-  const applyLayout = (ws, on) => {
+  const applyLayout = (ws, on, auto) => {
     if (!on && fsOn !== ws) return;
     if (on) {
-      if (!chatOpen) {
-        setChatOpen(true);
+      // A layout applied on its own (its workspace came to the front, its tab
+      // opened) leaves a tray the owner hid hidden; asked for, it shows it.
+      if (!chatOpen && !(auto && chatHiddenByOwner())) {
+        if (auto) setChatOpen(true);else showChat(true);
         fsOpenedChat.current = true;
       }
       if (!layoutTab) {
@@ -58400,18 +58514,57 @@ function App() {
     }
   };
   const toggleChat = () => {
-    setChatOpen(!chatOpen);
+    showChat(!chatOpen);
     if (!chatOpen) {
       setSettingsOpen(false);
       setQuickDraft(false);
     }
   };
+  // Ctrl+Alt+C hides or shows the tray; Friday's change (set_chat_tray) is
+  // applied by the page in front, which says so.
+  const trayDo = useRef({});
+  trayDo.current = {
+    open: chatOpen,
+    side: chatSide,
+    showChat,
+    setChatSide
+  };
+  useEffect(() => {
+    if (window.__FRIDAY_CHROME__ === 'chat') return;
+    const onKey = e => {
+      if (fridayTrayKey(e) !== 'toggle') return;
+      e.preventDefault();
+      trayDo.current.showChat(!trayDo.current.open);
+    };
+    const onFriday = e => {
+      const d = e && e.detail || {};
+      if (document.visibilityState !== 'visible') return;
+      const t = trayDo.current;
+      if (d.side === 'left' || d.side === 'right') t.setChatSide(d.side);
+      let shown = t.open;
+      if (typeof d.visible === 'boolean') {
+        t.showChat(d.visible);
+        shown = d.visible;
+      }
+      if (d.id) apiFetch('/api/desktop/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: d.id, result: { applied: true, shown, side: d.side || t.side } })
+      }).catch(() => {});
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('friday:chat-tray', onFriday);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('friday:chat-tray', onFriday);
+    };
+  }, []);
   // The bar's own actions in the palette, beside the layout.
   const barCommands = [{
     id: 'chat',
     ico: '\uD83D\uDCAC',
-    label: chatOpen ? 'Close the chat' : 'Open the chat',
-    meta: 'Top bar',
+    label: chatOpen ? 'Hide chat' : 'Show chat',
+    meta: 'Ctrl+Alt+C',
     aka: ['chat', 'talk', 'ask', 'conversation'],
     run: toggleChat
   }, {
@@ -58441,7 +58594,7 @@ function App() {
   // the desktop when its window comes to the front.
   useEffect(() => {
     const ws = frontWs();
-    if (ws && layouts[ws] === 'fullscreen_chat' && fsOn !== ws) applyLayout(ws, true);
+    if (ws && layouts[ws] === 'fullscreen_chat' && fsOn !== ws) applyLayout(ws, true, true);
   }, [focusWin, layoutTab, agentSettings.workspace_layouts]);
   // Its window closed: the dock, and the chat as it was, come back.
   useEffect(() => {
@@ -59175,8 +59328,9 @@ function App() {
     seedPrompt: wsChat.seed,
     onClose: () => setWsChat(null)
   });
-  const shellChatPanel = /*#__PURE__*/React.createElement("div", {
-    className: `chat-panel ${chatOpen ? 'open' : ''}`,
+  const shellChatPanel = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: `chat-panel ${chatOpen ? 'open' : ''}${chatSide === 'left' ? ' left' : ''}`,
+    "aria-hidden": chatOpen ? undefined : 'true',
     style: chatH ? {
       width: chatW,
       height: chatH,
@@ -59192,7 +59346,8 @@ function App() {
       chatRStart.current = {
         ...chatRStart.current,
         x: e.clientX,
-        w: chatW
+        w: chatW,
+        side: chatSide
       };
       setChatResize('w');
     }
@@ -59211,6 +59366,7 @@ function App() {
     }
   }), /*#__PURE__*//*#__PURE__*/React.createElement(ChatSurface, {
     mode: 'panel',
+    traySide: chatSide,
     agentSettings: agentSettings,
     audioDevicePopup: audioDevicePopup,
     audioDevicePopupRef: audioDevicePopupRef,
@@ -59244,7 +59400,7 @@ function App() {
     setChatIn: setChatIn,
     setChatLoad: setChatLoad,
     setChatMsgs: setChatMsgs,
-    setChatOpen: setChatOpen,
+    setChatOpen: showChat,
     setConvId: setConvId,
     setConvOpen: setConvOpen,
     setConvPickerOpen: setConvPickerOpen,
@@ -59268,7 +59424,13 @@ function App() {
     voiceReach: voiceReach,
     voiceStages: voiceStages,
     voiceStatus: voiceStatus
-  }));
+  })), !chatOpen && /*#__PURE__*/React.createElement("button", {
+    className: 'chat-edge-pill' + (chatSide === 'left' ? ' left' : ''),
+    "data-testid": "chat-edge-pill",
+    title: "Show chat (Ctrl+Alt+C)",
+    "aria-label": "Show chat",
+    onClick: () => showChat(true)
+  }, chatSide === 'left' ? "\u203A" : "\u2039"));
   const shellTrace = /*#__PURE__*/React.createElement(TraceModalHost, null);
   const shellActivity = activityOpen && /*#__PURE__*/React.createElement("div", {
     style: {

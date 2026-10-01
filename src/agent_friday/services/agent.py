@@ -720,6 +720,12 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "pin": {"type": "boolean"}}}},
+    {"name": "set_chat_tray", "description": "Show or hide the chat tray ('show chat', 'hide chat'), or dock it on the left or the right ('put chat on the left'). Hidden, it leaves a slim pill on its edge and the workspace takes the full width. It is the owner's own screen, so no approval is needed. CHAT_OK: say what changed in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
+     "input_schema": {"type": "object", "properties": {
+         "visible": {"type": "boolean", "description": "true to show the chat, false to hide it."},
+         "side": {"type": "string", "enum": ["left", "right"],
+                  "description": "The edge the tray docks on."}},
+         "required": []}},
     {"name": "show_my_day", "description": "Show the start screen's cluster now: the owner's countdowns (from their calendar, commitments and wiki), the chat field, the mic and Start my day ('show my day'). With mode, set when it shows on its own: smart (when useful, fading while they work or talk; the default), always, or never (only when asked). It is the owner's own screen, so no approval is needed. DAY_SHOWN: say so in a few words. DAY_NOT_SHOWN: say why, in plain words. DAY_MODE: say what it will do now. The countdowns are not in the result; do not invent them.",
      "input_schema": {"type": "object", "properties": {
          "mode": {"type": "string", "enum": ["smart", "always", "never"],
@@ -2931,6 +2937,51 @@ def _tool_set_workspace_layout(inp):
         return "LAYOUT_OK:%s — %s %s." % (ws, label, how)
     return "LAYOUT_SAVED:%s — remembered: %s %s whenever it is open%s." % (
         ws, label, how, "" if sent else "; no Friday page is showing it now")
+
+
+#: How long set_chat_tray waits for the page in front to say it applied it.
+CHAT_TRAY_ACK_S = 4.0
+CHAT_TRAY_SIDES = ("left", "right")
+
+
+def _tool_set_chat_tray(inp):
+    """Tool handler: the chat tray shown or hidden ("show chat", "hide chat")
+    and the edge it docks on (unified-shell.md §11). The owner's own screen,
+    so no approval is needed.
+
+    The change goes to every open page; the page in front applies it and says
+    so, and only that earns CHAT_OK. Hidden, the tray leaves nothing but a
+    slim pill on its edge, and the workspace takes the full width."""
+    import secrets
+    import time as _t
+    from agent_friday.services import desktop_bus
+    inp = inp or {}
+    visible = inp.get("visible")
+    if isinstance(visible, str):
+        visible = {"true": True, "false": False}.get(visible.strip().lower())
+    side = str(inp.get("side") or "").strip().lower()
+    if visible is None and not side:
+        return "CHAT_FAIL: say whether to show or hide the chat, or which side to put it on."
+    if side and side not in CHAT_TRAY_SIDES:
+        return "CHAT_FAIL: the chat docks on the left or the right."
+    cid = "chat-%d-%s" % (int(_t.time()), secrets.token_hex(3))
+    event = {"type": "chat_tray", "id": cid}
+    if visible is not None:
+        event["visible"] = bool(visible)
+    if side:
+        event["side"] = side
+    waiter = desktop_bus.expect(cid)
+    sent = desktop_bus.broadcast(event, kind="chat")
+    got = desktop_bus.wait(cid, waiter, CHAT_TRAY_ACK_S if sent else 0)
+    ack = got.get("ack") or {}
+    if got.get("acked") and ack.get("applied"):
+        where = ack.get("side") or side or "right"
+        if ack.get("shown"):
+            return "CHAT_OK — the chat is open on the %s." % where
+        return "CHAT_OK — the chat is hidden; the pill on the %s edge brings it back." % where
+    if not sent:
+        return "CHAT_NOT_APPLIED — no Friday page is open, so nothing changed."
+    return "CHAT_NOT_APPLIED — no Friday page in front answered, so nothing changed."
 
 
 #: How long show_my_day waits for the desktop page to say what it did.
@@ -6019,6 +6070,7 @@ CLAUDE_TOOL_HANDLERS = {
     "check_situation": _tool_check_situation,
     "set_workspace_layout": _tool_set_workspace_layout,
     "show_my_day": _tool_show_my_day,
+    "set_chat_tray": _tool_set_chat_tray,
     "organize_email": _tool_organize_email,
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
@@ -6428,6 +6480,8 @@ TOOL_RINGS: dict[str, int] = {
     "set_workspace_layout": 1,
     # Shows the start screen's cluster, or sets when it shows; the owner's own screen.
     "show_my_day": 1,
+    # Shows, hides or docks the chat tray; the owner's own screen.
+    "set_chat_tray": 1,
     # Organizing the owner's things (services/item_actions). Files and wiki
     # pages are local changes with an undo; mail only raises a card, like
     # draft_email, and a card is decided by the owner's own words.

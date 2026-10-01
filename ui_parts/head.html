@@ -526,18 +526,50 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Chat panel — frosted glass slide-in.
            bottom must clear the dock (with group labels) + its box-shadow. */
         .chat-panel {
-            position: fixed; top: 36px; right: -340px; bottom: 116px;
+            position: fixed; top: 36px; right: 0; bottom: 116px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
             background: rgba(10,14,26,0.75);
             backdrop-filter: blur(16px) saturate(1.2);
             -webkit-backdrop-filter: blur(16px) saturate(1.2);
             border-left: 1px solid rgba(0,212,255,0.15);
             box-shadow: -4px 0 30px rgba(0,0,0,0.3);
-            transition: right 0.3s ease;
+            /* Hidden, the tray moves past its edge by its own width and its
+               shadow, whatever width the owner gave it, and is invisible once
+               there (unified-shell.md §11.1). */
+            transform: translateX(calc(100% + 40px)); visibility: hidden;
+            transition: transform var(--fr-reveal), visibility 0s linear var(--fr-reveal-time);
         }
-        .chat-panel.open { right: 0; }
+        .chat-panel.open { transform: none; visibility: visible;
+            transition: transform var(--fr-reveal), visibility 0s linear 0s; }
+        /* Docked on the left: the same tray, mirrored. */
+        .chat-panel.left { right: auto; left: 0; border-left: none;
+            border-right: 1px solid rgba(0,212,255,0.15); box-shadow: 4px 0 30px rgba(0,0,0,0.3);
+            transform: translateX(calc(-100% - 40px)); }
+        .chat-panel.left.open { transform: none; }
+        .chat-panel.left .chat-resize-w { left: auto; right: -3px; }
+        /* Dragged far enough past its narrowest width to hide on release. */
+        .chat-panel.dismissing { opacity: 0.55; }
         /* Fullscreen with chat: the dock is away, so the tray runs to the bottom. */
         body.fr-fs-chat .chat-panel { bottom: 0; }
+        /* All that stays of a hidden tray: a slim pill on its edge, faint
+           until the pointer comes to it. A click brings the tray back. */
+        .chat-edge-pill {
+            position: fixed; top: 50%; right: 0; z-index: 66;
+            width: 14px; height: 76px; margin-top: -38px; padding: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(10,14,26,0.82); color: var(--fr-cyan);
+            border: 1px solid rgba(0,212,255,0.28); border-right: none;
+            border-radius: 10px 0 0 10px; cursor: pointer;
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            font-size: 13px; line-height: 1; opacity: 0.45;
+            transition: opacity 0.2s ease, width 0.2s ease;
+        }
+        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 22px; outline: none; }
+        .chat-edge-pill.left { right: auto; left: 0; border-left: none;
+            border-right: 1px solid rgba(0,212,255,0.28); border-radius: 0 10px 10px 0; }
+        @media (prefers-reduced-motion: reduce) {
+            .chat-panel, .chat-panel.open, .chat-edge-pill { transition: none !important; }
+        }
         /* A narrow bar keeps its controls and drops the clock and the resource
            readings (System shows them); a GPU held by something else still shows. */
         @media (max-width: 900px) {
@@ -1348,8 +1380,10 @@ window.addEventListener('DOMContentLoaded',function(){
             border-top: 1px solid rgba(0,212,255,0.15);
             border-radius: 12px 12px 0 0;
             transition: left 0.3s ease;
+            transform: none !important; visibility: visible !important;
           }
           .chat-panel.open { left: 0 !important; right: 0 !important; }
+          .chat-edge-pill { display: none; }
           /* No edge-drag resizing on mobile — the panel is full-bleed. */
           .chat-resize-w, .chat-resize-h { display: none !important; }
 

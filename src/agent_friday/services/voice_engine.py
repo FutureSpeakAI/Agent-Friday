@@ -374,6 +374,13 @@ _VOICE_LIVE_TOOLS = [
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
+    ("set_chat_tray",
+     "Show or hide the chat tray ('show chat', 'hide chat'), or dock it on the left or "
+     "the right. Hidden, it leaves a slim pill on its edge and the workspace takes the "
+     "full width. Their own screen, so no approval is needed. CHAT_OK: say what changed "
+     "in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
+     {"visible": ("boolean", "true to show the chat, false to hide it."),
+      "side": ("string", "left or right: the edge it docks on.")}, []),
     ("show_my_day",
      "Show the start screen's cluster now ('show my day'): their countdowns, the "
      "chat field, the mic and Start my day. With mode, set when it shows on its own "
@@ -1285,6 +1292,9 @@ def _voice_tool_run(name, args, send_client, session=None):
         if name == "show_my_day":
             from agent_friday.services import agent as _ag
             return _governed(name, _ag._tool_show_my_day, args)
+        if name == "set_chat_tray":
+            from agent_friday.services import agent as _ag
+            return _governed(name, _ag._tool_set_chat_tray, args)
         if name in ("navigate_to", "check_situation"):
             from agent_friday.services import agent as _ag
             _fn = (_ag._tool_navigate_to if name == "navigate_to"

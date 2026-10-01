@@ -471,6 +471,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "check_situation": {},
     "set_workspace_layout": {},
     "show_my_day": {},
+    "set_chat_tray": {},
     # Organizing (services/item_actions). Mail always goes on a card, which
     # shows where each detail came from.
     "organize_email": {"query": "detail", "thread_ids": "detail", "label": "detail",
