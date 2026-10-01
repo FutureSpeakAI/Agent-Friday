@@ -11629,6 +11629,23 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             except Exception:
                 pass
 
+        # A TURN CUT OFF AT ITS OUTPUT LIMIT RUNS NO TOOLS.
+        #
+        # finish_reason "length" (or "max_tokens") means the reply stopped
+        # because its budget ran out, so any tool call in it -- native, or
+        # parsed out of the text above -- may be half-written: arguments cut
+        # mid-value still parse. Acting on it would carry out half an
+        # instruction. Nothing from this turn runs; the turn is reported as
+        # cut off, which is what happened.
+        if tool_calls and _last_finish in ("length", "max_tokens"):
+            _names = ", ".join(sorted({(tc.get("function") or {}).get("name") or "?"
+                                       for tc in tool_calls}))
+            print(f"  [oai-loop] {model}: reply cut off at its output limit "
+                  f"(finish_reason={_last_finish}); {len(tool_calls)} tool call(s) not run: {_names}")
+            return (f"[My reply was cut off at its output limit before I finished asking "
+                    f"for {_names}, so I did not run it. Nothing was changed. "
+                    f"Ask again, or ask for a shorter answer, and I will retry.]"), tool_trace
+
         # No tools available, or the model is done calling them → final answer.
         if not oai_tools or not tool_calls:
             text = (msg.get("content") or "").strip()
