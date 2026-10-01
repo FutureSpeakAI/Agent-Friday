@@ -62,3 +62,22 @@ def test_who_is_on_each_show_is_a_setting_in_studio_with_the_recommendation_show
     b = _block(INDEX)
     assert "'Who is on each show'" in b and "' (recommended)'" in b
     assert "fetch('/api/podcasts/formats', { method: 'PUT'" in b
+
+
+def test_the_player_moves_remembers_its_place_and_pops_out():
+    b = _block(INDEX)
+    assert "onPointerDown: startDrag" in b and "PODCAST_POS_KEY" in b and "localStorage.setItem(PODCAST_POS_KEY" in b
+    assert "documentPictureInPicture" in b and "ReactDOM.createPortal(frame, popped.el)" in b
+    assert _block(INDEX) == _block(APP)
+
+
+def test_the_sourcing_is_synced_to_playback_and_scrubbable():
+    b = _block(INDEX)
+    assert "'aria-label': 'Now citing'" in b and "podcastSourceTimeline(ep)" in b
+    assert "onClick: () => seek(s.at)" in b
+
+
+def test_news_episodes_live_in_news_and_studio_keeps_the_owner_s_own():
+    b = _block(INDEX)
+    assert "eps.filter(ep => !ep.attached).map(ep =>" in b
+    assert "PodcastChip" in INDEX           # each News run's episode sits with its edition

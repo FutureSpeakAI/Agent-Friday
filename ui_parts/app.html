@@ -2380,6 +2380,27 @@ function PodcastBadges({ ep }) {
     chk.ok === false ? pill('⚠ audio differs from script', PODCAST_C.error, 'Only ' + Math.round((1 - (chk.wer || 0)) * 100) + '% of words matched the script when transcribed back') : null,
     ep.mode === 'data' ? pill('📊 data mode', PODCAST_C.accent, 'Every number is from a computation over your data') : null);
 }
+// Where the player sits: a remembered position, or the bottom-right corner.
+const PODCAST_POS_KEY = 'friday.podcastPlayer.pos';
+function podcastSavedPos() {
+  try { const p = JSON.parse(localStorage.getItem(PODCAST_POS_KEY) || 'null'); return p && typeof p.x === 'number' ? p : null; } catch (_) { return null; }
+}
+function podcastClampPos(p) {
+  const w = Math.min(400, window.innerWidth - 32);
+  return { x: Math.max(0, Math.min(p.x, window.innerWidth - w)), y: Math.max(0, Math.min(p.y, window.innerHeight - 80)) };
+}
+// The brand tokens the player reads, copied into a popped-out window.
+const PODCAST_TOKENS = ['--fr-glass', '--fr-glass-blur', '--fr-glass-edge', '--fr-text', '--fr-dim', '--fr-cyan',
+  '--fr-cyan-soft', '--fr-violet-soft', '--fr-ok', '--fr-error', '--fr-surface', '--fr-font-body',
+  '--fr-font-display', '--fr-font-mono', '--fr-track-display', '--fr-text-xs', '--fr-text-sm', '--fr-text-md',
+  '--fr-text-base', '--fr-text-lg', '--fr-text-xl'];
+// Each source a line cites, with the time it is first heard: the scrubbable list.
+function podcastSourceTimeline(ep) {
+  const first = {};
+  (ep.lines || []).forEach(ln => (ln.cites || []).forEach(c => { if (!(c in first)) first[c] = ln.start || 0; }));
+  return (ep.sources || []).filter(s => s.id in first).map(s => Object.assign({ at: first[s.id] }, s))
+    .sort((a, b) => a.at - b.at);
+}
 function PodcastPlayer() {
   const h = React.createElement;
   const [ep, setEp] = useState(null);
@@ -2388,6 +2409,10 @@ function PodcastPlayer() {
   const [rate, setRate] = useState(1);
   const [showText, setShowText] = useState(false);
   const [srcOpen, setSrcOpen] = useState(null);
+  const [showSources, setShowSources] = useState(false);
+  const [pos, setPos] = useState(podcastSavedPos);
+  const [popped, setPopped] = useState(null);       // {win, el} while popped out
+  const drag = useRef(null);
   const audio = useRef(null);
   const epRef = useRef(null);
   const pendingPlay = useRef(false);
@@ -2496,22 +2521,71 @@ function PodcastPlayer() {
     className: 'btn', 'aria-label': aria, title: aria, onClick: onClick,
     style: { minWidth: 34, padding: '4px 8px' }
   }, extra || {}), label);
-  return h('div', {
+  // Moving the player: drag its title; the place is remembered.
+  const startDrag = (e) => {
+    if (popped || e.button !== 0 || e.target.closest('button')) return;
+    const box = e.currentTarget.closest('[role="region"]').getBoundingClientRect();
+    drag.current = { dx: e.clientX - box.left, dy: e.clientY - box.top };
+    const move = (ev) => setPos(podcastClampPos({ x: ev.clientX - drag.current.dx, y: ev.clientY - drag.current.dy }));
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      setPos(p => { try { if (p) localStorage.setItem(PODCAST_POS_KEY, JSON.stringify(p)); } catch (_) {} return p; });
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  const resetPos = () => { setPos(null); try { localStorage.removeItem(PODCAST_POS_KEY); } catch (_) {} };
+  // Popping out: Document Picture-in-Picture (stays above other windows)
+  // where the browser has it, otherwise a small window. Playback carries over.
+  const carry = () => {
+    const a = audio.current;
+    if (a) { pendingSeek.current = a.currentTime; pendingPlay.current = !a.paused; }
+  };
+  const popOut = async () => {
+    carry();
+    let win = null;
+    try {
+      win = window.documentPictureInPicture
+        ? await window.documentPictureInPicture.requestWindow({ width: 420, height: 640 })
+        : window.open('', 'friday-podcast', 'popup,width=420,height=640');
+    } catch (_) { win = null; }
+    if (!win) return;
+    const doc = win.document;
+    doc.title = (ep && (ep.title || ep.show)) || 'Podcast';
+    const root = getComputedStyle(document.documentElement);
+    PODCAST_TOKENS.forEach(t => { const v = root.getPropertyValue(t); if (v) doc.documentElement.style.setProperty(t, v); });
+    doc.body.style.cssText = 'margin:0;padding:8px;background:var(--fr-surface, #0a0e1a);color:var(--fr-text, rgba(255,255,255,0.86))';
+    const el = doc.createElement('div');
+    doc.body.appendChild(el);
+    win.addEventListener('pagehide', () => { carry(); setPopped(null); });
+    setPopped({ win: win, el: el });
+  };
+  const dockBack = () => { carry(); const p = popped; setPopped(null); try { p && p.win.close(); } catch (_) {} };
+  const where = popped ? { position: 'static', width: '100%', maxHeight: 'none' }
+    : pos ? { position: 'fixed', left: pos.x, top: pos.y, width: 'min(400px, calc(100vw - 32px))', maxHeight: '70vh' }
+    : { position: 'fixed', right: 16, bottom: 16, width: 'min(400px, calc(100vw - 32px))', maxHeight: '70vh' };
+  const nowSources = (line && line.cites ? line.cites : []).map(c => srcById[c]).filter(Boolean);
+  const timeline = podcastSourceTimeline(ep);
+  const frame = h('div', {
     role: 'region', 'aria-label': 'Podcast player',
-    style: {
-      position: 'fixed', right: 16, bottom: 16, zIndex: 180, width: 'min(400px, calc(100vw - 32px))',
+    style: Object.assign({
+      zIndex: 180,
       background: PODCAST_C.bg, backdropFilter: PODCAST_C.blur, WebkitBackdropFilter: PODCAST_C.blur, border: '1px solid ' + PODCAST_C.line, borderRadius: 12,
       boxShadow: '0 12px 40px rgba(0,0,0,0.5)', color: PODCAST_C.text, fontFamily: PODCAST_C.font, fontSize: PODCAST_C.base, padding: 12,
-      display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '70vh'
-    }
+      display: 'flex', flexDirection: 'column', gap: 8
+    }, where)
   },
   h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
-    h('div', { style: { flex: 1, minWidth: 0 } },
+    h('div', {
+      onPointerDown: startDrag, onDoubleClick: resetPos,
+      title: popped ? undefined : 'Drag to move · double-click to put it back',
+      style: { flex: 1, minWidth: 0, cursor: popped ? 'default' : 'move', touchAction: 'none' }
+    },
       h('div', { style: { fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.md, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: ep.title }, '🎧 ', ep.title || ep.credit || ep.show),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, margin: '2px 0 4px' } },
         ep.credit || ep.show, ch >= 0 ? ' · ' + chapters[ch].title : ''),
       h(PodcastBadges, { ep: ep })),
-    btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); setEp(null); })),
+    popped ? btn('⇲', 'Put the player back in the window', dockBack) : btn('⧉', 'Pop the player out', popOut),
+    btn('✕', 'Close the player', () => { if (audio.current) audio.current.pause(); report(false); dockBack(); setEp(null); })),
   h('audio', {
     ref: audio, preload: 'metadata', src: '/api/podcasts/' + encodeURIComponent(ep.id) + '/audio',
     onLoadedMetadata: () => {
@@ -2540,7 +2614,25 @@ function PodcastPlayer() {
       'aria-label': 'Playback speed', value: rate, onChange: (e) => setRate(Number(e.target.value)),
       style: { background: 'transparent', color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6 }
     }, [0.8, 1, 1.25, 1.5, 1.75, 2].map(r => h('option', { key: r, value: r, style: { color: PODCAST_C.text, background: PODCAST_C.surface } }, r + '×'))),
+    btn(showSources ? 'Hide sources' : 'Sources', showSources ? 'Hide the sources' : 'Show the sources', () => setShowSources(!showSources), { 'aria-expanded': showSources }),
     btn(showText ? 'Hide transcript' : 'Transcript', showText ? 'Hide the transcript' : 'Show the transcript', () => setShowText(!showText), { 'aria-expanded': showText })),
+  nowSources.length ? h('div', { 'aria-label': 'Now citing', 'aria-live': 'polite', style: { display: 'flex', flexDirection: 'column', gap: 4, borderLeft: '3px solid ' + PODCAST_C.accent, paddingLeft: 8, background: PODCAST_C.accentSoft, borderRadius: 6, padding: '6px 8px' } },
+    h('div', { style: { fontSize: PODCAST_C.xs, color: PODCAST_C.dim, textTransform: 'uppercase', letterSpacing: '0.08em' } }, 'Now citing'),
+    nowSources.map(s => h('div', { key: s.id, style: { fontSize: PODCAST_C.md, lineHeight: 1.35 } },
+      h('b', null, podcastSourceLabel(s, s.id) + ': '),
+      s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, (s.title || '') + ' ↗')
+            : h('span', null, s.title || '')))) : null,
+  showSources ? h('div', { role: 'list', 'aria-label': 'Sources by time', style: { overflowY: 'auto', maxHeight: popped ? 'none' : '24vh', borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
+    timeline.map(s => {
+      const active = nowSources.some(n => n.id === s.id);
+      return h('div', { key: s.id, role: 'listitem', style: { display: 'flex', gap: 8, alignItems: 'baseline', padding: '3px 4px', borderRadius: 4, background: active ? PODCAST_C.accentSoft : 'transparent' } },
+        h('button', { className: 'btn', onClick: () => seek(s.at), 'aria-label': 'Play from ' + podcastClock(s.at) + ', where ' + podcastSourceLabel(s, s.id) + ' is cited',
+          style: { fontFamily: PODCAST_C.mono, fontSize: PODCAST_C.xs, padding: '0 6px', minHeight: 0 } }, podcastClock(s.at)),
+        h('span', { style: { fontSize: PODCAST_C.md, flex: 1, minWidth: 0 } },
+          h('b', null, podcastSourceLabel(s, s.id) + ': '),
+          s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title || '')
+                : (s.title || '')));
+    })) : null,
   line ? h('div', { 'aria-live': 'polite', style: { fontSize: PODCAST_C.base, lineHeight: 1.45 } },
     h('b', { style: { color: line.speaker === 'a' ? PODCAST_C.accent : PODCAST_C.second } }, who(line.speaker) + ': '),
     fridayTM(line.text), (line.cites || []).map(cite)) : null,
@@ -2566,6 +2658,7 @@ function PodcastPlayer() {
         h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title)))) : null,
     (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
+  return popped ? ReactDOM.createPortal(frame, popped.el) : frame;
 }
 // A creation as a podcast source: a spreadsheet or table goes in as a dataset
 // (data mode), anything else as a creation.
@@ -2723,8 +2816,10 @@ function PodcastsView() {
       msg ? h('div', { role: 'status', style: { fontSize: PODCAST_C.md, color: PODCAST_C.dim } }, msg) : null,
       h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim } }, 'A web page is fetched from the internet to be read; nothing about the episode is sent anywhere.')),
     h('section', { 'aria-label': 'Episodes', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-      eps.length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes yet. Every News routine run now comes with one, and you can make your own above.') : null,
-      eps.map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
+      h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim } },
+        'Episodes of the Front Page, the Briefing, the Editorial and the Weekly live in News, beside each edition.'),
+      eps.filter(ep => !ep.attached).length === 0 ? h('div', { style: { color: PODCAST_C.dim } }, 'No episodes of your own yet. Make one above.') : null,
+      eps.filter(ep => !ep.attached).map(ep => h('div', { key: ep.id, style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 8, padding: '8px 10px', display: 'flex', gap: 10, alignItems: 'center' } },
         h('div', { style: { flex: 1, minWidth: 0 } },
           h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ep.title || ep.credit || ep.show),
           h('div', { style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim, margin: '2px 0 4px' } },
