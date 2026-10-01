@@ -104,7 +104,7 @@ everything reachable from the keyboard), and the brand check in BRAND.md.
 |---|---|---|
 | K1 | The palette listed the workspaces and one action; the bar's chat, Quick Draft and notifications were not in it. | **Fixed.** Every control in the bar is in the palette, and the bar's buttons and the palette open the panels through the same handlers. |
 | K2 | There is no list of the global shortcuts (Ctrl+K, Ctrl+Shift+F, Esc, the tray's Alt+T); Mail has its own. | **Fixed** in a later piece ([unified-shell.md](../design/active/unified-shell.md) §12): one list, shown by "?" and the palette, kept true by tests over every key the page listens for. Mail and the 3D views keep their own "?". |
-| K3 | The scene steps its structure on a bare arrow wherever no text field has the focus, so arrows pressed in a workspace in front also change the scene behind it. (Its Ctrl+Alt+arrows clash with snapping was fixed on the snap side.) | Left: the scene's code is its owner's. The shortcuts list shows the arrows under "On the desktop". |
+| K3 | The scene steps its structure on a bare arrow wherever no text field has the focus, so arrows pressed in a workspace in front also change the scene behind it. (Its Ctrl+Alt+arrows clash with snapping was fixed on the snap side.) | **Fixed** in the shell, not the scene: while a workspace is open, on the desktop or in its own tab, the shell keeps ← and → after the workspace has had them, so they never reach the scene. With no workspace open the scene has them as before. |
 
 ### Voice-button placement
 

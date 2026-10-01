@@ -9630,7 +9630,7 @@ const FRIDAY_SHORTCUTS = [
   { group: 'In a chat box', keys: ['Enter'], what: 'Send' },
   { group: 'In a chat box', keys: ['Shift+Enter'], what: 'A new line' },
   { group: 'On the desktop', keys: ['Ctrl+click'], what: 'A workspace in the dock opens in its own tab', desktop: true },
-  { group: 'On the desktop', keys: ['←', '→'], what: 'The scene’s previous or next structure, when no text field has the focus', desktop: true },
+  { group: 'On the desktop', keys: ['←', '→'], what: 'The scene’s previous or next structure, while no workspace is open', desktop: true },
   { group: 'On the desktop', keys: ['F9'], what: 'The widget: a small window that is mostly {name}; F9 again to come back', desktop: true },
   { group: 'Safety', keys: ['Ctrl+Shift+Q'], what: 'Stop computer control now, and take back its permission' }
 ];
@@ -9676,6 +9676,12 @@ function fridayShortcutsKey(e) {
   if (!e || e.key !== '?' || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return false;
   const t = e.target;
   return !(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')));
+}
+// The scene's own keys on the desktop: ← and →, whatever is held with them.
+// While a workspace is open the shell keeps them, so they act in the
+// workspace and never step the scene behind it (audit K3).
+function fridaySceneKey(e) {
+  return !!e && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
 }
 /* fridayShortcuts:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
@@ -59148,6 +59154,20 @@ function App() {
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
+  }, []);
+  // While a workspace is open the shell keeps ← and →: they act in the
+  // workspace and never step the scene behind it (audit K3). The scene listens
+  // on the document; this listens on the root element, which a key reaches
+  // after everything in the page has had it and before the document does.
+  // With no workspace open the scene has them as before.
+  const shellOwnsArrows = useRef(false);
+  shellOwnsArrows.current = !!STANDALONE_WS || openWins.size > 0;
+  useEffect(() => {
+    const h = e => {
+      if (shellOwnsArrows.current && fridaySceneKey(e)) e.stopPropagation();
+    };
+    document.documentElement.addEventListener('keydown', h);
+    return () => document.documentElement.removeEventListener('keydown', h);
   }, []);
 
   // Top bar always visible (keeps branding + bell/settings in reach). Dock auto-hides

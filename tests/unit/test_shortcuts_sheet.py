@@ -91,6 +91,8 @@ console.log(JSON.stringify({
   labels: ['alt+t', 'ctrl+shift+f12', 'f9'].map(fridayKeyLabel),
   groups: [['Ctrl+Alt+←', 'Ctrl+Alt+→'], ['←', '→'], ['Ctrl+K'], ['Ctrl+click'], ['?'],
            ['Ctrl+Alt+↑', 'Shift+Enter']].map(fridayChordGroups),
+  scene: [{key: 'ArrowLeft'}, {key: 'ArrowRight', shiftKey: true}, {key: 'ArrowRight', ctrlKey: true},
+          {key: 'ArrowUp'}, {key: 'ArrowDown'}, {key: 'Right'}, null].map(e => fridaySceneKey(e)),
   question: {
     plain: typed('?', {shiftKey: true}), ctrl: typed('?', {ctrlKey: true}), alt: typed('?', {altKey: true}),
     meta: typed('?', {metaKey: true}), slash: typed('/'), taken: typed('?', {}, null, true),
@@ -158,6 +160,12 @@ def test_alternatives_that_share_their_modifiers_are_written_once(probe):
     ]
 
 
+def test_the_shell_keeps_every_arrow_the_scene_would_take(probe):
+    """The scene steps on ← or → whatever is held with it, so while a workspace
+    is open the shell keeps all of them (audit K3); up and down were never its."""
+    assert probe["scene"] == [True, True, True, False, False, False, False]
+
+
 def test_her_name_reads_as_a_name_in_a_sentence(probe):
     assert probe["names"] == ["Agent Friday", "Friday", "Friday", "Friday", "Juno-B", "juno"]
 
@@ -187,11 +195,13 @@ CENSUS = [
     (r"e\.key === 'Escape'", ["Esc"]),         # closing what is open
     (r"\.friday-cite\[data-kw-page\]", None),  # Enter or Space on a focused citation: its own button keys
     (r"fridayLandingInput\(", None),           # the landing judge noting that a key was pressed
+    (r"fridaySceneKey\(e\)", None),            # keeps the scene's arrows from it while a workspace is open
 ]
 
 
 def _listeners(text):
-    pat = r"(?:window|document)\.addEventListener\('keydown',\s*(function\s*\(e\)\s*\{|[\w$]+)"
+    pat = (r"(?:window|document|document\.documentElement)\.addEventListener\('keydown',\s*"
+           r"(function\s*\(e\)\s*\{|[\w$]+)")
     for m in re.finditer(pat, text):
         h = m.group(1)
         if h.startswith("function"):

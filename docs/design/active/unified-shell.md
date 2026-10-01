@@ -490,9 +490,12 @@ is listed.
   at modifiers, so Ctrl+Alt+Left and Right also stepped the scene behind the window being
   snapped. Fixed in `3b4c7093`: the snap chord is taken in the capture phase and stopped
   there; a code editor keeps its own Ctrl+Alt+arrows.
-- The scene's bare arrows also fire while a workspace is in front, whenever no text field has
-  the focus. That is the scene's code: recorded as audit K3 for its owner. The sheet lists the
-  arrows under "On the desktop".
+- The scene's bare arrows also fired while a workspace was in front, whenever no text field
+  had the focus (audit K3). The shell now keeps them while a workspace is open, on the desktop
+  or in its own tab: a listener on the root element, which a key reaches after everything in
+  the page has had it and before the document, stops ← and → short of the scene's document
+  listener. The workspace still hears them; the scene's code is unchanged, and with no
+  workspace open it has its arrows as before. The sheet lists them under "On the desktop".
 
 ### 12.5 Verification
 

@@ -397,18 +397,20 @@ _SPY_ON_THE_SCENE = """() => { window.__steps = [];
 
 
 def test_the_snap_keys_leave_the_scene_alone(site):
-    """A plain arrow is the scene's own key (its next structure); a snap chord
-    belongs to the window or the tray and never reaches the scene."""
-    s = site().desktop().open_news()
+    """A plain arrow is the scene's own key (its next structure) while no
+    workspace is open; a snap chord belongs to the window or the tray and never
+    reaches the scene."""
+    s = site().desktop()
     s.page.evaluate(_SPY_ON_THE_SCENE)
+    s.page.keyboard.press("ArrowRight")
+    s.page.wait_for_timeout(150)
+    assert s.page.evaluate("window.__steps") == ["next"], "with no workspace open the scene has its own key"
+    s.open_news()
     s.page.click(".fwin .fwin-title")
     s.page.keyboard.press("Control+Alt+ArrowRight")
     s.page.wait_for_timeout(300)
     assert s.boxes()["snap"] == "right_half"
-    assert s.page.evaluate("window.__steps") == []
-    s.page.keyboard.press("ArrowRight")
-    s.page.wait_for_timeout(150)
-    assert s.page.evaluate("window.__steps") == ["next"], "the scene still has its own key"
+    assert s.page.evaluate("window.__steps") == ["next"]
     # in a tab the chord moves the tray, and the scene there is left alone too
     s.page.goto(s.base + "/w/news", wait_until="domcontentloaded")
     s.page.wait_for_selector('[data-standalone="news"]', timeout=60000)
@@ -416,6 +418,44 @@ def test_the_snap_keys_leave_the_scene_alone(site):
     s.page.evaluate(_SPY_ON_THE_SCENE)
     s.page.keyboard.press("Control+Alt+ArrowLeft")
     s.page.wait_for_selector(".chat-panel.open.left", timeout=5000)
+    assert s.page.evaluate("window.__steps") == []
+
+
+def test_while_a_workspace_is_open_the_arrows_stay_out_of_the_scene(site):
+    """Audit K3. With no workspace open a bare arrow steps the scene, as it
+    always has. While one is open the shell keeps the arrows: the workspace
+    still hears them, the scene behind it does not. Closing it gives them back."""
+    s = site().desktop()
+    s.page.evaluate(_SPY_ON_THE_SCENE)
+    s.page.keyboard.press("ArrowRight")
+    s.page.wait_for_timeout(150)
+    assert s.page.evaluate("window.__steps") == ["next"]
+    s.open_news()
+    s.page.evaluate("""() => { window.__heard = [];
+      const w = document.querySelector('.fwin'); w.tabIndex = -1; w.focus();
+      w.addEventListener('keydown', e => window.__heard.push(e.key)); }""")
+    for key in ("ArrowRight", "ArrowLeft", "Shift+ArrowRight"):
+        s.page.keyboard.press(key)
+    s.page.wait_for_timeout(150)
+    assert s.page.evaluate("window.__steps") == ["next"], "the scene stepped behind an open workspace"
+    assert s.page.evaluate("window.__heard") == ["ArrowRight", "ArrowLeft", "Shift", "ArrowRight"], (
+        "the workspace must still hear its keys")
+    s.page.click('.dock-btn[data-ws="news"]')
+    s.page.wait_for_selector(".fwin", state="detached", timeout=5000)
+    s.page.keyboard.press("ArrowLeft")
+    s.page.wait_for_timeout(150)
+    assert s.page.evaluate("window.__steps") == ["next", "prev"], "closed, the scene has its keys back"
+
+
+def test_in_a_workspace_tab_the_arrows_stay_out_of_the_scene(site):
+    s = site()
+    s.page.goto(s.base + "/w/news", wait_until="domcontentloaded")
+    s.page.wait_for_selector('[data-standalone="news"]', timeout=60000)
+    s.page.wait_for_timeout(500)
+    s.page.evaluate(_SPY_ON_THE_SCENE)
+    s.page.keyboard.press("ArrowRight")
+    s.page.keyboard.press("ArrowLeft")
+    s.page.wait_for_timeout(150)
     assert s.page.evaluate("window.__steps") == []
 
 
