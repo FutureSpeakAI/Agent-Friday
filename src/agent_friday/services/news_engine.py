@@ -1685,10 +1685,9 @@ def _news_archiver_tick():
             g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
             clusters = _cluster_articles(pool, min_sources=2)
             summary = g.analyze_fetch(pool, clusters)
-            for it in pool:
-                dom = it.get("source") or _extract_domain(it.get("url", ""))
-                if dom:
-                    g.record_article_seen(dom)
+            # One batch per cycle: each call loads and rewrites the whole file.
+            g.record_articles_seen(
+                [it.get("source") or _extract_domain(it.get("url", "")) for it in pool])
             if summary and any(summary.get(k) for k in
                                ("corrections", "minority_claims", "primary_boosts", "independence")):
                 print(f"  [source-trust] {summary}")

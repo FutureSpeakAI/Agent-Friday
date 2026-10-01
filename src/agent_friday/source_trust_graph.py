@@ -267,9 +267,12 @@ class SourceTrustGraph:
         return data
 
     def _save(self, data):
+        """Write the whole file, compact. Every reader parses it with
+        json.loads, and indentation roughly doubled a multi-megabyte write."""
         data.setdefault("meta", {})["updated_at"] = datetime.now().isoformat(timespec="seconds")
         self.friday_dir.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+        self.path.write_text(json.dumps(data, separators=(",", ":"), default=str),
+                             encoding="utf-8")
 
     # ── record management ──────────────────────────────────────────
 
@@ -366,13 +369,30 @@ class SourceTrustGraph:
 
     def record_article_seen(self, domain, name=None):
         """Bump a source's article counter (and ensure it exists)."""
+        self.record_articles_seen([domain], name=name)
+
+    def record_articles_seen(self, domains, name=None):
+        """Bump the article counter once per entry in ``domains``.
+
+        One load and at most one save for the whole batch: the file runs to
+        megabytes, so a caller counting a fetch cycle passes every domain here
+        rather than calling record_article_seen per article. Blank or
+        unparseable entries are skipped; nothing is written when none count.
+        """
         with self._lock:
             data = self._load()
-            rec = self._get_or_create(data, domain, name)
-            if rec is None:
-                return
-            rec["article_count"] = int(rec.get("article_count", 0)) + 1
-            self._save(data)
+            counted = 0
+            for domain in domains or ():
+                if not domain:
+                    continue
+                rec = self._get_or_create(data, domain, name)
+                if rec is None:
+                    continue
+                rec["article_count"] = int(rec.get("article_count", 0)) + 1
+                counted += 1
+            if counted:
+                self._save(data)
+            return counted
 
     def record_user_action(self, domain, action):
         """Mirror a user ban/boost/click/read_later into user_actions."""
