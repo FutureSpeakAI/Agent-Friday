@@ -1407,6 +1407,21 @@ that it doesn't exist yet. "Reduced motion" is the swap required by §13.7.
 | **Background or scheduled work** | One faint cube orbits the lattice | A scheduled or background process is registered, then ends | One orbiter per process, up to 4 (a count after that) | A faint static satellite, one per process |
 | **Subagents or helpers** | Small clusters split off and return | A subagent task started, then ended, with a parent in this turn | One cluster per live subagent, up to 4 | Clusters shown as dimmed satellite groups |
 
+**Three times per trigger (owner, 2026-09-30).** Every one-shot gesture
+plays three times for each event, then rests, or holds while its work
+lasts:
+- **A round:** the wave rolls three times.
+- **A cloud send:** the vent opens three times.
+- **A verification:** it sweeps three times.
+- **A tool call:** it twists in three times, then holds until the tool
+  returns, and eases home from wherever it is.
+- **An approval:** it steps forward three times, then holds. It stays in the
+  approval hue throughout, so the colour never blinks.
+
+Continuous behaviour (listening, speaking) is not a one-shot and does not
+loop. The photosensitivity limits (§6.3) apply to the loops as to
+everything else.
+
 **Speaking** keeps its existing behaviour (§1.4). It layers on top of
 whatever else is showing.
 
@@ -1807,7 +1822,7 @@ moves:
 | **Listening** | Tiles on the side facing the user ripple with the voice |
 | **Reasoning, one round** | One section of the ball lifts and glows. From the Arms form on, the rounds also roll through the arms, one arm per layer |
 | **Tool call** | A 2×2 block of tiles flips 90°, like the robot turning tiles over, and flips back when the tool returns. On an arm, it is four neighbouring tiles along that arm |
-| **Cloud send** | The top of the ball opens and the thread rises. From the Rings form on, a ring also throws one tile out along the thread |
+| **Cloud send** | The top of the ball opens and the thread rises, three times (§13.3). From the Rings form on, a ring also throws a tile out along the thread at each of the three pulses |
 | **Waiting for approval** | The tile nearest the middle of the front steps forward in the approval amber, inside an amber octagonal lock-on frame, the Rez lock-on. The frame follows its tile as the ball turns and fades when the approval is decided |
 | **Verifying** | The scan plane sweeps across the ball. Giga Earth's gestures are sized to the ball, not to its arms, so on the later forms the plane stays ball-sized |
 

@@ -92,6 +92,19 @@ seed = SEED; { const g = new THREE.Group(); FridayRez.build(g, 0);
   FridayRez.animate(1 / 60, 1.0, 0, base, accent, false); const a0 = ang();
   for (let f = 0; f < 60; f++) FridayRez.animate(1 / 60, 1.0, 0, base, accent, false);
   const a1 = ang(); out.turnPerSecond = Math.max(...a1.map((v, i) => { let d = Math.abs(v - a0[i]); return Math.min(d, 2 * Math.PI - d); })); }
+// a cloud send's vent pulses three times, and a ring throws a tile at each pulse
+seed = SEED; { const g = new THREE.Group(); FridayRez.build(g, 5);
+  const root = g.children[0], seen = new Set();
+  // Three 1.8 s pulses, as the gesture engine sends them. Real frames do not
+  // land on the trough exactly, so between pulses the thread dips near zero
+  // but not to it.
+  for (let f = 0; f < 330; f++) {
+    const thread = Math.abs(Math.sin(Math.PI * Math.min(3, f / 60 / 1.8 + 0.006)));
+    FridayRez.animate(1 / 60, 0, 0, base, accent, false);
+    FridayRez.afterGestures(f / 60 < 5.4 ? thread : 0, [0, 1, 0], [0, 0, 1], false);
+    root.children.forEach(c => { if (c.isMesh && c.geometry.parameters && c.geometry.parameters.width === 0.8) seen.add(c); });
+  }
+  out.thrown = seen.size; }
 // reduced motion: nothing turns
 seed = SEED; { const g = new THREE.Group(); FridayRez.build(g, 5);
   const tiles = g.children[0].children.find(c => c.isInstancedMesh);
@@ -169,6 +182,13 @@ def test_no_section_turns_fast_enough_to_flicker(path):
     # tile, so 0.9 rad/s is under three tiles a second past any point.
     o = _run(path, 7)
     assert 0.1 < o["turnPerSecond"] <= 0.9 + 1e-6
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_a_cloud_send_throws_a_tile_at_each_of_the_three_vent_pulses(path):
+    # Every one-shot animation plays three times per trigger.
+    assert _run(path, 7)["thrown"] == 3
 
 
 @pytest.mark.skipif(not node, reason="node is not installed")

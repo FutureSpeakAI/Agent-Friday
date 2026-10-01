@@ -57,7 +57,7 @@ out.quiet = quiet;
 // 2. one twist per tool call, held until it returns
 G.reset(); G.setReduced(REDUCED);
 ['c1', 'c2', 'c3'].forEach(ref => G.frame(P('tool', 'start', { ref })));
-let r = run(0.6);
+let r = run(2.2);                         // after the three strokes: held
 out.twist_units = moving(r).length;
 out.twist_blocks = G._twists().filter(t => t.block !== null).length;
 out.twist_rot = Object.values(r.units).filter(u => u.r.some(v => Math.abs(v - Math.PI / 2) < 1e-6 || Math.abs(v + Math.PI / 2) < 1e-6)).length;
@@ -99,7 +99,7 @@ out.cloud_thread = maxThread; out.cloud_top_moved = topMoved;
 
 // 5. approvals: one cube each, stepped forward, the only approval hue
 G.reset(); G.setReduced(REDUCED);
-G.setApprovals(2); r = run(1.0);
+G.setApprovals(2); r = run(3.2);          // after the three steps: held forward
 const hued = Object.keys(r.units).filter(k => r.units[k].hue === 'approval').map(Number);
 out.approval_hued = hued.length;
 out.approval_forward = hued.filter(k => r.units[k].d[2] > 0.5).length;
@@ -119,7 +119,7 @@ let sawScan = false, settled = 0;
 for (let i = 0; i < 100; i++) { const q = G.step(dt, an); if (q.scan) sawScan = true;
   settled += Object.values(q.units).filter(u => u.s < 0.999 || u.b > 1.001).length; }
 out.scan = sawScan; out.settled = settled > 0;
-out.scan_after = run(0.5).scan;
+out.scan_after = run(3.5).scan;           // after the three sweeps
 
 // 7. listening ripples the facing side with the voice, and only then
 G.reset(); G.setReduced(REDUCED);
@@ -144,6 +144,37 @@ for (let i = 0; i < 180; i++) {
 }
 out.burst_moves = anyMove; out.burst_lights = anyLight;
 out.burst_max_step = maxStep; out.burst_min_b = minB; out.burst_max_b = maxB;
+
+// 10. each one-shot gesture plays three times per trigger, then rests (or holds)
+const peaks = (series, thr) => { let n = 0, up = false;
+  for (const v of series) { if (!up && v > thr) { n++; up = true; } else if (up && v < thr * 0.3) up = false; } return n; };
+const lift = (q, i) => { const u = q.units[i]; return u ? Math.hypot(...u.d) : 0; };
+G.reset(); G.setReduced(false);
+G.frame(P('round', 'step', { n: 2 })); let ser = [];
+for (let i = 0; i < 480; i++) ser.push(lift(G.step(dt, an), layers[1][0]));
+out.loop_wave = peaks(ser, 0.15); out.loop_wave_rest = moving(run(1.5)).length;
+G.reset(); G.setReduced(false);
+G.frame(P('egress', 'sent', { route: 'cloud' })); ser = [];
+for (let i = 0; i < 480; i++) ser.push(G.step(dt, an).thread);
+out.loop_vent = peaks(ser, 0.5); out.loop_vent_rest = run(1.5).thread;
+G.reset(); G.setReduced(false);
+G.frame(P('verify', 'once', { ok: true })); let sweeps = 0, lastX = null;
+for (let i = 0; i < 480; i++) { const q = G.step(dt, an); if (q.scan) { if (lastX === null || q.scan.x < lastX - 1e-6) sweeps++; lastX = q.scan.x; } }
+out.loop_scan = sweeps; out.loop_scan_rest = run(1.5).scan;
+G.reset(); G.setReduced(false);
+G.frame(P('tool', 'start', { ref: 't1' })); ser = []; let twistUnit = null;
+for (let i = 0; i < 240; i++) { const q = G.step(dt, an);
+  if (twistUnit === null) twistUnit = Object.keys(q.units).map(Number).find(k => q.units[k].r.some(v => Math.abs(v) > 1e-3));
+  ser.push(twistUnit === undefined || twistUnit === null || !q.units[twistUnit] ? 0 : Math.max(...q.units[twistUnit].r.map(Math.abs))); }
+out.loop_twist = peaks(ser, 1.2); out.loop_twist_held = ser[ser.length - 1] > 1.5;
+G.frame(P('tool', 'end', { ref: 't1', ok: true })); out.loop_twist_rest = moving(run(1.0)).length;
+G.reset(); G.setReduced(false);
+G.setApprovals(1); ser = []; let hueAll = true, seen = false;
+for (let i = 0; i < 300; i++) { const q = G.step(dt, an);
+  const k = Object.keys(q.units).find(x => q.units[x].hue === 'approval');
+  ser.push(k === undefined ? 0 : q.units[k].d[2]);
+  if (k !== undefined && q.units[k].d[2] > 0.6) seen = true; else if (seen && k === undefined) hueAll = false; }
+out.loop_approval = peaks(ser, 0.6); out.loop_approval_held = ser[ser.length - 1] > 0.6; out.loop_approval_hue_kept = hueAll;
 
 // 9. the same events make the same moves
 const trace = () => { G.reset(); G.setReduced(REDUCED); G.frame(P('tool', 'start', { ref: 'z' }));
@@ -193,6 +224,20 @@ def test_each_gesture_comes_from_its_event_and_only_from_it(path):
     # listening moves only the facing side, only while there is a voice
     assert o["listen_units_face"] is True and o["listen_after"] == 0
     assert o["deterministic"] is True
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_each_one_shot_gesture_plays_three_times_per_trigger(path):
+    # Owner: every animation on the holographic desktop loops three times.
+    o = _run(path, reduced=False)
+    assert o["loop_wave"] == 3 and o["loop_wave_rest"] == 0          # a round's wave
+    assert o["loop_vent"] == 3 and o["loop_vent_rest"] == 0          # a cloud send's vent
+    assert o["loop_scan"] == 3 and o["loop_scan_rest"] is None       # a verification's sweep
+    assert o["loop_twist"] == 3 and o["loop_twist_held"] is True     # a tool's twist, then held
+    assert o["loop_twist_rest"] == 0
+    assert o["loop_approval"] == 3 and o["loop_approval_held"] is True   # an approval's step
+    assert o["loop_approval_hue_kept"] is True                       # amber throughout, no blinking
 
 
 @pytest.mark.skipif(not node, reason="node is not installed")

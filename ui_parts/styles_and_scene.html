@@ -1044,13 +1044,16 @@
         // it passes. Under reduced motion every gesture is brightness only.
         const FridayGestures = (function () {
             const TWIST_IN = 0.45, TWIST_OUT = 0.35, MAX_TWISTS = 4;
+            // Every one-shot gesture plays three times per trigger, then rests
+            // (or, for a tool or an approval, holds until it is over).
+            const LOOPS = 3;
             const WAVE_S = 1.4, VENT_S = 1.8, SCAN_S = 1.6, SETTLE_S = 0.25;
             const STEP_IN = 0.6, APPROVAL_MAX = 3, BREATH_HZ = 0.3;
             const B_MIN = 0.6, B_MAX = 1.5, B_RATE = 0.08;     // brightness per frame
             const G_RATE = 0.08, ALIGN_IN = 0.8, ALIGN_OUT = 1.2, LIFT = 0.35;
             let reduced = false, now = 0;
             let twists = [], queue = [], waves = [], vents = [], scans = [];
-            let approvals = 0, approvalEnv = [], mic = 0, micS = 0, micPhase = 0;
+            let approvals = 0, approvalEnv = [], approvalLoop = [], mic = 0, micS = 0, micPhase = 0;
             let route = null, round = 0, verifyOk = null, lastB = {}, lastG = {}, align = 0;
             const ease = t => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
             const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -1073,7 +1076,8 @@
                     else queue.push(f.ref);
                 } else if (st === 'tool' && ph === 'end') {
                     const tw = twists.find(x => x.ref === f.ref && x.phase !== 'out');
-                    if (tw) { tw.phase = 'out'; tw.t = 0; }
+                    // Home from wherever the twist is, never a snap.
+                    if (tw) { tw.from = tw.a === undefined ? 0 : tw.a; tw.phase = 'out'; tw.t = 0; }
                     else queue = queue.filter(r => r !== f.ref);
                 } else if (st === 'round' && ph === 'step' && Number.isInteger(f.n)) {
                     round = f.n;
@@ -1109,7 +1113,7 @@
                 const unit = i => (out[i] = out[i] || { d: [0, 0, 0], r: [0, 0, 0], s: 1, b: 1, g: 0, hue: null });
                 const busy = new Set();
                 // Approvals outrank everything: pick their cubes first.
-                while (approvalEnv.length < approvals) approvalEnv.push(0);
+                while (approvalEnv.length < approvals) { approvalEnv.push(0); approvalLoop.push({ n: 0, back: false }); }
                 // The cube nearest the middle of the side facing the user: on
                 // that side (within half a cube of it), then closest to centre.
                 const fmax = Math.max(...an.units.map(u => dot(u, an.toward)));
@@ -1118,21 +1122,28 @@
                     .sort((a, b) => b[0] - a[0] || b[1] - a[1] || b[2] - a[2]).map(x => x[3]);
                 const apUnits = [];
                 for (let k = 0; k < approvalEnv.length; k++) {
-                    const target = k < approvals ? 1 : 0;
+                    // Pending: step forward and back, LOOPS times, then hold forward.
+                    const L = approvalLoop[k], pending = k < approvals;
+                    const target = pending && !L.back ? 1 : 0;
                     approvalEnv[k] += Math.sign(target - approvalEnv[k]) * Math.min(Math.abs(target - approvalEnv[k]), dt / STEP_IN);
+                    if (pending && !L.back && approvalEnv[k] >= 1) { L.n++; if (L.n < LOOPS) L.back = true; }
+                    else if (pending && L.back && approvalEnv[k] <= 0) L.back = false;
                     const i = facing[k];
                     if (i === undefined) continue;
                     apUnits.push(i); busy.add(i);
                     const e = ease(approvalEnv[k]);
-                    if (e <= 0) continue;
+                    // The hue stays once it has come: only the step loops, so
+                    // the approval colour never blinks.
+                    const lit = pending && L.n > 0 ? 1 : e;
+                    if (lit <= 0) continue;
                     const u = unit(i);
                     const breath = Math.sin(2 * Math.PI * BREATH_HZ * now);
                     u.hue = 'approval';
-                    u.g = Math.max(u.g, e);
+                    u.g = Math.max(u.g, lit);
                     if (reduced) u.b = 1 + 0.12 * breath * e;
                     else { u.d = add(u.d, scl(an.toward, 0.9 * e)); u.s = 1 + 0.04 * breath * e; }
                 }
-                while (approvalEnv.length > approvals && approvalEnv[approvalEnv.length - 1] <= 0) approvalEnv.pop();
+                while (approvalEnv.length > approvals && approvalEnv[approvalEnv.length - 1] <= 0) { approvalEnv.pop(); approvalLoop.pop(); }
 
                 // Tool twists: one 2x2 block per call, held while it runs.
                 for (const tw of twists) {
@@ -1144,9 +1155,16 @@
                 for (const tw of twists) {
                     tw.t += dt;
                     let a;
-                    if (tw.phase === 'in') { a = ease(tw.t / TWIST_IN); if (tw.t >= TWIST_IN) tw.phase = 'hold'; }
-                    else if (tw.phase === 'hold') a = 1;
-                    else a = 1 - ease(tw.t / TWIST_OUT);
+                    // In and back, LOOPS strokes, then held until the tool returns.
+                    if (tw.phase === 'in') {
+                        a = ease(tw.t / TWIST_IN);
+                        if (tw.t >= TWIST_IN) { tw.strokes = (tw.strokes || 0) + 1; tw.t = 0; tw.phase = tw.strokes < LOOPS ? 'back' : 'hold'; }
+                    } else if (tw.phase === 'back') {
+                        a = 1 - ease(tw.t / TWIST_OUT);
+                        if (tw.t >= TWIST_OUT) { tw.t = 0; tw.phase = 'in'; }
+                    } else if (tw.phase === 'hold') a = 1;
+                    else a = tw.from * (1 - ease(tw.t / TWIST_OUT));
+                    tw.a = a;
                     if (tw.block === null) continue;
                     const blk = an.blocks[tw.block], th = a * Math.PI / 2;
                     for (const i of blk.units) {
@@ -1166,7 +1184,7 @@
                 for (const w of waves) {
                     w.t += dt;
                     const L = an.layers.length || 1;
-                    const env = Math.sin(Math.PI * Math.min(1, w.t / WAVE_S));
+                    const env = Math.abs(Math.sin(Math.PI * Math.min(LOOPS, w.t / WAVE_S)));
                     for (const i of (an.layers[(w.n - 1) % L] || [])) {
                         if (busy.has(i)) continue;
                         const u = unit(i);
@@ -1176,13 +1194,13 @@
                         u.b *= 1 + 0.15 * env;
                     }
                 }
-                waves = waves.filter(w => w.t < WAVE_S);
+                waves = waves.filter(w => w.t < WAVE_S * LOOPS);
 
                 // A sealed cloud send: the top opens and a thread leaves.
                 let thread = 0;
                 for (const v of vents) {
                     v.t += dt;
-                    const env = Math.sin(Math.PI * Math.min(1, v.t / VENT_S));
+                    const env = Math.abs(Math.sin(Math.PI * Math.min(LOOPS, v.t / VENT_S)));
                     thread = Math.max(thread, env);
                     for (const i of an.top) {
                         if (busy.has(i)) continue;
@@ -1194,13 +1212,13 @@
                         u.r = add(u.r, scl(an.up, 0.25 * env));
                     }
                 }
-                vents = vents.filter(v => v.t < VENT_S);
+                vents = vents.filter(v => v.t < VENT_S * LOOPS);
 
                 // Verification: a plane sweeps across; each cube it passes settles.
                 let scan = null;
                 for (const sc of scans) {
                     sc.t += dt;
-                    const f = Math.min(1, sc.t / SCAN_S);
+                    const f = Math.min(1, sc.t / SCAN_S - Math.min(LOOPS - 1, Math.floor(sc.t / SCAN_S)));
                     const x = -an.extent + 2 * an.extent * f;
                     scan = { x: x, alpha: Math.sin(Math.PI * f), ok: sc.ok };
                     an.units.forEach((p, i) => {
@@ -1212,7 +1230,7 @@
                         if (reduced) u.b *= 1 + 0.2 * k; else u.s *= 1 - 0.06 * k;
                     });
                 }
-                scans = scans.filter(sc => sc.t < SCAN_S);
+                scans = scans.filter(sc => sc.t < SCAN_S * LOOPS);
 
                 // Listening: rings ripple across the facing side with the voice.
                 micPhase += dt * 2 * Math.PI * 1.6;
@@ -1291,7 +1309,7 @@
             }
             function reset() {
                 twists = []; queue = []; waves = []; vents = []; scans = [];
-                approvals = 0; approvalEnv = []; mic = 0; micS = 0; lastB = {}; lastG = {}; align = 0;
+                approvals = 0; approvalEnv = []; approvalLoop = []; mic = 0; micS = 0; lastB = {}; lastG = {}; align = 0;
                 round = 0; route = null; now = 0;
             }
             return { frame, setApprovals, setMic, setReduced, step, status, idle, settled, reset,
@@ -2040,7 +2058,7 @@
             let home = [], band = [], col = [], shade = [], order = [], place = [], units = [];
             let secAngle = new Float32Array(SECTIONS), swirl = 0, ringSpin = 0, robotSpin = 0, beat = 0;
             let robot = null, bladeMat = null, coreMat = null, frameMat = null, glow = null;
-            let rings = [], ringMat = null, shardMat = null, throws = [], lastThread = 0;
+            let rings = [], ringMat = null, shardMat = null, throws = [], armed = true;
             let reticle = null;
             const cur = [];                     // per tile: this frame's p, q, s
             const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
@@ -2156,7 +2174,7 @@
                     ring.visible = !!form.rings;
                     root.add(ring); rings.push(ring);
                 }
-                throws = []; lastThread = 0; reticle = null;
+                throws = []; armed = true; reticle = null;
                 group.add(root);
                 return root;
             }
@@ -2316,10 +2334,13 @@
             }
 
             // A cloud send, once the rings exist: a ring throws one tile out
-            // along the thread. Only on the send itself (the thread rising).
+            // along the thread at each pulse of the vent (three per send). Only
+            // on the send itself (the thread rising).
             function afterGestures(thread, up, toward, reduced) {
                 if (!root) return;
-                if (form.rings && !reduced && thread > 0.01 && lastThread <= 0.01 && throws.length < 3) {
+                if (thread < 0.1) armed = true;
+                if (form.rings && !reduced && armed && thread > 0.3 && throws.length < 9) {
+                    armed = false;
                     const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.22), own(shardMat.clone(), 0.95));
                     mesh.material.userData = null;
                     const from = new THREE.Vector3(...up).multiplyScalar(R * 1.3);
@@ -2327,7 +2348,6 @@
                     mesh.position.copy(from); root.add(mesh);
                     throws.push({ mesh, from, dir, t: 0 });
                 }
-                lastThread = thread;
             }
 
             return { build, animate, points, layers, blocks, applyUnit, lockOn, afterGestures, radius: R,
