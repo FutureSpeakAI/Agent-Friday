@@ -301,15 +301,16 @@ def test_decorative_dock_layers_take_no_clicks():
         "%r no longer sets pointer-events:none, so a decorative layer can "
         "take a click meant for a button" % sel
     )
-    # The icon must stay clickable. It is raised toward the viewer, so it is
-    # the thing drawn where the pointer is; making it click-through would send
-    # the click to whatever lies behind it. The event bubbles to the button.
-    for sel, body in rules.items():
-        if sel in (".dock-btn .ico", ".dock-btn > *"):
-            assert "pointer-events: none" not in body, (
-                "%r is click-through, but a raised icon is exactly what the "
-                "pointer is over: %r" % (sel, body.strip())
-            )
+    # Nothing raised inside a button takes a click. Chromium hit-tests a raised
+    # layer through the dock's shared perspective rather than its button's, so
+    # a raised icon took clicks over the button to its left; the flat button
+    # holds everything drawn in it and hit-tests where it is drawn
+    # (test_dock_hit_test_any_length.py measures it).
+    sel = ".dock-btn > *"
+    assert sel in rules and "pointer-events: none" in rules[sel], (
+        "%r no longer sets pointer-events:none, so a raised icon can take a "
+        "click meant for the button beside it" % sel
+    )
     for sel in (".dock::before", ".dock::after", ".dock-btn::before"):
         assert sel in rules, "the rule for %r is gone" % sel
         assert "pointer-events: none" in rules[sel], (

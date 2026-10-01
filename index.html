@@ -1971,10 +1971,20 @@ window.addEventListener('DOMContentLoaded',function(){
            the click. Stacking follows magnification, so the button nearest the
            pointer is always topmost and the hit areas partition the dock along
            exactly the edges that are visible. Decorative layers take no clicks
-           at all; a button's own children do, because they are what is drawn
-           where the pointer is, and the click bubbles to the button anyway. */
+           at all, and neither does anything raised inside a button. */
         .dock-btn { z-index: calc(2 + 1000 * var(--mag, 1)); }
         .dock-group-label, .dock-sep, .dock-divider { pointer-events: none; }
+        /* THE RAISED LAYERS ARE DRAWING, NOT TARGETS. Chromium hit-tests a
+           raised layer through the dock's shared perspective, not through the
+           perspective of the button it belongs to, so a raised icon took
+           clicks some way off where it is drawn: over the button to its left,
+           by more the further it sat from the dock's centre. At rest on the
+           shipped dock a third of News went to the icon of Messages; with
+           three workspaces fewer the centre of News did. The button itself is
+           a plain 2D transform, which hit-tests where it is drawn, and it
+           holds everything drawn in it, so it takes every click, at any
+           length of dock. */
+        .dock-btn > * { pointer-events: none; }
 
         .dock-btn .ico {
             transform: translateZ(calc(58px * var(--dock-k)));
