@@ -122,7 +122,7 @@ def _jwt():
     enc = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")  # noqa: E731
     return ".".join([enc(b'{"alg":"RS256","kid":"abc"}'),
                      enc(b'{"iss":"kubernetes/serviceaccount","sub":"system:serviceaccount:d:x"}'),
-                     enc(os.urandom(48))])
+                     enc(random.Random(48).randbytes(48))])
 
 
 @pytest.mark.parametrize("label,value", [
