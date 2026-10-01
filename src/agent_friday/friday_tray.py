@@ -57,6 +57,20 @@ log = logging.getLogger(__name__)
 
 VOICE_LOG = friday_home() / "voice_debug.log"
 SERVER_STDERR_LOG = friday_home() / "server_stderr.log"
+# server_stderr.log is capped: past this size it rotates into numbered
+# backups (services/capped_log), checked at every server start and on every
+# watchdog tick while the server runs.
+SERVER_STDERR_LOG_MAX_BYTES = 50 * 1024 * 1024
+SERVER_STDERR_LOG_BACKUPS = 3
+
+
+def _rotate_server_log() -> None:
+    try:
+        from agent_friday.services import capped_log
+        capped_log.rotate_if_over(SERVER_STDERR_LOG, SERVER_STDERR_LOG_MAX_BYTES,
+                                  SERVER_STDERR_LOG_BACKUPS)
+    except Exception as e:
+        log.info("server log rotation skipped: %s", e)
 
 
 # The server's port comes from the same source the server uses (FRIDAY_PORT,
@@ -315,6 +329,9 @@ class FridayTray:
     def __init__(self) -> None:
         self.server_proc: subprocess.Popen | None = None
         self._child_err = None
+        # True while the server's log handle is append-only at the OS level:
+        # only then may the live log be truncated under a running server.
+        self._log_rotatable = False
         self._last_failure: str | None = None
         self.running = False
         self.icon: pystray.Icon | None = None
@@ -348,10 +365,18 @@ class FridayTray:
             # Child stdout+stderr are appended to a file, never discarded: a
             # server that dies during import (before its own file logging is
             # up) has nowhere else to leave a traceback. DEVNULL here cost us
-            # seven invisible failures.
+            # seven invisible failures. The handle is append-only at the OS
+            # level so the live file can be rotated while the server holds it.
             err_path = SERVER_STDERR_LOG
             err_path.parent.mkdir(parents=True, exist_ok=True)
-            self._child_err = open(err_path, "ab", buffering=0)
+            _rotate_server_log()
+            try:
+                from agent_friday.services.capped_log import open_shared_append
+                self._child_err = open_shared_append(err_path)
+                self._log_rotatable = True
+            except Exception:
+                self._child_err = open(err_path, "ab", buffering=0)
+                self._log_rotatable = False
             self._child_err.write(
                 b"\n===== server start "
                 + time.strftime("%Y-%m-%dT%H:%M:%S").encode()
@@ -388,6 +413,7 @@ class FridayTray:
             except Exception:
                 pass
             self._child_err = None
+        self._log_rotatable = False
         self.running = False
 
     def restart_server(self) -> None:
@@ -490,6 +516,8 @@ class FridayTray:
         """
         while True:
             time.sleep(5)
+            if self._log_rotatable:
+                _rotate_server_log()
             self._update_meeting_title()
             proc = self.server_proc
             alive = (proc is not None and proc.poll() is None) or _port_in_use(_port())
