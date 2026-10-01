@@ -297,16 +297,15 @@ def open_page(browser):
 def _sheet(page):
     return page.evaluate(r"""() => { const s = document.querySelector('[data-testid="shortcuts-sheet"]');
       if (!s) return null;
+      // a row's keys sit on one line and inside their column, whatever the markup
       const rows = Array.from(s.querySelectorAll('.keys-row'));
-      const broken = [], overlap = [];
-      rows.forEach(r => { const what = r.querySelector('.keys-what').getBoundingClientRect();
-        r.querySelectorAll('.keys-chord').forEach(c => { const b = c.getBoundingClientRect();
-          if (b.height > 30) broken.push(c.innerText);
-          if (b.right > what.left - 4) overlap.push(c.innerText); }); });
+      const keysOf = r => r.querySelector('.keys-chords');
+      const broken = rows.filter(r => keysOf(r).getBoundingClientRect().height > 30).map(r => keysOf(r).innerText);
+      const overlap = rows.filter(r => keysOf(r).scrollWidth > keysOf(r).clientWidth + 1).map(r => keysOf(r).innerText);
       return {text: s.innerText, groups: Array.from(s.querySelectorAll('h3')).map(h => h.textContent),
               dialog: s.getAttribute('role'), label: document.getElementById(s.getAttribute('aria-labelledby')).textContent,
               focused: s.contains(document.activeElement), broken, overlap,
-              chords: Array.from(s.querySelectorAll('.keys-chord')).map(c => c.innerText.replace(/\s+/g, ''))}; }""")
+              chords: rows.map(r => keysOf(r).innerText.replace(/\s+/g, ''))}; }""")
 
 
 def test_question_mark_shows_the_keys_and_esc_closes_them(open_page):
