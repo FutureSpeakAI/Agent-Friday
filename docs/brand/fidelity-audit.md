@@ -123,9 +123,10 @@ everything reachable from the keyboard), and the brand check in BRAND.md.
 ## Left by rule
 
 - The avatar and the scene belong to the avatar session: the scene's fallback line ("That
-  look was too heavy for this computer; I went back") and its state chip are theirs, and so
-  are the two Orbitron declarations without a fallback in the Evolution controls that the
-  brand guard reports.
+  look was too heavy for this computer; I went back") and its state chip are theirs. The two
+  Orbitron declarations without a fallback in the Evolution controls now read
+  `'Orbitron, sans-serif'` (`5352ca12`): the brand guard arrives with this branch, so this
+  branch keeps it passing.
 - `ui_parts/app.html` still lacks parts of `index.html` (QuickSwitch, the orbs control, the
   chat stream, the Settings Updates section). The fixes above are mirrored where the mirror
   has the code.

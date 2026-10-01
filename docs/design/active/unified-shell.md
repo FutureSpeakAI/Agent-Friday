@@ -8,7 +8,10 @@
 > judge, the fade, the setting and the keys, §10.2 to §10.5) `226029b5`, piece 8 (one-action
 > collapse of the chat tray, §11.1) `9bc19e49`, piece 9 (snap layouts, §11.2 to §11.4)
 > `16fe2f2f` and its fix `3b4c7093` (a snap chord no longer steps the scene, §12.4), piece 10
-> (keyboard shortcuts, §12) `bda30794`.
+> (keyboard shortcuts, §12) `bda30794`. Fixes the Media branch needed: a dock button's raised
+> layers take no clicks, so the button is hit where it is drawn at any length of dock
+> (`e3784851`, `d6950f98`), and the Evolution controls' label falls back to sans-serif
+> (`5352ca12`).
 > **Last verified:** 2026-09-30 against main `321ec490` plus `piece/P-BRAND-0` (brand
 > source of truth: `src/agent_friday/brand.py`, `docs/brand/BRAND.md`,
 > `scripts/check_brand_tokens.py`), rebased as branch `feat/unified-shell`.
