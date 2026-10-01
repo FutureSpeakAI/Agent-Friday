@@ -3,6 +3,7 @@ served page and in its hand-maintained mirror, and they call the routes that
 require this PC and the page token."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -24,4 +25,5 @@ def test_privacy_tab_renders_both_panels(rel):
     assert "function ClawsRepinPanel(" in text and "function KeystoreWrapPanel(" in text
     assert "'/api/governance/claws/repin'" in text
     assert "'/api/security/keystore/wrap'" in text
-    assert "Re-confirm Friday" in text
+    # the button names her as the owner did (audit Y1)
+    assert re.search(r"""["']Re-confirm ["'] \+ fridayName\(\) \+ ["']’s rules on this PC""", text), rel
