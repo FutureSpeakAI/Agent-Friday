@@ -831,6 +831,49 @@ simply never grows, and everything else works.
 - **Never a flash.** A step applies as a crossfade of at least 12 s. Per frame,
   the change in mean scene luminance is capped so that no 1 s window can
   contain a WCAG 2.3.1 general flash. The step never sets `metamorphosisFlash`.
+- **Photosensitivity, as built (2026-09-30).** The scene has two limits,
+  measured on real rendered frames:
+  - no more than three flashes in any second, general or red (WCAG 2.3.1);
+  - within any 10-degree field, the average lightness (L*) moves by less
+    than 6 in any 100 ms. The scene is dark, so a glow that pumps from
+    luminance 0.004 to 0.02 is far below the WCAG step and still a visible
+    flicker.
+
+  What keeps it there:
+  - **Sound through an envelope.** The scene draws from sound (the
+    microphone's bands and Friday's voice) only through `soundEnvelope`,
+    which rises over about 0.5 s and falls over about 1 s. A voice or a loud
+    room swells the glow, colour and size with its phrasing, and never pumps
+    them with each syllable.
+  - **Energy lines surge.** A line surges over about a quarter of a second
+    instead of jumping to white.
+  - **Giga Earth's turn rate is capped.** Its sections turn no faster than
+    0.9 rad/s, so fewer than three tiles a second sweep past any point.
+  - **A structure change never pops.** A change asked for mid-crossfade
+    continues from what is on screen. The ocean's camera glides forward and
+    back instead of snapping back.
+  - **The brightness governor** is the composer's last pass. It measures
+    both the newly drawn image and the frame shown before on a 32 × 20 grid
+    of cells, and averages every 10-degree field (11 × 7 cells).
+    - A field that would change its average lightness faster than 2.5 L* per
+      100 ms keeps just enough of the frame shown before to change at that
+      rate, so it fades toward the new image instead of jumping.
+    - Each pixel keeps as much as the most demanding field around it, so
+      every field is held, wherever it lies.
+    - A small bright thing moving within a field barely changes the field's
+      average, so it is left alone and stays crisp.
+    - Below the rate, it changes nothing.
+
+    It runs on the GPU with no read-back. Frame time p95 on the Mandelbrot
+    set is unchanged within measurement: 24.7 ms against 24.1 ms without the
+    governor (2026-09-30, the live model resident).
+
+  `tests/app/specs/photosensitivity.spec.ts` measures every structure while
+  it arrives, at rest, while Friday speaks (with the microphone hearing
+  her), through every gesture, and while the user talks. It runs:
+  - at v1;
+  - with an evolved genome at the brightest corner of every gene;
+  - on Giga Earth at all seven forms, and on a step landing on screen.
 - **Reduced motion is honoured** (Phase A0 adds it to the scene, §11). Under
   `prefers-reduced-motion: reduce`, or the Friday override:
   - a step uses a 2 s opacity-only crossfade;

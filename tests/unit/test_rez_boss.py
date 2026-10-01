@@ -84,6 +84,14 @@ const radii = (voice, reduced) => { seed = SEED; const g = new THREE.Group(); Fr
   for (let s = 0; s < 5; s++) { tiles.getMatrixAt(s * 40, m); p.setFromMatrixPosition(m); r.push(+p.length().toFixed(4)); }
   return r; };
 out.silent = radii(0, false); out.speaking = radii(0.6, false); out.speakingReduced = radii(0.6, true);
+// photosensitivity: however fast the scene asks it to turn, no section turns
+// faster than 0.9 rad/s (tiles passing under three a second)
+seed = SEED; { const g = new THREE.Group(); FridayRez.build(g, 0);
+  const tiles = g.children[0].children.find(c => c.isInstancedMesh), m = new THREE.Matrix4(), p = new THREE.Vector3();
+  const ang = () => { const a = []; for (let s = 0; s < 5; s++) { tiles.getMatrixAt(s * 40, m); p.setFromMatrixPosition(m); a.push(Math.atan2(p.x, p.z)); } return a; };
+  FridayRez.animate(1 / 60, 1.0, 0, base, accent, false); const a0 = ang();
+  for (let f = 0; f < 60; f++) FridayRez.animate(1 / 60, 1.0, 0, base, accent, false);
+  const a1 = ang(); out.turnPerSecond = Math.max(...a1.map((v, i) => { let d = Math.abs(v - a0[i]); return Math.min(d, 2 * Math.PI - d); })); }
 // reduced motion: nothing turns
 seed = SEED; { const g = new THREE.Group(); FridayRez.build(g, 5);
   const tiles = g.children[0].children.find(c => c.isInstancedMesh);
@@ -152,6 +160,15 @@ def test_the_sections_pulse_in_turn_only_while_friday_speaks(path):
     o = _run(path, 7)
     assert o["silent"] == [7.0] * 5 and o["speakingReduced"] == [7.0] * 5
     assert len(set(o["speaking"])) > 1 and all(r > 7.0 for r in o["speaking"])
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+@pytest.mark.parametrize("path", SCENES, ids=lambda p: p.name)
+def test_no_section_turns_fast_enough_to_flicker(path):
+    # Photosensitivity (tests/app/specs/photosensitivity.spec.ts): 18 degrees a
+    # tile, so 0.9 rad/s is under three tiles a second past any point.
+    o = _run(path, 7)
+    assert 0.1 < o["turnPerSecond"] <= 0.9 + 1e-6
 
 
 @pytest.mark.skipif(not node, reason="node is not installed")

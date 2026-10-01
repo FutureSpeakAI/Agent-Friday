@@ -401,6 +401,143 @@
             `
         };
 
+        // <brightness-governor>
+        // The photosensitivity backstop (WCAG 2.3.1; tests/app/specs/
+        // photosensitivity.spec.ts). The scene's last pass caps how fast any
+        // 10-degree field of view (about a third of the screen each way) may
+        // change how bright it looks, on average. That is what a flash is; a
+        // small bright thing moving about within a field is not, and is left
+        // alone. Each frame, both the newly drawn image and the frame shown
+        // before are measured on a 32 x 20 grid of cells (lightness, CIE L*,
+        // per pixel, averaged), and every field-sized window of the grid is
+        // averaged. A field that would change faster than MAX_L_PER_S keeps
+        // just enough of the frame shown before to change at that rate, and
+        // each pixel keeps as much as the most demanding field around it, so
+        // every field is held, wherever it lies. Such a field fades toward the
+        // new image instead of jumping. Below that rate nothing is kept and the
+        // pass changes nothing: it acts only on a flash (a structure arriving
+        // through the camera, bright geometry sweeping past close up, a glow
+        // that pumps). It runs on the GPU with no read-back, so it never
+        // stalls a frame.
+        const BrightnessGovernor = (function () {
+            const GX = 32, GY = 20, SAMPLES = 8;
+            const FW = 11, FH = 7;                  // a 10-degree field (341 x 256 of 1024 x 768), in cells
+            const MAX_L_PER_S = 25;                 // 2.5 L* per 100 ms; the limit is 6
+            const VS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+            const COMMON = `
+                float lin1(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
+                float lstarOf(vec3 c) { c = clamp(c, 0.0, 1.0);
+                    float y = 0.2126 * lin1(c.r) + 0.7152 * lin1(c.g) + 0.0722 * lin1(c.b);
+                    return y > 0.008856 ? 116.0 * pow(y, 1.0 / 3.0) - 16.0 : 903.3 * y; }
+            `;
+            // Rows 0..GY-1: each cell's average L* as drawn; rows GY..2GY-1: as shown before.
+            const CELL_FS = `uniform sampler2D tDrawn; uniform sampler2D tShown; varying vec2 vUv; ${COMMON}
+                void main() {
+                    vec2 px = floor(vUv * vec2(${GX}.0, ${2 * GY}.0));
+                    bool shown = px.y >= ${GY}.0;
+                    vec2 cell = vec2(px.x, shown ? px.y - ${GY}.0 : px.y);
+                    float s = 0.0;
+                    for (int i = 0; i < ${SAMPLES}; i++) for (int j = 0; j < ${SAMPLES}; j++) {
+                        vec2 uv = (cell + (vec2(float(i), float(j)) + 0.5) / ${SAMPLES}.0) / vec2(${GX}.0, ${GY}.0);
+                        s += lstarOf(shown ? texture2D(tShown, uv).rgb : texture2D(tDrawn, uv).rgb);
+                    }
+                    gl_FragColor = vec4(s / ${SAMPLES * SAMPLES}.0, 0.0, 0.0, 1.0);
+                }`;
+            // Per cell: how much of the frame shown before the field centred
+            // on it (kept inside the screen) must keep to change at the rate.
+            const KEEP_FS = `uniform sampler2D tCells; uniform float stepL; uniform float prime; varying vec2 vUv;
+                void main() {
+                    vec2 cell = floor(vUv * vec2(${GX}.0, ${GY}.0));
+                    vec2 o = clamp(cell - vec2(${(FW - 1) / 2}.0, ${(FH - 1) / 2}.0), vec2(0.0), vec2(${GX - FW}.0, ${GY - FH}.0));
+                    float d = 0.0, s = 0.0;
+                    for (int j = 0; j < ${FH}; j++) for (int i = 0; i < ${FW}; i++) {
+                        vec2 c = o + vec2(float(i), float(j));
+                        d += texture2D(tCells, vec2((c.x + 0.5) / ${GX}.0, (c.y + 0.5) / ${2 * GY}.0)).r;
+                        s += texture2D(tCells, vec2((c.x + 0.5) / ${GX}.0, (c.y + ${GY}.0 + 0.5) / ${2 * GY}.0)).r;
+                    }
+                    d /= ${FW * FH}.0; s /= ${FW * FH}.0;
+                    float keep = 0.0;
+                    if (prime < 0.5 && stepL > 0.0 && abs(d - s) > stepL) keep = clamp(1.0 - stepL / abs(d - s), 0.0, 1.0);
+                    gl_FragColor = vec4(keep, 0.0, 0.0, 1.0);
+                }`;
+            // Per cell: the most any field containing it must keep.
+            const MOST_FS = `uniform sampler2D tKeep; varying vec2 vUv;
+                void main() {
+                    vec2 cell = floor(vUv * vec2(${GX}.0, ${GY}.0));
+                    float m = 0.0;
+                    for (int j = -${(FH - 1) / 2}; j <= ${(FH - 1) / 2}; j++) for (int i = -${(FW - 1) / 2}; i <= ${(FW - 1) / 2}; i++) {
+                        vec2 c = clamp(cell + vec2(float(i), float(j)), vec2(0.0), vec2(${GX - 1}.0, ${GY - 1}.0));
+                        m = max(m, texture2D(tKeep, (c + 0.5) / vec2(${GX}.0, ${GY}.0)).r);
+                    }
+                    gl_FragColor = vec4(m, 0.0, 0.0, 1.0);
+                }`;
+            const APPLY_FS = `uniform sampler2D tDrawn; uniform sampler2D tShown; uniform sampler2D tKeep; varying vec2 vUv;
+                void main() {
+                    vec4 c = texture2D(tDrawn, vUv);
+                    float k = texture2D(tKeep, vUv).r;
+                    gl_FragColor = k > 1e-3 ? mix(c, texture2D(tShown, vUv), k) : c;
+                }`;
+            const COPY_FS = 'uniform sampler2D tDiffuse; varying vec2 vUv; void main() { gl_FragColor = texture2D(tDiffuse, vUv); }';
+
+            class GovernorPass extends THREE.Pass {
+                constructor() {
+                    super();
+                    const rt = (w, h, filter) => new THREE.WebGLRenderTarget(w, h, { minFilter: filter, magFilter: filter,
+                        format: THREE.RGBAFormat, type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false });
+                    this.cells = rt(GX, 2 * GY, THREE.NearestFilter);
+                    this.keep = rt(GX, GY, THREE.NearestFilter);
+                    this.most = rt(GX, GY, THREE.LinearFilter);
+                    this.shown = []; this.shownAt = 0; this.primed = false; this.last = null;
+                    const mat = (fs, uniforms) => new THREE.ShaderMaterial({ uniforms, vertexShader: VS, fragmentShader: fs, depthTest: false, depthWrite: false });
+                    this.cellMat = mat(CELL_FS, { tDrawn: { value: null }, tShown: { value: null } });
+                    this.keepMat = mat(KEEP_FS, { tCells: { value: null }, stepL: { value: 0 }, prime: { value: 1 } });
+                    this.mostMat = mat(MOST_FS, { tKeep: { value: null } });
+                    this.applyMat = mat(APPLY_FS, { tDrawn: { value: null }, tShown: { value: null }, tKeep: { value: null } });
+                    this.copyMat = mat(COPY_FS, { tDiffuse: { value: null } });
+                    this.quad = new THREE.FullScreenQuad(null);
+                }
+                render(renderer, writeBuffer, readBuffer) {
+                    const now = performance.now() / 1000;
+                    const dt = this.last === null ? 0 : Math.max(0, Math.min(0.1, now - this.last));
+                    this.last = now;
+                    const w = readBuffer.width, h = readBuffer.height;
+                    if (!this.shown.length || this.shown[0].width !== w || this.shown[0].height !== h) {
+                        this.shown.forEach(s => s.dispose());
+                        this.shown = [0, 1].map(() => new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.LinearFilter,
+                            magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false }));
+                        this.primed = false;                 // nothing shown at this size yet
+                    }
+                    const out = this.shown[this.shownAt], before = this.shown[1 - this.shownAt];
+                    this.quad.material = this.cellMat;
+                    this.cellMat.uniforms.tDrawn.value = readBuffer.texture;
+                    this.cellMat.uniforms.tShown.value = before.texture;
+                    renderer.setRenderTarget(this.cells); this.quad.render(renderer);
+                    this.quad.material = this.keepMat;
+                    this.keepMat.uniforms.tCells.value = this.cells.texture;
+                    this.keepMat.uniforms.stepL.value = MAX_L_PER_S * dt;
+                    this.keepMat.uniforms.prime.value = this.primed ? 0 : 1;
+                    renderer.setRenderTarget(this.keep); this.quad.render(renderer);
+                    this.quad.material = this.mostMat;
+                    this.mostMat.uniforms.tKeep.value = this.keep.texture;
+                    renderer.setRenderTarget(this.most); this.quad.render(renderer);
+                    this.quad.material = this.applyMat;
+                    this.applyMat.uniforms.tDrawn.value = readBuffer.texture;
+                    this.applyMat.uniforms.tShown.value = before.texture;
+                    this.applyMat.uniforms.tKeep.value = this.most.texture;
+                    renderer.setRenderTarget(out); this.quad.render(renderer);
+                    this.shownAt = 1 - this.shownAt; this.primed = true;
+                    this.quad.material = this.copyMat;
+                    this.copyMat.uniforms.tDiffuse.value = out.texture;
+                    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+                    if (this.clear) renderer.clear();
+                    this.quad.render(renderer);
+                }
+                dispose() { this.cells.dispose(); this.keep.dispose(); this.most.dispose(); this.shown.forEach(s => s.dispose()); }
+            }
+            return { create: () => new GovernorPass(), MAX_L_PER_S, GRID: [GX, GY], FIELD: [FW, FH] };
+        })();
+        // </brightness-governor>
+
         // --- THREE.JS ENGINE ---
         let scene, camera, renderer, composer, bloomPass, holoPass;
         let particleSystem, energyLines = [], starField, nebulaClouds = [];
@@ -412,6 +549,10 @@
         let currentStructure = EVOLUTION_PATH[0].id;
         let targetStructure = EVOLUTION_PATH[0].id;
         let transitionProgress = 1.0;
+        // A crossfade never pops (photosensitivity): the structure leaving
+        // fades from the opacity it had when the change was asked for, and one
+        // dropped from an unfinished crossfade keeps fading out here.
+        let leavingFrom = 1.0, leavingStructures = [];
         let metamorphosisFlash = 0.0; 
         let currentMood = 'LISTENING';
         let moodOverride = null;
@@ -428,6 +569,14 @@
         let lastSoundTime = 0;
         let audioData = { low: 0, mid: 0, high: 0, total: 0 };
         let idleFactor = 0.4;
+        // Everything the scene draws from sound (the microphone's bands and
+        // Friday's voice) follows it through a slow envelope: it rises over
+        // about half a second and falls over about one. So a voice or a loud
+        // room swells the scene with its phrasing, and never pumps its glow,
+        // colour or size with each syllable, several times a second
+        // (photosensitivity: tests/app/specs/photosensitivity.spec.ts).
+        const soundEnvelope = (cur, target, dt) => cur + (target - cur) * Math.min(1, dt / (target > cur ? 0.5 : 1.0));
+        const audioEnv = { low: 0, mid: 0, high: 0, total: 0 };
         
         let moodLerpValues = { ...MOODS.LISTENING };
         moodLerpValues.baseColor = new THREE.Color(MOODS.LISTENING.baseColor);
@@ -1871,6 +2020,7 @@
             const SECTIONS = 5, BANDS = SECTIONS * 2, PER = 20, N = BANDS * PER, R = 7;
             const LAT0 = -75 * Math.PI / 180, DLAT = 15 * Math.PI / 180, DLON = 2 * Math.PI / PER;
             const ARMS = 4;
+            const MAX_TURN = 0.5;           // rad/s before each section's own factor (up to 1.8)
             // The X: a wide cross, so it shows through the ball's open middle.
             const BLADE_DEG = [35, 145, 215, 325];
             // What each form shows. gone: share of tiles blasted off the ball
@@ -2015,7 +2165,10 @@
             function animate(dt, rate, voice, base, accent, reduced) {
                 if (!root) return;
                 // rate is the scene's per-frame idle turn (at 60 frames a second).
-                const turn = reduced ? 0 : rate * 60 * dt;
+                // Capped: tiles sweeping past faster than about three a second
+                // (a section at 0.9 rad/s, 18 degrees a tile) flicker, seam and
+                // face in turn, which is what speaking at full speed did.
+                const turn = reduced ? 0 : Math.min(rate * 60, MAX_TURN) * dt;
                 for (let s = 0; s < SECTIONS; s++) secAngle[s] += turn * (s % 2 ? -1 : 1) * (0.8 + 0.25 * s);
                 swirl += turn * 1.6; ringSpin += turn * 2.2; robotSpin += turn * 0.6;
                 // While Friday speaks, the sections pulse in turn from the top,
@@ -2181,11 +2334,37 @@
         })();
         // </rez-boss>
 
+        // How visible a structure is right now, 0..1.
+        function shownOpacity(key) {
+            const e = smoothstep(transitionProgress);
+            if (key === targetStructure) return e;
+            if (key === currentStructure && transitionProgress < 1.0) return leavingFrom * (1 - e);
+            const l = leavingStructures.find(x => x.key === key);
+            return l ? l.opacity : 0;
+        }
+
         function setEvolution(idx) {
-            if (idx === currentEvolutionIdx && transitionProgress === 1.0) return;
+            const next = EVOLUTION_PATH[idx].id;
+            // Asking again for the structure already arriving changes nothing:
+            // restarting the crossfade popped it back to nothing.
+            if (next === targetStructure) { currentEvolutionIdx = idx; return; }
+            // Mid-crossfade, everything on screen continues from where it is:
+            // the one leaving keeps fading out, the one arriving becomes the
+            // one leaving at the opacity it reached, and the new one starts
+            // from whatever of it is already showing.
+            const fromTarget = shownOpacity(targetStructure), fromNext = shownOpacity(next);
+            if (transitionProgress < 1.0 && currentStructure !== targetStructure && currentStructure !== next) {
+                const o = shownOpacity(currentStructure);
+                if (o > 0) leavingStructures.push({ key: currentStructure, opacity: o });
+            }
+            leavingStructures = leavingStructures.filter(x => x.key !== next && x.key !== targetStructure);
             currentEvolutionIdx = idx;
-            currentStructure = targetStructure; targetStructure = EVOLUTION_PATH[idx].id;
-            transitionProgress = 0.0; SceneMotion.startFlash(performance.now() / 1000);
+            currentStructure = targetStructure; targetStructure = next;
+            leavingFrom = fromTarget;
+            let lo = 0, hi = 1;                  // the progress at which the new one shows fromNext
+            for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (smoothstep(m) < fromNext) lo = m; else hi = m; }
+            transitionProgress = fromNext > 0 ? lo : 0.0;
+            SceneMotion.startFlash(performance.now() / 1000);
             if (structures[targetStructure]) structures[targetStructure].visible = true;
             const dayText = document.getElementById('evolution-day-text');
             if (dayText) dayText.innerText = `DAY ${idx + 1}: ${EVOLUTION_PATH[idx].name}`;
@@ -2234,6 +2413,8 @@
             holoPass = new THREE.ShaderPass(HolographicShader);
             composer = new THREE.EffectComposer(renderer);
             composer.addPass(renderScene); composer.addPass(bloomPass); composer.addPass(holoPass);
+            // Last: nothing drawn above may flash (see <brightness-governor>).
+            composer.addPass(BrightnessGovernor.create());
 
             window.addEventListener('resize', onWindowResize);
 
@@ -2665,6 +2846,7 @@
             } else {
                 audioData.low = heartbeat * 0.15; audioData.mid = heartbeat * 0.05; audioData.high = 0; audioData.total = audioData.low;
             }
+            for (const k in audioEnv) audioData[k] = audioEnv[k] = soundEnvelope(audioEnv[k], audioData[k], delta);
 
             // Design rule: the scene only ANIMATES (elevated energy / motion)
             // while Friday is actually SPEAKING (audio playing back). Thinking /
@@ -2724,16 +2906,23 @@
                 if(g) {
                     updateGroupColors(g);
                     if (key === targetStructure) { g.visible = true; setGroupOpacity(g, ease); g.scale.setScalar(SceneMotion.transitionScale(ease, true)); }
-                    else if (key === currentStructure && transitionProgress < 1.0) { setGroupOpacity(g, 1 - ease); g.scale.setScalar(SceneMotion.transitionScale(ease, false)); }
-                    else g.visible = false;
+                    else if (key === currentStructure && transitionProgress < 1.0) { setGroupOpacity(g, leavingFrom * (1 - ease)); g.scale.setScalar(SceneMotion.transitionScale(ease, false)); }
+                    else {
+                        const l = leavingStructures.find(x => x.key === key);
+                        if (l) { g.visible = true; setGroupOpacity(g, l.opacity); }
+                        else g.visible = false;
+                    }
                 }
             });
-            if (transitionProgress >= 1.0 && currentStructure !== targetStructure) currentStructure = targetStructure;
+            if (transitionProgress >= 1.0 && currentStructure !== targetStructure) { currentStructure = targetStructure; leavingFrom = 1.0; }
+            // A structure dropped from an unfinished crossfade fades out at the crossfade's pace.
+            leavingStructures.forEach(l => { l.opacity = Math.max(0, l.opacity - delta * 0.125); });
+            leavingStructures = leavingStructures.filter(l => l.opacity > 0);
 
             // --- CINEMATIC TRUE-3D CAMERA PARALLAX ---
             if(camera) {
                 if (targetStructure === 'DOME') { targetCamPos.set(0, -6 + Math.sin(elapsed*0.2)*2, 18); targetCamLook.set(0, 5, 0); } 
-                else if (targetStructure === 'GRID') { targetCamPos.set(0, 2 + Math.sin(elapsed*0.2)*1, 15 - (elapsed*2) % 10); targetCamLook.set(0, 1, 0); } 
+                else if (targetStructure === 'GRID') { targetCamPos.set(0, 2 + Math.sin(elapsed*0.2)*1, 15 - 10 * (1 - Math.abs((elapsed * 0.2) % 2 - 1))); targetCamLook.set(0, 1, 0); } 
                 else if (targetStructure === 'CABLES' || targetStructure === 'ASTROLABE') { targetCamPos.set(Math.sin(elapsed*0.1)*12, Math.cos(elapsed*0.1)*12, 15 + Math.sin(elapsed*0.2)*5); targetCamLook.set(0, 0, 0); } 
                 else if (targetStructure === 'MANDELBROT') { targetCamPos.set(Math.sin(elapsed*0.2)*14, 8 + Math.sin(elapsed*0.3)*3, Math.cos(elapsed*0.2)*14); targetCamLook.set(0, 0, 0); } 
                 else if (targetStructure === 'NETWORK') { targetCamPos.set(Math.sin(elapsed*0.2)*10, Math.sin(elapsed*0.3)*6, Math.cos(elapsed*0.2)*10); targetCamLook.set(0, 0, 0); } 
@@ -3027,8 +3216,11 @@
             // --- ENERGY LINES ---
             energyLines.forEach((line) => {
                 if (line && line.userData && line.material && line.material.color) {
-                    if (audioData.high > 0.3 && Math.random() > 0.98) line.userData.intensity = 1.0;
-                    line.userData.intensity *= 0.95; 
+                    // A surge rises over about a quarter of a second and fades:
+                    // lines jumping to full white at random flashed the screen.
+                    if (audioData.high > 0.3 && Math.random() > 0.98) line.userData.surge = 1.0;
+                    line.userData.surge = (line.userData.surge || 0) * 0.95;
+                    line.userData.intensity += (line.userData.surge - line.userData.intensity) * Math.min(1, delta * 4); 
                     const pulse = (Math.sin(elapsed * line.userData.pulseSpeed) + 1) / 2;
                     line.material.opacity = (0.01 + line.userData.intensity * 0.4 + pulse * 0.03) * idleFactor;
                     line.material.color.copy(moodLerpValues.accentColor);
@@ -3038,7 +3230,7 @@
 
             // --- HOLOGRAPHIC REACTIVITY UPDATE ---
             holoTargetAmplitude = (window._fridayHoloAmplitude || 0) * SceneMotion.speechGain();
-            holoAmplitude += (holoTargetAmplitude - holoAmplitude) * 0.15;
+            holoAmplitude = soundEnvelope(holoAmplitude, holoTargetAmplitude, delta);
             if (processOrbManager) processOrbManager.update(delta, elapsed);
 
             // --- POST PROCESSING ---

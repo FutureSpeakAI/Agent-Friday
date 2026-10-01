@@ -1,0 +1,375 @@
+{
+ "v1": {
+  "genome": {
+   "palette": {
+    "base_offset": 0,
+    "scheme": "v1",
+    "accent_share": 0.2,
+    "saturation": 1.0,
+    "anchor_hue": 221,
+    "scheme_changed_at": 0
+   },
+   "luma": {
+    "bloom": 1.0,
+    "grain": 1.0
+   },
+   "form": {
+    "density": 1.0,
+    "coherence": 0.5,
+    "symmetry": 8,
+    "symmetry_changed_at": 0
+   },
+   "speech": {
+    "tempo": 1.0,
+    "amplitude": 1.0
+   },
+   "gesture": {
+    "tempo": 1.0,
+    "ease": "spring",
+    "trail": 0.0,
+    "ease_changed_at": 0
+   },
+   "facets": 0,
+   "structures": {
+    "CUBES": {
+     "spacing": 1.6,
+     "sparsity": 0.15
+    },
+    "ICOSAHEDRON": {
+     "shells": 3,
+     "detail_delta": 0
+    },
+    "NETWORK": {
+     "nodes": 120,
+     "link_distance": 6
+    },
+    "DOME": {
+     "pillars": 8,
+     "crystals": 6
+    },
+    "ASTROLABE": {
+     "rings": 8,
+     "tilt_spread": 1.0
+    },
+    "TESSERACT": {
+     "w_ratio": 1.0
+    },
+    "QUANTUM": {
+     "wave": 10
+    },
+    "MANDELBROT": {
+     "max_iter": 40,
+     "step": 0.012
+    },
+    "MOBIUS": {
+     "twists": 1,
+     "width": 1.5
+    },
+    "GRID": {
+     "wave_scale": 1.0
+    },
+    "CABLES": {
+     "tubes": 80
+    },
+    "NONE": {
+     "lines": 100
+    },
+    "EDEN": {
+     "stage": 0
+    }
+   }
+  },
+  "expression": {
+   "CUBES": {
+    "grid": 3,
+    "cube_size": 1.4,
+    "scale": 1.5,
+    "lattice_spread": 0.65,
+    "spacing": 1.6,
+    "sparsity": 0.15
+   },
+   "ICOSAHEDRON": {
+    "shells": 3,
+    "detail_delta": 0
+   },
+   "NETWORK": {
+    "nodes": 120,
+    "link_distance": 6.0
+   },
+   "DOME": {
+    "pillars": 8,
+    "crystals": 6
+   },
+   "ASTROLABE": {
+    "rings": 8,
+    "tilt_spread": 1.0
+   },
+   "TESSERACT": {
+    "w_ratio": 1.0
+   },
+   "QUANTUM": {
+    "wave": 10.0
+   },
+   "MANDELBROT": {
+    "max_iter": 40,
+    "step": 0.012
+   },
+   "MOBIUS": {
+    "twists": 1,
+    "width": 1.5
+   },
+   "GRID": {
+    "wave_scale": 1.0
+   },
+   "CABLES": {
+    "tubes": 80
+   },
+   "NONE": {
+    "lines": 100
+   },
+   "EDEN": {
+    "stage": 0
+   }
+  },
+  "palette": {
+   "base_hue": 221.0,
+   "hues": [
+    220.8,
+    212.6,
+    220.0,
+    210.0,
+    180.0,
+    180.0,
+    228.0,
+    209.6,
+    210.0
+   ],
+   "moods": {
+    "IDLE": {
+     "base": "#1e54c7",
+     "accent": "#5fa8ff"
+    },
+    "CALM": {
+     "base": "#001133",
+     "accent": "#0055aa"
+    },
+    "CURIOUS": {
+     "base": "#00b3b3",
+     "accent": "#00ffff"
+    },
+    "FOCUSED": {
+     "base": "#0a1e6e",
+     "accent": "#1e90ff"
+    },
+    "REFLECTIVE": {
+     "base": "#8888aa",
+     "accent": "#ddeeff"
+    }
+   },
+   "colours": [
+    "#1e54c7",
+    "#5fa8ff"
+   ],
+   "saturation": 1.0,
+   "accent_share": 0.2,
+   "bloom": 1.0,
+   "grain": 1.0
+  },
+  "sigil": {
+   "arms": 6,
+   "tilt": -12.5,
+   "accent_slot": 3,
+   "phase": 0.42
+  },
+  "v1": true,
+  "step": null
+ },
+ "evolved": {
+  "genome": {
+   "palette": {
+    "base_offset": 30,
+    "scheme": "violet",
+    "accent_share": 0.35,
+    "saturation": 1.1,
+    "anchor_hue": 221,
+    "scheme_changed_at": 0
+   },
+   "luma": {
+    "bloom": 1.1,
+    "grain": 1.1
+   },
+   "form": {
+    "density": 1.1,
+    "coherence": 1.0,
+    "symmetry": 8,
+    "symmetry_changed_at": 0
+   },
+   "speech": {
+    "tempo": 1.15,
+    "amplitude": 1.1
+   },
+   "gesture": {
+    "tempo": 1.15,
+    "ease": "spring",
+    "trail": 0.5,
+    "ease_changed_at": 0
+   },
+   "facets": 12,
+   "structures": {
+    "CUBES": {
+     "spacing": 1.9,
+     "sparsity": 0.3
+    },
+    "ICOSAHEDRON": {
+     "shells": 4,
+     "detail_delta": 0
+    },
+    "NETWORK": {
+     "nodes": 132,
+     "link_distance": 7.0
+    },
+    "DOME": {
+     "pillars": 10,
+     "crystals": 7
+    },
+    "ASTROLABE": {
+     "rings": 9,
+     "tilt_spread": 1.0
+    },
+    "TESSERACT": {
+     "w_ratio": 1.4
+    },
+    "QUANTUM": {
+     "wave": 12.0
+    },
+    "MANDELBROT": {
+     "max_iter": 40,
+     "step": 0.015
+    },
+    "MOBIUS": {
+     "twists": 3,
+     "width": 1.65
+    },
+    "GRID": {
+     "wave_scale": 1.2
+    },
+    "CABLES": {
+     "tubes": 88
+    },
+    "NONE": {
+     "lines": 110
+    },
+    "EDEN": {
+     "stage": 6
+    }
+   }
+  },
+  "expression": {
+   "CUBES": {
+    "grid": 3,
+    "cube_size": 1.4,
+    "scale": 1.5,
+    "lattice_spread": 0.65,
+    "spacing": 1.9,
+    "sparsity": 0.3
+   },
+   "ICOSAHEDRON": {
+    "shells": 4,
+    "detail_delta": 0
+   },
+   "NETWORK": {
+    "nodes": 145,
+    "link_distance": 7.0
+   },
+   "DOME": {
+    "pillars": 10,
+    "crystals": 7
+   },
+   "ASTROLABE": {
+    "rings": 9,
+    "tilt_spread": 1.0
+   },
+   "TESSERACT": {
+    "w_ratio": 1.4
+   },
+   "QUANTUM": {
+    "wave": 12.0
+   },
+   "MANDELBROT": {
+    "max_iter": 40,
+    "step": 0.015
+   },
+   "MOBIUS": {
+    "twists": 3,
+    "width": 1.65
+   },
+   "GRID": {
+    "wave_scale": 1.2
+   },
+   "CABLES": {
+    "tubes": 88
+   },
+   "NONE": {
+    "lines": 121
+   },
+   "EDEN": {
+    "stage": 6
+   }
+  },
+  "palette": {
+   "base_hue": 251,
+   "hues": [
+    250.7,
+    282.4,
+    250.0,
+    280.1,
+    209.8,
+    248.6,
+    258.3,
+    279.6,
+    280.8
+   ],
+   "moods": {
+    "IDLE": {
+     "base": "#5737ea",
+     "accent": "#da81ff"
+    },
+    "CALM": {
+     "base": "#0d004e",
+     "accent": "#8700ca"
+    },
+    "CURIOUS": {
+     "base": "#4aa5ff",
+     "accent": "#e7e3ff"
+    },
+    "FOCUSED": {
+     "base": "#2a057e",
+     "accent": "#c85dff"
+    },
+    "REFLECTIVE": {
+     "base": "#9784aa",
+     "accent": "#f7e6ff"
+    }
+   },
+   "colours": [
+    "#5737ea",
+    "#da81ff"
+   ],
+   "saturation": 1.1,
+   "accent_share": 0.35,
+   "bloom": 1.1,
+   "grain": 1.1
+  },
+  "sigil": {
+   "arms": 6,
+   "tilt": -12.5,
+   "accent_slot": 3,
+   "phase": 0.42
+  },
+  "v1": false,
+  "step": {
+   "content_hash": "sha256:flash-fixture",
+   "name": "The brightest corner"
+  }
+ }
+}

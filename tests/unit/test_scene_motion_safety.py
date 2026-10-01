@@ -102,7 +102,8 @@ def test_reduced_motion_means_no_flash_no_zoom_no_time_lapse(path):
 # The frame loop must actually go through SceneMotion. Each anchor is checked
 # to occur exactly once, so a second copy elsewhere cannot satisfy it silently.
 WIRING = [
-    "transitionProgress = 0.0; SceneMotion.startFlash(performance.now() / 1000);",
+    # A structure change starts its glow through SceneMotion (setEvolution).
+    "SceneMotion.startFlash(performance.now() / 1000);",
     "metamorphosisFlash = SceneMotion.tick(delta);",
     "bloomPass.strength = Math.max(0.7, currentBloom) + SceneMotion.flashBloom(metamorphosisFlash);",
     "g.scale.setScalar(SceneMotion.transitionScale(ease, true)); }",
