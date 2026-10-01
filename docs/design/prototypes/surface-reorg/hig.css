@@ -94,6 +94,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
    the one place this file names a colour outside the token block (BRAND.md: the scene's ground
    stays near-black). Every piece of chrome reads a token. */
 .stage { position: relative; min-height: calc(100vh - 30px); overflow: hidden; background: radial-gradient(ellipse at 50% 40%, #0d1426 0%, #060912 55%, #03050a 100%); }
+.stage .grid-floor { display: none; } /* the scene still has its own floor; Calm has none by design */
 .stars { position: absolute; inset: 0; pointer-events: none; opacity: .7;
   background-image: radial-gradient(1px 1px at 12% 20%, rgba(255,255,255,.5) 50%, transparent 51%), radial-gradient(1px 1px at 80% 30%, rgba(0,212,255,.5) 50%, transparent 51%), radial-gradient(1.5px 1.5px at 60% 70%, rgba(255,255,255,.35) 50%, transparent 51%), radial-gradient(1px 1px at 30% 80%, rgba(123,97,255,.5) 50%, transparent 51%), radial-gradient(1px 1px at 90% 85%, rgba(255,255,255,.4) 50%, transparent 51%), radial-gradient(1px 1px at 45% 15%, rgba(255,255,255,.3) 50%, transparent 51%), radial-gradient(1px 1px at 70% 50%, rgba(255,255,255,.25) 50%, transparent 51%), radial-gradient(1px 1px at 20% 55%, rgba(0,212,255,.3) 50%, transparent 51%);
   background-size: 700px 500px, 900px 600px, 800px 700px, 650px 450px, 1000px 800px, 500px 400px, 750px 550px, 850px 650px; }
@@ -336,8 +337,11 @@ select.sel, input.fld { height: 28px; border: 1px solid var(--fr-glass-edge); bo
 .cluster .ask input:focus { box-shadow: var(--fr-focus); }
 .cluster .ask .mic { width: 40px; height: 40px; border-radius: 50%; border: 1px solid rgba(0,212,255,.45); background: var(--fr-cyan-soft); color: var(--fr-cyan); display: grid; place-items: center; cursor: pointer; }
 .cluster .day { margin-top: 12px; }
-.holo { position: absolute; left: 50%; top: 44%; transform: translate(-50%, -50%); width: 260px; height: 260px; filter: drop-shadow(0 0 14px rgba(0,212,255,.35)); }
-.holo svg { width: 100%; height: 100%; fill: none; stroke: var(--fr-cyan); stroke-width: 1; opacity: .85; }
+.scene-still { position: absolute; inset: 0; background: url(scene.jpg) center / cover no-repeat; }
+.calm-only { display: none; }
+.stage.calm .scene-still { display: none; }
+.stage.calm .calm-only { display: block; }
+.avatar-still { position: absolute; left: 50%; top: 44%; width: 300px; height: 272px; transform: translate(-50%, -54%) scale(1.08); background: url(avatar.png) center / contain no-repeat; filter: drop-shadow(0 0 18px rgba(0,212,255,.35)); pointer-events: none; }
 
 /* Toast */
 .toast { position: fixed; right: 18px; bottom: 90px; z-index: 70; padding: 10px 14px; font-size: var(--fr-text-md); display: none; }

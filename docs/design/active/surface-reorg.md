@@ -229,7 +229,7 @@ one rail of thirteen pages in four groups, with the control room's four-line row
 | You and Friday | **General** | General: her name, language, startup, the local address, your profile answers | Getting to know you (progress strip, re-run any step) | "Delete my profile" moves to the danger zone |
 | | **Personality** | Personality text, the style sliders (verbosity, formality), how she addresses you, proactivity | Getting to know you | New page; today the persona is one textarea |
 | | **Voice** | Voice & Tracking's voice half: engine, model, voice, listening, push-to-transcribe, Gemini Live options | | Voice readiness becomes a status block at the top, marked as status |
-| | **Appearance & Hologram** | Appearance & 3D: dock, dazzle, constellation grouping; Tracking (head and hand); landing mode (shell §10.4); reduced motion, text size, 3D off | | The scene's own controls stay in the scene menu (avatar session) |
+| | **Appearance & Hologram** | Backdrop (Holographic, default; Calm: no starfield, grid or grain, the avatar stays); Appearance & 3D: dock, dazzle, constellation grouping; Tracking (head and hand); landing mode (shell §10.4); reduced motion, text size, 3D off | | The scene's own controls stay in the scene menu (avatar session) |
 | Thinking | **Models & Brain** | Models: routing mode, the seat per job, the Model Soup, local models, the model browser; Advanced's turn limits; Spending's stuck-model guard; keep-brain-warm and call mode when those settings exist (neither key exists today) | Models and seats | Cloud consent is one row here that links to Privacy & Data, not a second copy |
 | | **Spending** | Budgets, hard stops, scheduled jobs without a local model | Models and seats (sub-page) | Kept as its own page: money gets a door of its own; the six status blocks move under a "This month" status header |
 | Trust and data | **Privacy & Data** | Vault, cloud consent, wiki sections off the cloud, conversation log and off the record, retention, export, erase; the context log (from System); "What Friday knows about you" (§9.7) | What Friday knows about you; Privacy map | The privacy check becomes a status block; the Google Fonts toggle moves to Advanced |
@@ -275,21 +275,26 @@ sentence; a sentence becomes a diff and a yes.
 | D8 | The bar's default content is eight controls; telemetry sits behind the connection light. | §2.3; visionOS's bar: chrome when relevant. The computer-control indicator is the one exception, never hidden while live. |
 | D9 | Container queries decide a workspace's density, not the viewport. | P5: the same workspace must work at 560px in a window and 1600px in a tab. |
 | D10 | Prototypes use the generated `--fr-*` block byte for byte, and no colour outside it. | BRAND.md: one source of truth per medium. |
+| D11 | Family retires as a workspace. Members and pets go to People under a Household filter, dated items to Calendar and the landing cluster, routines to Routines; `family` stays as an alias that opens People → Household. | The owner left it to this document (2026-09-30). The view is four chat-prompt tiles over data that already has homes; a Household filter loses nothing. |
+| D12 | The clock and the resource chips leave the default bar; they live behind the connection light, and "Telemetry in the bar" is a setting, off by default. | The owner left it to this document (2026-09-30). visionOS's rule: chrome when relevant; one hover shows all of it. |
+| D13 | The holographic desktop, the cube of cubes and the 3D avatars are never removed or replaced by this reorganisation. A **Backdrop** option (Holographic, default; Calm) lets the starfield, grid floor and grain be turned off while the avatar stays. | The owner's words (2026-09-30): keep the cube of cubes and the holographic desktop; the calmer ground is welcome as an option; never lose the 3D avatars. The desktop prototype now draws its chrome over a still of the real scene for that reason. |
 
-### 3.2 Questions for the owner (at most three)
+### 3.2 The owner's rulings (2026-09-30)
 
-1. **Family.** Retire it (members and pets to People under a Household filter, dates to
-   Calendar and the landing cluster, routines to Routines), or keep a Family workspace and
-   give it a real job (household members, kids' modes, shared routines, the family lane in
-   Messages)? The prototype assumes retire.
-2. **The business dashboard under Sites** (pipeline, revenue, legal, talent, demos). Keep it
-   in the product as your own non-core workspace, named for the company and hidden on fresh
-   installs, or move it out of the product into a vibe-coded bundle when the salon can host
-   one? The prototype assumes the first.
-3. **The bar you look at all day.** The proposal takes the clock and the four resource chips
-   out of the default bar and puts them behind the connection light (one hover shows them
-   all). Do you want them back as a "show telemetry in the bar" setting on by default, or
-   gone by default?
+Three questions went to the owner with the first prototypes. The answers:
+
+| # | Question | Ruling |
+|---|---|---|
+| R1 | Retire Family, or give it a real job? | "You decide." Decided as D11: retire, with a Household filter in People. |
+| R2 | The business dashboard under Sites: in the product as the owner's own non-core workspace, or out into a vibe-coded bundle? | **Keep it as the owner's own workspace** ("unless there is a good reason it shouldn't be"; there is none: it reads the owner's files, costs nothing to keep, and is hidden on a fresh install). It leaves Sites, keeps every view it has, and sits off the default dock as `business`. |
+| R3 | Telemetry chips out of the default bar: a setting on by default, or gone by default? | "You decide." Decided as D12: gone by default, one hover away, with a setting to put it back. |
+
+One correction from the owner on the first stills, recorded as D13: the desktop prototype
+had drawn a flat stand-in where the scene is, and it read as a proposal to remove the
+holographic desktop and the 3D avatars. It was never that; the scene is the avatar
+session's and this document does not touch it. The prototype now draws its chrome over a
+still of the real scene, and the calmer ground the owner liked is offered as the Calm
+backdrop option, with the avatar in it.
 
 ## 4. The migration plan
 

@@ -30,17 +30,13 @@
 </head>
 <body>
 <div class="stage" id="stage">
-  <div class="stars"></div>
-  <div class="grid-floor"></div>
-
-  <!-- The hologram: a still wireframe standing in for the scene. The scene itself is the avatar session's. Motion only on a real event. -->
-  <div class="holo" aria-hidden="true">
-    <svg viewBox="0 0 200 200">
-      <g transform="translate(100 100)">
-        <g id="cubes"></g>
-      </g>
-    </svg>
-  </div>
+  <!-- The scene: a still of the real holographic desktop (from docs/images/desktop.png, the
+       README's picture), because this prototype has no WebGL and the scene is the avatar
+       session's. The chrome is drawn over it, never instead of it. -->
+  <div class="scene-still" id="sceneStill" aria-hidden="true"></div>
+  <!-- The Calm backdrop option: the stars, grid and grain off; the avatar stays. -->
+  <div class="stars calm-only"></div>
+  <div class="avatar-still calm-only" aria-hidden="true"></div>
 
   <!-- Top bar: eight controls (HIG §3.3) -->
   <div class="topbar">
@@ -106,6 +102,8 @@
     <button class="btn" id="toggleWin">Open a window</button>
     <button class="btn" id="toggleCluster">Hide the cluster</button>
     <button class="btn" id="toggleCC">Computer control on</button>
+    <span>backdrop</span>
+    <div class="seg" role="group" aria-label="Backdrop"><button aria-pressed="true" data-bg="holo">Holographic</button><button aria-pressed="false" data-bg="calm">Calm</button></div>
   </div>
 </div>
 
@@ -121,14 +119,12 @@ document.getElementById('micBtn').innerHTML = icon('mic');
 document.getElementById('winIco').innerHTML = icon('messages');
 document.querySelector('.live .pop').outerHTML = '<div class="pop glass"><dl><dt>Time</dt><dd>19:24:08</dd><dt>Local seat</dt><dd>held · 27B</dd><dt>GPU memory</dt><dd>8.6 / 12 GB</dd><dt>RAM</dt><dd>6.1 / 32 GB</dd><dt>CPU</dt><dd>11%</dd><dt>Disk</dt><dd>42 GB free</dd></dl><div class="faint" style="margin-top:8px;font-size:var(--fr-text-xs)">Telemetry lives here, one hover away. A setting puts it back in the bar.</div></div>';
 
-// A still lattice of cubes, in cyan, no animation.
-(function lattice() {
-  const g = document.getElementById('cubes'); let s = '';
-  const cube = (x, y, r) => { const a = r, b = r * 0.5; return '<g transform="translate(' + x + ' ' + y + ')"><path d="M0 ' + (-a) + ' L' + a + ' ' + (-b) + ' L' + a + ' ' + b + ' L0 ' + a + ' L' + (-a) + ' ' + b + ' L' + (-a) + ' ' + (-b) + ' Z"/><path d="M0 ' + (-a) + ' L0 0 L' + a + ' ' + b + ' M0 0 L' + (-a) + ' ' + b + '"/></g>'; };
-  const pts = [[-34, -22, 26], [30, -26, 24], [0, 14, 30], [-40, 30, 20], [42, 26, 22], [-6, -52, 18], [20, 52, 16]];
-  for (const [x, y, r] of pts) s += cube(x, y, r);
-  g.innerHTML = s;
-})();
+// Backdrop: Holographic (the scene as it is) or Calm (stars, grid and grain off; the avatar stays).
+document.querySelectorAll('[data-bg]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-bg]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  document.getElementById('stage').classList.toggle('calm', b.dataset.bg === 'calm');
+  toast(b.dataset.bg === 'calm' ? 'Calm backdrop. The avatar and its structures stay; only the stars, grid and grain are off.' : 'Holographic backdrop: the scene as it is.');
+}));
 
 // Dock: Life, Work, Friday; the core set; Ctrl-click opens a tab.
 const DOCK = [

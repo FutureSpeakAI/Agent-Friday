@@ -67,8 +67,15 @@ words "needs you" or a count.
 
 ## 3. Layer 1: the holographic desktop
 
-1. **The scene is the ground.** Nothing opaque covers it by default. Panels are glass
-   (`--fr-glass`, `--fr-glass-blur`, `--fr-glass-edge`).
+1. **The scene is the ground, and it stays.** The holographic desktop, the cube of cubes and
+   every one of the thirteen 3D structures (BRAND.md, "Holographic language") are Friday's
+   identity. No piece of this system removes, flattens or replaces them; chrome is drawn over
+   the scene, never instead of it. Nothing opaque covers it by default. Panels are glass
+   (`--fr-glass`, `--fr-glass-blur`, `--fr-glass-edge`). One option exists, **Backdrop**
+   (Settings → Appearance & Hologram): *Holographic*, the default, is the scene as it is;
+   *Calm* turns off the starfield, the grid floor and the grain and leaves the avatar and
+   its structures on a quiet gradient ground. The avatar renders in both. The option is the
+   avatar session's to build; this system only names the row.
 2. **Chrome appears when relevant.** The top bar is always present (the shell's piece 2);
    the dock hides after idle and returns at the bottom edge; the landing cluster shows when
    the shell's judge says so (§10.2). Nothing else is on the desktop until the user opens it.
