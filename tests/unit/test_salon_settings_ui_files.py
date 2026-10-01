@@ -40,3 +40,11 @@ def test_the_salon_settings_show_seats_and_guest_keys_and_never_echo_a_key():
     assert "Remove" in JS and "deleted" in JS.lower()
     # Default posture and box backend are shown as what they are, not as switches.
     assert "announce" in JS.lower() and "B0" in JS
+
+
+def test_the_salon_settings_offer_the_engine_choice_with_its_disclosure():
+    """Spec §4.7: engine is part of the routing record; choosing Claude's agent
+    is the user's call and the disclosure is shown where the choice is made."""
+    assert "/engine" in JS and "claude_agent" in JS
+    assert "'data-engine'" in JS
+    assert "read this PC's files" in JS

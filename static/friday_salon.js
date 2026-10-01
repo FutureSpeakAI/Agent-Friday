@@ -38,6 +38,13 @@
     const [keys, setKeys] = useState(cb_keys(cb));
     const [heavy, setHeavy] = useState('');
     const [small, setSmall] = useState('local');
+    const [engine, setEngineState] = useState((cb.seats && cb.seats.engine) || 'friday');
+    const setEngine = (eng) => send('POST', base + '/engine', { engine: eng }).then(({ ok, j }) => {
+      if (!ok) { setNote(j.error || 'That did not work.'); return; }
+      setEngineState(j.engine); setNote(j.engine === 'claude_agent'
+        ? "Claude's agent edits this codebase now. It runs as a process on this PC and can read this PC's files while it works; the salon proxy injects the key."
+        : 'Friday edits this codebase again.'); load();
+    });
     const [form, setForm] = useState({ label: '', provider: 'anthropic', key: '', cap: '' });
     const [note, setNote] = useState('');
     const load = useCallback(() => {
@@ -75,6 +82,13 @@
         field({ value: heavy, onChange: e => setHeavy(e.target.value), placeholder: "none yet, e.g. Opus 5.5", 'aria-label': 'Heavy seat', style: { width: 160 } }),
         btn('Set', () => setSeat('heavy', heavy)),
         heavy ? btn('Clear', () => setSeat('heavy', ''), dim) : null),
+      label('ENGINE'),
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 11 } },
+        btn('Friday', () => setEngine('friday'), engine === 'friday' ? ACCENT : undefined, { 'data-engine': 'friday', title: "Friday's own loop edits this codebase" }),
+        btn("Claude's agent", () => setEngine('claude_agent'), engine === 'claude_agent' ? ACCENT : undefined, { 'data-engine': 'claude_agent', title: "Your Claude Code runs as a process on this PC, behind the salon proxy" }),
+        h('span', { style: { fontFamily: MONO, fontSize: 9, color: dim } }, engine === 'claude_agent'
+          ? "runs as a process on this PC and can read this PC's files; the key never enters its environment, the proxy injects it"
+          : "Friday edits in her own loop; nothing runs outside her")),
       label('WHOSE KEY PAYS'),
       h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 11 } },
         btn('your key', () => setKey('mine'), hdr && hdr.key === 'mine' ? ACCENT : undefined, { 'data-key-profile': 'mine' }),
