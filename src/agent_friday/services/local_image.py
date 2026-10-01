@@ -971,6 +971,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         return is_cancelled(orb_pid)
 
     _outcome = {"status": "ok"}
+    _swap = None
 
     try:
         # Before the lease. This is the window the old cancel could not reach:
@@ -978,106 +979,148 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         # had been started yet for a lease-based cancel to find.
         if _cancelled():
             raise Cancelled("cancelled before the GPU was taken")
-        if arbiter is not None:
-            lease = arbiter.grant("image_job", ttl_s=lease_ttl_s)
-            if not lease.get("ok"):
-                # A refusal is an answer. Say which rule and stop — do not
-                # start ComfyUI anyway and fight the language seats for VRAM.
-                #
-                # And say WHAT TO DO, which needs one distinction the lease
-                # cannot make: whether this model could ever run here. "Free
-                # the card" is sound advice for a model that fits and useless
-                # for one that does not; telling them apart needs the model's
-                # measured peak compared to the card's ceiling.
-                env = {"status": "refused", "provider": PROVIDER,
-                       "reason": lease.get("error"),
-                       "rule_id": (lease.get("refused") or {}).get("rule_id")}
-                return _explain_refusal(env, _model_id)
-        else:
-            # No arbiter governing this process: start ComfyUI directly, and
-            # say so, because nothing is protecting the GPU in that case.
-            from agent_friday.services.residency_arbiter import ComfyUIBackend
-            ComfyUIBackend().start()
-            _log.warning("local image: no arbiter — GPU is unmanaged for this "
-                         "generation")
+        def _render():
+            """Submit every prompt of the batch and wait for its files.
 
-        # Taking the lease evicts the language seats and starts ComfyUI, which
-        # is the slowest part of the job — a cancel very often arrives during
-        # exactly this. Give the GPU straight back rather than generating an
-        # image nobody is waiting for any more.
-        if _cancelled():
-            raise Cancelled("cancelled while the GPU was being prepared")
-
-        images = []
-        _total = len(_queue)
-        for _idx, _p in enumerate(_queue):
+            Runs under the lease, whichever path took it. Returns ComfyUI's
+            own image records (filename, subfolder, type)."""
+            # Taking the lease evicts the language seats and starts ComfyUI,
+            # which is the slowest part of the job: a cancel very often
+            # arrives during exactly this. Give the GPU straight back rather
+            # than generating an image nobody is waiting for any more.
             if _cancelled():
-                raise Cancelled("cancelled after %d of %d image%s"
-                                % (_idx, _total, "" if _total == 1 else "s"))
-            # A SEED PER IMAGE.
-            #
-            # Diffusion is deterministic: same prompt + same seed = the same
-            # file, byte for byte. A fixed default seed turns a request for
-            # three distinct images into the same image three times —
-            # md5-identical — with the model asking for variety and the
-            # pipeline unable to produce any.
-            _seed = seed if seed else uuid.uuid4().int % (2 ** 63)
-            wf = build_workflow(_p, negative=negative, width=width,
-                                height=height, steps=steps, seed=_seed,
-                                cfg=_cfg, model_id=_model_id)
-            client_id = uuid.uuid4().hex[:12]
-            sub = _post("/prompt", {"prompt": wf, "client_id": client_id})
-            pid = sub.get("prompt_id")
-            if not pid:
-                return {"status": "error", "provider": PROVIDER,
-                        "reason": "ComfyUI rejected the workflow: %s" % sub}
+                raise Cancelled("cancelled while the GPU was being prepared")
+            images = []
+            _total = len(_queue)
+            for _idx, _p in enumerate(_queue):
+                if _cancelled():
+                    raise Cancelled("cancelled after %d of %d image%s"
+                                    % (_idx, _total, "" if _total == 1 else "s"))
+                # A SEED PER IMAGE.
+                #
+                # Diffusion is deterministic: same prompt + same seed = the same
+                # file, byte for byte. A fixed default seed turns a request for
+                # three distinct images into the same image three times —
+                # md5-identical — with the model asking for variety and the
+                # pipeline unable to produce any.
+                _seed = seed if seed else uuid.uuid4().int % (2 ** 63)
+                wf = build_workflow(_p, negative=negative, width=width,
+                                    height=height, steps=steps, seed=_seed,
+                                    cfg=_cfg, model_id=_model_id)
+                client_id = uuid.uuid4().hex[:12]
+                sub = _post("/prompt", {"prompt": wf, "client_id": client_id})
+                pid = sub.get("prompt_id")
+                if not pid:
+                    raise RuntimeError("ComfyUI rejected the workflow: %s" % sub)
 
-            # Real progress, from the socket, on its own thread.
-            _state = {"stop": False, "phase": "starting", "step": 0,
-                      "steps": steps}
+                # Real progress, from the socket, on its own thread.
+                _state = {"stop": False, "phase": "starting", "step": 0,
+                          "steps": steps}
 
-            def _on_update(step=None, steps=None, phase=None, _i=_idx):
-                if step is not None:
-                    _state["step"] = step
-                if steps:
-                    _state["steps"] = steps
-                if phase:
-                    _state["phase"] = phase
-                st, mx = _state["step"], max(1, _state["steps"])
-                # Sampling is the long pole but not the whole job, so it maps
-                # onto the middle of the bar rather than all of it. A bar that
-                # hits 100% and then keeps going is worse than no bar. Across a
-                # BATCH the per-image bar is scaled into its own slice, so three
-                # images fill the bar once rather than three times.
-                frac = 0.15 + 0.7 * (st / mx) if _state["phase"] == "sampling" \
-                    else (0.1 if st == 0 else 0.9)
-                frac = (_i + min(frac, 0.99)) / _total
-                # A bar that goes BACKWARDS reads as a restart. Sampling can
-                # finish at 85%, then ComfyUI's per-node progress resets
-                # `value` to 0 for the decode node and the bar would fall to
-                # 10% just before the image appears. Progress
-                # only ever moves forward within a job.
-                frac = max(frac, _state.get("floor", 0.0))
-                _state["floor"] = frac
-                label = "Image: %s" % _state["phase"]
-                if _state["phase"] == "sampling" and mx:
-                    label = "Image: sampling, step %d of %d" % (st, mx)
-                if _total > 1:
-                    label += " (%d of %d)" % (_i + 1, _total)
-                _orb(progress=round(min(frac, 0.97), 3), label=label,
-                     step={"type": "phase", "name": _state["phase"],
-                           "step": st, "steps": mx, "image": _i + 1,
-                           "images": _total, "ts": time.time()})
+                def _on_update(step=None, steps=None, phase=None, _i=_idx):
+                    if step is not None:
+                        _state["step"] = step
+                    if steps:
+                        _state["steps"] = steps
+                    if phase:
+                        _state["phase"] = phase
+                    st, mx = _state["step"], max(1, _state["steps"])
+                    # Sampling is the long pole but not the whole job, so it maps
+                    # onto the middle of the bar rather than all of it. A bar that
+                    # hits 100% and then keeps going is worse than no bar. Across a
+                    # BATCH the per-image bar is scaled into its own slice, so three
+                    # images fill the bar once rather than three times.
+                    frac = 0.15 + 0.7 * (st / mx) if _state["phase"] == "sampling" \
+                        else (0.1 if st == 0 else 0.9)
+                    frac = (_i + min(frac, 0.99)) / _total
+                    # A bar that goes BACKWARDS reads as a restart. Sampling can
+                    # finish at 85%, then ComfyUI's per-node progress resets
+                    # `value` to 0 for the decode node and the bar would fall to
+                    # 10% just before the image appears. Progress
+                    # only ever moves forward within a job.
+                    frac = max(frac, _state.get("floor", 0.0))
+                    _state["floor"] = frac
+                    label = "Image: %s" % _state["phase"]
+                    if _state["phase"] == "sampling" and mx:
+                        label = "Image: sampling, step %d of %d" % (st, mx)
+                    if _total > 1:
+                        label += " (%d of %d)" % (_i + 1, _total)
+                    _orb(progress=round(min(frac, 0.97), 3), label=label,
+                         step={"type": "phase", "name": _state["phase"],
+                               "step": st, "steps": mx, "image": _i + 1,
+                               "images": _total, "ts": time.time()})
 
-            _watcher = threading.Thread(
-                target=_watch_progress,
-                args=(pid, client_id, _on_update, lambda: _state["stop"]),
-                daemon=True)
-            _watcher.start()
-            try:
-                images.extend(_await_result(pid, cancelled=_cancelled))
-            finally:
-                _state["stop"] = True
+                _watcher = threading.Thread(
+                    target=_watch_progress,
+                    args=(pid, client_id, _on_update, lambda: _state["stop"]),
+                    daemon=True)
+                _watcher.start()
+                try:
+                    images.extend(_await_result(pid, cancelled=_cancelled))
+                finally:
+                    _state["stop"] = True
+            return images
+
+        if arbiter is not None and hasattr(arbiter, "heavy_job"):
+            # The deterministic swap (residency_arbiter.Arbiter.heavy_job):
+            # record the resident seat, evict it, render, confirm the files
+            # exist, stop ComfyUI, restore the seat, verify it answers. Every
+            # failure path still restores, and the receipt says what happened.
+            _out_dir = comfy_root() / "output"
+
+            def _job():
+                imgs = _render()
+                return {"images": imgs,
+                        "files": [str(_out_dir / (i.get("subfolder") or "")
+                                      / i["filename"])
+                                  for i in imgs if i.get("filename")]}
+
+            def _cancel_job():
+                request_cancel(orb_pid)
+                interrupt_comfy()
+
+            hj = arbiter.heavy_job("image_job", _job, timeout_s=lease_ttl_s,
+                                   job_id=orb_pid or None, cancel=_cancel_job)
+            _swap = {"receipt": hj.get("receipt"),
+                     "seat_restored": hj.get("restored"),
+                     "seat_verified": hj.get("verified"),
+                     "previous_parked": (hj.get("previous") or {}).get("parked")}
+            if hj.get("status") == "refused":
+                env = {"status": "refused", "provider": PROVIDER,
+                       "reason": hj.get("error"),
+                       "rule_id": (hj.get("refused") or {}).get("rule_id")}
+                return _explain_refusal(env, _model_id)
+            if isinstance(hj.get("exception"), Cancelled):
+                raise hj["exception"]
+            if not hj.get("ok"):
+                raise RuntimeError(hj.get("error") or
+                                   "the image job did not finish")
+            images = (hj.get("result") or {}).get("images") or []
+        else:
+            if arbiter is not None:
+                lease = arbiter.grant("image_job", ttl_s=lease_ttl_s)
+                if not lease.get("ok"):
+                    # A refusal is an answer. Say which rule and stop — do not
+                    # start ComfyUI anyway and fight the language seats for VRAM.
+                    #
+                    # And say WHAT TO DO, which needs one distinction the lease
+                    # cannot make: whether this model could ever run here. "Free
+                    # the card" is sound advice for a model that fits and useless
+                    # for one that does not; telling them apart needs the model's
+                    # measured peak compared to the card's ceiling.
+                    env = {"status": "refused", "provider": PROVIDER,
+                           "reason": lease.get("error"),
+                           "rule_id": (lease.get("refused") or {}).get("rule_id")}
+                    return _explain_refusal(env, _model_id)
+            else:
+                # No arbiter governing this process: start ComfyUI directly, and
+                # say so, because nothing is protecting the GPU in that case.
+                from agent_friday.services.residency_arbiter import ComfyUIBackend
+                ComfyUIBackend().start()
+                _log.warning("local image: no arbiter — GPU is unmanaged for this "
+                             "generation")
+
+            images = _render()
         out_dir = comfy_root() / "output"
         # The SAME envelope the cloud path returns: a list of dicts with
         # filename/path/url, not bare path strings.
@@ -1157,6 +1200,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             "width": width, "height": height, "steps": steps,
             "elapsed_s": round(time.time() - t0, 1),
             "local": True,
+            "swap": _swap,
         }
     except Cancelled as c:
         # Cancellation is an outcome, not a failure. It must not be reported as

@@ -53,6 +53,38 @@ TIMEOUT_FLOOR_S = 45.0
 TIMEOUT_MULTIPLE = 3.0
 
 
+def _result_files(result) -> list:
+    """The output paths a heavy job reports, whatever shape it used."""
+    if result is None:
+        return []
+    items = result
+    if isinstance(result, dict):
+        items = result.get("files") or []
+    out = []
+    for it in (items if isinstance(items, (list, tuple)) else [items]):
+        if isinstance(it, dict):
+            p = it.get("path") or it.get("source_path") or it.get("filename")
+        else:
+            p = it
+        if p:
+            out.append(str(p))
+    return out
+
+
+def _summarise_result(result) -> dict:
+    files = _result_files(result)
+    return {"files": files, "count": len(files)}
+
+
+def _port_open(port: int, timeout: float = 1.0) -> bool:
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
 class TransitionError(RuntimeError):
     pass
 
@@ -775,6 +807,40 @@ class LlamaServerBackend:
 
     def resident(self):
         return {m: 0 for m in self.procs}
+
+    def verify(self, model_id, timeout=120) -> dict:
+        """A real completion on the seat, not a port check.
+
+        A process that is listening is not a seat that answers: a seat that
+        came back half-loaded, or that the build-hours daemon killed a second
+        ago, still passes a socket probe. The verdict is the model's own
+        reply.
+        """
+        entry = self.procs.get(model_id)
+        if not entry:
+            return {"ok": False, "model_id": model_id,
+                    "error": "no process is serving it"}
+        port = entry[1]
+        body = json.dumps({
+            "model": model_id, "max_tokens": 8, "temperature": 0,
+            "messages": [{"role": "user",
+                          "content": "Reply with the single word OK."}],
+        }).encode()
+        t0 = time.time()
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:%d/v1/chat/completions" % port, data=body,
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                payload = json.loads(r.read().decode("utf-8", "replace"))
+            msg = ((payload.get("choices") or [{}])[0].get("message") or {})
+            text = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+            return {"ok": bool(text), "model_id": model_id, "port": port,
+                    "answer": text[:80], "latency_s": round(time.time() - t0, 2)}
+        except Exception as e:
+            return {"ok": False, "model_id": model_id, "port": port,
+                    "error": "%s: %s" % (type(e).__name__, e),
+                    "latency_s": round(time.time() - t0, 2)}
 
     @staticmethod
     def _declared_engine(model_id):
@@ -1641,6 +1707,22 @@ class ComfyUIBackend:
         self.venv = runtime_dir() / "venv-comfy" / "Scripts" / "python.exe"
         self.port = port
         self.proc = None
+        # VRAM ComfyUI must leave free, in MiB. The Arbiter sets it from the
+        # reconciled display reserve before start(). Without it ComfyUI's
+        # dynamic VRAM loading stages the text encoder and the diffusion model
+        # until a few hundred MiB are left on the card, the machine monitor
+        # reads that as a display-reserve breach, and the Arbiter cancels the
+        # render at its first sampling step. The reserve ComfyUI honours and
+        # the reserve the monitor enforces have to be the same number.
+        self.reserve_vram_mib = None
+        self.log_path = runtime_dir() / "logs" / "comfyui.log"
+
+    def launch_args(self) -> list:
+        args = [str(self.venv), "main.py", "--port", str(self.port)]
+        if self.reserve_vram_mib:
+            args += ["--reserve-vram",
+                     "%.2f" % (float(self.reserve_vram_mib) / 1024.0)]
+        return args
 
     def running(self):
         try:
@@ -1653,10 +1735,16 @@ class ComfyUIBackend:
     def start(self, timeout=300):
         if self.running():
             return 0.0
+        # ComfyUI's own output is the only record of why a render failed;
+        # it goes to a file, never to the void.
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            log = open(self.log_path, "ab")
+        except Exception:
+            log = subprocess.DEVNULL
         self.proc = subprocess.Popen(
-            [str(self.venv), "main.py", "--port", str(self.port)],
-            cwd=str(self.root), stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL)
+            self.launch_args(), cwd=str(self.root), stdout=log,
+            stderr=subprocess.STDOUT)
         t0 = time.time()
         while time.time() - t0 < timeout:
             if self.proc.poll() is not None:
@@ -2090,6 +2178,17 @@ class Arbiter:
         broken.
         """
         already = self.ollama.resident()
+        if self._build_hours_active():
+            for role, seat in self._pinned_llama_seats():
+                if roles is not None and role not in roles:
+                    continue
+                if seat["model_id"] in already or seat["model_id"] in self.llama.procs:
+                    continue
+                self._record("parked", role, seat["model_id"], 0.0)
+                self._note_seat_problem(role, seat["model_id"],
+                                        "parked for build hours; the "
+                                        "build-hours daemon restores it")
+            return
         for role, seat in self._pinned_llama_seats():
             if roles is not None and role not in roles:
                 continue
@@ -2289,6 +2388,13 @@ class Arbiter:
                 elif kind == "image_job":
                     displaced = self._evict_pinned()
                     self._evict_all_but_retained()
+                    try:
+                        from agent_friday.services.headroom_contract import (
+                            resolve_display_reserve)
+                        self.comfy.reserve_vram_mib = int(
+                            resolve_display_reserve(self.profile)["mib"])
+                    except Exception:
+                        pass
                     took = self.comfy.start()
                     self._record("start", "image", "comfyui", took)
                     self.lease = {"kind": kind, "role": "image",
@@ -2322,7 +2428,13 @@ class Arbiter:
                     self.llama.evict(self.lease["model_id"])
                 elif kind == "image_job":
                     self.comfy.stop()
-                self._restore_pinned(self.lease.get("displaced"))
+                if self._build_hours_active():
+                    # The build-hours daemon owns the brain seat and kills any
+                    # relaunch within seconds; the previous state to restore
+                    # is "parked", and restoring it means not launching.
+                    self._record("parked", "plan", None, 0.0)
+                else:
+                    self._restore_pinned(self.lease.get("displaced"))
                 self.lease = None
                 self.state = STATE_DEFAULT
                 el = round(time.time() - t0, 2)
@@ -2337,6 +2449,194 @@ class Arbiter:
         if self.lease and time.time() > self.lease.get("expires_at", 0):
             return self.release()
         return {"ok": True, "note": "not due"}
+
+    # ── heavy jobs: the deterministic swap ──────────────────────────────────
+
+    HEAVY_JOB_TIMEOUT_S = 900.0
+
+    def heavy_job(self, kind, job, *, timeout_s=None, job_id=None,
+                  cancel=None, expect_files=True):
+        """Run a job that needs the card to itself, then put the machine back.
+
+        The rule, in seven steps, each written to the receipt as it happens:
+
+          1. record which seats are resident (during build hours: that the
+             brain is parked, and parked is what gets restored);
+          2. evict them cleanly and take the lease (`grant`);
+          3. run `job()` on its own thread, bounded by `timeout_s`;
+          4. confirm the job finished: it returned, and every output file it
+             reported exists and is not empty, or its failure is recorded;
+          5. evict the job's model (ComfyUI stops; a leased seat is evicted);
+          6. restore the previous seats, unless build hours own them;
+          7. verify the restore with a real completion on each restored seat.
+
+        Every failure path still runs 5 to 7. A restore that fails is tried
+        once more, so a job never leaves the machine with no brain, and a
+        restore the daemon forbids is recorded as parked rather than retried
+        against it. The receipt lands under `runtime/residency/heavy_jobs/`
+        and the return value carries its path.
+        """
+        job_id = job_id or ("%s-%s" % (kind, uuid.uuid4().hex[:8]))
+        timeout_s = float(timeout_s or self.HEAVY_JOB_TIMEOUT_S)
+        steps = []
+        t_start = time.time()
+
+        def step(name, **kw):
+            rec = {"step": name, "at": round(time.time() - t_start, 3)}
+            rec.update(kw)
+            steps.append(rec)
+            return rec
+
+        parked = self._build_hours_active()
+        previous = {
+            "seats": {r: s.get("model_id") for r, s in self._pinned_llama_seats()},
+            "resident": sorted(self.llama.procs),
+            "parked": parked,
+        }
+        step("record-previous", previous=previous)
+        out = {"job_id": job_id, "kind": kind, "ok": False,
+               "status": "refused", "previous": previous, "result": None,
+               "error": None, "exception": None, "restored": None,
+               "verified": None, "verify": None, "receipt": None}
+
+        lease = self.grant(kind, ttl_s=int(timeout_s) + 60)
+        if not lease.get("ok"):
+            step("evict-and-grant", ok=False, error=lease.get("error"))
+            out.update(error=lease.get("error"), refused=lease.get("refused"))
+            out["receipt"] = self._write_heavy_receipt(job_id, out, steps)
+            return out
+        displaced = (lease.get("lease") or {}).get("displaced")
+        step("evict-and-grant", ok=True, displaced=displaced,
+             transition_s=lease.get("transition_s"))
+
+        box = {}
+
+        def _run():
+            try:
+                box["result"] = job()
+            except BaseException as e:      # a job may raise anything
+                box["error"] = e
+
+        th = threading.Thread(target=_run, daemon=True,
+                              name="heavy-job-%s" % job_id)
+        th.start()
+        th.join(timeout_s)
+        status, err, result, files = "ok", None, None, []
+        if th.is_alive():
+            status = "timeout"
+            err = "the job did not finish in %.0f s" % timeout_s
+            if callable(cancel):
+                try:
+                    cancel()
+                except Exception:
+                    pass
+            step("run", ok=False, status=status, error=err)
+        elif "error" in box:
+            e = box["error"]
+            status = "failed"
+            err = "%s: %s" % (type(e).__name__, e)
+            out["exception"] = e
+            step("run", ok=False, status=status, error=err)
+        else:
+            result = box.get("result")
+            step("run", ok=True, seconds=round(time.time() - t_start, 2))
+            files = _result_files(result)
+            missing = []
+            if expect_files:
+                if not files:
+                    missing = ["(no output file reported)"]
+                else:
+                    missing = [f for f in files
+                               if not (os.path.exists(f) and os.path.getsize(f) > 0)]
+            if missing:
+                status = "failed"
+                err = "completion not confirmed: %s" % ", ".join(missing)
+            step("confirm", ok=not missing, files=files, missing=missing)
+
+        rel = self.release()
+        step("evict-job-model-and-restore", ok=bool(rel.get("ok")),
+             detail=rel, parked=parked)
+        if not rel.get("ok") and not parked:
+            # Never leave the machine with no brain: one more attempt at the
+            # restore, from a clean card.
+            try:
+                self.comfy.stop()
+                self._evict_all_but_retained()
+                self._restore_pinned(displaced)
+                self.lease = None
+                self.state = STATE_DEFAULT
+                rel = {"ok": True, "retried": True}
+                step("restore-retry", ok=True)
+            except Exception as e:
+                self.state = STATE_DEGRADED
+                step("restore-retry", ok=False, error=str(e))
+
+        ver = self._verify_previous(previous)
+        step("verify", **ver)
+        out.update(ok=(status == "ok"), status=status, error=err,
+                   result=result, files=files, restored=bool(rel.get("ok")),
+                   verified=bool(ver.get("ok")), verify=ver)
+        self._record("heavy-job", kind, None, round(time.time() - t_start, 2))
+        out["receipt"] = self._write_heavy_receipt(job_id, out, steps)
+        return out
+
+    def _verify_previous(self, previous: dict) -> dict:
+        """Step 7. During build hours the previous state is parked, and the
+        proof is that no seat of ours is answering on its port; otherwise
+        every previous seat must answer a real completion."""
+        if previous.get("parked"):
+            listening = []
+            for model_id, entry in list(self.llama.procs.items()):
+                try:
+                    if _port_open(int(entry[1])):
+                        listening.append(model_id)
+                except Exception:
+                    continue
+            return {"ok": not listening, "mode": "parked",
+                    "listening": listening,
+                    "detail": ("the brain stays parked for build hours"
+                               if not listening else
+                               "a seat is answering during build hours; the "
+                               "daemon will park it")}
+        seats = {}
+        ok = True
+        for role, model_id in (previous.get("seats") or {}).items():
+            if not model_id or model_id in seats:
+                continue
+            r = self._verify_seat(model_id)
+            seats[model_id] = r
+            ok = ok and bool(r.get("ok"))
+        return {"ok": ok, "mode": "completion", "seats": seats}
+
+    def _verify_seat(self, model_id: str) -> dict:
+        verify = getattr(self.llama, "verify", None)
+        if callable(verify):
+            try:
+                return dict(verify(model_id))
+            except Exception as e:
+                return {"ok": False, "model_id": model_id, "error": str(e)}
+        resident = (model_id in self.llama.procs
+                    or model_id in self.ollama.resident())
+        return {"ok": resident, "model_id": model_id, "mode": "resident-only",
+                "detail": "this backend cannot run a completion probe"}
+
+    def _write_heavy_receipt(self, job_id: str, out: dict, steps: list):
+        try:
+            d = runtime_dir() / "residency" / "heavy_jobs"
+            d.mkdir(parents=True, exist_ok=True)
+            safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in job_id)
+            path = d / ("%s.json" % safe)
+            rec = {k: v for k, v in out.items()
+                   if k not in ("exception", "result", "receipt")}
+            rec["result_summary"] = _summarise_result(out.get("result"))
+            rec["steps"] = steps
+            rec["written_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            path.write_text(json.dumps(rec, indent=1, default=str),
+                            encoding="utf-8")
+            return str(path)
+        except Exception as e:
+            print(f"  [arbiter] could not write the heavy-job receipt: {e}")
+            return None
 
     # ── chains ──────────────────────────────────────────────────────────────
 
@@ -2921,10 +3221,19 @@ class Arbiter:
         try:
             self.comfy.stop()
             self._evict_all_but_retained()
-            self._restore_pinned()
+            if not self._build_hours_active():
+                self._restore_pinned()
             self.lease = None
         except Exception:
             pass
+
+    @staticmethod
+    def _build_hours_active() -> bool:
+        try:
+            from agent_friday.services import build_hours
+            return bool(build_hours.is_active())
+        except Exception:
+            return False
 
     # ── introspection ───────────────────────────────────────────────────────
 
