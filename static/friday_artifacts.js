@@ -223,6 +223,7 @@
 .fa-rail-label{writing-mode:vertical-rl;transform:rotate(180deg);font-family:Orbitron,Inter,sans-serif;font-size:9px;letter-spacing:.22em;color:${ACCENT};opacity:.85;white-space:nowrap}
 .fa-rail-count{font-family:'JetBrains Mono',monospace;font-size:10px;color:#eafcff;background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.35);border-radius:10px;padding:0 6px}
 .fa-strip{display:flex;align-items:stretch;flex-shrink:0;border-bottom:1px solid rgba(0,212,255,0.12);background:rgba(10,14,26,0.55)}
+.fa-strip .fa-widen{flex:0 0 auto;color:${ACCENT};font-size:11px;padding:4px 10px;white-space:nowrap}
 .fa-strip button{flex:1;background:transparent;border:none;border-bottom:2px solid transparent;color:rgba(255,255,255,0.6);cursor:pointer;
   font:11px Inter,system-ui,sans-serif;padding:6px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fa-strip button.fa-on{color:${ACCENT};border-bottom-color:${ACCENT};background:rgba(0,212,255,0.05)}
@@ -721,7 +722,7 @@
   const SIDE_MIN_HOST_W = 860;   // below this the panel is a tab over the chat
   const PANEL_MIN_W = 300, CHAT_MIN_W = 360;
 
-  function FridayArtifactHost({ convId, mode, children }) {
+  function FridayArtifactHost({ convId, mode, traySide, trayFrac, onTrayPlace, children }) {
     ensureCss();
     const [items, setItems] = useState([]);
     const [sel, setSel] = useState(null);
@@ -803,12 +804,21 @@
       : artifactPanel;
     const stripTitle = codebase ? codebase.title : (cur ? (KIND_GLYPH[cur.kind] || '') + ' ' + cur.title : 'Panel');
     const stripCount = codebase ? null : items.length;
+    // In the docked chat tray (unified-shell.md §11) the host is usually too
+    // narrow for a side panel. The strip offers to place the tray at two
+    // thirds, the shell's widest fraction, through the shell's own tray
+    // placement, which it remembers per workspace. Offered only when two
+    // thirds of the screen would hold a side panel (SIDE_MIN_HOST_W), and only
+    // on the owner's click: Friday never rearranges the screen on her own.
+    const canWiden = mode === 'panel' && typeof onTrayPlace === 'function' && (trayFrac || 0) < 0.6 && window.innerWidth * 2 / 3 >= SIDE_MIN_HOST_W;
 
     return h('div', { ref, className: 'fa-host', style: { flexDirection: side ? 'row' : 'column' }, 'data-artifact-host': has ? (open ? 'open' : 'closed') : 'none' },
       has && !side ? h('div', { className: 'fa-strip', role: 'tablist' },
         h('button', { role: 'tab', 'aria-selected': !open, className: open ? '' : 'fa-on', onClick: () => setOpen(false) }, 'Chat'),
         h('button', { role: 'tab', 'aria-selected': open, className: open ? 'fa-on' : '', onClick: () => setOpen(true), title: stripTitle },
-          stripTitle, stripCount ? h('span', { className: 'fa-count' }, stripCount) : null)) : null,
+          stripTitle, stripCount ? h('span', { className: 'fa-count' }, stripCount) : null),
+        canWiden ? h('button', { type: 'button', className: 'fa-widen', 'data-widen-tray': '1', title: 'Place the chat at two thirds of the screen, so the panel sits beside it',
+          onClick: () => { onTrayPlace(traySide || 'right', 2 / 3); setOpen(true); } }, '\u21E4 Beside the chat') : null) : null,
       h('div', { className: 'fa-chat', style: has && !side && open ? { display: 'none' } : undefined }, children),
       has && side && open ? h('div', { className: 'fa-divider' + (dragging ? ' fa-dragging' : ''), title: 'Drag to resize', onMouseDown: e => { e.preventDefault(); dragStart.current = { x: e.clientX, w: panelW }; setDragging(true); } }) : null,
       has && open ? panel : null,

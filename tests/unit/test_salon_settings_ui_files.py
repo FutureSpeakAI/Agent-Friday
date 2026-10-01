@@ -1,5 +1,5 @@
-"""Settings → Salon and the Costs split (salon spec §6.1 table rows "Settings →
-Salon" and "Costs"), as the served files carry them, in index.html and its
+"""The Salon section of Settings → Accounts & Keys, and the Costs split (salon spec §6.1 table rows
+"Settings → Salon" and "Costs"; Settings keeps its eight task-shaped tabs, so the Salon is a section, not a ninth tab), as the served files carry them, in index.html and its
 mirror: the documented two-place edit."""
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ JS = (ROOT / "static" / "friday_salon.js").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("html", [INDEX, APP], ids=["index", "mirror"])
-def test_settings_has_a_salon_tab_in_the_list_and_in_the_branch(html):
-    assert "id: 'salon'" in html
-    assert "tab === 'salon'" in html and "FridaySalonSettings" in html
+def test_the_salon_is_a_section_of_accounts_and_keys_not_a_ninth_tab(html):
+    assert "id: 'salon'" not in html
+    assert "tab === 'accounts' && window.FridaySalonSettings" in html
 
 
 @pytest.mark.parametrize("html", [INDEX, APP], ids=["index", "mirror"])

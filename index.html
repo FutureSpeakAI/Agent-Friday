@@ -11568,7 +11568,7 @@ function fridayResizeCursor(dir) {
 // change inside it. When the script is absent the shell is a Fragment.
 function FridayChatShell(props) {
   const Host = window.FridayArtifactHost;
-  if (Host) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode }, props.children);
+  if (Host) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace }, props.children);
   return /*#__PURE__*/React.createElement(React.Fragment, null, props.children);
 }
 function ChatSurface(props) {
@@ -11633,7 +11633,7 @@ function ChatSurface(props) {
     voiceStatus
   } = props;
   const trayMenu = useSnapMenuOpener();
-  return /*#__PURE__*/React.createElement(FridayChatShell, { convId: convId, mode: mode }, React.createElement("div", {
+  return /*#__PURE__*/React.createElement(FridayChatShell, { convId: convId, mode: mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace }, React.createElement("div", {
     "data-chat-head": "",
     style: {
       display: 'flex',
@@ -54575,7 +54575,7 @@ function SettingsTabCosts() {
     title: "By key"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({ fontSize: 10, color: dim, marginBottom: 12, lineHeight: 1.5 }, mono)
-  }, "Whose key paid: yours, or a guest key a codebase runs on (Settings \u2192 Salon)."), breakdown(s && s.by_key_profile)), /*#__PURE__*/React.createElement(StSection, {
+  }, "Whose key paid: yours, or a guest key a codebase runs on (Settings \u2192 Accounts & Keys, the Salon section)."), breakdown(s && s.by_key_profile)), /*#__PURE__*/React.createElement(StSection, {
     title: "By codebase"
   }, breakdown(s && s.by_codebase)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
     title: "Scheduled jobs this month"
@@ -54878,10 +54878,6 @@ const SETTINGS_TABS = [{
   label: 'Privacy & Approvals',
   sub: 'What may leave this machine, what needs your sign-off, and your data.'
 }, {
-  id: 'salon',
-  label: 'Salon',
-  sub: 'Each codebase: which model takes small and big edits, whose key pays, guest keys, and the box it runs in.'
-}, {
   id: 'appearance',
   label: 'Appearance & 3D',
   sub: 'The dock, its depth, and how much the 3D views move and glow.'
@@ -55116,7 +55112,7 @@ function SettingsWS() {
   }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
-  }), tab === 'salon' && window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
+  }), tab === 'accounts' && window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
     s: s,
     save: save
   }), tab === 'voice' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabVoice, {

@@ -1,4 +1,5 @@
-/* Settings → Salon (docs/design/active/vibe-coding-salon.md §4.7, §6.1 table).
+/* The Salon section of Settings → Accounts & Keys (docs/design/active/vibe-coding-salon.md §4.7, §6.1 table;
+ * Settings keeps its eight task-shaped tabs, tests/unit/test_settings_structure.py).
  *
  * Loaded after friday_bundles.js. Defines window.FridaySalonSettings: one
  * section per codebase with its header line, its seats (small edits, big

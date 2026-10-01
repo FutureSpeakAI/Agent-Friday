@@ -8480,7 +8480,7 @@ CLAUDE_TOOLS.append({
     "name": "codebase_key",
     "description": (
         "Change whose key pays for this chat's codebase: 'mine' (the user's own key) or the label of a "
-        "guest key added under Settings \u2192 Salon ('use Alex's key'). A guest key is used only by this "
+        "guest key added under Settings \u2192 Accounts & Keys ('use Alex's key'). A guest key is used only by this "
         "codebase; nothing falls back to the user's key if it fails. Speak the result's `say` as is."),
     "input_schema": {"type": "object", "properties": {
         "profile": {"type": "string", "description": "'mine' or a guest key's label."},
@@ -11409,7 +11409,7 @@ def _guest_client_for_turn(client, session_ctx):
     over = _cb.guest_key_over_cap(g["codebase"], g["label"])
     if over:
         raise RuntimeError("%s's key has reached the cap you set for it ($%.2f of $%.2f). Nothing was sent on your key; "
-                           "raise the cap under Settings \u2192 Salon or say \"use my key\"." % (g["label"], over["spent"], over["cap"]))
+                           "raise the cap under Settings \u2192 Accounts & Keys or say \"use my key\"." % (g["label"], over["spent"], over["cap"]))
     if g["provider"] != "anthropic":
         raise RuntimeError("%s's key is for %s, and guest keys are supported for Anthropic only for now. Nothing was sent on your key."
                            % (g["label"], g["provider"]))
@@ -11438,7 +11438,7 @@ def _guest_auth_failed(guest, exc):
     except Exception as e:
         _log.warning("could not record the rejected guest key: %s", e)
     raise RuntimeError("%s's key was rejected by the provider (%s). Nothing was sent on your key; fix or replace it under "
-                       "Settings \u2192 Salon, or say \"use my key\"." % (guest["label"], status or name))
+                       "Settings \u2192 Accounts & Keys, or say \"use my key\"." % (guest["label"], status or name))
 
 
 def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=None, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None, workspace=None):

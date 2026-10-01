@@ -172,3 +172,37 @@ def test_the_codebase_panel_shows_the_header_line_and_follows_seat_changes(js):
     """Salon spec §4.7: one line, seats · key · cost, re-read after every step and change."""
     assert "data-codebase-header" in js and "/header'" in js
     assert "m.type === 'codebase_header'" in js
+
+
+# ── The panel inside the unified shell (docs/design/active/unified-shell.md §11) ──
+# The chat is a docked tray at a fraction of the screen. In that tray the host
+# is usually too narrow for a side-by-side panel, so the panel is a tab over the
+# chat; the strip offers to place the tray at two thirds through the shell's own
+# tray placement, which the shell remembers per workspace. The owner's gesture,
+# never Friday's.
+
+def test_the_chat_shell_hands_the_trays_placement_to_the_host():
+    for p in (INDEX, MIRROR):
+        s = _read(p)
+        fn = s[s.index("function FridayChatShell("):]
+        fn = fn[:fn.index("\n}")]
+        assert "onTrayPlace" in fn and "traySide" in fn and "trayFrac" in fn, f"{p.name}: the shell drops the tray props"
+        body = s[s.index("function ChatSurface("):]
+        call = body[body.index("FridayChatShell"):]
+        call = call[:call.index("\n")]
+        assert "onTrayPlace" in call, f"{p.name}: ChatSurface does not pass the tray placement to the shell"
+
+
+def test_the_strip_offers_beside_the_chat_through_the_shells_tray_placement():
+    js = _read(PANEL_JS)
+    assert "data-widen-tray" in js
+    fn = js[js.index("function FridayArtifactHost("):]
+    assert "onTrayPlace" in fn and "traySide" in fn
+    # two thirds of the screen is the shell's widest tray fraction (FRIDAY_CHAT_LAYOUTS)
+    assert re.search(r"onTrayPlace\([^)]*2 ?/ ?3\)", fn), "the offer places the tray at two thirds"
+    # and the offer is made only in the docked tray, only when two thirds of the
+    # screen would hold a side panel, and only by the owner's click
+    gate = re.search(r"const canWiden = (.+)", fn)
+    assert gate, "the offer has one named gate"
+    assert "mode === 'panel'" in gate.group(1) and "SIDE_MIN_HOST_W" in gate.group(1) and "onTrayPlace" in gate.group(1)
+    assert "canWiden ? h('button'" in fn, "the button is rendered behind the gate"

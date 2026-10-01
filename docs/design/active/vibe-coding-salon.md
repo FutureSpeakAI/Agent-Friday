@@ -1089,8 +1089,8 @@ Anthropic on a client built for that key, so the owner's key is never sent
 for that codebase's work; the payer's cap stops a call before it is made,
 and Friday adds none; a refused key turns the header red, names whose key
 failed, and the turn stops with nothing falling back; removal deletes the
-key and says so. Guest keys are Anthropic only for now. Settings → Salon
-shows, per codebase, the header, the seats, whose key pays and the guest
+key and says so. Guest keys are Anthropic only for now. The Salon section of
+Settings → Accounts & Keys shows, per codebase, the header, the seats, whose key pays and the guest
 keys; Costs splits by key and by codebase. The **`claude_agent` engine**
 runs the user's own Claude Code CLI for one task in the codebase's folder as
 a process on this PC (B1, disclosed), with a scrubbed environment pointed at
@@ -1384,7 +1384,7 @@ flagged for the owner in §12.
 | Code workspace | Repos, Git and Procs stay. "Vibe" becomes "open in salon" | `CODE_TABS` |
 | Header line | model · key · cost | the `seat_transparency` system line style |
 | Cards | install, network and go-live cards, each with a spoken form (§6.3) | the approval card popup, drawer and System list |
-| Settings → Salon | default posture, default seats, guest keys, box backend | the Settings `TABS` array **and** its matching branch (the documented two-place edit) |
+| Settings → Accounts & Keys, the Salon section | default posture, default seats, guest keys, box backend | the Accounts & Keys branch in both UI files; Settings keeps its eight task-shaped tabs (`tests/unit/test_settings_structure.py`), so the Salon is a section, not a tab |
 | Costs | split by key profile and codebase | the Costs view |
 
 **What the Preview tab adds:**
@@ -1837,7 +1837,7 @@ not count.
     - the header line with no local model resident, and after "use Opus for
       this one";
     - the header line on a guest key, and red after a rejection;
-    - Settings → Salon with a guest key;
+    - the Salon section of Settings → Accounts & Keys with a guest key;
     - the header line at 390 px;
     - Costs split by key.
   - **Phase 4:**

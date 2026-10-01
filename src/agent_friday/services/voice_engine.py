@@ -334,7 +334,7 @@ _VOICE_LIVE_TOOLS = [
     ("codebase_key",
      "Change whose key pays for the current codebase chat: 'use Alex's key' means profile='Alex'; "
      "'use my key' means profile='mine'. Speak the result's say line as is; if refused, say the key "
-     "is not on this codebase and can be added under Settings, Salon.",
+     "is not on this codebase and can be added under Settings, Accounts and Keys.",
      {"profile": ("string", "'mine' or a guest key's label.")}, ["profile"]),
     ("codebase_costs",
      "Answer 'how much has this cost?' for the current codebase chat from the meter. Speak the result's "
