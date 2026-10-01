@@ -1,8 +1,9 @@
 # Brand fidelity audit: every workspace, in a window and in a tab
 
 > **Status:** first pass of P-BRAND-FIDELITY, built on `feat/unified-shell` as piece 4 of
-> [unified-shell.md](../design/active/unified-shell.md) §6. Each finding below says what
-> this pass did about it, or why it is left and where it goes next.
+> [unified-shell.md](../design/active/unified-shell.md) §6; K2 fixed by its piece 10 (§12).
+> Each finding below says what this pass did about it, or why it is left and where it goes
+> next.
 > **Last verified:** 2026-09-30, against the tree of this branch.
 > **Rules it applies:** [BRAND.md](BRAND.md), including the section on workspaces and
 > controls that this pass adds.
@@ -102,7 +103,8 @@ everything reachable from the keyboard), and the brand check in BRAND.md.
 | # | Finding | This pass |
 |---|---|---|
 | K1 | The palette listed the workspaces and one action; the bar's chat, Quick Draft and notifications were not in it. | **Fixed.** Every control in the bar is in the palette, and the bar's buttons and the palette open the panels through the same handlers. |
-| K2 | There is no list of the global shortcuts (Ctrl+K, Ctrl+Shift+F, Esc, the tray's Alt+T); Mail has its own. | Left: for the next pass. |
+| K2 | There is no list of the global shortcuts (Ctrl+K, Ctrl+Shift+F, Esc, the tray's Alt+T); Mail has its own. | **Fixed** in a later piece ([unified-shell.md](../design/active/unified-shell.md) §12): one list, shown by "?" and the palette, kept true by tests over every key the page listens for. Mail and the 3D views keep their own "?". |
+| K3 | The scene steps its structure on a bare arrow wherever no text field has the focus, so arrows pressed in a workspace in front also change the scene behind it. (Its Ctrl+Alt+arrows clash with snapping was fixed on the snap side.) | Left: the scene's code is its owner's. The shortcuts list shows the arrows under "On the desktop". |
 
 ### Voice-button placement
 

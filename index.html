@@ -1644,6 +1644,71 @@ window.addEventListener('DOMContentLoaded',function(){
             padding: 24px; text-align: center; color: rgba(255,255,255,0.65);
             font-size: 12px;
         }
+        /* The keyboard shortcuts sheet (unified-shell.md §12), in the palette's glass. */
+        .keys-sheet-overlay {
+            position: fixed; inset: 0; z-index: 200;
+            background: rgba(3,3,8,0.55); backdrop-filter: blur(6px);
+            animation: fadeIn 0.12s ease-out;
+        }
+        .keys-sheet {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: min(780px, calc(100vw - 32px)); max-height: min(82vh, 760px);
+            background: var(--fr-glass);
+            backdrop-filter: var(--fr-glass-blur); -webkit-backdrop-filter: var(--fr-glass-blur);
+            border: 1px solid rgba(0,212,255,0.15); border-radius: 12px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3), 0 0 40px rgba(0,212,255,0.08);
+            display: flex; flex-direction: column; overflow: hidden; outline: none;
+            font-family: var(--fr-font-body); color: var(--fr-text);
+            animation: paletteIn 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+        }
+        .keys-sheet-head {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 14px 20px; border-bottom: 1px solid var(--fr-glass-edge);
+        }
+        .keys-sheet-head h2 {
+            margin: 0; font-family: var(--fr-font-display); font-size: var(--fr-text-base);
+            font-weight: 600; letter-spacing: var(--fr-track-display); color: var(--fr-cyan);
+        }
+        .keys-sheet-close {
+            background: none; border: none; color: var(--fr-dim); cursor: pointer;
+            font-size: 20px; line-height: 1; padding: 2px 8px; border-radius: 6px;
+        }
+        .keys-sheet-close:hover, .keys-sheet-close:focus-visible {
+            color: #fff; background: var(--fr-cyan-soft); outline: none;
+        }
+        .keys-sheet-body {
+            overflow-y: auto; padding: 4px 20px 14px;
+            columns: 2 320px; column-gap: 32px;
+        }
+        .keys-sheet-body section { break-inside: avoid; padding-top: 12px; }
+        .keys-sheet-body h3 {
+            margin: 0 0 6px; font-family: var(--fr-font-display); font-size: var(--fr-text-sm);
+            font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
+            color: rgba(0,212,255,0.9);
+        }
+        .keys-row {
+            display: flex; align-items: baseline; gap: 12px; padding: 4px 0;
+            font-size: var(--fr-text-md); line-height: 1.45;
+        }
+        .keys-chords {
+            flex: 0 0 132px; display: inline-flex; flex-wrap: wrap; align-items: center;
+            gap: 3px; color: var(--fr-dim); font-size: var(--fr-text-xs);
+        }
+        .keys-or { margin: 0 3px; color: var(--fr-faint); }
+        .keys-what { color: var(--fr-label); }
+        .keys-sheet kbd {
+            font-family: var(--fr-font-mono); font-size: var(--fr-text-sm); color: #fff;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(0,212,255,0.25);
+            border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px;
+            min-width: 20px; text-align: center;
+        }
+        .keys-sheet-foot {
+            padding: 10px 20px 14px; border-top: 1px solid var(--fr-glass-edge);
+            color: var(--fr-dim); font-size: var(--fr-text-sm);
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .keys-sheet, .keys-sheet-overlay { animation: none; }
+        }
 
         /* ═══ GEMINI DESIGN PASS — Holographic Dock Refinements ═══ */
         @keyframes holoShimmer {
@@ -8765,6 +8830,67 @@ function SnapMenu({
   }, rows), document.body);
 }
 /* fridaySnap:end */
+/* fridayShortcuts:begin */
+// ═══ KEYBOARD SHORTCUTS ═══
+// Every key that works across the app, in one list (unified-shell.md §12).
+// The sheet shows it ("?", or "Keyboard shortcuts" in the palette), and the
+// tests hold the key functions above, and every key the page listens for, to
+// it: a key is not added or changed without the list. `tab` is what a key
+// does in a workspace's own tab when that differs; `desktop` marks a key a
+// tab does not have; {name} is her name as the owner gave it.
+const FRIDAY_SHORTCUTS = [
+  { group: 'Anywhere', keys: ['Ctrl+K'], what: 'The command palette: a workspace, a panel or an action' },
+  { group: 'Anywhere', keys: ['Ctrl+/'], what: 'Type to {name}: the chat field, brought back if it was hidden' },
+  { group: 'Anywhere', keys: ['Ctrl+Shift+Space'], what: 'Talk to {name}, or stop talking' },
+  { group: 'Anywhere', keys: ['Esc'], what: 'Interrupt {name} mid-sentence; close a menu, a panel or this list' },
+  { group: 'Anywhere', keys: ['?'], what: 'This list' },
+  { group: 'Windows and the chat tray', keys: ['Ctrl+Alt+C'], what: 'Hide or show the chat tray' },
+  { group: 'Windows and the chat tray', keys: ['Ctrl+Shift+F'], what: 'Fullscreen with the chat beside it, or back' },
+  { group: 'Windows and the chat tray', keys: ['Ctrl+Alt+←', 'Ctrl+Alt+→'],
+    what: 'Snap the window in front to that side: a half, then two thirds, then a third. With no window in front, they move the chat tray',
+    tab: 'Put the chat tray on that side: a third, then a half, then two thirds' },
+  { group: 'Windows and the chat tray', keys: ['Ctrl+Alt+↑'], what: 'The window in front fills the screen; with none in front, the chat tray shows', tab: 'Show the chat tray' },
+  { group: 'Windows and the chat tray', keys: ['Ctrl+Alt+↓'], what: 'Free the window in front; with none in front, the chat tray hides', tab: 'Hide the chat tray' },
+  { group: 'In a chat box', keys: ['Enter'], what: 'Send' },
+  { group: 'In a chat box', keys: ['Shift+Enter'], what: 'A new line' },
+  { group: 'On the desktop', keys: ['Ctrl+click'], what: 'A workspace in the dock opens in its own tab', desktop: true },
+  { group: 'On the desktop', keys: ['←', '→'], what: 'The scene’s previous or next structure, when no text field has the focus', desktop: true },
+  { group: 'On the desktop', keys: ['F9'], what: 'The widget: a small window that is mostly {name}; F9 again to come back', desktop: true },
+  { group: 'Safety', keys: ['Ctrl+Shift+Q'], what: 'Stop computer control now, and take back its permission' }
+];
+const FRIDAY_SHORTCUTS_ELSEWHERE = 'Mail and the 3D views have keys of their own: press ? inside them.';
+// "alt+t" as it is shown: "Alt+T".
+function fridayKeyLabel(k) {
+  return String(k || '').split('+').filter(Boolean)
+    .map(p => p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)).join('+');
+}
+// Her name inside a sentence: the default "AGENT FRIDAY" reads "Agent Friday".
+function fridayNameInText(name) {
+  const n = String(name || '').trim();
+  if (!n) return 'Friday';
+  return n === n.toUpperCase() && /[A-Z]/.test(n)
+    ? n.toLowerCase().replace(/(^|[\s-])(\S)/g, (m, sep, c) => sep + c.toUpperCase()) : n;
+}
+// The sheet's rows where it opens ('desktop' or 'tab'), with her name, and the
+// dictation key as Settings has it ({on, hotkey}; the tray holds that key).
+function fridayShortcutRows(where, name, dictation) {
+  const who = fridayNameInText(name);
+  const rows = FRIDAY_SHORTCUTS.filter(s => where !== 'tab' || !s.desktop).map(s => ({
+    group: s.group, keys: s.keys.slice(), what: (where === 'tab' && s.tab || s.what).replace(/\{name\}/g, who)
+  }));
+  if (dictation) rows.push({ group: 'Anywhere in Windows', keys: [fridayKeyLabel(dictation.hotkey || 'alt+t')],
+    what: dictation.on === false ? 'Push-to-transcribe, which is off: Settings, Voice turns it on'
+      : 'Hold, speak and let go: what you said is typed into the window you were in' });
+  return rows;
+}
+// "?" opens the sheet: typed with no Ctrl, Alt or Cmd, outside a text field,
+// and not already taken by a workspace's own "?" (Mail, the 3D views).
+function fridayShortcutsKey(e) {
+  if (!e || e.key !== '?' || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return false;
+  const t = e.target;
+  return !(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')));
+}
+/* fridayShortcuts:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
 function FridayCountdowns({
@@ -12259,6 +12385,96 @@ function CommandPalette({
       }, it.meta));
     })));
   })())));
+}
+
+// The keyboard shortcuts (unified-shell.md §12): every key that works across
+// the app, from FRIDAY_SHORTCUTS, as it applies where the sheet opens. "?"
+// outside a text field, or the palette, opens it; Esc, "?" or a click outside
+// closes it, and the focus goes back where it was.
+function ShortcutsSheet({
+  onClose,
+  settings
+}) {
+  const ref = useRef(null),
+    closeRef = useRef(null);
+  useEffect(() => {
+    const back = document.activeElement;
+    if (ref.current) ref.current.focus();
+    return () => {
+      try {
+        if (back && back.focus && document.contains(back)) back.focus();
+      } catch (_) {}
+    };
+  }, []);
+  const s = settings || {};
+  const rows = fridayShortcutRows(STANDALONE_WS ? 'tab' : 'desktop', s.agent_name, {
+    on: s.push_to_transcribe !== false,
+    hotkey: s.push_to_transcribe_hotkey
+  });
+  const groups = [];
+  rows.forEach(r => {
+    let g = groups.find(x => x.title === r.group);
+    if (!g) groups.push(g = {
+      title: r.group,
+      rows: []
+    });
+    g.rows.push(r);
+  });
+  const chord = k => k.split('+').map((p, i) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: i
+  }, i > 0 && '+', p === 'click' ? 'click' : /*#__PURE__*/React.createElement("kbd", null, p)));
+  const onKey = e => {
+    if (e.key === 'Escape' || e.key === '?') {
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      (document.activeElement === closeRef.current ? ref.current : closeRef.current).focus();
+    }
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "keys-sheet-overlay",
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    ref: ref,
+    className: "keys-sheet",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "keys-sheet-title",
+    tabIndex: -1,
+    "data-testid": "shortcuts-sheet",
+    onClick: e => e.stopPropagation(),
+    onKeyDown: onKey
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "keys-sheet-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    id: "keys-sheet-title"
+  }, "Keyboard shortcuts"), /*#__PURE__*/React.createElement("button", {
+    ref: closeRef,
+    type: "button",
+    className: "keys-sheet-close",
+    "aria-label": "Close the keyboard shortcuts",
+    onClick: onClose
+  }, "×")), /*#__PURE__*/React.createElement("div", {
+    className: "keys-sheet-body"
+  }, groups.map(g => /*#__PURE__*/React.createElement("section", {
+    key: g.title,
+    "aria-label": g.title
+  }, /*#__PURE__*/React.createElement("h3", null, g.title), g.rows.map((r, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "keys-row"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "keys-chords"
+  }, r.keys.map((k, j) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: j
+  }, j > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "keys-or"
+  }, "/"), chord(k)))), /*#__PURE__*/React.createElement("span", {
+    className: "keys-what"
+  }, r.what)))))), /*#__PURE__*/React.createElement("div", {
+    className: "keys-sheet-foot"
+  }, FRIDAY_SHORTCUTS_ELSEWHERE)));
 }
 
 // ═══ SEND-TO DROPDOWN (Data Flow) ═══
@@ -57968,6 +58184,18 @@ function App() {
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, []);
+  // "?" opens the keyboard shortcuts (unified-shell.md §12); a workspace with
+  // a "?" of its own (Mail, the 3D views) takes it first.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  useEffect(() => {
+    const h = e => {
+      if (!fridayShortcutsKey(e)) return;
+      e.preventDefault();
+      setShortcutsOpen(o => !o);
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, []);
 
   // Top bar always visible (keeps branding + bell/settings in reach). Dock auto-hides
   // after long idle so the immersive scene can breathe; re-shows on bottom-edge hover.
@@ -60970,8 +61198,20 @@ function App() {
       whiteSpace: 'pre-wrap'
     }
   }, p))));
+  const keysCommands = [{
+    id: 'shortcuts',
+    ico: '⌨',
+    label: 'Keyboard shortcuts',
+    meta: '?',
+    aka: ['keys', 'keyboard', 'shortcuts', 'hotkeys', 'help'],
+    run: () => setShortcutsOpen(true)
+  }];
+  const shellShortcuts = shortcutsOpen && /*#__PURE__*/React.createElement(ShortcutsSheet, {
+    onClose: () => setShortcutsOpen(false),
+    settings: agentSettings
+  });
   const shellPalette = paletteOpen && /*#__PURE__*/React.createElement(CommandPalette, {
-    commands: layoutCommands.concat(landingCommands, barCommands),
+    commands: layoutCommands.concat(landingCommands, barCommands, keysCommands),
     onClose: () => setPaletteOpen(false),
     onOpenWs: id => {
       toggle(id);
@@ -61108,7 +61348,7 @@ function App() {
       /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")))
       : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
         'There is no workspace called “' + STANDALONE_WS + '”. ',
-        /*#__PURE__*/React.createElement("a", { href: '/', style: { color: '#00d4ff' } }, 'Back to the Friday desktop')), shellWsChat, shellChatPanel, shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, shellPalette, shellQuickPost, shellPodcast, shellTaskModal);
+        /*#__PURE__*/React.createElement("a", { href: '/', style: { color: '#00d4ff' } }, 'Back to the Friday desktop')), shellWsChat, shellChatPanel, shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, shellPalette, shellShortcuts, shellQuickPost, shellPodcast, shellTaskModal);
   }
   return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
     value: {
@@ -61626,7 +61866,7 @@ function App() {
     }
   }, contentAlerts)))), g.name && /*#__PURE__*/React.createElement("div", {
     className: "dock-group-label"
-  }, g.name))))), shellPalette, shellQuickPost, shellPodcast, shellTaskModal);
+  }, g.name))))), shellPalette, shellShortcuts, shellQuickPost, shellPodcast, shellTaskModal);
 }
 
 // Mount with error surface so mobile failures are visible instead of a blank dock.

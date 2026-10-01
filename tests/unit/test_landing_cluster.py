@@ -230,7 +230,7 @@ def test_the_page_reports_the_cluster_and_answers_show_my_day(rel):
 @pytest.mark.parametrize("rel", PAGES)
 def test_the_palette_the_keys_and_the_setting(rel):
     text = _read(rel)
-    assert re.search(r"layoutCommands\.concat\(landingCommands, ?barCommands\)", text), rel
+    assert re.search(r"layoutCommands\.concat\(landingCommands, ?barCommands\b", text), rel
     for cmd in ("'show-my-day'", "'chat-field'", "meta: 'Ctrl+/'", "meta: 'Ctrl+Shift+Space'"):
         assert cmd in text, (rel, cmd)
     assert "const k = fridayLandingKey(e);" in text and "landingDo.current.toggleVoice()" in text, rel

@@ -1,13 +1,14 @@
 # One shell: the product name, one top bar everywhere, and fullscreen with chat
 
-> **Status:** pieces 1 to 9 built on branch `feat/unified-shell`, not yet on main: piece 1
+> **Status:** pieces 1 to 10 built on branch `feat/unified-shell`, not yet on main: piece 1
 > (the name and ™) `a64cad50`, piece 2 (one top bar) `24c27eb8`, piece 3 (fullscreen with
 > chat) `0015567e`, piece 4 (the audit and its fixes, recorded in
 > [`docs/brand/fidelity-audit.md`](../../brand/fidelity-audit.md)) `713c07ea`, piece 5
 > (both marks, §9) `db51175f`, piece 6 (the countdowns, §10.1) `68b6c6fd`, piece 7 (the
 > judge, the fade, the setting and the keys, §10.2 to §10.5) `f64bd5fa`, piece 8 (one-action
 > collapse of the chat tray, §11.1) `34e8240d`, piece 9 (snap layouts, §11.2 to §11.4)
-> `558a6584`.
+> `558a6584` and its fix `3f7a552a` (a snap chord no longer steps the scene, §12.4), piece 10
+> (keyboard shortcuts, §12).
 > **Last verified:** 2026-09-30 against main `e27ba160` plus `piece/P-BRAND-0` (brand
 > source of truth: `src/agent_friday/brand.py`, `docs/brand/BRAND.md`,
 > `scripts/check_brand_tokens.py`), rebased as branch `feat/unified-shell`.
@@ -195,6 +196,7 @@ one browser at a time for captures. Every new test is shown failing before its c
 7. The landing cluster's moments: the judge, the fade, the setting, the keys (§10.2 to §10.5).
 8. One-action collapse of the chat tray (§11.1).
 9. Snap layouts for the chat tray, workspace windows and chat windows (§11.2 to §11.6).
+10. Keyboard shortcuts: one list, the sheet, and the tests that keep it true (§12).
 
 Each lands on `feat/unified-shell` as one commit, with its checks, for the program lead's
 deploy lane.
@@ -445,3 +447,61 @@ width. A layout applies when its workspace comes to the front or its tab opens.
   fullscreen with chat does.
 - Hidden chat stays hidden across reloads until the owner shows it.
 - The edge pill shows whenever the tray is hidden, on the desktop and in tabs.
+
+## 12. Keyboard shortcuts (audit K2)
+
+Pieces 7 to 9 added Ctrl+/, Ctrl+Shift+Space, Ctrl+Alt+C and Ctrl+Alt with the arrows to
+the keys the app already had (Ctrl+K, Ctrl+Shift+F, Ctrl+Shift+Q, Esc, F9), and nothing
+listed any of them.
+
+### 12.1 One list
+
+`FRIDAY_SHORTCUTS`, in a block both pages carry (`fridayShortcuts`), is every key that works
+across the app: the keys, what they do, what they do in a workspace's own tab where that
+differs, and whether a tab has them at all. The sheet reads it; nothing else describes the
+keys.
+
+### 12.2 The sheet
+
+"?" outside a text field, or "Keyboard shortcuts" in the palette (its meta shows "?"), opens
+a sheet in the palette's glass, grouped: Anywhere; Windows and the chat tray; In a chat box;
+On the desktop; Safety; Anywhere in Windows. It uses her name from settings (the default
+"AGENT FRIDAY" reads "Agent Friday" in a sentence), the dictation key as Settings › Voice has
+it (or says push-to-transcribe is off), and in a tab it shows what the keys do there. A
+workspace with a "?" of its own (Mail, the 3D views) keeps it: the sheet opens only when
+nothing took the key first. Esc, "?" again or a click outside closes it, and the focus goes
+back where it was.
+
+### 12.3 Keeping it true
+
+Tests hold the list to the code in both directions. Every chord the key functions accept
+(`fridayLandingKey`, `fridayTrayKey`, `fridaySnapKey`, `fridayShortcutsKey`, probed in node
+over every key and modifier) is on the list, and the list claims no chord they do not take.
+Every page-wide key listener in `index.html` is matched to keys on the list, or named in the
+test's census with the reason it is not a shortcut. A new page-wide key fails a test until it
+is listed.
+
+### 12.4 Found while listing them
+
+- The scene steps its structure on a bare arrow, listening on the document without looking
+  at modifiers, so Ctrl+Alt+Left and Right also stepped the scene behind the window being
+  snapped. Fixed in `3f7a552a`: the snap chord is taken in the capture phase and stopped
+  there; a code editor keeps its own Ctrl+Alt+arrows.
+- The scene's bare arrows also fire while a workspace is in front, whenever no text field has
+  the focus. That is the scene's code: recorded as audit K3 for its owner. The sheet lists the
+  arrows under "On the desktop".
+
+### 12.5 Verification
+
+`tests/unit/test_shortcuts_sheet.py`: the block identical in both pages; both branches of
+`App` render the sheet and the palette lists it; in node, the chord probe, the rows for the
+desktop and a tab, her name, the dictation key and the "?" rule; the census of key listeners;
+in a real browser, "?" opens a labelled dialog with the focus in it and Esc closes it, a text
+field keeps its "?", the palette opens the sheet, and a tab lists what the keys do there and
+closes on a click outside.
+
+### 12.6 Decisions taken here, for the owner's veto
+
+- "?" opens the list, as in Gmail and Linear; Ctrl+/ already belongs to the chat field.
+- Keys are written as on Windows (Ctrl); the handlers that accept Cmd keep accepting it.
+- No voice tool: a list of keys is for the keyboard, and "?" and the palette both reach it.

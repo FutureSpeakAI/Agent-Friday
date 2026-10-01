@@ -192,7 +192,7 @@ def test_everything_in_the_bar_is_a_ctrl_k_away(rel):
     s = _read(rel)
     for cid in ("chat", "quick-draft", "notifications", "fs-chat"):
         assert re.search(r"id: ?'%s'" % cid, s), (rel, cid)
-    assert re.search(r"commands[:=]\s*\{?layoutCommands\.concat\([^)]*\bbarCommands\)", s), rel
+    assert re.search(r"commands[:=]\s*\{?layoutCommands\.concat\([^)]*\bbarCommands\b[^)]*\)", s), rel
     for fn in ("toggleChat", "toggleQuickDraft", "toggleNotifs"):
         assert re.search(r"onClick[:=]\s*\{?%s\b" % fn, s), (rel, fn + " is the bar button's own handler")
 
