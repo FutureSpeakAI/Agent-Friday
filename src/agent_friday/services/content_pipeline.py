@@ -173,7 +173,9 @@ def _connect() -> sqlite3.Connection:
 
     DB_PATH is read at call time so tests can monkeypatch it to a tmp dir."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=10)
+    from agent_friday.services.db_util import ClosingConnection
+    con = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=10,
+                          factory=ClosingConnection)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA foreign_keys=ON")
     con.row_factory = sqlite3.Row

@@ -17,6 +17,25 @@ import sqlite3
 from typing import Dict, Iterable, List, Tuple
 
 
+class ClosingConnection(sqlite3.Connection):
+    """A connection whose `with` block commits (or rolls back) AND closes.
+
+    The stock context manager only ends the transaction. A connection also
+    holds a statement cache that refers back to it, so an unclosed one is
+    freed only by the cycle collector, which on a large heap runs rarely:
+    every `with sqlite3.connect(...) as con:` left a file handle (two in WAL
+    mode) and a native page cache behind until then. Pass it as
+    `sqlite3.connect(..., factory=ClosingConnection)` for connections that
+    live for one block.
+    """
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+
 def _existing_columns(conn: sqlite3.Connection, table: str) -> List[str]:
     """Column names currently on `table` ([] if the table doesn't exist)."""
     try:
