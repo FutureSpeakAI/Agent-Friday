@@ -191,6 +191,8 @@ one browser at a time for captures. Every new test is shown failing before its c
 5. Both marks, the trademark line, podcasts' written material and the README (§9).
 6. The landing cluster's content: his countdowns, each with its reason (§10.1).
 7. The landing cluster's moments: the judge, the fade, the setting, the keys (§10.2 to §10.5).
+8. One-action collapse of the chat tray (§11.1).
+9. Snap layouts for the chat tray, workspace windows and chat windows (§11.2 to §11.6).
 
 Each lands on `feat/unified-shell` as one commit, with its checks, for the program lead's
 deploy lane.
@@ -345,3 +347,99 @@ cluster takes no pointer, no focus and no screen reader's attention: it is `iner
 - The five-minute idle.
 - The half-second hover.
 - The two keys.
+
+## 11. Snap layouts and one-action collapse (owner additions, 2026-09-30)
+
+The owner's words: "add some snap-to-like functionality when the chat tray is open alongside
+one of the workspace windows (or a separate chat window). I also want the chat tray to fully
+close all the way to the edge when the user chooses that. Don't force them to grab the edge
+and drag it across the screen to make the tray vanish from sight."
+
+**Why the tray did not vanish.** A closed tray parks at `right: -340px`, but its width is the
+user's own (`friday_chat_w`, up to 80% of the window). Any tray wider than 340px stayed partly
+on screen when closed, and the only way to clear it was to drag its edge narrower.
+
+The conventions are Windows Snap Layouts and macOS window tiling, in Friday's look.
+
+### 11.1 One-action collapse
+
+- **The collapse control** in the tray's header (it replaces the docked tray's ✕) slides the
+  tray fully off its edge in one motion, whatever its width: the tray moves by its own width
+  (`translateX(100%)`, or `-100%` when docked left), with the top bar's timing (`--fr-reveal`),
+  and is invisible once it has gone.
+- **The edge pill** is all that stays: a slim tab on that edge, vertically centred, faint until
+  the pointer comes near. A click brings the tray back.
+- **Every way works:** Ctrl+Alt+C hides or shows it; the palette has "Hide chat" and "Show
+  chat"; by voice, "hide chat" and "show chat" (`set_chat_tray`). Dragging still works:
+  dragging the tray's edge well past its narrowest width hides it, and its width is kept for
+  next time.
+- **The workspace reclaims the width:** a tab's workspace and a window laid out beside the
+  tray take the full width when it hides (the tray's docked width becomes 0).
+- **Reduced motion** hides and shows it at once.
+- **Hidden stays hidden:** after the owner hides it, a layout that includes the chat does not
+  reopen it on its own; showing it again clears that.
+
+### 11.2 The model
+
+- **The snap area** is the window between the top bar and the dock (the bottom of the window
+  when the dock is away), less the docked tray when it is shown.
+- **Slots** are fractions of the snap area's width, the full height: `full`, `left_half`,
+  `right_half`, `left_third`, `middle_third`, `right_third`, `left_two_thirds`,
+  `right_two_thirds`. One pure function, `fridaySnapBox(area, slot)`, gives a slot's exact box:
+  adjacent slots share an edge to the pixel, with no overlap and no gutter.
+- **The tray** docks on the right or the left at a fraction of the window's width (a third, a
+  half, two thirds) or the width the owner dragged it to, kept as a fraction so it holds when
+  the browser is resized.
+- **Workspace windows and chat windows** are free, or snapped to a slot. Maximised is the
+  `full` slot, edge to edge. A window snapped beside the shown tray hides the dock, as
+  fullscreen with chat does, so both run to the bottom.
+- **They resize together:** moving the tray's edge moves the edge of every window snapped
+  beside it, and hiding the tray gives them its width.
+
+### 11.3 How a window is snapped
+
+- **Drag:** drag a window by its title bar toward the left or right edge of the snap area and a
+  preview outline shows the slot before release: a half first, then, holding at the edge, a
+  third, then two thirds. The top edge previews `full`. Away from the edges, a window's edges
+  are magnetic within 10px of the snap area's edges. Release in a preview to snap; drag a
+  snapped window away to free it at its own size.
+- **The layout menu:** resting on a window's maximise button opens a small menu of layouts
+  (halves, two thirds and a third, a third and two thirds, three thirds); each layout is drawn
+  as zones, and choosing a zone snaps the window there. A second row places the window beside
+  the chat: the chat on the right in a third, a half or two thirds, the window filling the rest.
+- **Keys:** Ctrl+Alt+Left and Ctrl+Alt+Right snap the front window to that side's half, and
+  pressing again steps through two thirds and a third. Ctrl+Alt+Up fills the snap area;
+  Ctrl+Alt+Down frees it. With the cursor in the tray, the same keys move the tray: Left and
+  Right dock it to that side and step through a third, a half and two thirds; Up shows it and
+  Down hides it. (The Windows key belongs to Windows, so Ctrl+Alt stands in for it.)
+- **Voice and chat:** `set_chat_tray(visible?, side?, size?)` ("put chat on the right third",
+  "hide chat") and `set_workspace_layout(..., position?)` ("put News on the left two thirds").
+
+### 11.4 Remembered per workspace and per tab
+
+`settings.workspace_layouts` keeps, per workspace on the desktop (`news`) and per workspace in
+its own tab (`tab:news`, falling back to `news`), the window's slot and the tray's side and
+fraction: `{"window": "full", "chat": {"side": "right", "frac": 0.3333}}`. The earlier value
+`"fullscreen_chat"` still means the window fills the area beside the tray at the tray's own
+width. A layout applies when its workspace comes to the front or its tab opens.
+
+### 11.5 Verification
+
+- `fridaySnapBox` in node: every slot, at several window sizes, with the tray on either side;
+  adjacent slots share an edge exactly and cover the area.
+- A real browser: one click hides the tray (nothing of it left on screen, and the workspace as
+  wide as the window); a snap target gives the exact split; the layout survives a reload; the
+  menu, the drag preview and the keys; reduced motion hides at once.
+- The tool per the voice tool contract.
+- Stills of the layouts, the menu, the drag preview and the collapsed tray with its pill.
+
+### 11.6 Decisions taken here, for the owner's veto
+
+- Ctrl+Alt+arrow chords and Ctrl+Alt+C (Windows keeps the Windows key; Ctrl+Alt is the
+  common stand-in, and letters are matched by the character typed, so a keyboard whose AltGr
+  writes a character there is left alone).
+- Holding at an edge steps a half, then a third, then two thirds.
+- A window snapped beside the tray hides the dock until the bottom edge is touched, as
+  fullscreen with chat does.
+- Hidden chat stays hidden across reloads until the owner shows it.
+- The edge pill shows whenever the tray is hidden, on the desktop and in tabs.
