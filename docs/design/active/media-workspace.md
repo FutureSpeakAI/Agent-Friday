@@ -2,7 +2,7 @@
 
 > **Status:** active (spec plus clickable prototypes; nothing in this document is built
 > except the Studio tab-width fix in §1.6, commit `83f5595f` on branch `docs/studio-integrated`).
-> The owner decides from the prototypes before any build.
+> The owner decided on 2026-09-30 ("yes to all", §10); the build runs on branch `feat/media-workspace` over `feat/unified-shell`.
 > **Last verified:** 2026-09-30, against main at `e27ba160`.
 > **Implementation:** none of the new surfaces. §1 cites what exists today, line by line.
 > **Prototypes:** [`docs/design/prototypes/media/`](../prototypes/media/index.html), six
@@ -514,20 +514,23 @@ Added: `media_show`. Reused: `make_podcast`, `content_create_post`,
 - **A wrong "turn this into…"** makes a bad card, which is a draft and can be deleted; it
   never publishes.
 
-## 10. Decisions: what stays with the owner
+## 10. Decisions, taken by the owner on 2026-09-30
 
-- **D1.** Consolidate Draft, Content and Studio into Media, or keep Studio separate and
-  merge only Draft and Content? Recommended: all three; the prototypes show why.
-- **D2.** Five statuses with badges, or six with "Held" as its own column? Recommended:
-  five.
-- **D3.** Accounts and analytics out of Media (to Settings and Insights), or kept as Media
-  tabs? Recommended: out.
-- **D4.** Files 3D as a layout of the Library plus "Browse this PC", or its own entry?
-  Recommended: a layout.
-- **D5.** Cloud tools shown as chips that say "asks first", or hidden until a key exists?
-  Recommended: shown. Money.
-- **D6.** Media's timed cards as an overlay in the Calendar workspace? Recommended: yes.
-- **D7.** Media `core:true` for fresh installs? Recommended: yes, since it replaces three.
+The owner read the summary and the prototypes and said "yes to all". Each decision below
+records the option taken.
+
+- **D1.** Draft, Content and Studio all fold into Media. Decided: all three.
+- **D2.** Five statuses with badges; "held for you" is a badge on In review, not a column.
+- **D3.** Accounts and analytics leave Media: accounts to Settings → Accounts, analytics to
+  a Media → Insights pane and the card's "after it went out" panel.
+- **D4.** Files 3D becomes a layout of the Library plus "Browse this PC", not its own entry.
+- **D5.** Cloud tools are shown as chips that say "asks first".
+- **D6.** Media's timed cards appear as an overlay in the Calendar workspace.
+- **D7.** Media is `core:true` for fresh installs, since it replaces three workspaces.
+
+Engineering decisions (the index shape, the API, the fluid grid, the single open-in-tab
+mechanism, signing on save, the status mapping table) are made here and owned by the
+build.
 
 ## 11. What would falsify this
 
