@@ -91,6 +91,7 @@ from agent_friday.services.model_router import (
     _get_vault_control,
     _predict_route_provider,
     _seal_or_block,
+    turn_cancelled as _turn_cancelled,
 )  # noqa: E501
 from agent_friday.services import tool_hooks as _hooks
 from agent_friday.services import taint as _taint_mod
@@ -444,6 +445,11 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
 
     errors = []
     for name, fn, use_model in attempts:
+        # A turn its caller cancelled (a voice barge-in) is over. The next leg
+        # would answer a question the user has already talked past, possibly
+        # on a cloud provider.
+        if _turn_cancelled():
+            return "", []
         # Name the model each leg actually tried — "local: HTTP 404" without
         # the model id is undiagnosable from the log.
         _leg = f"{name} ({use_model})" if use_model else name
@@ -10569,7 +10575,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
             # The user's Stop, on the turn they are watching. A kill file is an
             # operator control, not a button; this is the button.
-            if core.turn_stop_requested():
+            if core.turn_stop_requested() or _turn_cancelled():
                 from agent_friday.services import turn_budget as _tbs
                 _pilot_outcome(session_ctx, "refused")
                 _orb_safe(process_update, orb_id, status='completed',
@@ -11166,7 +11172,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # stop. `core.turn_stop_requested()` already returns False rather than
         # raising, and `Path.exists()` answers False for an unreadable path.
         _stop_file = FRIDAY_DIR / "AGENT_STOP"
-        if core.turn_stop_requested() or _stop_file.exists():
+        if core.turn_stop_requested() or _turn_cancelled() or _stop_file.exists():
             _pilot_outcome(session_ctx, "refused")
             if _stop_file.exists():
                 try:
@@ -11201,6 +11207,15 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             _retry_over = None
         else:
             resp = send_fn(convo, oai_tools)
+        # Cancelled while this round ran (a voice barge-in): its text and its
+        # tool calls, including channel-format calls in the text, are never
+        # acted on.
+        if _turn_cancelled():
+            _pilot_outcome(session_ctx, "refused")
+            _orb(status='completed', label='Stopped', progress=1.0)
+            _led_done()
+            return _tb.stopped_message(used=_round,
+                                       model=str(model or "")), tool_trace
 
         usage = resp.get("usage", {}) or {}
         # Attribute spend to the model the provider ACTUALLY served when it
