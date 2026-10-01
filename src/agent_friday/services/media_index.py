@@ -485,13 +485,20 @@ def _scan_media_cards(con: sqlite3.Connection) -> int:
         body_p = root / (p.stem + ".md")
         text = body_p.read_text(encoding="utf-8", errors="ignore") if body_p.exists() else ""
         st = p.stat()
+        file_p = Path(rec["file"]) if rec.get("file") else None     # a Media-owned file (read-aloud audio)
+        path = str(file_p) if file_p and file_p.exists() else (str(body_p) if body_p.exists() else "")
+        signed, h, _where = _provenance(Path(path)) if path else (False, "", None)
+        status = rec.get("status") or "idea"
         c = _card(
             id=rec["id"], kind=rec.get("kind") or "draft", title=rec.get("title") or "Untitled",
-            path=str(body_p) if body_p.exists() else "", source_kind="media", source_ref=p.stem,
+            path=path, source_kind="media", source_ref=p.stem,
             origin=rec.get("origin") or "media", created=rec.get("created") or st.st_ctime,
-            modified=body_p.stat().st_mtime if body_p.exists() else st.st_mtime, when_ts=rec.get("when_ts") or st.st_mtime,
-            status=rec.get("status") or "idea", maker=rec.get("maker") or "You", sources=rec.get("sources") or [],
-            signed=False, privacy="private", project=rec.get("project"), text=text[:20000], extra=rec.get("extra") or {},
+            modified=Path(path).stat().st_mtime if path else st.st_mtime, when_ts=rec.get("when_ts") or st.st_mtime,
+            status=status, badges=list((rec.get("extra") or {}).get("badges") or []),
+            maker=rec.get("maker") or "You", sources=rec.get("sources") or [],
+            signed=signed, hash=h, privacy="private",
+            published_at="Kept on this PC" if (file_p and status == "published") else None,
+            project=rec.get("project"), text=text[:20000], extra=rec.get("extra") or {},
         )
         _upsert(con, c)
         for r in rec.get("relations") or []:
@@ -771,7 +778,10 @@ def create_card(kind: str = "draft", title: str = "", body: str = "", project: O
            "maker": maker, "status": status if status in STATUSES and status != "published" else "idea", "created": time.time(),
            "origin": origin, "relations": relations or [], "extra": {}}
     (root / (cid.split(":")[1] + ".json")).write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
-    (root / (cid.split(":")[1] + ".md")).write_text(body or "", encoding="utf-8")
+    body_p = root / (cid.split(":")[1] + ".md")
+    body_p.write_text(body or "", encoding="utf-8")
+    if (body or "").strip():
+        _sign(body_p, kind, [{"kind": "card", "ref": r["to"], "title": title} for r in (relations or []) if r.get("how") == "made_from"], "media.card")
     with _LOCK:
         con = _connect()
         try:
@@ -791,6 +801,8 @@ def set_body(card_id: str, text: str) -> Dict[str, Any]:
         return {"status": "not_found"}
     if c["source_kind"] == "media":
         Path(c["path"]).write_text(text, encoding="utf-8")
+        if text.strip():
+            _sign(Path(c["path"]), c["kind"], [], "media.card")
     elif c["source_kind"] == "post":
         from agent_friday.services import content_pipeline as cp
         r = cp.update_post(c["source_ref"], {"body": text})
@@ -804,6 +816,8 @@ def set_body(card_id: str, text: str) -> Dict[str, Any]:
         bp = root / ("body-" + hashlib.sha1(card_id.encode()).hexdigest()[:12] + ".md")
         bp.write_text(text, encoding="utf-8")
         _set_override(card_id, body_path=str(bp))
+        if text.strip():
+            _sign(bp, c["kind"], [{"kind": c["source_kind"], "ref": c["source_ref"]}], "media.card")
     with _LOCK:
         con = _connect()
         try:
@@ -1163,4 +1177,111 @@ def turn_into(card_id: str, kind: str) -> Dict[str, Any]:
             finally:
                 con.close()
         return {"status": "ok", "card": get(new_id)}
+    if kind == "audio":
+        return read_aloud(c, sync=bool(os.environ.get("FRIDAY_TESTING")))
     return {"status": "unavailable", "message": f"Making {TURNS[kind]} is not wired yet; ask Friday in chat and the result lands here."}
+
+
+# ── read aloud: one local voice, kept here ───────────────────────────────────
+
+def _chunks(text: str, limit: int = 420) -> List[str]:
+    """Paragraphs, then sentences, each short enough for one line of speech."""
+    out: List[str] = []
+    for para in re.split(r"\n\s*\n", text.strip()):
+        para = re.sub(r"\s+", " ", para).strip().lstrip("#").strip()
+        if not para:
+            continue
+        buf = ""
+        for sent in re.split(r"(?<=[.!?])\s+", para):
+            if len(buf) + len(sent) + 1 > limit and buf:
+                out.append(buf.strip()); buf = sent
+            else:
+                buf = (buf + " " + sent).strip()
+        if buf:
+            out.append(buf.strip())
+        out.append("")  # a paragraph break: a short silence
+    return out
+
+
+def _sign(path: Path, kind: str, sources: List[Dict[str, Any]], tool: str) -> None:
+    """Content credentials on a file Media saved. Never raises: an unsigned
+    file is shown as Unsigned, never pretended signed."""
+    try:
+        from agent_friday.services import provenance
+        media_type = {"audio": "audio", "image": "image", "video": "video", "draft": "text", "article": "text", "doc": "text"}.get(kind, "document")
+        provenance.write(str(path), tool_chain=[{"tool": tool, "version": "media"}], sources=sources, license=None, media_type=media_type)
+    except Exception:
+        pass
+
+
+def _write_media_record(cid: str, rec: Dict[str, Any]) -> Path:
+    root = cards_dir(); root.mkdir(parents=True, exist_ok=True)
+    p = root / (cid.split(":")[1] + ".json")
+    p.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
+    return p
+
+
+def read_aloud(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
+    """A new audio card, spoken by the local voice on this computer, from a
+    card's text. Returns at once with the card in Draft and "working"; the
+    file and the credential land when the voice is done (sync=True waits)."""
+    text = (c.get("body") or "").strip()
+    if not text:
+        return {"status": "error", "message": "Nothing to read yet."}
+    try:
+        from agent_friday.services import podcast_render as pr
+        voices = pr.installed_voices()
+    except Exception as e:
+        return {"status": "unavailable", "message": "The local voice is not installed on this computer (%s)." % e}
+    if not voices:
+        return {"status": "unavailable", "message": "No local voice is installed on this computer; nothing is downloaded to read aloud."}
+    voice = "af_heart" if "af_heart" in voices else voices[0]
+    cid = "media:" + uuid.uuid4().hex[:12]
+    audio_dir = media_dir() / "audio"; audio_dir.mkdir(parents=True, exist_ok=True)
+    wav = audio_dir / (cid.split(":")[1] + ".wav")
+    rec = {"id": cid, "kind": "audio", "title": "Read aloud: " + c["title"], "project": c.get("project"), "sources": [c["title"]],
+           "maker": "Local voice (%s) · this PC" % voice, "status": "draft", "created": time.time(), "origin": "turn",
+           "relations": [{"to": c["id"], "how": "made_from"}], "file": str(wav), "extra": {"badges": ["working"], "voice": voice}}
+    _write_media_record(cid, rec)
+    with _LOCK:
+        con = _connect()
+        try:
+            _scan_media_cards(con); con.commit()
+        finally:
+            con.close()
+
+    def work() -> None:
+        try:
+            from agent_friday.services import podcast_render as pr
+            spk = pr.speaker()
+            pcm = b""
+            for chunk in _chunks(text)[:400]:
+                if chunk == "":
+                    pcm += pr._silence(0.35)
+                    continue
+                pcm += pr._to_pcm16(spk.speak(chunk, voice))
+            pr.write_wav(pcm, wav)
+            seconds = len(pcm) / 2 / pr.RATE
+            mp3 = wav.with_suffix(".mp3")
+            try:
+                if pr.encode_mp3(wav, mp3, title=rec["title"], album="Read aloud by Agent Friday™", artist="Agent Friday™") and mp3.exists():
+                    rec["file"] = str(mp3)
+            except Exception:
+                pass
+            _sign(Path(rec["file"]), "audio", [{"kind": "card", "ref": c["id"], "title": c["title"]}], "media.read_aloud")
+            rec["status"] = "published"; rec["extra"] = {"duration_s": seconds, "voice": voice}
+        except Exception as e:
+            rec["status"] = "draft"; rec["extra"] = {"badges": ["failed"], "error": str(e)[:200], "voice": voice}
+        _write_media_record(cid, rec)
+        with _LOCK:
+            con = _connect()
+            try:
+                _scan_media_cards(con); con.commit()
+            finally:
+                con.close()
+
+    if sync:
+        work()
+    else:
+        threading.Thread(target=work, name="media-read-aloud", daemon=True).start()
+    return {"status": "ok", "card": get(cid)}

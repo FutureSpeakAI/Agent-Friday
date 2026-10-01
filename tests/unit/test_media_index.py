@@ -22,7 +22,8 @@ from agent_friday.services import media_index as mi
 def _digest(root: Path) -> dict:
     out = {}
     for p in sorted(root.rglob("*")):
-        if p.is_file() and p.name != "index.sqlite" and "media" not in p.parts and not p.name.endswith(("-shm", "-wal")):
+        # Media's own files and the credentials it writes are new files, never rewrites of an original.
+        if p.is_file() and p.name != "index.sqlite" and "media" not in p.parts and "provenance" not in p.parts and not p.name.endswith(("-shm", "-wal")):
             out[str(p.relative_to(root))] = hashlib.sha1(p.read_bytes()).hexdigest()
     return out
 
@@ -170,6 +171,7 @@ def test_a_new_card_and_turn_into_an_article(home):
     mi.reindex()
     new = mi.create_card(kind="draft", title="Weekly note", body="A line.", project="Newsletter")
     assert new["id"].startswith("media:") and new["status"] == "idea" and new["project"] == "Newsletter"
+    assert new["signed"] is True, "a card Media writes carries its credential from the first save"
     res = mi.turn_into(new["id"], "article")
     assert res["status"] == "ok"
     art = res["card"]
@@ -203,6 +205,34 @@ def test_publishing_a_post_card_arms_the_post_and_waits_for_the_content_card(hom
     assert cards, "the content gate's card was raised"
     assert not [a for a in approvals.list_approvals(kind="governed_action") if (a.get("payload") or {}).get("handler") == mi.HANDLER], "Media raised no card of its own"
     assert mi.get(post["id"])["status"] == "scheduled" and "publishing" in mi.get(post["id"])["badges"]
+
+
+def test_read_aloud_makes_a_signed_audio_card_from_a_text_card(home, monkeypatch):
+    """"Turn this into read aloud": the local voice speaks the card's text into a
+    file Media owns, the card is linked made_from, and the file is signed."""
+    import numpy as np
+    from agent_friday.services import podcast_render as pr
+    spoken = []
+
+    class FakeSpeaker:
+        def speak(self, text, voice):
+            spoken.append((text, voice))
+            return np.zeros(2400, dtype="float32")     # a tenth of a second per line
+
+    monkeypatch.setattr(pr, "installed_voices", lambda: ["af_heart", "bf_emma"])
+    monkeypatch.setattr(pr, "speaker", lambda: FakeSpeaker())
+    monkeypatch.setattr(pr, "encode_mp3", lambda *a, **k: False)
+    mi.reindex()
+    src = mi.create_card(kind="article", title="The ferry story", body="The 06:40 left on time. The quay count was low.\n\nThree numbers explain most of it.", status="draft")
+    res = mi.turn_into(src["id"], "audio")
+    assert res["status"] == "ok", res
+    card = mi.get(res["card"]["id"])
+    assert card["kind"] == "audio" and card["status"] == "published" and card["published_at"] == "Kept on this PC"
+    assert card["path"].endswith(".wav") and Path(card["path"]).stat().st_size > 44
+    assert card["duration"] == "0:00" or card["extra"]["duration_s"] > 0
+    assert [v for _t, v in spoken] == ["af_heart", "af_heart"] and spoken[0][0].startswith("The 06:40")
+    assert any(r["how"] == "made_from" and r["id"] == src["id"] for r in card["relations"])
+    assert card["signed"] is True, "a file Media saves carries its credential"
 
 
 def test_the_calendar_shows_only_timed_cards(home):
