@@ -81,7 +81,7 @@ def test_the_open_is_an_anchor_s_from_home_with_date_time_and_weather(monkeypatc
     opening, _ = pe.signature_lines(ep)
     assert opening[0]["text"] == ("Good evening from Springfield, Illinois. It's Wednesday, "
                                   "March 12, 6:04 PM, and 71 degrees and clear. "
-                                  "This is Friday's Front Page. I'm Friday.")
+                                  "This is The Front Page from Agent Friday. I'm Friday.")
     assert ep["open"]["weather_source"] == "Open-Meteo"
 
 
@@ -90,7 +90,7 @@ def test_without_weather_the_open_simply_leaves_it_out():
     pe.stamp_open(ep)
     assert pe.signature_lines(ep)[0][0]["text"] == (
         "Good morning from Springfield, Illinois. It's Wednesday, March 12, 7:30 AM. "
-        "This is Friday's Front Page. I'm Friday.")
+        "This is The Front Page from Agent Friday. I'm Friday.")
 
 
 def test_the_transcript_names_the_weather_source(monkeypatch):
@@ -267,8 +267,9 @@ def test_a_hard_problem_that_survives_revision_fails_the_episode(home, monkeypat
     (home / "briefing_runs" / (fx.DATE + ".json")).write_text(json.dumps(fx.sidecar()), encoding="utf-8")
     ds = fx.docs()
     bad = good_lines(ds)
-    bad[2] = dict(bad[2], text=bad[2]["text"] + " Example Wire reports that Brightline Bank "
-                  "estimates $400B of spending next year.")
+    # Friday's own analysis (her written insight) put in an outlet's mouth.
+    bad[2] = dict(bad[2], text=bad[2]["text"] + " Example Wire reports that the pledge leaves a "
+                  "governance opening your interviews can use.")
 
     def llm(system, user, *, max_tokens=3000):
         if "Plan an episode" in user:
@@ -338,8 +339,9 @@ def test_a_rejected_script_is_kept_for_review(home, monkeypatch):
     (home / "briefing_runs" / (fx.DATE + ".json")).write_text(json.dumps(fx.sidecar()), encoding="utf-8")
     ds = fx.docs()
     bad = good_lines(ds)
-    bad[2] = dict(bad[2], text=bad[2]["text"] + " Example Wire reports that Brightline Bank "
-                  "estimates $400B of spending next year.")
+    # Friday's own analysis (her written insight) put in an outlet's mouth.
+    bad[2] = dict(bad[2], text=bad[2]["text"] + " Example Wire reports that the pledge leaves a "
+                  "governance opening your interviews can use.")
 
     def llm(system, user, *, max_tokens=3000):
         if "Plan an episode" in user:
@@ -353,7 +355,7 @@ def test_a_rejected_script_is_kept_for_review(home, monkeypatch):
     monkeypatch.setattr(pe, "_llm_json", llm)
     done = pe.produce(podcast_news.queue_for_run("briefing", fx.DATE)["id"])
     assert done["status"] == "failed" and not done.get("lines")
-    assert any("Brightline" in ln["text"] for ln in done["draft_lines"])
+    assert any("governance opening" in ln["text"] for ln in done["draft_lines"])
 
 
 # ── where an episode opens ──────────────────────────────────────────────────
@@ -382,3 +384,41 @@ def test_an_own_episode_opens_in_media_once_it_exists_and_studio_until_then(monk
     assert _announced(monkeypatch, ep)["target"]["workspace"] == "studio"
     monkeypatch.setattr(workspace_registry, "get", lambda ws: {"id": "media", "label": "Media"} if ws == "media" else None)
     assert _announced(monkeypatch, ep)["target"] == {"workspace": "media", "view": "podcasts", "episode": ep["id"]}
+
+
+# ── one event, several outlets ──────────────────────────────────────────────
+
+def _two_outlets(ds):
+    pledge = next(d for d in ds if d["title"].startswith("Tech chiefs"))
+    return ds + [dict(pledge, sid="S97", outlet="exampleledger.com", url="https://exampleledger.com/p",
+                      title="Six AI chief executives sign a voluntary pledge in Washington",
+                      text="Six AI chief executives sign a voluntary pledge in Washington\nOutlet: "
+                           "exampleledger.com\nThe White House hosted the signing on Tuesday.")]
+
+
+def test_one_event_from_two_outlets_is_one_story(ds):
+    two = _two_outlets(ds)
+    pledge = next(d["sid"] for d in two if d["title"].startswith("Tech chiefs"))
+    lines = good_lines(two)
+    lines.insert(3, {"speaker": "a", "chapter": 0, "cites": ["S97"],
+                     "text": "Example Ledger adds that the White House hosted the signing on Tuesday."})
+    codes = _codes(_check(lines, two))
+    assert "story_split" not in codes and "crossed_facts" not in codes
+    assert {s["sid"] for s in q.stories(two) if s["sid"] in (pledge, "S97")} and \
+        next(s for s in q.stories(two) if s["sid"] == "S97")["cluster"] >= {pledge, "S97"}
+
+
+def test_a_fact_from_another_outlets_report_of_the_same_event_is_not_misattributed(ds):
+    two = _two_outlets(ds)
+    lines = good_lines(two)
+    lines[2] = dict(lines[2], text="Example Wire reports that the White House hosted six chief "
+                    "executives who signed a voluntary pledge on Tuesday.")
+    assert "misattributed" not in _codes(_check(lines, two))
+
+
+def test_a_fact_from_an_unrelated_story_is_crossed_not_hard(ds):
+    lines = good_lines(ds)
+    lines[2] = dict(lines[2], text="Example Wire reports that Brightline Bank backed the voluntary "
+                    "pledge the six chief executives signed on Tuesday.")
+    codes = _codes(_check(lines, ds))
+    assert "crossed_facts" in codes and "misattributed" not in codes

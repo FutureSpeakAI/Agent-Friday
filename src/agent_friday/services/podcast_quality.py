@@ -268,10 +268,36 @@ def stories(docs: list[dict]) -> list[dict]:
                     "entities": ents, "places": _places(body),
                     "keys": {_stem(w) for w in _content(d["title"])},
                     "safety": is_safety_story(d)})
+    # One event reported by several outlets is one story: items that share two
+    # names, or three headline words, form a cluster.
+    parent = {s["sid"]: s["sid"] for s in out}
+
+    def root(x):
+        while parent[x] != x:
+            x = parent[x]
+        return x
+    for i, a in enumerate(out):
+        for b in out[i + 1:]:
+            if len(a["entities"] & b["entities"]) >= 2 or len(a["keys"] & b["keys"]) >= 3:
+                parent[root(a["sid"])] = root(b["sid"])
+    groups: dict = {}
     for s in out:
-        others = set().union(*[o["entities"] for o in out if o is not s]) if len(out) > 1 else set()
+        groups.setdefault(root(s["sid"]), set()).add(s["sid"])
+    for s in out:
+        s["cluster"] = frozenset(groups[root(s["sid"])])
+    for s in out:
+        others = set().union(*[o["entities"] for o in out if o["sid"] not in s["cluster"]]) \
+            if len(out) > 1 else set()
         s["unique"] = s["entities"] - others
     return out
+
+
+def _cluster_words(story_list: list[dict]) -> dict:
+    """{sid: every word in its cluster's items}."""
+    words = {s["sid"]: set(_words("%s %s" % (s["title"], s["text"])))
+             | {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", "%s %s" % (s["title"], s["text"]))}
+             for s in story_list}
+    return {s["sid"]: set().union(*[words[m] for m in s["cluster"]]) for s in story_list}
 
 
 def events(docs: list[dict]) -> list[dict]:
@@ -369,9 +395,7 @@ def attribution_problems(lines: list[dict], story_list: list[dict], docs: list[d
     Wednesday" in a sentence about a different incident)."""
     if len(story_list) < 2:
         return []
-    words = {s["sid"]: set(_words("%s %s" % (s["title"], s["text"])))
-             | {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", "%s %s" % (s["title"], s["text"]))}
-             for s in story_list}
+    words = _cluster_words(story_list)
     shared = set()
     for d in docs:
         if d.get("kind") in ("event", "digest") or d.get("role") in ("event", "digest"):
@@ -387,14 +411,14 @@ def attribution_problems(lines: list[dict], story_list: list[dict], docs: list[d
                 about = [s for s in story_list if s["sid"] == cited[0]]
             if len(about) != 1:
                 continue
-            if cited and about[0]["sid"] not in cited:
+            if cited and not (about[0]["cluster"] & set(cited)):
                 out.append(_p("crossed_facts", "A sentence about \"%s\" sits in a line that cites a "
                               "different story: \"%s\"" % (about[0]["title"][:60], sent[:90]),
                               i, about[0]["sid"]))
                 break
             own = words[about[0]["sid"]]
             foreign = sorted(f for f in _hard_facts(sent) - own - shared
-                             if any(f in words[o] for o in words if o != about[0]["sid"]))
+                             if any(f in words[o] for o in words if o not in about[0]["cluster"]))
             if foreign:
                 out.append(_p("crossed_facts", "A sentence about \"%s\" carries %s from another story: "
                               "\"%s\"" % (about[0]["title"][:60], ", ".join(f.title() for f in foreign),
@@ -809,8 +833,12 @@ def placement_problems(lines: list[dict], story_list: list[dict]) -> list[dict]:
             if s["sid"] in (ln.get("cites") or []) or _mentions(ln, s):
                 at.setdefault(s["sid"], []).append((pos, i))
     last = max([ln.get("chapter", 0) for _i, ln in spoken] or [0])
+    seen_clusters = set()
     for s in story_list:
-        hits = at.get(s["sid"]) or []
+        if s["cluster"] in seen_clusters:
+            continue
+        seen_clusters.add(s["cluster"])
+        hits = sorted({h for m in s["cluster"] for h in at.get(m) or []})
         # The close may point back at one story in a single "what to watch"
         # line; re-telling it there is a split like any other.
         close = [h for h in hits if spoken[h[0]][1].get("chapter", 0) == last and last > 0]
@@ -819,7 +847,7 @@ def placement_problems(lines: list[dict], story_list: list[dict]) -> list[dict]:
         for (p1, _i1), (p2, i2) in zip(hits, hits[1:]):
             between = [spoken[x][1] for x in range(p1 + 1, p2)]
             others = [b for b in between if any(o["sid"] in (b.get("cites") or []) or _mentions(b, o)
-                                                for o in story_list if o["sid"] != s["sid"])]
+                                                for o in story_list if o["sid"] not in s["cluster"])]
             if len(others) >= 2:
                 out.append(_p("story_split", "\"%s\" is covered in two places; tell each story once, "
                               "in one place." % s["title"][:80], i2, s["sid"]))
@@ -869,22 +897,30 @@ def misattribution_problems(lines: list[dict], story_list: list[dict], docs: lis
             # sentence is checked against all of their items, and the
             # outlets' own names are not facts.
             pool = set()
-            for c in credited:
-                pool |= set(_words("%s %s" % (c["title"], c["text"])))
-                pool |= {w for a in outlet_aliases(c) for w in a.split()}
+            cluster = set().union(*[c["cluster"] for c in credited]) if credited else set()
+            for c in story_list:
+                if c["sid"] in cluster:
+                    pool |= set(_words("%s %s" % (c["title"], c["text"])))
+                    pool |= {w for a in outlet_aliases(c) for w in a.split()}
             for s in credited[:1]:
                 al = outlet_aliases(s)
                 story = pool
                 words = {w for w in _words(sent) if len(w) >= 6 and w not in _STOP}
-                foreign = sorted(w for w in words - story if w in own_words)
-                foreign += sorted(f for f in _hard_facts(sent) - story - {a for a in al}
-                                  if any(f in set(_words("%s %s" % (o["title"], o["text"])))
-                                         for o in story_list if o not in credited))
-                if foreign:
+                # Friday's own analysis put in a publisher's mouth: hard.
+                hers = sorted(w for w in words - story if w in own_words)
+                # A fact from another, unrelated story: crossed, not hard.
+                other = sorted(f for f in _hard_facts(sent) - story - {a for a in al}
+                               if any(f in set(_words("%s %s" % (o["title"], o["text"])))
+                                      for o in story_list if o["sid"] not in cluster))
+                if hers:
                     out.append(_p("misattributed", "\"%s\" is attributed to %s, but %s is not in "
                                   "that report; Friday's own analysis is hers, said as \"my read\"."
                                   % (sent[:90], spoken_outlet(s) or s["outlet"],
-                                     ", ".join(w.title() for w in foreign[:4])), i, s["sid"]))
+                                     ", ".join(w.title() for w in hers[:4])), i, s["sid"]))
+                elif other:
+                    out.append(_p("crossed_facts", "\"%s\" is attributed to %s, but %s comes from "
+                                  "another story." % (sent[:90], spoken_outlet(s) or s["outlet"],
+                                                      ", ".join(w.title() for w in other[:4])), i, s["sid"]))
                 break
     return out
 
