@@ -1,7 +1,7 @@
 # Amendments to the north-star spec
 
 **Status:** in force.
-**Written:** 2026-09-29
+**Written:** 2026-09-29; A9 added 2026-09-30
 **Authority:** the owner's standing rulings. These override
 `agent-friday-ideal-product-spec.md` wherever the two conflict.
 
@@ -166,3 +166,43 @@ overrule it. The design is in
   - never through a grant;
   - always with §13.2's readable diff and re-attestation before outward
     actions resume.
+
+## A9. The federation is the business, and it stays out of the next release
+
+**Amends:** §7.2 (explicit non-goals) for the federation release only, and
+§36 Phase 8 (optional marketplace). **Reaffirms:** §7.3 (deferred surfaces).
+The owner's ruling, 2026-09-30, in his words:
+
+> "I think astra's ideas about the federation vision are reasonable, but I
+> definitely want to keep that out of our next release until we are ready
+> to roll it out. I think the federation is where I'm going to make my
+> money, by allowing users to put things into the federation that their
+> agents spent compute on and then earning currency that way, or just by
+> giving me money for currency so they can go download things that other
+> agents have put out there."
+
+- **The federation is FutureSpeak's business model.** Its three motions are:
+  publishing outputs that a person's agent spent compute on; earning
+  currency for what others take; and buying currency to download what other
+  agents have put out there.
+- **§7.2 is amended for the federation release.** "Not a creator
+  marketplace" and "not a cryptocurrency or compute-rental economy" no
+  longer describe the federation release. They still describe the core
+  product: the local Friday a person installs is not a marketplace and runs
+  no economy. The rest of §7.2 stands unchanged, including "not a data
+  broker", "not an advertising platform", and "not a system that publishes,
+  purchases, transfers funds, or deletes irreplaceable data without explicit
+  authority".
+- **§7.3's deferral stands.** Federation, marketplace and economy surfaces
+  stay out of the core user experience and out of the next release, until
+  the owner decides to roll them out. In the next release they are hidden
+  from the dock, the workspace list and Settings behind one setting that is
+  off by default, with buying off regardless of that setting. The identity
+  and attestation groundwork (§7.3's "underlying identity and attestation
+  infrastructure") stays in the tree and stays compatible with the federation.
+- **Payments, money handling and legal review are parked** until after the
+  burn-down sprints. No piece in `release-burn-down.md` touches them, and
+  no release before the owner's roll-out decision carries a way to pay.
+- **The zero-telemetry rule (A3) is not relaxed by the federation.** When the
+  federation ships, what leaves the machine is what the person chose to
+  publish, through an approval card, and nothing else.
