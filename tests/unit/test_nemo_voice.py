@@ -251,7 +251,7 @@ def test_gpu_status_is_cached_and_fresh_bypasses(monkeypatch):
     """F1: health pollers share one reading; an admission re-measures."""
     calls = []
     monkeypatch.setattr(nv, "_probe_gpu_status",
-                        lambda: calls.append(1) or {"cuda": False, "sufficient": False})
+                        lambda **_k: calls.append(1) or {"cuda": False, "sufficient": False})
     monkeypatch.setattr(nv, "_local_gpu_voice_selected", lambda: True)
     nv.gpu_status()
     nv.gpu_status()
@@ -264,7 +264,7 @@ def test_gpu_status_is_cached_and_fresh_bypasses(monkeypatch):
 def test_gpu_status_cache_expires(monkeypatch):
     calls = []
     monkeypatch.setattr(nv, "_probe_gpu_status",
-                        lambda: calls.append(1) or {"cuda": False})
+                        lambda **_k: calls.append(1) or {"cuda": False})
     monkeypatch.setattr(nv, "_local_gpu_voice_selected", lambda: True)
     nv.gpu_status()
     nv._gpu_cache["at"] -= nv._GPU_STATUS_TTL_S + 1

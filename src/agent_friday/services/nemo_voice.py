@@ -43,6 +43,7 @@ import array
 import logging
 import os
 import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -197,6 +198,9 @@ def gpu_status(fresh: bool = False) -> dict:
     through ollama_manager when torch isn't installed yet. Never raises.
     ``sufficient`` reflects ``MIN_VRAM_GB`` against the CONSERVATIVE figure
     whenever nvidia-smi corroborated the reading (see ``_probe_gpu_status``).
+
+    Only ``fresh=True`` may initialise CUDA in this process; any other reading
+    comes from nvidia-smi unless CUDA is already initialised here.
     """
     ttl = _GPU_STATUS_TTL_S if _local_gpu_voice_selected() else _GPU_STATUS_IDLE_TTL_S
     with _gpu_cache_lock:
@@ -204,7 +208,7 @@ def gpu_status(fresh: bool = False) -> dict:
         if (not fresh and cached is not None
                 and (time.monotonic() - _gpu_cache["at"]) < ttl):
             return dict(cached)
-        info = _probe_gpu_status()
+        info = _probe_gpu_status(allow_cuda_init=True) if fresh else _probe_gpu_status()
         _gpu_cache["info"] = dict(info)
         _gpu_cache["at"] = time.monotonic()
         return info
@@ -228,16 +232,111 @@ def _log_dispute(info: dict) -> None:
         info.get("sufficient_reachable"), info.get("sufficient_real"))
 
 
-def _probe_gpu_status() -> dict:
-    """The uncached probe behind ``gpu_status``. One torch query plus one
-    ``nvidia-smi`` subprocess; call through the cache, not directly."""
+def _torch_cuda_initialized() -> bool:
+    """True when torch is imported AND has already initialised CUDA here.
+
+    Never imports torch and never initialises CUDA itself.
+    """
+    mod = sys.modules.get("torch")
+    if mod is None:
+        return False
+    try:
+        return bool(mod.cuda.is_initialized())
+    except Exception:
+        return False
+
+
+def _torch_cuda_build() -> bool:
+    """Is the installed torch a CUDA build? Answered without importing torch
+    when it is not imported yet (the CUDA wheels ship c10_cuda beside torch's
+    own libraries), and without touching torch.cuda either way."""
+    mod = sys.modules.get("torch")
+    if mod is not None and hasattr(mod, "version"):
+        return bool(getattr(mod.version, "cuda", None))
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("torch")
+        for loc in (spec.submodule_search_locations or []) if spec else []:
+            if any((Path(loc) / "lib").glob("*c10_cuda*")):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _smi_lines(fields: str) -> list:
+    """Non-empty lines of ``nvidia-smi --query-gpu=<fields>`` (csv, no units)."""
+    import subprocess
+    r = subprocess.run(
+        ["nvidia-smi", "--query-gpu=" + fields, "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=6)
+    return [ln for ln in (r.stdout or "").strip().splitlines() if ln.strip()]
+
+
+def _probe_without_cuda_context(info: dict) -> dict | None:
+    """The reading for a process that has not initialised CUDA: nvidia-smi's
+    name, total and free memory, with torch's build flag for ``cuda``.
+
+    Returns the finished reading, or None to fall through to the
+    hardware-detection path with ``info`` annotated. nvidia-smi's free figure
+    is the conservative one admission uses anyway, so the dispute fields
+    report a single, undisputed authority.
+    """
+    if not _torch_cuda_build():
+        info["source"] = "torch"
+        info["detail"] = "torch installed but CUDA not available"
+        return None
+    try:
+        lines = _smi_lines("name,memory.total,memory.free")
+        parts = [p.strip() for p in lines[0].split(",")]
+        name = ",".join(parts[:-2])
+        total = round(int(float(parts[-2])) / 1024.0, 1)    # MiB -> GiB
+        free = round(int(float(parts[-1])) / 1024.0, 1)
+    except Exception as e:
+        info["detail"] = (
+            "torch-CUDA is installed but nvidia-smi gave no reading "
+            f"({type(e).__name__}); VRAM is read when a GPU model loads")
+        return None
+    sufficient = free >= MIN_VRAM_GB
+    contended = free < _ASR_WORKING_SET_GB
+    info.update({
+        "cuda": True, "device": name,
+        "vram_gb": total, "vram_free_gb": free,
+        "sufficient": sufficient, "source": "nvidia-smi",
+        "detail": f"CUDA {name} — {free}GB free / {total}GB (nvidia-smi)",
+        "vram_free_real_gb": free, "sufficient_real": sufficient,
+        "sufficient_reachable": sufficient,
+        "vram_measurement_disputed": False, "vram_dispute_gb": None,
+        "contended": contended,
+        "contention_detail": (
+            f"Only {free}GB of VRAM is free. GPU voice needs about "
+            f"{_ASR_WORKING_SET_GB}GB, so it will compete with whatever model "
+            f"is loaded." if contended else ""),
+    })
+    return info
+
+
+def _probe_gpu_status(allow_cuda_init: bool = False) -> dict:
+    """The uncached probe behind ``gpu_status``; call through the cache.
+
+    torch.cuda is consulted only when CUDA is already initialised in this
+    process or ``allow_cuda_init`` is set (an admission about to load a GPU
+    model): the first torch.cuda query creates a CUDA context, about 1.5 GB of
+    private memory held for the life of the process. Every other reading is
+    one ``nvidia-smi`` subprocess.
+    """
     info = {
         "cuda": False, "device": None,
         "vram_gb": 0.0, "vram_free_gb": 0.0,
         "sufficient": False, "source": "none", "detail": "",
     }
+    torch_installed = _module_installed("torch")
+    if torch_installed and not (allow_cuda_init or _torch_cuda_initialized()):
+        done = _probe_without_cuda_context(info)
+        if done is not None:
+            return done
     # 1) torch — the authoritative source (and the runtime NeMo actually needs).
-    if _module_installed("torch"):
+    elif torch_installed:
         try:  # pragma: no cover - requires a real torch+CUDA install
             import torch
             if torch.cuda.is_available():
@@ -384,11 +483,7 @@ def _contention_probe(torch_free_gb: float) -> dict:
            "vram_measurement_disputed": False, "vram_dispute_gb": None,
            "sufficient_real": None}
     try:
-        import subprocess
-        r = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=6)
-        line = (r.stdout or "").strip().splitlines()
+        line = _smi_lines("memory.free")
         if not line:
             # No second opinion available. Say so — an unverified torch reading
             # is not the same thing as a corroborated one, and a caller that
