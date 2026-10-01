@@ -1,15 +1,15 @@
 # One shell: the product name, one top bar everywhere, and fullscreen with chat
 
 > **Status:** pieces 1 to 10 built on branch `feat/unified-shell`, not yet on main: piece 1
-> (the name and ™) `a64cad50`, piece 2 (one top bar) `24c27eb8`, piece 3 (fullscreen with
-> chat) `0015567e`, piece 4 (the audit and its fixes, recorded in
-> [`docs/brand/fidelity-audit.md`](../../brand/fidelity-audit.md)) `713c07ea`, piece 5
-> (both marks, §9) `db51175f`, piece 6 (the countdowns, §10.1) `68b6c6fd`, piece 7 (the
-> judge, the fade, the setting and the keys, §10.2 to §10.5) `f64bd5fa`, piece 8 (one-action
-> collapse of the chat tray, §11.1) `34e8240d`, piece 9 (snap layouts, §11.2 to §11.4)
-> `558a6584` and its fix `3f7a552a` (a snap chord no longer steps the scene, §12.4), piece 10
-> (keyboard shortcuts, §12) `6d598a4a`.
-> **Last verified:** 2026-09-30 against main `e27ba160` plus `piece/P-BRAND-0` (brand
+> (the name and ™) `1b20e289`, piece 2 (one top bar) `5e5a70f6`, piece 3 (fullscreen with
+> chat) `b96b6b01`, piece 4 (the audit and its fixes, recorded in
+> [`docs/brand/fidelity-audit.md`](../../brand/fidelity-audit.md)) `bdfabbcb`, piece 5
+> (both marks, §9) `784fe60d`, piece 6 (the countdowns, §10.1) `f9cea25f`, piece 7 (the
+> judge, the fade, the setting and the keys, §10.2 to §10.5) `226029b5`, piece 8 (one-action
+> collapse of the chat tray, §11.1) `9bc19e49`, piece 9 (snap layouts, §11.2 to §11.4)
+> `16fe2f2f` and its fix `3b4c7093` (a snap chord no longer steps the scene, §12.4), piece 10
+> (keyboard shortcuts, §12) `bda30794`.
+> **Last verified:** 2026-09-30 against main `321ec490` plus `piece/P-BRAND-0` (brand
 > source of truth: `src/agent_friday/brand.py`, `docs/brand/BRAND.md`,
 > `scripts/check_brand_tokens.py`), rebased as branch `feat/unified-shell`.
 > **Builds on:** `App` and `StandaloneShell` in `index.html` / `ui_parts/app.html` (a tab
@@ -485,7 +485,7 @@ is listed.
 
 - The scene steps its structure on a bare arrow, listening on the document without looking
   at modifiers, so Ctrl+Alt+Left and Right also stepped the scene behind the window being
-  snapped. Fixed in `3f7a552a`: the snap chord is taken in the capture phase and stopped
+  snapped. Fixed in `3b4c7093`: the snap chord is taken in the capture phase and stopped
   there; a code editor keeps its own Ctrl+Alt+arrows.
 - The scene's bare arrows also fire while a workspace is in front, whenever no text field has
   the focus. That is the scene's code: recorded as audit K3 for its owner. The sheet lists the
