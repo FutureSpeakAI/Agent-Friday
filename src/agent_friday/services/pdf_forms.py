@@ -374,6 +374,11 @@ def fill_form(path, values: dict, *, owner_text: Optional[str] = None,
         raise FormRefused(f"could not fill {src.name}: {e}")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
+    try:
+        from agent_friday.services.provenance import sign_saved
+        sign_saved(target, "pdf_forms.fill_form", "document", sources=[{"kind": "file", "path": str(src)}])
+    except Exception:
+        pass
     out["output"] = str(target)
     return out
 

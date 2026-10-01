@@ -304,7 +304,9 @@
             h('option', { value: 'next' }, 'By what matters next'), h('option', { value: 'newest' }, 'Newest first'), h('option', { value: 'title' }, 'By title'), h('option', { value: 'status' }, 'By status')),
           h('div', { className: 'md-seg', role: 'group', 'aria-label': 'Layout' },
             h('button', { className: 'btn' + (layout === 'grid' ? ' active' : ''), 'aria-pressed': layout === 'grid', onClick: () => setLayout('grid') }, 'Grid'),
-            h('button', { className: 'btn' + (layout === 'list' ? ' active' : ''), 'aria-pressed': layout === 'list', onClick: () => setLayout('list') }, 'List'))),
+            h('button', { className: 'btn' + (layout === 'list' ? ' active' : ''), 'aria-pressed': layout === 'list', onClick: () => setLayout('list') }, 'List'),
+            h('button', { className: 'btn' + (layout === '3d' ? ' active' : ''), 'aria-pressed': layout === '3d', title: 'The creations folder in the 3D file browser', onClick: () => setLayout('3d') }, '3D'))),
+        layout === '3d' ? h(window.MediaFiles3D || Placeholder, null) :
         h('div', { className: 'md-stage-wrap' },
           state.error ? h('div', { className: 'md-empty', role: 'alert' }, h('b', null, state.error), h('br'), 'Try again in a moment.') :
           !state.loading && cards.length === 0 ? h('div', { className: 'md-empty' }, h('b', null, 'Nothing here.'), h('br'), 'Pick another view on the left, or press ', h('kbd', null, 'N'), ' for a new card.') :
@@ -763,6 +765,57 @@
   }
   window.MediaChannelsSettings = MediaChannelsSettings;
   window.MediaInsights = MediaInsights;
+
+  // ── cards in 3D: the records view's source for Media ─────────────────────
+  // The records-3D script (static/friday3d_records.js) loads after this one
+  // and registers its sources on window.__friday3dRecords; Media adds its own
+  // once that exists, so the "View in 3D" bar shows the cards as a cluster.
+  function registerSource() {
+    const R = window.__friday3dRecords;
+    if (!R || !R.SOURCES || R.SOURCES.media) return !!(R && R.SOURCES && R.SOURCES.media);
+    const word = c => KIND_WORD[c.kind] || c.kind;
+    const by = f => (a, b) => { const x = f(a), y = f(b); return x < y ? -1 : x > y ? 1 : 0; };
+    R.SOURCES.media = {
+      label: 'Media', openLabel: 'Open the card', views: ['cluster', 'wall', 'ring', 'time'],
+      empty: 'No cards yet. Make something with + New, or ask Friday in chat.', noun: 'cards', intro: 'center',
+      blurb: 'Every piece of work as a card: by status, by kind, by project.',
+      load: () => json('/api/media?view=all&limit=600').then(d => d.cards || []),
+      toItem: c => ({ id: c.id, title: c.title, sub: word(c) + ' · ' + (STATUS_WORD[c.status] || c.status) + (c.held ? ' · held for you' : ''),
+        badge: c.privacy === 'private' ? 'private' : c.privacy, strip: c.title, weight: 1, time: c.when_ts || 0 }),
+      sorts: {
+        newest: { label: 'Newest', cmp: (a, b) => (b.when_ts || 0) - (a.when_ts || 0) },
+        title: { label: 'Title', cmp: by(c => String(c.title || '').toLowerCase()) },
+        status: { label: 'Status', cmp: by(c => ['review', 'draft', 'idea', 'scheduled', 'published'].indexOf(c.status)) }
+      },
+      filters: [
+        { id: 'progress', label: 'In progress', test: c => c.status === 'draft' || c.status === 'review' },
+        { id: 'needs', label: 'Needs you', test: c => c.status === 'review' || !!c.held },
+        { id: 'published', label: 'Published', test: c => c.status === 'published' },
+        { id: 'unsigned', label: 'Unsigned', test: c => !c.signed }
+      ],
+      groupings: {
+        status: { label: 'status', key: c => STATUS_WORD[c.status] || c.status },
+        kind: { label: 'kind', key: c => word(c) },
+        project: { label: 'project', key: c => c.project || 'No project' }
+      },
+      detail: c => [['Kind', word(c)], ['Status', STATUS_WORD[c.status] || c.status], ['Made by', c.maker], ['From', (c.sources || []).join(', ') || null],
+        ['Privacy', c.privacy === 'private' ? 'private to this PC' : c.privacy], ['Credentials', c.signed ? 'signed' : 'unsigned'], ['Where', c.published_at], ['Project', c.project]],
+      open: c => { if (window.fridayMediaOpen) window.fridayMediaOpen(c.id); else if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'media', card: c.id, view3d: false }); }
+    };
+    return true;
+  }
+  document.addEventListener('DOMContentLoaded', registerSource);
+  window.__mediaRegister3D = registerSource;
+
+  // ── Files 3D as a layout of the Library: the creations folder, in the file browser ─
+  function MediaFiles3D() {
+    if (!window.Files3DPanel) return h('div', { className: 'md-empty' }, 'The 3D file browser did not load.');
+    return h('div', { className: 'md-stage-wrap' },
+      h('div', { className: 'md-count', style: { marginBottom: 6 } }, 'Your creations folder in the 3D file browser. Documents and episodes stay in Friday’s home, which this browser never lists; find them in the grid. ', h('button', { className: 'btn', onClick: () => { window.__files3dOpen = { root: 'documents', path: '', file: '' }; window.dispatchEvent(new Event('friday-files3d-open')); } }, 'Browse this PC')),
+      h('div', { className: 'f3-host on', style: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        h(window.Files3DPanel, { root: 'creations', path: '', view: 'wall', fill: true })));
+  }
+  window.MediaFiles3D = MediaFiles3D;
 
   // Shared helpers for the other views (board, calendar, card), defined in this file's siblings.
   window.MediaWS = MediaWS;

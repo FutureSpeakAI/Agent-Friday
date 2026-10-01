@@ -741,6 +741,9 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
                                         model=_requested)
             out.setdefault("api_model", out.get("model") or _requested)
             out.setdefault("prompt", prompt)
+            for f in out.get("files") or []:
+                if isinstance(f, dict) and f.get("path") and not f.get("system_generated"):
+                    _write_creative_provenance(f, "image", prompt, _requested, out.get("api_model") or _requested)
             return out
     except Exception as _li_err:                 # never break the cloud path
         log.warning("local image dispatch skipped: %s", _li_err)
@@ -953,6 +956,9 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                                         model=_requested_lv)
             out.setdefault("api_model", out.get("model") or _requested_lv)
             out.setdefault("prompt", prompt)
+            for f in out.get("files") or []:
+                if isinstance(f, dict) and f.get("path") and not f.get("system_generated"):
+                    _write_creative_provenance(f, "video", prompt, _requested_lv, out.get("api_model") or _requested_lv)
             return out
     except Exception as _lv_err:                 # never break the cloud path
         log.warning("local video dispatch skipped: %s", _lv_err)

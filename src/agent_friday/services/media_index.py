@@ -1172,14 +1172,103 @@ def turn_into(card_id: str, kind: str) -> Dict[str, Any]:
                 _scan_creations(con)
                 new_id = _id_for("creation", fn)
                 _relate(con, new_id, card_id, "made_from")
-                _set_override(new_id, status="draft")
                 con.commit()
             finally:
                 con.close()
+        _set_override(new_id, status="draft")
         return {"status": "ok", "card": get(new_id)}
     if kind == "audio":
         return read_aloud(c, sync=bool(os.environ.get("FRIDAY_TESTING")))
+    if kind == "deck":
+        return make_deck(c)
     return {"status": "unavailable", "message": f"Making {TURNS[kind]} is not wired yet; ask Friday in chat and the result lands here."}
+
+
+# ── slides: a deck from a card's text, through the office tool ───────────────
+
+def _office(argv: List[str]) -> Dict[str, Any]:
+    """One door to the office CLI (services/office_engine.run_command); tests stub this."""
+    from agent_friday.services import office_engine
+    return office_engine.run_command(argv)
+
+
+def deck_outline(title: str, text: str, max_slides: int = 12) -> List[Tuple[str, str]]:
+    """(heading, body) per slide: a title slide, then one slide per heading or
+    paragraph, bodies kept to a few lines."""
+    slides: List[Tuple[str, str]] = [(title, "")]
+    current: Optional[str] = None
+    buf: List[str] = []
+
+    def flush() -> None:
+        if current is not None or buf:
+            body = "\n".join(buf).strip()
+            slides.append((current or (body.split(". ")[0][:60] if body else "…"), body[:480]))
+
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            flush(); current = line.lstrip("#").strip()[:80]; buf = []
+        elif current is None and not buf and len(slides) == 1 and line == title:
+            continue
+        else:
+            buf.append(line)
+            if current is None and len(buf) >= 1 and sum(len(b) for b in buf) > 300:
+                flush(); current = None; buf = []
+    flush()
+    return slides[:max_slides]
+
+
+def make_deck(c: Dict[str, Any]) -> Dict[str, Any]:
+    """A .pptx in the documents folder from the card's text: one slide per
+    heading or paragraph. Made by the office CLI on this computer; signed when
+    the last command has run; a deck card linked made_from."""
+    try:
+        from agent_friday.services import office_engine
+        if not office_engine.available():
+            return {"status": "unavailable", "message": "The office tool is not installed on this computer, so slides cannot be made here yet."}
+    except Exception as e:
+        return {"status": "unavailable", "message": "The office tool is unavailable: %s" % e}
+    body = (c.get("body") or "").strip()
+    if not body and not c.get("title"):
+        return {"status": "error", "message": "Nothing to make slides from yet."}
+    slug = re.sub(r"[^a-z0-9]+", "-", c["title"].lower()).strip("-")[:40] or "deck"
+    name = f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}.pptx"
+    slides = deck_outline(c["title"], body)
+    cmds: List[List[str]] = [["create", name]]
+    for i, (heading, text) in enumerate(slides, start=1):
+        cmds.append(["add", name, "/", "--type", "slide"])
+        cmds.append(["add", name, f"/slide[{i}]", "--type", "placeholder", "--prop", "phType=title", "--prop", "text=" + heading])
+        if text:
+            cmds.append(["add", name, f"/slide[{i}]", "--type", "shape", "--prop", "text=" + text,
+                         "--prop", "x=2cm", "--prop", "y=5cm", "--prop", "width=29cm", "--prop", "height=12cm", "--prop", "size=18pt"])
+    path: Optional[str] = None
+    for argv in cmds:
+        try:
+            r = _office(argv)
+        except Exception as e:
+            return {"status": "error", "message": getattr(e, "user_message", None) or str(e)}
+        if not r.get("ok"):
+            return {"status": "error", "message": (r.get("stderr") or r.get("stdout") or "The office tool refused.")[:300]}
+        if path is None:
+            for f in r.get("files") or []:
+                if f.get("path"):
+                    path = f["path"]
+    if not path or not Path(path).exists():
+        return {"status": "error", "message": "The office tool made no file."}
+    _sign(Path(path), "deck", [{"kind": "card", "ref": c["id"], "title": c["title"]}], "media.make_deck")
+    with _LOCK:
+        con = _connect()
+        try:
+            _scan_documents(con)
+            new_id = _id_for("document", Path(path).name)
+            _relate(con, new_id, c["id"], "made_from")
+            con.commit()
+        finally:
+            con.close()
+    _set_override(new_id, status="draft")   # after the connection closes: one writer at a time
+    return {"status": "ok", "card": get(new_id)}
 
 
 # ── read aloud: one local voice, kept here ───────────────────────────────────

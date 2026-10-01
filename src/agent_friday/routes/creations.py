@@ -47,6 +47,15 @@ from agent_friday.services.creations import (
 )  # noqa: E501
 from agent_friday.routes._errors import api_error, error_text, public_result
 
+
+def _sign_saved(path, tool, media_type, sources=None):
+    """A file a create route wrote carries its content credential (services/provenance.sign_saved)."""
+    try:
+        from agent_friday.services.provenance import sign_saved
+        sign_saved(path, tool, media_type, sources=sources)
+    except Exception:
+        pass
+
 creations_bp = Blueprint('creations', __name__)
 
 
@@ -522,6 +531,7 @@ def create_text():
         filename = (f"friday-text-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
                     f"-{uuid.uuid4().hex[:4]}.md")
         (CREATIONS_DIR / filename).write_text(text, encoding='utf-8')
+        _sign_saved(CREATIONS_DIR / filename, 'create_text', 'text', sources=[{'kind': 'prompt', 'text': str(prompt)[:200]}])
         _notify_creation(filename, _orb)
         url = f"/api/creations/{filename}"
         return jsonify({"status": "ok", "kind": "text", "text": text,
@@ -668,6 +678,7 @@ def create_code_art():
         filename = f"friday-codeart-{datetime.now().strftime('%Y%m%d-%H%M%S')}.html"
         filepath = CREATIONS_DIR / filename
         filepath.write_text(code.strip(), encoding='utf-8')
+        _sign_saved(filepath, 'create_code_art', 'page', sources=[{'kind': 'prompt', 'text': str(prompt)[:200]}])
         _notify_creation(filename, _orb)
         return jsonify({"status": "ok", "filename": filename, "url": f"/api/creations/{filename}"})
     except Exception as e:
@@ -696,6 +707,7 @@ def create_poem():
         filename = f"friday-text-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
         filepath = CREATIONS_DIR / filename
         filepath.write_text(text, encoding='utf-8')
+        _sign_saved(filepath, 'create_poem', 'text', sources=[{'kind': 'prompt', 'text': str(prompt)[:200]}])
         _notify_creation(filename, _orb)
         return jsonify({"status": "ok", "text": text, "filename": filename})
     except Exception as e:

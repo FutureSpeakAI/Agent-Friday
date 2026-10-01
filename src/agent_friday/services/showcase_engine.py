@@ -88,6 +88,11 @@ def _save_creation(filename, html_text, orb):
     path = CREATIONS_DIR / filename
     path.write_text(html_text, encoding="utf-8")
     try:
+        from agent_friday.services.provenance import sign_saved
+        sign_saved(path, "showcase_engine", "page", orb=orb)
+    except Exception:
+        pass
+    try:
         _notify_creation(filename, orb)
     except Exception:
         pass

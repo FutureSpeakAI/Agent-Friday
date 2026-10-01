@@ -412,6 +412,15 @@ def run_command(command, *, timeout: int = TIMEOUT_S) -> dict:
     if rc == 0 and info["verb"] == "create":
         _record_made([d["path"] for d in info["files"]
                       if not d["exists"] and Path(d["path"]).exists()])
+    if rc == 0 and info["verb"] in WRITE_VERBS:
+        # The credential follows the file: every write verb re-signs what it left on disk.
+        try:
+            from agent_friday.services.provenance import sign_saved
+            for d in info["files"]:
+                if Path(d["path"]).exists():
+                    sign_saved(d["path"], "officecli", "document", verb=info["verb"])
+        except Exception:
+            pass
     return {"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err,
             "verb": info["verb"], "files": info["files"],
             "argv": argv}

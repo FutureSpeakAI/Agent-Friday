@@ -3415,6 +3415,10 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .cal-event:hover { transform:scale(1.01); box-shadow:0 6px 24px rgba(0,0,0,0.42), 0 0 16px color-mix(in srgb,var(--ev,#00d4ff) 26%,transparent); z-index:6; }
         .cal-event.career { --ev:var(--cal-career); }
+        .cal-event.media { --ev:var(--fr-cat-blue); }
+        .cal-dots .dd.media { background:var(--fr-cat-blue); }
+        .cal-layers { display:flex; align-items:center; gap:8px; margin:6px 0 10px; }
+        .cal-layer-note { font-size:11px; color:var(--fr-dim); }
         .cal-event.conflict { border-color:#ff3c5a; box-shadow:0 0 0 1px rgba(255,60,90,0.5), 0 4px 18px rgba(0,0,0,0.3); }
         .cal-ev-title { font-size:12px; font-weight:600; color:#eef1f6; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .cal-ev-meta { font-size:10px; color:#9aa1b0; margin-top:2px; display:flex; gap:7px; flex-wrap:wrap; }
@@ -33136,6 +33140,17 @@ function CalendarWS() {
     setLoading(false);
   }).catch(() => setLoading(false));
   const loadWeek = () => fetch('/api/calendar/week').then(r => r.json()).then(d => setWeek(d.days || [])).catch(() => {});
+  // Media's timed cards as one layer among the owner's events (media-workspace.md §4.4, D6).
+  const [mediaCards, setMediaCards] = useState([]);
+  const [showMedia, setShowMedia] = useState(() => { try { return localStorage.getItem('friday_cal_media') !== '0'; } catch (_) { return true; } });
+  const weekKey = week.length ? week[0].date + '..' + week[week.length - 1].date : '';
+  useEffect(() => {
+    if (!weekKey) return;
+    const load = () => fetch('/api/media/calendar?from=' + week[0].date + '&to=' + week[week.length - 1].date).then(r => r.json()).then(d => setMediaCards(d.cards || [])).catch(() => {});
+    load();
+    window.addEventListener('friday:media-changed', load);
+    return () => window.removeEventListener('friday:media-changed', load);
+  }, [weekKey]);
   const loadTomorrow = () => fetch('/api/calendar/tomorrow').then(r => r.json()).then(setTomorrow).catch(() => {});
   const loadDay = iso => fetch('/api/calendar/day/' + iso).then(r => r.json()).then(setDayData).catch(() => {});
   useEffect(() => {
@@ -33213,6 +33228,12 @@ function CalendarWS() {
   const gaps = active?.gaps || [];
   const allDay = events.filter(e => e.all_day);
   const timed = events.filter(e => !e.all_day);
+  const activeDate = sel || (week.find(d => d.is_today) || {}).date || '';
+  const mediaByDay = {};
+  mediaCards.forEach(c => { const k = (c.when || '').slice(0, 10); (mediaByDay[k] = mediaByDay[k] || []).push(c); });
+  const mediaEvents = showMedia ? (mediaByDay[activeDate] || []).map(c => ({ id: 'media:' + c.id, title: c.title, start_time: c.when, end_time: null, type: 'media', media: c })) : [];
+  const timedAll = timed.concat(mediaEvents);
+  const openMediaCard = c => { if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'media', card: c.id }); };
   const conflicts = timed.filter(e => e.conflict);
   const hours = [];
   for (let h = CAL_START_HOUR; h < CAL_END_HOUR; h++) hours.push(h);
@@ -33249,6 +33270,14 @@ function CalendarWS() {
     onClick: quickAdd,
     disabled: adding
   }, adding ? 'Parsing…' : '✨ Add')), /*#__PURE__*/React.createElement(MeetingsPanel, null), /*#__PURE__*/React.createElement("div", {
+    className: "cal-layers"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: 'btn' + (showMedia ? ' active' : ''),
+    'aria-pressed': showMedia,
+    onClick: () => setShowMedia(v => { const n = !v; try { localStorage.setItem('friday_cal_media', n ? '1' : '0'); } catch (_) {} return n; })
+  }, "Media"), /*#__PURE__*/React.createElement("span", {
+    className: "cal-layer-note"
+  }, showMedia ? mediaCards.length + ' timed card' + (mediaCards.length === 1 ? '' : 's') + ' this week' : 'Media cards hidden')), /*#__PURE__*/React.createElement("div", {
     className: "cal-week"
   }, week.map(d => /*#__PURE__*/React.createElement("div", {
     key: d.date,
@@ -33263,7 +33292,11 @@ function CalendarWS() {
   }, d.count > 0 && [...Array(Math.min(3, d.count))].map((_, i) => /*#__PURE__*/React.createElement("span", {
     key: i,
     className: 'dd ' + d.density
-  })))))), conflicts.length > 0 && /*#__PURE__*/React.createElement("div", {
+  })), showMedia && (mediaByDay[d.date] || []).length > 0 && /*#__PURE__*/React.createElement("span", {
+    key: "media",
+    className: "dd media",
+    title: (mediaByDay[d.date] || []).length + " in Media"
+  }))))), conflicts.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "cal-conflict-warn"
   }, "\u26A0\uFE0F ", conflicts.length, " overlapping event", conflicts.length > 1 ? 's' : '', " \u2014 ", conflicts.map(c => c.title).join(', ')), /*#__PURE__*/React.createElement("div", {
     className: "cal-section-title"
@@ -33294,7 +33327,7 @@ function CalendarWS() {
       color: '#8a93a6',
       fontSize: 10
     }
-  }, "(all day)")))), timed.length === 0 && gaps.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "(all day)")))), timedAll.length === 0 && gaps.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "msg-empty"
   }, "No timed events. ", sel ? '' : 'Enjoy the open day, or quick-add something above.') : /*#__PURE__*/React.createElement("div", {
     className: "cal-timeline",
@@ -33322,7 +33355,7 @@ function CalendarWS() {
         height: ht
       }
     }, g.label, " \xB7 ", g.minutes >= 60 ? Math.floor(g.minutes / 60) + 'h ' + (g.minutes % 60 ? g.minutes % 60 + 'm' : '') : g.minutes + 'm');
-  }), timed.map(e => {
+  }), timedAll.map(e => {
     const top = calY(e.start_time);
     const end = calY(e.end_time) || top + CAL_HOUR_PX;
     const ht = Math.max(34, end - top);
@@ -33335,7 +33368,7 @@ function CalendarWS() {
         minHeight: ht,
         height: open ? 'auto' : ht
       },
-      onClick: () => e.prep_available && genPrep(e)
+      onClick: () => e.media ? openMediaCard(e.media) : e.prep_available && genPrep(e)
     }, /*#__PURE__*/React.createElement("div", {
       className: "cal-ev-title"
     }, e.title), /*#__PURE__*/React.createElement("div", {
@@ -59735,7 +59768,7 @@ function App() {
     futurespeak: showAllWorkspaces ? /*#__PURE__*/React.createElement(FuturespeakWS, null) : /*#__PURE__*/React.createElement(SitesWS, null),
     family: /*#__PURE__*/React.createElement(FamilyWS, null),
     studio: /*#__PURE__*/React.createElement(StudioWS, null),
-    media: window.MediaWS ? /*#__PURE__*/React.createElement(window.MediaWS, null) : /*#__PURE__*/React.createElement("div", {
+    media: window.MediaWS ? with3D('media', 'media', /*#__PURE__*/React.createElement(window.MediaWS, null)) : /*#__PURE__*/React.createElement("div", {
       style: {
         color: '#888',
         fontSize: 12,

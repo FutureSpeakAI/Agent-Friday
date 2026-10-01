@@ -358,6 +358,11 @@ def sign_approved(approval_id: str, actor: str = "owner") -> dict:
         raise SignRefused("the signed copy is never written over the original")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
+    try:
+        from agent_friday.services.provenance import sign_saved
+        sign_saved(out, "pdf_signing.sign", "document", sources=[{"kind": "file", "path": str(src)}])
+    except Exception:
+        pass
     ap.mark_used(approval_id, actor, {"output": str(out)})
     return {"signed": True, "output": str(out), "mode": mode, "page": page}
 

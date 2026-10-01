@@ -235,6 +235,47 @@ def test_read_aloud_makes_a_signed_audio_card_from_a_text_card(home, monkeypatch
     assert card["signed"] is True, "a file Media saves carries its credential"
 
 
+def test_turn_into_slides_makes_a_signed_deck_through_the_office_tool(home, monkeypatch):
+    """"Turn this into slides": one slide per heading or paragraph, made by the
+    office CLI on this computer, signed, a deck card linked made_from."""
+    from agent_friday.services import office_engine
+    monkeypatch.setattr(office_engine, "available", lambda: True)
+    ran = []
+
+    def fake_office(argv):
+        ran.append(argv)
+        name = argv[1]
+        path = office_engine.DOCUMENTS_DIR / name
+        if argv[0] == "create":
+            path.write_bytes(b"PK deck")
+        else:
+            path.write_bytes(path.read_bytes() + b"|" + argv[-1].encode("utf-8")[:40])
+        return {"ok": True, "rc": 0, "stdout": "", "stderr": "", "verb": argv[0], "files": [{"arg": name, "path": str(path), "exists": argv[0] != "create"}], "argv": argv}
+
+    monkeypatch.setattr(mi, "_office", fake_office)
+    mi.reindex()
+    src = mi.create_card(kind="article", title="The ferry story", body="# What changed\nThe 06:40 left on time.\n\n# Three numbers\nWeb, app, partners.", status="draft")
+    res = mi.turn_into(src["id"], "deck")
+    assert res["status"] == "ok", res
+    deck = res["card"]
+    assert deck["kind"] == "deck" and deck["status"] == "draft" and deck["source_kind"] == "document"
+    assert ran[0] == ["create", Path(deck["path"]).name]
+    titles = [a[-1] for a in ran if "phType=title" in a]
+    assert titles == ["text=The ferry story", "text=What changed", "text=Three numbers"]
+    assert all(("x=2cm" in a) for a in ran if "--type" in a and a[a.index("--type") + 1] == "shape"), "every length carries a unit"
+    assert any(r["how"] == "made_from" and r["id"] == src["id"] for r in deck["relations"])
+    assert deck["signed"] is True
+
+
+def test_slides_say_so_when_the_office_tool_is_missing(home, monkeypatch):
+    from agent_friday.services import office_engine
+    monkeypatch.setattr(office_engine, "available", lambda: False)
+    mi.reindex()
+    src = mi.create_card(kind="draft", title="A note", body="A line.", status="draft")
+    res = mi.turn_into(src["id"], "deck")
+    assert res["status"] == "unavailable" and "office tool" in res["message"]
+
+
 def test_the_calendar_shows_only_timed_cards(home):
     mi.reindex()
     post = [c for c in mi.query(view="all")["cards"] if c["source_kind"] == "post"][0]

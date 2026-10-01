@@ -10032,6 +10032,17 @@ function CalendarWS(){
 
   const loadToday=()=>fetch('/api/calendar/today').then(r=>r.json()).then(d=>{setToday(d);setLoading(false)}).catch(()=>setLoading(false));
   const loadWeek=()=>fetch('/api/calendar/week').then(r=>r.json()).then(d=>setWeek(d.days||[])).catch(()=>{});
+  // Media's timed cards as one layer among the owner's events (media-workspace.md §4.4, D6).
+  const [mediaCards,setMediaCards]=useState([]);
+  const [showMedia,setShowMedia]=useState(()=>{try{return localStorage.getItem('friday_cal_media')!=='0';}catch(_){return true;}});
+  const weekKey=week.length?week[0].date+'..'+week[week.length-1].date:'';
+  useEffect(()=>{
+    if(!weekKey)return;
+    const load=()=>fetch('/api/media/calendar?from='+week[0].date+'&to='+week[week.length-1].date).then(r=>r.json()).then(d=>setMediaCards(d.cards||[])).catch(()=>{});
+    load();
+    window.addEventListener('friday:media-changed',load);
+    return()=>window.removeEventListener('friday:media-changed',load);
+  },[weekKey]);
   const loadTomorrow=()=>fetch('/api/calendar/tomorrow').then(r=>r.json()).then(setTomorrow).catch(()=>{});
   const loadDay=(iso)=>fetch('/api/calendar/day/'+iso).then(r=>r.json()).then(setDayData).catch(()=>{});
   useEffect(()=>{loadToday();loadWeek();loadTomorrow();
@@ -10052,6 +10063,12 @@ function CalendarWS(){
   const gaps=(active?.gaps)||[];
   const allDay=events.filter(e=>e.all_day);
   const timed=events.filter(e=>!e.all_day);
+  const activeDate=sel||((week.find(d=>d.is_today)||{}).date)||'';
+  const mediaByDay={};
+  mediaCards.forEach(c=>{const k=(c.when||'').slice(0,10);(mediaByDay[k]=mediaByDay[k]||[]).push(c);});
+  const mediaEvents=showMedia?(mediaByDay[activeDate]||[]).map(c=>({id:'media:'+c.id,title:c.title,start_time:c.when,end_time:null,type:'media',media:c})):[];
+  const timedAll=timed.concat(mediaEvents);
+  const openMediaCard=c=>{if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'media',card:c.id});};
   const conflicts=timed.filter(e=>e.conflict);
   const hours=[];for(let h=CAL_START_HOUR;h<CAL_END_HOUR;h++)hours.push(h);
   const showNow=!sel; // only show now-line on the actual today view
@@ -10070,12 +10087,13 @@ function CalendarWS(){
     
     <MeetingsPanel/>
 
+    <div className="cal-layers"><button className={'btn'+(showMedia?' active':'')} aria-pressed={showMedia} onClick={()=>setShowMedia(v=>{const n=!v;try{localStorage.setItem('friday_cal_media',n?'1':'0');}catch(_){}return n;})}>Media</button><span className="cal-layer-note">{showMedia?mediaCards.length+' timed card'+(mediaCards.length===1?'':'s')+' this week':'Media cards hidden'}</span></div>
     {/* Week strip */}
     <div className="cal-week">
       {week.map(d=><div key={d.date} className={'cal-day'+(d.is_today?' today':'')+((sel===d.date||(!sel&&d.is_today))?' selected':'')+(d.has_career?' career':'')} onClick={()=>pickDay(d.date,d.is_today)}>
         <div className="cal-dow">{d.weekday}</div>
         <div className="cal-daynum">{d.day}</div>
-        <div className="cal-dots">{d.count>0&&[...Array(Math.min(3,d.count))].map((_,i)=><span key={i} className={'dd '+d.density}></span>)}</div>
+        <div className="cal-dots">{d.count>0&&[...Array(Math.min(3,d.count))].map((_,i)=><span key={i} className={'dd '+d.density}></span>)}{showMedia&&(mediaByDay[d.date]||[]).length>0&&<span className="dd media" title={(mediaByDay[d.date]||[]).length+' in Media'}></span>}</div>
       </div>)}
     </div>
 
@@ -10090,7 +10108,7 @@ function CalendarWS(){
     </div>}
 
     {/* Timeline */}
-    {timed.length===0&&gaps.length===0?<div className="msg-empty">No timed events. {sel?'':'Enjoy the open day, or quick-add something above.'}</div>:
+    {timedAll.length===0&&gaps.length===0?<div className="msg-empty">No timed events. {sel?'':'Enjoy the open day, or quick-add something above.'}</div>:
     <div className="cal-timeline" ref={tlRef} style={{position:'relative',height:(CAL_END_HOUR-CAL_START_HOUR)*CAL_HOUR_PX+10}}>
       {hours.map(h=><div key={h} className="cal-hour" style={{height:CAL_HOUR_PX}}>
         <span className="cal-hour-label">{h===12?'12 PM':h===0||h===24?'12 AM':h<12?h+' AM':(h-12)+' PM'}</span>
@@ -10102,8 +10120,8 @@ function CalendarWS(){
       })}
 
       {/* Events */}
-      {timed.map(e=>{const top=calY(e.start_time);const end=calY(e.end_time)||top+CAL_HOUR_PX;const ht=Math.max(34,end-top);const open=prepFor===e.id;return(
-        <div key={e.id} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht}} onClick={()=>e.prep_available&&genPrep(e)}>
+      {timedAll.map(e=>{const top=calY(e.start_time);const end=calY(e.end_time)||top+CAL_HOUR_PX;const ht=Math.max(34,end-top);const open=prepFor===e.id;return(
+        <div key={e.id} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht}} onClick={()=>e.media?openMediaCard(e.media):(e.prep_available&&genPrep(e))}>
           <div className="cal-ev-title">{e.title}</div>
           <div className="cal-ev-meta">
             <span>{calFmtTime(e.start_time)}{e.end_time?(' – '+calFmtTime(e.end_time)):''}</span>
@@ -22333,7 +22351,7 @@ function App(){
   const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces]);
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
-  const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?<window.MediaWS/>:<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:<MarketplaceWS/>,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
+  const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:<MarketplaceWS/>,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;

@@ -24,8 +24,27 @@ def test_the_script_is_loaded_by_the_page_and_its_mirror():
 
 
 def test_the_workspace_is_mapped_in_the_page_and_its_mirror():
-    assert "media: window.MediaWS ? /*#__PURE__*/React.createElement(window.MediaWS, null)" in INDEX
-    assert "media:window.MediaWS?<window.MediaWS/>" in APP
+    assert "media: window.MediaWS ? with3D('media', 'media', /*#__PURE__*/React.createElement(window.MediaWS, null))" in INDEX
+    assert "media:window.MediaWS?with3D('media','media',<window.MediaWS/>)" in APP
+
+
+def test_the_calendar_workspace_shows_media_cards_as_a_layer():
+    """Decision D6: Media's timed cards are one layer among the owner's events,
+    with a toggle, in the page and its mirror."""
+    for text in (INDEX, APP):
+        assert "/api/media/calendar?from=" in text
+        assert "friday_cal_media" in text and "cal-layers" in text
+        assert "timedAll" in text and "openMediaCard" in text
+    HEAD = (ROOT / "ui_parts" / "head.html").read_text(encoding="utf-8")
+    for css in (INDEX, HEAD):
+        assert ".cal-event.media { --ev:var(--fr-cat-blue); }" in css
+
+
+def test_the_library_has_a_3d_layout_and_the_records_view_knows_media():
+    """Decision D4: Files 3D is a layout of the Library, and "View in 3D" shows the cards."""
+    assert "window.MediaFiles3D = MediaFiles3D" in JS and "root: 'creations'" in JS and "fill: true" in JS
+    assert "R.SOURCES.media = {" in JS and "window.__mediaRegister3D = registerSource" in JS
+    assert "onClick: () => setLayout('3d') }, '3D')" in JS
 
 
 def test_the_registry_declares_media_as_a_core_work_workspace():
