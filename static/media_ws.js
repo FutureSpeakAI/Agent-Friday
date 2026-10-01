@@ -411,7 +411,9 @@
 .md-colhead .n{color:var(--fr-dim);font-family:var(--fr-font-mono);font-size:var(--fr-text-xs);font-weight:400}
 .md-colhead .gate{margin-left:auto}
 .md-lane-note{font-size:var(--fr-text-sm);color:var(--fr-dim);padding:2px}
-.md-drop{flex:1;display:flex;flex-direction:column;gap:8px;min-height:120px;border-radius:10px;padding:2px;overflow:auto}
+.md-drop{flex:1;display:flex;flex-direction:column;gap:8px;min-height:120px;border-radius:10px;padding:2px;overflow-y:auto;overflow-x:hidden}
+.md-drop>div{min-width:0}
+.md-drop .md-card{min-width:0;width:100%}
 .md-drop.over{outline:1px dashed var(--fr-cyan);background:var(--fr-cyan-soft)}
 .md-board .md-card{cursor:grab}
 .md-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
