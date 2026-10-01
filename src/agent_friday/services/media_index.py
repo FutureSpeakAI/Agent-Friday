@@ -937,6 +937,8 @@ def publish(card_id: str, requested_by: str = "user") -> Dict[str, Any]:
         return {"status": "not_found"}
     if c["status"] == "published" and c["source_kind"] not in ("creation", "document", "episode"):
         return {"status": "ok", "message": "Already published."}
+    if c["source_kind"] == "post":
+        return _publish_post(c)
     detail = {
         "handler": HANDLER, "card": card_id, "kind": c["kind"], "title": c["title"],
         "targets": c.get("targets") or [], "sources": c.get("sources") or [], "bytes": (c.get("extra") or {}).get("bytes"),
@@ -959,6 +961,31 @@ def publish(card_id: str, requested_by: str = "user") -> Dict[str, Any]:
         return {"status": "denied", "message": getattr(v, "reason", "") or "Refused."}
     aid = _find_card_id(detail)
     return {"status": "pending", "approval_id": aid, "message": "A card is asking you first."}
+
+
+def _publish_post(c: Dict[str, Any]) -> Dict[str, Any]:
+    """A post card is a v2 post: arm it the way the content route does and let
+    the content gate raise the owner's card for each target's exact words.
+    Media raises no card of its own here, so there is one card per place it
+    goes, and the publisher dispatches only once that card is approved."""
+    from agent_friday.services import content_pipeline as cp
+    from agent_friday.services import publisher as pub
+    pid = c["source_ref"]
+    r = cp.publish_now(pid)
+    if not r.get("ok"):
+        return {"status": "error", "message": r.get("error") or "The post could not be armed."}
+    ap = pub.request_publish_approval(pid)
+    try:
+        pub.kick()
+    except Exception:
+        pass
+    reindex_posts_only()
+    targets = ap.get("targets") or []
+    states = {str(t.get("state") or "") for t in targets}
+    if targets and states <= {"approved", "covered by a grant"}:
+        return {"status": "ok", "message": "Publishing.", "card": get(c["id"]), "targets": targets}
+    return {"status": "pending", "message": "A card is asking you first, for each place it goes.",
+            "targets": targets, "approval_id": next((t.get("approval_id") for t in targets if t.get("approval_id")), None)}
 
 
 def _publish_description(c: Dict[str, Any]) -> str:

@@ -188,6 +188,23 @@ def test_scheduling_a_post_goes_through_the_content_store(home):
     assert res["card"]["status"] == "scheduled" and res["card"]["when"].startswith("2026-10-02")
 
 
+def test_publishing_a_post_card_arms_the_post_and_waits_for_the_content_card(home):
+    """The content gate (321ec490) owns a post's card: Media arms the post and
+    raises that card, never one of its own, and nothing is sent before it."""
+    mi.reindex()
+    post = [c for c in mi.query(view="all")["cards"] if c["source_kind"] == "post"][0]
+    res = mi.publish(post["id"])
+    assert res["status"] == "pending", res
+    assert res["targets"] and all(t["state"] == "waiting for your approval" for t in res["targets"]), res
+    from agent_friday.services import content_pipeline as cp, approvals
+    p = cp.get_post(home["post_id"])["post"]
+    assert p["status"] == "PUBLISHING" and all(not t.get("post_url") for t in p["targets"])
+    cards = [a for a in approvals.list_approvals(kind="governed_action") if str(a.get("subject_id", "")).startswith("content: publish")]
+    assert cards, "the content gate's card was raised"
+    assert not [a for a in approvals.list_approvals(kind="governed_action") if (a.get("payload") or {}).get("handler") == mi.HANDLER], "Media raised no card of its own"
+    assert mi.get(post["id"])["status"] == "scheduled" and "publishing" in mi.get(post["id"])["badges"]
+
+
 def test_the_calendar_shows_only_timed_cards(home):
     mi.reindex()
     post = [c for c in mi.query(view="all")["cards"] if c["source_kind"] == "post"][0]
