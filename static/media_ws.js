@@ -631,8 +631,8 @@
       return h('textarea', { className: 'md-text', value: body || '', 'aria-label': 'Text', spellCheck: false, onChange: e => setBody(e.target.value), placeholder: 'Write here. Friday’s suggestions arrive as a diff you accept or not, never as a silent rewrite.' });
     }
     if (kind === 'post' && window.ContentComposeTab) {
-      const prefill = Object.assign({}, (c.extra || {}).post || {}, { id: c.source_ref, title: c.title, body: body || '' });
-      return h('div', { style: { padding: 10, overflow: 'auto', flex: 1 } }, h(window.ContentComposeTab, { platforms: window.__mediaPlatforms || [], prefillPost: prefill, slot: null, onNavAccounts: () => toast('Accounts live under Settings → Accounts & Keys.') }));
+      // Compose takes the post's id and fetches the post itself; a post card is that post.
+      return h('div', { style: { padding: 10, overflow: 'auto', flex: 1 } }, h(window.ContentComposeTab, { platforms: window.__mediaPlatforms || [], prefillPost: c.source_ref, slot: null, onNavAccounts: () => toast('Accounts live under Settings → Accounts & Keys.') }));
     }
     if ((kind === 'imageset' || kind === 'image') && file) return h('img', { src: file, alt: c.title });
     if ((kind === 'video' || kind === 'timeline') && file) return h('video', { src: file, controls: true });

@@ -90,6 +90,12 @@ def test_publishing_never_happens_in_the_page():
     assert "/publish'" in JS
 
 
+def test_a_post_card_opens_compose_on_the_post_itself():
+    """Compose takes a post id and fetches the post; the card hands it that id."""
+    assert "prefillPost: c.source_ref" in JS
+    assert re.search(r"setPostId\(prefillPost\);\s*fetch\('/api/content/posts/' \+ prefillPost\)", INDEX)
+
+
 def test_a_selected_segment_is_the_brand_control():
     assert "className: 'btn' + (view === v[0] && !card ? ' active' : '')" in JS
     assert "'aria-pressed': view === v[0] && !card" in JS
