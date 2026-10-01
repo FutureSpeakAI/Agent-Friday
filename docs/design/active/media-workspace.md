@@ -8,7 +8,8 @@
 > slides and read-aloud as turn-into targets (they answer "not wired yet"), the Calendar
 > workspace overlay (D6), Files 3D as a Library layout (D4), credentials on every save path
 > (P7). The owner decided on 2026-09-30 ("yes to all", §10).
-> **Last verified:** 2026-09-30, against main at `e27ba160`.
+> **Last verified:** 2026-09-30, against main at `321ec490` (merged into the branch; the content gate
+> it carries owns a post card's approval, §4.5) and `feat/unified-shell` at `34e8240d`.
 > **Implementation:** as the status says; §1 cites what existed before the build, line by line, and `tests/unit/test_media_index.py`, `tests/api/test_media_routes.py`, `tests/unit/test_media_card_tools.py` and `tests/unit/test_media_workspace_ui.py` are the proofs.
 > **Prototypes:** [`docs/design/prototypes/media/`](../prototypes/media/index.html), six
 > screens and a map in Friday's brand, one shared set of cards, keyboard-complete, no server.
