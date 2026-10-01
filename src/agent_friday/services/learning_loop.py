@@ -4,8 +4,17 @@ FutureSpeak.AI · Asimov's Mind
 
 A local, closed-loop self-improvement engine. Friday observes which approaches
 succeed for which task types, mines successful patterns into *skill candidates*,
-scores them against their trial record, and promotes the best to active use —
-where they are injected as advisory heuristics into the system prompt.
+scores them against their trial record, and proposes the best for active use —
+where, once the owner accepts, they are injected as advisory heuristics into
+the system prompt.
+
+Owner-gated (amendment A2): a heuristic in the prompt changes how Friday
+behaves, so the loop never adds or removes one by itself. A skill that clears
+the promotion bar, or an active one that decays below the retirement bar,
+raises an approval card (kind ``learning_skill_change``) carrying the diff, the
+evidence and a preview of the resulting prompt block. Only the owner's
+decision (accept, edit, reject, or defer by leaving the card pending) changes
+the active set.
 
 Hard rules (cLaws-safe):
   • Local-only. No cloud, no LLM. Pure SQLite + heuristics → Ring-0.
@@ -43,6 +52,10 @@ _PROMOTE_THRESHOLD = 0.65
 _RETIRE_THRESHOLD = 0.40
 _DEFAULT_MAX_ACTIVE = 50
 
+#: Approval-card kind for a proposed change to the active heuristics.
+PROPOSAL_KIND = "learning_skill_change"
+_MAX_PATTERN_CHARS = 300
+
 
 def _settings() -> Dict[str, Any]:
     try:
@@ -78,7 +91,7 @@ def _connect() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS skills(
             skill_id TEXT PRIMARY KEY, name TEXT, task_type TEXT, created_ts REAL,
             pattern TEXT, status TEXT, score REAL, trials INTEGER, wins INTEGER,
-            source_obs_json TEXT
+            source_obs_json TEXT, proposal_id TEXT
         );
         CREATE TABLE IF NOT EXISTS skill_trials(
             trial_id TEXT PRIMARY KEY, skill_id TEXT, ts REAL, success INTEGER,
@@ -97,7 +110,7 @@ def _connect() -> sqlite3.Connection:
         from agent_friday.services.db_util import ensure_schema
         ensure_schema(conn, {
             "observations": [("workspace", "TEXT"), ("meta_json", "TEXT")],
-            "skills": [("source_obs_json", "TEXT")],
+            "skills": [("source_obs_json", "TEXT"), ("proposal_id", "TEXT")],
         })
     except Exception:
         pass
@@ -276,9 +289,15 @@ def score_skill(skill_id: str) -> float:
 # ── Promotion ─────────────────────────────────────────────────────────────────
 def promote(threshold: float = _PROMOTE_THRESHOLD, min_trials: int = 3,
             retire: float = _RETIRE_THRESHOLD) -> List[Dict[str, Any]]:
-    """candidate/validating → active when score clears threshold (and, once it
-    has trials, min_trials met). active → retired when score decays below
-    `retire`. Respects max_active_skills."""
+    """Propose changes to the active set; never make them.
+
+    A candidate/validating skill whose score clears `threshold` (and, once it
+    has trials, meets `min_trials`) raises an "add" proposal while there is
+    room under max_active_skills. An active skill whose score decays below
+    `retire` raises a "remove" proposal and stays active until the owner
+    decides. A skill with a pending proposal is not proposed again; a
+    rejected one is never proposed again. candidate → validating is internal
+    bookkeeping (nothing reaches the prompt) and still happens here."""
     if not _enabled():
         return []
     threshold = _clamp01(threshold)
@@ -286,55 +305,254 @@ def promote(threshold: float = _PROMOTE_THRESHOLD, min_trials: int = 3,
     min_trials = max(0, _coerce_int(min_trials, 3))
     changes: List[Dict[str, Any]] = []
     try:
-        # Serialize the whole read-count/score/promote sequence: without this two
-        # concurrent epochs (scheduler + POST /api/learning/epoch) both read
-        # active_count, both see room under the cap, and both promote — blowing
-        # past max_active_skills. _LOCK is an RLock so score_skill can re-enter.
+        # Serialize the whole read-count/score/propose sequence so two
+        # concurrent epochs (scheduler + POST /api/learning/epoch) cannot both
+        # raise a card for the same skill. _LOCK is an RLock so score_skill
+        # can re-enter.
         with _LOCK:
             conn = _connect()
             skills = conn.execute(
-                "SELECT skill_id, status, trials FROM skills").fetchall()
+                "SELECT skill_id, status, trials, proposal_id FROM skills").fetchall()
             conn.close()
-            active_count = _count_active()
-            max_active = _max_active()
-            for sid, status, trials in skills:
+            room = _max_active() - _count_active() - _count_pending("add")
+            for sid, status, trials, proposal_id in skills:
                 sc = score_skill(sid)
+                pending = _card_pending(proposal_id)
                 if status in ("candidate", "validating"):
                     ready = sc >= threshold and (trials == 0 or trials >= min_trials)
-                    if ready and active_count < max_active:
-                        _set_status(sid, "active")
-                        active_count += 1
-                        changes.append({"skill_id": sid, "to": "active", "score": sc})
+                    if ready and not pending and room > 0:
+                        if _propose(sid, "add", sc):
+                            room -= 1
+                            changes.append({"skill_id": sid, "to": "proposed_add",
+                                            "score": sc})
                     elif sc >= threshold and status == "candidate":
                         _set_status(sid, "validating")
                         changes.append({"skill_id": sid, "to": "validating", "score": sc})
-                elif status == "active" and sc < retire:
-                    _set_status(sid, "retired")
-                    active_count -= 1
-                    changes.append({"skill_id": sid, "to": "retired", "score": sc})
-        # Post-step (outside the lock): a newly active skill becomes a
-        # knowledge-graph node and ignites live in the 3D explorer.
-        for ch in changes:
-            if ch.get("to") != "active":
-                continue
-            try:
-                conn = _connect()
-                row = conn.execute(
-                    "SELECT name, pattern, task_type FROM skills WHERE skill_id=?",
-                    (ch["skill_id"],)).fetchone()
-                conn.close()
-                if row:
-                    from agent_friday.services.knowledge_graph.integration import (
-                        ingest_fact)
-                    ingest_fact(f"Learned skill ({row[2]}): {row[0]} — {row[1]}",
-                                source_kind="cognitive",
-                                source_key=f"skill:{ch['skill_id']}",
-                                category="skill")
-            except Exception:
-                pass
+                elif status == "active" and sc < retire and not pending:
+                    if _propose(sid, "remove", sc):
+                        changes.append({"skill_id": sid, "to": "proposed_remove",
+                                        "score": sc})
         return changes
     except Exception:
         return []
+
+
+# ── Owner decisions ───────────────────────────────────────────────────────────
+def _skill_row(skill_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT skill_id, name, task_type, pattern, status, score, trials, wins, "
+            "source_obs_json, proposal_id FROM skills WHERE skill_id=?",
+            (skill_id,)).fetchone()
+        conn.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    keys = ("skill_id", "name", "task_type", "pattern", "status", "score", "trials",
+            "wins", "source_obs_json", "proposal_id")
+    return dict(zip(keys, row))
+
+
+def _card(approval_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not approval_id:
+        return None
+    try:
+        from agent_friday.services import approvals
+        return approvals.get_approval(approval_id)
+    except Exception:
+        return None
+
+
+def _card_pending(approval_id: Optional[str]) -> bool:
+    card = _card(approval_id)
+    return bool(card and card.get("status") == "pending")
+
+
+def _count_pending(change: str) -> int:
+    try:
+        conn = _connect()
+        ids = [r[0] for r in conn.execute(
+            "SELECT proposal_id FROM skills WHERE proposal_id IS NOT NULL").fetchall()]
+        conn.close()
+    except Exception:
+        return 0
+    n = 0
+    for aid in ids:
+        card = _card(aid)
+        if (card and card.get("status") == "pending"
+                and (card.get("payload") or {}).get("change") == change):
+            n += 1
+    return n
+
+
+def _preview(pattern: str, change: str) -> str:
+    """The heuristics block as it would read after this change."""
+    current = [s["pattern"] for s in active_skills()]
+    if change == "add":
+        after = current + [pattern]
+    else:
+        after = [p for p in current if p != pattern]
+    return "\n".join(f"• {p}" for p in after)
+
+
+def _propose(skill_id: str, change: str, score: float) -> bool:
+    """Raise one owner approval card for adding or removing a heuristic."""
+    import json
+    row = _skill_row(skill_id)
+    if not row:
+        return False
+    pattern = row["pattern"] or ""
+    try:
+        source_obs = len(json.loads(row["source_obs_json"] or "[]"))
+    except Exception:
+        source_obs = 0
+    evidence = {"score": round(float(score), 4), "trials": int(row["trials"] or 0),
+                "wins": int(row["wins"] or 0), "source_observations": source_obs,
+                "task_type": row["task_type"]}
+    sign = "+" if change == "add" else "-"
+    verb = "Add" if change == "add" else "Remove"
+    diff = f"{sign} • {pattern}"
+    try:
+        from agent_friday.services import approvals
+        card = approvals.create_approval(
+            kind=PROPOSAL_KIND, subject_type="learning_skill",
+            subject_id=f"{skill_id}:{change}:{uuid.uuid4().hex[:8]}",
+            title=f"{verb} a learned heuristic for {row['task_type']} tasks",
+            description=(f"{diff}\n\nScore {evidence['score']} over "
+                         f"{evidence['trials']} trial(s), {evidence['wins']} win(s)."),
+            action_description=f"{verb} a learned heuristic in Friday's system prompt",
+            action_class="internal", force_gate=True,
+            payload={"skill_id": skill_id, "change": change, "pattern": pattern,
+                     "diff": diff, "evidence": evidence,
+                     "preview": _preview(pattern, change)})
+    except Exception:
+        return False
+    if not card or card.get("status") != "pending":
+        return False
+    try:
+        conn = _connect()
+        conn.execute("UPDATE skills SET proposal_id=? WHERE skill_id=?",
+                     (card["approval_id"], skill_id))
+        conn.commit()
+        conn.close()
+    except Exception:
+        return False
+    return True
+
+
+def _ingest_active(skill_id: str) -> None:
+    """A newly active skill becomes a knowledge-graph node."""
+    try:
+        row = _skill_row(skill_id)
+        if row:
+            from agent_friday.services.knowledge_graph.integration import ingest_fact
+            ingest_fact(f"Learned skill ({row['task_type']}): {row['name']} — "
+                        f"{row['pattern']}",
+                        source_kind="cognitive", source_key=f"skill:{skill_id}",
+                        category="skill")
+    except Exception:
+        pass
+
+
+def _on_proposal_decided(card: Dict[str, Any]) -> None:
+    """Apply an owner's decision on a learning_skill_change card.
+
+    Only the card the skill currently points at can change it, so a stale or
+    replayed card does nothing."""
+    payload = card.get("payload") or {}
+    sid = payload.get("skill_id")
+    change = payload.get("change")
+    status = card.get("status")
+    with _LOCK:
+        row = _skill_row(sid) if sid else None
+        if not row or row["proposal_id"] != card.get("approval_id"):
+            return
+        new_status = row["status"]
+        activated = False
+        if status == "approved" and change == "add":
+            if row["status"] in ("candidate", "validating") and _count_active() < _max_active():
+                new_status = "active"
+                activated = True
+        elif status == "approved" and change == "remove":
+            if row["status"] == "active":
+                new_status = "retired"
+        elif status == "denied" and change == "add":
+            new_status = "rejected"
+        try:
+            conn = _connect()
+            conn.execute("UPDATE skills SET status=?, proposal_id=NULL WHERE skill_id=?",
+                         (new_status, sid))
+            conn.commit()
+            conn.close()
+        except Exception:
+            return
+    if activated:
+        _ingest_active(sid)
+
+
+def pending_proposals() -> List[Dict[str, Any]]:
+    """Open proposals, each with its diff, evidence and preview."""
+    try:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT skill_id, proposal_id FROM skills WHERE proposal_id IS NOT NULL"
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return []
+    out = []
+    for sid, aid in rows:
+        card = _card(aid)
+        if card and card.get("status") == "pending":
+            out.append({"skill_id": sid, "approval_id": aid,
+                        **{k: (card.get("payload") or {}).get(k)
+                           for k in ("change", "pattern", "diff", "evidence", "preview")}})
+    return out
+
+
+def decide_proposal(skill_id: str, decision: str, *,
+                    pattern: Optional[str] = None) -> Dict[str, Any]:
+    """The owner's decision on a skill's pending proposal.
+
+    accept: apply it. edit: replace an "add" proposal's wording with the
+    owner's, then apply it. reject: keep the active set as it is (a rejected
+    addition is never proposed again). defer: leave the card pending."""
+    if decision not in ("accept", "edit", "reject", "defer"):
+        return {"ok": False, "error": "decision must be accept, edit, reject or defer"}
+    row = _skill_row(skill_id) if isinstance(skill_id, str) and skill_id else None
+    card = _card(row["proposal_id"]) if row else None
+    if not card or card.get("status") != "pending":
+        return {"ok": False, "error": "no pending proposal for that skill"}
+    if decision == "defer":
+        return {"ok": True, "status": "pending"}
+    change = (card.get("payload") or {}).get("change")
+    if decision == "edit":
+        if change != "add":
+            return {"ok": False, "error": "only a proposed addition can be edited"}
+        text = " ".join(str(pattern or "").split())[:_MAX_PATTERN_CHARS]
+        if not text:
+            return {"ok": False, "error": "the edited heuristic is empty"}
+        try:
+            with _LOCK:
+                conn = _connect()
+                conn.execute("UPDATE skills SET pattern=? WHERE skill_id=?",
+                             (text, skill_id))
+                conn.commit()
+                conn.close()
+        except sqlite3.IntegrityError:
+            return {"ok": False, "error": "that heuristic already exists"}
+        except Exception as e:
+            return {"ok": False, "error": exception_text(e)}
+    if decision in ("accept", "edit") and change == "add" and _count_active() >= _max_active():
+        return {"ok": False, "error": "the active heuristics are full"}
+    from agent_friday.services import approvals
+    approvals.decide(card["approval_id"],
+                     "deny" if decision == "reject" else "approve",
+                     note=f"learning loop: {decision}")
+    after = _skill_row(skill_id) or {}
+    return {"ok": True, "status": after.get("status")}
 
 
 def active_skills(task_type: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -388,7 +606,7 @@ def state() -> Dict[str, Any]:
     try:
         conn = _connect()
         counts = {}
-        for status in ("candidate", "validating", "active", "retired"):
+        for status in ("candidate", "validating", "active", "retired", "rejected"):
             counts[status] = conn.execute(
                 "SELECT COUNT(*) FROM skills WHERE status=?", (status,)).fetchone()[0]
         obs = conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
@@ -469,3 +687,11 @@ def _clamp01(v) -> float:
 
 def _norm(s) -> str:
     return re.sub(r"\s+", "_", str(s or "").strip().lower())[:60] or "general"
+
+
+# The owner's decision on a proposal card is applied by this hook.
+try:
+    from agent_friday.services import approvals as _approvals
+    _approvals.register_decision_hook(PROPOSAL_KIND, _on_proposal_decided)
+except Exception:
+    pass

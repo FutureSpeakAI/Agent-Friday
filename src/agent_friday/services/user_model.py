@@ -11,6 +11,11 @@ What it learns (all local, all heuristic — no cloud, no LLM):
   • Workflow patterns    — active hours, top tools, top workspaces.
   • Durable facts        — preferences/decisions surfaced by memory dreaming.
 
+Adaptation is ephemeral (amendment A2): what ``observe_message`` infers about
+style and expertise changes how Friday speaks, so it lives only in this
+process's memory for the running session and is never written to the store.
+A durable trait is one the owner set (``set_trait``) or accepted.
+
 Persistence: ``~/.friday/user_model.db`` (SQLite). The injected summary is
 TIER_1 behavioral preference text — never raw PII — so it is safe for the system
 prompt on any provider.
@@ -35,6 +40,10 @@ FRIDAY_DIR = friday_home()
 DB_PATH = FRIDAY_DIR / "user_model.db"
 
 _LOCK = threading.Lock()
+
+#: This session's inferred style and expertise, key -> (value, evidence).
+#: Never persisted; read ahead of the durable store by get_trait.
+_SESSION_TRAITS: Dict[str, tuple] = {}
 
 # ── Heuristic lexicons ────────────────────────────────────────────────────────
 _CASUAL_MARKERS = [
@@ -148,46 +157,50 @@ def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Di
 
 
 def _nudge_trait(key: str, target: float, weight: float = 0.15) -> None:
-    """Move a 0..1 trait toward `target` by an EMA step; bump evidence + confidence.
+    """Move a 0..1 session trait toward `target` by an EMA step.
 
-    The whole SELECT-compute-UPDATE runs under _LOCK: the value write is a plain
-    overwrite of a Python-computed EMA derived from the SELECT, so two concurrent
-    observers (e.g. chat + a channel poll thread) would otherwise read the same
-    value and the later committer would clobber the earlier's nudge (lost update),
-    while the SQL-relative evidence+1 still counted both — drifting value vs.
-    evidence apart.
+    Session-only: the step starts from this session's value, else from the
+    owner's durable value, else 0.5, and is never written to the store. The
+    read-compute-write runs under _LOCK so two concurrent observers (chat and
+    a channel poll thread) cannot lose an update.
     """
     try:
         with _LOCK:
-            conn = _connect()
-            row = conn.execute("SELECT value, evidence FROM traits WHERE key=?",
-                               (key,)).fetchone()
-            cur = float(row[0]) if row and _isfloat(row[0]) else 0.5
-            ev = int(row[1] or 0) if row else 0
+            if key in _SESSION_TRAITS:
+                cur, ev = _SESSION_TRAITS[key]
+            else:
+                durable = _durable_trait(key)
+                cur, ev = (float(durable) if _isfloat(durable) else 0.5), 0
             new = round(cur + (target - cur) * weight, 4)
-            new = max(0.0, min(1.0, new))
-            conf = min(0.95, 0.4 + 0.03 * (ev + 1))
-            conn.execute(
-                "INSERT INTO traits(key,value,confidence,updated_ts,evidence) VALUES(?,?,?,?,?) "
-                "ON CONFLICT(key) DO UPDATE SET value=?, confidence=?, updated_ts=?, "
-                "evidence=evidence+1",
-                (key, str(new), conf, time.time(), ev + 1, str(new), conf, time.time()))
-            conn.commit()
-            conn.close()
+            _SESSION_TRAITS[key] = (max(0.0, min(1.0, new)), ev + 1)
     except Exception:
         pass
 
 
+def reset_session_adaptation() -> None:
+    """Drop everything this session inferred; durable traits are untouched."""
+    with _LOCK:
+        _SESSION_TRAITS.clear()
+
+
 def get_trait(key: str, default=None):
+    with _LOCK:
+        if key in _SESSION_TRAITS:
+            return _SESSION_TRAITS[key][0]
+    val = _durable_trait(key)
+    return default if val is None else val
+
+
+def _durable_trait(key: str):
     try:
         conn = _connect()
         row = conn.execute("SELECT value FROM traits WHERE key=?", (key,)).fetchone()
         conn.close()
         if row is None:
-            return default
+            return None
         return float(row[0]) if _isfloat(row[0]) else row[0]
     except Exception:
-        return default
+        return None
 
 
 # ── Observation ───────────────────────────────────────────────────────────────
@@ -399,6 +412,7 @@ def profile() -> Dict[str, Any]:
         return {
             "available": True,
             "traits": _all_traits(),
+            "session_traits": sorted(_SESSION_TRAITS),
             "facts": _recent_facts(50),
             "top_workspaces": _top_counters("workflow.workspace.", n=5),
             "top_tools": _top_counters("workflow.tool.", n=8),
@@ -416,6 +430,7 @@ def forget(category: Optional[str] = None) -> Dict[str, Any]:
             if category:
                 conn.execute("DELETE FROM facts WHERE category=?", (_slug(category),))
             else:
+                _SESSION_TRAITS.clear()
                 conn.execute("DELETE FROM traits")
                 conn.execute("DELETE FROM facts")
                 conn.execute("DELETE FROM signals")
@@ -463,13 +478,17 @@ def _bump_counter(key: str) -> None:
 
 
 def _all_traits() -> Dict[str, Any]:
+    """Durable traits overlaid with this session's adaptation."""
     try:
         conn = _connect()
         rows = conn.execute("SELECT key, value FROM traits").fetchall()
         conn.close()
-        return {k: v for k, v in rows}
+        out = {k: v for k, v in rows}
     except Exception:
-        return {}
+        out = {}
+    with _LOCK:
+        out.update({k: str(v[0]) for k, v in _SESSION_TRAITS.items()})
+    return out
 
 
 def _recent_facts(n: int) -> List[Dict[str, Any]]:

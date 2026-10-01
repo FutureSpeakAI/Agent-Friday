@@ -6,6 +6,9 @@ FutureSpeak.AI · Asimov's Mind
   GET   /api/learning/skills    active learned heuristics
   POST  /api/learning/epoch     run one mine→promote cycle now
   POST  /api/learning/observe   record a task outcome (used by the agent loop)
+  GET   /api/learning/proposals  pending heuristic changes awaiting the owner
+  POST  /api/learning/proposals/<skill_id>  {decision: accept|edit|reject|defer,
+                                             pattern?: the owner's wording for edit}
 """
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
@@ -44,3 +47,18 @@ def learning_observe():
         d["task_type"], d.get("prompt", ""), approach=d.get("approach", "default"),
         success=bool(d["success"]), satisfaction=d.get("satisfaction"),
         revisions=int(d.get("revisions", 0)), workspace=d.get("workspace", "")), "Couldn't record the observation"))
+
+
+@learning_bp.route("/api/learning/proposals", methods=["GET"])
+@login_required
+def learning_proposals():
+    return jsonify({"ok": True, "proposals": learning_loop.pending_proposals()})
+
+
+@learning_bp.route("/api/learning/proposals/<skill_id>", methods=["POST"])
+@login_required
+def learning_decide(skill_id):
+    d = request.get_json(silent=True) or {}
+    res = learning_loop.decide_proposal(skill_id, str(d.get("decision") or ""),
+                                        pattern=d.get("pattern"))
+    return jsonify(public_result(res, "Couldn't record that decision")), (200 if res.get("ok") else 400)

@@ -129,4 +129,6 @@ class TestLearningLoopEndToEnd:
         for _ in range(4):
             ll.record_trial(sid, success=True, satisfaction=0.95)
         ll.promote(threshold=0.5, min_trials=3)
+        assert sid not in [s["skill_id"] for s in ll.active_skills()]
+        assert ll.decide_proposal(sid, "accept")["ok"] is True
         assert sid in [s["skill_id"] for s in ll.active_skills()]

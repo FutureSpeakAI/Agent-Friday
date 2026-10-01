@@ -85,6 +85,17 @@ class TestLearningRoutes:
         r = client.post("/api/learning/epoch")
         assert r.status_code == 200
 
+    def test_proposals_list(self, client):
+        r = client.get("/api/learning/proposals")
+        assert r.status_code == 200
+        assert isinstance(r.get_json()["proposals"], list)
+
+    def test_decide_without_a_pending_proposal_is_refused(self, client):
+        r = client.post("/api/learning/proposals/no-such-skill",
+                        json={"decision": "accept"})
+        assert r.status_code == 400
+        assert r.get_json()["ok"] is False
+
 
 # ── User model routes ─────────────────────────────────────────────────────────
 

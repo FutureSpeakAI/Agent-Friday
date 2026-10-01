@@ -73,14 +73,16 @@ def test_record_trial_updates_score():
     assert ll.score_skill(sid) > 0.5
 
 
-def test_promote_candidate_to_active():
+def test_promote_proposes_and_owner_accept_activates():
     _seed_successful(n=5)
     sid = ll.mine_candidates()[0]["skill_id"]
     for _ in range(4):
         ll.record_trial(sid, True, 0.9)
     changes = ll.promote(threshold=0.5, min_trials=3)
     to_states = {c["to"] for c in changes}
-    assert "active" in to_states
+    assert "proposed_add" in to_states
+    assert not any(s["skill_id"] == sid for s in ll.active_skills())
+    assert ll.decide_proposal(sid, "accept")["ok"] is True
     assert any(s["skill_id"] == sid for s in ll.active_skills())
 
 
@@ -129,7 +131,10 @@ def test_retire_low_scoring_active():
     for _ in range(6):
         ll.record_trial(sid, success=False, satisfaction=0.05)
     changes = ll.promote()
-    assert any(c["to"] == "retired" for c in changes)
+    assert any(c["to"] == "proposed_remove" for c in changes)
+    assert any(s["skill_id"] == sid for s in ll.active_skills())
+    ll.decide_proposal(sid, "accept")
+    assert not any(s["skill_id"] == sid for s in ll.active_skills())
 
 
 def test_mine_requires_distinct_prompts():
