@@ -32,7 +32,7 @@ def test_running_camera_apps_are_candidates_only():
 
 
 def test_snapshot_separates_the_certain_from_the_possible(monkeypatch):
-    monkeypatch.setattr(ch, "read_registry", lambda: [("x#Zoom.exe", 7, 0)])
+    monkeypatch.setattr(ch, "read_registry", lambda kind="webcam": [("x#Zoom.exe", 7, 0)])
     monkeypatch.setattr(ch, "_process_names", lambda: ["Zoom.exe", "ms-teams.exe"])
     assert ch.snapshot() == {"holders": ["Zoom"], "candidates": ["Microsoft Teams"]}
 
@@ -40,7 +40,7 @@ def test_snapshot_separates_the_certain_from_the_possible(monkeypatch):
 def test_snapshot_never_raises(monkeypatch):
     def boom():
         raise RuntimeError("registry")
-    monkeypatch.setattr(ch, "read_registry", lambda: [])
+    monkeypatch.setattr(ch, "read_registry", lambda kind="webcam": [])
     monkeypatch.setattr(ch, "_process_names", boom)
     assert ch.snapshot() == {"holders": [], "candidates": []}
 
