@@ -45,7 +45,9 @@ class FakeSolution {
   async send() {
     FakeSolution.sends++;
     if (window.__cam.failFrames) throw new Error('engine gone');
-    if (this.cb) this.cb({ detections: [{ boundingBox: { xCenter: 0.5, yCenter: 0.5, width: 0.2, height: 0.2 } }],
+    // A face centred and at the neutral width (0.18), so a tracked head sits
+    // at zero lean: with or without a face the view rests at neutral.
+    if (this.cb) this.cb({ detections: [{ boundingBox: { xCenter: 0.5, yCenter: 0.5, width: 0.18, height: 0.18 } }],
                            multiHandLandmarks: [] });
   }
 }
@@ -55,12 +57,49 @@ const cv = document.createElement('canvas'); cv.width = 320; cv.height = 240;
 const ctx = cv.getContext('2d');
 setInterval(() => { ctx.fillStyle = 'rgb(' + (Date.now() % 255) + ',40,80)'; ctx.fillRect(0, 0, 320, 240); }, 33);
 window.__cam = { calls: 0, fail: null, failFrames: false, streams: [] };
+// The manager feeds a tracking pass per NEW VIDEO FRAME: it reads the video
+// element's readyState and currentTime. In headless Chromium on software GL
+// the first frame of a canvas capture stream takes five to seven seconds to
+// reach the video element, whatever the scene is doing, which put the test
+// at the mercy of machine load (a 50% flake on a loaded PC). The fake camera
+// therefore owns the video element's readiness and clock: frames are "new"
+// on every animation frame from the moment the stream is attached, and the
+// stream's tracks stay real, so ended, mute and stop behave as in the field.
+// No test here may ever depend on a real camera or on the media pipeline.
+(function () {
+  const v = videoElement;
+  let t = 0;
+  Object.defineProperty(v, 'readyState', { configurable: true, get: () => (v.srcObject ? 4 : 0) });
+  Object.defineProperty(v, 'currentTime', { configurable: true,
+    get: () => (v.srcObject ? (t += 1 / 60) : 0), set: () => {} });
+  v.play = () => Promise.resolve();
+})();
 navigator.mediaDevices.getUserMedia = async () => {
   window.__cam.calls++;
   if (window.__cam.fail) { const e = new Error('cannot start video source'); e.name = window.__cam.fail; throw e; }
   const s = cv.captureStream(30); window.__cam.streams.push(s); return s;
 };
 window.__cam.lastTrack = () => { const s = window.__cam.streams[window.__cam.streams.length - 1]; return s && s.getVideoTracks()[0]; };
+// A log of every camera status transition, recorded by the manager's own
+// write to state.status (a setter), with what the page showed once that
+// transition's synchronous work had finished (a microtask later, still
+// before any timer). States that last only as long as a backoff are read
+// from here: a poller could miss them on a busy main thread.
+window.__camLog = [];
+(function () {
+  const st = FridayCamera.state;
+  let cur = st.status;
+  Object.defineProperty(st, 'status', { configurable: true, get: () => cur, set: v => {
+    cur = v;
+    queueMicrotask(() => {
+      const el = document.getElementById('camera-status');
+      window.__camLog.push({ status: v, face: isFaceVisible, seen: FridayTracking.head.seen,
+        hasStream: !!FridayCamera.stream, calls: window.__cam.calls,
+        text: el.textContent, shown: el.classList.contains('shown'),
+        dot: document.getElementById('camera-indicator').className, z: FridayTracking.head.z });
+    });
+  } });
+})();
 window.__cam.status = () => ({ status: FridayCamera.state.status, wanted: FridayCamera.state.wanted,
   text: document.getElementById('camera-status').textContent,
   shown: document.getElementById('camera-status').classList.contains('shown'),
@@ -96,6 +135,11 @@ def page():
                                  " && !!window.FridayCamera && typeof toggleHologram === 'function'",
                                  timeout=60000)
             pg.evaluate(FAKES)
+            # These tests never look at the scene, and on software GL a drawn
+            # frame costs hundreds of milliseconds that starve every timer in
+            # the page. Hold the drawing (the app's own hold for a covered
+            # backdrop); the simulation, the camera and the head still run.
+            pg.evaluate("window.__fridayBackdropHold = 1")
             yield pg
             browser.close()
     finally:
@@ -124,21 +168,29 @@ def test_the_camera_opens_when_the_hologram_is_turned_on_and_a_face_is_tracked(p
 
 
 def test_a_track_that_ends_mid_session_is_reacquired_and_the_face_comes_back(page):
-    page.evaluate("__cam.lastTrack().dispatchEvent(new Event('ended'))")
-    _until(page, "() => FridayCamera.state.status === 'lost'", "the ended track was not noticed", 2)
-    # The face is dropped on the next rendered frame, not in the event.
-    _until(page, "() => !FridayTracking.head.seen", "the face was still counted as seen", 2)
-    st = page.evaluate("__cam.status()")
-    assert not st["hasStream"]
-    assert st["shown"] and "camera stopped" in st["text"] and "retrying" in st["text"]
-    assert "holo-active" not in st["dot"]
-    # The head eases back toward neutral while nothing tracks it.
-    page.evaluate("FridayTracking.head.z = 0.8")
+    page.evaluate("__camLog.length = 0; FridayTracking.head.z = 0.8;"
+                  " __cam.lastTrack().dispatchEvent(new Event('ended'))")
+    # The lost state lasts one backoff; the camera then opens again and the
+    # face is seen. Read the lost state from the log, where it was recorded
+    # as it happened, since the re-acquire may already be behind us.
+    _until(page, "() => __cam.calls >= 2 && " + LIVE_WITH_FACE[6:]
+           + " && __camLog.some(e => e.status === 'lost')", "the camera was never lost and re-acquired", 8)
+    log = page.evaluate("__camLog")
+    lost = [e for e in log if e["status"] == "lost"]
+    assert lost, log
+    first = lost[0]
+    assert not first["hasStream"]
+    assert first["shown"] and "camera stopped" in first["text"] and "retrying" in first["text"], first
+    assert "holo-active" not in first["dot"]
+    # The face is dropped the moment the camera is gone (the head then eases
+    # on the next rendered frame).
+    assert first["face"] is False, first
+    # Nothing tracked the head meanwhile, so it eased from 0.8 toward neutral
+    # (the fake face sits at the neutral width, so the view rests at zero
+    # either way; the easing itself is pinned by the engine tests).
     _until(page, "() => Math.abs(FridayTracking.head.z) < 0.05", "the head did not ease back to neutral", 3)
-    # Then the camera is opened again, with backoff, and the face is seen.
-    _until(page, "() => __cam.calls >= 2 && " + LIVE_WITH_FACE[6:], "the camera was never re-acquired", 6)
     st = page.evaluate("__cam.status()")
-    assert st["text"] == "" and not st["shown"]
+    assert st["status"] == "live" and st["text"] == "" and not st["shown"]
     assert st["calls"] == 2
 
 
