@@ -13698,7 +13698,8 @@ function podcastCreationSource(name) {
 }
 // "Make a podcast" from whatever item a workspace is showing: a wiki page, a
 // graph entry, a creation, a conversation. One button, one request; the
-// episode follows in Studio → Podcasts with a notice when it is ready.
+// episode follows with a notice when it is ready (episode_home: a routine's
+// show on its News tab, the owner's own in Media, or Studio until Media lands).
 function PodcastButton({ sources, title, compact, className }) {
   const h = React.createElement;
   const [state, setState] = useState('');
@@ -30379,6 +30380,8 @@ function NewsWS() {
       setSelected(null);
     }
     if (t.article || t.url) setArticleOpen({ id: t.article || '', url: t.url || '', title: t.title || '', source: t.source || '' });
+    // A routine's episode lives beside its edition: open it in the player here.
+    if (t.episode) fridayPodcast('open', t.episode);
   });
 
   // Pull a page of the permanent archive (newest first). reset=true clears and

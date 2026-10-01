@@ -1193,6 +1193,26 @@ def _write_provenance(ep: dict, audio: Path) -> None:
         log.warning("podcast provenance failed: %s", e)
 
 
+#: The News tab each routine's runs live on.
+NEWS_TABS = {"front_page": "frontpage", "briefing": "briefings", "weekly": "weekly",
+             "editorial": "editorial"}
+
+
+def episode_home(ep: dict) -> dict:
+    """Where an episode is opened: a News routine's show on its News tab, beside
+    its edition; the owner's own episode in Media once the workspace registry
+    has it, and in Studio until then."""
+    routine = (ep.get("attached") or {}).get("routine")
+    if routine in NEWS_TABS:
+        return {"workspace": "news", "tab": NEWS_TABS[routine], "episode": ep["id"]}
+    try:
+        from agent_friday.services import workspace_registry
+        ws = "media" if workspace_registry.get("media") else "studio"
+    except Exception:
+        ws = "studio"
+    return {"workspace": ws, "view": "podcasts", "episode": ep["id"]}
+
+
 def _announce(ep: dict) -> None:
     if settings().get("on_ready") != "notify":
         return
@@ -1211,11 +1231,10 @@ def _announce(ep: dict) -> None:
         if sc.get("ok") is False:
             body += " · the script check found %d problem%s" % (
                 len(sc.get("problems") or []), "" if len(sc.get("problems") or []) == 1 else "s")
-        target = {"workspace": "studio", "view": "podcasts", "episode": ep["id"]}
+        target = episode_home(ep)
         ne.push(title="🎧 " + title, body=body, source="podcasts", kind="info",
                 priority="low", dedupe_key="podcast:" + ep["id"], target=target,
-                actions=[{"label": "Listen", "workspace": "studio", "view": "podcasts",
-                          "episode": ep["id"]}])
+                actions=[dict(target, label="Listen")])
     except Exception as e:
         log.debug("podcast notify failed: %s", e)
 

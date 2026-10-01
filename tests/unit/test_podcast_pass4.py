@@ -354,3 +354,31 @@ def test_a_rejected_script_is_kept_for_review(home, monkeypatch):
     done = pe.produce(podcast_news.queue_for_run("briefing", fx.DATE)["id"])
     assert done["status"] == "failed" and not done.get("lines")
     assert any("Brightline" in ln["text"] for ln in done["draft_lines"])
+
+
+# ── where an episode opens ──────────────────────────────────────────────────
+
+def _announced(monkeypatch, ep):
+    sent = []
+    import agent_friday.notifications_engine as ne
+    monkeypatch.setattr(ne, "push", lambda **k: sent.append(k))
+    pe._announce(ep)
+    return sent[0]
+
+
+@pytest.mark.parametrize("routine,tab", [("front_page", "frontpage"), ("briefing", "briefings"),
+                                         ("weekly", "weekly"), ("editorial", "editorial")])
+def test_a_routine_show_opens_on_its_news_tab(monkeypatch, routine, tab):
+    ep = _news_ep(routine)
+    note = _announced(monkeypatch, dict(ep, status="ready", duration_s=60))
+    assert note["target"] == {"workspace": "news", "tab": tab, "episode": ep["id"]}
+    assert note["actions"][0]["workspace"] == "news"
+
+
+def test_an_own_episode_opens_in_media_once_it_exists_and_studio_until_then(monkeypatch):
+    from agent_friday.services import workspace_registry
+    ep = dict(pe.create([{"kind": "text", "text": "x", "title": "t"}]), status="ready", duration_s=60)
+    monkeypatch.setattr(workspace_registry, "get", lambda ws: None)
+    assert _announced(monkeypatch, ep)["target"]["workspace"] == "studio"
+    monkeypatch.setattr(workspace_registry, "get", lambda ws: {"id": "media", "label": "Media"} if ws == "media" else None)
+    assert _announced(monkeypatch, ep)["target"] == {"workspace": "media", "view": "podcasts", "episode": ep["id"]}

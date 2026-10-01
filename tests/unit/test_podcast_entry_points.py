@@ -83,3 +83,11 @@ def test_news_episodes_live_in_news_and_studio_keeps_the_owner_s_own():
     b = _block(INDEX)
     assert "eps.filter(ep => !ep.attached).map(ep =>" in b
     assert "PodcastChip" in INDEX           # each News run's episode sits with its edition
+
+
+def test_news_opens_a_routine_episode_in_the_player():
+    for src in (INDEX, APP):
+        i = src.index("useNavTarget('news'")
+        assert "fridayPodcast('open', t.episode)" in src[i:i + 600].replace("fridayPodcast('open',t.episode)",
+                                                                             "fridayPodcast('open', t.episode)")
+    assert "Studio → Podcasts" not in _block(INDEX)

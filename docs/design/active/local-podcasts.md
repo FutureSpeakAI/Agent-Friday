@@ -32,7 +32,7 @@ github.com/souzatharsis/podcastfy). Only the idea is borrowed; no code is.
    the episode is sent anywhere.
 3. **Any sources, from anywhere.** Files, wiki pages, knowledge-graph entries,
    chat conversations, Studio creations, datasets or pasted text. It is reachable
-   from Studio → Podcasts, from the "send to" menu, from chat ("make a podcast
+   from Media (Studio until Media lands), from the "send to" menu, from chat ("make a podcast
    from …"), from voice, and as a typed tool.
 4. **Data mode.** For a spreadsheet or CSV, Friday computes the numbers first,
    on this computer, and draws charts. The hosts may only say numbers that
@@ -280,7 +280,8 @@ Everything but public news articles is private.
     seam (§3.7).
 - **Routes** (`routes/podcasts.py`, owner and loopback only): list, create, get,
   audio, captions, charts, now-playing.
-- **UI:** one global mini-player, a Podcasts view in Studio, an episode chip on
+- **UI:** one global mini-player, the owner's own episodes in Media (Studio until
+  Media lands), each News routine's episode on its News tab, an episode chip on
   each News run, and a "Make a podcast" destination in the shared send-to menu.
 - **Playback control from voice:** a `podcast` action on the existing desktop
   bus.
@@ -353,7 +354,8 @@ What the first live Briefing episode got wrong, and the rules that now hold
 day with the same defects).
 
 - **Who is on the show** is a setting per routine, shown with the
-  recommended value and changeable in Studio → Podcasts, over
+  recommended value and changeable in the Podcasts view (Media, or Studio until
+  Media lands), over
   `/api/podcasts/formats`, or by voice and chat (`podcast_format`). The
   Briefing, the Front Page and the Editorial are Friday alone (a newscast and
   an op-ed are one voice); the Weekly and episodes made from the owner's own
