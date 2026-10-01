@@ -13307,10 +13307,10 @@ function PodcastsView() {
       { method: what === 'delete' ? 'DELETE' : 'POST' }).then(refresh).catch(() => {});
   };
   const field = { background: PODCAST_C.line, color: PODCAST_C.text, border: '1px solid ' + PODCAST_C.line, borderRadius: 6, padding: '6px 8px', fontSize: PODCAST_C.base, fontFamily: PODCAST_C.font };
-  return h('div', { style: { padding: 16, color: PODCAST_C.text, fontFamily: PODCAST_C.font, display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 900 } },
+  return h('div', { style: { padding: 16, color: PODCAST_C.text, fontFamily: PODCAST_C.font, display: 'flex', flexDirection: 'column', gap: 14 } },
     h('div', null,
       h('h2', { style: { margin: 0, fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.xl } }, '🎧 Podcasts'),
-      h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.md, marginTop: 4 } },
+      h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.md, marginTop: 4, maxWidth: '80ch' } },
         'Two hosts talk through any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and the hosts may only say computed numbers.')),
     h('section', { 'aria-label': 'Make a podcast', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
       rows.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'flex-start' } },
