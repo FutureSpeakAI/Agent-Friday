@@ -386,6 +386,10 @@ def set_vault_passphrase():
         _agent._VAULT_KEY_READY = False
     except Exception:
         pass
+    # Summaries decrypted under the old key leave memory now, not at the
+    # next query.
+    from agent_friday.services.knowledge_graph import wiki_graph as _wiki_graph
+    _wiki_graph.clear_wiki_index_cache()
     return jsonify({"status": "ok", "keychain": keychain,
                     "note": ("Saved to OS keychain." if keychain else
                              "Set for this session (install 'keyring' to persist).")})
