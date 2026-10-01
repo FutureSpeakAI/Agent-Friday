@@ -216,7 +216,13 @@ Three findings from the run shape the wrapper and are already inside the
 `FLOCI_SERVICES_LAMBDA_ENABLED=false` (or the box listens on the LAN), give
 floci a working directory outside the codebase (memory mode still writes
 three files), and expect 40–50 s to ready on the JVM build, so Friday starts
-it when a codebase opens, not when a request arrives.
+it when a codebase opens, not when a request arrives. The first two are a
+rule in code already: `services/floci_box.py` holds the launch environment
+(loopback host and port, both switches off, memory storage under the box's
+own folder, nothing of the owner's environment but the path) and the listener
+audit a started box must pass, `require_loopback_only`, which refuses any
+bind beyond 127.0.0.1 or ::1. The lifecycle that starts the process is still
+Phase 5.
 
 **Open items for the owner:** whether Friday ships a Friday-built native
 binary per platform (a build pipeline, not a dependency on floci's releases;
