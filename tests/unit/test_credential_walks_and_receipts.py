@@ -229,11 +229,15 @@ def test_key_and_credential_files_stay_closed(test_home, rel):
 def test_a_link_named_config_into_a_key_is_still_refused(test_home):
     key = _mk(test_home / ".ssh" / "id_ed25519", PEM)
     link = test_home / ".ssh" / "config"
+    link.unlink(missing_ok=True)
     try:
         link.symlink_to(key)
     except (OSError, NotImplementedError):
         pytest.skip("symlinks unavailable")
-    assert cred.check(link)
+    try:
+        assert cred.check(link)
+    finally:
+        link.unlink(missing_ok=True)   # the shared test home must not keep a config that points at a key
 
 
 def test_a_lookup_refusal_never_calls_a_credentials_file_key_material(test_home):
