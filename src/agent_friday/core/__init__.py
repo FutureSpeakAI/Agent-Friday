@@ -38,6 +38,8 @@ from agent_friday.core.os_mode import is_os_mode
 # here cannot recurse. friday_home() honours FRIDAY_HOME; user_home() is the
 # host's own home and deliberately does not.
 from agent_friday.paths import friday_home, is_redirected, user_home
+# Stdlib-only palette module; the login page reads its `:root` token block.
+from agent_friday import brand
 
 # ── Structured logging ──────────────────────────────────────────
 # Module-level logger; file handler is attached below once FRIDAY_DIR is known.
@@ -687,31 +689,36 @@ LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FRIDAY — Authenticate</title>
+<title>Sign in · {{ product }}</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
 <link href="/static/fonts/fonts.css" rel="stylesheet">
 <style>
+/*BRAND_TOKENS*/
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0f;color:#e0e0ff;font-family:'Orbitron',monospace;display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden}
-body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 50% 50%,rgba(124,58,237,.12) 0%,transparent 70%);pointer-events:none}
-.login-box{background:rgba(15,15,30,.85);border:1px solid rgba(124,58,237,.35);border-radius:12px;padding:40px 36px;width:340px;backdrop-filter:blur(20px);box-shadow:0 0 40px rgba(124,58,237,.15),inset 0 0 30px rgba(124,58,237,.05);position:relative}
-.login-box::before{content:'';position:absolute;top:-1px;left:20%;right:20%;height:2px;background:linear-gradient(90deg,transparent,rgba(124,58,237,.8),transparent);border-radius:2px}
-h1{font-size:14px;letter-spacing:.25em;text-align:center;color:rgba(124,58,237,.9);margin-bottom:8px}
-.subtitle{font-size:9px;letter-spacing:.15em;text-align:center;color:rgba(180,160,255,.4);margin-bottom:32px}
+body{background:var(--fr-surface);color:var(--fr-text);font-family:var(--fr-font-body);display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 50% 50%,rgba(0,212,255,.10) 0%,transparent 70%);pointer-events:none}
+.login-box{background:var(--fr-glass);border:1px solid rgba(0,212,255,.3);border-radius:12px;padding:40px 36px;width:340px;backdrop-filter:var(--fr-glass-blur);box-shadow:0 0 40px rgba(0,212,255,.12),inset 0 0 30px rgba(0,212,255,.04);position:relative}
+.login-box::before{content:'';position:absolute;top:-1px;left:20%;right:20%;height:2px;background:linear-gradient(90deg,var(--fr-cyan),var(--fr-violet),var(--fr-magenta));opacity:.8;border-radius:2px}
+h1{font-family:var(--fr-font-display);font-size:14px;letter-spacing:.25em;text-align:center;color:var(--fr-cyan);margin-bottom:6px}
+.maker{font-size:var(--fr-text-2xs);text-align:center;color:var(--fr-dim);margin-bottom:10px}
+.maker b{font-family:var(--fr-font-display);font-weight:700;color:var(--fr-wordmark-amber)}
+.subtitle{font-size:var(--fr-text-2xs);letter-spacing:var(--fr-track-label);text-align:center;color:var(--fr-dim);margin-bottom:32px}
 .field{margin-bottom:12px}
-input[type=email],input[type=text],input[type=password]{width:100%;padding:12px 16px;background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:6px;color:#e0e0ff;font-family:'Orbitron',monospace;font-size:12px;letter-spacing:.15em;outline:none;transition:border-color .3s}
-input[type=email]:focus,input[type=text]:focus,input[type=password]:focus{border-color:rgba(124,58,237,.7);box-shadow:0 0 15px rgba(124,58,237,.15)}
-input::placeholder{color:rgba(180,160,255,.25)}
-button{width:100%;padding:12px;margin-top:4px;background:linear-gradient(135deg,rgba(124,58,237,.3),rgba(124,58,237,.15));border:1px solid rgba(124,58,237,.4);border-radius:6px;color:rgba(200,180,255,.9);font-family:'Orbitron',monospace;font-size:11px;letter-spacing:.2em;cursor:pointer;transition:all .3s}
-button:hover{background:linear-gradient(135deg,rgba(124,58,237,.45),rgba(124,58,237,.25));border-color:rgba(124,58,237,.7);box-shadow:0 0 20px rgba(124,58,237,.2)}
-.error{color:#ff4466;font-size:9px;text-align:center;margin-top:12px;letter-spacing:.1em}
-.scan-line{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(124,58,237,.15),transparent);animation:scan 4s linear infinite;pointer-events:none}
+input[type=email],input[type=text],input[type=password]{width:100%;padding:12px 16px;background:var(--fr-cyan-soft);border:1px solid rgba(0,212,255,.25);border-radius:6px;color:var(--fr-text);font-family:var(--fr-font-body);font-size:var(--fr-text-md);outline:none;transition:border-color .3s}
+input[type=email]:focus,input[type=text]:focus,input[type=password]:focus{border-color:rgba(0,212,255,.7);box-shadow:0 0 15px rgba(0,212,255,.15)}
+input::placeholder{color:var(--fr-faint);font-size:var(--fr-text-xs);letter-spacing:var(--fr-track-label)}
+button{width:100%;padding:12px;margin-top:4px;background:var(--fr-cyan-soft);border:1px solid rgba(0,212,255,.4);border-radius:6px;color:var(--fr-cyan);font-family:var(--fr-font-body);font-size:var(--fr-text-sm);cursor:pointer;transition:all .3s}
+button:hover{background:rgba(0,212,255,.22);border-color:rgba(0,212,255,.7);box-shadow:0 0 20px rgba(0,212,255,.2)}
+.error{color:var(--fr-deny);font-size:var(--fr-text-2xs);text-align:center;margin-top:12px;letter-spacing:.1em}
+.scan-line{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(0,212,255,.15),transparent);animation:scan 4s linear infinite;pointer-events:none}
 @keyframes scan{0%{top:0}100%{top:100vh}}
 </style>
 </head>
 <body>
 <div class="scan-line"></div>
 <div class="login-box">
-<h1>FRIDAY</h1>
+<h1>{{ product_upper }}</h1>
+<div class="maker">by <b>{{ maker }}</b></div>
 <div class="subtitle">AUTHENTICATION REQUIRED</div>
 <form method="POST">
 <div class="field"><input type="email" name="username" placeholder="EMAIL / USERNAME" autofocus autocomplete="username"></div>
@@ -721,7 +728,9 @@ button:hover{background:linear-gradient(135deg,rgba(124,58,237,.45),rgba(124,58,
 {{ error }}
 </div>
 </body>
-</html>"""
+</html>""".replace("/*BRAND_TOKENS*/", brand.css_root_block()).replace(
+    "{{ product }}", brand.PRODUCT_NAME).replace(
+    "{{ product_upper }}", brand.PRODUCT_NAME.upper()).replace("{{ maker }}", brand.MAKER_NAME)
 
 # The two login banners are fixed, code-owned strings — no user input reaches
 # them today, so there is no live XSS. But LOGIN_HTML.replace('{{ error }}', error)
@@ -2189,6 +2198,14 @@ DEFAULT_SETTINGS = {
     # authenticated session, and a room with several people offers no
     # equivalent. Turning it off means anyone within earshot can approve.
     "voice_room_approvals_require_name": True,
+    # Leave the local brain loaded after a quit. OFF: the 27B seat holds around
+    # 14 GB of RAM and most of a 12 GB card, and those are the machine's, not
+    # Friday's, the moment the owner has closed her. A planned restart (the
+    # deploy lane, tray Restart) keeps the seat regardless, because reloading
+    # it costs the better part of a minute and nobody asked for the memory
+    # back; only a quit releases it (services/residency_arbiter.
+    # release_for_quit).
+    "keep_brain_warm_between_sessions": False,
     # ── Voice engine selection ──
     # LOCAL is the default; cloud (Gemini Live) is the opt-in. The mic button
     # resolves this via GET /api/voice/session-info → /ws/voice-local (local) or
@@ -2440,7 +2457,14 @@ DEFAULT_SETTINGS = {
                                            # default. Even when True, each runtime grant is a
                                            # separate Ring-3 step (/api/control/permission).
     # ── Agent Identity & Model Selection ──
-    "agent_name": "AGENT FRIDAY",
+    "agent_name": "AGENT FRIDAY",  # brand: plain (her default name, not the product)
+    # The workspaces the owner set to fill the screen with the chat tray docked
+    # beside them (docs/design/active/unified-shell.md §5): id -> "fullscreen_chat".
+    "workspace_layouts": {},
+    # When the start screen's cluster (countdowns, chat field, mic, Start my
+    # day) shows (unified-shell.md §10.4): "smart" when it is useful, "always"
+    # whenever no workspace is open, "never" only when asked (show_my_day).
+    "landing_mode": "smart",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
     # most tasks; Opus 5 remains available for max-reasoning work. Fallback
     # chain: Sonnet 5 → Fable 5 → Opus 5 → Sonnet 5 → Haiku 4.5
@@ -2562,11 +2586,31 @@ DEFAULT_SETTINGS = {
     #     region with gain is what makes small movements cover the screen.
     #   * pinch_enter/pinch_exit differ on purpose. One threshold chatters at
     #     the boundary; the gap is the hysteresis.
+    # Call mode (services/call_watch): when another app takes the camera or
+    # the mic, Friday stands back on its own - releases the webcam and mic,
+    # holds the scene, parks the brain seat - and comes back when the call
+    # ends. "automatic" (recommended), "ask" (a chip, once per call), "off".
+    "call_mode": "automatic",
     "tracking": {
         "parallax_strength": 1.0,
         "depth_strength": 1.0,
         "head_smoothing": 0.35,
         "holo_cues": 0.6,
+        # The hologram window's depth. head.z is octaves nearer (log2 of the
+        # face-width ratio against the calibrated neutral), and the zoom is
+        # 2 ** (z * depth_strength), so at 1.0 halving your distance doubles
+        # the avatar: it behaves as if it sat right at the glass. zoom_in_max
+        # and zoom_out_max bound it; 1.8 is a clear lean-in without the
+        # avatar filling the screen, and the engine caps zoom_in_max at 2.5
+        # so the eye can never reach the avatar. head_response is the One
+        # Euro speed term on its own (how hard a quick lean is followed);
+        # head_smoothing above stays the stillness cutoff. neutral_face_width
+        # is the calibrated face-box width for "sitting normally"; 0 means
+        # not calibrated and the engine assumes 0.18.
+        "zoom_in_max": 1.8,
+        "zoom_out_max": 1.5,
+        "head_response": 0.5,
+        "neutral_face_width": 0,
         # Dock depth: shelf tilt, how far icons stand off the shelf, and how
         # much a button swells as the pointer nears it. 0 is the flat dock.
         "dock_depth": 1.0,

@@ -26,18 +26,19 @@ import logging
 import re
 from datetime import datetime
 
+from agent_friday import brand
 from agent_friday.core import CREATIONS_DIR
 from agent_friday.user_errors import ExceptionText
 
 _log = logging.getLogger("friday.showcase")
 
 # Palette shared by both templates — Friday's dark-neon Studio look.
-_BG = "#07080d"
-_PANEL = "#10121c"
-_TEXT = "#e8e8f0"
-_MUTED = "#a8a8b4"
-_ACCENT = "#00d4ff"
-_ACCENT2 = "#a78bfa"
+_BG = brand.PAGE_BG
+_PANEL = brand.PAGE_PANEL
+_TEXT = brand.PAGE_TEXT
+_MUTED = brand.PAGE_MUTED
+_ACCENT = brand.CYAN
+_ACCENT2 = brand.VIOLET_SOFT
 
 
 # ── Spec parsing ───────────────────────────────────────────────────────────
@@ -174,7 +175,7 @@ def _render_deck_html(spec):
     closing = _e(spec.get("closing") or "Thank you.")
     slides_html = [
         f'<section class="slide title-slide">'
-        f'<div class="kicker">Agent Friday · Presentation</div>'
+        f'<div class="kicker">{_e(brand.PRODUCT_NAME)} · Presentation</div>'
         f'<h1>{title}</h1>'
         f'<p class="subtitle">{subtitle}</p>'
         f'</section>'
@@ -195,7 +196,7 @@ def _render_deck_html(spec):
     slides_html.append(
         f'<section class="slide closing-slide">'
         f'<h1>{closing}</h1>'
-        f'<p class="subtitle">Built by Agent Friday</p>'
+        f'<p class="subtitle">{_e(brand.MADE_WITH)}</p>'
         f'</section>'
     )
     body = "\n".join(slides_html)
@@ -241,7 +242,7 @@ def _render_deck_html(spec):
 {body}
 <div class="hud" id="hud"></div>
 <div class="counter" id="ctr"></div>
-<div class="brand">⚡ Agent Friday</div>
+<div class="brand">{_e(brand.MADE_WITH)}</div>
 <script>
 (function(){{
   var slides=[].slice.call(document.querySelectorAll('.slide')),i=0;
@@ -350,7 +351,7 @@ def _slugify(s, fallback):
 def _render_site_html(spec):
     site_title = _e(spec.get("site_title") or "Untitled Site")
     tagline = _e(spec.get("tagline") or "")
-    footer = _e(spec.get("footer") or f"{site_title} — built by Agent Friday")
+    footer = _e(spec.get("footer") or site_title)
     pages = [p for p in spec.get("pages", []) if isinstance(p, dict)]
     navs, page_html = [], []
     for idx, p in enumerate(pages):
@@ -421,7 +422,7 @@ def _render_site_html(spec):
 </style></head><body>
 <div class="topbar"><span class="logo">{site_title}</span><nav id="nav">{''.join(navs)}</nav></div>
 {''.join(page_html)}
-<footer>{footer} · <span style="opacity:.7">⚡ Built by Agent Friday</span></footer>
+<footer>{footer} · <span style="opacity:.7">{_e(brand.MADE_WITH)}</span></footer>
 <script>
 (function(){{
   var pages=[].slice.call(document.querySelectorAll('.page'));

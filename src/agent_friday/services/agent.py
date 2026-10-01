@@ -726,6 +726,27 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "pin": {"type": "boolean"}}}},
+    {"name": "set_chat_tray", "description": "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or the right in a third, a half or two thirds of the screen ('put chat on the right third'); the workspace beside it takes the rest. Hidden, it leaves a slim pill on its edge and the workspace takes the full width. It is the owner's own screen, so no approval is needed. CHAT_OK: say what changed in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
+     "input_schema": {"type": "object", "properties": {
+         "visible": {"type": "boolean", "description": "true to show the chat, false to hide it."},
+         "side": {"type": "string", "enum": ["left", "right"],
+                  "description": "The edge the tray docks on."},
+         "size": {"type": "string", "enum": ["third", "half", "two_thirds"],
+                  "description": "How much of the screen's width the tray takes."}},
+         "required": []}},
+    {"name": "show_my_day", "description": "Show the start screen's cluster now: the owner's countdowns (from their calendar, commitments and wiki), the chat field, the mic and Start my day ('show my day'). With mode, set when it shows on its own: smart (when useful, fading while they work or talk; the default), always, or never (only when asked). It is the owner's own screen, so no approval is needed. DAY_SHOWN: say so in a few words. DAY_NOT_SHOWN: say why, in plain words. DAY_MODE: say what it will do now. The countdowns are not in the result; do not invent them.",
+     "input_schema": {"type": "object", "properties": {
+         "mode": {"type": "string", "enum": ["smart", "always", "never"],
+                  "description": "Leave empty to show it now; set to change when it shows on its own."}},
+         "required": []}},
+    {"name": "set_workspace_layout", "description": "Show a workspace fullscreen with the chat tray docked beside it, or back to its normal layout, or (with fullscreen_chat false and a position) in part of the screen: a half, a third or two thirds ('put News on the left two thirds'). It is the owner's own screen, so no approval is needed, and the choice is remembered for that workspace. Leave workspace empty for the one in front. LAYOUT_OK means the screen applied it; LAYOUT_SAVED means it is remembered and applies when that workspace is next open.",
+     "input_schema": {"type": "object", "properties": {
+         "workspace": {"type": "string", "description": "Workspace id or name; empty for the one in front."},
+         "fullscreen_chat": {"type": "boolean", "description": "true: fullscreen with the chat beside it; false: the normal layout, or the position given."},
+         "position": {"type": "string", "enum": ["full", "left_half", "right_half", "left_third", "middle_third",
+                                                  "right_third", "left_two_thirds", "right_two_thirds"],
+                      "description": "With fullscreen_chat false: the part of the screen the window takes."}},
+      "required": ["fullscreen_chat"]}},
     {"name": "organize_email", "description": "Archive, label, move, star, mark read or unread, Trash, restore or report spam on the user's Gmail. Pick the mail with a Gmail search in query (from:, subject:, older_than:1m, is:unread, label:, in:inbox) or thread_ids from search_email. Nothing changes yet: it raises ONE approval card for the whole batch and returns a readback; say it to the user in one sentence and ask: yes, no, or change it (call again with replaces=the card_id). They approve on the card, or by saying yes (then call answer_card). Every change can be undone (undo_action).",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["archive", "inbox", "read", "unread", "star", "unstar", "label", "unlabel", "move", "trash", "restore", "spam", "not_spam"]},
@@ -955,6 +976,10 @@ def _tool_read_file(inp):
         p = Path(raw).expanduser().resolve()
     except Exception as e:
         return f"Invalid path {raw!r}: {e}"
+    # Friday does not read key material, even when asked (services/credential_paths).
+    from agent_friday.services import credential_paths as _cred
+    if _cred.check(p):
+        return _cred.refusal(p)
     if not p.exists():
         return f"File not found: {p}.{_suggest_near_miss(p)}"
     if not p.is_file():
@@ -983,7 +1008,8 @@ def _tool_read_file(inp):
     out = text[:limit] + (f"\n...[truncated — {len(text)} total chars]" if len(text) > limit else "")
     if result.truncated:
         out += "\n...[extraction truncated to the first pages of this document]"
-    return out
+    # Key material pasted inside an otherwise ordinary file never reaches the model.
+    return _cred.redact_secrets(out)
 
 
 def _tool_search_files(inp):
@@ -2103,6 +2129,13 @@ def _tool_run_command(inp):
     cmd = ((inp or {}).get('command') or '').strip()
     if not cmd:
         return "Empty command."
+    # A read verb aimed at key material is refused before it runs, even when
+    # the owner asks (services/credential_paths). A write/exfil command is
+    # already classified outward and carded by the governance checkpoint.
+    from agent_friday.services import credential_paths as _cred
+    _cred_why = _cred.scan_command(cmd)
+    if _cred_why:
+        return _cred.refusal_command(_cred_why)
     bad = blocked_command_token(cmd)
     if bad is not None:
         return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
@@ -2118,6 +2151,9 @@ def _tool_run_command(inp):
             creationflags=_POPEN_FLAGS,
         )
         out = (proc.stdout or '') + (("\n[stderr]\n" + proc.stderr) if proc.stderr else '')
+        # Whatever the command printed, key blocks and vendor tokens are
+        # withheld: the path scan above is best-effort, this is the backstop.
+        out = _cred.redact_secrets(out)
         return out[:100_000] if out else f"(exit {proc.returncode}, no output)"
     except subprocess.TimeoutExpired:
         return "Command timed out after 300s."
@@ -2130,13 +2166,23 @@ def _tool_run_sandboxed(inp):
     shell. The checkpoint has already ruled on it: the host backend is
     outward, Windows Sandbox is internal only where it is installed."""
     from agent_friday.services import code_sandbox as _sbx
+    from agent_friday.services import credential_paths as _cred
     inp = inp or {}
+    # The host backend reads whatever the account can, so key material is
+    # refused before the code runs, even when the owner asks.
+    _why = _cred.scan_code(str(inp.get("code") or ""))
+    if _why:
+        return _cred.refusal_command(_why)
     res = _sbx.run(str(inp.get("code") or ""),
                    timeout_s=inp.get("timeout_seconds") or _sbx.DEFAULT_TIMEOUT_S,
                    memory_mb=inp.get("memory_mb") or _sbx.DEFAULT_MEMORY_MB,
                    backend=str(inp.get("backend") or "host"))
     if not res.get("ok"):
         return f"Not run: {res.get('error')}"
+    # Whatever the program printed, key blocks and tokens are withheld.
+    for _k in ("stdout", "stderr"):
+        if isinstance(res.get(_k), str):
+            res[_k] = _cred.redact_secrets(res[_k])
     return json.dumps(res, default=str)
 
 
@@ -2587,6 +2633,11 @@ def _perform_open(target, in_browser=False):
     resolved = _resolve_open_target(target)
     if not resolved:
         return None
+    # The target may have been a bare name or alias that only now resolved to a
+    # path; key material is refused whatever name found it (services/credential_paths).
+    from agent_friday.services import credential_paths as _cred
+    if _cred.check(Path(resolved)):
+        return _cred.refusal(Path(resolved))
     # Only documents, pictures, recordings and folders open without a
     # decision (services/open_safety.py). The governance checkpoint already
     # holds anything else for the owner; this is the second check, so a
@@ -2635,6 +2686,11 @@ def _tool_open_path(inp):
     inp = inp or {}
     target = (inp.get('path') or inp.get('target') or '').strip()
     in_browser = bool(inp.get('in_browser'))
+    # Friday does not open key material, even when asked (services/credential_paths).
+    if target:
+        from agent_friday.services import credential_paths as _cred
+        if _cred.check(Path(target).expanduser()):
+            return _cred.refusal(Path(target).expanduser())
     result = _perform_open(target, in_browser=in_browser)
     if result is None:
         return f"Couldn't find anything matching {target!r} to open."
@@ -2878,6 +2934,174 @@ def _tool_check_situation(inp):
     if (inp.get('detail') or 'brief') == 'full':
         return json.dumps(situation.compact(snap), default=str) + note
     return situation.brief(snap) + note
+
+
+#: How long set_workspace_layout waits for a page to say it applied the layout.
+LAYOUT_ACK_S = 5.0
+#: Where a workspace window can sit (unified-shell.md §11.2), as it is said.
+LAYOUT_POSITIONS = {
+    "full": "the whole screen", "left_half": "the left half", "right_half": "the right half",
+    "left_third": "the left third", "middle_third": "the middle third",
+    "right_third": "the right third", "left_two_thirds": "the left two thirds",
+    "right_two_thirds": "the right two thirds",
+}
+
+
+def _tool_set_workspace_layout(inp):
+    """Tool handler: a workspace fullscreen with the chat tray docked beside it,
+    or back to normal, remembered per workspace (settings.workspace_layouts).
+
+    The choice is saved first, then sent to the open pages; the page that shows
+    the workspace applies it and says so, and only that earns LAYOUT_OK.
+    Otherwise the choice is remembered and applies when the workspace is next
+    open (LAYOUT_SAVED)."""
+    import secrets
+    import time as _t
+    from agent_friday.core import _save_settings
+    from agent_friday.services import desktop_bus, workspace_registry
+    inp = inp or {}
+    on = bool(inp.get("fullscreen_chat"))
+    position = str(inp.get("position") or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if position and position not in LAYOUT_POSITIONS:
+        return "LAYOUT_FAIL: a position is one of %s." % ", ".join(LAYOUT_POSITIONS)
+    if on:
+        position = ""
+    words = str(inp.get("workspace") or "").strip()
+    if words:
+        ws = workspace_registry.resolve(words)
+        if not ws:
+            return "LAYOUT_FAIL: no workspace is called %r. Workspaces: %s." % (
+                words, workspace_registry.tool_list())
+    else:
+        ws = desktop_bus.focused_workspace()
+        if not ws:
+            return "LAYOUT_FAIL: no workspace is open in front. Ask which one."
+    if ws == "settings":
+        return "LAYOUT_FAIL: Settings opens as a panel; it has no fullscreen layout."
+    layouts = dict((_load_settings() or {}).get("workspace_layouts") or {})
+    if on:
+        layouts[ws] = "fullscreen_chat"
+    elif position:
+        layouts[ws] = {"window": position}
+    else:
+        layouts.pop(ws, None)
+    _save_settings({"workspace_layouts": layouts})
+    label = workspace_registry.label(ws)
+    how = ("fills the screen with the chat beside it" if on else
+           "takes %s" % LAYOUT_POSITIONS[position] if position else "is back to its normal layout")
+    cid = "layout-%d-%s" % (int(_t.time()), secrets.token_hex(3))
+    waiter = desktop_bus.expect(cid)
+    event = {"type": "layout", "id": cid, "workspace": ws, "fullscreen_chat": on}
+    if position:
+        event["position"] = position
+    sent = desktop_bus.broadcast(event, kind="chat")
+    got = desktop_bus.wait(cid, waiter, LAYOUT_ACK_S if sent else 0)
+    if got.get("acked") and (got.get("ack") or {}).get("applied"):
+        return "LAYOUT_OK:%s — %s %s." % (ws, label, how)
+    return "LAYOUT_SAVED:%s — remembered: %s %s whenever it is open%s." % (
+        ws, label, how, "" if sent else "; no Friday page is showing it now")
+
+
+#: How long set_chat_tray waits for the page in front to say it applied it.
+CHAT_TRAY_ACK_S = 4.0
+CHAT_TRAY_SIDES = ("left", "right")
+CHAT_TRAY_SIZES = {"third": "a third", "half": "a half", "two_thirds": "two thirds"}
+
+
+def _tool_set_chat_tray(inp):
+    """Tool handler: the chat tray shown or hidden ("show chat", "hide chat")
+    and the edge it docks on (unified-shell.md §11). The owner's own screen,
+    so no approval is needed.
+
+    The change goes to every open page; the page in front applies it and says
+    so, and only that earns CHAT_OK. Hidden, the tray leaves nothing but a
+    slim pill on its edge, and the workspace takes the full width."""
+    import secrets
+    import time as _t
+    from agent_friday.services import desktop_bus
+    inp = inp or {}
+    visible = inp.get("visible")
+    if isinstance(visible, str):
+        visible = {"true": True, "false": False}.get(visible.strip().lower())
+    side = str(inp.get("side") or "").strip().lower()
+    size = str(inp.get("size") or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if visible is None and not side and not size:
+        return "CHAT_FAIL: say whether to show or hide the chat, or where to put it."
+    if side and side not in CHAT_TRAY_SIDES:
+        return "CHAT_FAIL: the chat docks on the left or the right."
+    if size and size not in CHAT_TRAY_SIZES:
+        return "CHAT_FAIL: the chat takes a third, a half or two thirds of the screen."
+    cid = "chat-%d-%s" % (int(_t.time()), secrets.token_hex(3))
+    event = {"type": "chat_tray", "id": cid}
+    if visible is not None:
+        event["visible"] = bool(visible)
+    if side:
+        event["side"] = side
+    if size:
+        event["size"] = size
+    waiter = desktop_bus.expect(cid)
+    sent = desktop_bus.broadcast(event, kind="chat")
+    got = desktop_bus.wait(cid, waiter, CHAT_TRAY_ACK_S if sent else 0)
+    ack = got.get("ack") or {}
+    if got.get("acked") and ack.get("applied"):
+        where = ack.get("side") or side or "right"
+        if ack.get("shown"):
+            took = ack.get("size") or size
+            return "CHAT_OK — the chat is open on the %s%s." % (
+                where, ", %s of the screen" % CHAT_TRAY_SIZES[took] if took in CHAT_TRAY_SIZES else "")
+        return "CHAT_OK — the chat is hidden; the pill on the %s edge brings it back." % where
+    if not sent:
+        return "CHAT_NOT_APPLIED — no Friday page is open, so nothing changed."
+    return "CHAT_NOT_APPLIED — no Friday page in front answered, so nothing changed."
+
+
+#: How long show_my_day waits for the desktop page to say what it did.
+LANDING_ACK_S = 3.0
+LANDING_MODES = ("smart", "always", "never")
+_LANDING_MODE_WORDS = {
+    "smart": "shows your day when it is useful and fades while you work or talk",
+    "always": "shows your day whenever no workspace is open",
+    "never": "shows your day only when you ask",
+}
+
+
+def _tool_show_my_day(inp):
+    """Tool handler: the start screen's cluster (the owner's countdowns, the
+    chat field, the mic and Start my day) now, or how it decides to show
+    (settings.landing_mode: smart, always or never). The owner's own screen,
+    so no approval is needed.
+
+    With no mode it asks the desktop page to show the cluster and reports what
+    the page said: DAY_SHOWN, or DAY_NOT_SHOWN with the page's reason (a
+    workspace is open over it). A mode is saved first, then sent (DAY_MODE).
+    The countdowns themselves are never read back to the model: the page shows
+    them, so nothing about the owner's day leaves the machine to answer this."""
+    from agent_friday.core import _save_settings
+    from agent_friday.services import desktop_bus
+    inp = inp or {}
+    mode = str(inp.get("mode") or "").strip().lower()
+    if mode and mode not in LANDING_MODES:
+        return "DAY_FAIL: the start screen's mode is smart, always or never."
+    if mode:
+        _save_settings({"landing_mode": mode})
+    action = {"type": "landing", "summon": not mode, "via": "friday"}
+    if mode:
+        action["mode"] = mode
+    sent = desktop_bus.send([action], timeout=LANDING_ACK_S)
+    seen = (sent.get("ack") or {}).get("landing") or {}
+    if mode:
+        now = (" It is showing now." if seen.get("show") else "") if sent.get("acked") else (
+            "" if sent.get("delivered") else " No Friday desktop page is open now.")
+        return "DAY_MODE:%s — the start screen %s.%s" % (mode, _LANDING_MODE_WORDS[mode], now)
+    if not sent.get("delivered"):
+        return "DAY_NOT_SHOWN — no Friday desktop page is open to show it on."
+    if not sent.get("acked"):
+        return "DAY_NOT_SHOWN — the desktop page did not answer."
+    if seen.get("show"):
+        return "DAY_SHOWN — your day is on the start screen."
+    why = str(seen.get("reason") or "the page could not show it")
+    return "DAY_NOT_SHOWN — %s, so the start screen is covered." % why if why.startswith(
+        "working in") else "DAY_NOT_SHOWN — %s." % why
 
 
 def _organize_result(out):
@@ -5915,6 +6139,9 @@ CLAUDE_TOOL_HANDLERS = {
     "navigate": _tool_navigate,
     "navigate_to": _tool_navigate_to,
     "check_situation": _tool_check_situation,
+    "set_workspace_layout": _tool_set_workspace_layout,
+    "show_my_day": _tool_show_my_day,
+    "set_chat_tray": _tool_set_chat_tray,
     "organize_email": _tool_organize_email,
     "organize_files": _tool_organize_files,
     "organize_wiki": _tool_organize_wiki,
@@ -6320,6 +6547,12 @@ TOOL_RINGS: dict[str, int] = {
     # phone-origin turn (ring 0 only) cannot drive the screen at home.
     "navigate_to":          1,
     "check_situation":      0,   # reads state the server already holds
+    # Lays out the owner's own screen and remembers it; ring 1 like navigate_to.
+    "set_workspace_layout": 1,
+    # Shows the start screen's cluster, or sets when it shows; the owner's own screen.
+    "show_my_day": 1,
+    # Shows, hides or docks the chat tray; the owner's own screen.
+    "set_chat_tray": 1,
     # Organizing the owner's things (services/item_actions). Files and wiki
     # pages are local changes with an undo; mail only raises a card, like
     # draft_email, and a card is decided by the owner's own words.
@@ -7890,6 +8123,24 @@ try:
 except Exception as _ate:  # never let optional deps break the agent import
     print(f"  [AVATAR] registration skipped: {_ate}")
 
+# The hologram window (hologram_window): how much leaning in and out zooms
+# the avatar, the parallax, smoothing and response, and the calibrated
+# sitting distance. Shared into voice. See services/hologram_tools.py.
+try:
+    from agent_friday.services import hologram_tools as _hologram_tools
+    _hologram_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _hte:  # never let optional deps break the agent import
+    print(f"  [HOLOGRAM] registration skipped: {_hte}")
+
+# Call mode (call_mode): standing back for a call, and the setting that
+# decides whether that happens on its own. Shared into voice. See
+# services/call_tools.py.
+try:
+    from agent_friday.services import call_tools as _call_tools
+    _call_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _cte:  # never let optional deps break the agent import
+    print(f"  [CALL] registration skipped: {_cte}")
+
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
 # hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.
@@ -8683,6 +8934,7 @@ def _task_log_tool(session_ctx, name, args):
 
 
 from agent_friday.services import tool_receipts as _receipts
+from agent_friday.services import credential_paths as _cred_paths
 
 #: Verb prefixes a model habitually invents in front of a tool's real name.
 #: Example: a seat calls `mcp_higgsfield_get_balance` when the registered
@@ -8845,7 +9097,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _surface_tok = _CURRENT_SURFACE.set(str(_sc.get("surface") or ("chat" if _sc.get("session_id") else "")))
         try:
             _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
+            _cred_paths.REFUSED.set(False)
             result = handler(ctx.input)
+            _refused = _cred_paths.REFUSED.get()
         finally:
             _CURRENT_SURFACE.reset(_surface_tok)
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
@@ -8863,7 +9117,12 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     # Receipt written only after the handler actually returned. This is the
     # only place one is created, so a receipt cannot exist for a call that did
     # not happen — which is what makes an unbacked claim detectable later.
-    _receipts.record(name, ok=True)
+    # A credential refusal raised by the handler itself is a denial, not a read.
+    if _refused:
+        _receipt_credential_refusal(name, ctx.input, "refused by the handler")
+        _receipts.record(name, ok=False, denied=True, detail=result)
+    else:
+        _receipts.record(name, ok=True)
 
     # Cap result size to prevent token explosion in the model context window.
     # The voice path already caps at 8 KB; apply the same limit uniformly here.
@@ -9102,6 +9361,10 @@ def _hook_governance(ctx):
     Critical, so it cannot be switched off in settings and an exception in it
     denies the call.
     """
+    refused = _hook_credential_refusal(ctx)
+    if refused.action == "deny":
+        return refused
+
     allowed, reason = _governance_check(ctx.tool_name, ctx.input,
                                         session_ctx=ctx.session_ctx)
     if not allowed:
@@ -9390,6 +9653,80 @@ def _hook_vault_zt(ctx):
         return _hooks.DENY(
             "[VAULT DENY] network/vault-tier tool requires an authenticated session")
     return _hooks.ALLOW
+
+
+def _hook_credential_refusal(ctx):
+    """Key material is refused before anything is narrated, carded or run.
+
+    The first step of the governance checkpoint, ahead of any approval card.
+    The refusal is a denial in the receipt, not a successful read of the key,
+    and the owner's "yes" is never asked for: the answer to "read my key" is
+    the same whoever asks. The handlers repeat these checks as their own
+    backstop (services/credential_paths).
+    """
+    try:
+        from agent_friday.services import credential_paths as _cred
+        inp = ctx.input or {}
+        if ctx.tool_name == "read_file":
+            raw = inp.get("path") or ""
+            p = Path(raw).expanduser().resolve() if raw else None
+            why = _cred.check(p) if p is not None else None
+            if why:
+                _receipt_credential_refusal(ctx.tool_name, inp, why)
+                return _hooks.DENY(_cred.refusal(p))
+        elif ctx.tool_name == "open_path":
+            target = str(inp.get("path") or inp.get("target") or "").strip()
+            if target:
+                p = Path(target).expanduser()
+                why = _cred.check(p)
+                if why:
+                    _receipt_credential_refusal(ctx.tool_name, inp, why)
+                    return _hooks.DENY(_cred.refusal(p))
+                # A bare name or alias is judged by what it resolves to, so a
+                # key found by name is refused before any card or narration.
+                resolved = _resolve_open_target(target)
+                why = _cred.check(Path(resolved)) if resolved else None
+                if why:
+                    _receipt_credential_refusal(ctx.tool_name, inp, why)
+                    return _hooks.DENY(_cred.refusal(Path(resolved)))
+        elif ctx.tool_name == "run_command":
+            why = _cred.scan_command(str(inp.get("command") or ""))
+            if why:
+                _receipt_credential_refusal(ctx.tool_name, inp, why)
+                return _hooks.DENY(_cred.refusal_command(why))
+        elif ctx.tool_name == "run_sandboxed":
+            why = _cred.scan_code(str(inp.get("code") or ""))
+            if why:
+                _receipt_credential_refusal(ctx.tool_name, inp, why)
+                return _hooks.DENY(_cred.refusal_command(why))
+    except Exception:
+        pass
+    return _hooks.ALLOW
+
+
+def _receipt_credential_refusal(tool_name: str, args: dict, why: str) -> None:
+    """Write the signed decision-bom entry for a credential refusal.
+
+    Called before the denial is returned, so the receipt exists whatever the
+    caller does with the refusal. It records the tool, a hash of the arguments
+    and the kind of secret that was refused, never the secret and never the
+    arguments themselves. A receipt that cannot be written is logged and the
+    refusal stands: nothing is read because the log is unavailable.
+    """
+    try:
+        from agent_friday.governance import action_gate as _ag
+        args_hash = _hashlib.sha256(
+            json.dumps(args or {}, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        _ag._receipt({
+            "kind": "credential_refusal",
+            "tool": tool_name,
+            "args_hash": args_hash,
+            "policy": "cLaw:CredentialsStayClosed",
+            "decision": "deny",
+            "reason": str(why),
+        })
+    except Exception as err:
+        logging.getLogger(__name__).error("credential refusal receipt failed: %s", err)
 
 
 def _hook_sandbox_policy(ctx):
@@ -10150,7 +10487,7 @@ def _tool_call_status(result):
     r = result if isinstance(result, str) else ""
     if r.startswith(_TOOL_PENDING_SENTINELS):
         return "pending"
-    if r.startswith(_TOOL_DENY_SENTINELS):
+    if r.startswith(_TOOL_DENY_SENTINELS) or _cred_paths.is_refusal(r):
         return "deny"
     if r.startswith(_TOOL_ERROR_SENTINELS):
         return "error"
@@ -10171,6 +10508,8 @@ def _tool_call_reason(result, status):
                      + _TOOL_ERROR_SENTINELS):
         if r.startswith(sentinel):
             return sentinel.strip("[]() ").lower() or status
+    if status == "deny" and _cred_paths.is_refusal(r):
+        return "credential refused"
     return status
 
 

@@ -95,6 +95,7 @@ ruff check --select E9,F63,F7,F82 .     # fatal-rule lint
 python scripts/check_gated_prompt_callers.py
 python scripts/check_settings_readers.py
 python scripts/check_stale_model_names.py
+python scripts/check_brand_tokens.py
 ```
 
 The pre-commit hook runs the scanner and these guards; do not bypass it with

@@ -29,11 +29,11 @@ import re
 #: the shape does not say which service it is for.
 SHAPES: tuple = (
     ("anthropic", "Anthropic API key",
-     r"sk-ant-[A-Za-z0-9_\-]{20,}", "provider:anthropic"),
+     r"\bsk-ant-[A-Za-z0-9_\-]{20,}", "provider:anthropic"),
     ("openrouter", "OpenRouter API key",
-     r"sk-or-(?:v1-)?[A-Za-z0-9_\-]{20,}", "provider:openrouter"),
+     r"\bsk-or-(?:v1-)?[A-Za-z0-9_\-]{20,}", "provider:openrouter"),
     ("openai", "OpenAI / Anthropic / OpenRouter API key",
-     r"sk-(?:ant-|or-(?:v1-)?|proj-)?[A-Za-z0-9_\-]{20,}", "provider:openai"),
+     r"\bsk-(?:ant-|or-(?:v1-)?|proj-)?[A-Za-z0-9_\-]{20,}", "provider:openai"),
     ("gemini", "Google/Gemini API key",
      r"AIza[0-9A-Za-z_\-]{35}", "provider:google-gemini"),
     ("gemini_aq", "Google AI Studio (AQ.) key",

@@ -131,7 +131,7 @@ def test_the_writer_calls_the_local_seat_inside_the_local_only_guard(monkeypatch
 
 def test_news_episodes_carry_the_evidence_rules():
     from agent_friday.services.voice_persona import VOICE_ANCHOR_RULES
-    ep = {"show": "Friday's Front Page", "hosts": pe.DEFAULTS["hosts"],
+    ep = {"show": "The Front Page", "hosts": pe.DEFAULTS["hosts"],
           "attached": {"routine": "front_page", "run_id": "2026-09-29-morning"}}
     assert VOICE_ANCHOR_RULES in pe._system_prompt(ep)
     other = dict(ep, attached=None)
@@ -472,7 +472,7 @@ def test_the_wav_master_is_removed_once_the_mp3_is_checked_and_signed(monkeypatc
     monkeypatch.setattr(pe, "_llm_json", _fake_writer())
     _fake_speaker(monkeypatch)
 
-    def encode(wav, mp3, title=""):
+    def encode(wav, mp3, title="", **tags):
         mp3.write_bytes(b"ID3fake")
         return True
     monkeypatch.setattr(render, "encode_mp3", encode)
@@ -522,12 +522,13 @@ def test_every_episode_opens_and_signs_off_the_same_way(monkeypatch):
     _fake_speaker(monkeypatch)
     real = render.listen_back
     monkeypatch.setattr(render, "listen_back", lambda wav, s, transcribe=None: real(wav, s, transcribe=lambda p: s))
-    done = pe.produce(_text_ep(show="Friday's Front Page")["id"])
+    done = pe.produce(_text_ep(show="The Front Page")["id"])
     first, second, last = done["lines"][0], done["lines"][1], done["lines"][-1]
     assert first["signature"] and first["speaker"] == "a"
-    assert first["text"] == "This is Friday's Front Page. I'm Friday."
+    # The show is credited to the product in plain words; she is herself.
+    assert first["text"] == "This is The Front Page from Agent Friday. I'm Friday."
     assert second["signature"] and second["text"] == "And I'm Emma."
-    assert last["signature"] and last["text"].startswith("That's Friday's Front Page.")
+    assert last["signature"] and last["text"].startswith("That's The Front Page from Agent Friday.")
     assert last["text"].endswith("I'm Friday.")
     # The writer is told not to greet or sign off itself.
     assert first["start"] > 0.5                              # after the intro sting

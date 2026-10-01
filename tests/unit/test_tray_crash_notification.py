@@ -22,6 +22,7 @@ if sys.platform != "win32":
     )
 
 import agent_friday.friday_tray as ft
+from agent_friday import brand
 from agent_friday.friday_tray import FridayTray
 
 
@@ -78,7 +79,7 @@ class TestCrashNotification:
             "must be explicit that nothing auto-restarted -- that's the "
             "whole point of notifying instead of resurrecting"
         )
-        assert title == "Friday Desktop"
+        assert title == brand.PRODUCT_NAME
 
     def test_a_deliberate_stop_does_not_notify(self, tray, monkeypatch):
         """stop_server() already sets self.running = False synchronously

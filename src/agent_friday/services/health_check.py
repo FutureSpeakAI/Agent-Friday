@@ -116,6 +116,13 @@ def reset_health_cache() -> None:
     _cache["report"] = None
 
 
+def last_boot_status() -> Optional[str]:
+    """The boot_status of the most recent report, of any age, without running
+    a check; None before the first report. Never blocks."""
+    report = _cache.get("report")
+    return report.get("boot_status") if isinstance(report, dict) else None
+
+
 def check_config() -> Tuple[bool, str]:
     """Can the running app's own settings.json actually be parsed?"""
     try:

@@ -17,16 +17,18 @@ import logging
 import queue
 import threading
 
+from agent_friday import brand
+
 log = logging.getLogger(__name__)
 
 _COLOR = {
-    "arming": "#64748b",
-    "recording": "#ef4444",
-    "thinking": "#e0a030",
-    "done": "#22c55e",
-    "clipboard": "#e0a030",
-    "error": "#ef4444",
-    "idle": "#94a3b8",
+    "arming": brand.NEUTRAL,
+    "recording": brand.CYAN,
+    "thinking": brand.VIOLET,
+    "done": brand.OK,
+    "clipboard": brand.WARN,
+    "error": brand.ERROR,
+    "idle": brand.NEUTRAL,
 }
 #: How long a finished card stays up before fading out, per state.
 _LINGER_MS = {"done": 1200, "idle": 1400, "clipboard": 4000, "error": 6000}

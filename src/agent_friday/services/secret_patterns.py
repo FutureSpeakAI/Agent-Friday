@@ -1,0 +1,499 @@
+"""Recognising credentials in text: one definition for every layer that needs it.
+
+Three consumers share these patterns so they cannot drift apart:
+
+* the egress classifier (`sensitivity_classifier`) rates any text that carries
+  a credential SENSITIVE, so it never reaches a cloud provider;
+* the model's file and shell tools (`credential_paths.redact_secrets`) strip a
+  key block or a token out of what they return, as the last line behind the
+  path deny-list;
+* the private-key sniff that denies a key file whatever it is named.
+
+Detection runs on the text as written AND on the forms a determined caller
+re-encodes it into: percent-encoding, escaped newlines, zero-width padding,
+rot13, chunked armor, and base64 / base32 / hex runs (wrapped or not) that
+decode to text, UTF-16 text or gzip, layered up to `_MAX_DEPTH` deep. Patterns
+split by how sure they are:
+
+KEY_RES     private-key headers and the leading bytes of encoded key bodies.
+TOKEN_RES   vendor token formats with a distinctive prefix. High precision.
+            The provider-key shapes (`secret_shapes.SHAPES`, the list the setup
+            chat guard also uses) are part of it: that list is the one
+            definition of a provider key, and `PROVIDER_KEY_RE` is built from
+            it for the classifier and the ledger.
+ASSIGN_RES  keyword = value forms (`password: ...`, `"api_key": "..."`). These
+            need context, so they gate egress but are not used to redact tool
+            output, where the owner's own config files are legitimate reading.
+
+Every pattern is deliberately narrow: ordinary prose about passwords, tokens
+and certificates, and public X.509 certificates, must not be swept up.
+"""
+from __future__ import annotations
+
+import base64
+import binascii
+import codecs
+import re
+import urllib.parse
+import zlib
+
+from agent_friday.services import secret_shapes as _shapes
+
+_WS = r"\s+"
+
+#: Characters handed to a pattern since the last `reset_work`. Detection on the
+#: egress path does bounded work, and a bound on this count holds under any
+#: machine load where a bound on seconds does not.
+_WORK = [0]
+
+
+def reset_work() -> None:
+    _WORK[0] = 0
+
+
+def work_chars() -> int:
+    return _WORK[0]
+
+
+class _Guarded:
+    """A compiled pattern behind a cheap literal test.
+
+    `needles` are substrings at least one of which every match must contain;
+    the pattern is not run over a text that holds none of them, so a large body
+    with no vendor prefix costs a substring search per pattern and not a
+    regular-expression scan. A case-insensitive pattern is tested against the
+    lower-cased text, a case-sensitive one against the text as it is (a
+    needle that must match exactly rules out far more). No needles means
+    always run.
+    """
+    __slots__ = ("rx", "needles", "fold")
+
+    def __init__(self, pattern: str, needles: tuple[str, ...] = (), flags: int = 0):
+        self.rx = re.compile(pattern, flags)
+        self.fold = bool(self.rx.flags & re.I)
+        self.needles = tuple(n.lower() if self.fold else n for n in needles)
+
+    @property
+    def pattern(self) -> str:
+        return self.rx.pattern
+
+    def possible(self, text: str, low: str | None = None) -> bool:
+        if not self.needles:
+            return True
+        hay = (text.lower() if low is None else low) if self.fold else text
+        return any(n in hay for n in self.needles)
+
+    def search(self, text: str, low: str | None = None):
+        if not self.possible(text, low):
+            return None
+        _WORK[0] += len(text)
+        return self.rx.search(text)
+
+    def sub(self, repl, text: str):
+        if not self.possible(text):
+            return text
+        _WORK[0] += len(text)
+        return self.rx.sub(repl, text)
+
+
+class _Union:
+    """Several guarded patterns that read as one: `search`, `sub`, `pattern`."""
+    __slots__ = ("members",)
+
+    def __init__(self, members):
+        self.members = tuple(members)
+
+    @property
+    def pattern(self) -> str:
+        return "|".join("(?:%s)" % m.pattern for m in self.members)
+
+    def search(self, text: str):
+        low = text.lower()
+        for m in self.members:
+            hit = m.search(text, low)
+            if hit:
+                return hit
+        return None
+
+    def sub(self, repl, text: str):
+        for m in self.members:
+            text = m.sub(repl, text)
+        return text
+
+
+#: Leading bytes of DER private keys, as base64, for a body that lost its
+#: armor. Each is a SEQUENCE header followed by the fixed INTEGER version that
+#: only a private key starts with, so an X.509 certificate (whose first field is
+#: another SEQUENCE) never matches, however large its key:
+#:   MII..  IB AAK / ADA   RSA PKCS#1 / PKCS#8 (two-byte length: 1024 bit up)
+#:   MI[GH] AgE AMB        PKCS#8 with an EC key (P-256/384/521)
+#:   MI[GH] AgE BBD/BBE    SEC1 EC private key
+#:   MHcCAQEE              SEC1 P-256 (one-byte length)
+#:   MC4CAQAwBQYDK2VwBCIEI PKCS#8 Ed25519
+#:   b3BlbnNzaC1rZXktdjE   OpenSSH ("openssh-key-v1")
+_B64C = r"[A-Za-z0-9+/]"
+_KEY_BODY_STARTS: tuple[str, ...] = (
+    r"MII" + _B64C + r"{3}IB(?:AAK|ADA)",
+    r"MI[GH]" + _B64C + r"AgE(?:AMB|BBD|BBE)",
+    r"MHcCAQEE",
+    r"MC4CAQAwBQYDK2VwBCIEI",
+    r"b3BlbnNzaC1rZXktdjE",
+)
+_BODY_LEAD = r"(?<![A-Za-z0-9+/])"
+#: The literal prefix each body start opens with (lower-cased by `_Guarded`).
+_START_NEEDLES: tuple[tuple[str, ...], ...] = (
+    ("MII",), ("MIG", "MIH"), ("MHcCAQEE",), ("MC4CAQAwBQYDK2VwBCIEI",),
+    ("b3BlbnNzaC1rZXktdjE",))
+
+KEY_RES: tuple[_Guarded, ...] = (
+    # Any PRIVATE KEY armor header, in any case; whitespace (including
+    # newlines) between the words is tolerated so a wrapped header still matches.
+    _Guarded(r"-----BEGIN" + _WS + r"(?:[A-Z0-9]+" + _WS + r")*PRIVATE" + _WS
+             + r"KEY(?:" + _WS + r"BLOCK)?-----", ("private",), re.I),
+    _Guarded(r"openssh-key-v1", ("openssh-key-v1",)),
+    # PuTTY .ppk: the format header and the private-lines marker.
+    _Guarded(r"PuTTY-User-Key-File-\d+\s*:", ("putty-user-key-file",), re.I),
+    _Guarded(r"(?<![A-Za-z0-9-])Private-Lines\s*:\s*\d", ("private-lines",), re.I),
+) + tuple(_Guarded(_BODY_LEAD + start, _START_NEEDLES[i])
+          for i, start in enumerate(_KEY_BODY_STARTS))
+
+#: The armor header once every separator a caller might chunk it with is gone.
+_SQUASHED_HEADER = _Guarded(r"-----BEGIN[A-Z0-9]*PRIVATEKEY(?:BLOCK)?-----",
+                            ("privatekey",), re.I)
+_SQUASH = re.compile(r"[\s\"'`+,;]")
+
+#: What every provider-key shape in `secret_shapes.SHAPES` opens with, so the
+#: pattern is not run over text that cannot hold one. A shape not listed here
+#: always runs: a new shape is detected before it is ever given a needle.
+_SHAPE_NEEDLES: dict[str, tuple[str, ...]] = {
+    "anthropic": ("sk-ant-",), "openrouter": ("sk-or-",), "openai": ("sk-",),
+    "gemini": ("AIza",), "gemini_aq": ("AQ.",), "google_client_secret": ("GOCSPX-",),
+    "google_refresh": ("1//0",), "google_access": ("ya29.",), "aws": ("AKIA",),
+    "slack": ("xox",), "github": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"),
+    "huggingface": ("hf_",), "groq_xai_pplx": ("gsk_", "xai-", "pplx-"),
+    "jwt": ("eyJ",), "elevenlabs": ("sk_",), "firecrawl": ("fc-",),
+    "telegram": (":",), "discord": (".",), "linear": ("lin_api_",),
+    "notion": ("secret_", "ntn_"),
+}
+
+#: Provider keys, from the list the setup chat guard shares. The armor header
+#: is KEY_RES' business.
+PROVIDER_RES: tuple[_Guarded, ...] = tuple(
+    _Guarded(pat, _SHAPE_NEEDLES.get(sid, ()))
+    for sid, _label, pat, _target in _shapes.SHAPES if sid != "private_key"
+) + (
+    # The vendor prefixes whose keys are most often pasted in part or in a
+    # shorter form than the shape list's exact length: still a key.
+    _Guarded(r"\b(?:sk-ant-|sk-|AQ\.|AIza)[A-Za-z0-9_\-]{16,}\b",
+             ("sk-", "AQ.", "AIza")),
+)
+
+#: The same provider keys as one searchable pattern, for the classifier and the
+#: ledger's redaction (`sensitivity_classifier._API_KEY_RE`).
+PROVIDER_KEY_RE = _Union(PROVIDER_RES)
+
+#: Vendor tokens the shape list does not carry.
+_VENDOR_RES: tuple[_Guarded, ...] = (
+    _Guarded(r"\bgh[posur]_[A-Za-z0-9]{20,}\b", ("ghp_", "gho_", "ghu_", "ghs_", "ghr_")),
+    _Guarded(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b", ("github_pat_",)),
+    _Guarded(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", ("AKIA", "ASIA")),
+    _Guarded(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", ("xox",)),
+    _Guarded(r"\bxapp-\d-[A-Za-z0-9-]{10,}\b", ("xapp-",)),
+    _Guarded(r"hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]{20,}",
+             ("hooks.slack.com",)),
+    _Guarded(r"\bglpat-[A-Za-z0-9_-]{20,}", ("glpat-",)),
+    _Guarded(r"\b[sr]k_live_[A-Za-z0-9]{16,}", ("k_live_",)),
+    _Guarded(r"\bnpm_[A-Za-z0-9]{36}\b", ("npm_",)),
+    _Guarded(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}", ("SG.",)),
+    _Guarded(r"\b\d{8,10}:AA[A-Za-z0-9_-]{33}\b", (":AA",)),
+    # A JSON Web Token whatever its payload opens with: the shape list holds
+    # the common `{"` payload, this one also the spaced `{ "` form.
+    _Guarded(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}", ("eyJ",)),
+    _Guarded(r"(?i)(?:twilio|auth[_\s-]?token)[^0-9a-f]{0,24}[0-9a-f]{32}\b",
+             ("twilio", "token")),
+    # An AWS secret access key is forty base64 characters with no prefix of its
+    # own; it is recognised by the name it is assigned to.
+    _Guarded(r"(?i)(?:aws_?secret_?(?:access_?)?key|secret_?access_?key)[\"']?\s*[:=]\s*[\"']?"
+             r"[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])", ("secret",)),
+    _Guarded(r"(?i)\"?root_key\"?\s*[:=]", ("root_key",)),   # Friday keystore JSON
+)
+
+TOKEN_RES: tuple[_Guarded, ...] = _VENDOR_RES + PROVIDER_RES
+
+_Q = r"""["']?"""
+ASSIGN_RES: tuple[_Guarded, ...] = (
+    # A password assignment whose value carries a digit or a symbol, so
+    # "Password: Required" and `password = request.form.get(...)` are not
+    # secrets but "password=hunter2" is. A value that opens like a filesystem
+    # path (`PWD=/c/Users/...`) is a directory, not a password. A masked value
+    # (`********`) and a policy line (`minimum-8 characters`) are not secrets.
+    _Guarded(r"(?i)\b(?:password|passwd|pwd)" + _Q + r"\s*[:=]\s*" + _Q
+             + r"""(?![/~.\\]|[A-Za-z]:[\\/])"""
+             + r"""(?![*•●#x._-]+(?=[\s"',;)]|$))"""
+             + r"""(?!(?:min|max)(?:imum)?-\d+(?=[\s"',;)]|$))"""
+             + r"""(?=[^\s"']{6,})[^\s"']*[0-9!@#$%^&*+=/-][^\s"']*""",
+             ("password", "passwd", "pwd")),
+    _Guarded(r"(?i)(?<![A-Za-z0-9])(?:api[_-]?key|secret[_-]?(?:access[_-]?)?key|"
+             r"client[_-]?secret|access[_-]?token|auth[_-]?token|private[_-]?key)"
+             + _Q + r"\s*[:=]\s*" + _Q + r"(?=[A-Za-z0-9_\-/+=.]*\d)[A-Za-z0-9_\-/+=.]{16,}",
+             ("api", "secret", "token", "private")),
+    # A bearer token always carries a digit; a hyphenated phrase does not.
+    _Guarded(r"(?i)\bbearer\s+(?=[A-Za-z0-9_\-.=+/]*\d)[A-Za-z0-9_\-.=+/]{20,}", ("bearer",)),
+    # user:password@host inside a URL
+    # Anchored at the start of the scheme and bounded in length, so a long
+    # unbroken run of letters and digits is scanned once, not once per offset.
+    _Guarded(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{1,31}://[^\s/:@]+:[^\s/@]{3,}@[^\s/]+",
+             ("://",)),
+)
+
+_ZERO_WIDTH = re.compile("[​‌‍⁠﻿]")
+_PERCENT = re.compile(r"%[0-9A-Fa-f]{2}")
+_B64_RUN = re.compile(
+    r"[A-Za-z0-9+/_-]{20,}={0,2}(?:[ \t]*\r?\n[ \t]*[A-Za-z0-9+/_-]{4,}={0,2})*")
+_B32_RUN = re.compile(r"[A-Z2-7]{24,}={0,6}")
+#: Sixteen or more hex bytes, joined by nothing or by `-`, `:`, `,` or spaces,
+#: each optionally written `0x..` (BitConverter, xxd, Format-Hex, byte lists).
+_HEX_RUN = re.compile(r"(?:(?:0[xX])?[0-9A-Fa-f]{2}[-:,\t ]{0,2}){16,}")
+_MAX_RUNS = 64
+_MAX_RUN_CHARS = 400_000
+_MAX_DEPTH = 3
+_MAX_INFLATE = 2_000_000
+
+
+def _b64_bytes(run: str) -> bytes | None:
+    s = re.sub(r"\s+", "", run).replace("-", "+").replace("_", "/").rstrip("=")
+    if len(s) < 16:
+        return None
+    s += "=" * (-len(s) % 4)
+    try:
+        return base64.b64decode(s, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _b32_bytes(run: str) -> bytes | None:
+    s = run.rstrip("=")
+    s += "=" * (-len(s) % 8)
+    try:
+        return base64.b32decode(s)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _hex_bytes(run: str) -> bytes | None:
+    digits = re.sub(r"0[xX]|[^0-9A-Fa-f]", "", run)
+    digits = digits[:len(digits) - (len(digits) % 2)]
+    try:
+        return bytes.fromhex(digits) if len(digits) >= 32 else None
+    except ValueError:
+        return None
+
+
+_DECODERS = ((_B64_RUN, _b64_bytes), (_HEX_RUN, _hex_bytes), (_B32_RUN, _b32_bytes))
+
+
+def _line_prefixes(run: str):
+    """`run` whole, then with trailing wrapped lines dropped one at a time.
+
+    A wrapped base64 run greedily swallows any following word of four or more
+    letters; the encoded part is the longest leading run of lines that decodes.
+    """
+    yield len(run), run
+    cut = len(run)
+    for _ in range(8):
+        cut = run.rfind("\n", 0, cut)
+        if cut <= 0:
+            return
+        yield cut, run[:cut]
+
+
+#: Encoded characters one classification decodes in total, across every
+#: variant and nesting layer. Runs are taken smallest first, so the runs a
+#: credential fits in are always decoded and a large attachment body is what
+#: goes unread once the budget is spent.
+_DECODE_BUDGET_CHARS = 1_000_000
+
+
+def _b64_windows(run: str, room: int):
+    """The head and the tail of a base64 run too large for what is left of the
+    budget, each cut on a four-character boundary so it decodes on its own."""
+    s = re.sub(r"\s+", "", run)
+    half = room // 2 // 4 * 4
+    if half < 64 or len(s) <= half:
+        return
+    yield s[:half]
+    yield s[(len(s) - half) // 4 * 4:]
+
+
+def _encoded_runs(text: str, budget: list[int] | None = None):
+    """Yield (span, raw_bytes) for each base64, hex or base32 run that decodes.
+
+    With `budget` (a one-element list of characters left) runs are taken
+    smallest first, so the runs a credential fits in are decoded first. A
+    base64 run larger than what is left is not skipped whole: its head and
+    tail are decoded, where appended or leading content sits. Total decode
+    work never exceeds the budget.
+    """
+    n = 0
+    found = [(rx, decode, m) for rx, decode in _DECODERS for m in rx.finditer(text)]
+    if budget is not None:
+        found.sort(key=lambda f: f[2].end() - f[2].start())
+    for rx, decode, m in found:
+        if n >= _MAX_RUNS:
+            return
+        run = m.group(0)
+        if budget is None and len(run) > _MAX_RUN_CHARS:
+            continue
+        if budget is not None and len(run) > budget[0]:
+            room, budget[0] = budget[0], 0
+            if decode is _b64_bytes:
+                for part in _b64_windows(run, room):
+                    raw = decode(part)
+                    if raw:
+                        n += 1
+                        yield (m.start(), m.end()), raw
+            continue
+        if budget is not None:
+            budget[0] -= len(run)
+        for used, part in _line_prefixes(run):
+            raw = decode(part)
+            if raw:
+                n += 1
+                yield (m.start(), m.start() + used), raw
+                break
+
+
+def _views(raw: bytes):
+    """Every text a decoded byte string may be read as: Latin-1, UTF-16, gzip."""
+    yield raw.decode("latin-1")
+    head = raw[:4096]
+    if b"\x00" in head:
+        # ASCII-range UTF-16 has a NUL in every second byte; random or packed
+        # binary has almost none, and reading it as UTF-16 costs a full scan.
+        half = max(len(head) // 2, 1)
+        if head[1::2].count(0) * 5 >= half:
+            yield raw.decode("utf-16-le", errors="ignore")
+        if head[0::2].count(0) * 5 >= half:
+            yield raw.decode("utf-16-be", errors="ignore")
+    if raw[:2] == b"\x1f\x8b":
+        try:
+            inflated = zlib.decompressobj(31).decompress(raw, _MAX_INFLATE)
+        except zlib.error:
+            inflated = b""
+        if inflated:
+            yield from _views(inflated)
+
+
+def _decoded(text: str, depth: int = _MAX_DEPTH, budget: list[int] | None = None):
+    """Texts hidden inside `text` by nested base64 / base32 / hex / gzip layers."""
+    if depth <= 0:
+        return
+    for _span, raw in _encoded_runs(text, budget):
+        for view in _views(raw):
+            yield view
+            yield from _decoded(view, depth - 1, budget)
+
+
+def _variants(text: str):
+    """The text plus the re-encodings a caller might have hidden it in."""
+    yield text
+    if "%" in text and _PERCENT.search(text):
+        yield urllib.parse.unquote(text)
+    if "\\n" in text or "\\r" in text:
+        yield text.replace("\\r", "").replace("\\n", "\n")
+    if _ZERO_WIDTH.search(text):
+        yield _ZERO_WIDTH.sub("", text)
+    if "-----" in text or "---" in text:
+        yield _SQUASH.sub("", text)
+    yield codecs.encode(text, "rot13")
+
+
+def _direct(text: str, groups) -> bool:
+    low = text.lower()
+    return any(rx.search(text, low) for g in groups for rx in g)
+
+
+_SQUASHED = ((_SQUASHED_HEADER,),)
+
+
+def _scan(text: str, groups) -> bool:
+    budget = [_DECODE_BUDGET_CHARS]
+    for v in _variants(text):
+        if _direct(v, groups) or _direct(v, _SQUASHED):
+            return True
+        for dec in _decoded(v, _MAX_DEPTH, budget):
+            if _direct(dec, groups) or _direct(dec, _SQUASHED):
+                return True
+    return False
+
+
+def contains_key_material(text: str) -> bool:
+    """A private key block or the leading bytes of one, in any listed encoding."""
+    return bool(text) and _scan(text, (KEY_RES,))
+
+
+def contains_secret(text: str) -> bool:
+    """Any credential this module knows, in the text or a re-encoding of it."""
+    return bool(text) and _scan(text, (KEY_RES, TOKEN_RES, ASSIGN_RES))
+
+
+_KEY_BLOCK = re.compile(
+    r"-----BEGIN" + _WS + r"(?:[A-Z0-9]+" + _WS + r")*PRIVATE" + _WS + r"KEY(?:" + _WS
+    + r"BLOCK)?-----(?:[\s\S]*?-----END" + _WS + r"[A-Z0-9 ]*-----|(?:\s*[A-Za-z0-9+/=]{16,})*)",
+    re.I)
+_KEY_BODY = re.compile(
+    _BODY_LEAD + "(?:" + "|".join(_KEY_BODY_STARTS) + ")"
+    r"[A-Za-z0-9+/=]*(?:[ \t]*\r?\n[ \t]*[A-Za-z0-9+/=]{16,})*")
+
+WITHHELD = "[credential withheld]"
+
+
+def _rot13_lines(text: str) -> str:
+    """Lines whose rot13 form carries key material or a token are withheld."""
+    if not _direct(codecs.encode(text, "rot13"), (KEY_RES, TOKEN_RES)):
+        return text
+    return "\n".join(
+        WITHHELD if _direct(codecs.encode(line, "rot13"), (KEY_RES, TOKEN_RES)) else line
+        for line in text.split("\n"))
+
+
+def redact(text: str) -> str:
+    """`text` with key blocks and vendor-format tokens replaced by a marker.
+
+    Only KEY_RES and TOKEN_RES material is removed: keyword=value lines in the
+    owner's own files are left alone. Encoded copies are replaced whole; armor
+    chunked to defeat a pattern withholds the whole text, since it cannot be
+    cut cleanly.
+    """
+    if not text:
+        return text
+    out = text
+    if _PERCENT.search(out) and contains_key_material(urllib.parse.unquote(out)):
+        # A percent-encoded key cannot be cut cleanly; withhold the run.
+        out = re.sub(r"(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9._~-]){60,}",
+                     lambda m: WITHHELD if contains_secret(urllib.parse.unquote(m.group(0)))
+                     else m.group(0), out)
+    out = _KEY_BLOCK.sub(WITHHELD, out)
+    out = _KEY_BODY.sub(WITHHELD, out)
+    for rx in TOKEN_RES:
+        out = rx.sub(WITHHELD, out)
+    spans = []
+    for span, raw in _encoded_runs(out):
+        for view in _views(raw):
+            if _direct(view, (KEY_RES, TOKEN_RES)) or any(
+                    _direct(d, (KEY_RES, TOKEN_RES)) for d in _decoded(view, _MAX_DEPTH - 1)):
+                spans.append(span)
+                break
+    merged: list[list[int]] = []
+    for a, b in sorted(set(spans)):
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    for a, b in reversed(merged):
+        out = out[:a] + WITHHELD + out[b:]
+    out = _rot13_lines(out)
+    if _SQUASHED_HEADER.search(_SQUASH.sub("", out)):
+        # armor whose header only exists once its chunks are joined
+        return WITHHELD
+    return out

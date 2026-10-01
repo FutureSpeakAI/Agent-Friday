@@ -204,7 +204,9 @@ def tier_safe(text: str) -> str:
     except Exception:
         return text
     s = str(text)
-    s = sc._API_KEY_RE.sub("[redacted key]", s)
+    from agent_friday.services import secret_patterns as _sp
+    s = sc._API_KEY_RE.sub(_sp.WITHHELD, s)
+    s = _sp.redact(s)
     s = sc._SSN_RE.sub("[redacted SSN]", s)
     s = sc._CC_RE.sub(lambda m: "[redacted card number]"
                       if _luhn_ok(re.sub(r"\D", "", m.group(0))) else m.group(0), s)

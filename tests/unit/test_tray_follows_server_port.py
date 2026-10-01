@@ -2,7 +2,7 @@
 
 The server honours FRIDAY_PORT and falls back to the next free port when the
 requested one is busy, and records the port it bound. The tray's health
-check, "Open Friday Desktop", watchdog and push-to-transcribe must all follow
+check, its "Open Agent Friday™" item, watchdog and push-to-transcribe must all follow
 that port.
 """
 from __future__ import annotations

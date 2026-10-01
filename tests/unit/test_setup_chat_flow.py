@@ -156,6 +156,8 @@ def test_personality_json_is_written_only_when_setup_finishes(home):
     sc.answer("style", {"action": "skip"}, "")
     assert sc.load_state()["stage"] == "room_voice"
     sc.answer("room_voice", "skip", "")
+    assert sc.load_state()["stage"] == "brain_warm"
+    sc.answer("brain_warm", "skip", "")
     assert sc.load_state()["stage"] == "finish"
     assert not pfile.exists(), "personality.json ends first-run setup early"
     assert not (home["path"] / ".setup_complete").exists()

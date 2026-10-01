@@ -27,6 +27,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday import brand
 from agent_friday.paths import contained, safe_name
 from agent_friday.core import (
     CREATIONS_DIR,
@@ -137,8 +138,8 @@ def serve_creation(filename):
 def serve_creation_framed(filename):
     """Branded full-page view of a creation, for when the user clicks
     "Open in Tab". Wraps the raw creation (served at /api/creations/<file>) in a
-    Friday-branded header with a "Return to Friday Desktop" link so a creation
-    opened in a standalone Chrome tab still reads as part of the product."""
+    branded header with a link back to the desktop, so a creation opened in a
+    standalone Chrome tab still reads as part of the product."""
     try:
         _sync_daily_creation_files()
     except Exception:
@@ -196,7 +197,8 @@ def serve_creation_framed(filename):
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · Friday Desktop</title>
+<title>{title} · {brand.PRODUCT_NAME}</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
 <style>
   :root{{--cyan:#00d4ff;--bg:#05060c;--panel:#0a0d18;}}
   *{{box-sizing:border-box;}}
@@ -204,13 +206,12 @@ def serve_creation_framed(filename):
     font-family:Inter,-apple-system,Segoe UI,Roboto,sans-serif;}}
   .fc-bar{{position:sticky;top:0;z-index:10;display:flex;align-items:center;
     justify-content:space-between;gap:12px;padding:10px 18px;
-    background:linear-gradient(90deg,rgba(0,212,255,0.10),rgba(124,58,237,0.10));
+    background:linear-gradient(90deg,rgba(0,212,255,0.10),rgba(123,97,255,0.10));
     border-bottom:1px solid rgba(0,212,255,0.25);
     backdrop-filter:blur(10px);box-shadow:0 2px 24px rgba(0,212,255,0.08);}}
-  .fc-brand{{display:flex;align-items:center;gap:10px;font-family:Orbitron,
-    'JetBrains Mono',monospace;font-weight:700;letter-spacing:0.08em;font-size:14px;}}
+  .fc-brand{{display:flex;align-items:center;gap:10px;font-family:Orbitron, sans-serif;font-weight:700;letter-spacing:0.08em;font-size:14px;}}
   .fc-logo{{width:22px;height:22px;border-radius:50%;
-    background:radial-gradient(circle at 35% 30%,#7cf6ff,#00d4ff 45%,#7c3aed);
+    background:radial-gradient(circle at 35% 30%,#7cf6ff,#00d4ff 45%,#7b61ff);
     box-shadow:0 0 14px rgba(0,212,255,0.7);}}
   .fc-sub{{color:#7fb6c9;font-size:11px;font-family:'JetBrains Mono',monospace;
     letter-spacing:0.04em;opacity:0.85;}}
@@ -221,7 +222,7 @@ def serve_creation_framed(filename):
     box-shadow:0 0 18px rgba(0,212,255,0.45);transition:transform .12s ease;}}
   .fc-return:hover{{transform:translateY(-1px);}}
   .fc-body{{height:calc(100vh - 45px);}}
-  .fc-frame{{width:100%;height:100%;border:none;background:#0a0a0f;}}
+  .fc-frame{{width:100%;height:100%;border:none;background:#0a0e1a;}}
   .fc-pad{{padding:28px;display:flex;flex-direction:column;align-items:center;
     gap:14px;text-align:center;}}
   .fc-pad img,.fc-pad video{{max-width:100%;border-radius:10px;
@@ -245,9 +246,9 @@ def serve_creation_framed(filename):
 </style></head>
 <body>
   <div class="fc-bar">
-    <div class="fc-brand"><span class="fc-logo"></span>FRIDAY DESKTOP
+    <div class="fc-brand"><span class="fc-logo"></span>{brand.PRODUCT_NAME}
       <span class="fc-sub">· Creation · {title}</span></div>
-    <a class="fc-return" href="{home_url}">← Return to Friday Desktop</a>
+    <a class="fc-return" href="{home_url}">← Back to {brand.PRODUCT_NAME}</a>
   </div>
   <div class="fc-body">{body}</div>
 </body></html>"""

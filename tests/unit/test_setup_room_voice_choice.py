@@ -79,9 +79,10 @@ def test_skipping_writes_nothing_and_keeps_the_careful_default(value, saved):
 
 
 @pytest.mark.parametrize("value", ["name", "anyone", "skip"])
-def test_every_answer_moves_on_to_finish(value, saved):
+def test_every_answer_moves_on(value, saved):
+    """The brain-warm question follows this one; neither may stall setup."""
     st, _t, _s = _run(value, saved)
-    assert st["stage"] == "finish", "setup must not stall on this question"
+    assert st["stage"] == "brain_warm", "setup must not stall on this question"
 
 
 def test_the_answer_is_read_back(saved):
@@ -104,7 +105,7 @@ def test_a_failed_write_does_not_strand_setup(monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     st, transcript = {"stage": "room_voice"}, []
     sc._on_room_voice(st, transcript, "anyone", "")
-    assert st["stage"] == "finish"
+    assert st["stage"] == "brain_warm"
 
 
 def test_the_writer_sets_only_its_own_key(monkeypatch):

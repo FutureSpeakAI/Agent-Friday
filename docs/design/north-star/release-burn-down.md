@@ -1,0 +1,273 @@
+# Release burn-down: what closes the north star's missing and partial MUST rows
+
+> **Status:** active (planning document; no product code changes)
+> **Written:** 2026-09-30
+> **Verified against:** main at `321ec490` (live since 22:07 on 2026-09-30)
+> **Re-cut:** 2026-09-30, after the owner's answers (A10 to A14): signing deferred, a single-person release, no pilot, the federation hidden but never unmounted, the privacy gate always on
+> **Inputs:** [`agent-friday-ideal-product-spec.md`](agent-friday-ideal-product-spec.md), [`AMENDMENTS.md`](AMENDMENTS.md) A1 to A14 (A10 to A14 are the owner's answers to this document's five decisions, recorded the same night), the 09-29 gap matrix (`ftv/program/gap_matrix.json`, 1,184 rows), and the refreshed matrix written beside it as [`GAP-MATRIX-2026-09-30.md`](GAP-MATRIX-2026-09-30.md)
+> **Method:** STORM with four perspectives argued against the tree: a release manager (what gates a release and what merely improves it), a security reviewer (which rows a breach would trace back to), a first-time non-technical user (which rows she would feel in the first hour), and an accessibility auditor (which rows exclude someone outright). Each piece below records which perspective put it where it is.
+> **Scope:** the next release of the local product. The federation, the marketplace and the positron economy are out of it by the owner's ruling (A9) and get their own track in §6.
+> **Companion:** the program lead's queued piece P-NS-CONFLICTS already covers the 23 code-level "conflicting" rows; this document references it and does not re-plan them.
+
+## 0. The owner's question, and the answer in one paragraph
+
+The owner asked what it takes to hit all the missing requirements, with the federation kept out of the next release. The 09-29 matrix had 161 missing rows (119 of them MUST) and 679 partial rows (556 MUST). Re-verified against main tonight, the counts moved (§1), because a day of landings closed or narrowed rows. What remains is grouped here into buildable pieces, ordered by the north star's own fifteen-point definition of product completeness and then by §36's phases, each with the rows it closes, a size in agent-days, its dependencies, and an acceptance test the program lead's gauntlet can run. §34 is the release gate: the next release ships when every §34 MUST passes, and not before. One piece hides every federation, marketplace and economy surface behind a setting that is off by default, with buying off regardless. The federation itself is sketched afterwards as a separate track that reuses the identity and attestation groundwork rather than fighting it. The owner answered the five decisions this document raised the same night; they are amendments A10 to A14, and this cut reflects them: the release is single-person, unsigned and says so, has no pilot, keeps the federation code in the build behind the off switch, and runs the privacy gate under every consent level.
+
+## 1. The refreshed numbers
+
+| Status | MUST rows, 09-29 | MUST rows, 09-30 |
+|---|---|---|
+| shipped | 176 | 186 |
+| partial | 556 | 554 |
+| proposed | 73 | 78 |
+| missing | 119 | 106 |
+| conflicting | 17 | 17 |
+
+675 rows were re-verified (every MUST row that was missing or partial on 09-29); 20 changed and 655 did not. The full table, with current file and line evidence for every row, is [`GAP-MATRIX-2026-09-30.md`](GAP-MATRIX-2026-09-30.md). What moved: tests that already existed and the 09-29 survey had missed (every-action-is-governed, provider-echo attribution, receipt-write-failure holds), the content-publish card gate, the organize actions with receipts and undo, the browser-origin and session-token gates, reduced-motion handling and captions, and five first-run rows that are now specified but not built. What did not move is the shape of the work: the same long tail of partial rows across governance, memory, goals, portability, principals, accessibility and release acceptance.
+
+Two numbers matter more than the totals. **106 MUST rows are still missing outright**, and **84 of §34's 114 MUST release-acceptance rows are not yet shipped** (58 partial, 24 missing, 1 proposed, 1 conflicting). The second number is the release gate.
+
+## 2. Four perspectives, argued against the tree
+
+- **The release manager** asks what gates a release versus what merely improves the product. Her answer is §34, row by row, and she wants every piece to end in a test the gauntlet can run. She puts the installer, the CI matrix, update rollback and the Doctor first, because nothing else is demonstrable on a clean machine without them. She flagged that §34.8 and §34.9-10 demand principal-isolation tests, so households (point 12) would be on the release path unless the owner changed the gate. The owner changed it (A11): the next release is single-person, and the principal pieces are a post-release track.
+- **The security reviewer** asks which rows a breach would trace back to. He names five: the false-done defect (a raised approval card still counts as completion, `services/agent.py:3756-3769`), the two write paths that bypass the action gate (the workspace-studio chat patch at `services/workspace_studio.py:501` and calendar quick-add), the plaintext credential fallback at `services/credential_store.py:209`, the unbounded read on the remote MCP path at `mcp_client.py:633`, and the absence of any domain allowlist for remote tool servers. He wants those closed before any release, hidden features or not. He asked for the federation routes to be unmounted in a release build rather than hidden; the owner decided otherwise (A13): the code stays in the build, hidden by the off-by-default setting with buying refused, and future federation work starts only on his word.
+- **The first-time non-technical user** asks what she would feel in the first hour. Her list is the installer, a padlock, a synthesis she can correct, one action she can approve and inspect, and a way to stop Friday. She does not feel the data-model or API-contract rows, so they come after hers in the ordering even though engineers want them first.
+- **The accessibility auditor** asks which rows exclude someone outright. Her list is short and non-negotiable for a public release: no skip link, no global focus rule, no text-size setting, no speech-rate control, no "say that again", no text alternative for the 3D views, and no screen-reader or keyboard flow test anywhere in CI. She does not accept "the scene honours reduced motion" as a substitute for a switch that turns rendering off.
+
+## 3. How the pieces are ordered
+
+The north star's final definition of product completeness is fifteen things a non-technical owner can do (the spec's closing section). The pieces below are grouped under those fifteen points in order, then by the §36 phase they belong to, so that the first pieces are the ones a person feels on day one and the last are the ones only an engineer sees. Cross-cutting pieces (accessibility, security process, contracts) come after the fifteen, with the point they serve named. Every piece has an id (`BD-nn`), the rows it closes (by matrix id; the matrix carries the evidence), a size in agent-days, its dependencies, and an acceptance test. Sizes are honest estimates for one agent working through the gauntlet, not calendar time.
+
+The program lead's queued **P-NS-CONFLICTS** owns the 17 MUST rows marked `conflicting` (for example NS-26.7-1, NS-13.7-3, NS-10.6-2, NS-27.8-1); they are not re-planned here, and the pieces below assume its picks.
+
+## 4. The pieces
+
+### Point 1: install it on a clean supported machine (Phase 0)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-00** | **Hide the federation.** One setting, `held_features.federation`, off by default, gates the Marketplace workspace (`index.html:57893`), the Federation and Economy Settings tabs (today a compile-time constant at `index.html:52589`), the Trust tab's federation strip (`index.html:30189`) and the dock entry. Buying is off regardless: `/api/marketplace/purchase` (`routes/federation.py:365`) and `services/marketplace.py` `purchase_intent` refuse with a "not in this release" result until a second, separate setting exists in a federation release. `auto_accept_at_listing_price` (`services/marketplace.py:43-53`) is forced false. The identity and attestation routes stay mounted and untouched. | NS-7.2-3, NS-3.2-1 (the surface half) | 3 | A9 | On a clean install, no workspace, dock entry, Settings tab or command-palette item mentions marketplace, positrons or federation; a POST to the purchase route returns the refusal; the setting's "on" state restores the surfaces and still refuses purchases. |
+| **BD-01** | **The installer, signing deferred.** One installer file per the first-run spec §3, built to be signed the day an identity exists (A10: "We're not there yet"; the test certificate stays): embedded runtime and content-addressed wheels, a signed `release-manifest.json` with a per-file hash list, a signed SBOM, exact itemised plan before install, get-pip and model checksums, no secret files carried in the app directory, the model-free preflight with the four buckets and the Bonsai2 tier lookup, the install receipt; the release notes state plainly that the installer is unsigned, what SmartScreen will show, and how to verify the SHA-256 beside the download. | NS-8.1-2, -3, -4, -6, -9, -10, NS-8.2-1, -2, NS-26.16-1, -2, -4, NS-34.4-2, -5, NS-36.0-5 (NS-8.1-1, NS-26.15-1, NS-34.4-1 and NS-36.0-2 are deferred by the owner, A10) | 18 | A10; `bonsai2-tiers.json` | The release notes carry the unsigned statement and the SHA-256 verification steps, checked by a test against the release artifacts; the preflight's four buckets match a scripted machine profile; a tampered file fails the manifest check; an empty `sha256` in `Download.ps1` fails instead of passing. |
+| **BD-02** | **Release truth in CI.** Independent CI stages with the security suite as its own always-run job, the integration suite in CI, a dependency-review job that gates releases, a clean-machine matrix (Windows versions, minimum RAM, no and mid GPU, non-English locale, restricted account, upgrade from oldest supported and from previous, restore from bundle), and a release-evidence page built from the artifacts. | NS-34.2-3, -5, -8, -10, -12, -13, -16, -17, -18, NS-34.3-1 to -8, NS-36.0-1, -3, -11, -12, NS-36.9-1, NS-34.17-6, NS-33.11-1 (NS-34.17-4, the unsigned update path, is deferred by the owner, A10, and the evidence page shows it as deferred rather than green) | 12 | BD-01, BD-17 (for the restore job) | A deliberately failing unit test does not skip the security job; every matrix leg uploads its evidence; the evidence page lists each §34 gate with a green or red state and a link. |
+| **BD-03** | **Update, rollback, repair, Doctor, known issues, safe mode.** The update preview with the north star's eleven fields, versioned app directories with health-checked flip and automatic rollback, repair against the signed manifest, a saved Doctor report (the file the A3 weekly ask shares), the nine health states and a UI consumer for `/api/capabilities/state`, known issues shown in the product, a real safe mode (models optional, connectors off, schedules paused, outward actions held, read-only inspection), a migration journal with pre-migration backup, and the settings loader reporting rather than silently resetting. | NS-28.1-1, NS-28.2-1, NS-28.3-1, -2, NS-28.4-2, NS-28.5-1, -2, NS-28.7-1, NS-28.8-1, NS-28.9-1, NS-32.2-4, NS-32.12-1, NS-36.0-7, -9, -10, NS-33.5-2, -3, -6, NS-11.4-2, NS-11.3-9, NS-33.6-7 | 18 | BD-01 | A release whose health check is made to fail rolls back without a person present and says so; `friday doctor` writes a report file the Health section opens; a corrupted settings file produces a visible "reset, because" line, not a silent default; safe mode starts with the model runtime absent. |
+
+### Point 2: understand and choose where reasoning happens (Phase 0 and 2)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-04** | **Routing truth.** The five profiles with nothing pre-selected and per-option cost and capability lists; no silent provider fallback (the ladder holds and asks, or follows a pre-authorised policy, and every fallback is a signed receipt); the route record carries alternatives rejected, expected cost and latency, and the reason is shown in the UI; cloud fallback becomes opt-in per sensitivity and action class rather than a global switch; a whole-system offline mode and test; per-schedule timezone. | NS-6.2-1, NS-6.4-2, -6, NS-12.3-1, -2, NS-12.4-2, NS-12-A6, NS-32.1-1, NS-32.2-5, NS-32.3-1, -2, NS-32.15-1, NS-32.16-1, NS-8.6-3, NS-33.5-5, NS-36.2-13 | 12 | P-NS-CONFLICTS pick on NS-26.7-1 | With the local seat killed mid-turn under "local preferred", the turn holds with a card instead of answering from the cloud; the route record of every turn names the alternatives and the reason; the offline test passes with the network interface disabled. |
+| **BD-05** | **Cost truth.** A pre-call estimate on chat, per-provider caps, per-scheduled-job spend budgets, a block on calls whose cost cannot be estimated within tolerance, and principal and goal attribution on every cost row. | NS-12.9-1, -3, -4, -7, NS-29.7-1 | 6 | BD-04 | A provider cap set to one cent stops the next call with a card; a job with a budget stops at the budget and records why. |
+
+### Point 3: connect data with least privilege (Phase 1 and 2)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-06** | **The connector contract.** The `Connector` protocol gains declared operations and action classes, rate limits, retention and network destinations, limitations, revoke and audit, and an owner or principal on every account; the connect-your-life card contract of the first-run spec §6.1 renders from it; read scopes first and write scopes as a permission diff; the default Google set loses its write halves; contract tests per connector for auth, scopes, rate limits, pagination, idempotency, partial failure, undo, revoked access, malformed content and receipt creation. | NS-23.1-2, -3, -4, -6, -7, NS-23.2-2, NS-23.3-3, -4, -5, NS-8.9-2, -3, NS-34.11-1, -2, -3, NS-19.7-3 | 18 | `connector-ecosystem.md` phases 1 and 2 | Every registered connector passes the same fixture set; the Google consent page requests no write scope on first connect; a revoked token shows "needs you", never "connected". |
+| **BD-07** | **MCP as governed connectors.** Remote tool servers get a domain allowlist and https enforcement, the streamable-HTTP read is bounded, tools carry a typed manifest (version, ring, idempotency, domains), action classes come from the manifest rather than verb guessing, tool descriptions are signature-checked, and the registry lists only runnable tools with the integrity-redispatch defect re-checked. | NS-23.10-1 to -5, NS-23.11-2, NS-23.4-1, NS-23.5-1, NS-26.13-1 | 10 | BD-06 | A remote server answering from an unlisted domain is refused; a 100 MB response is cut at the cap; a tool without a manifest is shown as unavailable with the reason. |
+| **BD-08** | **Credential store without a soft floor.** Remove the plaintext fallback, fail closed on keystore errors, record last use without values, add the central logging redaction filter and a correlation-id scheme, and test every credential read path. | NS-26.5-1, -4, -5, -6, NS-26.17-1, -2, NS-34.17-3, NS-23.3-3 | 8 | P-NS-CONFLICTS pick on NS-26.5-2 | With the keystore made unreadable, every read path raises rather than returning a secret; a log line containing a key-shaped string is redacted by the filter; every request carries one correlation id across its ledgers. |
+
+### Point 4: receive a useful personal synthesis within the first session (Phase 1)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-09** | **Import staging and the first synthesis.** This is Phase 1 of the first-run spec (§11.1 there): the seven-step preview-first import, a general staging area, nightly dreaming stops auto-promoting imported material, "What I see so far" with its seven fields and seven marks, the first governed action with its receipt link, and the completion criterion of §9.6 replacing the `.setup_complete` marker. | NS-8.10-2, -3, NS-9.1-2, NS-9.2-2, -3, NS-36.1-2, -3, -4, -5, -6, NS-34.9-7, NS-4.7-2, NS-15.4-2, NS-3.4-2, NS-34.4-8, NS-8.3-2, NS-8.5-2, -3, NS-8.7-1, -2, NS-8.12-3, NS-8.13-2, -3, NS-8.2-2 | 30 | BD-01, BD-06, `first-run-and-onboarding.md` | On the clean-machine matrix with two sources connected, a synthesis of at most five items with citations appears within fifteen minutes on the local path; nothing from an import is durable before a review answer; the first action's receipt opens from the card. |
+
+### Point 5: correct what Friday believes (Phase 2)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-10** | **Memory truth.** The typed memory schema (principal scope, sensitivity, status, freshness, authority) across the three stores, sensitive-category filters on inference, proposals with edit and suppress and a UI consumer, supersession with history and a production caller, deletion that traverses indexes, graph, summaries, caches and proposals with a receipt for every kind, off-record honoured by `observe_message` and the external-records notice, a memory browser with "why do you know this", near-duplicate suppression, and local memory metrics. | NS-15.2-1, NS-15.4-3, NS-15.5-1, NS-15.6-1, NS-15.7-1, -2, -3, NS-15.8-2, -3, NS-15.9-1, NS-15.11-1, NS-15.12-1, NS-14.6-2, NS-29.9-1, NS-30.7-1, NS-30.20-1, NS-36.2-6, -8, -9, -11, -12, NS-34.9-1, -2, -3, -4, -8, -9, NS-3.4-1 | 25 | BD-09 | Forgetting a fact removes it from every index and summary and the receipt lists each place; a correction supersedes with the old value visible in history; an off-record turn writes nothing to `user_model`; the browser answers "why" with the source span. |
+
+### Point 6: authorize an action and inspect its verified receipt (Phase 3)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-11a** | **"Done" means evidence.** Fix the live false-done defect: `FAILURE_SENTINELS` gains approval-card-raised, held and declined markers, and `_evidence_verdict` stops counting a raised card as completion; the single action envelope (action id, principal, idempotency key, verification plan, policy version, cLaws state); client-supplied idempotency keys on Friday's own APIs; the four outcome classes including waiting and verified-completion; argument-schema validation so misnamed tools are not auto-resolved and run. | NS-4.6-1, -2, NS-6.4-5, NS-6.5-1, NS-13.2-2, NS-17.7-2, NS-21.6-3, NS-21.23-2, NS-22.3-2, NS-18.1-1, -2, NS-18.7-1, NS-30.10-1, NS-30.19-1, NS-31.1-4, NS-31.4-1, NS-31.5-2, NS-32.21-1, NS-36.3-1, -5, -12, NS-34.16-4, NS-37.6-1 | 12 | none; first in Phase 3 | A turn that only raises a card is marked waiting, never complete, in chat, task cards and voice; the same idempotency key submitted twice runs once; a receipt without an action id cannot be written. |
+| **BD-11b** | **The receipt chain and the Ledger workspace.** Hash-chained receipts with a hold on corruption, one receipt store joined from decision BOM, goals, tool, voice and action-journal receipts, a Ledger workspace in the registry with tool, principal, provider and status filters and export, receipt links from chat and approval cards, grants with argument, destination and money constraints and revocation, signed principal-bound approvals with withdraw for approved-unused cards, revocation of all action authority in one control, and tests that every outward action leaves a receipt. | NS-18.2-4, NS-18.4-3, -4, NS-18.6-1, NS-18.9-2, NS-18.10-1, -3, NS-18.12-1, NS-30.11-1, NS-30.12-1, NS-30.15-1, NS-32.20-1, NS-36.3-8, -11, NS-36.1-6, NS-29.4-1, -2, NS-34.2-15, NS-34.5-3, -4, -5, -6, NS-34.17-7, NS-37.2-5, NS-37.7-1, -2, NS-11.8-3 | 15 | BD-11a | Editing one receipt on disk makes the next outward action hold with a visible reason; the Ledger shows a receipt for every row in the action gate's log; "revoke all" leaves no grant active. |
+| **BD-11c** | **No write path outside the gate.** The workspace-studio chat patch, calendar quick-add and the scheduler's workflow chain go through the action gate; install and delete stop accepting a chat yes; the forbidden taxonomy names disabling governance, the kill switch and cross-principal access; outward reversible and consequential are distinct classes. | NS-4.5-1, NS-6.3-1, NS-18.2-1, -6, -7, NS-18.4-2, -5, NS-31.1-8, -9, NS-31.5-1, NS-36.9-2, NS-37.2-10, NS-34.17-1, NS-21.1-1 | 6 | BD-11a | The AST scan in `test_every_action_is_governed.py` finds zero unreviewed sites; a workspace chat turn that edits a document produces a decision receipt. |
+
+### Point 7: create a goal that Friday carries across days and restarts (Phase 4)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-12** | **Goals that survive.** The goal schema with typed evidence, constraints, per-category autonomy, notification policy and permitted tools; states for waiting, needs-owner, at-risk, met-unverified, met-verified and archived; the goal-definition dialogue and plain-language summary before creation; milestones with dependencies and evidence requirements; typed blockers shown to the owner; continuation preconditions; a goal-level no-progress breaker; goal health; a Goals workspace; reopen and pause; scoped subagents with a principal. The "Getting to know you" goal of the first-run spec §7A is its first user. | NS-17.1-1, NS-17.2-1, NS-17.3-1, -2, NS-17.4-1, -2, NS-17.5-1, NS-17.6-1, NS-17.7-1, NS-17.9-1, NS-17.10-1, -2, NS-17.11-1, NS-17.13-1, NS-17.14-2, -3, NS-17.15-1, NS-3.3-1, NS-30.8-1, NS-30.9-1, -2, NS-32.7-1, NS-32.8-1, NS-36.4-1, -5, NS-34.10-2, -3, -6, -8, NS-4.7-1, NS-37.9-9, NS-37.2-11 | 25 | BD-11a, BD-11b, `goals-and-delivery-receipts.md` | A thirty-day test goal survives a restart, a provider outage, an approval and a plan change with a complete receipt chain; a blocked goal shows its typed blocker in the workspace and in voice; a goal is never marked met by a model's statement alone. |
+
+### Point 8: stop Friday from any trusted surface (Phase 4)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-13** | **Global STOP.** One stop that halts every lane (model loop, computer control, voice, scheduled work, subagents), releases held keys and mouse buttons, and acknowledges within the §33.4 budget; remote status, goals, tasks, pause, stop and brief-me commands; a test that STOP works while the model loop is wedged. | NS-18.12-2, NS-20.8-6, NS-19.8-1, NS-32.22-1, NS-34.5-9, NS-20.8-5 | 6 | BD-11a | With a key held by the control lane and the model loop wedged, STOP from the hotkey, the phone and voice each release the key and halt within one second, with a receipt. |
+| **BD-14** | **Triggers, presence and pairing.** A trigger engine (calendar, mail, file, repo, webhook, connector, health, deadline) with the §19.3 record, dedup and bounded queues on event intake, a global cap on autonomous work, quiet hours and a daily digest default, a presence endpoint that is not lattice frames, pairing codes and explicit expansion for Telegram and Discord with a channel UI, SMS approvals that carry the card's essential fields, next-channel notification on failure, and a generic authenticated webhook with a timestamp window. | NS-19.1-2, NS-19.2-1, NS-19.4-1, NS-19.6-2, -3, -4, -5, NS-19.7-1, -2, NS-19.9-1, NS-19.10-1, NS-19.12-2, NS-30.16-1, NS-36.4-10, -11, NS-10.2-2, NS-24.8-3 | 18 | BD-12 | A storm of 1,000 synthetic mail events produces one bounded queue and no duplicate actions; a Telegram chat id not paired through a desktop code is refused; a card expires through a failed channel only after the next channel was tried. |
+
+### Point 9: see what data left the device and why (Phase 2 and 3)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-15** | **The privacy map and the egress ledger.** The egress log entry gains purpose, context-manifest id, payload hash, grants used and withheld count; a per-assembly context manifest the person can open; the privacy map and "what left this machine today" of the first-run spec §9.4 over the existing route; a recent-egress and remote-devices view; the off-record notice that tools may still create external records; a payload-size check at the gate. | NS-29.6-1, NS-12.5-1, NS-14.3-1, NS-14.8-1, NS-26.7-3, NS-26.22-1, NS-30.13-1, NS-36.2-4, NS-15.8-3, NS-33.6-6 | 12 | BD-11b | Every row in the egress log opens to the exact text that left and the manifest that produced it; the map's lines are regenerated from the log, with a test that a synthetic egress appears within one refresh. |
+
+### Point 10: recover from provider, model, process and update failure without duplicate effects (Phase 3)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-16** | **Failure taxonomy and reconciliation.** The unified failure and pending-state classifier (external wait, needs user input, recall degraded, index corruption, disk full, offline), compensation and recovery receipts, crash reconciliation, a canonical event envelope persisted before notification, one process registry with goal ancestry and receipt links, clean server shutdown, and the chaos suite (kill during an outward action, during a receipt write, during backup, restore, index rebuild, update and connector refresh). | NS-32.5-1, NS-32.6-1, NS-32.10-1, NS-32.11-1, NS-32.13-1, NS-32.14-1, NS-11.3-8, NS-11.8-2, NS-29.1-1, NS-29.2-1, NS-29.8-1, NS-31.6-1, NS-31.7-1, NS-31.11-1, NS-34.16-1, -2, -3, NS-33.6-2, -3, -8, NS-37.2-7 | 18 | BD-11a, BD-11b | Each chaos kill leaves zero duplicate effects and one recovery receipt; a full disk pauses background work with a visible state; the integrity dashboard shows receipt-chain, backup and update-signature checks. |
+
+### Point 11: export and restore Friday on another device (Phase 6)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-17** | **The Friday Bundle and restore.** The versioned, encrypted bundle with selectable categories and credentials excluded; the human-readable export (wiki as Markdown, memories, conversations, goals, receipts with verification, contacts, redacted settings); the fourteen-step restore wizard with the post-restore outward hold; scheduled backups with manifest test-reads and the weekly restore rehearsal; the export-first, revoke, remove, verify uninstall; a store and version inventory and migration receipts. | NS-27.1-1, NS-27.2-1, NS-27.3-2, NS-27.6-2, NS-27.10-1, NS-6.10-1, -2, NS-13.2-8, NS-30.1-6, NS-36.6-1, -2, NS-34.3-7, NS-34.4-9, NS-11.7-2, -3, NS-37.3-1, -2, -8, -9, -11, NS-37.9-8 | 22 | BD-10, BD-11b | A bundle restored on a second clean machine reproduces the wiki, memories, goals and receipts, re-attests governance and holds outward actions until the device key is re-established; the rehearsal fails loudly when a bundle is corrupted; uninstall leaves no trace in the places it listed. |
+
+### Point 12: support another principal without data leakage (Phase 6), post-release by A11
+
+The owner's answer was "Sooner, yes": the next release is single-person, and this point is a post-release track. The piece stays here, unchanged in content, so the gauntlet can run it the moment the release is out; the cheap `principal_id` fields are added inside BD-10, BD-11b and BD-34 now, with the single value, so this piece does not have to touch every record later.
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-18** (post-release) | **Principals.** Owner, adult member, minor and guest; `principal_id` on every record and scope enforced in the compiler, retrieval, indexes, goals, tools and caches; authentication per principal and a lock screen with the active principal always shown; explicit shared spaces; owner administration without casual visibility and an admin log; per-principal vaults and retention; minor mode as a relationship (guardian permissions, no adult vault, no spending, constrained messaging, time and device limits, no covert monitoring, anti-attachment and narrow escalation); third-party export and forget; the leakage suite across eleven vectors including backups and voice. | NS-25.2-1, NS-25.3-3, NS-25.4-1, NS-25.6-2, -3, NS-25.7-1, -2, -6, -7, -9, NS-25.9-2, NS-25.10-1, NS-25.11-1, NS-26.6-5, NS-26.21-1, NS-29.11-1, NS-30.1-1, NS-31.1-2, NS-31.8-2, NS-13.1-1, NS-13.2-3, NS-33.6-4, NS-33.9-2, NS-34.2-5, NS-34.5-10, NS-34.8-1, NS-34.9-10, NS-34.17-2, NS-36.6-6, -7, -9, -10, -12, NS-37.3-3, NS-37.9-5 | 45 | BD-10, BD-11b, BD-17; `v6-wholeness-spec.md` P9 | Two principals on one machine cannot retrieve each other's private data through chat, search, memory, the graph, voice, a backup, a receipt or a notification, with a test per vector; a minor cannot reach the adult vault or spend; the active principal is visible on every screen. |
+
+### Point 13: inspect changes to personality, skills, permissions and policy (Phase 7)
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-19** | **Legible growth.** Personality changes as proposals with diff, evidence, preview and rollback (A2); the growth timeline distinguishing owner edits, approved proposals and ephemeral adaptation; a versioned, signed constitution with a readable diff and re-attestation before outward actions resume (A8); dissent with an observation level and a turn-pipeline hook; a skill manifest with scopes, domains and tests, a review step on import, quarantine and a dedicated sandbox for generated skills; the "family" framing as an owner choice; a guard against persuading the owner toward broader grants. | NS-13.7-2, NS-13.2-1, NS-13.2-10, NS-13.6-1, -2, -3, NS-13.10-2, NS-3.2-2, NS-3.3-2, NS-4.4-2, NS-6.1-6, NS-23.6-1, NS-23.7-1, -3, NS-30.17-1, NS-36.7-4, -5, -10, NS-36.8-2, NS-37.2-6, NS-34.13-2, -3, -4 | 20 | BD-11b | A persona change arrives as a card with a diff and a preview and can be rolled back; a release that changes the constitution holds outward actions until the owner re-attests; an imported skill is quarantined until reviewed. |
+
+### Point 14: verify that "done" means evidence-backed completion (Phase 3 and 5)
+
+BD-11a carries the core of this point. The remainder is artifacts.
+
+| Id | Piece | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| **BD-20** | **Verification engine and artifact manifests.** One verification engine over the existing pieces; artifact manifests with goal ancestry, sensitivity, QA state and delivery receipt for documents and creative outputs; the seven distinct file-action classes, with write and office edits that never overwrite without a backup; named visual QA checks, spreadsheet validation, presentation checks; publishing verification across destinations with accessibility and link checks; a redaction policy for private sources in lineage; a representative browser and document workflow suite. | NS-24.1-1, -2, NS-24.2-1, -2, NS-24.3-1, NS-24.4-1, -2, NS-24.5-1, NS-24.6-1, NS-24.7-1, NS-24.9-2, NS-24.10-2, NS-30.14-1, NS-36.3-6, NS-36.5-7, -8, -9, -10, -11, NS-34.12-1, -2, NS-36.5-6 | 18 | BD-11a | A document written with a known clipping defect fails its QA check and the task is marked unverified; every artifact opens to its manifest and receipt; `write_file` on an existing file leaves a backup. |
+
+### Point 15: leave with all meaningful data intact and no dependence on the vendor
+
+Closed by BD-17 (export and uninstall) and BD-00 (no vendor dependency in the core); no separate piece.
+
+### Cross-cutting pieces
+
+| Id | Piece | Serves | Closes | Size | Depends on | Acceptance |
+|---|---|---|---|---|---|---|
+| **BD-21** | **Accessibility to WCAG 2.2 AA.** The UI audit in CI; a skip link; a global focus-visible rule and a focus-order test; real headings in Settings; a high-contrast theme and contrast audit; an in-app text-size setting with a zoom test; a global reduced-motion rule over every keyframe and a switch that turns 3D rendering off; colour-independent state; text alternatives for the 3D graphs; a global 44 px target rule; non-drag alternatives; speech rate, "say that again", a confirmation-level setting and audible approval cards; transcript correction and pause in voice; screen-reader and keyboard flow tests. | points 1 to 15 | NS-33.1-1 to -9, -11, -12, -13, -14, NS-33.2-1, NS-33.3-1, -2, -3, -6, NS-21.2-13, NS-21.22-2, -3, NS-22.4-2, -3, -5, NS-22.2-6, NS-34.14-2, NS-21-A5 | 20 | none | The audit runs in CI and passes on every workspace; a keyboard-only and a screen-reader run of the five first-run flows pass as tests; the 3D-off setting leaves no WebGL context. |
+| **BD-22** | **Voice and camera safety.** The voice indicator with a UI consumer and an OS-level indicator, live latency, transcript retention shown in conversational mode, a sensitivity-aware read-aloud rule, prosody checked against state, camera frames to a cloud model only with approval, vision descriptions marked untrusted, push-to-talk with review before insertion, password-field detection and an application denylist, and ElevenLabs and Inworld in the voice enum. | points 3, 6, 9 | NS-22.1-5, -6, -7, NS-22.2-2, -3, -5, -8, NS-22.5-2, NS-22.6-2, NS-22.7-3, -4, NS-22.8-1, NS-22.10-4, -5, -6, NS-33.6-5 | 10 | BD-11a | Push-to-talk refuses to type into a password field; a camera frame reaches a cloud model only after a card; the indicator shows outside Friday's window while the mic is open. |
+| **BD-23** | **Browser and desktop actuation safety.** Desktop screenshots and accessibility trees classified as untrusted, confidence thresholds and predicted effect before a click, site-level and structural detection of payment, identity, healthcare, system-settings, installer and permission dialogs, secret scrubbing of screenshots, a pointer overlay, and a transaction checkpoint for browser and desktop work. | points 6, 14 | NS-20.4-1, NS-20.5-1, NS-20.6-2, -3, -4, -5, NS-36.5-2, NS-36.5-6 | 10 | BD-11a, BD-13 | A synthetic UAC dialog and a healthcare portal both stop the desktop lane with a card; a screenshot containing a visible key is scrubbed before it reaches any model. |
+| **BD-24** | **Untrusted content, one way in.** Every tool output re-framed to the model as untrusted through one `untrusted_input` service, roles on task and goal edits, a paraphrase and re-encoding catch, per-medium injection fixtures, and tests across all sandboxes. | points 6, 14 | NS-19.5-1, -2, -4, NS-13.2-4, NS-14.9-1, NS-26.9-1, NS-34.7-1, -5 | 8 | none | The injection fixture set (mail, web, document, calendar, chat export, image description) grants no authority in any medium; a paraphrased instruction inside tool output is caught. |
+| **BD-25** | **Context compiler truth and resource policy.** One context assembler, deferred tool schemas on the cloud path, agreeing core-tool lists, priority preservation of commitments and decisions in history, summaries with source pointers, staged split or larger-seat request on overflow with an owner notice, per-source metrics in the Doctor, measured-versus-estimate across the registry, a general active-use detector, battery and thermal detection, and per-job resource declarations with a yielding policy. | points 2, 4 | NS-14.1-1, NS-14.4-1, -2, -4, NS-14.5-1, -2, NS-14.10-1, NS-12.10-1, -2, -3, NS-12.7-2, NS-11.10-4, -5, -6, NS-33.7-1, -2, NS-33.8-1, NS-36.2-2, -3, -5 | 15 | BD-04 | A context overflow never changes the route silently (test); the cloud path receives only the deferred schema; on battery the background goal pauses and says so. |
+| **BD-26** | **Sandbox and file confinement.** `run_command` under OS-level network and filesystem allowlists, `read_file` and `write_file` confined to granted paths, worktree isolation for salon sessions, a dedicated sandbox for generated skills, the MCP subprocess sandbox beyond an environment allowlist, a file-escape fuzz suite, and the sandbox docstring corrected. | points 6, 14 | NS-26.11-1, NS-26.12-1, NS-31.12-1, NS-7.2-4, NS-21.15-3, NS-36.7-5, NS-36.8-3, -10, NS-34.17-5, NS-37.2-12 | 12 | BD-11c | A command in the sandbox cannot reach an unlisted host or a path outside its grant; the fuzz suite finds no escape; a malicious test extension cannot read undeclared data or hide its effects. |
+| **BD-27** | **Security process.** The threat model's incident-response section with enumerated assets and attackers, a periodic self-test (receipt chain, update signature, domain policy), a unified security safe mode and a compromise state distinct from suspicion, a defined security review process and the independent review §7.3 requires before any federation release, incident runbook, cross-install revocation, the support matrix, and the per-capability documentation template with universal staleness markers. | points 1, 10 | NS-26.18-1, NS-26.19-1, NS-26.20-1, -2, NS-26.25-2, NS-36.8-5, -6, -7, NS-33.12-1, -2, NS-26.14-1 | 10 | BD-03 | The self-test runs on a schedule and its failure puts Friday in security safe mode with outward actions held; the review process has a document, a checklist and a named external reviewer engagement. |
+| **BD-28** | **Knowledge and research epistemics.** A common source record (publisher, time, class, conflict of interest, principal, method), owner override of trust scores, freshness and evidence-type requirements in plans, independent source classes, populated contradiction and contested fields, unresolved-question lists, inferred-claim labels, acceptance of findings into the durable graph, empirical-versus-value classification, retrieval for time-sensitive questions in ordinary chat, proposals with source and edit-before-approve, and per-item "why" on briefings. | points 4, 5 | NS-16.1-1, -2, NS-16.2-1, NS-16.3-3, NS-16.4-1, -2, -5, -9, -10, NS-16.5-1, NS-16.6-2, NS-16.7-2, NS-16.8-3, NS-16.9-1, NS-16.10-1, -2, -3, NS-16.11-2, -3, NS-4.3-2, NS-21.9-3, NS-21.16-3 | 14 | BD-10 | Two sources that disagree produce a contested finding the person can see; a time-sensitive question triggers retrieval in ordinary chat with a test; a research finding accepted into the graph carries its source record. |
+| **BD-29** | **Home and the situation model.** A Home workspace with what changed, priorities and commitments; a situation model of the owner's world rather than the machine; live-state probes beyond Google; return-to-device briefings; priority explanations and tunable priority dimensions; the six-way knowledge taxonomy in answers; no manufactured urgency; evolution driven by real growth rather than a time lapse. | points 4, 8 | NS-4.2-1, -2, NS-4.3-3, NS-21.3-1, -3, NS-36.1-1, -8, -9, NS-10.3-1, -2, -3, NS-10.4-2, NS-6.9-1, -2, NS-6.8-1, -2, NS-21.11-3, NS-21.21-1, NS-21.23-1, NS-37.8-1 | 18 | BD-12, BD-14 | Home shows an approval, a completion, an artifact and a health item from one place; a question answered from memory says so and shows freshness; the briefing after two days away lists what changed with a "why" per item. |
+| **BD-30** | **Relationship ethics guardrails.** Rules and tests against cultivating exclusive emotional need, discouraging human relationships, guilt, claims of sentience and engagement optimisation; the honesty that the personality runs on software. | point 13 | NS-6.11-1, -2, -3, -4, NS-35.11-3 | 5 | none | A golden set of baiting prompts produces no dependency-cultivating reply; the dependency guard is a CI test. |
+| **BD-31** (post-release for the principal mapping; the store inventory, migration receipts and the recovery key move into BD-17 now) | **Migration of existing installs.** "Complete your sovereignty setup" for people already running Friday: the recovery key, guided rekey, the connector and autonomy review, principal mapping, canonical conversion of conversations, memories, persona, goals and approvals with receipts preserved, ambiguity shown to the owner, a migration-driven index rebuild, migration receipts, a documented migration window, and settings migration that preserves unknown keys. | points 1, 11 | NS-37.2-1, -9, -13, NS-37.3-4, -5, -6, -7, -10, NS-37.5-2, NS-37.9-2, -3, -4, -6, -7, NS-37.10-1 | 15 | BD-17, BD-18, BD-33 | An install from the oldest supported release migrates with every receipt still verifiable and a migration receipt listing what moved and what was ambiguous. |
+| **BD-32** | **Local metrics.** §35's activation, utility, trust, memory and autonomy metrics computed on the machine from the decision BOM, `costs.db`, the activity ledger, the egress log and receipts, shown in the person's own thirty-day review and the Doctor report; the per-connector verified success rate and crash-free rate; the performance tests of §34.15. There is no pilot (A12: "Don't worry about this"). | point 9 | NS-35.7-1, NS-35.11-6, NS-33.6-1, NS-34.15-1, -2, -3, -4 (NS-34.18-1 and NS-36.1-10 are removed by A12) | 6 | BD-11b, BD-03 | Every metric in the thirty-day review has a query against a local ledger and a test; a packet capture during a week of ordinary use shows nothing leaving except the person's own approved sends. |
+| **BD-33** | **Typed settings.** A typed, versioned settings schema with per-key readers, consequence strings and history, unknown keys preserved with a migration report, deep merge for every block, the schema check in CI, and the direct `~/.friday` readers removed. | points 2, 13 | NS-36.0-4, NS-37.5-1, NS-21.18-2, NS-34.2-13, NS-11.7-1 | 8 | none | A settings file with an unknown key loads with the key preserved and reported; every key has a reader and a default or the guard fails. |
+| **BD-34** | **Contracts and the canonical data model.** Versioned APIs with a stable error envelope (code, retryable, suggested action, correlation id), declared read and write behaviour with a side-effect test, a canonical event bus, full UUIDs, versioned records, canonical source and provenance records, validity windows on relationships, conversation records with route and source refs, a device record, workspace manifests with version history, per-service declarations of budget and scope, and the §37.2 consolidations (five process registries to one, three approval modules to one, path policy to one). | points 6, 10, 12 | NS-31.1-3, -5, -6, -7, NS-31.2-1, -2, NS-31.3-1, NS-30.1-2, -3, -4, -5, -8, -9, -10, NS-30.3-1, NS-30.4-1, NS-30.5-1, NS-30.6-1, -2, NS-30.18-1, NS-11.1-1, -2, NS-11.6-1, NS-11.7-2, NS-11.9-1, NS-11.3-5, -6, NS-13.3-1, -2, NS-29.10-1, NS-32.18-1, NS-32.19-1, NS-19.6-5 | 25 | BD-11b | Every API error carries the envelope; a GET route is proven side-effect-free by a test; one process registry answers every "what is running, with whose authority" question. |
+
+### Totals
+
+| | Pieces | Agent-days |
+|---|---|---|
+| Points 1 to 15 | 21 | 347 |
+| Cross-cutting | 14 | 176 |
+| **All** | **35** | **523** |
+| of which post-release by A11 (BD-18, BD-31) | 2 | 60 |
+| of which **release-gating** (§5, after A10 to A12) | 25 | **326** |
+
+The three largest are principals (BD-18, 45, now post-release), the first synthesis and import staging (BD-09, 30), and goals (BD-12, 25) tied with memory truth (BD-10, 25) and the contracts piece (BD-34, 25). At the program's measured pace of several pieces in parallel through the gauntlet, the release-gating subset (§5) is a matter of weeks; the whole list is a matter of months. Calendar time depends on how many gauntlet lanes run at once and on the two owner decisions that are money.
+
+## 5. The release gate: §34
+
+The next release ships when every §34 MUST passes, and not before (A7 keeps the release itself an owner conversation even then). Three amendments change what "every" means for this release: A10 defers the signing rows (the release notes say the installer is unsigned), A11 moves the principal-isolation rows to the household release, and A12 removes the pilot row. The evidence page shows deferred and moved rows as such, never as green. The table maps each §34 MUST row that is not shipped to the piece that closes it; a release build that lacks any of these pieces does not meet the gate.
+
+| §34 rows | Closed by |
+|---|---|
+| 34.1-1, 34.2-3, -8, -10, -12, -13, -16, -17, -18, 34.3-1 to -8, 34.17-6 | BD-02 (with BD-17 for the restore leg) |
+| 34.4-1, 34.17-4 (signing) | **deferred by the owner, A10**; the release notes state the installer is unsigned |
+| 34.4-2, -5 | BD-01 |
+| 34.4-3, -6, -7 | BD-06 and BD-08 (secure fields and connector scopes) |
+| 34.4-8 | BD-09 |
+| 34.4-9 | BD-17 |
+| 34.5-3, -4, -5, -6, 34.17-7, 34.2-15 | BD-11b |
+| 34.5-9 | BD-13 |
+| 34.5-10, 34.8-1, 34.9-10, 34.17-2, 34.2-5 (principal isolation) | **post-release, A11**; return to the gate for the household release (BD-18) |
+| 34.6-4, -5, -10, -11, -13, -14 | BD-15 and BD-04 (egress tests per provider and per connector, vault content across all paths, gauntlet tests moved into CI) |
+| 34.7-1, -5 | BD-24, BD-26 |
+| 34.9-1, -2, -3, -4, -8, -9 | BD-10 |
+| 34.9-7 | BD-09 |
+| 34.10-2, -3, -6, -8 | BD-12 |
+| 34.11-1, -2, -3 | BD-06 |
+| 34.12-1, -2 | BD-20 |
+| 34.13-2, -3, -4 | BD-19 |
+| 34.14-1, -2 | BD-21 (keyboard and screen-reader flows) and BD-09 (a scripted non-technical run of the first-run flows on the clean-machine matrix stands in for the usability study, since there is no pilot) |
+| 34.15-1 to -4 | BD-32 with BD-25 (battery and thermal) |
+| 34.16-1 to -4 | BD-16, BD-11a |
+| 34.17-1 | BD-11c |
+| 34.17-3 | BD-08 |
+| 34.17-5 | BD-26 |
+| 34.18-1 (the pilot) | **removed, A12** |
+
+The security reviewer's five rows (BD-11a, BD-11c, BD-08, BD-07) are all inside the gate, which is as it should be.
+
+**Release-gating subset, after A10 to A12**, itemised:
+
+| Piece | Agent-days | Piece | Agent-days |
+|---|---|---|---|
+| BD-00 hide the federation | 3 | BD-12 goals that survive | 25 |
+| BD-01 installer, signing deferred | 18 | BD-13 global STOP | 6 |
+| BD-02 release truth in CI | 12 | BD-15 privacy map and egress ledger | 12 |
+| BD-03 update, rollback, Doctor, safe mode | 18 | BD-16 failure taxonomy and reconciliation | 18 |
+| BD-04 routing truth | 12 | BD-17 Friday Bundle and restore | 22 |
+| BD-06 connector contract | 18 | BD-19 legible growth, the golden sets only | 3 |
+| BD-07 MCP as governed connectors | 10 | BD-20 verification engine, the artifact tests only | 4 |
+| BD-08 credential store | 8 | BD-21 accessibility | 20 |
+| BD-09 import staging and first synthesis | 30 | BD-24 untrusted content | 8 |
+| BD-10 memory truth | 25 | BD-25 context compiler, battery and thermal only | 3 |
+| BD-11a done means evidence | 12 | BD-26 sandbox and file confinement | 12 |
+| BD-11b receipt chain and Ledger | 15 | BD-32 local metrics | 6 |
+| BD-11c no write path outside the gate | 6 | | |
+| **Total** | | | **326** |
+
+Everything else is the same product, finished after the release: the remainder of BD-19, BD-20 and BD-25, and BD-05, BD-14, BD-22, BD-23, BD-27, BD-28, BD-29, BD-30, BD-33, BD-34 (137 agent-days), plus the post-release household track, BD-18 and BD-31 (60 agent-days).
+
+## 6. The federation, afterwards
+
+The owner's rulings (A9 and A13) make the federation FutureSpeak's business, keep it out of this release, keep its code in the build hidden behind the off-by-default setting with buying refused, and unmount nothing. The track below is a sketch, not a plan, and no piece, lane or sprint schedules it: it starts only on the owner's word ("let's just build on what we have when we are ready to (I'll say)"). It exists so that nothing in the burn-down forecloses it and so that the identity and attestation groundwork is built once.
+
+What already exists and stays: the federation blueprint and its routes (`routes/federation.py`, identity, peers, discover, assessments, attestations, listings, purchase, policy), the Positron and Negatron ledger (`services/economy.py`), the marketplace service with a two-step purchase intent, the cLaws hash exchanged between peers (`services/federation.py:530`), the Ed25519 attestation manifest (`governance/proof_of_integrity.py`), the encrypted settings sync (`services/federation_transport.py`). BD-00 hides the surfaces and refuses purchases without deleting any of it.
+
+What the burn-down builds that the federation will reuse: per-device identity and the device record (BD-17, BD-34), signed principal-bound approvals and the receipt chain (BD-11b), artifact manifests with provenance and QA state (BD-20, which is what a published output needs), the independent security review and the incident process (BD-27, which §7.3 makes a precondition), the privacy map and egress ledger (BD-15, so that "what I published" is one more row the person can see).
+
+| Id | Federation piece | Depends on | Note |
+|---|---|---|---|
+| FD-1 | Federation identity on the device identity: one key per install, attestation of the constitution version, peer trust from evidence | BD-17, BD-34, BD-19 | groundwork; compatible with today's `federation.py` |
+| FD-2 | Publishing an output: an approval card with the exact artifact and its manifest, a signed listing, provenance that names the person's agent and model, nothing else leaving | BD-20, BD-11b, BD-15 | the "put things into the federation" motion |
+| FD-3 | Discovery and download: listings, assessments by peers, the download of another agent's work as an untrusted import through the staging path | BD-09, BD-24, BD-26 | the "go download things" motion |
+| FD-4 | The currency: earning positrons for what others take, the ledger as a receipt chain, limits set by the person | BD-11b | engineering can start; nothing is spent or bought |
+| FD-5 | Buying currency and paying: payment handling, tax, consumer law, refunds, fraud | FD-4, legal review | **parked** per A9 until after the sprints |
+| FD-6 | Independent security review of the federation surface, per §7.3 and §26.19 | BD-27 | precondition for the roll-out |
+
+The roll-out is the owner's decision at the end of this track, not a date in it.
+
+## 7. §35 success metrics under the zero-telemetry amendment
+
+A3 means every §35 metric is computed on the person's machine and leaves only inside a Doctor report the person chose to email, once a week at most, after seeing the literal text. That is the design, not a limitation, and BD-32 builds it. For the record:
+
+- **Computable today from existing ledgers:** verified tasks and receipts, approval and grant use, duplicate and false-completion counts, cloud egress counts and withheld items, cost per outcome, memory supersessions and forgets, goal milestones, installer and setup completion from the install and setup receipts, time to usable interface and to first synthesis from the receipts' timestamps.
+- **Need new counters, all local:** confirmed time saved (asked, never inferred), memory precision (sampled from the review queue's answers), the per-connector verified success rate, the crash-free session rate, deletion completeness (from the deletion receipts), approval comprehension and route-transparency comprehension (two questions in the weekly review, answered or skipped).
+- **Never collected:** anything about emotional attachment, engagement or time in app; §35.11's MUST NOTs become CI guards in BD-30.
+- **No pilot (A12).** §35's activation target is still computed, on each machine, from the setup receipts, and shown to the person; it travels only inside a Doctor report the person chose to email.
+
+## 8. The owner's decisions, as given
+
+All five were answered on 2026-09-30 and recorded as amendments A10 to A14 in the owner's words. No decision remains open in this document.
+
+| Asked | Answer | Amendment | What changed here |
+|---|---|---|---|
+| R1 Pay for code signing | "We're not there yet." | A10 | The test certificate stays; §34's signing rows are deferred by the owner; the release notes must say the installer is unsigned. BD-01 is 18 days, not 20. |
+| R2 Households in the next release | "Sooner, yes." | A11 | The next release is single-person; BD-18 and BD-31 are a post-release track; the principal-isolation rows leave the gate until the household release. |
+| R3 The thirty-day pilot | "Don't worry about this." | A12 | The pilot is removed; BD-32 keeps the local metrics only and is 6 days, not 8. |
+| R4 Hide or unmount the federation | "No, let's just build on what we have when we are ready to (I'll say)." | A13 | Nothing is unmounted; BD-00 hides the surfaces and refuses buying; federation work starts on his word. |
+| R5 The privacy gate under unrestricted cloud | "Yes." | A14 | NS-26.7-1 is settled for the spec; BD-04 and BD-15 are written for a gate that always runs, and P-NS-CONFLICTS takes the amendment as its pick for that row. |
+
+## 9. What this document does not do
+
+It does not plan the conflicting rows (P-NS-CONFLICTS does), it does not touch SHOULD and MAY rows, it does not schedule calendar dates (the program lead's lanes do), and it does not build anything. Its evidence is as of main `321ec490`; rows move daily, and the matrix is the thing to refresh, not this document.

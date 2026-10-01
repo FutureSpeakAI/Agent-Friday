@@ -84,7 +84,16 @@ class Tier:
 _SSN_RE     = re.compile(r'\b\d{3}[-\s]\d{2}[-\s]\d{4}\b')
 _CC_RE      = re.compile(r'\b(?:\d[ -]?){13,19}\b')
 _ROUTING_RE = re.compile(r'\b\d{9}\b')
-_API_KEY_RE = re.compile(r'\b(?:sk-ant-|sk-|AQ\.|AIza)[A-Za-z0-9_\-]{16,}\b')
+
+# Credential formats the egress gate must not let past: private keys, vendor
+# token formats and keyword=value secrets, also when re-encoded (base64,
+# percent-encoding, escaped newlines). One definition, shared with the tool
+# output redaction: services/secret_patterns.
+from agent_friday.services import secret_patterns as _secret_patterns
+
+# Every provider-key shape, from the one list (services/secret_shapes) that the
+# setup chat guard and the tool-output redaction also read.
+_API_KEY_RE = _secret_patterns.PROVIDER_KEY_RE
 
 # ── Layer 1a (cont.): contact-shaped PII ──────────────────────────────────────
 # A phone number, a street address and a masked account tail need a detector
@@ -447,6 +456,8 @@ def _regex_tier(text: str) -> int:
     if _CC_RE.search(text):
         return Tier.SENSITIVE
     if _API_KEY_RE.search(text):
+        return Tier.SENSITIVE
+    if _secret_patterns.contains_secret(text):
         return Tier.SENSITIVE
     if _ACCT_TAIL_RE.search(text) or _ISSUED_ID_RE.search(text):
         return Tier.SENSITIVE

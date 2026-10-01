@@ -49,19 +49,20 @@ test.describe('API Endpoints', () => {
     });
   }
 
-  test('GET /api/countdowns has countdown items', async ({ request }) => {
+  test('GET /api/countdowns answers with the owner\'s countdowns', async ({ request }) => {
     const res = await request.get('/api/countdowns');
     const json = await res.json();
     expect(json.status).toBe('ok');
     expect(Array.isArray(json.countdowns)).toBe(true);
-    expect(json.countdowns.length).toBeGreaterThan(0);
-    // Each countdown should have required fields. The engine emits `label`
-    // and a numeric `days` (0 == today is valid) — NOT `name`/`days_until`.
+    // The list is the owner's own (calendar, commitments, wiki), so it may be
+    // empty. Each countdown has `label`, `date`, a numeric `days` (0 == today
+    // is valid), `emoji`, and `why`, the reason it is there.
     for (const c of json.countdowns) {
       expect(c).toHaveProperty('label');
       expect(c).toHaveProperty('date');
       expect(typeof c.days).toBe('number');
       expect(c).toHaveProperty('emoji');
+      expect(c).toHaveProperty('why');
     }
   });
 

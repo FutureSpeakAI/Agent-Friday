@@ -1,7 +1,7 @@
 # Amendments to the north-star spec
 
 **Status:** in force.
-**Written:** 2026-09-29
+**Written:** 2026-09-29; A9 to A14 added 2026-09-30
 **Authority:** the owner's standing rulings. These override
 `agent-friday-ideal-product-spec.md` wherever the two conflict.
 
@@ -166,3 +166,119 @@ overrule it. The design is in
   - never through a grant;
   - always with §13.2's readable diff and re-attestation before outward
     actions resume.
+
+## A9. The federation is the business, and it stays out of the next release
+
+**Amends:** §7.2 (explicit non-goals) for the federation release only, and
+§36 Phase 8 (optional marketplace). **Reaffirms:** §7.3 (deferred surfaces).
+The owner's ruling, 2026-09-30, in his words:
+
+> "I think astra's ideas about the federation vision are reasonable, but I
+> definitely want to keep that out of our next release until we are ready
+> to roll it out. I think the federation is where I'm going to make my
+> money, by allowing users to put things into the federation that their
+> agents spent compute on and then earning currency that way, or just by
+> giving me money for currency so they can go download things that other
+> agents have put out there."
+
+- **The federation is FutureSpeak's business model.** Its three motions are:
+  publishing outputs that a person's agent spent compute on; earning
+  currency for what others take; and buying currency to download what other
+  agents have put out there.
+- **§7.2 is amended for the federation release.** "Not a creator
+  marketplace" and "not a cryptocurrency or compute-rental economy" no
+  longer describe the federation release. They still describe the core
+  product: the local Friday a person installs is not a marketplace and runs
+  no economy. The rest of §7.2 stands unchanged, including "not a data
+  broker", "not an advertising platform", and "not a system that publishes,
+  purchases, transfers funds, or deletes irreplaceable data without explicit
+  authority".
+- **§7.3's deferral stands.** Federation, marketplace and economy surfaces
+  stay out of the core user experience and out of the next release, until
+  the owner decides to roll them out. In the next release they are hidden
+  from the dock, the workspace list and Settings behind one setting that is
+  off by default, with buying off regardless of that setting. The identity
+  and attestation groundwork (§7.3's "underlying identity and attestation
+  infrastructure") stays in the tree and stays compatible with the federation.
+- **Payments, money handling and legal review are parked** until after the
+  burn-down sprints. No piece in `release-burn-down.md` touches them, and
+  no release before the owner's roll-out decision carries a way to pay.
+- **The zero-telemetry rule (A3) is not relaxed by the federation.** When the
+  federation ships, what leaves the machine is what the person chose to
+  publish, through an approval card, and nothing else.
+
+## A10. Code signing is deferred; the release says so
+
+**Amends:** §8.1 (NS-8.1-1), §26.15 and §34.4-1 / §34.17-4 for the next
+release only. The owner's ruling, 2026-09-30, on paying for a signing identity:
+
+> "We're not there yet."
+
+- The test certificate stays. The signing rows of §34 are **deferred by the
+  owner**, not failed; the gate is otherwise unchanged.
+- The release cannot claim signed status, so the release notes must say plainly
+  that the installer is unsigned, what SmartScreen will show, and how to verify
+  the SHA-256 beside the download.
+- Everything else in the installer piece (the signed manifest's hash list, the
+  SBOM, the preflight, the receipt) is built now and signs the day the identity
+  exists.
+
+## A11. The next release is single-person
+
+**Amends:** §34.2-5, §34.5-10, §34.8, §34.9-10 and §34.17-2 (the
+principal-isolation tests) for the next release, and §36 Phase 6's place in
+the sequence. The owner's ruling, 2026-09-30, asked whether households should
+wait so the release ships sooner:
+
+> "Sooner, yes."
+
+- The next release is **single-person**: one owner principal plus the existing
+  read-only observer. It says so in its notes and in the first-run copy.
+- The principal and household pieces (owner, adult member, minor, guest, shared
+  spaces, per-principal vaults, the leakage suite, and the migration steps that
+  depend on them) move to a **post-release track**. §25 and the isolation
+  tests return to the gate for the release that ships households.
+- Nothing in the single-person release may make the household work harder
+  later: `principal_id` fields that are cheap to add now are added now, with
+  the single value.
+
+## A12. No pilot
+
+**Amends:** §34.18 (the thirty-day pilot) and the pilot lines of §35 and §36
+Phase 1's exit criterion. The owner's ruling, 2026-09-30:
+
+> "Don't worry about this."
+
+- The pilot is removed from the release plan. No cohort, no pilot report, no
+  pilot-based exit criterion.
+- §35's metrics stay, computed locally and shown to the person in their own
+  weekly and thirty-day reviews (A3). The weekly ask to email a Doctor report
+  remains the only way any of it travels, and only by the person's hand.
+
+## A13. The federation stays in the build, hidden, until the owner says
+
+**Amends:** nothing in the spec; it settles the build question under A9. The
+owner's ruling, 2026-09-30, asked whether the federation, marketplace and
+economy routes should be left out of the release build:
+
+> "No, let's just build on what we have when we are ready to (I'll say)."
+
+- The federation code stays in the build. Its surfaces are hidden by the
+  off-by-default setting of A9, with buying refused regardless of that
+  setting. **Nothing gets unmounted.**
+- Future federation work starts only on the owner's word. No piece, lane or
+  sprint schedules it.
+
+## A14. The privacy gate runs under unrestricted cloud
+
+**Amends:** §26.7 as implemented (the `is_unrestricted_cloud` bypass in
+`services/egress_gate.py`), settling the conflicting row NS-26.7-1 in the
+spec's favour. The owner's ruling, 2026-09-30, asked whether the gate should
+still run and record every call when the person has chosen unrestricted cloud:
+
+> "Yes."
+
+- Under unrestricted cloud consent the egress gate still runs, still records
+  every call in the egress log, and still applies the never-send floor. The
+  consent changes what the gate permits, never whether it runs.
+- The person sees the same ledger either way (§26.22, the privacy map).

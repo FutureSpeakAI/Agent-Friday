@@ -166,10 +166,14 @@ def is_stood_down() -> bool:
     return bool(state().get("active"))
 
 
-def stand_down(*, requested_by: str = "", hours: Optional[float] = None) -> Dict[str, Any]:
+def stand_down(*, requested_by: str = "", hours: Optional[float] = None,
+               kind: str = "manual", app: str = "") -> Dict[str, Any]:
     """Release the machine. Idempotent.
 
     `hours=None` means "until Resume". Any number sets an auto-resume window.
+    `kind` is "manual" ("I need my machine") or "call" (services/call_watch:
+    a call took the camera or the mic, and Friday stood back on its own);
+    `app` names the call app. The banner reads both.
     """
     now = time.time()
     auto = None
@@ -179,7 +183,9 @@ def stand_down(*, requested_by: str = "", hours: Optional[float] = None) -> Dict
         except Exception:
             auto = None
     st = {"active": True, "since": now,
-          "requested_by": (requested_by or "").strip(), "auto_resume_at": auto}
+          "requested_by": (requested_by or "").strip(), "auto_resume_at": auto,
+          "kind": kind if kind in ("manual", "call") else "manual",
+          "app": (app or "").strip()}
     _write(st)
     _release_gpu()
     _log.warning("Friday stood down at the user's request (by=%r, auto_resume=%s)",
@@ -231,5 +237,9 @@ def reason() -> str:
     if st.get("auto_resume_at"):
         left = int(max(0, float(st["auto_resume_at"]) - time.time()) // 60)
         tail = " It resumes on its own in about %d min." % left
+    if st.get("kind") == "call":
+        return ("Friday is standing back for your call%s, since %d min ago: the GPU is "
+                "released and background jobs are paused.%s"
+                % (" in " + st["app"] if st.get("app") else "", mins, tail))
     return ("Friday is stood down — you asked for the machine %d min ago, so the "
             "GPU is released and background jobs are paused.%s" % (mins, tail))

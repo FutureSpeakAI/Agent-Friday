@@ -1074,6 +1074,34 @@ class LlamaServerBackend:
     # passes unconditionally.
     KV_CACHE_TYPE = "q8_0"
 
+    # HOST-SIDE SEAT CACHES. Every seat command bounds them; a model record
+    # may declare its own values in `serve_args`.
+    #
+    # `--cache-ram` is llama-server's host-RAM prompt cache: when a new task
+    # displaces the slot, the old prompt's KV (plus, on hybrid models, its
+    # recurrent state and checkpoints) is copied to private heap memory so a
+    # returning conversation is restored instead of re-prefilled. The build
+    # default is 8192 MiB, and the seat's private commit climbs by that much
+    # with use. On Bonsai 2 27B one saved conversation of 15-40k tokens is
+    # 1-2.7 GiB, so 3072 MiB keeps the most recently displaced conversation
+    # plus several short probes (each ~150 MiB of recurrent state) - the
+    # restore that matters when a background probe interrupts a chat turn.
+    # 0 would disable it and turn every such return into a full re-prefill
+    # (25k tokens is about a minute at ~420 tok/s).
+    #
+    # `--ctx-checkpoints` caps the per-slot snapshots a hybrid or sliding-
+    # window model keeps for rolling back to an earlier prefix. On Bonsai 2
+    # 27B each is the whole recurrent state, ~150 MiB, held in host memory;
+    # the build default of 32 allows ~4.7 GiB per slot. They are taken at
+    # least 8192 tokens apart and the newest ones serve a rollback, so four
+    # cover the last ~32k tokens. Dense models make no checkpoints and are
+    # unaffected.
+    #
+    # Neither flag changes the weights, the KV precision or sampling, so
+    # greedy output is byte-identical with and without them.
+    PROMPT_CACHE_RAM_MIB = 3072
+    CTX_CHECKPOINTS = 4
+
     def _kv_cache_type(self) -> str:
         """The KV cache type to spawn seats with. Settings override, then the
         class default, then f16 once a spawn has proved the flag unusable."""
@@ -1182,7 +1210,9 @@ class LlamaServerBackend:
                # under Ollama, which runs -b 512 -ub 512. The extra ~3.5 GB is
                # the compute buffer, not the model, and it is the difference
                # between the pinned pair fitting and not.
-               "-b", "512", "-ub", "512"]
+               "-b", "512", "-ub", "512",
+               "--cache-ram", str(self.PROMPT_CACHE_RAM_MIB),
+               "--ctx-checkpoints", str(self.CTX_CHECKPOINTS)]
         # `-b 512 -ub 512` is measured on gemma4:12b and is not universal
         # either. On Bonsai 2 27B, -ub 2048 lifted prompt processing from 370
         # to 467 tok/s on a 16k prompt, and -np 1 meant every background probe
@@ -2952,3 +2982,76 @@ class Arbiter:
             self.comfy.stop()
             self.llama.evict_all()
             self.state = STATE_DEFAULT
+
+    def resident_seats(self) -> list:
+        """The seat names this process is holding, for a receipt to name."""
+        try:
+            with self._lock:
+                return sorted(self.llama.resident())
+        except Exception:
+            return []
+
+
+#: Setting: leave the local brain loaded when Friday is quit. Off, because a
+#: 27B seat holds around 14 GB of RAM and most of a 12 GB card, and a quit
+#: that keeps them starves whatever the owner opens next -- the incident this
+#: exists to prevent was a video call dying minutes after Friday was quit.
+KEEP_WARM_SETTING = "keep_brain_warm_between_sessions"
+
+
+def release_for_quit(reason: str = "user_quit", *, planned: bool = False) -> dict:
+    """Evict every seat because the owner is quitting, and receipt it.
+
+    `planned=True` is the deploy lane and the tray's own Restart (P-BRAIN-SEAT:
+    seats survive a planned restart, and reloading a 27B costs the better part
+    of a minute). Only a user quit releases them.
+
+    Returns the receipt body. Never raises: a quit that cannot write a receipt
+    still has to release the memory, so the receipt failure is recorded in the
+    log and the eviction goes ahead.
+    """
+    from agent_friday.core import _load_settings
+    log = __import__("logging").getLogger("friday.residency")
+    try:
+        keep_warm = bool((_load_settings() or {}).get(KEEP_WARM_SETTING, False))
+    except Exception:
+        keep_warm = False
+
+    arb = None
+    try:
+        arb = get_arbiter()
+    except Exception as e:  # noqa: BLE001
+        log.warning("release_for_quit: no arbiter to ask (%s)", e)
+
+    held = arb.resident_seats() if arb is not None else []
+    released: list = []
+    if planned:
+        outcome = "kept_planned_restart"
+    elif keep_warm:
+        outcome = "kept_by_setting"
+    elif arb is None:
+        outcome = "no_arbiter"
+    else:
+        try:
+            arb.shutdown()
+            released = held
+            outcome = "released"
+        except Exception as e:  # noqa: BLE001
+            log.error("release_for_quit: eviction failed (%s: %s)",
+                      type(e).__name__, e)
+            outcome = "failed"
+
+    body = {"tool": "residency.release_for_quit", "class": "resource",
+            "decision": outcome, "surface": "quit", "reason": reason,
+            "seats_held": held, "seats_released": released,
+            "keep_warm_setting": keep_warm, "planned": bool(planned)}
+    try:
+        from agent_friday.governance import action_gate as _ag
+        _ag._receipt(dict(body))
+    except Exception as e:  # noqa: BLE001
+        log.warning("release_for_quit: receipt not written (%s: %s)",
+                    type(e).__name__, e)
+        body["receipt"] = "unwritten"
+    log.info("release_for_quit: %s (held=%s released=%s)",
+             outcome, held, released)
+    return body

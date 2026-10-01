@@ -1,4 +1,4 @@
-# Agent Friday
+# Agent Friday™ by FutureSpeak.AI™
 
 [![CI](https://github.com/FutureSpeakAI/Agent-Friday/actions/workflows/tests.yml/badge.svg)](https://github.com/FutureSpeakAI/Agent-Friday/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -11,7 +11,7 @@ decision.
 
 ![The Friday desktop](docs/images/desktop.png)
 
-> Agent Friday Desktop is the standalone desktop application in this repository.
+> Agent Friday™ is the standalone desktop application in this repository.
 > It is distinct from the [Asimov's Mind Claude Code plugin](https://futurespeak.ai/asimovs-mind),
 > a separate product built for the Claude Code environment.
 
@@ -122,7 +122,7 @@ every step can be skipped, and **Set up later** is always there. See
 [The setup chat](docs/user-guide/setup-chat.md).
 
 Open Friday from the desktop shortcut, which opens **http://localhost:3000**,
-or from the tray icon's **Open Friday Desktop**. Optionally, give it a secure
+or from the tray icon's **Open Agent Friday™**. Optionally, give it a secure
 local address such as **https://agent.friday** in Settings → General: Windows
 asks you to confirm the hosts-file entry and to trust a certificate that can
 vouch for that one name only.
@@ -207,5 +207,7 @@ MIT License. Copyright 2026 FutureSpeak.AI. See [LICENSE](LICENSE),
 The Windows installer brings in some packages under other licenses, including
 copyleft ones; NOTICE lists them.
 
-Created by [FutureSpeak.AI](https://futurespeak.ai) · Built with Claude by
+Agent Friday™ and FutureSpeak.AI™ are trademarks of FutureSpeak.AI.
+
+Created by [FutureSpeak.AI™](https://futurespeak.ai) · Built with Claude by
 Anthropic as AI development partner.

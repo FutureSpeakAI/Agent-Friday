@@ -12,6 +12,8 @@ import json
 
 import pytest
 
+from agent_friday import brand
+
 tray = pytest.importorskip("agent_friday.friday_tray")
 
 
@@ -254,7 +256,7 @@ def test_a_registration_that_keeps_failing_is_said_out_loud(monkeypatch):
     assert len(msgs) == 2, msgs
     assert "not working" in msgs[0] and "bad hotkey" in msgs[0]
     assert "working now" in msgs[1] and "Alt+T" in msgs[1]
-    assert all(title == "Friday Desktop" for _m, title in t.icon.notifications)
+    assert all(title == brand.PRODUCT_NAME for _m, title in t.icon.notifications)
 
 
 def test_the_menu_line_says_why_while_it_is_not_working(monkeypatch):

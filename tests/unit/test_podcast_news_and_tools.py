@@ -74,7 +74,7 @@ def test_the_notice_hook_queues_an_episode_even_with_notifications_off(_home):
     ne._notify_front_page(EDITION, "morning")
     ep = pe.for_run("front_page", "2026-09-29-morning")
     assert ep and ep["status"] == "queued" and ep["origin"] == "routine"
-    assert ep["length"] == "short" and ep["show"] == "Friday's Front Page"
+    assert ep["length"] == "short" and ep["show"] == "The Front Page"
     assert ep["priority"] == "routine"
 
 

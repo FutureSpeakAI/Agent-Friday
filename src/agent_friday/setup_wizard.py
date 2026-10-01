@@ -637,6 +637,8 @@ def _unanswered(existing: dict) -> list:
         missing.append("vault")
     if acks.get("updates_choice") not in ("on", "off"):
         missing.append("updates")
+    if acks.get("call_mode_choice") not in ("automatic", "ask", "off"):
+        missing.append("calls")
     if not acks.get("third_party_ack"):
         missing.append("third_party")
     if (routing.get("mode") == "cloud_only") and not acks.get("cloud_ack"):
@@ -718,6 +720,23 @@ def step_updates(total: int, step: int) -> None:
     console.print()
     pick = Prompt.ask("  Choose", choices=["1", "2"], default="2")
     _record_onboarding(updates_choice=scr["choices"][int(pick) - 1]["value"])
+
+
+def step_calls(total: int, step: int) -> None:
+    """Whether Friday stands back on her own when a call starts. The
+    recommended answer is labelled, never pre-selected: no default."""
+    scr = _say_screen("calls", total, step)
+    for n, c in enumerate(scr["choices"], 1):
+        console.print(f"  [bold]{n}[/bold] {c['label']}  [dim]{c['detail']}[/dim]")
+    console.print()
+    pick = Prompt.ask("  Choose", choices=[str(n) for n in range(1, len(scr["choices"]) + 1)])
+    value = scr["choices"][int(pick) - 1]["value"]
+    _record_onboarding(call_mode_choice=value)
+    try:
+        from agent_friday.core import _save_settings
+        _save_settings({"call_mode": value})
+    except Exception:
+        pass
 
 
 def step_welcome(quick: bool):
@@ -1721,6 +1740,11 @@ def main():
     # ── Screen 5: new versions ──
     # Asked, never assumed: the weekly check is the one scheduled request to
     # Friday's own project. Quick setup does not ask, so it stays off.
+    # ── Screen 4b: calls ──
+    # Standing back for a call is recommended, and asked rather than assumed.
+    if not quick and _ask("calls"):
+        step_calls(total_steps, 5)
+
     if not quick and _ask("updates"):
         step_updates(total_steps, 5)
 

@@ -340,12 +340,16 @@ def _fresh_warm_cache():
 
 
 @pytest.fixture(autouse=True)
-def _fresh_health_cache():
+def _fresh_health_cache(monkeypatch):
     """/api/health serves one payload for five seconds; each test computes
-    its own from the state it set up."""
+    its own from the state it set up. A test that reads the payload's fields
+    waits for its computation however slow the machine is; the tests of the
+    wait cap set ``_HEALTH_WAIT_S`` themselves."""
     cr = sys.modules.get("agent_friday.routes.core_routes")
     if cr is not None and hasattr(cr, "_reset_health_cache_for_tests"):
         cr._reset_health_cache_for_tests()
+    if cr is not None and hasattr(cr, "_HEALTH_WAIT_S"):
+        monkeypatch.setattr(cr, "_HEALTH_WAIT_S", 60.0)
     yield
 
 

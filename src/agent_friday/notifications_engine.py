@@ -21,6 +21,7 @@ import threading
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from agent_friday import brand
 from agent_friday.paths import friday_home
 
 FRIDAY_DIR = friday_home()
@@ -30,10 +31,10 @@ TRIGGER_STATE_FILE = FRIDAY_DIR / "notif_trigger_state.json"
 
 PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 PRIORITY_COLORS = {
-    "critical": "#ff3366",
-    "high":     "#ff8a00",
-    "medium":   "#ffd23f",
-    "low":      "#00d4ff",
+    "critical": brand.WARN,
+    "high":     brand.CYAN,
+    "medium":   brand.VIOLET_SOFT,
+    "low":      brand.NEUTRAL,
 }
 
 _LOCK = threading.RLock()

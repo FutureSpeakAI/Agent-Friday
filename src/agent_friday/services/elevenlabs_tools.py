@@ -137,8 +137,9 @@ def _dest_dir(folder):
 # ── speak_text ──────────────────────────────────────────────────────────────
 
 def _tool_speak_text(inp):
+    from agent_friday import brand
     inp = inp or {}
-    text = (inp.get("text") or "").strip()
+    text = brand.spoken((inp.get("text") or "").strip())
     if not text:
         return "speak_text error: 'text' is required."
     if len(text) > _MAX_CHARS:

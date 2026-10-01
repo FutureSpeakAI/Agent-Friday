@@ -16,6 +16,12 @@ from pathlib import PurePath
 
 TRANSIENT_PARTS = frozenset({"audio-cache", "vibe-code-logs", "__pycache__"})
 DOWNLOAD_TOPS = frozenset({"runtime", "local_voice", "models", "cache"})
+# A vault re-encrypt backup (backups/vault-reencrypt-*) is a whole-vault
+# copytree: it carries key material AND a second plaintext copy of the context
+# log, at nested paths (backups/.../vault/.vault_config.json) the top-level
+# secret filter does not see. It is redundant with the live data every export
+# already holds, so it is excluded from ALL exports.
+BACKUP_TOPS = frozenset({"backups"})
 SECRET_DIRS = (
     ("security",),                 # keystore root key, DPAPI passphrase copy
     ("providers", "keys"),         # provider API keys
@@ -35,14 +41,16 @@ SECRET_SUFFIXES = (".key", ".dpapi", ".cred", ".oauth.enc", ".token.enc", "-key.
 def skip_reason(rel: PurePath, full: bool = False) -> str | None:
     """Why a file at `rel` (relative to ~/.friday) is left out, or None.
 
-    "transient" and "download" apply to every export; "secret" applies unless
-    `full` is set.
+    "transient", "download" and "backup" apply to every export; "secret"
+    applies unless `full` is set.
     """
     parts = tuple(rel.parts)
     if set(parts) & TRANSIENT_PARTS:
         return "transient"
     if parts and parts[0] in DOWNLOAD_TOPS:
         return "download"
+    if parts and parts[0].lower() in BACKUP_TOPS:
+        return "backup"
     if full:
         return None
     for prefix in SECRET_DIRS:

@@ -8,11 +8,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="/friday-live/manifest.json">
-<title>FRIDAY LIVE</title>
+<title>Live · Agent Friday™</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
 <link href="/static/fonts/fonts.css" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;background:#05060c;color:#e0f6ff;font-family:'Orbitron','Courier New',monospace;overflow:hidden;user-select:none;-webkit-user-select:none}
+html,body{height:100%;background:#05060c;color:#e0f6ff;font-family:'Orbitron', sans-serif;overflow:hidden;user-select:none;-webkit-user-select:none}
 body{display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
 .bg{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 30%,rgba(0,212,255,.08) 0%,rgba(123,97,255,.04) 35%,transparent 70%),linear-gradient(180deg,#05060c 0%,#08091a 100%);pointer-events:none;z-index:0}
 .scan{position:fixed;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(0,212,255,.35),transparent);animation:scan 5s linear infinite;pointer-events:none;z-index:1}
@@ -65,7 +66,7 @@ footer{position:relative;z-index:3;display:flex;justify-content:center;align-ite
 <div class="bg"></div><div class="scan"></div>
 
 <header>
-  <h1>FRIDAY · LIVE</h1>
+  <h1>AGENT FRIDAY™ · LIVE</h1>
   <div class="status" id="status"><span class="dot"></span><span id="statusText">IDLE</span></div>
 </header>
 

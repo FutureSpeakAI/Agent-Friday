@@ -64,6 +64,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from tests.conftest import CANNED_TEXT  # noqa: F401
+from agent_friday import brand
+
+#: The creation viewer's way back to the app, named for the product.
+BACK = "Back to " + brand.PRODUCT_NAME
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -973,7 +977,7 @@ class TestCreationBrandedViewer:
         resp = client.get("/creation/poem_return.md")
         assert resp.status_code == 200
         html = resp.data.decode("utf-8", errors="replace")
-        assert "Return to Friday Desktop" in html
+        assert BACK in html
 
     def test_html_file_has_sandbox_attr(self, client, creations_dir):
         """An HTML creation must be wrapped in a sandboxed iframe."""
@@ -991,7 +995,7 @@ class TestCreationBrandedViewer:
         resp = client.get("/creation/myapp2.html")
         assert resp.status_code == 200
         html = resp.data.decode("utf-8", errors="replace")
-        assert "Return to Friday Desktop" in html
+        assert BACK in html
 
     def test_html_file_iframe_src_points_to_api(self, client, creations_dir):
         """The iframe src should point to /api/creations/<filename>."""
@@ -1011,12 +1015,12 @@ class TestCreationBrandedViewer:
         html = resp.data.decode("utf-8", errors="replace")
         assert "UNIQUE_CONTENT_abc123" in html
 
-    def test_friday_desktop_branding_present(self, client, creations_dir):
-        """The page must show the FRIDAY DESKTOP brand in the top bar."""
+    def test_the_product_brand_is_in_the_top_bar(self, client, creations_dir):
+        """The page shows the product's name in its top bar."""
         (creations_dir / "branded.md").write_text("content", encoding="utf-8")
         resp = client.get("/creation/branded.md")
         html = resp.data.decode("utf-8", errors="replace")
-        assert "FRIDAY DESKTOP" in html
+        assert '<div class="fc-brand"><span class="fc-logo"></span>' + brand.PRODUCT_NAME in html
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1164,7 +1168,7 @@ class TestRoundTrips:
         assert viewer.status_code == 200
         html = viewer.data.decode("utf-8", errors="replace")
         assert "sandbox=" in html
-        assert "Return to Friday Desktop" in html
+        assert BACK in html
 
 
 if __name__ == "__main__":

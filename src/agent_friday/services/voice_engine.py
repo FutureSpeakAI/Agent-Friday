@@ -374,6 +374,38 @@ _VOICE_LIVE_TOOLS = [
      "asked about — the full snapshot is a wall of numbers nobody wants spoken.",
      {"detail": ("string", "brief (default) or full."),
       "pin": ("boolean", "Keep a live summary in view on later turns.")}, []),
+    ("set_chat_tray",
+     "Show or hide the chat tray ('show chat', 'hide chat'), or put it on the left or "
+     "the right in a third, a half or two thirds of the screen ('put chat on the right "
+     "third'); the workspace beside it takes the rest. Hidden, it leaves a slim pill on "
+     "its edge and the workspace takes the full width. Their own screen, so no approval is needed. CHAT_OK: say what changed "
+     "in a few words. CHAT_NOT_APPLIED: say no Friday page was there to change.",
+     {"visible": ("boolean", "true to show the chat, false to hide it."),
+      "side": ("string", "left or right: the edge it docks on."),
+      "size": ("string", "third, half or two_thirds: how much of the screen it takes.")}, []),
+    ("show_my_day",
+     "Show the start screen's cluster now ('show my day'): their countdowns, the "
+     "chat field, the mic and Start my day. With mode, set when it shows on its own "
+     "('always show my day' is always): smart (when useful; the default), always, or "
+     "never (only when asked). Their own screen, so no approval is needed. DAY_SHOWN: "
+     "say so in a few words. DAY_NOT_SHOWN: say why in plain words. DAY_MODE: say what "
+     "it will do now. The countdowns are not in the result: do not guess them.",
+     {"mode": ("string", "smart, always or never; empty to show it now.")}, []),
+    ("set_workspace_layout",
+     "Show a workspace fullscreen with the chat tray docked beside it ('make this "
+     "fullscreen with chat'), or back to normal, or, with fullscreen_chat false and a "
+     "position, in part of the screen ('put News on the left two thirds'). It is their "
+     "own screen, so no "
+     "approval is needed, and the choice is remembered for that workspace. Leave "
+     "workspace empty for the one in front. LAYOUT_OK means the screen did it: say "
+     "so in a few words. LAYOUT_SAVED means it is remembered and applies when that "
+     "workspace is open: say that, not that it changed. On LAYOUT_FAIL, ask which "
+     "workspace.",
+     {"workspace": ("string", "Workspace id or name; empty for the one in front."),
+      "fullscreen_chat": ("boolean", "true: fullscreen with the chat beside it; false: normal."),
+      "position": ("string", "With fullscreen_chat false: left_half, right_half, left_third, "
+                   "middle_third, right_third, left_two_thirds, right_two_thirds or full.")},
+     ["fullscreen_chat"]),
     # Organizing mail, files and wiki pages (services/item_actions). A result
     # meant for this cloud session names counts, never a subject, sender,
     # account, file or page Friday found (voice-tool-contract.md §5).
@@ -620,6 +652,11 @@ _VOICE_SHARED_TOOLS = (
     # month's look", "turn evolution off", "what changed?". The same tool the
     # screen uses, so what she says is what the history shows.
     "avatar_evolution",
+    # The hologram window: "make the zoom stronger", "calibrate where I'm
+    # sitting", "reset the window". Persists the dials and applies them live.
+    "hologram_window",
+    # Call mode: "I'm on a call", "the call is over", "ask me first on calls".
+    "call_mode",
 )
 
 
@@ -1260,6 +1297,15 @@ def _voice_tool_run(name, args, send_client, session=None):
         if name == "ask_local_for_context":
             return _governed("ask_local_for_context",
                              lambda a: _tool_ask_local_for_context(a, session), args)
+        if name == "set_workspace_layout":
+            from agent_friday.services import agent as _ag
+            return _governed(name, _ag._tool_set_workspace_layout, args)
+        if name == "show_my_day":
+            from agent_friday.services import agent as _ag
+            return _governed(name, _ag._tool_show_my_day, args)
+        if name == "set_chat_tray":
+            from agent_friday.services import agent as _ag
+            return _governed(name, _ag._tool_set_chat_tray, args)
         if name in ("navigate_to", "check_situation"):
             from agent_friday.services import agent as _ag
             _fn = (_ag._tool_navigate_to if name == "navigate_to"
@@ -1421,6 +1467,8 @@ def _synthesize_tts_wav_local(text):
     """
     if not text or not str(text).strip():
         return None
+    from agent_friday import brand
+    text = brand.spoken(text)
     _has_pyttsx3 = True
     try:
         import pyttsx3
@@ -1493,12 +1541,17 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
     also fall back to local TTS (when allow_local and settings.offline_voice_fallback)
     so spoken output degrades gracefully instead of erroring.
 
+    The trademark sign comes off first (brand.spoken): she says "Agent
+    Friday", never "Agent Friday T M".
+
     PII gate: spoken replies are a cloud egress point of their own — a reply
     generated by a LOCAL model may legitimately contain vault values, and those
     must not transit Gemini TTS. Text containing PII is synthesized locally
     (full fidelity, nothing leaves the machine); if the local engine is
     unavailable, Gemini speaks the scrubbed text only.
     """
+    from agent_friday import brand
+    text = brand.spoken(text)
     try:
         _pii_lookup = core._scrub_pii(text)[1]
     except Exception:
@@ -1569,6 +1622,8 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
 
 def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
     """The Gemini-TTS synthesis path (cloud). Raises on any failure."""
+    from agent_friday import brand
+    text = brand.spoken(text)
     import wave
     from google import genai
     from google.genai import types

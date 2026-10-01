@@ -6,6 +6,8 @@ rank candidate pages from index metadata, BFS multi-hop paths, and return a
 
 Operates on the in-memory index produced by ``wiki_graph.build_wiki_index``
 (never re-reads page bodies), so a query is microseconds and works offline.
+With no index passed, a query uses ``wiki_graph.cached_wiki_index``, which
+parses the wiki again only when it changed.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import re
 from collections import deque
 from typing import Any
 
-from .wiki_graph import build_wiki_index, _slug
+from .wiki_graph import cached_wiki_index, _slug
 
 
 def _resolve_key(index: dict[str, dict], term: str) -> str:
@@ -215,7 +217,7 @@ def query(question: str, index: dict[str, dict] | None = None, *,
           top_n: int = 8, max_should_read: int = 3) -> dict[str, Any]:
     """Answer a question from graph structure alone — zero LLM calls."""
     if index is None:
-        index = build_wiki_index()
+        index = cached_wiki_index()
     if not index:
         return {"answer_type": "direct", "candidates": [], "path": [],
                 "god_nodes_relevant": [], "should_read": [],

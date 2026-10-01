@@ -684,6 +684,8 @@ class VoiceSession:
         # so a barge cannot cut one mid-synthesis: the queue drops the turn's
         # waiting jobs, the running one is flagged, and its audio is never
         # sent.
+        from agent_friday import brand
+        clause = brand.spoken(clause)
         if self.gpu_queue is not None and getattr(engine, "device", "") == "cuda":
             out = []
             d = self.gpu_queue.submit(turn["id"],

@@ -7,6 +7,7 @@ viewing the voice debug log, and quitting cleanly.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -23,6 +24,7 @@ from pathlib import Path
 import pystray
 from PIL import Image
 
+from agent_friday import brand
 from agent_friday.paths import clear_server_port, friday_home, server_port
 
 # No console windows from anything this process spawns. The tray outlives the
@@ -56,6 +58,20 @@ log = logging.getLogger(__name__)
 
 VOICE_LOG = friday_home() / "voice_debug.log"
 SERVER_STDERR_LOG = friday_home() / "server_stderr.log"
+# server_stderr.log is capped: past this size it rotates into numbered
+# backups (services/capped_log), checked at every server start and on every
+# watchdog tick while the server runs.
+SERVER_STDERR_LOG_MAX_BYTES = 50 * 1024 * 1024
+SERVER_STDERR_LOG_BACKUPS = 3
+
+
+def _rotate_server_log() -> None:
+    try:
+        from agent_friday.services import capped_log
+        capped_log.rotate_if_over(SERVER_STDERR_LOG, SERVER_STDERR_LOG_MAX_BYTES,
+                                  SERVER_STDERR_LOG_BACKUPS)
+    except Exception as e:
+        log.info("server log rotation skipped: %s", e)
 
 
 # The server's port comes from the same source the server uses (FRIDAY_PORT,
@@ -88,7 +104,7 @@ def _meetings_status_url() -> str:
     return _server_url() + "/api/meetings/status"
 
 
-TRAY_TITLE = "Agent Friday by FutureSpeak.AI"
+TRAY_TITLE = brand.PRODUCT_LOCKUP
 
 
 # Real cold start measured at ~143s (wiki merge, model discovery, embedding
@@ -314,6 +330,9 @@ class FridayTray:
     def __init__(self) -> None:
         self.server_proc: subprocess.Popen | None = None
         self._child_err = None
+        # True while the server's log handle is append-only at the OS level:
+        # only then may the live log be truncated under a running server.
+        self._log_rotatable = False
         self._last_failure: str | None = None
         self.running = False
         self.icon: pystray.Icon | None = None
@@ -347,10 +366,18 @@ class FridayTray:
             # Child stdout+stderr are appended to a file, never discarded: a
             # server that dies during import (before its own file logging is
             # up) has nowhere else to leave a traceback. DEVNULL here cost us
-            # seven invisible failures.
+            # seven invisible failures. The handle is append-only at the OS
+            # level so the live file can be rotated while the server holds it.
             err_path = SERVER_STDERR_LOG
             err_path.parent.mkdir(parents=True, exist_ok=True)
-            self._child_err = open(err_path, "ab", buffering=0)
+            _rotate_server_log()
+            try:
+                from agent_friday.services.capped_log import open_shared_append
+                self._child_err = open_shared_append(err_path)
+                self._log_rotatable = True
+            except Exception:
+                self._child_err = open(err_path, "ab", buffering=0)
+                self._log_rotatable = False
             self._child_err.write(
                 b"\n===== server start "
                 + time.strftime("%Y-%m-%dT%H:%M:%S").encode()
@@ -387,6 +414,7 @@ class FridayTray:
             except Exception:
                 pass
             self._child_err = None
+        self._log_rotatable = False
         self.running = False
 
     def restart_server(self) -> None:
@@ -429,7 +457,32 @@ class FridayTray:
         else:
             os.startfile(str(VOICE_LOG.parent))  # type: ignore[attr-defined]
 
+    def _release_seats(self, reason: str) -> None:
+        """Ask the server to evict its model seats before we stop it.
+
+        It has to be asked, and asked FIRST. The seats are separate
+        llama-server processes, so none of them dies with the server; and
+        `stop_server` terminates it, which on Windows runs no atexit handler,
+        so the server cannot do this on its own way out. Best-effort and
+        short: a quit is not allowed to hang on a seat that will not go.
+        """
+        try:
+            req = urllib.request.Request(
+                self.server_url + "/api/residency/release-for-quit",
+                data=json.dumps({"reason": reason}).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=75) as r:
+                r.read()
+        except Exception as e:
+            # Nothing to do about it here, and it must not stop the quit; the
+            # server's own log carries the detail.
+            log.warning("could not release the model seats on quit: %s: %s",
+                        type(e).__name__, e)
+
     def _quit(self, _icon, _item) -> None:
+        # A quit gives the machine its memory back. A restart does not: see
+        # `restart_server`, which is a planned restart and keeps the seats.
+        self._release_seats("tray_quit")
         self.stop_server()
         if self.icon:
             self.icon.stop()
@@ -452,7 +505,7 @@ class FridayTray:
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
-            pystray.MenuItem("Open Friday Desktop", self._open_ui, default=True),
+            pystray.MenuItem("Open " + brand.PRODUCT_NAME, self._open_ui, default=True),
             pystray.MenuItem("Restart Server", self._restart),
             pystray.MenuItem("Voice Debug Log", self._open_voice_log),
             pystray.MenuItem(self._status_label, None, enabled=False),
@@ -489,6 +542,8 @@ class FridayTray:
         """
         while True:
             time.sleep(5)
+            if self._log_rotatable:
+                _rotate_server_log()
             self._update_meeting_title()
             proc = self.server_proc
             alive = (proc is not None and proc.poll() is None) or _port_in_use(_port())
@@ -510,7 +565,7 @@ class FridayTray:
                             "It has NOT been restarted automatically — "
                             "open the tray menu to restart it, or check "
                             "%s for what happened." % SERVER_STDERR_LOG,
-                            "Friday Desktop",
+                            brand.PRODUCT_NAME,
                         )
                     except Exception:
                         pass
@@ -533,7 +588,7 @@ class FridayTray:
             threading.Thread(target=self.restart_server, daemon=True).start()
         if self.icon is not None:
             try:
-                self.icon.notify(msg, "Friday Desktop")
+                self.icon.notify(msg, brand.PRODUCT_NAME)
             except Exception:
                 pass
 
@@ -624,7 +679,7 @@ class FridayTray:
     def _notify(self, message: str) -> None:
         if self.icon is not None:
             try:
-                self.icon.notify(message, "Friday Desktop")
+                self.icon.notify(message, brand.PRODUCT_NAME)
             except Exception:
                 pass
 
@@ -728,7 +783,15 @@ def main() -> None:
     if not _acquire_single_instance():
         return
 
+    tray = FridayTray()
+
     def _on_signal(_sig, _frm):
+        # Being told to stop is a quit, not a restart: hand the memory back.
+        try:
+            tray._release_seats("tray_signal")
+            tray.stop_server()
+        except Exception:
+            pass
         sys.exit(0)
 
     try:
@@ -737,7 +800,7 @@ def main() -> None:
     except Exception:
         pass
 
-    FridayTray().run()
+    tray.run()
 
 
 if __name__ == "__main__":

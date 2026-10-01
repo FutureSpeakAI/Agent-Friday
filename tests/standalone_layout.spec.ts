@@ -97,17 +97,17 @@ for (const size of [{ width: 1366, height: 768 }, { width: 1920, height: 1080 }]
   });
 }
 
-test('the tab header carries the desktop wordmark, and the title names the workspace', async ({ page }) => {
+test('the tab wears the desktop top bar and its wordmark, and the title names the workspace', async ({ page }) => {
   await prepare(page);
   await page.goto(BASE + '/w/news');
-  await page.waitForSelector('.ws-tab-head', { timeout: 60000 });
-  const head = await page.locator('.ws-tab-head').innerText();
-  expect(head).toContain('AGENT FRIDAY');
+  await page.waitForSelector('[data-testid="friday-top-bar"]', { timeout: 60000 });
+  const head = await page.locator('[data-testid="friday-top-bar"]').innerText();
+  expect(head).toContain('AGENT FRIDAY™');
   expect(head).toContain('by');
   expect(head).toContain('FutureSpeak.AI');
-  const font = await page.locator('.ws-tab-mark').evaluate(el => getComputedStyle(el).fontFamily);
+  const font = await page.locator('.fr-lockup-name').first().evaluate(el => getComputedStyle(el).fontFamily);
   expect(font).toContain('Orbitron');
-  await expect(page).toHaveTitle('News · Agent Friday');
+  await expect(page).toHaveTitle('News · Agent Friday™');
 });
 
 test('a workspace tab shrunk very small stays a workspace, not the desktop widget', async ({ page }) => {
@@ -119,5 +119,5 @@ test('a workspace tab shrunk very small stays a workspace, not the desktop widge
   const s = await page.evaluate(() => ({ condensed: document.body.classList.contains('condensed'), ui: getComputedStyle(document.getElementById('ui-root')!).display }));
   expect(s.condensed).toBe(false);
   expect(s.ui).not.toBe('none');
-  await expect(page.locator('.ws-tab-head')).toBeVisible();
+  await expect(page.locator('[data-testid="friday-top-bar"]')).toBeVisible();
 });

@@ -47,6 +47,16 @@ class TestVaultPassphrase:
         assert r.status_code == 200
         assert r.get_json()["status"] == "ok"
 
+    def test_arming_a_passphrase_drops_the_parsed_wiki(self, client):
+        # The cached wiki index holds summaries read with the old key; a new
+        # passphrase must not leave them in memory until the next query.
+        from agent_friday.services.knowledge_graph import wiki_graph
+        with wiki_graph._index_cache_lock:
+            wiki_graph._index_cache.update(key=("primed",), index={"page": {}})
+        r = client.post("/api/vault/passphrase", json={"passphrase": "correct horse battery"})
+        assert r.status_code == 200
+        assert wiki_graph._index_cache["index"] is None
+
     def test_too_short_rejected(self, client):
         r = client.post("/api/vault/passphrase", json={"passphrase": "abc"})
         assert r.status_code == 400

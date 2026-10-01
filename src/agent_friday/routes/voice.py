@@ -149,6 +149,17 @@ _LIVE_RESUME = {"handle": None, "ts": 0.0, "model": None, "voice": None}
 _LIVE_CONN_GEN = [0]
 
 
+def _on_a_call() -> bool:
+    """Friday is standing back for a call (services/call_watch): voice works
+    when the owner starts it, and never speaks first."""
+    try:
+        from agent_friday.services import stand_down
+        st = stand_down.state()
+        return bool(st.get("active")) and st.get("kind") == "call"
+    except Exception:
+        return False
+
+
 def _live_conn_next():
     with _LIVE_RESUME_LOCK:
         _LIVE_CONN_GEN[0] += 1
@@ -2805,6 +2816,10 @@ if sock is not None:
         if live_proactive is None:
             live_proactive = _model_is_25
         live_proactive = bool(live_proactive)
+        # On a call, voice is there when asked for and never speaks first:
+        # a session the owner starts by hand works, unprompted audio does not.
+        if live_proactive and _on_a_call():
+            live_proactive = False
         # Context window compression is ON by default. Without it the Live
         # session hits a hard duration cap (~15 min audio-only) and terminates,
         # losing the conversation — the opposite of the "fluid for hours"

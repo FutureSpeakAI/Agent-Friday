@@ -44,6 +44,7 @@ import threading
 import time as _time
 import logging
 from pathlib import Path
+from agent_friday import brand
 from agent_friday.paths import friday_home
 
 _log = logging.getLogger("friday.connectors")
@@ -347,26 +348,26 @@ def _has_required_tokens(defn: dict, server_cfg: dict | None) -> bool:
 
 # Status vocabulary (drives the badge color in the UI):
 #   connected        — live + healthy            (green)
-#   connecting       — handshake in progress     (amber, pulsing)
+#   connecting       — handshake in progress     (violet, pulsing: working, needs nothing from you)
 #   error            — configured but failing    (red)
 #   disconnected     — configured + token, off   (grey)
-#   needs_setup      — missing token/OAuth client (blue — "Connect")
+#   needs_setup      — missing token/OAuth client (amber: it needs you)
 #   blocked_by_policy— disabled by extension security, not a runtime failure
-#                      (orange — distinct from "error" so the real cause,
+#                      (deny magenta - a rule refused it; distinct from "error" so the real cause,
 #                      carried in `detail`, is legible rather than reading as
 #                      a generic "failed to start")
 _STATUS_COLORS = {
-    "connected": "#00ff80",
+    "connected": brand.OK,
     # Connected, and one thing it offers is switched off at the provider - the
     # Drive case. Amber rather than red: the account works, and colouring it as
     # a failure would be the opposite lie to the one it replaced.
-    "degraded": "#f59e0b",
-    "connecting": "#f59e0b",
-    "error": "#ff5470",
-    "disconnected": "#7a8699",
-    "needs_setup": "#00d4ff",
-    "blocked_by_policy": "#ff8c42",
-    "unknown": "#888888",
+    "degraded": brand.WARN,
+    "connecting": brand.VIOLET,
+    "error": brand.ERROR,
+    "disconnected": brand.NEUTRAL,
+    "needs_setup": brand.WARN,
+    "blocked_by_policy": brand.DENY,
+    "unknown": brand.NEUTRAL,
 }
 
 

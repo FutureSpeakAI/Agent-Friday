@@ -361,3 +361,24 @@ def roles():
                   for r in rp.ROLES],
         "aliases": rp.ROLE_ALIASES,
     })
+@residency_bp.route("/api/residency/release-for-quit", methods=["POST"])
+@login_required
+def residency_release_for_quit():
+    """The owner is closing Friday: give the machine its memory back.
+
+    llama-server seats are separate processes on purpose, so nothing about
+    them dies with this one. The tray's Quit calls this BEFORE stopping the
+    server, because a terminated process runs no atexit handler on Windows and
+    a 27B seat would otherwise keep around 14 GB of RAM and most of the card
+    for whatever the owner opens next.
+
+    `planned` is the deploy lane and the tray's own Restart (P-BRAIN-SEAT):
+    the seats stay, because reloading them costs the better part of a minute
+    and nobody asked for the memory back. Only a quit releases them.
+    """
+    from agent_friday.services import residency_arbiter as ra
+    body = request.get_json(silent=True) or {}
+    planned = str(body.get("planned") or "").lower() in ("1", "true", "yes")
+    reason = str(body.get("reason") or "user_quit")[:64]
+    return jsonify({"status": "ok",
+                    "release": ra.release_for_quit(reason, planned=planned)})
