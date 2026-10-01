@@ -236,11 +236,19 @@ def build_wiki_index(wiki_dir: Optional[Path] = None,
 # digest misses the cache, and arming a passphrase clears it at once), when
 # any page, SOUL.md or the graph settings change, and after CACHE_IDLE_SECONDS
 # without a query.
+#
+# One parse runs at a time: a miss that finds a parse under way waits for it
+# (BUILD_WAIT_SECONDS at most, then parses for itself) rather than starting
+# another. A clear while a parse runs bumps the generation, so that parse's
+# result is handed to its caller but never stored.
 CACHE_IDLE_SECONDS = 600
+BUILD_WAIT_SECONDS = 60
 _Timer = threading.Timer
 _clock = time.monotonic
-_index_cache: dict[str, Any] = {"key": None, "index": None, "used": 0.0, "timer": None}
+_index_cache: dict[str, Any] = {"key": None, "index": None, "used": 0.0, "timer": None,
+                                "timer_token": 0, "generation": 0}
 _index_cache_lock = threading.Lock()
+_index_build_lock = threading.Lock()
 
 
 def _vault_state() -> Optional[str]:
@@ -272,14 +280,22 @@ def _drop_locked() -> None:
 
 
 def _arm_idle_locked(delay: float) -> None:
-    timer = _Timer(delay, _idle_check)
-    timer.daemon = True
-    _index_cache["timer"] = timer
-    timer.start()
+    """Arm the idle drop. If no timer can start, nothing stays cached."""
+    _index_cache["timer_token"] += 1
+    token = _index_cache["timer_token"]
+    try:
+        timer = _Timer(delay, _idle_check, args=(token,))
+        timer.daemon = True
+        _index_cache["timer"] = timer
+        timer.start()
+    except Exception:
+        _drop_locked()
 
 
-def _idle_check() -> None:
+def _idle_check(token: int) -> None:
     with _index_cache_lock:
+        if token != _index_cache["timer_token"]:
+            return                      # a timer replaced or cancelled since
         _index_cache["timer"] = None
         if _index_cache["index"] is None:
             return
@@ -298,12 +314,13 @@ def _index_fingerprint(root: Path, include_soul: bool, mention_edges: bool) -> t
             st = p.stat()
         except OSError:
             continue
-        pages.append((str(p), st.st_mtime_ns, st.st_size))
+        # st_ino changes when a page is replaced atomically (wiki_write_text).
+        pages.append((str(p), st.st_mtime_ns, st.st_size, st.st_ino))
     soul = None
     if include_soul:
         try:
             st = SOUL_FILE.stat()
-            soul = (str(SOUL_FILE), st.st_mtime_ns, st.st_size)
+            soul = (str(SOUL_FILE), st.st_mtime_ns, st.st_size, st.st_ino)
         except OSError:
             soul = None
     return (str(root), include_soul, mention_edges, _vault_state(), soul, tuple(pages))
@@ -318,23 +335,44 @@ def cached_wiki_index() -> dict[str, dict]:
     include_soul = bool(settings["index_sources"].get("soul", True))
     mention_edges = bool(settings.get("mention_edges", True))
     key = _index_fingerprint(WIKI_DIR, include_soul, mention_edges)
+    hit = _cache_hit(key)
+    if hit is not None:
+        return hit
+    leader = _index_build_lock.acquire(timeout=BUILD_WAIT_SECONDS)
+    try:
+        if leader:
+            hit = _cache_hit(key)       # the parse this miss waited for
+            if hit is not None:
+                return hit
+        with _index_cache_lock:
+            _drop_locked()
+            generation = _index_cache["generation"]
+        index = build_wiki_index(include_soul=include_soul, mention_edges=mention_edges)
+        with _index_cache_lock:
+            if _index_cache["generation"] == generation:
+                _drop_locked()
+                _index_cache.update(key=key, index=index, used=_clock())
+                _arm_idle_locked(CACHE_IDLE_SECONDS)
+        return index
+    finally:
+        if leader:
+            _index_build_lock.release()
+
+
+def _cache_hit(key: tuple):
     with _index_cache_lock:
         now = _clock()
         if (_index_cache["key"] == key and _index_cache["index"] is not None
                 and now - _index_cache["used"] < CACHE_IDLE_SECONDS):
             _index_cache["used"] = now
             return _index_cache["index"]
-        _drop_locked()
-    index = build_wiki_index(include_soul=include_soul, mention_edges=mention_edges)
-    with _index_cache_lock:
-        _drop_locked()
-        _index_cache.update(key=key, index=index, used=_clock())
-        _arm_idle_locked(CACHE_IDLE_SECONDS)
-    return index
+    return None
 
 
 def clear_wiki_index_cache() -> None:
     with _index_cache_lock:
+        _index_cache["generation"] += 1
+        _index_cache["timer_token"] += 1
         _drop_locked()
 
 

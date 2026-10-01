@@ -101,11 +101,66 @@ def test_the_cache_key_never_holds_the_vault_key(wiki, monkeypatch):
     assert not any(part is key for part in wiki_graph._index_cache["key"])
 
 
+def test_concurrent_misses_parse_once(wiki, monkeypatch):
+    # Turns arriving while a parse runs wait for it instead of each starting
+    # their own: concurrent parses were the peak this cache exists to remove.
+    import threading
+    import time as _t
+    real = wiki_graph.build_wiki_index
+    builds = []
+
+    def slow_build(*a, **k):
+        builds.append(1)
+        _t.sleep(0.3)
+        return real(*a, **k)
+    monkeypatch.setattr(wiki_graph, "build_wiki_index", slow_build)
+    out = []
+    threads = [threading.Thread(target=lambda: out.append(wiki_graph.cached_wiki_index())) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert len(out) == 4 and all(o is out[0] for o in out)
+    assert len(builds) == 1
+
+
+def test_a_parse_overtaken_by_a_clear_is_not_kept(wiki, monkeypatch):
+    # A passphrase armed while a parse runs: what that parse decrypted under
+    # the old key must not be stored afterwards.
+    real = wiki_graph.build_wiki_index
+
+    def build_then_clear(*a, **k):
+        index = real(*a, **k)
+        wiki_graph.clear_wiki_index_cache()
+        return index
+    monkeypatch.setattr(wiki_graph, "build_wiki_index", build_then_clear)
+    wiki_graph.cached_wiki_index()
+    assert wiki_graph._index_cache["index"] is None
+
+
+def test_an_atomic_same_size_replace_is_seen(wiki, reads):
+    # wiki_write_text replaces a page atomically; same size and a restored
+    # mtime must still read as a change.
+    page = wiki / "research" / "graphrag.md"
+    structural_query.query("tell me about graphrag")
+    st = page.stat()
+    old = page.read_text(encoding="utf-8")
+    tmp = page.with_name("graphrag.md.tmp")
+    tmp.write_text(old.replace("GraphRAG", "GraphRaG"), encoding="utf-8")
+    os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
+    os.replace(tmp, page)
+    assert page.stat().st_size == st.st_size and page.stat().st_mtime_ns == st.st_mtime_ns
+    n = len(reads)
+    structural_query.query("tell me about graphrag")
+    assert len(reads) > n
+
+
 class _FakeTimer:
     made: list = []
 
     def __init__(self, interval, fn, args=(), kwargs=None):
         self.interval, self.fn, self.cancelled, self.daemon = interval, fn, False, False
+        self.args = tuple(args)
         _FakeTimer.made.append(self)
 
     def start(self):
@@ -116,7 +171,7 @@ class _FakeTimer:
 
     def fire(self):
         if not self.cancelled:
-            self.fn()
+            self.fn(*self.args)
 
 
 @pytest.fixture
@@ -154,6 +209,29 @@ def test_use_keeps_the_cache_and_idle_still_ends_it(wiki, reads, clock):
     assert wiki_graph._index_cache["index"] is not None
     clock["t"] += 301
     _live_timer().fire()
+    assert wiki_graph._index_cache["index"] is None
+
+
+def test_an_old_timer_never_unhooks_the_current_one(wiki, clock):
+    structural_query.query("tell me about graphrag")
+    old = _live_timer()
+    wiki_graph.clear_wiki_index_cache()
+    old.cancelled = False                    # it was already running when cancelled
+    structural_query.query("tell me about graphrag")
+    current = wiki_graph._index_cache["timer"]
+    assert current is not None and current is not old
+    old.fire()
+    assert wiki_graph._index_cache["timer"] is current
+    assert wiki_graph._index_cache["index"] is not None
+
+
+def test_a_timer_that_cannot_start_keeps_nothing(wiki, clock, monkeypatch):
+    class Broken(_FakeTimer):
+        def start(self):
+            raise RuntimeError("can't start new thread")
+    monkeypatch.setattr(wiki_graph, "_Timer", Broken)
+    index = wiki_graph.cached_wiki_index()
+    assert index                                # the caller still gets its answer
     assert wiki_graph._index_cache["index"] is None
 
 
