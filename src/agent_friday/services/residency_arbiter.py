@@ -1074,6 +1074,34 @@ class LlamaServerBackend:
     # passes unconditionally.
     KV_CACHE_TYPE = "q8_0"
 
+    # HOST-SIDE SEAT CACHES. Every seat command bounds them; a model record
+    # may declare its own values in `serve_args`.
+    #
+    # `--cache-ram` is llama-server's host-RAM prompt cache: when a new task
+    # displaces the slot, the old prompt's KV (plus, on hybrid models, its
+    # recurrent state and checkpoints) is copied to private heap memory so a
+    # returning conversation is restored instead of re-prefilled. The build
+    # default is 8192 MiB, and the seat's private commit climbs by that much
+    # with use. On Bonsai 2 27B one saved conversation of 15-40k tokens is
+    # 1-2.7 GiB, so 3072 MiB keeps the most recently displaced conversation
+    # plus several short probes (each ~150 MiB of recurrent state) - the
+    # restore that matters when a background probe interrupts a chat turn.
+    # 0 would disable it and turn every such return into a full re-prefill
+    # (25k tokens is about a minute at ~420 tok/s).
+    #
+    # `--ctx-checkpoints` caps the per-slot snapshots a hybrid or sliding-
+    # window model keeps for rolling back to an earlier prefix. On Bonsai 2
+    # 27B each is the whole recurrent state, ~150 MiB, held in host memory;
+    # the build default of 32 allows ~4.7 GiB per slot. They are taken at
+    # least 8192 tokens apart and the newest ones serve a rollback, so four
+    # cover the last ~32k tokens. Dense models make no checkpoints and are
+    # unaffected.
+    #
+    # Neither flag changes the weights, the KV precision or sampling, so
+    # greedy output is byte-identical with and without them.
+    PROMPT_CACHE_RAM_MIB = 3072
+    CTX_CHECKPOINTS = 4
+
     def _kv_cache_type(self) -> str:
         """The KV cache type to spawn seats with. Settings override, then the
         class default, then f16 once a spawn has proved the flag unusable."""
@@ -1182,7 +1210,9 @@ class LlamaServerBackend:
                # under Ollama, which runs -b 512 -ub 512. The extra ~3.5 GB is
                # the compute buffer, not the model, and it is the difference
                # between the pinned pair fitting and not.
-               "-b", "512", "-ub", "512"]
+               "-b", "512", "-ub", "512",
+               "--cache-ram", str(self.PROMPT_CACHE_RAM_MIB),
+               "--ctx-checkpoints", str(self.CTX_CHECKPOINTS)]
         # `-b 512 -ub 512` is measured on gemma4:12b and is not universal
         # either. On Bonsai 2 27B, -ub 2048 lifted prompt processing from 370
         # to 467 tok/s on a 16k prompt, and -np 1 meant every background probe
