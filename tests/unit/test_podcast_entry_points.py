@@ -68,6 +68,8 @@ def test_the_player_moves_remembers_its_place_and_pops_out():
     b = _block(INDEX)
     assert "onPointerDown: startDrag" in b and "PODCAST_POS_KEY" in b and "localStorage.setItem(PODCAST_POS_KEY" in b
     assert "documentPictureInPicture" in b and "ReactDOM.createPortal(frame, popped.el)" in b
+    # The popped window gets the page's styles, and fits its window.
+    assert "querySelectorAll('style, link[rel=\"stylesheet\"]')" in b and "boxSizing: 'border-box'" in b
     assert _block(INDEX) == _block(APP)
 
 

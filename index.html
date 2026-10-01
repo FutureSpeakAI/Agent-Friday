@@ -13578,6 +13578,8 @@ function PodcastPlayer() {
     if (!win) return;
     const doc = win.document;
     doc.title = (ep && (ep.title || ep.show)) || 'Podcast';
+    // The page's own styles (buttons, fonts) and the brand tokens.
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach(n => doc.head.appendChild(n.cloneNode(true)));
     const root = getComputedStyle(document.documentElement);
     PODCAST_TOKENS.forEach(t => { const v = root.getPropertyValue(t); if (v) doc.documentElement.style.setProperty(t, v); });
     doc.body.style.cssText = 'margin:0;padding:8px;background:var(--fr-surface, #0a0e1a);color:var(--fr-text, rgba(255,255,255,0.86))';
@@ -13587,7 +13589,7 @@ function PodcastPlayer() {
     setPopped({ win: win, el: el });
   };
   const dockBack = () => { carry(); const p = popped; setPopped(null); try { p && p.win.close(); } catch (_) {} };
-  const where = popped ? { position: 'static', width: '100%', maxHeight: 'none' }
+  const where = popped ? { position: 'static', width: '100%', maxHeight: 'none', boxSizing: 'border-box' }
     : pos ? { position: 'fixed', left: pos.x, top: pos.y, width: 'min(400px, calc(100vw - 32px))', maxHeight: '70vh' }
     : { position: 'fixed', right: 16, bottom: 16, width: 'min(400px, calc(100vw - 32px))', maxHeight: '70vh' };
   const nowSources = (line && line.cites ? line.cites : []).map(c => srcById[c]).filter(Boolean);
@@ -13631,7 +13633,7 @@ function PodcastPlayer() {
     'aria-label': 'Position', 'aria-valuetext': podcastClock(t) + ' of ' + podcastClock(ep.duration_s),
     onChange: (e) => seek(Number(e.target.value)), style: { width: '100%', accentColor: PODCAST_C.accent }
   }),
-  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
     btn('⏮', 'Previous chapter', () => stepChapter(-1)),
     btn(playing ? '⏸' : '▶', playing ? 'Pause' : 'Play', () => { const a = audio.current; if (a) (a.paused ? a.play().catch(() => {}) : a.pause()); }),
     btn('⏭', 'Next chapter', () => stepChapter(1)),
