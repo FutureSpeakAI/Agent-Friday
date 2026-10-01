@@ -382,3 +382,36 @@ select.sel, input.fld { height: 28px; border: 1px solid var(--fr-glass-edge); bo
 .cluster .mic svg, .fwin-bar .ibtn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
 .pop .mi svg { width: 14px; height: 14px; stroke: var(--fr-dim); fill: none; stroke-width: 1.5; flex: none; }
 .needs-panel .card .acts .btn { height: 26px; }
+
+/* ── Snap layouts and trays (HIG §3.7, §3.8) ───────────────────────── */
+.snap-preview { position: absolute; pointer-events: none; border: 1px solid rgba(0,212,255,.55); background: var(--fr-cyan-soft); border-radius: var(--fr-radius); backdrop-filter: var(--fr-glass-blur); opacity: 0; transition: opacity var(--fr-reveal), left var(--fr-reveal), width var(--fr-reveal), top var(--fr-reveal), height var(--fr-reveal); z-index: 5; display: grid; place-items: center; font-family: var(--fr-font-display); font-size: var(--fr-text-xs); letter-spacing: var(--fr-track-label); text-transform: uppercase; color: var(--fr-cyan); }
+.snap-preview.show { opacity: 1; }
+.layout-menu { width: 280px; }
+.layout-menu .zones { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 4px; }
+.layout-menu .zone { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 8px; border: 1px solid var(--fr-glass-edge); border-radius: 6px; background: transparent; color: var(--fr-label); font-size: var(--fr-text-md); cursor: pointer; }
+.layout-menu .zone:hover, .layout-menu .zone:focus-visible { background: var(--fr-hover); color: var(--fr-text); }
+.layout-menu .zone[aria-pressed="true"] { border-color: rgba(0,212,255,.45); color: var(--fr-cyan); }
+.layout-menu .zone .z { width: 28px; height: 18px; border: 1px solid var(--fr-glass-edge); border-radius: 3px; position: relative; flex: none; }
+.layout-menu .zone .z::after { content: ""; position: absolute; top: 2px; bottom: 2px; background: var(--fr-cyan); opacity: .7; border-radius: 1px; left: 2px; right: 2px; }
+.layout-menu .zone .z.left-half::after { right: 50%; } .layout-menu .zone .z.right-half::after { left: 50%; }
+.layout-menu .zone .z.left-third::after { right: 66%; } .layout-menu .zone .z.right-third::after { left: 66%; }
+.layout-menu .zone .z.left-two::after { right: 34%; } .layout-menu .zone .z.right-two::after { left: 34%; }
+.layout-menu .zone .z.free::after { left: 7px; right: 7px; top: 4px; bottom: 4px; opacity: .35; }
+.tray { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 356px; display: flex; flex-direction: column; transform: translateX(calc(100% + 24px)); transition: transform var(--fr-reveal); z-index: 4; }
+.tray.in { transform: none; }
+.tray-head { height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--fr-glass-edge); font-weight: 600; font-size: var(--fr-text-base); }
+.tray-head .ibtn { margin-left: auto; }
+.tray-body { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: var(--fr-text-md); }
+.tray .msg { padding: 8px 10px; border-radius: 10px; max-width: 92%; line-height: 1.5; }
+.tray .msg.you { align-self: flex-end; background: var(--fr-cyan-soft); color: var(--fr-text); }
+.tray .msg.her { align-self: flex-start; background: rgba(255,255,255,.04); color: var(--fr-label); }
+.tray-compose { flex: none; display: flex; gap: 6px; align-items: center; padding: 8px; border-top: 1px solid var(--fr-glass-edge); }
+.tray-compose input { flex: 1; height: 30px; border: 1px solid var(--fr-glass-edge); border-radius: 15px; background: rgba(255,255,255,.03); color: var(--fr-text); padding: 0 12px; outline: none; }
+.tray-compose input:focus { box-shadow: var(--fr-focus); }
+.edge-tab { position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 24px; height: 72px; border-radius: 8px 0 0 8px; border-right: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; color: var(--fr-label); padding: 0; z-index: 4; }
+.edge-tab:hover { color: var(--fr-text); background: rgba(10,14,26,.9); }
+.edge-tab .ico svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.edge-tab .n { font-family: var(--fr-font-mono); font-size: var(--fr-text-2xs); color: var(--fr-warn); }
+
+.tray[hidden], .edge-tab[hidden] { display: none; }
+.ctlbar .seg button, .ctlbar > span { white-space: nowrap; }

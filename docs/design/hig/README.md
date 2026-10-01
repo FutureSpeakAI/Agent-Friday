@@ -83,10 +83,42 @@ words "needs you" or a count.
 5. **Motion only on a real event.** A window opens from and folds into its dock icon; the
    cluster fades with `--fr-reveal`; nothing idles, pulses or shimmers to look busy
    (the avatar rule applies to chrome too).
-6. **Windows are windows.** Title, maximize, snap left and right, open in a tab, close.
-   Double-click the title to maximize. Geometry and sidebar state are remembered per
-   workspace. The window's title bar holds the OS's controls; the workspace's own tools live
-   in its header (§4.2).
+6. **Windows are windows.** Title, a layout menu, maximize, open in a tab, close.
+   Double-click the title to maximize. Geometry, snap zone and sidebar state are remembered
+   per workspace. The window's title bar holds the OS's controls; the workspace's own tools
+   live in its header (§4.2). The two behaviours below are the standard for every workspace
+   window and every panel; the UI session is building both on `feat/unified-shell`.
+7. **Snap layouts.** Anything that can sit beside something else (a workspace window, the
+   chat tray, a separate chat window, a second workspace) snaps to one of five zones of the
+   space between the top bar and the dock: left or right **half**, left or right **third**,
+   left or right **two-thirds**, and **fill**. A snapped window's edge is the next window's
+   stop, so two halves, or a third and two-thirds, tile without a gap or an overlap. Four
+   ways in, all equal:
+   - **The layout menu**, on the window controls (the first button in the title bar, before
+     maximize): a picture of the zones; hovering one previews it, clicking applies it; the
+     menu also offers "beside the chat" and "swap sides".
+   - **Magnetic edges.** Dragging a window within 24px of the screen's edge, the dock's top,
+     the tray's edge or another window's edge shows the zone as a glass outline (the
+     preview); releasing snaps into it; moving away dismisses it. A preview is never a
+     commitment.
+   - **Keyboard chords.** Ctrl+Alt+← and Ctrl+Alt+→ snap to that side's half; pressing the
+     same chord again cycles half → third → two-thirds; Ctrl+Alt+↑ fills; Ctrl+Alt+↓ restores
+     the free size. On a Mac, Ctrl+Option.
+   - **Voice.** "Put Messages on the left", "give the chat a third", "swap them", "fill the
+     screen", per the voice tool contract (`set_workspace_layout` grows the zone names).
+   The chosen zone is remembered per workspace (`settings.workspace_layouts`, with the
+   shell's `fullscreen_chat`), and the snap preview, the zone edges and the tiling rule use
+   `--fr-reveal` and the glass tokens, nothing else.
+8. **Trays collapse in one action.** A tray (the chat tray, the inspector when it is a
+   sheet, the notifications panel, any docked panel) slides fully off-screen to an **edge
+   tab** on the side it lives on: a 24px glass tab with the panel's icon and, when something
+   is waiting in it, its count in amber. One click on the tray's collapse control, one chord
+   (Ctrl+\ for the chat tray), or one phrase ("tuck the chat away", "bring the chat back")
+   collapses or restores it; the edge tab restores it with one click. **Never by dragging**:
+   a tray is not resized to nothing and it is not thrown; it goes to its tab and comes back
+   from it. Windows beside a collapsing tray take the space it leaves and give it back when
+   it returns, so a snapped layout stays tiled. The slide uses `--fr-reveal`; a collapsed
+   tray is `inert` and `aria-hidden`; its edge tab is focusable and in the Tab order.
 
 ## 4. Layer 2: the workspace frame
 
@@ -121,8 +153,9 @@ words "needs you" or a count.
   canvas (the graph, the gallery). A pattern is chosen per section, not per workspace.
 - **Inspector** (`--fr-inspector-w`): the selected item's details, or the section's
   sources and settings (News → Sources). Optional, toggled from the toolbar, remembered.
-- **⋯ menu**: the workspace's own tools in a fixed order: Open in tab, Pop out, Fullscreen
-  with chat, a separator, Chat about this, Talk about this, Earlier versions, Friday's
+- **⋯ menu**: the workspace's own tools in a fixed order: Open in tab, Pop out, Layout ▸
+  (the same zones as the title bar's layout menu, §3.7), Fullscreen with chat, a
+  separator, Chat about this, Talk about this, Earlier versions, Friday's
   changes to this workspace, a separator, Customize…, then the section's extra actions.
 
 ### 4.2 The header replaces the 💡 banner
@@ -274,7 +307,9 @@ sampled or summarised by a model.
   and phrase), approvals ("Approve: send the follow-up…"), people and routines after
   typing. Every toolbar and ⋯ action registers itself; nothing is reachable only by mouse.
 - **Global**: Ctrl+K palette · Ctrl+/ chat field (the shell) · Ctrl+Shift+Space voice (the
-  shell) · Ctrl+Shift+F fullscreen with chat (the shell) · Ctrl+, Settings · Esc closes
+  shell) · Ctrl+Shift+F fullscreen with chat (the shell) · Ctrl+Alt+←/→ snap to a half,
+  again for a third, again for two-thirds · Ctrl+Alt+↑ fill · Ctrl+Alt+↓ restore ·
+  Ctrl+\ collapse or restore the chat tray to its edge tab · Ctrl+, Settings · Esc closes
   the topmost panel · F9 condensed · Ctrl+Shift+Q stop computer control.
 - **Lists** (§4.4) share one key map. **Workspaces** may add keys only for their own content
   (Messages: e archive, r reply) and must list them in ⋯ → Keyboard shortcuts.
@@ -309,7 +344,10 @@ phrase · the diff-and-yes flow for a typed or spoken sentence · nothing but `-
 
 **Desktop.** Eight bar controls · telemetry behind the connection light · the needs-you pill
 only when something waits · dock in three groups with the core set · motion only on an
-event · windows snap, maximize, open in a tab · the scene uncovered by default.
+event · every window and panel snaps to halves, thirds and two-thirds from the layout
+menu, a magnetic drag with a preview, a chord and a phrase · snapped edges tile without a
+gap · every tray collapses to an edge tab in one click, chord or phrase and never by
+dragging · the scene uncovered by default.
 
 **Brand.** Only tokens · Orbitron only for display · amber only for needs-you and the maker's
 name in the wordmark · deny magenta only for a refusal or a stop · error red only for a

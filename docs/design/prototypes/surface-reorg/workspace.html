@@ -11,10 +11,12 @@
   .host { flex: 1; min-height: 0; display: flex; justify-content: center; align-items: stretch; padding: 0; background: var(--fr-surface); }
   .host.window { padding: 24px; background: radial-gradient(ellipse at 50% 40%, #0d1426 0%, #060912 55%, #03050a 100%); }
   .host .fwin { position: relative; width: 100%; height: 100%; }
-  .host.window .fwin { width: var(--w, 1000px); height: calc(100% - 20px); margin: 0 auto; }
+  .host.window { position: relative; display: block; padding: 0; }
+  .host.window .fwin { position: absolute; transition: left var(--fr-reveal), top var(--fr-reveal), width var(--fr-reveal), height var(--fr-reveal); }
+  .host.window .fwin.dragging { transition: none; }
   .host.tab .fwin { box-shadow: none; border: 0; border-radius: 0; background: transparent; }
   .host.tab .fwin-bar { display: none; }
-  .ctlbar { flex: none; display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--fr-glass-edge); background: #000; font-size: var(--fr-text-sm); color: var(--fr-dim); }
+  .ctlbar { flex: none; display: flex; flex-wrap: wrap; row-gap: 4px; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--fr-glass-edge); background: #000; font-size: var(--fr-text-sm); color: var(--fr-dim); }
   .ctlbar .seg { height: 24px; }
   .ctlbar .seg button { font-size: var(--fr-text-sm); }
   .pop { position: absolute; z-index: 30; padding: 8px; display: none; min-width: 220px; }
@@ -53,14 +55,16 @@
     <div class="seg" role="group" aria-label="Context"><button aria-pressed="true" data-ctx="tab">Its own tab</button><button aria-pressed="false" data-ctx="window" data-w="1000">Window · 1000px</button><button aria-pressed="false" data-ctx="window" data-w="640">Window · 640px</button></div>
     <span>state</span>
     <div class="seg" role="group" aria-label="Content state"><button aria-pressed="true" data-state="data">Data</button><button aria-pressed="false" data-state="empty">Empty</button><button aria-pressed="false" data-state="loading">Loading</button><button aria-pressed="false" data-state="failed">Failed</button></div>
-    <span class="faint" style="margin-left:auto">The same code at every width: the frame reads its container, not the viewport.</span>
+    <span>chat tray</span>
+    <div class="seg" role="group" aria-label="Chat tray"><button aria-pressed="false" id="trayOn">Beside the window</button></div>
+    <span class="faint" style="margin-left:auto">Window: drag the title to an edge · Layout menu · Ctrl+Alt+←/→, again for ⅓ and ⅔ · Ctrl+Alt+↑ fill · Ctrl+\ tucks the chat away</span>
   </div>
 
   <div class="host tab" id="host">
     <div class="fwin glass" id="fwin">
       <div class="fwin-bar"><span class="ws-ico" id="winIco"></span><span id="winTitle">Messages</span>
         <div class="btns">
-          <button class="ibtn" title="Snap left" aria-label="Snap left" data-i="snapL"></button>
+          <button class="ibtn" title="Layout (Ctrl+Alt+arrows)" aria-label="Layout" aria-haspopup="menu" data-i="snapL" id="layoutBtn"></button>
           <button class="ibtn" title="Maximize" aria-label="Maximize" data-i="max"></button>
           <button class="ibtn" title="Open in its own tab" aria-label="Open in its own tab" data-i="tab"></button>
           <button class="ibtn close" title="Close" aria-label="Close" data-i="x"></button>
@@ -68,7 +72,20 @@
       </div>
       <div class="fwin-body"><div class="ws" id="ws"></div></div>
     </div>
+    <div class="snap-preview" id="snapPreview" aria-hidden="true"></div>
+    <aside class="tray glass" id="tray" aria-label="Chat with Friday" hidden>
+      <div class="tray-head"><span>Chat · Main</span><span class="chip" style="height:20px"><span class="dot work"></span> Sonnet 5.5</span>
+        <button class="ibtn" id="trayCollapse" title="Tuck the chat away (Ctrl+\)" aria-label="Tuck the chat away"></button></div>
+      <div class="tray-body">
+        <div class="msg you">Draft a reply to Dana: yes to both, timeline slide by Thursday.</div>
+        <div class="msg her">Drafted. It goes out only when you approve the card: "Yes to both. The timeline slide will be with you Thursday morning, and I'll send Priya the one-pager today."</div>
+        <div class="card needs" style="margin-top:8px"><h4>Send the reply to Dana</h4><div class="what">The text above, to the thread "Re: Tuesday's deck". <a href="#">See exact text</a></div><div class="acts"><button class="btn ok">Approve</button><button class="btn">Change</button><button class="btn deny">Deny</button></div></div>
+      </div>
+      <div class="tray-compose"><input type="text" placeholder="Talk to Friday…" aria-label="Talk to Friday"><button class="ibtn" aria-label="Talk" id="trayMic"></button><button class="btn primary">Send</button></div>
+    </aside>
+    <button class="edge-tab glass" id="edgeTab" hidden aria-label="Bring the chat back (Ctrl+\)" title="Bring the chat back (Ctrl+\)"><span class="ico"></span><span class="n">1</span></button>
   </div>
+  <div class="pop glass layout-menu" id="layoutMenu" role="menu" aria-label="Layout"></div>
 </div>
 
 <div class="pop glass" id="moreMenu" role="menu" aria-label="Workspace menu"></div>
@@ -81,7 +98,10 @@ document.getElementById('openPalette').innerHTML = icon('search');
 document.getElementById('chatBtn').innerHTML = icon('chat');
 document.getElementById('gearBtn').innerHTML = icon('gear');
 document.querySelector('.pop-live').outerHTML = '<div class="pop glass"><dl><dt>Time</dt><dd>19:24:08</dd><dt>Local seat</dt><dd>held · 27B</dd><dt>GPU memory</dt><dd>8.6 / 12 GB</dd><dt>RAM</dt><dd>6.1 / 32 GB</dd><dt>CPU</dt><dd>11%</dd><dt>Disk</dt><dd>42 GB free</dd></dl></div>';
-document.querySelectorAll('.fwin-bar .ibtn').forEach(b => { b.innerHTML = icon(b.dataset.i); b.addEventListener('click', () => toast('Prototype: ' + b.title + '.')); });
+document.querySelectorAll('.fwin-bar .ibtn').forEach(b => { b.innerHTML = icon(b.dataset.i); if (b.id !== 'layoutBtn') b.addEventListener('click', () => { if (b.dataset.i === 'max') applyZone(zone === 'fill' ? 'free' : 'fill'); else toast('Prototype: ' + b.title + '.'); }); });
+document.getElementById('trayCollapse').innerHTML = icon('x');
+document.getElementById('trayMic').innerHTML = icon('mic');
+document.getElementById('edgeTab').querySelector('.ico').innerHTML = icon('chat');
 
 // ── Fictional data. No real person, address or message appears here. ──
 const MAIL = [
@@ -241,18 +261,98 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') { moreMenu.c
 document.querySelectorAll('[data-ws]').forEach(b => b.addEventListener('click', () => { ws = b.dataset.ws; document.querySelectorAll('[data-ws]').forEach(x => x.setAttribute('aria-pressed', x === b)); render(); }));
 document.querySelectorAll('[data-ctx]').forEach(b => b.addEventListener('click', () => {
   ctx = b.dataset.ctx; document.querySelectorAll('[data-ctx]').forEach(x => x.setAttribute('aria-pressed', x === b));
-  const host = document.getElementById('host'); host.className = 'host ' + ctx; host.style.setProperty('--w', (b.dataset.w || 1000) + 'px');
+  const host = document.getElementById('host'); host.className = 'host ' + ctx; freeW = +(b.dataset.w || 1000);
+  if (ctx === 'window') { zone = 'free'; layoutWindow(); } else { fwinEl.removeAttribute('style'); }
 }));
+
+// ── Snap layouts and the tray (HIG §3.7, §3.8). Zones are fractions of the host's width;
+// the tray's left edge is every window's right stop while the tray is open. ──
+const fwinEl = document.getElementById('fwin'), hostEl = document.getElementById('host'), preview = document.getElementById('snapPreview');
+const trayEl = document.getElementById('tray'), edgeTab = document.getElementById('edgeTab'), layoutMenu = document.getElementById('layoutMenu');
+let zone = 'free', freeW = 1000, trayOpen = false, trayCollapsed = false;
+const ZONES = { 'left-half': [0, .5], 'right-half': [.5, .5], 'left-third': [0, 1/3], 'right-third': [2/3, 1/3], 'left-two': [0, 2/3], 'right-two': [1/3, 2/3], 'fill': [0, 1] };
+const ZONE_LABEL = { 'left-half': 'Left half', 'right-half': 'Right half', 'left-third': 'Left third', 'right-third': 'Right third', 'left-two': 'Left two-thirds', 'right-two': 'Right two-thirds', 'fill': 'Fill', 'free': 'Free size' };
+function area() { const W = hostEl.clientWidth - (trayOpen && !trayCollapsed ? 380 : 0), H = hostEl.clientHeight; return { W, H, pad: 12 }; }
+function rectFor(z) {
+  const { W, H, pad } = area();
+  if (z === 'free') { const w = Math.min(freeW, W - 2 * pad); return { left: Math.max(pad, (W - w) / 2), top: 24, width: w, height: H - 48 }; }
+  const [x, f] = ZONES[z]; return { left: pad + x * (W - 2 * pad), top: pad, width: f * (W - 2 * pad), height: H - 2 * pad };
+}
+function setRect(el, r) { el.style.left = r.left + 'px'; el.style.top = r.top + 'px'; el.style.width = r.width + 'px'; el.style.height = r.height + 'px'; }
+function layoutWindow() { if (ctx !== 'window') return; setRect(fwinEl, rectFor(zone)); }
+function applyZone(z) { zone = z; layoutWindow(); hidePreview(); toast(ZONE_LABEL[z] + (trayOpen && !trayCollapsed ? ' · beside the chat' : '') + '. Remembered for ' + WS[ws].name + '.'); }
+function showPreview(z) { preview.classList.add('show'); setRect(preview, rectFor(z)); preview.dataset.zone = z; preview.textContent = ZONE_LABEL[z]; }
+function hidePreview() { preview.classList.remove('show'); preview.dataset.zone = ''; }
+
+// The layout menu on the window controls: hover previews, click applies.
+const MENU = [['left-half', 'Left ½'], ['right-half', 'Right ½'], ['left-third', 'Left ⅓'], ['right-two', 'Right ⅔'], ['left-two', 'Left ⅔'], ['right-third', 'Right ⅓'], ['fill', 'Fill'], ['free', 'Free size']];
+document.getElementById('layoutBtn').addEventListener('click', e => {
+  if (ctx !== 'window') { toast('In its own tab the workspace fills the tab; snap applies to windows and trays on the desktop.'); return; }
+  layoutMenu.innerHTML = '<div class="label-caps" style="padding:4px 8px 8px">Layout · hover to preview</div><div class="zones">' + MENU.map(([z, l]) => '<button class="zone" role="menuitem" data-z="' + z + '" aria-pressed="' + (zone === z) + '"><i class="z ' + z + '"></i><span>' + l + '</span></button>').join('') + '</div><hr><div class="mi" role="menuitem" tabindex="0" id="besideChat">' + icon('chat') + '<span>' + (trayOpen ? 'Swap sides with the chat' : 'Beside the chat') + '</span></div><div class="dim" style="padding:6px 8px 2px;font-size:var(--fr-text-xs)">Also: drag the title to an edge · Ctrl+Alt+arrows · say "put ' + WS[ws].name + ' on the left"</div>';
+  const r = e.currentTarget.getBoundingClientRect(); layoutMenu.style.top = (r.bottom + 6) + 'px'; layoutMenu.style.left = Math.max(8, r.right - 280) + 'px'; layoutMenu.classList.add('open');
+  layoutMenu.querySelectorAll('.zone').forEach(b => { b.addEventListener('mouseenter', () => showPreview(b.dataset.z)); b.addEventListener('focus', () => showPreview(b.dataset.z)); b.addEventListener('mouseleave', hidePreview); b.addEventListener('click', () => { layoutMenu.classList.remove('open'); applyZone(b.dataset.z); }); });
+  layoutMenu.querySelector('#besideChat').addEventListener('click', () => { layoutMenu.classList.remove('open'); if (!trayOpen) openTray(); else toast('Prototype: the window and the tray swap sides.'); });
+  layoutMenu.querySelector('.zone').focus();
+});
+document.addEventListener('click', e => { if (!e.target.closest('#layoutMenu, #layoutBtn')) { layoutMenu.classList.remove('open'); if (!dragging) hidePreview(); } });
+
+// Magnetic edges: drag the title bar; within 24px of an edge a glass outline previews the zone; release snaps.
+let dragging = null;
+fwinEl.querySelector('.fwin-bar').addEventListener('pointerdown', e => {
+  if (ctx !== 'window' || e.target.closest('button')) return;
+  const r = fwinEl.getBoundingClientRect(), h = hostEl.getBoundingClientRect();
+  dragging = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, hh: r.height, hostLeft: h.left, hostTop: h.top };
+  fwinEl.classList.add('dragging'); fwinEl.setPointerCapture(e.pointerId);
+});
+fwinEl.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const { W, H } = area(); const left = e.clientX - dragging.hostLeft - dragging.dx, top = e.clientY - dragging.hostTop - dragging.dy;
+  fwinEl.style.left = left + 'px'; fwinEl.style.top = top + 'px';
+  const M = 24, right = left + dragging.w; let z = '';
+  if (left <= M) z = top <= M ? 'left-third' : 'left-half';
+  else if (right >= W - M) z = top <= M ? 'right-third' : 'right-half';
+  else if (top <= M) z = 'fill';
+  else if (top + dragging.hh >= H - M) z = left + dragging.w / 2 < W / 2 ? 'left-two' : 'right-two';
+  z ? showPreview(z) : hidePreview();
+});
+fwinEl.addEventListener('pointerup', () => { if (!dragging) return; fwinEl.classList.remove('dragging'); const z = preview.dataset.zone; dragging = null; if (z) applyZone(z); else { zone = 'free'; hidePreview(); } });
+
+// Keyboard chords.
+document.addEventListener('keydown', e => {
+  if (ctx === 'window' && e.ctrlKey && e.altKey && /^Arrow/.test(e.key)) {
+    e.preventDefault();
+    if (e.key === 'ArrowUp') return applyZone('fill');
+    if (e.key === 'ArrowDown') return applyZone('free');
+    const side = e.key === 'ArrowLeft' ? 'left' : 'right', cycle = [side + '-half', side + '-third', side + '-two'];
+    applyZone(cycle[(cycle.indexOf(zone) + 1) % 3]);
+  }
+  if (e.ctrlKey && !e.altKey && e.key === '\\') { e.preventDefault(); if (!trayOpen) openTray(); else toggleTray(); }
+});
+
+// The tray: opens beside the window, collapses to an edge tab in one action, never by dragging.
+function openTray() { if (ctx !== 'window') document.querySelector('[data-ctx="window"][data-w="1000"]').click(); trayOpen = true; trayCollapsed = false; trayEl.hidden = false; edgeTab.hidden = true; requestAnimationFrame(() => trayEl.classList.add('in')); document.getElementById('trayOn').setAttribute('aria-pressed', 'true'); layoutWindow(); }
+function toggleTray() {
+  trayCollapsed = !trayCollapsed;
+  if (trayCollapsed) { trayEl.classList.remove('in'); trayEl.setAttribute('inert', ''); trayEl.setAttribute('aria-hidden', 'true'); edgeTab.hidden = false; toast('Tucked away. The edge tab, Ctrl+\\ or "bring the chat back" restores it.'); edgeTab.focus(); }
+  else { trayEl.classList.add('in'); trayEl.removeAttribute('inert'); trayEl.removeAttribute('aria-hidden'); edgeTab.hidden = true; trayEl.querySelector('input').focus(); }
+  layoutWindow();
+}
+document.getElementById('trayOn').addEventListener('click', () => { if (!trayOpen) openTray(); else { trayOpen = false; trayEl.hidden = true; trayEl.classList.remove('in'); edgeTab.hidden = true; document.getElementById('trayOn').setAttribute('aria-pressed', 'false'); layoutWindow(); } });
+document.getElementById('trayCollapse').addEventListener('click', toggleTray);
+edgeTab.addEventListener('click', toggleTray);
+trayEl.querySelectorAll('.card .btn').forEach(b => b.addEventListener('click', () => toast(b.textContent === 'Approve' ? 'Sent. Receipt in Activity → Receipts and Left this machine.' : b.textContent === 'Deny' ? 'Denied. Nothing was sent.' : 'Prototype: a revised card.')));
+window.addEventListener('resize', layoutWindow);
 document.querySelectorAll('[data-state]').forEach(b => b.addEventListener('click', () => { state = b.dataset.state; document.querySelectorAll('[data-state]').forEach(x => x.setAttribute('aria-pressed', x === b)); render(); }));
 
 const pal = installPalette(() => [
   { name: WS[ws].name, items: WS[ws].toolbar.filter(t => t[0] !== 'seg').map(t => ({ label: t[0], icon: t[1], run: () => toast('Prototype: ' + t[0]) })).concat(WS[ws].more.filter(Boolean).map(m => ({ label: m[0], icon: m[1], keys: m[2], run: () => toast('Prototype: ' + m[0]) }))) },
+  { name: 'Layout', items: [{ label: 'Put ' + WS[ws].name + ' on the left half', icon: 'snapL', keys: ['Ctrl', 'Alt', '←'], hint: 'say it', run: () => applyZone('left-half') }, { label: 'Give ' + WS[ws].name + ' two-thirds', icon: 'snapL', hint: 'say it', run: () => applyZone('left-two') }, { label: 'Fill the screen', icon: 'max', keys: ['Ctrl', 'Alt', '↑'], run: () => applyZone('fill') }, { label: trayOpen && !trayCollapsed ? 'Tuck the chat away' : 'Bring the chat back', icon: 'chat', keys: ['Ctrl', '\\'], hint: 'say it', run: () => trayOpen ? toggleTray() : openTray() }] },
   { name: 'Workspaces', items: ['News', 'Messages', 'Calendar', 'People', 'Career', 'Code', 'Sites', 'Media', 'Knowledge', 'Routines', 'Activity', 'Settings'].flatMap(w => [{ label: 'Open ' + w, icon: w.toLowerCase(), run: () => toast('Prototype: opens ' + w) }, { label: 'Open ' + w + ' in a tab', icon: 'tab', hint: '/w/' + w.toLowerCase(), run: () => toast('Prototype: opens a tab') }]) },
   { name: 'Settings', items: [['Where she thinks', 'models'], ['Off the record', 'privacy'], ['Keep the local brain warm', 'models'], ['Her voice', 'voice'], ['Telemetry in the bar', 'appearance']].map(([l, p]) => ({ label: l, hint: 'Settings', icon: 'gear', run: () => location.href = 'settings.html#' + p })) },
   { name: 'Needs you', items: [{ label: 'Approve: send the follow-up to Dana', hint: 'external send', icon: 'check', run: () => toast('Prototype: the card opens.') }] },
 ]);
 document.getElementById('openPalette').addEventListener('click', pal.open);
-document.getElementById('chatBtn').addEventListener('click', () => toast('Prototype: the chat tray docks on the right of this tab.'));
+document.getElementById('chatBtn').addEventListener('click', () => { trayOpen && trayCollapsed ? toggleTray() : openTray(); });
 document.getElementById('gearBtn').addEventListener('click', () => location.href = 'settings.html');
 document.getElementById('needsPill').addEventListener('click', () => toast('Prototype: opens Activity → Needs you.'));
 render();

@@ -7,10 +7,11 @@
 > Guidelines). The clickable prototypes are in
 > [`docs/design/prototypes/surface-reorg/`](../prototypes/surface-reorg/index.html).
 > **Last verified:** 2026-09-30 against main `e27ba160`, `feat/unified-shell` (pieces 1 to 7),
-> `piece/P-BRAND-0` (BRAND.md) and the Studio session's `docs/studio-integrated` tree.
+> `piece/P-BRAND-0` (BRAND.md) and the Studio session's `docs/studio-integrated` at `e96b6b3c`
+> (`media-workspace.md` and its six prototypes).
 > **Owns nothing another session owns:** the shell, the top bar and the normalization audit
 > belong to the UI session (`unified-shell.md`, `docs/brand/fidelity-audit.md`); the Media
-> workspace belongs to the Studio session (`studio-integrated.md`); the avatar and the scene
+> workspace belongs to the Studio session (`media-workspace.md`); the avatar and the scene
 > belong to the avatar session. This document references their work and sequences after it.
 
 ## What the owner asked
@@ -52,7 +53,7 @@ system with three layers and a small number of templates, applied surface by sur
   registry, the voice tool list, DEFAULT_SETTINGS and the design docs that constrain the
   surfaces: `workspace-ecosystem.md`, `first-run-and-onboarding.md` §7A and §9 (the control
   room), `task-visibility.md`, `tasks-tray-honesty.md`, `v6-wholeness-spec.md` §1.1 and the
-  Studio session's `studio-integrated.md`.
+  Studio session's `media-workspace.md`.
 - **Bars.** Settings against Claude.ai's and ChatGPT's settings (a category rail, plain rows
   with one line of explanation, search, a clear danger zone). Workspaces against Linear and
   Superhuman (one toolbar, one list-and-detail layout, keyboard first, a command palette with
@@ -95,11 +96,11 @@ is misplaced, and the verdict (keep, reshape, merge, retire). Line references ar
 | **People** (`ContactsWS` 33970) | Contacts with trust, research notes and Forget. | The Relationship-memory panel (sync, import, two Google-save buttons) sits above the list on every visit. | Trust dimensions and evidence vs the Trust workspace; Forget vs Knowledge. | | **Keep**; becomes the home for every person (Trust folds in); the panel becomes a sheet. |
 | **Code** (`CodeWS` 27253) | Local developer console. | | Repos vs Sites "discovered repos"; Procs vs System's Top Processes; Files vs Studio's Files 3D. | | **Keep**; Sites stops listing repos. |
 | **Sites** (`SitesWS` 24780 or `FuturespeakWS` 17358) | Two components under one label: a site portfolio, or the owner's business dashboard (pipeline, revenue, legal, talent, demos, its own "studio"). | 9 view tabs. | Its "studio" view vs Studio. | A company dashboard under a generic label, shown to anyone with all workspaces on. | **Split**: Sites keeps one job (your websites); the business dashboard becomes the owner's own non-core workspace (Q2). |
-| **Draft** (`DraftWS` 32763) | One-shot writer per channel. | | Five text writers exist (Draft; Content Compose and Ideas; Studio's Text mode; Career Outreach; Calendar follow-ups). | | **Merge into Media** (the Studio session's Create segment; `studio-integrated.md` names the three writers and does not resolve Draft; this document proposes Draft's channel modes as Create → Text presets). |
-| **Content** (`ContentWS` 38186) | Multi-platform post pipeline. | 11 "connect" chips in the composer; a "Calendar" tab that is not the Calendar. | Compose vs Draft. | | **Merge into Media** (the Studio session keeps Compose; this document proposes it as Media's Publish segment, with Queue, Calendar and Analytics as its sections). |
+| **Draft** (`DraftWS` 32763) | One-shot writer per channel. | | Five text writers exist (Draft; Content Compose and Ideas; Studio's Text mode; Career Outreach; Calendar follow-ups). | | **Merge into Media** (the Studio session's `media-workspace.md`: a Draft becomes a card of kind `draft` with its channel kept; the Pipeline board is where Draft went). |
+| **Content** (`ContentWS` 38186) | Multi-platform post pipeline. | 11 "connect" chips in the composer; a "Calendar" tab that is not the Calendar. | Compose vs Draft. | | **Merge into Media** (`media-workspace.md`: posts are cards; the Pipeline board replaces Ideas and Queue, the Calendar view is Content's calendar promoted, Accounts and Analytics move to Settings and the card). |
 | **Knowledge** (`KnowledgeWS` 15663) | The wiki's pages and the galaxy. | | Pending updates (wiki approvals) vs the approvals queue. | Its settings are split across three Settings tabs. | **Keep**; pending updates become a "Needs you" kind. |
 | **Trust** (`TrustWS` 23613) | A list of people with dimensions and evidence. | | A subset of the People detail page; shares People's 3D source. | Source trust is in News. | **Merge into People** (a Trust tab on a person) and News → Sources. |
-| **Studio** (`StudioWS` 21107) | Generation, gallery, files, podcasts. | 8 views + prompt bar with 5 modes + log/daily + 7 file-type chips; a "Family mode" toggle whose banner says it is coming soon (21403). | Production vs Projects; two generators; Files 3D vs Code Files. | Podcasts (News's shows). | **Becomes Media** (Studio session: Library, Create, Projects). |
+| **Studio** (`StudioWS` 21107) | Generation, gallery, files, podcasts. | 8 views + prompt bar with 5 modes + log/daily + 7 file-type chips; a "Family mode" toggle whose banner says it is coming soon (21403). | Production vs Projects; two generators; Files 3D vs Code Files. | Podcasts (News's shows). | **Becomes Media** (`media-workspace.md`: one card per piece of work, three views of the same cards, one editor frame). |
 | **Marketplace** (`MarketplaceWS` 22735) | Listings priced in ψ. | | | v6 §1.1 and `workspace-ecosystem.md` Phase 1: a catalogue at most, purchases disabled. | **Off the dock** until Phase 4; not deleted. |
 | **Workflows** (`WorkflowsWS` 24472) | Routines from a sentence, outward actions gated. | A sentence box, a step builder, a notice, "waiting for your OK", "also working on", the list, the built-ins: seven blocks in a column. | "Also working on" vs the tray; "waiting for your OK" vs approvals; built-in News jobs vs News's own buttons. | The control room (§9.1 of the onboarding spec) lists Routines as a Settings section. | **Keep as a workspace, rename Routines** (the word the onboarding spec and the registry's alias list already use); list-and-detail on the template; Settings links to it. |
 | **System** (`SystemWS` 25300) | Nine unrelated cards in one column: context compression, weekly self-review, approvals, task records, what Friday did, changes with undo, disk, processes, the context log with delete-range. | Everything; no sidebar, no sections, deep links scroll. | Approvals (P7), receipts (P8), processes vs Code → Procs, task records vs the tray. | Machine telemetry is Health; the context log is a Privacy setting; self-review is a review. | **Becomes Activity** (§2.2); telemetry and the context log move to Settings. |
@@ -146,7 +147,7 @@ alias so deep links, saved layouts and voice phrases still land.
 | Work | **Career** (`career`) | Your job search: roles evaluated, applications tracked. | Overview, Tracker, Scanner, Reports, Pipeline, Curated, Interview | | Outreach drafting (to Media); setup becomes an empty-state card |
 | Work | **Code** (`code`) | Your repos, git, files and running processes. | Repos, Vibe, Git, Files, Processes, Logs | System's Top Processes | |
 | Work | **Sites** (`futurespeak`) | Your websites: status, deploys and new projects. | Sites, Deploys, New project | | The business dashboard (Q2); the repo list (Code has it) |
-| Work | **Media** (`studio`, aliases `draft`, `content`) | Make, keep and publish images, video, audio and text. | Library, Create, Projects, Publish (Studio session owns; this document proposes Draft as Create → Text presets and Content as Publish) | Draft, Content, Studio | Podcasts from News routines (to News → Shows) |
+| Work | **Media** (`studio`, aliases `draft`, `content`) | One home for everything Friday makes or helps make: one card per piece of work, whatever the medium. | Library (Today, In progress, Needs you, Published, Everything; projects, types, privacy), Pipeline (the one status vocabulary), Calendar (what went out and what is due); one editor frame with "turn this into…"; any card pops out. Owned and specified by the Studio session in [`media-workspace.md`](media-workspace.md); this document adopts it unchanged. | Draft, Content, Studio | The News shows stay in News on their runs; Content's Accounts and Analytics go to Settings → Connectors and to the card |
 | Friday | **Knowledge** (`knowledge`) | Your wiki's pages and the graph that links them. | Pages, Graph, Split | | Pending updates become a "Needs you" kind in Activity (still approved here too) |
 | Friday | **Routines** (`workflows`) | What Friday does on a schedule, and what she asks first. | Yours, Built in, Runs | Workflows | "Also working on" and "waiting for your OK" (to Activity) |
 | Friday | **Activity** (`system`) | What Friday is doing, what needs you, what she did, and what left this machine. | Now, Needs you, Receipts, Left this machine, Weekly review | The bell's tasks and running-now sections; every approvals list; What Friday did; Changes Friday made; the Activity Ledger; the egress log (new UI); the weekly self-review | Disk, processes, context compression, the context log (to Settings → Health, Privacy) |
@@ -200,7 +201,13 @@ default bar. The narrow-bar rules of the shell's §6 still apply.
 ### 2.4 Windows and tabs
 
 Workspaces are proper app windows. The window chrome keeps title, maximize, open in tab and
-close, and gains snap left and snap right (Win+arrow, Cmd+Ctrl+arrow) and the shell's
+close, and gains the two standard window behaviours of HIG §3.7 and §3.8: **snap layouts**
+(halves, thirds and two-thirds for a workspace window, the chat tray or a separate chat
+window side by side, with magnetic edges, a preview, a layout menu on the window controls,
+keyboard chords and voice) and **one-action collapse for trays** (a tray slides fully
+off-screen to an edge tab with one click, chord or phrase, never by dragging). The UI
+session is building both on `feat/unified-shell`; this document and the HIG codify them as
+the standard for every workspace and panel. They sit beside the shell's
 fullscreen-with-chat. The workspace's own tools (chat about it, talk about it, its earlier
 versions, Friday's customization) move from the title bar into the workspace header's ⋯
 menu, so the title bar is the OS's and the header is the app's. Every window's layout is
@@ -247,7 +254,7 @@ sentence; a sentence becomes a diff and a yes.
 - The brand tokens, the type, the glass, the triad: BRAND.md's.
 - The shell's product name, one bar, fullscreen with chat, the landing cluster and its
   judge: the UI session's, already built on its branch.
-- Media's segments and the move of the News shows: the Studio session's.
+- Media (its cards, views, editor, status vocabulary and pop-out): the Studio session's, in `media-workspace.md`. The News shows stay in News, per that spec and the podcast session.
 - Voice tools and the voice tool contract: this document adds settings rows and palette
   actions as *targets*; the tool that sets a setting (`set_setting`) is specified in the HIG
   §6.4 and built by the voice session.
@@ -297,9 +304,9 @@ sits in its bar and its tab frame.
 | M2 | **Activity**: System becomes Activity with Now, Needs you, Receipts, Left this machine (the first UI on `routes/research.py:107`), Weekly review. One approval card everywhere; the widget bug fixed; the tray's pinned strings kept. Disk, processes, compression and the context log move to Settings (M4). | One workspace, the bell, the widget, the tab drawer. | Claude.ai's and ChatGPT's data-controls pages for Left this machine; `tasks-tray-honesty.md` for Now; the brand check for status hues. | M0; sensitive subsystem review (approvals, egress) |
 | M3 | **People absorbs Trust**; Finance contacts, Health providers, Career warm leads link to People records. Trust's id becomes an alias. | Three workspaces touched, one retired. | Linear's list-and-detail; the brand check. | M0 |
 | M4 | **Settings on the row contract**: the thirteen-page rail, search, four lines per row, one home per setting, danger zones, status pages labelled; the gear opens Settings; quick toggles become palette actions; the context log and telemetry arrive from System; `pause_warnings_off` and `voice_room_approvals_require_name` get their promised rows. New pages (Personality, Notifications, Devices & Backups) ship with what exists and say what is planned. | Settings, the top bar's gear. | Claude.ai and ChatGPT settings; the brand check. | M0, M2 |
-| M5 | **The bar's default content** (eight controls) and the window chrome (snap, ⋯ for workspace tools). | Top bar, `FWin`. | visionOS for the desktop; Windows and macOS window conventions. | the shell's piece 2; the UI session builds it |
+| M5 | **The bar's default content** (eight controls) and the window chrome (⋯ for workspace tools; snap layouts and tray collapse per HIG §3.7 and §3.8, which the UI session is already building on the shell branch). | Top bar, `FWin`, the trays. | visionOS for the desktop; Windows 11 snap layouts and macOS tiling for conventions only. | the shell's piece 2; the UI session builds it |
 | M6 | **News on the frame**: editions in the sidebar, Sources in the inspector, the Shows shelf (Studio session's D1). | One workspace. | Linear/Superhuman; NPR/NYT apps for reading conventions only. | M0; the Studio session's Media piece for Shows |
-| M7 | **Media** absorbs Draft and Content (Studio session's plan plus this document's Create → Text presets and Publish). | Three workspaces → one. | the Studio session's own bars. | the Studio session |
+| M7 | **Media** replaces Draft, Content and Studio per [`media-workspace.md`](media-workspace.md) (cards, three views, one editor, pop-out, voice). This plan adds nothing to it; the frame (M0) is the shell Media's views sit in. | Three workspaces → one. | the Media spec's own bars (Linear and Superhuman plus the brand check). | the Studio session; M0 |
 | M8 | **Routines** (rename, list-and-detail, runs) and Code (processes from System) and Sites (one job; the business dashboard to its own workspace per Q2). | Three workspaces. | Linear; GitHub Desktop and Vercel for conventions. | M0, M2 |
 | M9 | **Records workspaces**: Health and Finance on the frame with a real editor each (today: "edit this JSON file"); vehicles to Finance; the wallet out; Family retired per Q1; Career's labels. | Four workspaces. | Linear; Apple Health and Copilot Money for conventions only. | M0, M3, Q1 |
 | M10 | **Dock and defaults**: Life, Work, Friday; the core set; Marketplace off the dock; aliases for every retired id; voice phrases updated. | Registry, dock, settings. | the brand check (dock is a brand surface). | M1 to M9 |
