@@ -49,6 +49,12 @@ def home(tmp_path, monkeypatch):
 
     # a creation with its sidecar
     (creations / "friday-image-harbour.png").write_bytes(b"\x89PNG fake")
+    (fd / "creations_meta" / "friday-image-harbour.png.json").write_text(json.dumps({"kind": "image", "prompt": "harbour at blue hour", "model": "local-sdxl"}), encoding="utf-8")
+    (creations / "friday-text-ferry.md").write_text("# The ferry story\n\nThe 06:40 left on time.", encoding="utf-8")
+    # an office document and its render
+    (docs / "pitch.pptx").write_bytes(b"PK fake")
+    (docs / "_renders").mkdir()
+    (docs / "_renders" / "pitch-1.png").write_bytes(b"\x89PNG render")
     # a user episode and a routine episode
     from agent_friday.services import podcast_engine as pe
     for eid, origin in (("20260930T080000-abc123", "user"), ("20260930T063000-def456", "routine")):
