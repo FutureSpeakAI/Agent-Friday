@@ -91,9 +91,18 @@ def _until(pg, js, what, secs=8):
 
 
 def _frames_advance(pg, ms=600):
+    """How many frames the scene drew in a fixed window: used to show it
+    holds still (zero) during a call."""
     a = pg.evaluate("__frame()")
     pg.wait_for_timeout(ms)
     return pg.evaluate("__frame()") - a
+
+
+def _drawing(pg, what, secs=5):
+    """The scene is drawing: a few frames land within a few seconds. A fixed
+    window would race a resume on a slow software-GL frame."""
+    a = pg.evaluate("__frame()")
+    _until(pg, "() => __frame() > %d + 3" % a, what, secs)
 
 
 def test_a_call_starting_lets_go_of_the_camera_holds_the_scene_and_shows_the_chip(page):
@@ -101,7 +110,7 @@ def test_a_call_starting_lets_go_of_the_camera_holds_the_scene_and_shows_the_chi
     pg.evaluate("toggleHologram()")
     _until(pg, _cam.LIVE_WITH_FACE, "the camera never opened")
     pg.evaluate("window.__voice.on = true")
-    assert _frames_advance(pg) > 3, "the scene was not drawing before the call"
+    _drawing(pg, "the scene was not drawing before the call")
     pg.evaluate("fridayRunActions([{ type: 'call', op: 'start', app: 'Zoom', by: 'automatic' }])")
     _until(pg, "() => FridayCamera.state.status === 'off' && !FridayCamera.stream && !isHologramMode",
            "the webcam was not released for the call", 3)
@@ -121,7 +130,7 @@ def test_the_call_ending_brings_the_camera_and_the_scene_back(page):
     _until(pg, "() => __cam.calls > %d && isHologramMode && " % calls + _cam.LIVE_WITH_FACE[6:],
            "tracking that was on did not come back after the call", 8)
     assert not pg.evaluate("__chip()")["shown"]
-    assert _frames_advance(pg) > 3, "the scene did not resume after the call"
+    _drawing(pg, "the scene did not resume after the call")
     assert pg.evaluate("window.__voice.on") is False, "voice must not auto-start after a call"
 
 
