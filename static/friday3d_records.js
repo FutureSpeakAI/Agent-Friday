@@ -20,6 +20,11 @@
  */
 (function () {
   'use strict';
+  // Her name and the product's, as the page gives them (audit Y1); where a
+  // page does not give them (a fixture, a test) the defaults stand.
+  const W = typeof window !== 'undefined' ? window : {};
+  const fridayName = () => (typeof W.fridayName === 'function' ? W.fridayName() : 'Friday');
+  const FRIDAY_BRAND = W.FRIDAY_BRAND || { name: 'Agent Friday™' };
   if (window.Friday3DToggle) return;
   const F = window.Friday3D;
   if (!F) return;
@@ -38,7 +43,7 @@
   const colorFor = key => { let x = 0; for (const c of String(key)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return PALETTE[x % PALETTE.length]; };
   const json = url => api(url).then(r => r.json());
   const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    .then(r => r.json().then(j => ({ ok: r.ok && j.status !== 'error', j }), () => ({ ok: false, j: { message: 'Friday answered ' + r.status } })));
+    .then(r => r.json().then(j => ({ ok: r.ok && j.status !== 'error', j }), () => ({ ok: false, j: { message: (fridayName() + ' answered ') + r.status } })));
   const nav = (workspace, extra) => window.fridayRunActions && window.fridayRunActions([Object.assign({ type: 'navigate', workspace }, extra || {})]);
 
   const V = {
@@ -68,7 +73,7 @@
   SOURCES.models = {
     label: 'Model library', openLabel: 'Show in Model Browser', views: ['ring', 'cluster', 'wall', 'orbit'],
     empty: 'No models in the catalog yet.', noun: 'models', intro: 'center',
-    blurb: 'Every model Friday can route to. Filter to the ones that are ready.',
+    blurb: ('Every model ' + fridayName() + ' can route to. Filter to the ones that are ready.'),
     sorts: {
       context: { label: 'Longest context', cmp: desc(m => +m.context_window || 0) },
       price: { label: 'Cheapest', cmp: by(m => m.free ? 0 : m.price_in != null ? +m.price_in : 1e9) },
@@ -280,7 +285,7 @@
     groupings: {
       type: { label: 'kind', key: e => e.conflict ? 'Clashes' : e.type === 'career' ? 'Career' : 'Everyday',
         style: k => ({ color: { Clashes: 0xef4444, Career: 0x7b61ff, Everyday: BRAND.cyan }[k] }) },
-      source: { label: 'calendar', key: e => e.source === 'google' ? 'Google' : 'Friday' }
+      source: { label: 'calendar', key: e => e.source === 'google' ? 'Google' : fridayName() }
     },
     detail: e => [['When', e.all_day ? e.day + ' (all day)' : fmtDate(secs(e.start_time)) + (e.end_time ? ' – ' + hhmm(secs(e.end_time)) : '')],
       ['Where', e.location], ['With', (e.attendees || []).join(', ')], ['Clashes', e.conflict ? 'overlaps another event' : null],
@@ -298,7 +303,7 @@
   SOURCES.messages = {
     label: 'Messages', openLabel: 'Open thread', views: ['stack', 'river', 'constellation', 'time', 'cluster', 'wall'],
     empty: 'No messages to show.', noun: 'messages', intro: 'deal', carryIco: '✉',
-    zoneNote: 'in Friday only',
+    zoneNote: ('in ' + FRIDAY_BRAND.name + ' only'),
     blurb: 'Your inbox dealt into piles by lane. Drag cards onto a zone, or lasso several. A card moves only once the change is made (in Gmail too where the account allows it) and bounces back if it is refused. Everything can be undone; Trash is Gmail’s, kept 30 days. Green edges: waiting for your reply.',
     glow: m => !!m.awaiting_reply,
     sorts: {
@@ -339,13 +344,13 @@
     zones: [
       { id: 'archive', ico: '🗄', label: 'Archive', action: 'archive', away: true, done: 'Archived', inDetail: true, tip: 'Archive (in Gmail too where the account allows it)' },
       { id: 'trash', ico: '🗑', label: 'Trash', action: 'trash', away: true, done: 'Moved to Trash', inDetail: true, danger: true, tip: 'Delete: to Gmail’s Trash, kept 30 days and restorable' },
-      { id: 'snooze', ico: '⏰', label: () => 'Snooze · ' + whenShort(snoozeUntil()), action: 'snooze', away: true, done: () => 'Snoozed until ' + whenShort(snoozeUntil()), inDetail: true, tip: 'Snooze until tomorrow morning (in Friday only)' },
+      { id: 'snooze', ico: '⏰', label: () => 'Snooze · ' + whenShort(snoozeUntil()), action: 'snooze', away: true, done: () => 'Snoozed until ' + whenShort(snoozeUntil()), inDetail: true, tip: ('Snooze until tomorrow morning (in ' + FRIDAY_BRAND.name + ' only)') },
       { id: 'flag', ico: '⭐', label: 'Star', action: 'flag', patch: { flagged: true }, done: 'Starred', inDetail: true, when: m => !m.flagged, whenNot: 'Already starred.' },
       { id: 'read', ico: '✓', label: 'Read', action: 'read', patch: { unread: false }, done: 'Marked read', when: m => !!m.unread, whenNot: 'Already read.' },
       { id: 'unread', ico: '●', label: 'Unread', action: 'unread', patch: { unread: true }, done: 'Marked unread', inDetail: true, when: m => !m.unread, whenNot: 'Already unread.' }
     ].concat([['career', '💼 Career'], ['finance', '💰 Finance'], ['futurespeak', '🚀 Projects'], ['family', '👪 Family'], ['subscriptions', '📰 Subscriptions'], ['noise', '🔇 Noise']]
       .map(([k, l]) => ({ id: 'lane:' + k, ico: l.split(' ')[0], label: l.split(' ').slice(1).join(' '), lane: k, patch: { lane: k }, done: 'Moved to ' + l.split(' ').slice(1).join(' '), kind: 'lane',
-        when: m => m.lane !== k, whenNot: 'Already in that lane.', tip: 'Move to the ' + l.split(' ').slice(1).join(' ') + ' lane (Friday learns from it)' }))),
+        when: m => m.lane !== k, whenNot: 'Already in that lane.', tip: 'Move to the ' + l.split(' ').slice(1).join(' ') + (' lane (' + fridayName() + ' learns from it)') }))),
     // One zone per Gmail label (by name: each account has its own labels).
     loadZones: () => json('/api/google/accounts').then(d => {
       const accts = (d.accounts || []).filter(a => Array.isArray(a.services) ? a.services.includes('gmail') : !!(a.services && a.services.gmail));
@@ -380,7 +385,7 @@
           const before = {};
           rs.forEach(r => r.ok && Object.assign(before, r.j.before || {}));
           const bad = rs.find(r => !r.ok);
-          return { okIds: ids.filter((_, k) => rs[k].ok), before, error: bad ? (bad.j.message || 'Friday could not move that.') : '' };
+          return { okIds: ids.filter((_, k) => rs[k].ok), before, error: bad ? (bad.j.message || (fridayName() + ' could not move that.')) : '' };
         });
       }
       // Gmail itself changes too, for accounts reconnected with sending
@@ -389,13 +394,13 @@
       if (z.action === 'snooze') body.until = localIso(snoozeUntil());
       return post('/api/messages/action', body).then(r => {
         const st = Object.values((r.j && r.j.gmail_status) || {});
-        const note = z.action === 'snooze' ? 'in Friday only' : z.action === 'trash' ? 'in Gmail, kept 30 days' : st.includes('synced') && !st.includes('not_permitted') ? 'also in Gmail'
-          : st.includes('synced') ? 'in Gmail where allowed' : 'in Friday only';
+        const note = z.action === 'snooze' ? ('in ' + FRIDAY_BRAND.name + ' only') : z.action === 'trash' ? 'in Gmail, kept 30 days' : st.includes('synced') && !st.includes('not_permitted') ? 'also in Gmail'
+          : st.includes('synced') ? 'in Gmail where allowed' : ('in ' + FRIDAY_BRAND.name + ' only');
         const bad = Object.values((r.j && r.j.not_changed) || {});
         return { okIds: r.ok ? (r.j.ids || ids) : [], note,
           before: r.ok ? { states: r.j.before || {}, gmail: r.j.gmail_changes || {} } : {},
           error: !r.ok ? (r.j.message || 'That did not work.') : bad.length ? 'Gmail refused: ' + bad[0] : '' };
-      }, e => ({ okIds: [], before: {}, error: "Couldn't reach Friday: " + e }));
+      }, e => ({ okIds: [], before: {}, error: ("Couldn't reach " + fridayName() + ": ") + e }));
     },
     undo: before => before && before.gmailMulti
       ? Promise.all(before.gmailMulti.map(g => post('/api/mail/modify/undo', g).then(r => r.ok && r.j.status === 'ok', () => false))).then(oks => oks.every(Boolean))
@@ -744,7 +749,7 @@
           if (fnRef.current.afterAct) fnRef.current.afterAct(true);
           setToast({ text: done + noun + ((res.note || src.zoneNote) ? ' (' + (res.note || src.zoneNote) + ')' : '') + (failed ? ' · ' + failed + ' not changed: ' + res.error : ''), undo: u, err: !!failed });
         });
-      }).catch(() => { busyRef.current = false; group.forEach(g => eng.setHeld(relIndex(g.rel), false)); setToast({ text: 'Nothing changed: Friday could not be reached.', err: true }); });
+      }).catch(() => { busyRef.current = false; group.forEach(g => eng.setHeld(relIndex(g.rel), false)); setToast({ text: ('Nothing changed: ' + fridayName() + ' could not be reached.'), err: true }); });
     };
     const undo = u => {
       u = u || undoRef.current.pop();

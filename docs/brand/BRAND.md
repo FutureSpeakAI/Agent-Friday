@@ -29,6 +29,15 @@ replies, her greetings, the cards that speak for her. A brand surface never
 shows her own name in place of the product's, and conversation never calls her
 by the product's name.
 
+In the interface every line that speaks of her says `fridayName()`: her name
+through `fridayNameInText` (the default "AGENT FRIDAY" reads "Agent Friday" in a
+sentence), kept current from settings and remembered in the browser. A line about
+the program itself (its address, certificate, process, files, updates, other
+installations, what lives in it rather than in Gmail) names the product,
+`FRIDAY_BRAND.name`. `tests/unit/test_her_name.py` reads every string of the
+page, Mail and the 3D views and fails on a new one that names her "Friday" by
+hand.
+
 | Constant (`brand.py`) | Value | Use |
 |---|---|---|
 | `PRODUCT` | Agent Friday | What audio and models get. Never shown. |
@@ -317,6 +326,6 @@ occurrences in `index.html`.
 - **Green that is not ok.** `#3effa1` (11) and the camera indicator's `#00ff66` (2) stand in for ok green.
 - **Other one-offs.** The decorative amber `#e0a030` (1) sits outside the token set.
 - **Destructive buttons.** A destructive button is deny magenta in some places (Remove, Delete Range, Clear) and error red in others (Settings danger, Knowledge's Delete, the 3D view's Trash). One of the two is the rule; the semantic migration decides which.
-- **Her name.** About 250 UI strings write her name as "Friday". For the owner that is her name; for anyone who named her otherwise it is not. Conversation uses her name, so these are to read `settings.agent_name`.
+- **Her name.** Done: the interface reads her name through `fridayName()` (see above). Left by rule: the scene's two lines and the avatar's Evolution section, which belong to the avatar session.
 - **States, headings, shortcuts.** Empty and loading lines have no shared component, section headings mix case, and there is no list of the global shortcuts. See [fidelity-audit.md](fidelity-audit.md).
 - **Literals in general.** `#00d4ff`, `rgba(0,212,255,…)`, `#f59e0b`, `#00ff80` and `#ff0080` are still spelled as literals throughout `index.html` and `ui_parts/app.html`. The tokens exist so those can move to `var(--fr-*)` without a value changing.

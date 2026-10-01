@@ -29,6 +29,11 @@
  */
 (function () {
   'use strict';
+  // Her name and the product's, as the page gives them (audit Y1); where a
+  // page does not give them (a fixture, a test) the defaults stand.
+  const W = typeof window !== 'undefined' ? window : {};
+  const fridayName = () => (typeof W.fridayName === 'function' ? W.fridayName() : 'Friday');
+  const FRIDAY_BRAND = W.FRIDAY_BRAND || { name: 'Agent Friday™' };
   if (window.FridayMailPanel) return;
   const h = React.createElement;
   const { useState, useEffect, useRef, useCallback } = React;
@@ -48,7 +53,7 @@
   const laneLabel = id => (LANES[id] || [id])[0];
   // Gmail's folders; '' is Friday's own triage view.
   const FOLDERS = [
-    ['', '✨', 'Priority', 'Friday’s triage: what is recent or unread, sorted into lanes'],
+    ['', '✨', 'Priority', (fridayName() + '’s triage: what is recent or unread, sorted into lanes')],
     ['inbox', '📥', 'Inbox'], ['starred', '⭐', 'Starred'], ['important', '❗', 'Important'], ['snoozed', '⏰', 'Snoozed', 'Snoozed in Gmail itself'],
     ['sent', '📤', 'Sent'], ['drafts', '📝', 'Drafts'], ['scheduled', '🗓', 'Scheduled'], ['all', '🗂', 'All Mail'],
     ['spam', '⚠', 'Spam'], ['trash', '🗑', 'Trash']
@@ -495,14 +500,14 @@
       post('/api/mail/draft', fields()).then(({ ok, j }) => {
         setDrafting(false);
         say(ok ? 'Saved to Gmail Drafts (' + (fromAcct.email || fromAcct.label || 'account') + '). Nothing was sent.' : (j.message || 'Gmail did not save the draft.'));
-      }).catch(() => { setDrafting(false); say('Could not reach Friday.'); });
+      }).catch(() => { setDrafting(false); say(('Could not reach ' + fridayName() + '.')); });
     };
     // Undo send: take an approved message back while it waits.
     const undoSend = () => {
       if (!state || !state.approval_id) return;
       post('/api/mail/held/' + encodeURIComponent(state.approval_id) + '/cancel', {}).then(({ ok, j }) => {
         setState(s => Object.assign({}, s, ok ? { status: 'cancelled', message: 'Taken back. Nothing was sent.' } : { message: j.message || 'Too late to take it back.' }));
-      }).catch(() => say('Could not reach Friday.'));
+      }).catch(() => say(('Could not reach ' + fridayName() + '.')));
     };
     const request = () => {
       const bad = splitAddrs(to).concat(splitAddrs(cc), splitAddrs(bcc)).filter(a => !/^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/.test(addrOf(a)));
@@ -512,9 +517,9 @@
       post('/api/mail/request', Object.assign(fields(), { requested_by: 'ui:messages',
         send_at: sendAt ? new Date(sendAt).toISOString() : null })).then(({ ok, j }) => {
         setBusy(false);
-        if (!ok || !j.approval_id) { setState({ status: 'refused', message: j.message || 'Friday could not queue this message.' }); return; }
+        if (!ok || !j.approval_id) { setState({ status: 'refused', message: j.message || (fridayName() + ' could not queue this message.') }); return; }
         setState({ approval_id: j.approval_id, status: j.approval_status, message: 'Waiting for your approval. Nothing has been sent yet.' });
-      }).catch(() => { setBusy(false); setState({ status: 'refused', message: 'Could not reach Friday.' }); });
+      }).catch(() => { setBusy(false); setState({ status: 'refused', message: ('Could not reach ' + fridayName() + '.') }); });
     };
     // follow the card: approved → sent (or refused), denied → not sent
     useEffect(() => {
@@ -546,7 +551,7 @@
       h('div', { className: 'fm-compose-h' }, title,
         h('button', { className: 'btn fm-btn', onClick: onClose, 'aria-label': 'Close compose' }, '✕')),
       !canSend.length && h('div', { className: 'fm-banner warn', style: { margin: 10 } },
-        'Neither connected account has allowed Friday to send. You can write this and file the approval card, but it cannot go out until you reconnect an account with “allow sending” ticked (Settings › Connectors › Google).'),
+        ('Neither connected account has allowed ' + fridayName() + ' to send. You can write this and file the approval card, but it cannot go out until you reconnect an account with “allow sending” ticked (Settings › Connectors › Google).')),
       h('div', { className: 'fm-field' }, h('label', null, 'From'),
         h('select', { value: from, onChange: e => setFrom(e.target.value) },
           (canSend.length ? canSend : accounts).map(a => h('option', { key: a.id, value: a.id }, (a.label || '') + (a.email ? ' <' + a.email + '>' : '') + (canSend.find(c => c.id === a.id) ? '' : ' (read-only)'))))),
@@ -584,7 +589,7 @@
   // Friday's own, with no scripts, and asks the browser to print it.
   function printThread(subject, messages, showImages) {
     const w = window.open('', '_blank');
-    if (!w) { alert('The browser blocked the print window. Allow pop-ups for Friday and try again.'); return; }
+    if (!w) { alert(('The browser blocked the print window. Allow pop-ups for ' + FRIDAY_BRAND.name + ' and try again.')); return; }
     const clean = html => {
       const d = new DOMParser().parseFromString(html || '', 'text/html');
       d.querySelectorAll('script,iframe,frame,object,embed,form,base,link,meta').forEach(n => n.remove());
@@ -668,7 +673,7 @@
       setData(d => (d && (d.query || '') === (q || '') && (d.folder || '') === (f || '')) ? d : null);
       const url = '/api/messages?limit=80' + (q ? '&q=' + encodeURIComponent(q) : '') + (f ? '&folder=' + encodeURIComponent(f) : '');
       const done = d => { if (n !== seq.current) return; if (d) { d.query = q || ''; d.folder = f || ''; } setData(d); setLoading(false); };
-      api(url).then(r => r.json()).then(done).catch(e => done({ status: 'error', search_failed: true, error: "Couldn't reach Friday: " + e }));
+      api(url).then(r => r.json()).then(done).catch(e => done({ status: 'error', search_failed: true, error: ("Couldn't reach " + fridayName() + ": ") + e }));
       if (!q && !f) api('/api/messages/stats').then(r => r.json()).then(d => { setStats(d); if (d.actionable != null) window._fridayMsgActionable = d.actionable; }).catch(() => {});
     }, []);
     useEffect(() => { load(query, folder); setSel(new Set()); setFocus(0); }, [query, folder]);
@@ -790,11 +795,11 @@
         }
         const ids = j.ids || asked;                    // conversations Gmail refused are left as they were
         const st = Object.values(j.gmail_status || {});
-        const where = ['snooze', 'mute', 'unmute'].includes(action) ? ' (in Friday only)'
+        const where = ['snooze', 'mute', 'unmute'].includes(action) ? (' (in ' + FRIDAY_BRAND.name + ' only)')
           : ['trash', 'untrash', 'spam', 'notspam', 'important', 'unimportant'].includes(action) ? ' in Gmail'
             : st.includes('synced') && !st.includes('not_permitted') ? ' (also in Gmail)'
-              : st.includes('synced') ? ' (in Gmail where allowed; the rest in Friday only)'
-                : ' (in Friday only' + (st.includes('not_permitted') ? ' — Reconnect with sending to change Gmail too' : '') + ')';
+              : st.includes('synced') ? (' (in Gmail where allowed; the rest in ' + FRIDAY_BRAND.name + ' only)')
+                : (' (in ' + FRIDAY_BRAND.name + ' only') + (st.includes('not_permitted') ? ' — Reconnect with sending to change Gmail too' : '') + ')';
         const refused = Object.keys(refusedMap).length;
         const leaves = AWAY.includes(action) || (folder === 'starred' && action === 'unflag') || (folder === 'important' && action === 'unimportant');
         if (leaves) { drop(ids); if (open && ids.includes(open.card.id)) setOpen(null); }
@@ -810,7 +815,7 @@
           say(msg, ids.length ? undo : null, refused > 0);
         }
         setSel(new Set());
-      }).catch(() => { setBusyIds(s => { const n = new Set(s); asked.forEach(i => n.delete(i)); return n; }); say('Could not reach Friday. Nothing changed.', null, true); });
+      }).catch(() => { setBusyIds(s => { const n = new Set(s); asked.forEach(i => n.delete(i)); return n; }); say(('Could not reach ' + fridayName() + '. Nothing changed.'), null, true); });
     };
     const moveLane = (cards, newLane) => {
       cards = cards.filter(Boolean);
@@ -818,12 +823,12 @@
         const before = {};
         const moved = cards.filter((c, k) => rs[k].ok);
         rs.forEach(r => r.ok && Object.assign(before, (r.j && r.j.before) || {}));
-        if (!moved.length) { say('Nothing moved: ' + ((rs[0] && rs[0].j && rs[0].j.message) || 'Friday refused the change.'), null, true); return; }
+        if (!moved.length) { say('Nothing moved: ' + ((rs[0] && rs[0].j && rs[0].j.message) || (fridayName() + ' refused the change.')), null, true); return; }
         patch(moved.map(c => c.id), m => Object.assign({}, m, { lane: newLane }));
         if (open && moved.some(c => c.id === open.card.id)) setOpen(o => o && Object.assign({}, o, { card: Object.assign({}, o.card, { lane: newLane }) }));
         const undo = { before, cards: moved.map(c => Object.assign({}, c)), label: 'move' };
         undoStack.current.push(undo);
-        say('Moved to ' + laneLabel(newLane) + (moved.length > 1 ? ' · ' + moved.length + ' conversations' : '') + ' (Friday learns from it)' + (moved.length < cards.length ? ' · ' + (cards.length - moved.length) + ' could not be moved' : ''), undo);
+        say('Moved to ' + laneLabel(newLane) + (moved.length > 1 ? ' · ' + moved.length + ' conversations' : '') + (' (' + fridayName() + ' learns from it)') + (moved.length < cards.length ? ' · ' + (cards.length - moved.length) + ' could not be moved' : ''), undo);
         setSel(new Set());
       });
     };
@@ -836,7 +841,7 @@
       cards.forEach(c => { (byAcct[c.account_id] = byAcct[c.account_id] || []).push(c); });
       const accts = Object.keys(byAcct);
       Promise.all(accts.map(aid => loadLabels(aid).then(list => {
-        if (!canModify(aid)) return { aid, err: (acctOf(aid) || {}).label + ' has not allowed Friday to change Gmail labels' };
+        if (!canModify(aid)) return { aid, err: (acctOf(aid) || {}).label + (' has not allowed ' + fridayName() + ' to change Gmail labels') };
         const lab = list.find(l => l.name === name);
         if (!lab) return { aid, err: (acctOf(aid) || {}).label + ' has no label “' + name + '”' };
         const tids = byAcct[aid].map(c => c.thread_id || c.gmail_id);
@@ -862,7 +867,7 @@
       }))).then(made => {
         if (!made.some(Boolean)) { say('Gmail did not create the label (the account may be read-only).', null, true); return; }
         setTimeout(() => setLabel(cards, name, true), 50);
-      }).catch(() => say('Could not reach Friday.', null, true));
+      }).catch(() => say(('Could not reach ' + fridayName() + '.'), null, true));
     };
     const undo = u => {
       u = u || undoStack.current.pop();
@@ -896,7 +901,7 @@
       if (m.unread) act([m], 'read', { silent: true });
       api('/api/messages/' + encodeURIComponent(m.thread_id || m.id) + (m.account_id ? '?account=' + encodeURIComponent(m.account_id) : ''))
         .then(r => r.json()).then(res => setOpen(o => o && o.card.id === m.id ? { card: o.card, loading: false, res } : o))
-        .catch(e => setOpen(o => o && o.card.id === m.id ? { card: o.card, loading: false, res: { status: 'error', error: "Couldn't reach Friday: " + e } } : o));
+        .catch(e => setOpen(o => o && o.card.id === m.id ? { card: o.card, loading: false, res: { status: 'error', error: ("Couldn't reach " + fridayName() + ": ") + e } } : o));
     };
 
     // The quoted original goes into an editor in Friday's own page, outside
@@ -954,8 +959,8 @@
       const m = open && open.card; if (!m) return;
       setAiDraft({ busy: true, text: '' });
       post('/api/messages/draft', { id: m.id, sender: m.sender_email || m.sender, subject: m.subject, snippet: m.snippet, lane: m.lane })
-        .then(({ j }) => setAiDraft({ busy: false, text: j.draft || '', error: j.draft ? null : (j.message || 'Friday could not draft a reply.') }))
-        .catch(() => setAiDraft({ busy: false, text: '', error: 'Friday could not draft a reply.' }));
+        .then(({ j }) => setAiDraft({ busy: false, text: j.draft || '', error: j.draft ? null : (j.message || (fridayName() + ' could not draft a reply.')) }))
+        .catch(() => setAiDraft({ busy: false, text: '', error: (fridayName() + ' could not draft a reply.') }));
     };
 
     // ── unsubscribe, original, filter-like-these ──
@@ -972,7 +977,7 @@
           if (opt.status !== 'ok') { say(opt.message || 'This message does not say how to unsubscribe.', null, true); return; }
           setDialog({ kind: 'unsub', card, mid, opt });
         });
-      }).catch(() => say('Could not reach Friday.', null, true));
+      }).catch(() => say(('Could not reach ' + fridayName() + '.'), null, true));
     };
     const doUnsubscribe = d => {
       setDialog(null);
@@ -986,7 +991,7 @@
         }
         if (j.status === 'next' && j.method === 'link') { openLink(j.url); return; }
         say(j.message || 'Could not unsubscribe.', null, true);
-      }).catch(() => say('Could not reach Friday.', null, true));
+      }).catch(() => say(('Could not reach ' + fridayName() + '.'), null, true));
     };
     const showOriginal = (card, msg) => {
       setDialog({ kind: 'original', loading: true, card, msg });
@@ -997,7 +1002,7 @@
     const filterLike = card => {
       const who = card.sender_email || addrOf(card.sender);
       setFolder(''); setQInput('from:' + who); setQuery('from:' + who);
-      say('Showing everything from ' + who + '. Saving this as a Gmail filter needs Gmail’s settings permission, which Friday has not asked for.');
+      say('Showing everything from ' + who + ('. Saving this as a Gmail filter needs Gmail’s settings permission, which ' + fridayName() + ' has not asked for.'));
     };
     const toggleOriginal = sender => {
       const k = (sender || '').toLowerCase();
@@ -1015,10 +1020,10 @@
       const r = row ? row.getBoundingClientRect() : { left: 200, bottom: 200, width: 0 };
       return { x: r.left + Math.min(260, r.width / 2), y: r.bottom };
     };
-    const snoozeMenu = (cards, p) => setMenu(Object.assign({ title: 'Snooze until', items: [{ head: 'Snooze until… (in Friday only)' }].concat(
+    const snoozeMenu = (cards, p) => setMenu(Object.assign({ title: 'Snooze until', items: [{ head: ('Snooze until… (in ' + FRIDAY_BRAND.name + ' only)') }].concat(
       snoozeChoices().map(([label, d]) => ({ label, hint: fmtUntil(d), ico: '⏰', onClick: () => act(cards, 'snooze', { until: localIso(d), untilText: fmtUntil(d) }) })),
       [{ sep: true }, { label: 'Pick date & time…', ico: '📅', onClick: () => { setDialog({ kind: 'snooze', cards }); } }]) }, p));
-    const laneMenu = (cards, p) => setMenu(Object.assign({ title: 'Move to lane', items: [{ head: 'Friday’s lanes (Friday learns from it)' }].concat(
+    const laneMenu = (cards, p) => setMenu(Object.assign({ title: 'Move to lane', items: [{ head: (fridayName() + '’s lanes (' + fridayName() + ' learns from it)') }].concat(
       Object.keys(LANES).filter(k => k !== 'all').map(k => ({ label: LANES[k][0], ico: LANES[k][1], checked: cards.length === 1 ? cards[0].lane === k : undefined, onClick: () => moveLane(cards, k) }))) }, p));
     const labelMenu = (cards, p) => {
       const aids = Array.from(new Set(cards.map(c => c.account_id)));
@@ -1029,20 +1034,20 @@
         setMenu(Object.assign({ title: 'Label as', items: [{ head: 'Gmail labels' + (ro.length ? ' (read-only account)' : '') }].concat(
           names.length ? names.map(n => ({ label: n, checked: has(n), off: ro.length === aids.length, title: ro.length === aids.length ? 'Reconnect with sending to label in Gmail' : '', onClick: () => setLabel(cards, n, !has(n)) })) : [{ label: 'No labels yet', off: true }],
           [{ sep: true }, { label: 'New label…', ico: '＋', off: ro.length === aids.length, onClick: () => newLabel(cards) },
-            { sep: true }, { head: 'Friday’s lanes' }],
+            { sep: true }, { head: (fridayName() + '’s lanes') }],
           Object.keys(LANES).filter(k => k !== 'all').map(k => ({ label: LANES[k][0], ico: LANES[k][1], checked: cards.length === 1 ? cards[0].lane === k : undefined, onClick: () => moveLane(cards, k) }))) }, p));
       });
     };
     const moreItems = (cards) => {
       const one = cards.length === 1 ? cards[0] : null;
       return [
-        { label: 'Mute', ico: '🔕', hint: 'm', title: 'Hide this conversation and keep new replies out of view (in Friday only)', onClick: () => act(cards, 'mute') },
+        { label: 'Mute', ico: '🔕', hint: 'm', title: ('Hide this conversation and keep new replies out of view (in ' + FRIDAY_BRAND.name + ' only)'), onClick: () => act(cards, 'mute') },
         inSpam ? { label: 'Not spam', ico: '✅', onClick: () => act(cards, 'notspam') } : { label: 'Report spam', ico: '⚠', hint: '!', onClick: () => act(cards, 'spam') },
         { label: cards.every(c => c.important) ? 'Mark not important' : 'Mark important', ico: '❗', hint: cards.every(c => c.important) ? '-' : '+', onClick: () => act(cards, cards.every(c => c.important) ? 'unimportant' : 'important') },
         one && { sep: true },
         one && one.list_unsubscribe && { label: 'Unsubscribe…', ico: '✂', title: 'Leave this mailing list (confirms first)', onClick: () => unsubscribe(one) },
         one && { label: 'Filter messages like these', ico: '⧩', onClick: () => filterLike(one) },
-        one && { label: 'Block sender', ico: '⛔', off: true, title: 'Blocking is a Gmail filter; it needs Gmail’s settings permission, which Friday has not asked for yet.' }
+        one && { label: 'Block sender', ico: '⛔', off: true, title: ('Blocking is a Gmail filter; it needs Gmail’s settings permission, which ' + fridayName() + ' has not asked for yet.') }
       ].filter(Boolean);
     };
     const contextMenu = (m, e) => {
@@ -1188,15 +1193,15 @@
         CATEGORIES.map(([k, l]) => h('span', { key: k, role: 'tab', className: 'fm-chip' + (folder === 'category:' + k ? ' on' : ''), onClick: () => setFolder('category:' + k) }, l))),
       // honest status
       readOnlyAccts.length > 0 && h('div', { className: 'fm-banner warn', 'data-testid': 'fm-readonly' },
-        '🔒 Read-only in Gmail: ' + readOnlyAccts.map(a => a.label || a.email).join(', ') + '. Delete, spam, importance and labels need Gmail’s permission to change mail; archive, star and read changes there stay in Friday.',
+        '🔒 Read-only in Gmail: ' + readOnlyAccts.map(a => a.label || a.email).join(', ') + ('. Delete, spam, importance and labels need Gmail’s permission to change mail; archive, star and read changes there stay in ' + FRIDAY_BRAND.name + '.'),
         h('button', { className: 'btn fm-btn', onClick: openReconnect, style: { marginLeft: 'auto' } }, 'Reconnect with sending…')),
       loading && !data && h('div', { className: 'fm-banner info' }, query ? 'Searching Gmail for “' + query + '”…' : folder ? 'Reading ' + folderName(folder) + '…' : 'Reading your mail…'),
       failed && h('div', { className: 'fm-banner err', role: 'alert' }, '⚠ ' + (data.error || "Couldn't read mail.") + ' This is not an empty inbox — the read did not happen.'),
       !failed && data && data.partial && h('div', { className: 'fm-banner warn' }, '⚠ Showing only part of your mail: ' + errs.map(e => (e.label || 'an account') + ' — ' + e.error).join('; ')),
-      !failed && data && /^cache/.test(data.source || '') && h('div', { className: 'fm-banner warn' }, 'Showing Friday’s saved copy of your mail, not a live read: Gmail could not be reached.'),
+      !failed && data && /^cache/.test(data.source || '') && h('div', { className: 'fm-banner warn' }, ('Showing ' + fridayName() + '’s saved copy of your mail, not a live read: Gmail could not be reached.')),
       !failed && data && /^legacy/.test(data.source || '') && h('div', { className: 'fm-banner warn' }, 'Showing only your main account: the read across all accounts failed.'),
       query && !failed && data && h('div', { className: 'fm-banner info' }, 'Gmail search for “' + query + '”' + (folder ? ' in ' + folderName(folder) : '') + ': ' + (data.total || 0) + ' result' + (data.total === 1 ? '' : 's') + ' across ' + (acct === 'all' ? 'all accounts' : 'this account') + (data.partial ? ' (partial)' : '')),
-      inTrash && h('div', { className: 'fm-banner info' }, '🗑 Gmail’s Trash. Gmail deletes what is here for good after 30 days. Restore (e or #) puts a conversation back in the inbox. Friday never empties the Trash.'),
+      inTrash && h('div', { className: 'fm-banner info' }, ('🗑 Gmail’s Trash. Gmail deletes what is here for good after 30 days. Restore (e or #) puts a conversation back in the inbox. ' + fridayName() + ' never empties the Trash.')),
       inSpam && h('div', { className: 'fm-banner info' }, '⚠ Gmail’s Spam. “Not spam” (!) moves a conversation back to the inbox.'),
       // bulk bar
       sel.size > 0 && h('div', { className: 'fm-bulk', role: 'toolbar', 'aria-label': 'Selected conversations' }, sel.size + ' selected',
@@ -1246,14 +1251,14 @@
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('reply'), title: 'r' }, '↩ Reply'),
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('replyAll'), title: 'a' }, '↩↩ Reply all'),
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('forward'), title: 'f' }, '↪ Forward'),
-            h('button', { className: 'btn fm-btn', onClick: fridayDraft }, '💬 Draft with Friday'),
+            h('button', { className: 'btn fm-btn', onClick: fridayDraft }, ('💬 Draft with ' + fridayName())),
             inTrash ? h('button', { className: 'btn fm-btn', onClick: () => act([open.card], 'untrash') }, '↩ Restore') : h('button', { className: 'btn fm-btn', onClick: () => act([open.card], 'archive'), title: 'e' }, '🗄 Archive'),
             !inTrash && h('button', { className: 'btn fm-btn danger', onClick: () => act([open.card], 'trash'), title: 'Delete — to Trash, kept 30 days (#)' }, '🗑 Delete'),
             h('button', { className: 'btn fm-btn', onClick: () => act([open.card], inSpam ? 'notspam' : 'spam'), title: '!' }, inSpam ? '✅ Not spam' : '⚠ Spam'),
             h('button', { className: 'btn fm-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); snoozeMenu([open.card], { x: r.left, y: r.bottom + 2 }); }, title: 'b' }, '⏰ Snooze ▾'),
             h('button', { className: 'btn fm-btn', onClick: () => act([open.card], open.card.flagged ? 'unflag' : 'flag'), title: 's' }, open.card.flagged ? '★ Unstar' : '⭐ Star'),
             h('button', { className: 'btn fm-btn', onClick: () => act([open.card], 'unread'), title: 'Shift+U' }, 'Mark unread'),
-            h('button', { className: 'btn fm-btn', 'data-testid': 'fm-label-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); labelMenu([open.card], { x: r.left, y: r.bottom + 2 }); }, title: 'Gmail labels and Friday’s lanes (l)' }, '🏷 ' + laneLabel(open.card.lane) + ' ▾'),
+            h('button', { className: 'btn fm-btn', 'data-testid': 'fm-label-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); labelMenu([open.card], { x: r.left, y: r.bottom + 2 }); }, title: ('Gmail labels and ' + fridayName() + '’s lanes (l)') }, '🏷 ' + laneLabel(open.card.lane) + ' ▾'),
             h('button', { className: 'btn fm-btn', onClick: e => {
               const r = e.currentTarget.getBoundingClientRect(), msgs = (T && T.messages) || [], last = msgs[msgs.length - 1];
               setMenu({ x: r.left, y: r.bottom + 2, title: 'More', items: moreItems([open.card]).concat([{ sep: true },
@@ -1263,11 +1268,11 @@
             } }, '⋯ More'),
             h('label', { style: { fontSize: 11, color: '#8fa6c4', display: 'flex', gap: 4, alignItems: 'center' } }, h('input', { type: 'checkbox', checked: showImages, onChange: e => setShowImages(e.target.checked) }), 'Show remote images')),
           aiDraft && h('div', { className: 'fm-banner info', style: { flexDirection: 'column', alignItems: 'stretch' } },
-            aiDraft.busy ? 'Friday is drafting a reply…' : aiDraft.error ? aiDraft.error : [h('div', { key: 't', style: { whiteSpace: 'pre-wrap' } }, aiDraft.text),
+            aiDraft.busy ? (fridayName() + ' is drafting a reply…') : aiDraft.error ? aiDraft.error : [h('div', { key: 't', style: { whiteSpace: 'pre-wrap' } }, aiDraft.text),
               h('div', { key: 'b', style: { display: 'flex', gap: 6, marginTop: 6 } }, h('button', { className: 'btn fm-btn', onClick: () => startReply('reply') }, 'Use in reply'), h('button', { className: 'btn fm-btn', onClick: () => setAiDraft(null) }, 'Discard'))]),
           open.loading && h('div', { className: 'fm-banner info' }, 'Opening the thread…'),
           T && T.status !== 'ok' && h('div', { className: 'fm-banner err', role: 'alert' }, '⚠ ' + (T.error || 'Could not open this thread.')),
-          T && T.source === 'cache' && h('div', { className: 'fm-banner warn' }, 'Showing Friday’s saved copy: ' + (T.note || 'Gmail was not reachable.')),
+          T && T.source === 'cache' && h('div', { className: 'fm-banner warn' }, ('Showing ' + fridayName() + '’s saved copy: ') + (T.note || 'Gmail was not reachable.')),
           T && (T.messages || []).map(msg => {
             const who = addrOf(msg.sender), asSent = !!original[who];
             return h('div', { key: msg.id, className: 'fm-msg' },
@@ -1276,7 +1281,7 @@
                   msg.list_unsubscribe && [' · ', h('button', { key: 'u', className: 'fm-link', onClick: () => unsubscribe(open.card), title: 'Leave this mailing list (confirms first)' }, 'Unsubscribe')], h('br'),
                   msg.to && ['to ', msg.to], msg.cc && [h('br', { key: 'b' }), 'cc ', msg.cc]),
                 msg.html && h('button', { className: 'fm-link', 'data-testid': 'fm-theme-toggle', onClick: () => toggleOriginal(who),
-                  title: asSent ? 'Re-colour this sender’s mail for Friday’s dark theme' : 'Show this sender’s mail exactly as it was sent (remembered for this sender)' }, asSent ? '🌙 Match Friday’s theme' : '☀ Show original colours'),
+                  title: asSent ? ('Re-colour this sender’s mail for ' + FRIDAY_BRAND.name + '’s dark theme') : 'Show this sender’s mail exactly as it was sent (remembered for this sender)' }, asSent ? ('🌙 Match ' + FRIDAY_BRAND.name + '’s theme') : '☀ Show original colours'),
                 h('button', { className: 'fm-link', onClick: () => showOriginal(open.card, msg), title: 'The message source and all its headers' }, 'Headers')),
               h(MailBody, { html: msg.html, text: msg.body, showImages, onMailto: mailtoCompose, adapt: !asSent }),
               (msg.attachments || []).length > 0 && h('div', { className: 'fm-atts' }, msg.attachments.map(a => h('span', { key: a.attachment_id, style: { display: 'inline-flex', gap: 4 } },
@@ -1291,9 +1296,9 @@
       menu && h(Menu, { menu, onClose: () => setMenu(null) }),
       dialog && dialog.kind === 'unsub' && h(Dialog, { title: 'Unsubscribe?', onClose: () => setDialog(null) },
         h('p', null, 'Leave the mailing list that sent “' + (dialog.card.subject || '') + '”' + (dialog.opt.sender ? ' (' + dialog.opt.sender + ')' : '') + '?'),
-        h('p', { style: { color: '#ffd699' } }, dialog.opt.method === 'one_click' ? 'Friday will send the list’s own one-click unsubscribe request to ' + dialog.opt.host + '. That tells the sender this address is read.'
-          : dialog.opt.method === 'mailto' ? 'This list unsubscribes by email to ' + dialog.opt.mailto.to + '. Friday will write that message; sending it asks for your approval.'
-            : 'This list unsubscribes on its own web page (' + dialog.opt.host + '). Friday will open it in your browser.'),
+        h('p', { style: { color: '#ffd699' } }, dialog.opt.method === 'one_click' ? (fridayName() + ' will send the list’s own one-click unsubscribe request to ') + dialog.opt.host + '. That tells the sender this address is read.'
+          : dialog.opt.method === 'mailto' ? 'This list unsubscribes by email to ' + dialog.opt.mailto.to + ('. ' + fridayName() + ' will write that message; sending it asks for your approval.')
+            : 'This list unsubscribes on its own web page (' + dialog.opt.host + ('). ' + fridayName() + ' will open it in your browser.')),
         h('div', { className: 'fm-bar', style: { justifyContent: 'flex-end', marginTop: 12 } },
           h('button', { className: 'btn fm-btn', onClick: () => setDialog(null) }, 'Cancel'),
           h('button', { className: 'btn fm-btn', style: { borderColor: '#00d4ff', color: '#00d4ff' }, autoFocus: true, onClick: () => doUnsubscribe(dialog) }, 'Unsubscribe'))),
@@ -1310,7 +1315,7 @@
       dialog && dialog.kind === 'snooze' && h(SnoozePicker, { onClose: () => setDialog(null), onPick: d => { const cards = dialog.cards; setDialog(null); act(cards, 'snooze', { until: localIso(d), untilText: fmtUntil(d) }); } }),
       dialog && dialog.kind === 'reconnect' && h(Dialog, { title: 'Gmail has not allowed this yet', onClose: () => setDialog(null) },
         h('p', null, dialog.why + '.'),
-        h('p', null, 'Friday can delete (to Trash), label, report spam and mark importance in Gmail once the account is reconnected with “allow sending and mailbox changes” ticked. Nothing else about the account changes.'),
+        h('p', null, (fridayName() + ' can delete (to Trash), label, report spam and mark importance in Gmail once the account is reconnected with “allow sending and mailbox changes” ticked. Nothing else about the account changes.')),
         h('div', { className: 'fm-bar', style: { justifyContent: 'flex-end', marginTop: 12 } },
           h('button', { className: 'btn fm-btn', onClick: () => setDialog(null) }, 'Not now'),
           h('button', { className: 'btn fm-btn', style: { borderColor: '#00d4ff', color: '#00d4ff' }, onClick: () => { setDialog(null); openReconnect(); } }, 'Open Settings › Connectors'))),
@@ -1319,7 +1324,7 @@
          ['s', 'star / unstar'], ['+ / -', 'important / not'], ['Shift+U', 'mark unread'], ['Shift+I', 'mark read'], ['b', 'snooze…'], ['l', 'label…'], ['v', 'move to lane…'], ['m', 'mute'],
          ['z', 'undo'], ['r', 'reply'], ['a', 'reply all'], ['f', 'forward'], ['c', 'compose'], ['/', 'search'], ['g', 'refresh'], ['?', 'this help'], ['Esc', 'close / clear'], ['right-click', 'every action']]
           .map(([k, d]) => h('div', { key: k, style: { breakInside: 'avoid', margin: '3px 0' } }, h('kbd', null, k), d)),
-        h('div', { style: { marginTop: 10, color: '#7f93ad', columnSpan: 'all' } }, 'Your own clicks act at once and can be undone (Z). Delete moves to Gmail’s Trash, kept 30 days; nothing here deletes for good. Delete, spam, importance and labels need an account reconnected with sending; archive, star and read there stay in Friday. Snooze and mute are Friday’s own. Sending always waits for your approval, then 10 seconds you can take it back in.'))),
+        h('div', { style: { marginTop: 10, color: '#7f93ad', columnSpan: 'all' } }, ('Your own clicks act at once and can be undone (Z). Delete moves to Gmail’s Trash, kept 30 days; nothing here deletes for good. Delete, spam, importance and labels need an account reconnected with sending; archive, star and read there stay in ' + FRIDAY_BRAND.name + '. Snooze and mute are ' + FRIDAY_BRAND.name + '’s own. Sending always waits for your approval, then 10 seconds you can take it back in.')))),
       toast && h('div', { className: 'fm-toast' + (toast.err ? ' err' : ''), role: 'status' }, toast.text,
         toast.undo && h('button', { className: 'btn fm-btn', onClick: () => undo(toast.undo) }, 'Undo (z)')));
   }
@@ -1330,7 +1335,7 @@
     const d = new Date(v), ok = !isNaN(d) && d.getTime() > Date.now();
     return h(Dialog, { title: 'Snooze until', onClose },
       h('input', { type: 'datetime-local', value: v, onChange: e => setV(e.target.value), style: { background: '#0b1220', color: '#e6f0ff', border: '1px solid #24406a', borderRadius: 6, padding: 6, colorScheme: 'dark' }, 'aria-label': 'Snooze until' }),
-      h('div', { style: { marginTop: 8, color: '#8fa6c4', fontSize: 11 } }, 'Snooze is Friday’s own: the conversation leaves Friday’s view and comes back then. Gmail is not changed.'),
+      h('div', { style: { marginTop: 8, color: '#8fa6c4', fontSize: 11 } }, ('Snooze is ' + FRIDAY_BRAND.name + '’s own: the conversation leaves ' + FRIDAY_BRAND.name + '’s view and comes back then. Gmail is not changed.')),
       h('div', { className: 'fm-bar', style: { justifyContent: 'flex-end', marginTop: 12 } },
         h('button', { className: 'btn fm-btn', onClick: onClose }, 'Cancel'),
         h('button', { className: 'btn fm-btn', disabled: !ok, onClick: () => onPick(d), style: { borderColor: '#00d4ff', color: '#00d4ff' } }, 'Snooze')));

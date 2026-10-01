@@ -118,7 +118,7 @@ everything reachable from the keyboard), and the brand check in BRAND.md.
 
 | # | Finding | This pass |
 |---|---|---|
-| Y1 | About 250 UI strings write her name as "Friday" ("Discuss with Friday", "Ask Friday anything…"). For the owner that is her name; for someone who named her otherwise it is not. BRAND.md: conversation uses her name. | Left: a helper that reads `settings.agent_name`, and a sweep, for the next pass. |
+| Y1 | About 250 UI strings write her name as "Friday" ("Discuss with Friday", "Ask Friday anything…"). For the owner that is her name; for someone who named her otherwise it is not. BRAND.md: conversation uses her name. | **Fixed**: `fridayName()` (block `fridayHerName`) gives her name as the owner set it, kept from settings and remembered in the browser; 243 strings in the page, 207 in the mirror and 53 in Mail and the 3D views read it, and the ones about the program itself name the product (`FRIDAY_BRAND.name`). Left as written: weekdays, a value the server sends, her name's own default, a log, and the scene's and the avatar's own lines (the avatar session's). `test_her_name.py` fails on any new hard-coded "Friday". |
 
 ## Left by rule
 

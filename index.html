@@ -8293,7 +8293,7 @@ function fridayMicBlockedReason() {
     if (window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) return '';
     const la = window.__FRIDAY_LOCAL_ADDRESS__ || {};
     const where = la.secure && la.origin ? la.origin : la.local || 'http://localhost:3000';
-    return 'This address is not secure, so the browser allows no microphone or camera here. Open Friday at ' + where + ' for voice' + (la.secure ? '.' : ', or make this address secure in Settings \u2192 General \u2192 Local address.');
+    return ('This address is not secure, so the browser allows no microphone or camera here. Open ' + FRIDAY_BRAND.name + ' at ') + where + ' for voice' + (la.secure ? '.' : ', or make this address secure in Settings \u2192 General \u2192 Local address.');
   } catch (e) {
     return '';
   }
@@ -9684,6 +9684,28 @@ function fridaySceneKey(e) {
   return !!e && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
 }
 /* fridayShortcuts:end */
+/* fridayHerName:begin */
+// ═══ HER NAME ═══
+// Every line of the page that speaks of her reads her name as the owner gave
+// it (audit Y1); the product stays Agent Friday™ (FRIDAY_BRAND.name). App keeps
+// the name current from settings, and the last one seen is kept in this
+// browser, so a reload does not show the default first.
+function fridayName() {
+  return fridayNameInText(window.__FRIDAY_AGENT_NAME);
+}
+function fridaySetName(name) {
+  const n = String(name || '').trim();
+  if (!n || n === window.__FRIDAY_AGENT_NAME) return;
+  window.__FRIDAY_AGENT_NAME = n;
+  try {
+    localStorage.setItem('friday_agent_name', n);
+  } catch (_) {}
+}
+try {
+  window.__FRIDAY_AGENT_NAME = window.__FRIDAY_AGENT_NAME || localStorage.getItem('friday_agent_name') || '';
+} catch (_) {}
+window.fridayName = fridayName;
+/* fridayHerName:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
 function FridayCountdowns({
@@ -9847,7 +9869,7 @@ function fridayStandDownBanner(state) {
     }
     bar.innerHTML = '';
     var label = document.createElement('span');
-    label.textContent = '\u23FB  Friday is stood down \u2014 the machine is yours. ' +
+    label.textContent = ('\u23FB  ' + fridayName() + ' is stood down \u2014 the machine is yours. ') +
       'Local models are unloaded and background jobs are paused.';
     var btn = document.createElement('button');
     btn.textContent = 'Resume';
@@ -9860,7 +9882,7 @@ function fridayStandDownBanner(state) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ level: 'working' }),
       }).then(function (r) { return r.json(); }).then(function (d) {
-        fridayToast((d && d.message) || 'Friday is back.');
+        fridayToast((d && d.message) || (fridayName() + ' is back.'));
         fridayStandDownBanner({ active: false });
       }).catch(function () {
         btn.disabled = false; btn.textContent = 'Resume';
@@ -10291,7 +10313,7 @@ function WsTools({
   onHistory
 }) {
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-    title: `Chat with Friday about ${title} \u2014 tweak the layout, add features, undo changes`,
+    title: `Chat with ${fridayName()} about ${title} \u2014 tweak the layout, add features, undo changes`,
     "aria-label": `Workspace chat for ${title}`,
     onClick: e => {
       e.stopPropagation();
@@ -10301,7 +10323,7 @@ function WsTools({
       fontSize: 12
     }
   }, "\uD83D\uDCAC"), /*#__PURE__*/React.createElement("button", {
-    title: `Talk to Friday about ${title}`,
+    title: `Talk to ${fridayName()} about ${title}`,
     "aria-label": `Start voice for ${title}`,
     onClick: e => {
       e.stopPropagation();
@@ -10336,7 +10358,7 @@ function WsCustomizedMark({
   const cust = map[id] || {};
   if (!Object.keys(cust).length) return null;
   return /*#__PURE__*/React.createElement("span", {
-    title: "Friday has customized this workspace \u2014 open \uD83D\uDCAC to tweak or revert",
+    title: (fridayName() + " has customized this workspace \u2014 open \uD83D\uDCAC to tweak or revert"),
     style: {
       marginLeft: 6,
       fontSize: 10,
@@ -10410,9 +10432,9 @@ function WsCustomBody({
     style: {
       margin: 0
     }
-  })), /*#__PURE__*/React.createElement("button", { "aria-label": "Ask Friday to remove this note", 
+  })), /*#__PURE__*/React.createElement("button", { "aria-label": ("Ask " + fridayName() + " to remove this note"), 
     onClick: () => openWsChat('remove the pinned note'),
-    title: "Ask Friday to remove this note",
+    title: ("Ask " + fridayName() + " to remove this note"),
     style: {
       background: 'none',
       border: 'none',
@@ -10937,7 +10959,7 @@ function WorkspaceChat({
     }
   };
   const reset = async () => {
-    if (!window.confirm('Reset ALL of Friday’s changes to this workspace back to default?')) return;
+    if (!window.confirm(('Reset ALL of ' + fridayName() + '’s changes to this workspace back to default?'))) return;
     try {
       const r = await fetch(`/api/workspace/${wsId}/reset`, {
         method: 'POST'
@@ -11016,7 +11038,7 @@ function WorkspaceChat({
       fontSize: 10,
       color: '#8891a8'
     }
-  }, "Shape this workspace by talking to Friday")), /*#__PURE__*/React.createElement("button", {
+  }, ("Shape this workspace by talking to " + fridayName()))), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowVer(v => !v),
     title: "Version history",
     style: {
@@ -11124,7 +11146,7 @@ function WorkspaceChat({
     style: {
       marginBottom: 10
     }
-  }, "Tell Friday what you want this workspace to be. She can restyle it, pin notes, add quick actions, or build new features \u2014 and undo anything."), STARTERS.map((s, i) => /*#__PURE__*/React.createElement("div", {
+  }, ("Tell " + fridayName() + " what you want this workspace to be. She can restyle it, pin notes, add quick actions, or build new features \u2014 and undo anything.")), STARTERS.map((s, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     onClick: () => send(s),
     className: "card",
@@ -11209,7 +11231,7 @@ function WorkspaceChat({
       marginLeft: 4,
       color: '#8891a8'
     }
-  }, "Friday is working\u2026")), /*#__PURE__*/React.createElement("div", {
+  }, (fridayName() + " is working\u2026"))), /*#__PURE__*/React.createElement("div", {
     ref: endRef
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -11224,7 +11246,7 @@ function WorkspaceChat({
     value: input,
     onChange: e => setInput(e.target.value),
     onKeyDown: e => fridayEnterSends(e, send),
-    placeholder: `Ask Friday to change ${label}…`,
+    placeholder: `Ask ${fridayName()} to change ${label}…`,
     rows: 1,
     style: {
       flex: 1,
@@ -11691,7 +11713,7 @@ function ChatSurface(props) {
       const url = fridayTabOrigin() + '/?conversation=' + encodeURIComponent(cid) + '&chrome=chat';
       const w = window.open(url, '_blank');
       if (!w) {
-        fridayToast('The browser blocked that tab. Allow pop-ups for Friday and '
+        fridayToast(('The browser blocked that tab. Allow pop-ups for ' + FRIDAY_BRAND.name + ' and ')
               + 'try again.');
         return;
       }
@@ -11772,7 +11794,7 @@ function ChatSurface(props) {
       fontSize: 12,
       marginTop: 30
     }
-  }, "Talk to Friday. Type, speak, or drop a file."), chatMsgs.map((m, i) => m.role === 'system'
+  }, ("Talk to " + fridayName() + ". Type, speak, or drop a file.")), chatMsgs.map((m, i) => m.role === 'system'
   /* B2: system lines — seat changes and other transparency notices.
      Amber, centered, unmistakably NOT Friday speaking. Never sent to
      the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
@@ -11882,7 +11904,7 @@ function ChatSurface(props) {
       color: '#888',
       marginTop: 1
     }
-  }, m.role === 'user' ? 'You' : 'Friday', " \xB7 ", m.time || '', m.via === 'voice' && /*#__PURE__*/React.createElement("span", {
+  }, m.role === 'user' ? 'You' : fridayName(), " \xB7 ", m.time || '', m.via === 'voice' && /*#__PURE__*/React.createElement("span", {
     style: {
       marginLeft: 6,
       padding: '1px 5px',
@@ -12411,7 +12433,7 @@ function ChatSurface(props) {
     onChange: setChatIn,
     // Enter sends, Shift+Enter is a new line (fridayEnterSends).
     onSend: () => sendChat(),
-    placeholder: voiceOn ? 'Voice mode active — just speak…' : 'Talk to Friday...'
+    placeholder: voiceOn ? 'Voice mode active — just speak…' : ('Talk to ' + fridayName() + '...')
   }), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
@@ -12427,7 +12449,7 @@ function ChatSurface(props) {
    shown only when it is a whole number and the label only when it is text, so
    an unexpected payload shape can never print "[object Object]". */
 function fridayTurnStatusText(turnStatus) {
-  if (!turnStatus) return "Friday is thinking";
+  if (!turnStatus) return (fridayName() + " is thinking");
   const secs = Number(turnStatus.elapsed_s) || 0;
   const m = Math.floor(secs / 60);
   const el = m >= 1 ? m + "m" : Math.round(secs) + "s";
@@ -13131,7 +13153,7 @@ function CommandPalette({
       }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
         fridayToast((d && d.message) || (ok ? 'Started.' : 'Could not start it.'),
                     { error: !ok });
-      }).catch(() => fridayToast('Could not reach Friday to start that routine.',
+      }).catch(() => fridayToast(('Could not reach ' + fridayName() + ' to start that routine.'),
                                  { error: true }));
       onClose();
     } else if (item.kind === 'contact') {
@@ -13764,7 +13786,7 @@ function SendTo({
         const r = await fetch('/api/podcasts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sources: [{ kind: 'text', text: typeof c === 'string' ? c : JSON.stringify(c, null, 1), title: personName || dataType || 'From Friday' }], length: 'short' })
+          body: JSON.stringify({ sources: [{ kind: 'text', text: typeof c === 'string' ? c : JSON.stringify(c, null, 1), title: personName || dataType || ('From ' + fridayName()) }], length: 'short' })
         });
         const d = await r.json();
         setStatus(d.status === 'ok' ? 'ok' : 'fail');
@@ -13880,7 +13902,7 @@ function TalkToFridayButton({
     setTimeout(() => setActive(false), 2000);
     const typeLabel = contentType === 'creation' ? 'creation' : contentType === 'briefing' ? 'briefing' : contentType === 'editorial' ? 'editorial' : 'article';
     const ctx = `The user wants to discuss a ${typeLabel}: "${title || 'this content'}". ${summary ? 'Brief summary: ' + String(summary).slice(0, 350) + '. ' : ''}Please start by asking: "Would you like me to read this to you, or shall we discuss it?"`;
-    const sourcesMd = `🎤 **Discussing with Friday** · ${title || ''}${contentType ? ' · ' + contentType : ''}`;
+    const sourcesMd = `🎤 **Discussing with ${fridayName()}** · ${title || ''}${contentType ? ' · ' + contentType : ''}`;
     window.fridayVoice.startAnchor({
       prompt: ctx,
       sourcesMd
@@ -13888,7 +13910,7 @@ function TalkToFridayButton({
   };
   return /*#__PURE__*/React.createElement("button", {
     onClick: onClick,
-    title: `Discuss "${title || 'this'}" with Friday`,
+    title: `Discuss "${title || 'this'}" with ${fridayName()}`,
     style: Object.assign({}, {
       fontSize: 10,
       padding: '3px 9px',
@@ -13909,7 +13931,7 @@ function TalkToFridayButton({
     style: {
       fontSize: 11
     }
-  }, "\uD83C\uDFA4"), active ? 'Starting…' : 'Discuss with Friday');
+  }, "\uD83C\uDFA4"), active ? 'Starting…' : ('Discuss with ' + fridayName()));
 }
 
 // ═══ WORKSPACES ═══
@@ -14003,7 +14025,7 @@ function CareerWS() {
         'Content-Type': 'application/json'
       },
       body: '{}'
-    }).then(r => r.json()).then(d => fridayToast(d.status === 'prepared' ? 'Prepared. Friday does not submit applications: submit it yourself on the employer’s site.' : 'Not prepared: ' + ((d.quality_gates_failed || []).join(', ') || d.error || d.status))).catch(() => {});
+    }).then(r => r.json()).then(d => fridayToast(d.status === 'prepared' ? ('Prepared. ' + fridayName() + ' does not submit applications: submit it yourself on the employer’s site.') : 'Not prepared: ' + ((d.quality_gates_failed || []).join(', ') || d.error || d.status))).catch(() => {});
   };
   if (loading) return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -14152,7 +14174,7 @@ function CareerWS() {
       fontSize: 12,
       color: '#aaa'
     }
-  }, "Job Scanner engine \u2014 ", engineJobs.length, " tracked. Scoring, dedup and resume A/B variants run locally. Friday prepares applications; you submit them."),/*#__PURE__*/React.createElement("button", {
+  }, "Job Scanner engine \u2014 ", engineJobs.length, (" tracked. Scoring, dedup and resume A/B variants run locally. " + fridayName() + " prepares applications; you submit them.")),/*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 11
@@ -19428,7 +19450,7 @@ function FSStudio() {
       color: '#666',
       marginTop: 4
     }
-  }, "Friday scaffolds via Claude Code, creates a GitHub repo, and prints Replit connect steps.")) : /*#__PURE__*/React.createElement("div", {
+  }, (fridayName() + " scaffolds via Claude Code, creates a GitHub repo, and prints Replit connect steps."))) : /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',
@@ -20607,7 +20629,7 @@ function FamilyWS() {
       fontSize: 11,
       color: '#888'
     }
-  }, "Click to set up with Friday")), /*#__PURE__*/React.createElement("button", {
+  }, ("Click to set up with " + fridayName()))), /*#__PURE__*/React.createElement("button", {
     className: "card",
     style: {
       textAlign: 'left',
@@ -23381,7 +23403,7 @@ function StudioWS() {
   // launcher (the old mis-wired "Create Now" button) is the only Studio
   // control that touches the terminal launcher, and it says so before it runs.
   const runDailyAgent = () => {
-    if (!confirm("Launch Friday's autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar.")) return;
+    if (!confirm(("Launch " + fridayName() + "'s autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar."))) return;
     fetch('/api/vibe-code/launch', {
       method: 'POST',
       headers: {
@@ -23622,7 +23644,7 @@ function StudioWS() {
       fontSize: 10,
       color: '#5a8a6a'
     }
-  }, "\u2014 age-appropriate filtering is on for everything Friday creates here. Hiding older adult content from this gallery is coming soon.")), /*#__PURE__*/React.createElement("div", {
+  }, ("\u2014 age-appropriate filtering is on for everything " + fridayName() + " creates here. Hiding older adult content from this gallery is coming soon."))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -23723,7 +23745,7 @@ function StudioWS() {
     style: {
       fontSize: 11
     },
-    title: "Opt-in agent task: Friday runs her autonomous daily creation in a Claude Code terminal. Completely separate from the prompt bar above \u2014 it does not use your prompt.",
+    title: ("Opt-in agent task: " + fridayName() + " runs her autonomous daily creation in a Claude Code terminal. Completely separate from the prompt bar above \u2014 it does not use your prompt."),
     onClick: runDailyAgent
   }, "\uD83C\uDF05 Daily creation (agent)")), logOpen && /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -24800,7 +24822,7 @@ function FederationPanel() {
       color: '#00d4ff',
       marginBottom: 3
     }
-  }, identity.display_name || 'Friday'), /*#__PURE__*/React.createElement("div", {
+  }, identity.display_name || fridayName()), /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: 'JetBrains Mono',
       fontSize: 11,
@@ -25083,7 +25105,7 @@ function MarketplaceWS() {
     text: '📝'
   })[t] || '📦';
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
-    text: "Buy, sell, and share creations with other Friday agents. Prices are in \u03C8 (psi) \u2014 Friday's internal economy currency."
+    text: ("Buy, sell, and share creations with other " + FRIDAY_BRAND.name + " agents. Prices are in \u03C8 (psi) \u2014 " + FRIDAY_BRAND.name + "'s internal economy currency.")
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -26291,7 +26313,7 @@ function WfEditor({
       return;
     }
     if (!clean.length) {
-      setErr('Say what Friday should do in at least one step.');
+      setErr(('Say what ' + fridayName() + ' should do in at least one step.'));
       return;
     }
     if (ui.repeat === 'once' && !ui.date) {
@@ -26332,7 +26354,7 @@ function WfEditor({
     style: {
       marginBottom: 10
     }
-  }, "Friday couldn't reach a model to break this into steps, so it's one step with your words. You can add steps below."), /*#__PURE__*/React.createElement("label", {
+  }, (fridayName() + " couldn't reach a model to break this into steps, so it's one step with your words. You can add steps below.")), /*#__PURE__*/React.createElement("label", {
     className: "wfx-lbl",
     htmlFor: "wf-name"
   }, "Name"), /*#__PURE__*/React.createElement("input", {
@@ -26448,7 +26470,7 @@ function WfEditor({
     style: {
       marginTop: 16
     }
-  }, "What Friday does"), /*#__PURE__*/React.createElement("div", {
+  }, ("What " + fridayName() + " does")), /*#__PURE__*/React.createElement("div", {
     className: "wfx-quiet",
     style: {
       marginBottom: 8
@@ -26503,7 +26525,7 @@ function WfEditor({
     },
     value: s.prompt,
     onChange: e => setS(i, 'prompt', e.target.value),
-    placeholder: "Tell Friday what to do, the way you'd tell a colleague."
+    placeholder: ("Tell " + fridayName() + " what to do, the way you'd tell a colleague.")
   }))), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn",
@@ -26519,7 +26541,7 @@ function WfEditor({
     }
   }, /*#__PURE__*/React.createElement("span", {
     "aria-hidden": "true"
-  }, "\uD83D\uDEE1\uFE0F"), /*#__PURE__*/React.createElement("div", null, ask.length ? /*#__PURE__*/React.createElement("span", null, "This looks like it will ", /*#__PURE__*/React.createElement("b", null, wfJoin(ask)), ". Friday won't do that on her own: when a step gets there, she stops and asks you with an approval card.") : /*#__PURE__*/React.createElement("span", null, "If a step ever tries to send, post, buy, delete or change something outside your computer, Friday stops and asks you first with an approval card."))), err && /*#__PURE__*/React.createElement("div", {
+  }, "\uD83D\uDEE1\uFE0F"), /*#__PURE__*/React.createElement("div", null, ask.length ? /*#__PURE__*/React.createElement("span", null, "This looks like it will ", /*#__PURE__*/React.createElement("b", null, wfJoin(ask)), (". " + fridayName() + " won't do that on her own: when a step gets there, she stops and asks you with an approval card.")) : /*#__PURE__*/React.createElement("span", null, ("If a step ever tries to send, post, buy, delete or change something outside your computer, " + fridayName() + " stops and asks you first with an approval card.")))), err && /*#__PURE__*/React.createElement("div", {
     className: "wfx-err",
     role: "alert"
   }, err), /*#__PURE__*/React.createElement("div", {
@@ -26598,7 +26620,7 @@ function WfCard({
     className: "wfx-quiet"
   }, w.steps.length, " steps")), w.asks_first && w.asks_first.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "wfx-shield",
-    title: "Friday stops and asks you before doing these"
+    title: (fridayName() + " stops and asks you before doing these")
   }, "\uD83D\uDEE1\uFE0F Asks you before it can ", wfJoin(w.asks_first)), open && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
@@ -26708,7 +26730,7 @@ function WorkflowsWS() {
   }, []);
   const draft = () => {
     if (!ask.trim()) {
-      setDraftErr('Describe what you want Friday to do.');
+      setDraftErr(('Describe what you want ' + fridayName() + ' to do.'));
       return;
     }
     setDrafting(true);
@@ -26832,7 +26854,7 @@ function WorkflowsWS() {
     style: {
       marginTop: 8
     }
-  }, "Use your own words. Friday writes a draft for you to check; nothing is saved until you say so."), !ask && /*#__PURE__*/React.createElement("div", {
+  }, ("Use your own words. " + fridayName() + " writes a draft for you to check; nothing is saved until you say so.")), !ask && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 8
     }
@@ -26886,7 +26908,7 @@ function WorkflowsWS() {
     "aria-hidden": "true"
   }, "\uD83D\uDEE1\uFE0F"), /*#__PURE__*/React.createElement("div", {
     className: "wfx-grow"
-  }, "Workflows run on their own, but Friday ", /*#__PURE__*/React.createElement("b", null, "asks you first"), " before any of them sends, posts, buys or deletes anything."), pending > 0 && /*#__PURE__*/React.createElement("button", {
+  }, ("Workflows run on their own, but " + fridayName() + " "), /*#__PURE__*/React.createElement("b", null, "asks you first"), " before any of them sends, posts, buys or deletes anything."), pending > 0 && /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn",
     style: {
@@ -26936,7 +26958,7 @@ function WorkflowsWS() {
     },
     "aria-expanded": showRoutines,
     onClick: () => setShowRoutines(!showRoutines)
-  }, showRoutines ? '▾' : '▸', " Friday's built-in routines (", onCount, " of ", routines.length, " on)"), showRoutines && /*#__PURE__*/React.createElement("div", {
+  }, showRoutines ? '▾' : '▸', (" " + fridayName() + "'s built-in routines ("), onCount, " of ", routines.length, " on)"), showRoutines && /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       padding: '4px 12px'
@@ -26946,7 +26968,7 @@ function WorkflowsWS() {
     style: {
       padding: '6px 0'
     }
-  }, "Jobs that come with Friday, like the news briefings. You can switch them on or off."), routines.map(r => {
+  }, ("Jobs that come with " + fridayName() + ", like the news briefings. You can switch them on or off.")), routines.map(r => {
     const st = r.running ? WF_STATUS.running : r.last_run ? WF_STATUS[r.last_run.status] || WF_STATUS.finished : null;
     return /*#__PURE__*/React.createElement("div", {
       key: r.schedule_id,
@@ -27054,7 +27076,7 @@ function FridayChangesCard() {
       justifyContent: 'space-between',
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "\u21A9 Changes Friday made"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", null, ("\u21A9 Changes " + fridayName() + " made")), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     "aria-label": "Refresh the changes",
     title: "Refresh",
@@ -27069,7 +27091,7 @@ function FridayChangesCard() {
       color: '#7f93ad',
       margin: '2px 2px 8px'
     }
-  }, "Mail, files and wiki pages Friday organized for you. Undo puts each one back; nothing was ever deleted."), err ? /*#__PURE__*/React.createElement("div", {
+  }, ("Mail, files and wiki pages " + fridayName() + " organized for you. Undo puts each one back; nothing was ever deleted.")), err ? /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#ff9a9a'
@@ -27085,7 +27107,7 @@ function FridayChangesCard() {
       color: '#888',
       padding: '4px 2px'
     }
-  }, "No changes yet. When Friday archives mail, moves files or tidies wiki pages for you, each change appears here with its Undo.") : recs.map(r => /*#__PURE__*/React.createElement("div", {
+  }, ("No changes yet. When " + fridayName() + " archives mail, moves files or tidies wiki pages for you, each change appears here with its Undo.")) : recs.map(r => /*#__PURE__*/React.createElement("div", {
     key: r.receipt_id,
     "data-receipt": r.receipt_id,
     style: {
@@ -27184,7 +27206,7 @@ function WhatFridayDidCard() {
       justifyContent: 'space-between',
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83E\uDDFE What Friday did"), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, ("\uD83E\uDDFE What " + fridayName() + " did")), /*#__PURE__*/React.createElement("span", {
     style: {
       display: 'flex',
       gap: 4,
@@ -27234,7 +27256,7 @@ function WhatFridayDidCard() {
       color: '#888',
       padding: '4px 2px'
     }
-  }, "Every action Friday decided on, from the signed receipts the governance checkpoint writes. Each signature is checked; a receipt that does not verify says so."), err && /*#__PURE__*/React.createElement("div", {
+  }, ("Every action " + fridayName() + " decided on, from the signed receipts the governance checkpoint writes. Each signature is checked; a receipt that does not verify says so.")), err && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#ff0080'
@@ -27763,7 +27785,7 @@ function SystemWS() {
       color: '#888',
       padding: '8px 2px'
     }
-  }, "No self-review yet. Friday reviews her own recent responses every Sunday \u2014 or run one now.") : (() => {
+  }, ("No self-review yet. " + fridayName() + " reviews her own recent responses every Sunday \u2014 or run one now.")) : (() => {
     const epi = selfImp.epistemic || {};
     const syc = selfImp.sycophancy || {};
     const eo = epi.overall;
@@ -27845,7 +27867,7 @@ function SystemWS() {
         fontSize: 10,
         marginBottom: 4
       }
-    }, "Friday's reflection"), /*#__PURE__*/React.createElement(FridayDoc, {
+    }, (fridayName() + "'s reflection")), /*#__PURE__*/React.createElement(FridayDoc, {
       text: selfImp.reflection,
       compact: true,
       style: {
@@ -27919,7 +27941,7 @@ function SystemWS() {
       color: '#888',
       padding: '8px 2px'
     }
-  }, "Nothing waiting on you. Actions Friday won't take on her own — connecting Google, gated goal steps, spend — show up here.") : approvals.map(a => /*#__PURE__*/React.createElement(ApprovalCardBody, {
+  }, ("Nothing waiting on you. Actions " + fridayName() + " won't take on her own — connecting Google, gated goal steps, spend — show up here.")) : approvals.map(a => /*#__PURE__*/React.createElement(ApprovalCardBody, {
     key: a.approval_id,
     a: a,
     busy: apBusy,
@@ -28651,7 +28673,7 @@ function DevVibe({
     setCommitting(false);
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
-    text: "Describe a change in plain English. Friday drafts a plan, you preview the diff, then apply and commit."
+    text: ("Describe a change in plain English. " + fridayName() + " drafts a plan, you preview the diff, then apply and commit.")
   }), /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -29904,7 +29926,7 @@ function DeepDive({
     className: "deepdive-loading"
   }, /*#__PURE__*/React.createElement("span", {
     className: "gen-spinner"
-  }), " Friday is reading the full article\u2026") : err ? /*#__PURE__*/React.createElement("div", {
+  }), (" " + fridayName() + " is reading the full article\u2026")) : err ? /*#__PURE__*/React.createElement("div", {
     className: "deepdive-err"
   }, "Couldn't deep-dive: ", err) : data ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "deepdive-summary"
@@ -30858,14 +30880,14 @@ function NewsWS() {
       let sourcesMd = '';
       const srcs = (d.sources || []).filter(s => s && s.url);
       if (srcs.length) {
-        sourcesMd = '🎙️ **Now reading the Front Page** — *' + (d.headline || "Friday's Front Page") + '*. Interrupt any time to ask about a story. Sources:\n\n' + srcs.map(s => '- ' + (s.title || 'Story') + (s.source ? ' · ' + s.source : '') + ' [web:' + s.url + ']').join('\n');
+        sourcesMd = '🎙️ **Now reading the Front Page** — *' + (d.headline || (fridayName() + "'s Front Page")) + '*. Interrupt any time to ask about a story. Sources:\n\n' + srcs.map(s => '- ' + (s.title || 'Story') + (s.source ? ' · ' + s.source : '') + ' [web:' + s.url + ']').join('\n');
       }
       window.fridayVoice.startAnchor({
         prompt: d.prompt,
         sourcesMd
       });
       setAnchorReading(true);
-      flashNews('Anchor mode — Friday is reading the Front Page');
+      flashNews(('Anchor mode — ' + fridayName() + ' is reading the Front Page'));
     } catch (e) {
       flashNews(e.message || 'Anchor briefing failed');
     } finally {
@@ -31487,7 +31509,7 @@ function NewsWS() {
     },
     onClick: startAnchorBriefing,
     disabled: anchorBusy,
-    title: "Friday reads the Front Page aloud like a live news anchor \u2014 interrupt any time to ask about a story."
+    title: (fridayName() + " reads the Front Page aloud like a live news anchor \u2014 interrupt any time to ask about a story.")
   }, anchorBusy ? 'Starting…' : '🎙️ Listen to Front Page'), tab === 'frontpage' && anchorReading && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-magenta",
     style: {
@@ -31513,7 +31535,7 @@ function NewsWS() {
     className: "gen-progress"
   }, /*#__PURE__*/React.createElement("span", {
     className: "gen-spinner"
-  }), /*#__PURE__*/React.createElement("span", null, "Friday is assembling your briefing\u2026"), /*#__PURE__*/React.createElement("span", {
+  }), /*#__PURE__*/React.createElement("span", null, (fridayName() + " is assembling your briefing\u2026")), /*#__PURE__*/React.createElement("span", {
     className: "gen-steps"
   }, NEWS_GEN_STEPS.map((s, i) => /*#__PURE__*/React.createElement("span", {
     key: i,
@@ -31574,7 +31596,7 @@ function NewsWS() {
       textAlign: 'center',
       padding: 30
     }
-  }, "No archived stories", streamCat !== 'All' ? ' in ' + streamCat : '', " yet. Friday archives articles every few minutes as it fetches them \u2014 check back shortly, or open the \uD83D\uDDDE Front Page.") : /*#__PURE__*/React.createElement("div", null, clusters.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "No archived stories", streamCat !== 'All' ? ' in ' + streamCat : '', (" yet. " + fridayName() + " archives articles every few minutes as it fetches them \u2014 check back shortly, or open the \uD83D\uDDDE Front Page.")) : /*#__PURE__*/React.createElement("div", null, clusters.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "cluster-strip"
   }, /*#__PURE__*/React.createElement("div", {
     className: "cluster-strip-head"
@@ -31722,7 +31744,7 @@ function NewsWS() {
     }
   })), i === 0 && /*#__PURE__*/React.createElement("div", {
     className: "editorial-note"
-  }, /*#__PURE__*/React.createElement("b", null, "Friday's note:"), " ", editorialFor(it)), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, (fridayName() + "'s note:")), " ", editorialFor(it)), /*#__PURE__*/React.createElement("div", {
     className: "relevance-tag"
   }, relevanceFor(it)), /*#__PURE__*/React.createElement(NewsWikiLink, {
     it: it
@@ -31777,7 +31799,7 @@ function NewsWS() {
     className: "gen-progress"
   }, /*#__PURE__*/React.createElement("span", {
     className: "gen-spinner"
-  }), /*#__PURE__*/React.createElement("span", null, "Friday is curating your Front Page \u2014 fetching every feed, scoring against your profile, writing the lead\u2026")), fpLoading ? /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("span", null, (fridayName() + " is curating your Front Page \u2014 fetching every feed, scoring against your profile, writing the lead\u2026"))), fpLoading ? /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#999',
       textAlign: 'center',
@@ -31790,11 +31812,11 @@ function NewsWS() {
       textAlign: 'center',
       padding: 36
     }
-  }, "No edition yet. Friday publishes automatically at 7 AM & 6 PM Central \u2014 or hit \u2728 Generate Front Page to make one now.") : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, ("No edition yet. " + fridayName() + " publishes automatically at 7 AM & 6 PM Central \u2014 or hit \u2728 Generate Front Page to make one now.")) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "fp-masthead"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "fp-title"
-  }, fp.headline || "Friday's Front Page"), /*#__PURE__*/React.createElement("div", {
+  }, fp.headline || (fridayName() + "'s Front Page")), /*#__PURE__*/React.createElement("div", {
     className: "fp-sub"
   }, (fp.slot === 'evening' ? 'Evening edition' : 'Morning edition') + (fp.generated_central ? ' · ' + fp.generated_central : ''), fp.stats && fp.stats.total_considered ? ' · ' + fp.stats.total_considered + ' stories from ' + fp.stats.sources + ' sources' : '')), fpList.length > 1 && /*#__PURE__*/React.createElement("select", {
     className: "input",
@@ -31841,7 +31863,7 @@ function NewsWS() {
     className: "fp-anchor-dot"
   }), /*#__PURE__*/React.createElement("span", {
     className: "fp-anchor-label"
-  }, "\uD83C\uDF99\uFE0F Now Reading: Front Page \u2014 speak any time to ask Friday about a story"), /*#__PURE__*/React.createElement("button", { "aria-label": "End the live anchor briefing", 
+  }, ("\uD83C\uDF99\uFE0F Now Reading: Front Page \u2014 speak any time to ask " + fridayName() + " about a story")), /*#__PURE__*/React.createElement("button", { "aria-label": "End the live anchor briefing", 
     className: "fp-audio-btn close",
     title: "End the live anchor briefing",
     onClick: stopAnchorBriefing
@@ -31874,7 +31896,7 @@ function NewsWS() {
     className: "fp-lead-snippet"
   }, fp.lead.snippet), fp.lead.editorial_note && /*#__PURE__*/React.createElement("div", {
     className: "editorial-note"
-  }, /*#__PURE__*/React.createElement("b", null, "Friday's note:"), " ", fp.lead.editorial_note), fp.lead.thread_update && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, (fridayName() + "'s note:")), " ", fp.lead.editorial_note), fp.lead.thread_update && /*#__PURE__*/React.createElement("div", {
     className: "fp-thread"
   }, /*#__PURE__*/React.createElement("b", null, "What's new today:"), " ", fp.lead.thread_update), /*#__PURE__*/React.createElement("div", {
     className: "source-row",
@@ -32013,7 +32035,7 @@ function NewsWS() {
       textAlign: 'center',
       padding: 36
     }
-  }, "No weekly digest yet. Friday publishes one every Sunday at 8 AM Central.", /*#__PURE__*/React.createElement("div", {
+  }, ("No weekly digest yet. " + fridayName() + " publishes one every Sunday at 8 AM Central."), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 12
     }
@@ -32068,7 +32090,7 @@ function NewsWS() {
     style: {
       marginTop: 4
     }
-  }, /*#__PURE__*/React.createElement("b", null, "Friday's take:"), " ", weekly.editorial)), (weekly.top_stories || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, (fridayName() + "'s take:")), " ", weekly.editorial)), (weekly.top_stories || []).length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "fp-section"
   }, /*#__PURE__*/React.createElement("div", {
     className: "fp-section-head cat-tech"
@@ -32102,14 +32124,14 @@ function NewsWS() {
       textAlign: 'center',
       padding: 40
     }
-  }, "Loading Friday's editorial\u2026") : !editorial ? /*#__PURE__*/React.createElement("div", {
+  }, ("Loading " + fridayName() + "'s editorial\u2026")) : !editorial ? /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#999',
       fontSize: 12,
       textAlign: 'center',
       padding: 36
     }
-  }, "No editorial yet. Friday writes one every Friday at 7 PM Central \u2014 her one fully independent space.", /*#__PURE__*/React.createElement("div", {
+  }, ("No editorial yet. " + fridayName() + " writes one every Friday at 7 PM Central \u2014 her one fully independent space."), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 12
     }
@@ -32129,7 +32151,7 @@ function NewsWS() {
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "fp-title"
-  }, "Friday's Editorial"), /*#__PURE__*/React.createElement("div", {
+  }, (fridayName() + "'s Editorial")), /*#__PURE__*/React.createElement("div", {
     className: "fp-sub"
   }, (editorial.generated_central || editorial.week || '') + (editorial.regenerated ? ' · rewritten for stronger pushback' : '') + (typeof editorial.independence_score === 'number' ? ' · independence ' + editorial.independence_score.toFixed(2) : ''))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -32157,7 +32179,7 @@ function NewsWS() {
     disabled: edGen
   }, edGen ? 'Writing…' : '↻ Rewrite'), /*#__PURE__*/React.createElement(TalkToFridayButton, {
     contentType: "editorial",
-    title: "Friday's Editorial" + (editorial.week ? ' — ' + editorial.week : ''),
+    title: (fridayName() + "'s Editorial") + (editorial.week ? ' — ' + editorial.week : ''),
     summary: editorial.preview || '',
     style: {
       fontSize: 10
@@ -32205,7 +32227,7 @@ function NewsWS() {
       color: '#888',
       margin: '8px 0'
     }
-  }, "Friday scores every source on six dimensions, learned by cross-referencing claims across outlets on every fetch. Click a source for its breakdown and observation history."), trustLoading ? /*#__PURE__*/React.createElement("div", {
+  }, (fridayName() + " scores every source on six dimensions, learned by cross-referencing claims across outlets on every fetch. Click a source for its breakdown and observation history.")), trustLoading ? /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#999',
       textAlign: 'center',
@@ -32218,7 +32240,7 @@ function NewsWS() {
       textAlign: 'center',
       padding: 36
     }
-  }, "No sources scored yet. Friday builds the graph as it fetches news \u2014 check back after a fetch cycle (every few minutes).") : /*#__PURE__*/React.createElement("div", {
+  }, ("No sources scored yet. " + fridayName() + " builds the graph as it fetches news \u2014 check back after a fetch cycle (every few minutes).")) : /*#__PURE__*/React.createElement("div", {
     className: "trust-layout"
   }, /*#__PURE__*/React.createElement("div", {
     className: "trust-board"
@@ -33310,7 +33332,7 @@ function MessagesWS() {
     }, /*#__PURE__*/React.createElement("span", {
       className: "mini-btn",
       onClick: () => draft(m)
-    }, "\uD83D\uDCAC Reply with Friday"), /*#__PURE__*/React.createElement("span", {
+    }, ("\uD83D\uDCAC Reply with " + fridayName())), /*#__PURE__*/React.createElement("span", {
       className: "mini-btn",
       onClick: () => act(m, 'archive')
     }, "\uD83D\uDDC4 Archive"), /*#__PURE__*/React.createElement("span", {
@@ -33346,7 +33368,7 @@ function MessagesWS() {
       },
       value: draftInstr,
       onChange: e => setDraftInstr(e.target.value),
-      placeholder: "Optional: how should Friday angle this reply?"
+      placeholder: ("Optional: how should " + fridayName() + " angle this reply?")
     }), /*#__PURE__*/React.createElement("button", {
       className: "btn",
       style: {
@@ -33359,7 +33381,7 @@ function MessagesWS() {
         fontSize: 11,
         color: '#b794f6'
       }
-    }, "Friday is drafting a reply\u2026") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("textarea", {
+    }, (fridayName() + " is drafting a reply\u2026")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("textarea", {
       value: draftText,
       onChange: e => setDraftText(e.target.value)
     }), /*#__PURE__*/React.createElement("div", {
@@ -33718,7 +33740,7 @@ function CalendarWS() {
         fontSize: 11,
         color: '#c4b5fd'
       }
-    }, "Friday is building your prep card\u2026") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(FridayDoc, {
+    }, (fridayName() + " is building your prep card\u2026")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(FridayDoc, {
       text: prepText,
       compact: true,
       style: {
@@ -34693,7 +34715,7 @@ async function fridayChatTurn(body, onDelta, onTrace) {
       if (recovered) return recovered;
     }
     throw new Error(errMsg || (sawDone ? 'stream finished with no payload'
-                                       : 'Friday is still working on this — the '
+                                       : (fridayName() + ' is still working on this — the ')
                                          + 'connection dropped, not the turn.'));
   } catch (e) {
     // NEVER re-send a turn that started. Re-POSTing runs it twice and bills it
@@ -34705,7 +34727,7 @@ async function fridayChatTurn(body, onDelta, onTrace) {
         const recovered = await fridayResumeTurn(turnId);
         if (recovered) return recovered;
       } catch (_) { /* fall through to the honest error */ }
-      throw new Error('Friday is still working on this — the connection dropped, '
+      throw new Error((fridayName() + ' is still working on this — the connection dropped, ')
                       + 'not the turn. It will appear when it finishes.');
     }
     if (got) throw e;          // half a turn already happened — do not repeat it
@@ -36101,7 +36123,7 @@ function RelationshipPanel({ onImported }) {
   return e("div", { className: "card", style: { marginBottom: 10 } },
     e("div", { className: "card-title" }, "Relationship memory"),
     e("div", { style: { fontSize: 11, color: '#999', marginBottom: 8, lineHeight: 1.5 } },
-      "Friday keeps a timeline of who you have emailed and met, from mail and calendar headers only, never message text. It stays on this computer.",
+      (fridayName() + " keeps a timeline of who you have emailed and met, from mail and calendar headers only, never message text. It stays on this computer."),
       info.last_sync ? " Last sync " + String(info.last_sync).slice(0, 16).replace('T', ' ') + " · " + (info.interactions || 0) + " interactions." : ""),
     cfg && e("div", { style: { display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 8 } },
       e("label", { style: { ...small, display: 'flex', gap: 4, alignItems: 'center' } },
@@ -36118,7 +36140,7 @@ function RelationshipPanel({ onImported }) {
         onChange: ev => { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; importFile(f); } }),
       e("button", { className: "btn", style: small, disabled: !!busy, title: "LinkedIn → Settings → Data privacy → Get a copy of your data → Connections",
         onClick: () => fileRef.current && fileRef.current.click() }, busy === 'import' ? 'Importing…' : '⬆ Import LinkedIn connections (CSV)'),
-      readOnly.map(a => e("button", { key: a.id, className: "btn", style: small, title: "Friday can only read contacts on this account. Saving still waits for your approval each time.",
+      readOnly.map(a => e("button", { key: a.id, className: "btn", style: small, title: (fridayName() + " can only read contacts on this account. Saving still waits for your approval each time."),
         onClick: () => allowSaving(a) }, "Allow saving to Google Contacts: " + (a.email || a.label)))),
     consent && e("div", { style: { fontSize: 11, color: '#bbb', margin: '6px 0', lineHeight: 1.5 } },
       consent.brief ? e("div", { style: { marginBottom: 4 } }, consent.brief) : null,
@@ -36148,7 +36170,7 @@ function PersonTimelineCard({ name }) {
     try {
       const r = await fetch('/api/relationships/follow-ups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ person: name, note, in_days: Number(days) || 0 }) });
       const d = await r.json();
-      if (d.status === 'ok') { setNote(''); setMsg('Friday will remind you on ' + String(d.follow_up.due).slice(0, 10) + '.'); load(); }
+      if (d.status === 'ok') { setNote(''); setMsg((fridayName() + ' will remind you on ') + String(d.follow_up.due).slice(0, 10) + '.'); load(); }
       else setMsg(d.message || 'Could not set the follow-up.');
     } catch (err) { setMsg('Could not set the follow-up.'); }
   };
@@ -36360,7 +36382,7 @@ function ContactsWS() {
         borderColor: '#ff0080',
         color: '#ff0080'
       },
-      title: "Show what Friday holds about this person, and remove it",
+      title: ("Show what " + fridayName() + " holds about this person, and remove it"),
       onClick: openForget
     }, "\uD83D\uDDD1 Forget"))), forgetReport && /*#__PURE__*/React.createElement("div", {
       className: "card",
@@ -36370,12 +36392,12 @@ function ContactsWS() {
       }
     }, forgetReport.loading ? /*#__PURE__*/React.createElement("div", {
       style: { fontSize: 12, color: '#999' }
-    }, "Checking what Friday holds…") : forgetReport.error ? /*#__PURE__*/React.createElement("div", {
+    }, ("Checking what " + fridayName() + " holds…")) : forgetReport.error ? /*#__PURE__*/React.createElement("div", {
       style: { fontSize: 12, color: '#ff0080' }
     }, forgetReport.error) : /*#__PURE__*/React.createElement(React.Fragment, null,
       /*#__PURE__*/React.createElement("div", {
         style: { fontWeight: 600, fontSize: 13, marginBottom: 6, color: '#fff' }
-      }, "Remove what Friday holds about ", selected.name, "?"),
+      }, ("Remove what " + fridayName() + " holds about "), selected.name, "?"),
       /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 12, color: '#bbb', marginBottom: 8, lineHeight: 1.5 }
       }, "She currently holds ",
@@ -37116,7 +37138,7 @@ function ContentIdeasTab({
   }
   const by = pipe?.by_stage || {};
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
-    text: `${pipe?.total || 0} items in pipeline · ${savedDrafts.length} saved drafts · ${templates.length} templates. Capture an idea, start from a template, or 💬 ask Friday to reshape this studio.`
+    text: `${pipe?.total || 0} items in pipeline · ${savedDrafts.length} saved drafts · ${templates.length} templates. Capture an idea, start from a template, or 💬 ask ${fridayName()} to reshape this studio.`
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -37156,7 +37178,7 @@ function ContentIdeasTab({
       color: '#999',
       marginBottom: 8
     }
-  }, "One-click scaffolds \u2014 Friday fills in the structure when you hit \u2728 Draft."), /*#__PURE__*/React.createElement("div", {
+  }, ("One-click scaffolds \u2014 " + fridayName() + " fills in the structure when you hit \u2728 Draft.")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))',
@@ -38101,7 +38123,7 @@ function ContentComposeTab({
     },
     value: body,
     onChange: e => setBody(e.target.value),
-    placeholder: "Write the canonical post \u2014 Friday adapts it to each platform's native voice and limits\u2026"
+    placeholder: ("Write the canonical post \u2014 " + fridayName() + " adapts it to each platform's native voice and limits\u2026")
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -38435,7 +38457,7 @@ function ContentComposeTab({
       setOptimal(e.target.checked);
       if (e.target.checked) setSchedAt('');
     }
-  }), " \u2728 Let Friday pick the optimal time")), slots.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }), (" \u2728 Let " + fridayName() + " pick the optimal time"))), slots.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 5,
@@ -39652,7 +39674,7 @@ function ContentAccountsTab({
     }
   };
   const disconnect = async name => {
-    if (!window.confirm('Disconnect ' + cpMeta(name).label + '? Friday revokes the platform-side grant where the API allows it and purges the local credential.')) return;
+    if (!window.confirm('Disconnect ' + cpMeta(name).label + ('? ' + fridayName() + ' revokes the platform-side grant where the API allows it and purges the local credential.'))) return;
     try {
       await fetch('/api/content/platforms/' + name, {
         method: 'DELETE'
@@ -39829,7 +39851,7 @@ function ContentAccountsTab({
         marginBottom: 6,
         fontStyle: 'italic'
       }
-    }, "No public API. Friday prepares a ready-to-paste package and opens the editor \u2014 you paste, publish, and confirm the URL back. Honest handoff, never fake automation."), /*#__PURE__*/React.createElement("div", {
+    }, ("No public API. " + fridayName() + " prepares a ready-to-paste package and opens the editor \u2014 you paste, publish, and confirm the URL back. Honest handoff, never fake automation.")), /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         gap: 5,
@@ -39937,7 +39959,7 @@ function ContentAccountsTab({
         color: '#666',
         marginTop: 3
       }
-    }, "Stored encrypted in Friday's credential vault \u2014 never plaintext, never logged.")), authOpen === name && isManual && /*#__PURE__*/React.createElement("div", {
+    }, ("Stored encrypted in " + fridayName() + "'s credential vault \u2014 never plaintext, never logged."))), authOpen === name && isManual && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 8
       }
@@ -39996,7 +40018,7 @@ function ContentAccountsTab({
       color: '#a8a8b4',
       marginBottom: 4
     }
-  }, "Staging host \u2014 a public base URL ", /*#__PURE__*/React.createElement("i", null, "you"), " already host and control, used only when Instagram/TikTok insist on fetching media from a URL. Friday does not upload or stage anything herself \u2014 the asset must already be public at that URL before publishing. Leave empty to hold such posts instead."), /*#__PURE__*/React.createElement("div", {
+  }, "Staging host \u2014 a public base URL ", /*#__PURE__*/React.createElement("i", null, "you"), (" already host and control, used only when Instagram/TikTok insist on fetching media from a URL. " + fridayName() + " does not upload or stage anything herself \u2014 the asset must already be public at that URL before publishing. Leave empty to hold such posts instead.")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6
@@ -43577,7 +43599,7 @@ function CloudConsentGate({ onDone }) {
       })
       .catch(() => {
         setSaving(false);
-        setErr('Could not reach Friday to record that choice. Try again.');
+        setErr(('Could not reach ' + fridayName() + ' to record that choice. Try again.'));
       });
   };
 
@@ -43597,7 +43619,7 @@ function CloudConsentGate({ onDone }) {
 
     !capable && React.createElement(React.Fragment, null,
       React.createElement('p', { style: para },
-        'Some of what Friday does cannot run on this computer, so that part ' +
+        ('Some of what ' + fridayName() + ' does cannot run on this computer, so that part ') +
         'will use the cloud:'),
       React.createElement('ul', { style: { marginBottom: 12, paddingLeft: 20 } },
         failing.map(([role]) =>
@@ -43617,7 +43639,7 @@ function CloudConsentGate({ onDone }) {
             cap.chain_why))),
       React.createElement('p', { style: para },
         'The question is how much the cloud gets to see. With the safeguards ' +
-        'on, Friday holds back money, health, legal and identity details and ' +
+        ('on, ' + fridayName() + ' holds back money, health, legal and identity details and ') +
         'tells you when she has. Unrestricted sends everything as written. ' +
         'You can change this later in Settings.'),
       err && React.createElement('div', {
@@ -43724,7 +43746,7 @@ function WizardGemmaPull({
       style: {
         color: '#00d4ff'
       }
-    }, "Ollama"), " to run Friday fully offline with no cloud key. Then come back here, or to Settings > Models, to pull the bundled model.");
+    }, "Ollama"), (" to run " + fridayName() + " fully offline with no cloud key. Then come back here, or to Settings > Models, to pull the bundled model."));
   }
   if (has || state === 'done') {
     return /*#__PURE__*/React.createElement("div", {
@@ -43790,7 +43812,7 @@ function WizardGemmaPull({
     style: {
       color: '#00d4ff'
     }
-  }, BUNDLED_MODEL), " so Friday chats fully on-device with no API key."), state === 'pulling' ? /*#__PURE__*/React.createElement("div", {
+  }, BUNDLED_MODEL), (" so " + fridayName() + " chats fully on-device with no API key.")), state === 'pulling' ? /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: 'rgba(0,212,255,0.8)',
@@ -43840,7 +43862,7 @@ async function scJSON(url, method, body) {
       ok: false,
       status: 0,
       data: {
-        message: 'Could not reach Friday. Try again.'
+        message: ('Could not reach ' + fridayName() + '. Try again.')
       }
     };
   }
@@ -43898,7 +43920,7 @@ const SC_STATUS = {
   needs_attention: 'Needs attention',
   not_connected: 'Not connected',
   skipped: 'Skipped',
-  external: 'Set up outside Friday'
+  external: ('Set up outside ' + FRIDAY_BRAND.name)
 };
 function scSafeUrl(u) {
   return /^https?:\/\//i.test(String(u || '')) ? u : '';
@@ -44410,7 +44432,7 @@ function SetupResearchReview({
     }])
   }, "Reject"))))), !items.length && /*#__PURE__*/React.createElement("p", {
     className: "sc-sub"
-  }, r.accepted ? r.accepted + ' finding(s) kept in Friday\'s knowledge graph, each with its source.' : 'Nothing is waiting for review.'), err && /*#__PURE__*/React.createElement("div", {
+  }, r.accepted ? r.accepted + (' finding(s) kept in ' + fridayName() + '\'s knowledge graph, each with its source.') : 'Nothing is waiting for review.'), err && /*#__PURE__*/React.createElement("div", {
     role: "alert",
     className: "sc-msgline bad"
   }, err));
@@ -44467,7 +44489,7 @@ function SetupStyleCard({
   }, /*#__PURE__*/React.createElement("h2", {
     tabIndex: -1,
     "data-sc-focus": ""
-  }, "Friday for you"), /*#__PURE__*/React.createElement("div", {
+  }, (fridayName() + " for you")), /*#__PURE__*/React.createElement("div", {
     className: "sc-badge"
   }, by.kind === 'local' ? 'Read by ' + by.model + ' (on this computer)' : by.kind === 'cloud' ? 'Read by ' + by.model + ' (' + by.provider + ', cloud)' : 'Made with simple rules on this computer, no model'), /*#__PURE__*/React.createElement("p", {
     className: "sc-summary"
@@ -44502,7 +44524,7 @@ function SetupStyleCard({
     }, /*#__PURE__*/React.createElement("span", null, d.low), /*#__PURE__*/React.createElement("span", null, d.high)));
   }), /*#__PURE__*/React.createElement("p", {
     className: "sc-sub"
-  }, "Pushback never goes below ", floor, ": Friday still tells you when you're wrong, just more gently. Honesty and asking before real-world actions can't be tuned."), /*#__PURE__*/React.createElement("div", {
+  }, "Pushback never goes below ", floor, (": " + fridayName() + " still tells you when you're wrong, just more gently. Honesty and asking before real-world actions can't be tuned.")), /*#__PURE__*/React.createElement("div", {
     className: "sc-row"
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -44557,9 +44579,9 @@ function SetupBasicsCard({
     "data-sc-focus": ""
   }, "The basics"), /*#__PURE__*/React.createElement("div", {
     className: "sc-group"
-  }, "Who is this Friday for?"), /*#__PURE__*/React.createElement("div", {
+  }, ("Who is this " + fridayName() + " for?")), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
-    "aria-label": "Who is this Friday for?"
+    "aria-label": ("Who is this " + fridayName() + " for?")
   }, radio(!minor, 'For me', 'Full, unfiltered creative range', () => setMinor(false), 'me'), radio(minor, 'For my child', 'Family mode: age-appropriate filtering', () => setMinor(true), 'child')), /*#__PURE__*/React.createElement("div", {
     className: "sc-group"
   }, "Starting profile"), /*#__PURE__*/React.createElement("div", {
@@ -44585,7 +44607,7 @@ function SetupBasicsCard({
     className: "sc-chip quiet",
     "aria-expanded": addr,
     onClick: () => setAddr(!addr)
-  }, (addr ? '▾ ' : '▸ ') + "Friday's own address on this PC (optional)"), addr && /*#__PURE__*/React.createElement("div", {
+  }, (addr ? '▾ ' : '▸ ') + (FRIDAY_BRAND.name + "'s own address on this PC (optional)")), addr && /*#__PURE__*/React.createElement("div", {
     "data-testid": "setup-local-address",
     style: {
       marginTop: 8
@@ -44856,12 +44878,12 @@ function SetupChat({
     className: "st-root sc-root",
     role: "dialog",
     "aria-modal": "true",
-    "aria-label": "Set up Friday"
+    "aria-label": ("Set up " + fridayName())
   }, /*#__PURE__*/React.createElement("header", {
     className: "sc-head"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sc-brand st-brand"
-  }, String(st.agent_name || 'Friday').toUpperCase()), /*#__PURE__*/React.createElement("nav", {
+  }, String(st.agent_name || fridayName()).toUpperCase()), /*#__PURE__*/React.createElement("nav", {
     className: "sc-rail",
     "aria-label": "Setup progress"
   }, (st.groups || []).map(g => /*#__PURE__*/React.createElement("button", {
@@ -44885,7 +44907,7 @@ function SetupChat({
     className: "sc-body"
   }, /*#__PURE__*/React.createElement("section", {
     className: "sc-chat",
-    "aria-label": "Conversation with Friday"
+    "aria-label": ("Conversation with " + fridayName())
   }, /*#__PURE__*/React.createElement("div", {
     className: "sc-log",
     ref: logRef,
@@ -44897,7 +44919,7 @@ function SetupChat({
     className: 'sc-msg ' + (m.role === 'user' ? 'user' : 'friday')
   }, /*#__PURE__*/React.createElement("span", {
     className: "sc-sr"
-  }, m.role === 'user' ? 'You: ' : (st.agent_name || 'Friday') + ': '), m.text, m.model && /*#__PURE__*/React.createElement("div", {
+  }, m.role === 'user' ? 'You: ' : (st.agent_name || fridayName()) + ': '), m.text, m.model && /*#__PURE__*/React.createElement("div", {
     className: "sc-badge"
   }, 'Read by ' + m.model), m.task_id && /*#__PURE__*/React.createElement("div", {
     className: "sc-badge"
@@ -44971,7 +44993,7 @@ function SetupChat({
 function SettingsSetupChecklist() {
   return /*#__PURE__*/React.createElement(StSection, {
     title: "Setup checklist",
-    desc: "Everything Friday can connect to, with exactly what each one asks for. Anything you skipped in the setup chat waits here."
+    desc: ("Everything " + fridayName() + " can connect to, with exactly what each one asks for. Anything you skipped in the setup chat waits here.")
   }, /*#__PURE__*/React.createElement(SetupConnectionsPanel, null));
 }
 function SettingsYourProfile() {
@@ -45058,10 +45080,10 @@ function SettingsYourProfile() {
   const rs = research && research.state;
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(StSection, {
     title: "Your profile",
-    desc: "What you told Friday in the setup chat, and the speaking style made from it. Stored encrypted on this computer. Only the style reaches Friday's prompt, never your answers."
+    desc: ("What you told " + fridayName() + " in the setup chat, and the speaking style made from it. Stored encrypted on this computer. Only the style reaches " + fridayName() + "'s prompt, never your answers.")
   }, p.name && /*#__PURE__*/React.createElement("div", {
     className: "sc-sub"
-  }, 'Friday calls you ' + p.name + '.'), (p.questions || []).map(q => /*#__PURE__*/React.createElement("label", {
+  }, (fridayName() + ' calls you ') + p.name + '.'), (p.questions || []).map(q => /*#__PURE__*/React.createElement("label", {
     key: q.id,
     className: "sc-field"
   }, /*#__PURE__*/React.createElement("span", null, q.question), /*#__PURE__*/React.createElement("input", {
@@ -45104,12 +45126,12 @@ function SettingsYourProfile() {
       });
       if (r.ok) {
         setP(r.data);
-        setMsg('Style saved. It is part of Friday\'s personality now.');
+        setMsg(('Style saved. It is part of ' + fridayName() + '\'s personality now.'));
       }
     }
   })), /*#__PURE__*/React.createElement("div", {
     className: "sc-sub"
-  }, p.style_in_prompt ? 'Your style is part of Friday\'s personality (SOUL.md) and keeps evolving.' : 'No first-run style is in Friday\'s personality.'), /*#__PURE__*/React.createElement("div", {
+  }, p.style_in_prompt ? ('Your style is part of ' + fridayName() + '\'s personality (SOUL.md) and keeps evolving.') : ('No first-run style is in ' + fridayName() + '\'s personality.')), /*#__PURE__*/React.createElement("div", {
     className: "sc-row"
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -45555,7 +45577,7 @@ function CcGrantPanel({
   }), /*#__PURE__*/React.createElement(Line, {
     ok: st.granted,
     label: "Session grant",
-    detail: st.granted ? 'Held. Friday can control the apps listed under Apps below. This grant persists across restarts until revoked.' : 'Not held. Press Grant below. Once given, the grant persists across restarts until revoked.'
+    detail: st.granted ? ('Held. ' + fridayName() + ' can control the apps listed under Apps below. This grant persists across restarts until revoked.') : 'Not held. Press Grant below. Once given, the grant persists across restarts until revoked.'
   }), st.killed && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
@@ -45678,7 +45700,7 @@ function CcAppGrants() {
       ...dim,
       marginBottom: 8
     }
-  }, "Friday can only look at (Observe) or click and type in (Act) the apps listed here. Typing into a password field, and clicking anything named Delete, Send, Pay or Submit, always asks you first."), apps === null ? h("div", {
+  }, (fridayName() + " can only look at (Observe) or click and type in (Act) the apps listed here. Typing into a password field, and clicking anything named Delete, Send, Pay or Submit, always asks you first.")), apps === null ? h("div", {
     style: dim
   }, "Loading…") : rows.length === 0 ? h("div", {
     style: {
@@ -45800,7 +45822,7 @@ function LocalAddressSettings() {
       if (!r.ok || d.ok === false) setMsg(d.message || 'That did not work.');
       if (d.status) setSt(d.status);else await load(false);
     } catch (e) {
-      setMsg('Could not reach Friday.');
+      setMsg(('Could not reach ' + fridayName() + '.'));
     }
     setBusy('');
   };
@@ -45814,7 +45836,7 @@ function LocalAddressSettings() {
   const o = st.oauth || {};
   const onWindows = st.platform === 'win32';
   const goal = st.preferred_origin || 'https://' + host;
-  const via = s => s === 'friday' ? 'Friday answers there itself, for this PC only.' : s === 'this Friday, through another program' ? 'Friday answers there through another program already on this PC (the older demo proxy).' : s === 'another program' ? 'Something else on this PC answers there, not this Friday.' : '';
+  const via = s => s === 'friday' ? (FRIDAY_BRAND.name + ' answers there itself, for this PC only.') : s === 'this Friday, through another program' ? (FRIDAY_BRAND.name + ' answers there through another program already on this PC (the older demo proxy).') : s === 'another program' ? ('Something else on this PC answers there, not this ' + FRIDAY_BRAND.name + '.') : '';
   const portTrouble = [];
   ['https', 'http'].forEach(k => {
     const a = ((st.listeners || {})[k] || {}).addrs || {};
@@ -45843,21 +45865,21 @@ function LocalAddressSettings() {
           h('button', { className: 'settings-btn active', disabled: !!busy || waiting, onClick: () => post('/api/local-address/hosts-entry', { add: true }, 'hosts') }, 'Add ' + host + ' to this PC'),
           h('span', { className: 'la-hint' }, 'Windows asks for permission first (its shield prompt). Nothing else on the PC changes.')),
         st.resolves && (st.hosts_entry || {}).ours && h('button', { className: 'la-link', disabled: !!busy || waiting, onClick: () => post('/api/local-address/hosts-entry', { add: false }, 'hosts') }, 'Remove it from this PC')),
-      h(Line, { ok: st.resolves ? answers : null, label: 'Friday answers there' },
+      h(Line, { ok: st.resolves ? answers : null, label: (FRIDAY_BRAND.name + ' answers there') },
         !st.resolves ? 'Once this PC knows the name.' : answers ? via(https.works ? https.served_by : http.served_by) : via(https.served_by || http.served_by) || 'Nothing answers at ' + host + ' yet.',
         portTrouble.map(t => h('div', { key: t, className: 'la-warn' }, t.charAt(0).toUpperCase() + t.slice(1) + '.')),
         !answers && !st.serve && h('div', { className: 'la-actions' },
-          h('button', { className: 'settings-btn active', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: true }, 'serve') }, 'Turn on Friday’s local address'),
-          h('span', { className: 'la-hint' }, 'No system change: Friday listens on ' + host + ' for this PC only.')),
-        st.serve && h('button', { className: 'la-link', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: false }, 'serve') }, 'Turn Friday’s listener off')),
+          h('button', { className: 'settings-btn active', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: true }, 'serve') }, ('Turn on ' + FRIDAY_BRAND.name + '’s local address')),
+          h('span', { className: 'la-hint' }, ('No system change: ' + FRIDAY_BRAND.name + ' listens on ') + host + ' for this PC only.')),
+        st.serve && h('button', { className: 'la-link', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: false }, 'serve') }, ('Turn ' + FRIDAY_BRAND.name + '’s listener off'))),
       h(Line, { ok: st.resolves && answers ? secure : null, label: 'Secure (the padlock)' },
         secure ? 'Your browser trusts https://' + host + '.' : 'Not yet. Until it is, browsers switch off the microphone and camera on this address, so voice keeps working at localhost.',
         !secure && onWindows && ca.exists && !ca.trusted && !consent && h('div', { className: 'la-actions' },
           h('button', { className: 'settings-btn active', disabled: !!busy || waiting, onClick: () => setConsent(true) }, 'Enable secure local address')),
-        (ca.trusted || (ca.previous_trusted || []).length > 0) && h('button', { className: 'la-link', disabled: !!busy || waiting, onClick: () => post('/api/local-address/untrust', {}, 'untrust') }, 'Stop trusting Friday’s certificate')),
+        (ca.trusted || (ca.previous_trusted || []).length > 0) && h('button', { className: 'la-link', disabled: !!busy || waiting, onClick: () => post('/api/local-address/untrust', {}, 'untrust') }, ('Stop trusting ' + FRIDAY_BRAND.name + '’s certificate'))),
       consent && !secure && h('div', { className: 'la-consent', role: 'region', 'aria-label': 'Make ' + host + ' secure' },
         h('div', { className: 'la-consent-title' }, 'Make ' + host + ' secure'),
-        h('p', null, 'Friday made its own certificate authority on this PC, called “', h('b', null, ca.subject), '”. For your browser to show a padlock at https://' + host + ', Windows has to trust it. That changes what this PC trusts, so it is your decision.'),
+        h('p', null, (FRIDAY_BRAND.name + ' made its own certificate authority on this PC, called “'), h('b', null, ca.subject), '”. For your browser to show a padlock at https://' + host + ', Windows has to trust it. That changes what this PC trusts, so it is your decision.'),
         h('ul', null,
           h('li', null, 'It can vouch for ', h('b', null, host), ' and nothing else. It was made unable to vouch for any other website or any IP address, so even a copy of it could not pass for your bank or your email.'),
           h('li', null, 'It stays on this PC, and only your Windows account will trust it.'),
@@ -45870,7 +45892,7 @@ function LocalAddressSettings() {
           h('button', { className: 'settings-btn active', disabled: !!busy || waiting, onClick: () => {
             setConsent(false);
             post('/api/local-address/trust', {}, 'trust');
-          } }, 'Trust Friday’s certificate'),
+          } }, ('Trust ' + FRIDAY_BRAND.name + '’s certificate')),
           h('button', { className: 'settings-btn', onClick: () => setConsent(false) }, 'Not now'))),
       recentJob && h('div', { className: 'la-job ' + recentJob.state, role: 'status' }, recentJob.message),
       h(Line, { ok: true, label: 'Google sign-in' },
@@ -45880,7 +45902,7 @@ function LocalAddressSettings() {
             h('input', { type: 'checkbox', checked: registered, onChange: e => setRegistered(e.target.checked) }),
             h('span', null, 'I added ', h('code', null, (o.named_callbacks || [])[0]), ' and ', h('code', null, (o.named_callbacks || [])[1]), ' as Authorized redirect URIs in my Google Cloud project.')),
           h('button', { className: 'settings-btn', disabled: !registered || !!busy, onClick: () => post('/api/local-address/google', { use: true, confirmed: true }, 'google') }, 'Use ' + host + ' for Google sign-in')),
-        secure && !o.override && o.client_type && o.client_type !== 'web' && h('div', { className: 'la-hint' }, 'Friday’s Google client is a Desktop client, and Google only lets those return to localhost, so there is nothing to change.'),
+        secure && !o.override && o.client_type && o.client_type !== 'web' && h('div', { className: 'la-hint' }, (FRIDAY_BRAND.name + '’s Google client is a Desktop client, and Google only lets those return to localhost, so there is nothing to change.')),
         o.override && h('button', { className: 'la-link', disabled: !!busy, onClick: () => post('/api/local-address/google', { use: false }, 'google') }, 'Return Google sign-in to localhost')),
       msg && h('div', { className: 'la-err', role: 'alert' }, msg),
       h('div', { className: 'la-actions' },
@@ -45902,7 +45924,7 @@ function SettingsTabGeneral({
     title: "Identity"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Name",
-    desc: "What Friday calls herself in chat and voice."
+    desc: ("What " + fridayName() + " calls herself in chat and voice.")
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
     "aria-label": "Name",
@@ -45917,7 +45939,7 @@ function SettingsTabGeneral({
     placeholder: "Friday"
   })), /*#__PURE__*/React.createElement(StRow, {
     label: "Personality",
-    desc: "How Friday presents herself. Saved when you click away."
+    desc: ("How " + fridayName() + " presents herself. Saved when you click away.")
   }, /*#__PURE__*/React.createElement("textarea", {
     className: "input",
     "aria-label": "Personality",
@@ -45931,7 +45953,7 @@ function SettingsTabGeneral({
     onBlur: e => save({
       personality: e.target.value
     }),
-    placeholder: "Describe Friday's personality..."
+    placeholder: ("Describe " + fridayName() + "'s personality...")
   }))), /*#__PURE__*/React.createElement(LocalAddressSettings, null), /*#__PURE__*/React.createElement(StSection, {
     title: "Workspaces"
   }, /*#__PURE__*/React.createElement(StToggle, {
@@ -46496,7 +46518,7 @@ function PauseWarning({
       color: '#8affc1',
       marginBottom: 4
     }
-  }, "Friday stays reachable on the ", f.stays_awake.join(', '), " throughout."), msg && /*#__PURE__*/React.createElement("div", {
+  }, (FRIDAY_BRAND.name + " stays reachable on the "), f.stays_awake.join(', '), " throughout."), msg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: 'rgba(255,255,255,0.4)',
@@ -46607,7 +46629,7 @@ function SettingsTabWork() {
       color: 'rgba(255,255,255,0.35)',
       lineHeight: 1.5
     }
-  }, "Nothing waiting on you. When Friday judges a job might be heavy she will lay out the steps here and ask how you want it run \u2014 she will not decide that on her own."), (props || []).map(p => /*#__PURE__*/React.createElement(WorkProposal, {
+  }, ("Nothing waiting on you. When " + fridayName() + " judges a job might be heavy she will lay out the steps here and ask how you want it run \u2014 she will not decide that on her own.")), (props || []).map(p => /*#__PURE__*/React.createElement(WorkProposal, {
     key: p.id,
     p: p,
     onDecided: load
@@ -46912,7 +46934,7 @@ function useIntelligence(pollMs, view, enabled = true) {
       setErr({ kind: stale ? 'stale-tab' : e.name === 'AbortError' ? 'timeout' : 'unreachable',
         what: stale ? 'This page can no longer authenticate with the server.'
           : e.name === 'AbortError' ? 'Model information did not answer within 30 seconds.' : e.message,
-        fix: stale ? 'Reload the page (Ctrl+Shift+R).' : 'Retry, or check that Friday is still running.' });
+        fix: stale ? 'Reload the page (Ctrl+Shift+R).' : ('Retry, or check that ' + FRIDAY_BRAND.name + ' is still running.') });
     }).finally(() => {
       clearTimeout(run.timer); clearTimeout(run.stallTimer);
       if (current()) { flight.current = null; setStalled(false); }
@@ -47226,7 +47248,7 @@ function QuickSwitch({ current, onPick, switching }) {
     E('button', {
       onClick: () => setOpen(o => !o),
       title: stalled && !d
-        ? "Friday's model status is not answering; the last known seat was " + (current || 'unknown') + '.'
+        ? (fridayName() + "'s model status is not answering; the last known seat was ") + (current || 'unknown') + '.'
         : !serving ? 'No turn served yet.'
         : serving.stale
           ? 'Bound model: ' + serving.model + '\nLive serving state unavailable until the server restarts.'
@@ -47813,7 +47835,7 @@ function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
         fontFamily: 'JetBrains Mono', lineHeight: 1.5, marginBottom: 5,
       },
     }, 'Sent with every turn in this project, so they are charged on every ' +
-       'turn too. Friday’s memory is unchanged either way — a ' +
+       ('turn too. ' + fridayName() + '’s memory is unchanged either way — a ') +
        'project files your chats, it does not narrow what she knows.'),
     E('textarea', {
       value: instr, onChange: e => setInstr(e.target.value),
@@ -47988,7 +48010,7 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
           },
         }, !fit.ok ? fit.why
           : r.awaiting_choice
-            ? 'This job is yours to choose. Friday will not pick a model for you.'
+            ? ('This job is yours to choose. ' + fridayName() + ' will not pick a model for you.')
           : r.blocked_because ? r.blocked_because
           : [r.where || (m && !m.local ? 'cloud' : '—'),
              r.proven ? 'has answered ' + (fmtAgo(r.last_used) || 'before') : 'not used on this machine yet',
@@ -48071,7 +48093,7 @@ function LocalModelRow({ r, onFetch }) {
     }, 'Licence: ' + r.licence),
     allUnknown && E('div', {
       style: { fontSize: 10, color: 'rgba(255,255,255,0.42)', fontFamily: 'JetBrains Mono', marginTop: 3 },
-    }, 'Not measured on this machine. Fetch it and Friday will measure it the first time it runs.'));
+    }, ('Not measured on this machine. Fetch it and ' + fridayName() + ' will measure it the first time it runs.')));
 }
 
 /** The pre-fetch card: what / where / what stands down / how long / what it
@@ -48160,7 +48182,7 @@ function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching,
         fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
         lineHeight: 1.6, marginBottom: 8,
       },
-    }, 'One row per model Friday can run locally, installed or not. Three separate ' +
+    }, ('One row per model ' + fridayName() + ' can run locally, installed or not. Three separate ') +
        'axes, never one combined yes/no — a row with no basis says so plainly ' +
        'instead of guessing.'),
     sections.map(sec => {
@@ -48239,7 +48261,7 @@ function WizardStarterSetSection({ hw }) {
     return E('div', {
       style: { fontSize: 12, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 },
     },
-      'This machine will run Friday in ',
+      ('This machine will run ' + fridayName() + ' in '),
       E('span', { style: { color: '#00d4ff' } }, 'cloud mode'),
       ' using your connected provider(s). On-device models want more RAM/VRAM — you can always add one later.');
   }
@@ -48405,10 +48427,10 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
   // An older server build answers without `soup`. Say so, and keep the mode
   // buttons: a control that vanishes because the payload is short is the
   // silent failure this card exists to end.
-  if (!soup || soup.error) return E(StSection, { title: 'What answers you', desc: 'The model that will answer your next message, where it runs and what it costs, and how Friday chooses between this machine and the cloud.' },
+  if (!soup || soup.error) return E(StSection, { title: 'What answers you', desc: ('The model that will answer your next message, where it runs and what it costs, and how ' + fridayName() + ' chooses between this machine and the cloud.') },
     E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11, color: '#f59e0b', lineHeight: 1.5 } },
       soup && soup.error ? 'The card could not be built: ' + soup.error
-        : 'The running server is an older build that does not report the model soup yet. Restart Friday to see what is about to answer you.'),
+        : ('The running server is an older build that does not report the model soup yet. Restart ' + FRIDAY_BRAND.name + ' to see what is about to answer you.')),
     modeButtons);
   const now = soup.now || {};
   const deep = soup.deep || {};
@@ -48429,7 +48451,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
     'knowledge indexing ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'on this machine' + (post.kg_local_possible ? '' : ' (cannot run: no local model is serving)')),
   ].join(' · ');
-  return E(StSection, { title: 'What answers you', desc: 'The model that will answer your next message, where it runs and what it costs, and how Friday chooses between this machine and the cloud.' },
+  return E(StSection, { title: 'What answers you', desc: ('The model that will answer your next message, where it runs and what it costs, and how ' + fridayName() + ' chooses between this machine and the cloud.') },
     E(SoupRow, {
       label: 'Now answering',
       main: (now.label || now.model || 'nothing') + ' · ' + whereTxt(now),
@@ -48549,7 +48571,7 @@ function TurnLimitsSection() {
   const ROWS = [
     { group: 'rounds', key: 'default', fallback: 999, unit: 'rounds',
       label: 'Rounds per turn',
-      hint: 'Tool calls Friday may make while working on one message. The same ' +
+      hint: ('Tool calls ' + fridayName() + ' may make while working on one message. The same ') +
             'budget the cloud seat has always had.' },
     { group: 'rounds', key: 'local', fallback: null, unit: 'rounds',
       label: 'Rounds \u2014 local seat only',
@@ -48580,7 +48602,7 @@ function TurnLimitsSection() {
     }, 'The local seat has the same round budget as the cloud seat. What stops ' +
        'a runaway turn is loop detection \u2014 the same call with the same ' +
        'arguments, three times \u2014 plus the clock and token ceiling below. ' +
-       'When one of those stops a turn, Friday says which one and offers to ' +
+       ('When one of those stops a turn, ' + fridayName() + ' says which one and offers to ') +
        'continue. Your own Stop button, on a turn in flight, needs no such ' +
        'offer.'),
     E('button', {
@@ -48887,7 +48909,7 @@ function IntelligenceDiagnostics() {
       fridayToast(d2.message || 'Noted.');
       // Put the banner up immediately rather than waiting for the next poll.
       if (window.fridayStandDownBanner) window.fridayStandDownBanner(d2.state || null);
-    }).catch(() => fridayToast('Could not stand Friday down — try again.',
+    }).catch(() => fridayToast(('Could not stand ' + fridayName() + ' down — try again.'),
                               { error: true }))
       .finally(() => setYielding(false));
   };
@@ -48909,7 +48931,7 @@ function IntelligenceDiagnostics() {
              Math.round(ram.total_mib / 1024) + ' GB',
       }),
       diskSys.total_mib && E(Bar, {
-        label: 'System drive (Windows, Friday’s own data)',
+        label: ('System drive (Windows, ' + FRIDAY_BRAND.name + '’s own data)'),
         used: diskUsed, total: diskSys.total_mib, reserve: diskSys.floor_mib,
         sub: Math.round((diskSys.free_mib || 0) / 1024) + ' GB free of ' +
              Math.round(diskSys.total_mib / 1024) + ' GB',
@@ -48926,7 +48948,7 @@ function IntelligenceDiagnostics() {
         E('span', null, 'Machine mode: '),
         E('span', { style: { color: 'var(--st-text)' } }, contract.level || 'working'),
         contract.stood_down && E('span', {
-          title: contract.stand_down_reason || 'Friday is stood down.',
+          title: contract.stand_down_reason || (fridayName() + ' is stood down.'),
           style: { color: 'rgba(255,170,60,0.95)' },
         }, '· stood down'),
         typeof contract.idle_s === 'number' && E('span', {
@@ -48953,7 +48975,7 @@ function IntelligenceDiagnostics() {
       E(RefusalGroup, {
         rows: mach.choices, tone: 'choice',
         heading: 'Optional jobs you have not filled',
-        blurb: 'These are yours to choose. Friday will not pick for you, and ' +
+        blurb: ('These are yours to choose. ' + fridayName() + ' will not pick for you, and ') +
                'leaving them empty is a normal, working setup.',
       }),
       E(RefusalGroup, {
@@ -49352,7 +49374,7 @@ function PushToTranscribeRows({ s, save }) {
   return /*#__PURE__*/React.createElement(React.Fragment, null,
     /*#__PURE__*/React.createElement(StRow, {
       label: "Push-to-Transcribe",
-      desc: "Hold the key, say a sentence, let go. It is transcribed on this machine and typed into whatever window you were looking at — any application, not just Friday. A quick tap is passed through to that application, so the key keeps working where it already did. Press Esc while it is listening to throw the recording away."
+      desc: ("Hold the key, say a sentence, let go. It is transcribed on this machine and typed into whatever window you were looking at — any application, not just " + fridayName() + ". A quick tap is passed through to that application, so the key keeps working where it already did. Press Esc while it is listening to throw the recording away.")
     }, /*#__PURE__*/React.createElement("div", null,
       /*#__PURE__*/React.createElement("button", {
         className: `settings-btn ${on ? 'active' : ''}`,
@@ -49391,7 +49413,7 @@ function PushToTranscribeRows({ s, save }) {
       /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, opacity: 0.7, marginTop: 6 }
       }, "Modifiers plus one key, e.g. ", /*#__PURE__*/React.createElement("code", null, "ctrl+shift+space"),
-        ". A shortcut Friday cannot honour is refused rather than quietly replaced with a different one."))),
+        (". A shortcut " + fridayName() + " cannot honour is refused rather than quietly replaced with a different one.")))),
     on && /*#__PURE__*/React.createElement(StRow, {
       label: "Hold before it listens",
       desc: "Shorter reacts sooner; longer makes it harder to start a recording by accident when you meant the application's own shortcut."
@@ -49456,7 +49478,7 @@ function VoiceStackCard({ s, save, mc }) {
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 } },
           /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '5px 12px' }, onClick: () => proveNow(null) }, manifest && manifest.proving ? 'Checking…' : 'Check voice now'),
           /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.6 } }, manifest ? (manifest.ready ? 'All three stages are working.' : 'Not ready yet; see the rows above.') + ' Voice models unload after ' + Math.round((manifest.idle_unload_s || 600) / 60) + ' minutes idle.' : 'Checking…')),
-        manifest && manifest.description && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 6, fontStyle: 'italic' } }, "What Friday is told about herself: “", manifest.description, "”"))),
+        manifest && manifest.description && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 6, fontStyle: 'italic' } }, ("What " + fridayName() + " is told about herself: “"), manifest.description, "”"))),
     (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Speech recognition", desc: "When listening may use the graphics card. Never: always the processor. If free: the graphics card when enough memory is spare after the display's share. Required: refuse a voice session rather than fall back to the processor." },
       policyRow('voice_ear_gpu', 'Graphics card')),
     (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Speaking voice engine", desc: "Which synthesizer speaks. Piper runs on the processor and is always available. Kokoro sounds more natural but needs an NVIDIA graphics card (or the processor opt-in below), and refuses rather than quietly running slowly." },
@@ -49490,10 +49512,10 @@ function VoiceModePicker({ s, save, mc }) {
   const gpu = eng('local-gpu');
   const rows = [
     { id: 'local', label: 'Local', desc: 'Ears, reasoning and voice on this machine. Nothing leaves it.', off: false, reason: null },
-    { id: 'gemini', label: 'Cloud (Gemini Live)', desc: "Google's speech-to-speech model. Your microphone audio goes to Google. Questions about your own context go through Friday's local model.", off: !!(gem && gem.available === false), reason: gem && gem.hint }
+    { id: 'gemini', label: 'Cloud (Gemini Live)', desc: ("Google's speech-to-speech model. Your microphone audio goes to Google. Questions about your own context go through " + fridayName() + "'s local model."), off: !!(gem && gem.available === false), reason: gem && gem.hint }
   ].concat(providers.map(pv => ({
     id: pv.name, label: 'Local listening, cloud voice (' + String(pv.label || pv.name).replace(/\s*\(cloud\)\s*$/i, '') + ')',
-    desc: 'Friday hears and thinks here; ' + pv.label + ' speaks. Only the reply text leaves.',
+    desc: (fridayName() + ' hears and thinks here; ') + pv.label + ' speaks. Only the reply text leaves.',
     off: pv.selectable === false, reason: pv.reason, provider: pv.name
   }))).concat(gpu ? [{ id: 'local-gpu', label: 'Local GPU (NeMo, experimental)', desc: 'Nemotron ASR + FastPitch on CUDA. Off by default; kept behind the engine interface.', off: gpu.available === false, reason: gpu.hint }] : []);
   const choose = row => {
@@ -49502,7 +49524,7 @@ function VoiceModePicker({ s, save, mc }) {
     if (row.id === 'gemini') {
       setPending({ id: 'gemini', label: row.label, lines: [
         ['Mode', 'Speech-to-speech: Gemini hears, thinks and speaks in one hop, with barge-in and native prosody.'],
-        ['What leaves this machine', 'Your microphone audio and the session context, after the privacy gate. Questions about your own notes, memory or knowledge graph are answered by Friday’s local model through ask_friday; only the sealed answer is relayed.'],
+        ['What leaves this machine', ('Your microphone audio and the session context, after the privacy gate. Questions about your own notes, memory or knowledge graph are answered by ' + fridayName() + '’s local model through ask_friday; only the sealed answer is relayed.')],
         ['Retention', 'Subject to Google’s API data terms for the Live API.'],
         ['Cost', 'Metered per session in Settings → Spending; the byte receipt is shown after each session.']
       ] });
@@ -49686,7 +49708,7 @@ function SettingsTabVoice({
   }, l))))), /*#__PURE__*/React.createElement(StSection, {
     title: "Listening"
   }, gem && /*#__PURE__*/React.createElement(StRow, {
-    label: "Interrupting Friday",
+    label: ("Interrupting " + fridayName()),
     desc: "Talk over her and she stops, which works best with headphones. On open speakers her own voice can echo back and cut her off; choose no interruption there and press Esc to stop her instead."
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -49713,7 +49735,7 @@ function SettingsTabVoice({
     }
   }, o.l)))), gem && /*#__PURE__*/React.createElement(StRow, {
     label: "Who is talking",
-    desc: "With several people in the room, Friday answers only when she is spoken to by name, or when someone replies to her. Takes effect on the next voice session."
+    desc: ("With several people in the room, " + fridayName() + " answers only when she is spoken to by name, or when someone replies to her. Takes effect on the next voice session.")
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -49736,7 +49758,7 @@ function SettingsTabVoice({
       fontSize: 11
     }
   }, o.l)))), !gem && /*#__PURE__*/React.createElement(StSavedSlider, {
-    label: "Pause before Friday replies",
+    label: ("Pause before " + fridayName() + " replies"),
     desc: "How long a silence counts as the end of what you said. Longer suits slow speech; shorter feels snappier.",
     value: s.voice_silence_ms ?? 800,
     min: 300,
@@ -49748,7 +49770,7 @@ function SettingsTabVoice({
     })
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "What voice can't do, and why",
-    desc: "Voice can do anything chat can: what its quick tools do not cover, it hands to Friday in the background. These limits remain, and why."
+    desc: ("Voice can do anything chat can: what its quick tools do not cover, it hands to " + fridayName() + " in the background. These limits remain, and why.")
   }, /*#__PURE__*/React.createElement(VoiceRestrictions, null)), gem && /*#__PURE__*/React.createElement(StSection, {
     title: "Gemini Live options",
     desc: "These apply only to the Gemini Live session."
@@ -49760,7 +49782,7 @@ function SettingsTabVoice({
     }),
     desc: "Lets the voice carry emotion. Only some Gemini voice models support it."
   }), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Friday may speak first",
+    label: (fridayName() + " may speak first"),
     value: !!s.voice_proactive,
     onChange: () => save({
       voice_proactive: !s.voice_proactive
@@ -49779,7 +49801,7 @@ function SettingsTabVoice({
     onChange: () => save({
       voice_tools: s.voice_tools === false
     }),
-    desc: "Lets Friday call her tools mid-conversation."
+    desc: ("Lets " + fridayName() + " call her tools mid-conversation.")
   }), /*#__PURE__*/React.createElement(StSavedSlider, {
     label: /*#__PURE__*/React.createElement("span", null, "Variety", s.voice_temperature != null && /*#__PURE__*/React.createElement("button", {
       type: "button",
@@ -49980,7 +50002,7 @@ function ClawsRepinPanel() {
   }, []);
   useEffect(() => { load(); }, [load]);
   const repin = () => {
-    if (!window.confirm("Re-confirm Friday's rules on this PC?\n\nDo this only if you moved Friday's data to this PC or Windows account, or updated Friday. " +
+    if (!window.confirm(("Re-confirm " + fridayName() + "'s rules on this PC?\n\nDo this only if you moved " + FRIDAY_BRAND.name + "'s data to this PC or Windows account, or updated " + FRIDAY_BRAND.name + ". ") +
       "It accepts the current rules text under this PC's signing key, and outward actions stop being held for this reason.")) return;
     setBusy(true);
     setMsg('');
@@ -50002,11 +50024,11 @@ function ClawsRepinPanel() {
       'Rules text SHA-256 ', (st.text_sha256 || '').slice(0, 16), '…',
       st.pinned_at ? ' · pinned ' + new Date(st.pinned_at * 1000).toLocaleString() : ''),
     E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) },
-      'Friday signs her rules with a key kept in this PC’s Credential Manager. After moving her data to another PC or Windows account, or after an update that changed the rules, the signature no longer matches and every outward action waits. Reads keep working.'),
+      (fridayName() + ' signs her rules with a key kept in this PC’s Credential Manager. After moving her data to another PC or Windows account, or after an update that changed the rules, the signature no longer matches and every outward action waits. Reads keep working.')),
     E('button', {
       className: 'settings-btn', style: { fontSize: 12 },
       disabled: busy || st.state !== 'mismatch', onClick: repin
-    }, busy ? 'Re-confirming…' : "Re-confirm Friday’s rules on this PC"),
+    }, busy ? 'Re-confirming…' : ("Re-confirm " + fridayName() + "’s rules on this PC")),
     msg && E('div', { style: { fontSize: 11, color: '#cfefff', marginTop: 8 } }, msg));
 }
 
@@ -50247,7 +50269,7 @@ function SettingsTabPrivacy({
     save: save
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "Privacy check",
-    desc: "Which of Friday's privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on."
+    desc: ("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")
   }, /*#__PURE__*/React.createElement(PrivacyCheckLayers, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Fonts"
   }, /*#__PURE__*/React.createElement(StToggle, {
@@ -50256,7 +50278,7 @@ function SettingsTabPrivacy({
     onChange: () => save({
       web_fonts_from_google: s.web_fonts_from_google === false
     }),
-    desc: "Only used while Friday's own font files are not installed in static\\fonts. On, every page load asks Google for the typefaces, which shows Google this PC's address. Off, Friday uses similar fonts already on this PC. Takes effect when the page reloads."
+    desc: ("Only used while " + FRIDAY_BRAND.name + "'s own font files are not installed in static\\fonts. On, every page load asks Google for the typefaces, which shows Google this PC's address. Off, " + FRIDAY_BRAND.name + " uses similar fonts already on this PC. Takes effect when the page reloads.")
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "What needs your sign-off"
   }, /*#__PURE__*/React.createElement(ApprovalScannerPanel, {
@@ -50267,7 +50289,7 @@ function SettingsTabPrivacy({
   }, /*#__PURE__*/React.createElement(LayaPilotPanel, {s:s, save:save})), /*#__PURE__*/React.createElement(StSection, {
     title: "Scheduled jobs: what they may do on their own"
   }, /*#__PURE__*/React.createElement(GovernanceGrantsPanel, null)), /*#__PURE__*/React.createElement(StSection, {
-    title: "Friday’s rules on this PC"
+    title: (fridayName() + "’s rules on this PC")
   }, /*#__PURE__*/React.createElement(ClawsRepinPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Stored keys"
   }, /*#__PURE__*/React.createElement(KeystoreWrapPanel, null)), /*#__PURE__*/React.createElement(StSection, {
@@ -50279,7 +50301,7 @@ function SettingsTabPrivacy({
       marginBottom: 10,
       lineHeight: 1.6
     }
-  }, "High risk. Lets Friday move the mouse, click, type and take screenshots. It needs both this switch and a grant below; once granted, the grant lasts across restarts until you revoke it."), /*#__PURE__*/React.createElement(StToggle, {
+  }, ("High risk. Lets " + fridayName() + " move the mouse, click, type and take screenshots. It needs both this switch and a grant below; once granted, the grant lasts across restarts until you revoke it.")), /*#__PURE__*/React.createElement(StToggle, {
     label: "Allow computer control",
     value: !!s.computer_control_enabled,
     onChange: () => save({
@@ -50359,7 +50381,7 @@ function SettingsTabPrivacy({
       marginBottom: 12,
       lineHeight: 1.6
     }
-  }, "Everything Friday knows lives on this device. Take it with you, or erase it completely \u2014 no server copy exists. The export leaves out stored API keys, account sign-ins and the key that decrypts them; for a backup that includes them, run \u201cfriday export --full\u201d, which encrypts it with a passphrase you choose."), /*#__PURE__*/React.createElement("button", {
+  }, ("Everything " + fridayName() + " knows lives on this device. Take it with you, or erase it completely \u2014 no server copy exists. The export leaves out stored API keys, account sign-ins and the key that decrypts them; for a backup that includes them, run \u201cfriday export --full\u201d, which encrypts it with a passphrase you choose.")), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       width: '100%',
@@ -50530,7 +50552,7 @@ function LayaPilotPanel({s, save}) {
     E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',margin:'8px 0'}},
       !enabled ? 'Pilot is off.' : (st && st.off_record) ? 'Paused while off the record.'
         : (st && st.ready) ? 'Laya is ready. Late or busy predictions are skipped without holding the chat.'
-        : 'Waiting for Laya to be ready. Chats continue with ordinary preparation. If Laya stays unavailable, restart Friday to warm it.'),
+        : ('Waiting for Laya to be ready. Chats continue with ordinary preparation. If Laya stays unavailable, restart ' + FRIDAY_BRAND.name + ' to warm it.')),
     E('button', {className:'settings-btn',onClick:load,style:{fontSize:11}}, 'Refresh measurements'),
     error && E('div', {role:'status',style:{fontSize:11,color:'#f59e0b',marginTop:6}}, error),
     st && E('div', {style:{fontSize:11,color:'var(--st-dim)',marginTop:8}},
@@ -50624,7 +50646,7 @@ function ApprovalScannerPanel({
   const opts = [{
     k: 'off',
     l: 'Off',
-    d: 'The keyword scan alone decides. This is how Friday behaved before Laya.'
+    d: ('The keyword scan alone decides. This is how ' + fridayName() + ' behaved before Laya.')
   }, {
     k: 'shadow',
     l: 'Shadow',
@@ -50644,7 +50666,7 @@ function ApprovalScannerPanel({
       marginBottom: 10,
       lineHeight: 1.6
     }
-  }, "Before Friday sends mail as you, spends money, or does something it cannot undo, a scanner decides whether to stop and ask. Adding a second opinion can only ever raise more approval cards — the keyword scan is still one of the two votes, so turning this on cannot let something through that it would have caught."), /*#__PURE__*/React.createElement("div", {
+  }, ("Before " + fridayName() + " sends mail as you, spends money, or does something it cannot undo, a scanner decides whether to stop and ask. Adding a second opinion can only ever raise more approval cards — the keyword scan is still one of the two votes, so turning this on cannot let something through that it would have caught.")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -50730,7 +50752,7 @@ function CallModePanel({
   const opts = [{
     k: 'automatic',
     l: 'Stand back on her own (recommended)',
-    d: 'When a call takes the camera or the mic, Friday lets go of both, holds the scene still and parks the local brain; she comes back when the call ends.'
+    d: ('When a call takes the camera or the mic, ' + fridayName() + ' lets go of both, holds the scene still and parks the local brain; she comes back when the call ends.')
   }, {
     k: 'ask',
     l: 'Ask me first',
@@ -50738,11 +50760,11 @@ function CallModePanel({
   }, {
     k: 'off',
     l: 'Don\'t',
-    d: 'Friday keeps going through calls. "I\'m on a call" still works by voice or from the chip.'
+    d: (fridayName() + ' keeps going through calls. "I\'m on a call" still works by voice or from the chip.')
   }];
   return /*#__PURE__*/React.createElement(StSection, {
     title: "Calls",
-    desc: "A video call needs the camera, the mic and most of this computer's memory: the same things Friday's local brain and 3D scene use."
+    desc: ("A video call needs the camera, the mic and most of this computer's memory: the same things " + fridayName() + "'s local brain and 3D scene use.")
   }, /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
     "aria-label": "Call mode",
@@ -50940,7 +50962,7 @@ function SettingsTabFederation() {
       marginBottom: 20,
       lineHeight: 1.6
     }
-  }, "Connect with other Friday instances. Each instance has its own signed identity, and messages between them are encrypted end to end."), /*#__PURE__*/React.createElement(FederationPanel, null), /*#__PURE__*/React.createElement("div", {
+  }, ("Connect with other " + FRIDAY_BRAND.name + " instances. Each instance has its own signed identity, and messages between them are encrypted end to end.")), /*#__PURE__*/React.createElement(FederationPanel, null), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 24
     }
@@ -50973,7 +50995,7 @@ function SettingsTabEconomy() {
 const GA_STATE_COLORS = { connected: '#00ff80', needs_reauth: '#ff8c42', error: '#ff5470', disconnected: '#7a8699', unknown: '#888888' };
 function gaHealth(acc) {
   const h = acc && acc.health;
-  if (!h) return { state: 'unknown', label: 'Status unknown', summary: 'Status unknown - Friday could not read this account state', healthy: false, actionable: true, stale: false, color: GA_STATE_COLORS.unknown };
+  if (!h) return { state: 'unknown', label: 'Status unknown', summary: ('Status unknown - ' + fridayName() + ' could not read this account state'), healthy: false, actionable: true, stale: false, color: GA_STATE_COLORS.unknown };
   return Object.assign({}, h, { color: GA_STATE_COLORS[h.state] || GA_STATE_COLORS.unknown });
 }
 function gaSyncTitle(acc) {
@@ -51054,7 +51076,7 @@ function WorkspaceHistory({ wsId, label, onClose, top }) {
       /*#__PURE__*/React.createElement("button", { style: _btn, onClick: onClose }, "Close")),
     /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginBottom: 10 } },
       currentKeys.length
-        ? "Friday has customized this workspace: " + currentKeys.join(", ") + ". Every step below is reversible — reverting is snapshotted too."
+        ? (fridayName() + " has customized this workspace: ") + currentKeys.join(", ") + ". Every step below is reversible — reverting is snapshotted too."
         : "This workspace is at its baseline. Nothing has been customized."),
     err && /*#__PURE__*/React.createElement("div", { style: { ..._dim, color: 'rgba(255,120,120,0.85)', marginBottom: 8 } }, err),
     /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' } },
@@ -51062,7 +51084,7 @@ function WorkspaceHistory({ wsId, label, onClose, top }) {
       /*#__PURE__*/React.createElement("button", { style: { ..._btn, borderColor: 'rgba(255,255,255,0.18)', color: 'rgba(255,255,255,0.6)' }, disabled: !!busy || !currentKeys.length, onClick: () => act('/reset', {}, 'reset') }, busy === 'reset' ? '…' : "Back to baseline")),
     !data && !err && /*#__PURE__*/React.createElement("div", { style: _dim }, "Reading the history…"),
     data && !entries.length && /*#__PURE__*/React.createElement("div", { style: _dim },
-      "No changes recorded yet. Friday snapshots this workspace before every change it makes, so the first one will show up here."),
+      ("No changes recorded yet. " + fridayName() + " snapshots this workspace before every change it makes, so the first one will show up here.")),
     entries.map((e, i) => /*#__PURE__*/React.createElement("div", {
       key: e.version_id || i,
       style: { borderLeft: '2px solid rgba(0,212,255,0.3)', paddingLeft: 10, marginBottom: 12 }
@@ -51367,9 +51389,9 @@ function GoogleAccountsPanel() {
     // say what the limit is, so the screen confirms rather than surprises.
     pending.requestingSend && /*#__PURE__*/React.createElement("div", {
       style: { marginTop: 10, padding: '9px 11px', borderRadius: 6, background: 'rgba(255,140,66,0.08)', border: '1px solid rgba(255,140,66,0.3)', fontSize: 11.5, lineHeight: 1.55, color: 'rgba(255,255,255,0.88)' } },
-      'Google will also ask to let Friday ',
+      ('Google will also ask to let ' + fridayName() + ' '),
       /*#__PURE__*/React.createElement("b", null, 'send email on your behalf'),
-      '. That is this request, and it is expected. Friday still cannot send anything on its own: every message waits on an approval card showing the exact From, To, Subject and text, and approving that card is what sends it.'),
+      ('. That is this request, and it is expected. ' + fridayName() + ' still cannot send anything on its own: every message waits on an approval card showing the exact From, To, Subject and text, and approving that card is what sends it.')),
     pending.scopes && pending.scopes.length > 0 && /*#__PURE__*/React.createElement("div", {
       "data-testid": "ga-mailbox-scopes",
       style: { marginTop: 10, padding: '9px 11px', borderRadius: 6, background: 'rgba(0,212,255,0.05)', border: '1px solid rgba(0,212,255,0.25)', fontSize: 11.5, lineHeight: 1.55 } },
@@ -51381,7 +51403,7 @@ function GoogleAccountsPanel() {
           /*#__PURE__*/React.createElement("span", { style: { color: x.new ? '#fff' : 'rgba(255,255,255,0.6)' } }, x.what),
           /*#__PURE__*/React.createElement("code", { style: { display: 'block', fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', overflowWrap: 'anywhere' } }, x.scope)))),
       /*#__PURE__*/React.createElement("div", { style: { ...{ fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }, marginTop: 6 } },
-        'Leave every box ticked on Google\u2019s screen. If you untick one, Friday says so afterwards and that part stays off.')),
+        ('Leave every box ticked on Google\u2019s screen. If you untick one, ' + fridayName() + ' says so afterwards and that part stays off.'))),
     /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' } },
       /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12, color: '#00d4ff' },
         onClick: () => { const acct = pending.account; window.open(pending.url, '_blank', 'width=600,height=700'); setReconnecting(acct ? acct.id : 'new'); setMsg(acct ? 'Sign in as ' + (acct.email || acct.label || 'that account') + ' in the Google window. This page updates on its own once you are done.' : 'Finish in the Google window. This page updates on its own once you are done.'); setPending(null); } },
@@ -51482,7 +51504,7 @@ function GoogleAccountsPanel() {
     style: { color: '#ff8c42', fontSize: 12, fontWeight: 600, marginBottom: 4 }
   }, accounts.filter(a => !gaHealth(a).healthy).length + ' of ' + accounts.length + ' account(s) are not working'), /*#__PURE__*/React.createElement("div", {
     style: { color: 'rgba(255,255,255,0.6)', fontSize: 11, lineHeight: 1.5 }
-  }, "Friday cannot read mail or calendar for these accounts, so anything it tells you about them is out of date. Reconnecting just signs you back in to Google - nothing is deleted and your settings are kept.")), accounts.map(acc => {
+  }, (fridayName() + " cannot read mail or calendar for these accounts, so anything it tells you about them is out of date. Reconnecting just signs you back in to Google - nothing is deleted and your settings are kept."))), accounts.map(acc => {
     const h = gaHealth(acc);
     return /*#__PURE__*/React.createElement("div", {
     key: acc.id,
@@ -51560,7 +51582,7 @@ function GoogleAccountsPanel() {
   }, reconnecting === acc.id ? 'Waiting...' : 'Reconnect'), !(acc.mail && acc.mail.send && acc.mail.modify) && /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     "data-testid": "ga-reconnect-sending",
-    title: 'Sign in again and allow Friday to send mail (each message waits for your approval) and to change this mailbox (labels, archive, star, read). One Google screen; it shows you the exact permissions first.',
+    title: ('Sign in again and allow ' + fridayName() + ' to send mail (each message waits for your approval) and to change this mailbox (labels, archive, star, read). One Google screen; it shows you the exact permissions first.'),
     style: { fontSize: 11, padding: '4px 12px', color: '#00d4ff', borderColor: 'rgba(0,212,255,0.5)', whiteSpace: 'nowrap' },
     onClick: () => reconnectWithSending(acc),
     disabled: loading
@@ -51639,7 +51661,7 @@ function GoogleAccountsPanel() {
     style: { marginTop: 2 }
   }), /*#__PURE__*/React.createElement("span", {
     style: { fontSize: 11, lineHeight: 1.5, color: 'rgba(255,255,255,0.6)' }
-  }, /*#__PURE__*/React.createElement("span", { style: { color: 'rgba(255,255,255,0.85)' } }, 'Let Friday send mail from this account'),
+  }, /*#__PURE__*/React.createElement("span", { style: { color: 'rgba(255,255,255,0.85)' } }, ('Let ' + fridayName() + ' send mail from this account')),
      ' \u2014 every message still waits for your approval, one card per message. Leave this off and the account is read-only for mail. Applies to the account you add next; it cannot be turned on later without reconnecting.')),
   msg && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -52515,7 +52537,7 @@ function ModelBrowser({
       fontSize: 10,
       padding: '3px 8px'
     },
-    title: "Use for sub-tasks Friday hands off to a helper",
+    title: ("Use for sub-tasks " + fridayName() + " hands off to a helper"),
     onClick: () => useAs('subagent_model', m.id)
   }, "Use for sub-tasks"), (m.modalities || []).includes('image') && /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
@@ -52609,7 +52631,7 @@ function AutoRouterControls({ s, save, orReady, compact }) {
       }
     }, body);
   }
-  return React.createElement(StSection, { title: "Let Friday decide" }, body);
+  return React.createElement(StSection, { title: ("Let " + fridayName() + " decide") }, body);
 }
 
 function SettingsTabProviders({
@@ -52735,7 +52757,7 @@ function SettingsTabConnectors({
       marginBottom: 10,
       lineHeight: 1.5
     }
-  }, "Model Context Protocol servers add tools Friday can call. Configured in ", /*#__PURE__*/React.createElement("code", {
+  }, ("Model Context Protocol servers add tools " + fridayName() + " can call. Configured in "), /*#__PURE__*/React.createElement("code", {
     style: {
       color: '#00d4ff'
     }
@@ -52893,7 +52915,7 @@ function SettingsTabSigning() {
     }
   }, msg), /*#__PURE__*/React.createElement(StSection, {
     title: "SIGNING PDFS",
-    desc: "Friday never signs on her own: every signature waits for your approval on a card that shows the page and where the signature goes."
+    desc: (fridayName() + " never signs on her own: every signature waits for your approval on a card that shows the page and where the signature goes.")
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Signature image",
     desc: 'A picture of your signature, stamped onto a page. Status: ' + label(st && st.signature_image)
@@ -52969,8 +52991,8 @@ function SettingsTabBrowser() {
     }).catch(() => setMsg('✗ Could not reach the server.')).finally(() => setBusy(false));
   };
   const clear = () => {
-    if (!window.confirm("Delete Friday's browser profile? Every site you signed in to in Friday's window will ask you to sign in again.")) return;
-    post('/api/browser/profile/clear', "Friday's browser profile cleared");
+    if (!window.confirm(("Delete " + fridayName() + "'s browser profile? Every site you signed in to in " + fridayName() + "'s window will ask you to sign in again."))) return;
+    post('/api/browser/profile/clear', (fridayName() + "'s browser profile cleared"));
   };
   const size = b => (b || 0) > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round((b || 0) / 1024) + ' KB';
   const running = !!(st && st.running);
@@ -52985,23 +53007,23 @@ function SettingsTabBrowser() {
     }
   }, msg), /*#__PURE__*/React.createElement(StSection, {
     title: "FRIDAY'S BROWSER",
-    desc: "Friday works in web pages in her own window, which you can watch. It uses her own profile, never your normal browser. She never types passwords: when a site needs you to sign in, she stops and asks you to do it in that window. Anything that submits, sends or pays waits for your approval card."
+    desc: (fridayName() + " works in web pages in her own window, which you can watch. It uses her own profile, never your normal browser. She never types passwords: when a site needs you to sign in, she stops and asks you to do it in that window. Anything that submits, sends or pays waits for your approval card.")
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Window",
-    desc: running ? 'Open: ' + (st.url || 'a blank page') : 'Closed. It opens when Friday needs it and closes itself after 15 minutes idle.'
+    desc: running ? 'Open: ' + (st.url || 'a blank page') : ('Closed. It opens when ' + fridayName() + ' needs it and closes itself after 15 minutes idle.')
   }, running && /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     disabled: busy,
-    onClick: () => post('/api/browser/close', "Friday's browser closed")
+    onClick: () => post('/api/browser/close', (fridayName() + "'s browser closed"))
   }, "Close")), /*#__PURE__*/React.createElement(StRow, {
     label: "Sign-ins and cookies",
-    desc: st && st.profile_exists ? 'Kept in Friday’s profile on this computer (' + size(st.profile_bytes) + '). Clearing it signs Friday out of every site.' : 'Nothing stored yet.'
+    desc: st && st.profile_exists ? ('Kept in ' + fridayName() + '’s profile on this computer (') + size(st.profile_bytes) + ('). Clearing it signs ' + fridayName() + ' out of every site.') : 'Nothing stored yet.'
   }, /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     disabled: busy || !(st && st.profile_exists),
-    "aria-label": "Clear Friday's browser profile",
+    "aria-label": ("Clear " + fridayName() + "'s browser profile"),
     onClick: clear
-  }, "Clear Friday's browser profile"))));
+  }, ("Clear " + fridayName() + "'s browser profile")))));
 }
 // ── Settings → Accounts & Keys → Phone (Twilio). Off by default. Secrets go in, never come back:
 // the server reports "stored"/"missing"/"unreadable" for each one. Every
@@ -53102,10 +53124,10 @@ function SettingsTabPhone() {
     onChange: () => patch({
       enabled: !c.enabled
     }, c.enabled ? 'Phone switched off' : 'Phone switched on'),
-    desc: "Off by default. When off, nothing listens for Twilio and Friday sends nothing."
+    desc: ("Off by default. When off, nothing listens for Twilio and " + fridayName() + " sends nothing.")
   }), /*#__PURE__*/React.createElement("div", {
     style: note
-  }, st.ingress && st.ingress.running ? 'Listening for Twilio on 127.0.0.1:' + st.ingress.port + ' (only the phone webhooks; nothing else of Friday is reachable there).' : c.enabled ? 'Not listening yet: the auth token is needed before the webhook listener starts.' : 'Not listening.')), /*#__PURE__*/React.createElement(StSection, {
+  }, st.ingress && st.ingress.running ? 'Listening for Twilio on 127.0.0.1:' + st.ingress.port + (' (only the phone webhooks; nothing else of ' + FRIDAY_BRAND.name + ' is reachable there).') : c.enabled ? 'Not listening yet: the auth token is needed before the webhook listener starts.' : 'Not listening.')), /*#__PURE__*/React.createElement(StSection, {
     title: "TWILIO ACCOUNT"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Account SID",
@@ -53143,7 +53165,7 @@ function SettingsTabPhone() {
     }).then(() => set('api_key_sid', ''))
   }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
     label: "API key secret",
-    desc: 'Used for everything Friday sends. Status: ' + secretLabel(c.api_key_secret)
+    desc: ('Used for everything ' + fridayName() + ' sends. Status: ') + secretLabel(c.api_key_secret)
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -53160,7 +53182,7 @@ function SettingsTabPhone() {
     onClick: () => saveSecret('api_key_secret', 'key_secret', 'API key secret stored')
   }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
     label: "Auth token",
-    desc: 'Twilio signs every webhook with the account auth token, not the API key, so Friday needs it to check that a text or call really came from Twilio. Status: ' + secretLabel(c.auth_token)
+    desc: ('Twilio signs every webhook with the account auth token, not the API key, so ' + fridayName() + ' needs it to check that a text or call really came from Twilio. Status: ') + secretLabel(c.auth_token)
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -53176,7 +53198,7 @@ function SettingsTabPhone() {
     disabled: busy || !d.auth_token,
     onClick: () => saveSecret('auth_token', 'auth_token', 'Auth token stored')
   }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
-    label: "Friday's number"
+    label: (fridayName() + "'s number")
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -53195,7 +53217,7 @@ function SettingsTabPhone() {
     title: "YOUR CELL"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Your cell number",
-    desc: "The only number Friday will text or call without you naming another one. A one-time code proves it is yours."
+    desc: ("The only number " + fridayName() + " will text or call without you naming another one. A one-time code proves it is yours.")
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -53233,7 +53255,7 @@ function SettingsTabPhone() {
     }, 'Calling your cell with the code')
   }, "Call me with a code")), /*#__PURE__*/React.createElement("div", {
     style: note
-  }, !c.enabled ? 'Switch the phone on first. ' : '', !ready ? 'Enter the account SID, API key and secret, and Friday’s number first. ' : '', "While carrier registration is pending, a text may be filtered; the call works either way."), st.verification_pending && /*#__PURE__*/React.createElement("div", {
+  }, !c.enabled ? 'Switch the phone on first. ' : '', !ready ? ('Enter the account SID, API key and secret, and ' + fridayName() + '’s number first. ') : '', "While carrier registration is pending, a text may be filtered; the call works either way."), st.verification_pending && /*#__PURE__*/React.createElement("div", {
     style: {
       ...row,
       marginTop: 8
@@ -53271,7 +53293,7 @@ function SettingsTabPhone() {
     style: note
   }, "Checked ", new Date(num.checked_at * 1000).toLocaleString(), ". Texts go to: ", num.webhooks && num.webhooks.sms || 'nowhere set', ". Calls go to: ", num.webhooks && num.webhooks.voice || 'nowhere set', ".")), /*#__PURE__*/React.createElement(StRow, {
     label: "Public address of the phone tunnel",
-    desc: "The https:// hostname your Cloudflare tunnel serves. It must reach only the phone listener, never Friday itself."
+    desc: ("The https:// hostname your Cloudflare tunnel serves. It must reach only the phone listener, never " + FRIDAY_BRAND.name + " itself.")
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -53289,8 +53311,8 @@ function SettingsTabPhone() {
   }, "Save"))), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     disabled: busy || !ready || !c.public_base_url,
-    onClick: () => call('/api/phone/point-webhooks', {}, 'The number now points at Friday')
-  }, "Point the number at Friday"), /*#__PURE__*/React.createElement("div", {
+    onClick: () => call('/api/phone/point-webhooks', {}, ('The number now points at ' + fridayName()))
+  }, ("Point the number at " + fridayName())), /*#__PURE__*/React.createElement("div", {
     style: note
   }, "Changes the number's SMS and voice webhooks in Twilio to ", c.public_base_url || 'the address above', "/twilio/\u2026")), /*#__PURE__*/React.createElement(StSection, {
     title: "TEXTING REGISTRATION (A2P 10DLC)"
@@ -53319,7 +53341,7 @@ function SettingsTabPhone() {
       color: 'rgba(255,255,255,0.78)',
       lineHeight: 1.6
     }
-  }, /*#__PURE__*/React.createElement("div", null, "\u2713 ", c.owner_cell_verified ? c.owner_cell : 'your cell, once verified', ": alerts, approval codes and replies, within ", c.owner_sms_per_hour, " texts an hour and ", c.owner_sms_per_day, " a day."), /*#__PURE__*/React.createElement("div", null, "\u2022 Anyone else: only when you type their number in your message, and only after you approve a card for that exact text or call."), /*#__PURE__*/React.createElement("div", null, "\u2022 Every call, including to you, waits for your approval. Calls to anyone else start by saying Friday is an AI assistant."), /*#__PURE__*/React.createElement("div", null, "\u2022 Nothing that arrives by phone can make Friday contact anyone. A text from your number is still treated as unverified and can only get answers, not actions."))), /*#__PURE__*/React.createElement(StSection, {
+  }, /*#__PURE__*/React.createElement("div", null, "\u2713 ", c.owner_cell_verified ? c.owner_cell : 'your cell, once verified', ": alerts, approval codes and replies, within ", c.owner_sms_per_hour, " texts an hour and ", c.owner_sms_per_day, " a day."), /*#__PURE__*/React.createElement("div", null, "\u2022 Anyone else: only when you type their number in your message, and only after you approve a card for that exact text or call."), /*#__PURE__*/React.createElement("div", null, ("\u2022 Every call, including to you, waits for your approval. Calls to anyone else start by saying " + fridayName() + " is an AI assistant.")), /*#__PURE__*/React.createElement("div", null, ("\u2022 Nothing that arrives by phone can make " + fridayName() + " contact anyone. A text from your number is still treated as unverified and can only get answers, not actions.")))), /*#__PURE__*/React.createElement(StSection, {
     title: "BEHAVIOUR"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Answer my texts",
@@ -53327,7 +53349,7 @@ function SettingsTabPhone() {
     onChange: () => patch({
       sms_conversation: !c.sms_conversation
     }),
-    desc: "Texts from your verified cell get a reply. Read-only: Friday can look things up but not act."
+    desc: ("Texts from your verified cell get a reply. Read-only: " + fridayName() + " can look things up but not act.")
   }), /*#__PURE__*/React.createElement(StToggle, {
     label: "Approve by text",
     value: !!c.sms_approvals,
@@ -53348,7 +53370,7 @@ function SettingsTabPhone() {
     onChange: () => patch({
       live_calls: !c.live_calls
     }),
-    desc: "Talk with Friday in its own voice. Needs local voice ready; falls back to voicemail when it is not. Not yet tested on a real call."
+    desc: ("Talk with " + fridayName() + " in its own voice. Needs local voice ready; falls back to voicemail when it is not. Not yet tested on a real call.")
   }), /*#__PURE__*/React.createElement(StToggle, {
     label: "Ask Twilio to forget",
     value: !!c.redact_after_delivery,
@@ -53358,7 +53380,7 @@ function SettingsTabPhone() {
     desc: "Blank message bodies at Twilio once delivered and delete voicemail recordings once transcribed."
   }), /*#__PURE__*/React.createElement(StRow, {
     label: "Greeting",
-    desc: "Said to every caller. Keep the part saying Friday is an AI."
+    desc: ("Said to every caller. Keep the part saying " + fridayName() + " is an AI.")
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -53438,7 +53460,7 @@ function SettingsTabPhone() {
     title: "WHAT TWILIO CAN STILL SEE"
   }, /*#__PURE__*/React.createElement("div", {
     style: note
-  }, "Twilio carries every text and call, so it sees the numbers, times, durations, and message text while a text is in flight. With \"Ask Twilio to forget\" on, bodies are blanked and recordings deleted afterwards, but the records (numbers, times, prices) stay in your Twilio account. Friday never asks Twilio to record calls or transcribe them. The carriers see the same in-flight content.")));
+  }, ("Twilio carries every text and call, so it sees the numbers, times, durations, and message text while a text is in flight. With \"Ask Twilio to forget\" on, bodies are blanked and recordings deleted afterwards, but the records (numbers, times, prices) stay in your Twilio account. " + fridayName() + " never asks Twilio to record calls or transcribe them. The carriers see the same in-flight content."))));
 }
 // Phone (Twilio) spend inside Cost & Usage: what it has cost so far and the
 // current per-text and per-minute rates, read from /api/phone/status.
@@ -53696,7 +53718,7 @@ function SettingsTabAbout() {
     }
   }, "\u26A0 This install does not match its own records"), vt.disagreement) : null, /*#__PURE__*/React.createElement(StToggle, {
     label: "Check for new versions weekly",
-    desc: "Asks GitHub once a week whether a newer Agent Friday\u2122 has been released, and tells you if one has. Friday never downloads or installs anything by itself \u2014 you choose. The check sends nothing about you or this machine: no identifier, no usage data, not even which version you are running.",
+    desc: ("Asks GitHub once a week whether a newer Agent Friday\u2122 has been released, and tells you if one has. " + FRIDAY_BRAND.name + " never downloads or installs anything by itself \u2014 you choose. The check sends nothing about you or this machine: no identifier, no usage data, not even which version you are running."),
     value: !!(upd && upd.enabled),
     onChange: toggleUpd
   }), /*#__PURE__*/React.createElement("div", {
@@ -53929,7 +53951,7 @@ function KnowledgeSettings({
   };
   if (part === 'privacy') return /*#__PURE__*/React.createElement(StRow, {
     label: "Where knowledge indexing runs",
-    desc: "Friday reads your wiki, memories and conversations to link facts into the knowledge graph. Local keeps that text on this machine, and cannot run while no local model is serving. Cloud sends it to the cloud model under your cloud consent above."
+    desc: (fridayName() + " reads your wiki, memories and conversations to link facts into the knowledge graph. Local keeps that text on this machine, and cannot run while no local model is serving. Cloud sends it to the cloud model under your cloud consent above.")
   }, /*#__PURE__*/React.createElement(StSelect, {
     ariaLabel: "Where knowledge indexing runs",
     value: kg.indexing_mode || 'local',
@@ -54069,7 +54091,7 @@ function LoopGuardSwitch({ on, onToggle }) {
     /*#__PURE__*/React.createElement("div", {
       style: { fontSize: 10.5, color: 'rgba(255,255,255,0.45)',
                fontFamily: mono, lineHeight: 1.6, marginBottom: 10 }
-    }, "Nothing limits how long Friday may work or how many rounds she may " +
+    }, ("Nothing limits how long " + fridayName() + " may work or how many rounds she may ") +
        "take — only the limits you set above. This is the one exception, and " +
        "it is not a limit on usage: it stops a turn when the same call, or the " +
        "same short cycle of calls, repeats without the conversation moving on. " +
@@ -54297,7 +54319,7 @@ function SettingsTabCosts() {
       marginTop: 8,
       lineHeight: 1.5
     }, mono)
-  }, "Friday's own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here."), (s && s.unpriced_calls > 0) && /*#__PURE__*/React.createElement("div", {
+  }, (fridayName() + "'s own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here.")), (s && s.unpriced_calls > 0) && /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       fontSize: 10,
       color: '#ffb347',
@@ -54500,7 +54522,7 @@ function SettingsTabCosts() {
       marginTop: 12,
       lineHeight: 1.5
     }, mono)
-  }, "Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.")), /*#__PURE__*/React.createElement(StSection, {
+  }, ("Alert-only: crossing 80% warns, 100% alerts. " + fridayName() + " is never blocked from working."))), /*#__PURE__*/React.createElement(StSection, {
     title: "Hard stop"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
@@ -54509,7 +54531,7 @@ function SettingsTabCosts() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, "The cap that actually stops. When an enabled period's spend reaches its limit, Friday refuses every further cloud call until you raise it or switch it off. Local models keep working. Off by default — your choice, like local vs cloud."), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
+  }, ("The cap that actually stops. When an enabled period's spend reaches its limit, " + fridayName() + " refuses every further cloud call until you raise it or switch it off. Local models keep working. Off by default — your choice, like local vs cloud.")), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
     style: {
       border: '1px solid #ff0080',
       background: 'rgba(255,0,128,0.08)',
@@ -54650,7 +54672,7 @@ const SETTINGS_TAB_ALIASES = {
 const SETTINGS_HELD_TABS = [{
   id: 'federation',
   label: 'Federation',
-  sub: 'Other Friday instances this one can talk to.'
+  sub: ('Other ' + FRIDAY_BRAND.name + ' instances this one can talk to.')
 }, {
   id: 'economy',
   label: 'Economy',
@@ -54689,7 +54711,7 @@ const SETTINGS_TABS = [{
 }, {
   id: 'voice',
   label: 'Voice & Tracking',
-  sub: 'How Friday listens and speaks, and how the camera follows your head and hand.'
+  sub: ('How ' + fridayName() + ' listens and speaks, and how the camera follows your head and hand.')
 }, {
   // This entry must never be dropped: without it the Spending panel's
   // fetches run into nothing and budget alerts cannot be armed.
@@ -55091,12 +55113,12 @@ function ArbiterStrip() {
     className: "arbiter-strip",
     style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: 'JetBrains Mono', fontSize: 10, letterSpacing: '0.04em' }
   }, excl && /*#__PURE__*/React.createElement("span", {
-    title: 'The GPU is held exclusively by ' + excl + '. Friday will refuse GPU work rather than add contention, and cannot preempt a process it did not start.',
+    title: 'The GPU is held exclusively by ' + excl + ('. ' + fridayName() + ' will refuse GPU work rather than add contention, and cannot preempt a process it did not start.'),
     style: { padding: '3px 8px', borderRadius: 10, fontWeight: 700, background: 'rgba(245,158,11,0.16)', border: '1px solid rgba(245,158,11,0.5)', color: '#f59e0b' }
   }, "GPU HELD \u00b7 ", excl), arb.resources.filter(r => r.resource !== 'gpu_exclusive').map(r => {
     const ok = r.verifiable;
-    const holders = (r.holders || []).map(h => h.holder + ' ' + fmtUnits(h.amount, r.unit) + (h.holder_kind === 'foreign' ? ' (foreign, not Friday\u2019s to unload)' : '')).join(', ');
-    const tip = r.label + '\n' + 'reading: ' + r.basis + '\n' + 'total on this machine: ' + fmtUnits(r.total_units, r.unit) + '\n' + 'reserved for the desktop: ' + fmtUnits(r.reserve_units, r.unit) + '\n' + 'claimed by leases: ' + fmtUnits(r.claimed_units, r.unit) + '\n' + 'measured free right now: ' + fmtUnits(r.measured_free, r.unit) + '\n' + 'available to new work: ' + (ok ? fmtUnits(r.available_units, r.unit) : 'cannot verify \u2014 Friday will refuse rather than guess') + '\n' + (r.unexplained_units ? ('in use with no declared hold: ' + fmtUnits(r.unexplained_units, r.unit) + '\n') : '') + 'holders: ' + (holders || 'none');
+    const holders = (r.holders || []).map(h => h.holder + ' ' + fmtUnits(h.amount, r.unit) + (h.holder_kind === 'foreign' ? (' (foreign, not ' + fridayName() + '\u2019s to unload)') : '')).join(', ');
+    const tip = r.label + '\n' + 'reading: ' + r.basis + '\n' + 'total on this machine: ' + fmtUnits(r.total_units, r.unit) + '\n' + 'reserved for the desktop: ' + fmtUnits(r.reserve_units, r.unit) + '\n' + 'claimed by leases: ' + fmtUnits(r.claimed_units, r.unit) + '\n' + 'measured free right now: ' + fmtUnits(r.measured_free, r.unit) + '\n' + 'available to new work: ' + (ok ? fmtUnits(r.available_units, r.unit) : ('cannot verify \u2014 ' + fridayName() + ' will refuse rather than guess')) + '\n' + (r.unexplained_units ? ('in use with no declared hold: ' + fmtUnits(r.unexplained_units, r.unit) + '\n') : '') + 'holders: ' + (holders || 'none');
     const claimed = r.claimed_units > 0;
     return /*#__PURE__*/React.createElement("span", {
       key: r.resource,
@@ -55276,7 +55298,7 @@ function StandaloneApprovals() {
     className: 'ws-tab-ask' + (items.length ? '' : ' none'),
     "data-testid": "ws-tab-approvals",
     onClick: () => setOpen(v => !v),
-    title: items.length ? 'Friday is waiting for your approval' : 'Nothing is waiting for your approval'
+    title: items.length ? (fridayName() + ' is waiting for your approval') : 'Nothing is waiting for your approval'
   }, items.length ? '✋ ' + items.length + ' waiting for you' : '✋ No approvals waiting'), open && /*#__PURE__*/React.createElement("div", {
     className: "ws-tab-drawer",
     role: "dialog",
@@ -55633,7 +55655,7 @@ function fridayDecideApproval(id, decision) {
     }
     return d;
   }).catch(() => {
-    fridayToast('Could not reach Friday to record that. The card is still waiting.');
+    fridayToast(('Could not reach ' + fridayName() + ' to record that. The card is still waiting.'));
     return null;
   });
 }
@@ -55671,7 +55693,7 @@ function LocalContextShareCard({
       body: JSON.stringify(body)
     }).then(r => r.json()).catch(() => ({
       ok: false,
-      error: 'Could not reach Friday.'
+      error: ('Could not reach ' + fridayName() + '.')
     })).finally(() => setWorking(false));
   };
   const save = accept => act({
@@ -55853,7 +55875,7 @@ function LocalContextShareCard({
     setEditing(false);
     setCheck(null);
     setDraft(p.text || '');
-  }, '#999'), btn("Don't send", () => decide('decline'), '#ff0080', 'Nothing is shared; Friday carries on without it'), !editing && btn('Allow for this conversation', () => decide('allow_conversation'), '#8ab4ff', 'Send this, and share this kind of context without asking again in this conversation (expires in 4 hours)')));
+  }, '#999'), btn("Don't send", () => decide('decline'), '#ff0080', ('Nothing is shared; ' + fridayName() + ' carries on without it')), !editing && btn('Allow for this conversation', () => decide('allow_conversation'), '#8ab4ff', 'Send this, and share this kind of context without asking again in this conversation (expires in 4 hours)')));
 }
 // One of Friday's organize batches (services/item_actions): mail, files or
 // wiki pages, listed one per line on the card.
@@ -55908,7 +55930,7 @@ function ApprovalCardBody({
       color: '#7f93ad',
       marginTop: 4
     }
-  }, "Approve changes exactly what is listed. Afterwards, “undo that” or System › Changes Friday made puts it back."), /*#__PURE__*/React.createElement(ApprovalPagePreview, {
+  }, ("Approve changes exactly what is listed. Afterwards, “undo that” or System › Changes " + fridayName() + " made puts it back.")), /*#__PURE__*/React.createElement(ApprovalPagePreview, {
     a: a
   }), /*#__PURE__*/React.createElement(ApprovalProvenance, {
     p: a.provenance
@@ -55986,7 +56008,7 @@ function ApprovalPopups() {
   return /*#__PURE__*/React.createElement("div", {
     className: "card",
     role: "dialog",
-    "aria-label": "Friday is waiting for your approval",
+    "aria-label": (fridayName() + " is waiting for your approval"),
     "data-testid": "approval-popup",
     style: Object.assign({}, pos, {
       width: 'min(400px, calc(100vw - 32px))',
@@ -56711,6 +56733,10 @@ function App() {
     dock_custom: { order: [], hidden: [] }
   };
   const [agentSettings, setAgentSettings] = useState(DEFAULT_AGENT_SETTINGS);
+  // Her name for every line that speaks of her, before anything below
+  // renders, once settings have come from the server (workspace_layouts is
+  // only in theirs); until then the name this browser last saw stands.
+  if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name);
   useEffect(() => { fridaySetOffRecord(fridayOffRecordFrom(agentSettings)); },
     [agentSettings.off_record, agentSettings.off_record_stops_storage]);
   // Mic / Speaker test state (used by the Audio & Voice section).
@@ -56939,7 +56965,7 @@ function App() {
       }
     } catch (e) {
       setTurnStatus(s => Object.assign({}, s || {}, {
-        stopping: false, label: 'could not reach Friday to stop it',
+        stopping: false, label: ('could not reach ' + fridayName() + ' to stop it'),
       }));
     }
   }, []);
@@ -56991,14 +57017,14 @@ function App() {
       if (stop || released || inFlightTurn.current !== turn) return;
       if (!live) {
         if (++misses < 4) return;
-        release('Friday has stopped answering — the server is not responding '
+        release((fridayName() + ' has stopped answering — the server is not responding ')
           + 'at all, which is what a hang looks like from here. Your turn may '
           + 'not have finished. The chat is yours again.');
         return;
       }
       misses = 0;
       if (live.hang && live.hang.stalled) {
-        release('The Friday process has gone silent — the hang watchdog says '
+        release(('The ' + FRIDAY_BRAND.name + ' process has gone silent — the hang watchdog says ')
           + 'its heartbeat stopped ' + Math.round(live.hang.stale_for_s)
           + 's ago, so this is a hang and not a long turn. A stack dump was '
           + 'written to ~/.friday/logs. The chat is yours again.');
@@ -57810,7 +57836,7 @@ function App() {
         }
         setVoiceStatus('you: ' + (m.text || '').slice(-60));
       } else if (m.type === 'text') {
-        setVoiceStatus('Friday: ' + (m.text || '').slice(-60));
+        setVoiceStatus((fridayName() + ': ') + (m.text || '').slice(-60));
         // The condensed widget shows one line of this. An event rather than a
         // shared state hook, because the widget also runs inside a
         // Picture-in-Picture document that React does not render into.
@@ -61061,8 +61087,8 @@ function App() {
       cursor: 'pointer',
       fontSize: 14
     },
-    title: chatOpen ? 'Close chat' : 'Open chat with Friday',
-    "aria-label": chatOpen ? 'Close chat' : 'Open chat with Friday'
+    title: chatOpen ? 'Close chat' : ('Open chat with ' + fridayName()),
+    "aria-label": chatOpen ? 'Close chat' : ('Open chat with ' + fridayName())
   }, /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 13
@@ -61116,7 +61142,7 @@ function App() {
     }
   }, "\uD83D\uDC41")), ccGranted && /*#__PURE__*/React.createElement("span", {
     className: "cc-indicator",
-    title: "Computer control ACTIVE \u2014 Friday can move your mouse and type. Press Ctrl+Shift+Q or click STOP to terminate."
+    title: ("Computer control ACTIVE \u2014 " + fridayName() + " can move your mouse and type. Press Ctrl+Shift+Q or click STOP to terminate.")
   }, /*#__PURE__*/React.createElement("span", {
     className: "cc-dot"
   }), /*#__PURE__*/React.createElement("span", null, "CC LIVE")), /*#__PURE__*/React.createElement("button", {
@@ -62353,7 +62379,7 @@ function App() {
       /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")))
       : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
         'There is no workspace called “' + STANDALONE_WS + '”. ',
-        /*#__PURE__*/React.createElement("a", { href: '/', style: { color: '#00d4ff' } }, 'Back to the Friday desktop')), shellWsChat, shellChatPanel, shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, shellPalette, shellShortcuts, shellQuickPost, shellPodcast, shellTaskModal);
+        /*#__PURE__*/React.createElement("a", { href: '/', style: { color: '#00d4ff' } }, ('Back to the ' + fridayName() + ' desktop'))), shellWsChat, shellChatPanel, shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, shellPalette, shellShortcuts, shellQuickPost, shellPodcast, shellTaskModal);
   }
   return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
     value: {
@@ -62458,7 +62484,7 @@ function App() {
     onChange: setPromptText,
     onSend: sendPrompt,
     maxHeight: 120,
-    placeholder: "Ask Friday anything...",
+    placeholder: ("Ask " + fridayName() + " anything..."),
     style: {
       width: 360,
       background: 'rgba(10,14,26,0.75)',
@@ -62781,7 +62807,7 @@ function App() {
       }
     },
     onMouseDown: e => { if (e.button === 1) e.preventDefault(); },
-    title: suggestedWs.has(w.id) && !openWins.has(w.id) ? 'Suggested — Friday predicts you’ll want this' : w.blurb ? w.label + ' — ' + w.blurb : undefined,
+    title: suggestedWs.has(w.id) && !openWins.has(w.id) ? ('Suggested — ' + fridayName() + ' predicts you’ll want this') : w.blurb ? w.label + ' — ' + w.blurb : undefined,
     style: {
       position: 'relative'
     }

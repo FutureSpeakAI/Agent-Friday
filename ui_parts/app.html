@@ -52,7 +52,7 @@ function useIntelligence(pollMs, view, enabled = true) {
       setErr({ kind: stale ? 'stale-tab' : e.name === 'AbortError' ? 'timeout' : 'unreachable',
         what: stale ? 'This page can no longer authenticate with the server.'
           : e.name === 'AbortError' ? 'Model information did not answer within 30 seconds.' : e.message,
-        fix: stale ? 'Reload the page (Ctrl+Shift+R).' : 'Retry, or check that Friday is still running.' });
+        fix: stale ? 'Reload the page (Ctrl+Shift+R).' : ('Retry, or check that ' + FRIDAY_BRAND.name + ' is still running.') });
     }).finally(() => {
       clearTimeout(run.timer); clearTimeout(run.stallTimer);
       if (current()) { flight.current = null; setStalled(false); }
@@ -134,7 +134,7 @@ window.FRIDAY_VOICE_DEBUG = window.FRIDAY_VOICE_DEBUG || false;
 function fridayMicBlockedReason(){
   try{if(window.isSecureContext&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)return '';
     const la=window.__FRIDAY_LOCAL_ADDRESS__||{};const where=la.secure&&la.origin?la.origin:(la.local||'http://localhost:3000');
-    return 'This address is not secure, so the browser allows no microphone or camera here. Open Friday at '+where+' for voice'+(la.secure?'.':', or make this address secure in Settings \u2192 General \u2192 Local address.')}catch(e){return ''}
+    return ('This address is not secure, so the browser allows no microphone or camera here. Open ' + FRIDAY_BRAND.name + ' at ')+where+' for voice'+(la.secure?'.':', or make this address secure in Settings \u2192 General \u2192 Local address.')}catch(e){return ''}
 }
 /* FRIDAY'S SCROLLBARS INSIDE A FRAME FRIDAY BUILDS. A frame is a document of
    its own and inherits no styles, so the one scrollbar rule set (the style
@@ -1340,6 +1340,28 @@ function fridaySceneKey(e) {
   return !!e && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
 }
 /* fridayShortcuts:end */
+/* fridayHerName:begin */
+// ═══ HER NAME ═══
+// Every line of the page that speaks of her reads her name as the owner gave
+// it (audit Y1); the product stays Agent Friday™ (FRIDAY_BRAND.name). App keeps
+// the name current from settings, and the last one seen is kept in this
+// browser, so a reload does not show the default first.
+function fridayName() {
+  return fridayNameInText(window.__FRIDAY_AGENT_NAME);
+}
+function fridaySetName(name) {
+  const n = String(name || '').trim();
+  if (!n || n === window.__FRIDAY_AGENT_NAME) return;
+  window.__FRIDAY_AGENT_NAME = n;
+  try {
+    localStorage.setItem('friday_agent_name', n);
+  } catch (_) {}
+}
+try {
+  window.__FRIDAY_AGENT_NAME = window.__FRIDAY_AGENT_NAME || localStorage.getItem('friday_agent_name') || '';
+} catch (_) {}
+window.fridayName = fridayName;
+/* fridayHerName:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
 function FridayCountdowns({items}){
@@ -1761,7 +1783,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
         </div>
       </div>
       <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:12}}>
-        {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
+        {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to {fridayName()}. Type, speak, or drop a file.</div>}
         {pausePending&&pausePending.kind==='privacy_hold'&&<PrivacyHoldCard hold={pausePending.hold} msg={pausePending.message}
           onChoose={(id)=>pausePending.onVoiceChoice?pausePending.onVoiceChoice(id)
             :sendChat(pausePending.message,{skipForecast:true,alreadyShown:true,privacyOverride:id==='send_anyway'})}
@@ -1808,7 +1830,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
           {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
             onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
-            {m.role==='user'?'You':'Friday'} · {m.time||''}
+            {m.role==='user'?'You':fridayName()} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
             {/* B1: model badge — exact id + seat class on every assistant
                message, amber for local seats, cyan for cloud. Persisted
@@ -1816,7 +1838,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
             {m.role==='friday'&&m.model&&<span title={'Actually generated by '+m.model+' ('+(m.seat||'unknown')+' seat)'+((m.fallback_chain&&m.fallback_chain.length)?'\nFallbacks this turn:\n· '+m.fallback_chain.join('\n· '):'')} style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:m.seat==='local'?'rgba(245,158,11,0.10)':'rgba(0,212,255,0.08)',border:'1px solid '+(m.seat==='local'?'rgba(245,158,11,0.35)':'rgba(0,212,255,0.25)'),color:m.seat==='local'?'#f59e0b':'#00d4ff',fontSize:9,letterSpacing:'0.05em',fontFamily:'JetBrains Mono'}}>{m.model}{m.seat?' · '+m.seat:''}{(m.fallback_chain&&m.fallback_chain.length)?<span title="This reply reached this model via fallback — hover for the chain" style={{marginLeft:3,color:'#f59e0b'}}>⚠</span>:null}</span>}
           </div>
         </div>)}
-        {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
+        {chatLoad&&<div className="typing-indicator"><span className="label">{fridayName()} is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
         <div ref={chatEnd}/>
       </div>
       <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
@@ -1828,7 +1850,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
         {!voiceOn&&voiceStatus&&<div style={{fontSize:10,color:'#ff6699',marginBottom:4,fontFamily:'JetBrains Mono'}}>{voiceStatus}</div>}
         {/* Source Production controls — cite-every-claim toggle + dossier generator */}
         <div style={{display:'flex',gap:6,marginBottom:6,alignItems:'center'}}>
-          <button onClick={toggleCiteSources} title={agentSettings.cite_sources?'Cited mode ON — Friday cites every factual claim. Click to turn off.':'Turn on Source Production Mode — Friday cites every factual claim inline.'}
+          <button onClick={toggleCiteSources} title={agentSettings.cite_sources?('Cited mode ON — ' + fridayName() + ' cites every factual claim. Click to turn off.'):('Turn on Source Production Mode — ' + fridayName() + ' cites every factual claim inline.')}
             style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',letterSpacing:'0.03em',padding:'3px 8px',borderRadius:5,
               background:agentSettings.cite_sources?'rgba(52,211,153,0.14)':'rgba(255,255,255,0.03)',
               border:'1px solid '+(agentSettings.cite_sources?'rgba(52,211,153,0.5)':'rgba(255,255,255,0.1)'),
@@ -1902,7 +1924,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
                 onMouseOver={e=>e.currentTarget.style.color='#00d4ff'} onMouseOut={e=>e.currentTarget.style.color='rgba(255,255,255,0.45)'}>↺ refresh list</div>
             </div>}
           </div>
-          <FridayChatInput className="input" style={{flex:1,minWidth:0}} value={chatIn} onChange={setChatIn} onSend={()=>sendChat()} placeholder={voiceOn?'Voice mode active — just speak…':'Talk to Friday...'}/>
+          <FridayChatInput className="input" style={{flex:1,minWidth:0}} value={chatIn} onChange={setChatIn} onSend={()=>sendChat()} placeholder={voiceOn?'Voice mode active — just speak…':('Talk to ' + fridayName() + '...')}/>
           <button className="btn" style={{flexShrink:0}} onClick={()=>sendChat()}>Send</button>
         </div>
       </div>
@@ -1929,8 +1951,8 @@ function WsIcon({ws,glyph}){
 // workspace tab draws them in the top bar, beside the workspace's name.
 function WsTools({id,title,emoji,histOpen,onHistory}){
   return(<>
-    <button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji)}} style={{fontSize:12}}>💬</button>
-    <button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button>
+    <button title={`Chat with ${fridayName()} about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji)}} style={{fontSize:12}}>💬</button>
+    <button title={`Talk to ${fridayName()} about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button>
     {/* The 40 snapshots workspace_studio keeps, reachable without asking Friday out loud. */}
     <button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} aria-pressed={!!histOpen} onClick={e=>{e.stopPropagation();onHistory()}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>
   </>);
@@ -1939,7 +1961,7 @@ function WsCustomizedMark({id}){
   const {map}=useContext(WsCustomCtx);
   const cust=map[id]||{};
   if(!Object.keys(cust).length)return null;
-  return(<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>);
+  return(<span title={(fridayName() + " has customized this workspace — open 💬 to tweak or revert")} style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>);
 }
 function WsCustomBody({id,title,emoji,children}){
   // Live customization Friday applied to THIS workspace via the 💬 chat.
@@ -1955,7 +1977,7 @@ function WsCustomBody({id,title,emoji,children}){
   return(<div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
       {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
       {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
-      {cust.note&&<div style={{background:'rgba(255,84,112,0.08)',border:'1px solid rgba(255,84,112,0.25)',borderRadius:8,padding:'7px 10px',marginBottom:10,fontSize:12,color:'#ffd0d8',display:'flex',gap:8,alignItems:'flex-start'}}><span style={{flexShrink:0}}>🛠️</span><div style={{flex:1,minWidth:0}}><FridayDoc text={fridayTM(cust.note)} style={{margin:0}}/></div><button aria-label="Ask Friday to remove this note" onClick={()=>openWsChat('remove the pinned note')} title="Ask Friday to remove this note" style={{background:'none',border:'none',color:'#ff8aa0',cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button></div>}
+      {cust.note&&<div style={{background:'rgba(255,84,112,0.08)',border:'1px solid rgba(255,84,112,0.25)',borderRadius:8,padding:'7px 10px',marginBottom:10,fontSize:12,color:'#ffd0d8',display:'flex',gap:8,alignItems:'flex-start'}}><span style={{flexShrink:0}}>🛠️</span><div style={{flex:1,minWidth:0}}><FridayDoc text={fridayTM(cust.note)} style={{margin:0}}/></div><button aria-label={("Ask " + fridayName() + " to remove this note")} onClick={()=>openWsChat('remove the pinned note')} title={("Ask " + fridayName() + " to remove this note")} style={{background:'none',border:'none',color:'#ff8aa0',cursor:'pointer',fontSize:13,lineHeight:1,flexShrink:0}}>×</button></div>}
       {cust.actions&&cust.actions.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>{cust.actions.map((a,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>openWsChat(a.prompt)}>{a.label}</button>)}</div>}
       {children}
     </div>);
@@ -2094,7 +2116,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
   // Auto-send a seed prompt (e.g. clicked quick-action) exactly once.
   useEffect(()=>{if(seedPrompt&&!seededRef.current){seededRef.current=true;send(seedPrompt)}},[seedPrompt]);
   const revert=async(vid)=>{try{const r=await fetch(`/api/workspace/${wsId}/revert`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version_id:vid})});const d=await r.json();if(d.status!=='ok'){flash('Revert failed');return}if(d.customization!==undefined)setCust(wsId,d.customization);if(d.versions)setVersions(d.versions);flash('↩ Reverted')}catch(e){flash('Revert failed')}};
-  const reset=async()=>{if(!window.confirm('Reset ALL of Friday’s changes to this workspace back to default?'))return;try{const r=await fetch(`/api/workspace/${wsId}/reset`,{method:'POST'});const d=await r.json();setCust(wsId,d.customization||{});if(d.versions)setVersions(d.versions);flash('Workspace reset to default')}catch(e){flash('Reset failed')}};
+  const reset=async()=>{if(!window.confirm(('Reset ALL of ' + fridayName() + '’s changes to this workspace back to default?')))return;try{const r=await fetch(`/api/workspace/${wsId}/reset`,{method:'POST'});const d=await r.json();setCust(wsId,d.customization||{});if(d.versions)setVersions(d.versions);flash('Workspace reset to default')}catch(e){flash('Reset failed')}};
   const clearChat=()=>{fetch(`/api/workspace/${wsId}/chat/clear`,{method:'POST'}).then(()=>{setMsgs([]);flash('History cleared')}).catch(()=>{})};
   const STARTERS=['Make this layout more compact','I don’t like the colors — try a warmer accent','Pin a note reminding me what this workspace is for','Add quick-action buttons for my common tasks here'];
   return(<div style={{position:'fixed',left:pos.x,top:pos.y,width:390,maxWidth:'94vw',height:'min(620px,76vh)',zIndex:130,display:'flex',flexDirection:'column',background:'rgba(10,14,24,0.97)',border:'1px solid rgba(0,212,255,0.28)',borderRadius:14,boxShadow:'0 18px 60px rgba(0,0,0,0.6)',backdropFilter:'blur(14px)',overflow:'hidden'}}>
@@ -2102,7 +2124,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
       <span style={{fontSize:15}}>💬</span>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontFamily:'Orbitron, sans-serif',fontSize:12,color:'#00d4ff',letterSpacing:'.04em'}}>{emoji} {label} · Studio</div>
-        <div style={{fontSize:10,color:'#8891a8'}}>Shape this workspace by talking to Friday</div>
+        <div style={{fontSize:10,color:'#8891a8'}}>Shape this workspace by talking to {fridayName()}</div>
       </div>
       <button onClick={()=>setShowVer(v=>!v)} title="Version history" style={{background:'none',border:'1px solid rgba(255,255,255,0.14)',borderRadius:6,color:'#aab',cursor:'pointer',fontSize:11,padding:'2px 7px'}}>🕘 {versions.length}</button>
       <button aria-label="Close" onClick={onClose} title="Close" style={{background:'none',border:'none',color:'#9aa',cursor:'pointer',fontSize:18,lineHeight:1}}>×</button>
@@ -2121,7 +2143,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
     </div>}
     <div style={{flex:1,overflowY:'auto',padding:'10px 12px'}}>
       {msgs.length===0&&!loading&&<div style={{color:'#8891a8',fontSize:12,lineHeight:1.6}}>
-        <div style={{marginBottom:10}}>Tell Friday what you want this workspace to be. She can restyle it, pin notes, add quick actions, or build new features — and undo anything.</div>
+        <div style={{marginBottom:10}}>Tell {fridayName()} what you want this workspace to be. She can restyle it, pin notes, add quick actions, or build new features — and undo anything.</div>
         {STARTERS.map((s,i)=><div key={i} onClick={()=>send(s)} className="card" style={{cursor:'pointer',padding:'7px 10px',marginBottom:5,fontSize:11.5}}>{s}</div>)}
       </div>}
       {msgs.map((m,i)=>(<div key={i} style={{marginBottom:10,display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start'}}>
@@ -2133,13 +2155,13 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
           <button onClick={()=>revert(m.revert_to)} style={{background:'none',border:'1px solid rgba(255,84,112,0.4)',borderRadius:5,color:'#ff8aa0',cursor:'pointer',fontSize:10,padding:'1px 7px'}}>↩ revert this</button>
         </div>}
       </div>))}
-      {loading&&<div style={{display:'flex',gap:4,alignItems:'center',color:'#00d4ff',fontSize:12,padding:'4px 2px'}}><span className="ws-typing-dot"/><span className="ws-typing-dot" style={{animationDelay:'.15s'}}/><span className="ws-typing-dot" style={{animationDelay:'.3s'}}/><span style={{marginLeft:4,color:'#8891a8'}}>Friday is working…</span></div>}
+      {loading&&<div style={{display:'flex',gap:4,alignItems:'center',color:'#00d4ff',fontSize:12,padding:'4px 2px'}}><span className="ws-typing-dot"/><span className="ws-typing-dot" style={{animationDelay:'.15s'}}/><span className="ws-typing-dot" style={{animationDelay:'.3s'}}/><span style={{marginLeft:4,color:'#8891a8'}}>{fridayName()} is working…</span></div>}
       <div ref={endRef}/>
     </div>
     
     <div style={{padding:'8px 10px',borderTop:'1px solid rgba(255,255,255,0.08)',display:'flex',gap:6,alignItems:'flex-end'}}>
       <textarea ref={inRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>fridayEnterSends(e,send)}
-        placeholder={`Ask Friday to change ${label}…`} rows={1}
+        placeholder={`Ask ${fridayName()} to change ${label}…`} rows={1}
         style={{flex:1,resize:'none',maxHeight:90,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:8,color:'#dde',fontSize:12.5,padding:'7px 9px',fontFamily:'Inter',outline:'none'}}/>
       <button onClick={()=>send()} disabled={loading||!input.trim()} className="btn" style={{fontSize:12,fontWeight:600,opacity:(loading||!input.trim())?0.5:1}}>Send</button>
     </div>
@@ -2699,7 +2721,7 @@ function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
         const r = await fetch('/api/podcasts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sources: [{ kind: 'text', text: typeof c === 'string' ? c : JSON.stringify(c, null, 1), title: personName || dataType || 'From Friday' }], length: 'short' })
+          body: JSON.stringify({ sources: [{ kind: 'text', text: typeof c === 'string' ? c : JSON.stringify(c, null, 1), title: personName || dataType || ('From ' + fridayName()) }], length: 'short' })
         });
         const d = await r.json();
         setStatus(d.status === 'ok' ? 'ok' : 'fail');
@@ -2748,10 +2770,10 @@ function TalkToFridayButton({contentType,title,summary,style}){
     setTimeout(()=>setActive(false),2000);
     const typeLabel=contentType==='creation'?'creation':contentType==='briefing'?'briefing':contentType==='editorial'?'editorial':'article';
     const ctx=`The user wants to discuss a ${typeLabel}: "${title||'this content'}". ${summary?'Brief summary: '+String(summary).slice(0,350)+'. ':''}Please start by asking: "Would you like me to read this to you, or shall we discuss it?"`;
-    const sourcesMd=`🎤 **Discussing with Friday** · ${title||''}${contentType?' · '+contentType:''}`;
+    const sourcesMd=`🎤 **Discussing with ${fridayName()}** · ${title||''}${contentType?' · '+contentType:''}`;
     window.fridayVoice.startAnchor({prompt:ctx,sourcesMd});
   };
-  return<button onClick={onClick} title={`Discuss "${title||'this'}" with Friday`} style={Object.assign({},{
+  return<button onClick={onClick} title={`Discuss "${title||'this'}" with ${fridayName()}`} style={Object.assign({},{
     fontSize:10,padding:'3px 9px',cursor:'pointer',
     background:active?'rgba(123,97,255,0.35)':'rgba(123,97,255,0.1)',
     border:'1px solid rgba(123,97,255,'+(active?'0.7':'0.3')+')',
@@ -2760,7 +2782,7 @@ function TalkToFridayButton({contentType,title,summary,style}){
     transition:'all .2s',whiteSpace:'nowrap',fontFamily:'inherit',
     boxShadow:active?'0 0 10px rgba(123,97,255,0.35)':'none',
   },style||{})}>
-    <span style={{fontSize:11}}>🎤</span>{active?'Starting…':'Discuss with Friday'}
+    <span style={{fontSize:11}}>🎤</span>{active?'Starting…':('Discuss with ' + fridayName())}
   </button>;
 }
 
@@ -2785,7 +2807,7 @@ function CareerWS(){
   const launchScan=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run portal scan'],cwd:coCwd()})}).then(()=>fridayToast('Scan launched')).catch(()=>{})};
   const saveCoPath=()=>{fetch('/api/career-ops/path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:coPath})}).then(r=>r.json()).then(d=>{if(d.error){fridayToast(d.error);return}setCoStatus(d);fridayToast('Career-ops folder saved')}).catch(()=>{})};
   const engineScan=()=>{fetch('/api/pipeline/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).then(()=>fetch('/api/pipeline/jobs')).then(r=>r.json()).then(d=>{setEngineJobs(d.jobs||[]);fridayToast('Scan finished')}).catch(()=>{})};
-  const engineApply=id=>{fetch('/api/pipeline/jobs/'+id+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).then(d=>fridayToast(d.status==='prepared'?'Prepared. Friday does not submit applications: submit it yourself on the employer’s site.':'Not prepared: '+((d.quality_gates_failed||[]).join(', ')||d.error||d.status))).catch(()=>{})};
+  const engineApply=id=>{fetch('/api/pipeline/jobs/'+id+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).then(d=>fridayToast(d.status==='prepared'?('Prepared. ' + fridayName() + ' does not submit applications: submit it yourself on the employer’s site.'):'Not prepared: '+((d.quality_gates_failed||[]).join(', ')||d.error||d.status))).catch(()=>{})};
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading career pipeline...</div>;
   const entries=tracker?.entries||[];const applied=entries.filter(e=>(e.status||'').toLowerCase().includes('appli')).length;
   const interviewing=entries.filter(e=>(e.status||'').toLowerCase().includes('interview')).length;
@@ -2806,7 +2828,7 @@ function CareerWS(){
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','tracker','scanner','reports','pipeline','curated','interview','outreach'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='scanner'&&<div>
       <div className="card" style={{marginBottom:8,padding:10,display:'flex',gap:6,alignItems:'center'}}>
-        <div style={{flex:1,fontSize:12,color:'#aaa'}}>Job Scanner engine — {engineJobs.length} tracked. Scoring, dedup and resume A/B variants run locally. Friday prepares applications; you submit them.</div>
+        <div style={{flex:1,fontSize:12,color:'#aaa'}}>Job Scanner engine — {engineJobs.length} tracked. Scoring, dedup and resume A/B variants run locally. {fridayName()} prepares applications; you submit them.</div>
         <button className="btn" style={{fontSize:11}} onClick={engineScan}>Scan Now</button>
       </div>
       {engineJobs.length===0&&<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No tracked jobs yet. Scan Now uses the configured keyword sets; external tools can also push listings to POST /api/pipeline/scan.</div>}
@@ -6232,7 +6254,7 @@ function FSStudio(){
       {wMode==='describe'?<div>
         <textarea className="input" style={{width:'100%',height:60,resize:'vertical',fontSize:12}} value={wDesc} onChange={e=>setWDesc(e.target.value)} placeholder="Describe the site to create… (e.g. 'a landing page for a solar installer with a quote form')"/>
         <button className="btn" style={{fontSize:11,fontWeight:600,marginTop:6}} disabled={wBusy||!wDesc.trim()} onClick={scaffold}>{wBusy?'Launching…':'🚀 Scaffold & Create Repo'}</button>
-        <div style={{fontSize:11,color:'#666',marginTop:4}}>Friday scaffolds via Claude Code, creates a GitHub repo, and prints Replit connect steps.</div>
+        <div style={{fontSize:11,color:'#666',marginTop:4}}>{fridayName()} scaffolds via Claude Code, creates a GitHub repo, and prints Replit connect steps.</div>
       </div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
         <input className="input" style={{fontSize:11}} placeholder="Name *" value={wf.name} onChange={e=>setWf({...wf,name:e.target.value})}/>
         <input className="input" style={{fontSize:11}} placeholder="Live URL" value={wf.url} onChange={e=>setWf({...wf,url:e.target.value})}/>
@@ -6448,7 +6470,7 @@ function FamilyWS(){
     {hasEvents&&<div style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.emoji||''} {c.label||c.name}{c.why&&<span className="cd-why"> · {c.why}</span>}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron, sans-serif',fontSize:11}}>{fridayCountdownWhen(c)||`${c.days}d`}</span></div>)}</div>}
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
       <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me add my family members to the wiki.')}>
-        <div className="card-title">Family Members</div><div style={{fontSize:11,color:'#888'}}>Click to set up with Friday</div>
+        <div className="card-title">Family Members</div><div style={{fontSize:11,color:'#888'}}>Click to set up with {fridayName()}</div>
       </button>
       <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me add birthday and anniversary countdowns for my family.')}>
         <div className="card-title">Add Countdown</div><div style={{fontSize:11,color:'#888'}}>Birthdays, anniversaries</div>
@@ -7071,7 +7093,7 @@ function StudioWS(){
   // prompts post straight to /api/create/<type> via StudioPromptBar; this
   // launcher (the old mis-wired "Create Now" button) is the only Studio
   // control that touches the terminal launcher, and it says so before it runs.
-  const runDailyAgent=()=>{if(!confirm("Launch Friday's autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar."))return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(r=>r.json()).then(d=>fridayToast(d&&d.status==='ok'?'Daily creation agent launched — watch the Code workspace for progress.':'Could not launch: '+((d&&d.message)||'unknown error'))).catch(()=>fridayToast('Could not launch the daily creation agent.'))};
+  const runDailyAgent=()=>{if(!confirm(("Launch " + fridayName() + "'s autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar.")))return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(r=>r.json()).then(d=>fridayToast(d&&d.status==='ok'?'Daily creation agent launched — watch the Code workspace for progress.':'Could not launch: '+((d&&d.message)||'unknown error'))).catch(()=>fridayToast('Could not launch the daily creation agent.'))};
   const openCreation=async f=>{setSelected(f);const ext=(f.name||'').split('.').pop().toLowerCase();if(ext==='md'){try{const r=await fetch('/api/creations/'+f.name);setPreview(await r.text())}catch(e){setPreview('')}}else{setPreview('')}};
   // Deep-link: a notification's "Open Document" button navigates here with
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
@@ -7136,7 +7158,7 @@ function StudioWS(){
     <FridaySays text={creations.length+(creations.length===1?' creation':' creations')+' in the gallery. Generate images, video & music, compose timelines, or run a full production.'}/>
     {minor&&<div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8,padding:'5px 10px',borderRadius:8,background:'rgba(34,197,94,0.08)',border:'1px solid rgba(34,197,94,0.3)'}}>
       <span style={{fontSize:13}}>👨‍👧</span><span style={{fontSize:11,color:'#7fe0a8',fontWeight:600}}>Family mode</span>
-      <span style={{fontSize:10,color:'#5a8a6a'}}>— age-appropriate filtering is on for everything Friday creates here. Hiding older adult content from this gallery is coming soon.</span>
+      <span style={{fontSize:10,color:'#5a8a6a'}}>— age-appropriate filtering is on for everything {fridayName()} creates here. Hiding older adult content from this gallery is coming soon.</span>
     </div>}
     <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
       <button className={'btn'+(view==='generate'?' active':'')} aria-pressed={view==='generate'} style={{fontSize:11,fontWeight:700}} onClick={()=>setView('generate')}>✨ Generate</button>
@@ -7159,7 +7181,7 @@ function StudioWS(){
     <StudioPromptBar onCreated={loadCreations}/>
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
       {creationLog&&<button className="btn" style={{fontSize:11}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}
-      <button className="btn" style={{fontSize:11}} title="Opt-in agent task: Friday runs her autonomous daily creation in a Claude Code terminal. Completely separate from the prompt bar above — it does not use your prompt." onClick={runDailyAgent}>🌅 Daily creation (agent)</button>
+      <button className="btn" style={{fontSize:11}} title={("Opt-in agent task: " + fridayName() + " runs her autonomous daily creation in a Claude Code terminal. Completely separate from the prompt bar above — it does not use your prompt.")} onClick={runDailyAgent}>🌅 Daily creation (agent)</button>
     </div>
     {logOpen&&<div className="card" style={{marginBottom:10}}><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono',maxHeight:150,overflow:'auto'}}>{creationLog}</pre></div>}
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
@@ -7440,7 +7462,7 @@ function FederationPanel(){
     {identity?<div style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'10px 12px',marginBottom:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
         <div>
-          <div style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color:'#00d4ff',marginBottom:3}}>{identity.display_name||'Friday'}</div>
+          <div style={{fontFamily:'Orbitron, sans-serif',fontSize:13,color:'#00d4ff',marginBottom:3}}>{identity.display_name||fridayName()}</div>
           <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{trunc(identity.agent_id,16)} {identity.agent_id&&identity.agent_id.length>16?'...':''}</div>
         </div>
         <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} onClick={copyPeerCard}>Copy Peer Card</button>
@@ -7522,7 +7544,7 @@ function MarketplaceWS(){
   const licBadge=lic=>{const map={'CC0':['#00c48c','#003d2d'],'CC-BY':['#2563eb','#0d1f4a'],'CC-BY-SA':['#d97706','#3d2600'],'all-rights-reserved':['#6b7280','#1f2937']};const c=map[lic]||['#7b61ff','#1e0a3c'];return<span style={{display:'inline-block',fontSize:9,padding:'1px 5px',borderRadius:4,background:c[1],color:c[0],border:'1px solid '+c[0],fontFamily:'JetBrains Mono',letterSpacing:'.03em'}}>{lic}</span>};
   const mediaIcon=t=>({image:'🖼',video:'🎬',music:'🎵',html:'💻',text:'📝'}[t]||'📦');
   return(<div>
-    <FridaySays text="Buy, sell, and share creations with other Friday agents. Prices are in ψ (psi) — Friday's internal economy currency."/>
+    <FridaySays text={("Buy, sell, and share creations with other " + FRIDAY_BRAND.name + " agents. Prices are in ψ (psi) — " + FRIDAY_BRAND.name + "'s internal economy currency.")}/>
     
     <div style={{display:'flex',gap:4,marginBottom:12}}>
       {[['browse','Browse'],['my','My Listings'],['publish','Publish']].map(([k,l])=>(
@@ -7913,7 +7935,7 @@ function WfEditor({ initial, onCancel, onSaved }) {
     setErr('');
     const clean = steps.filter(s => s.prompt.trim()).map((s, i) => ({ name: s.name.trim() || 'Step ' + (i + 1), prompt: s.prompt.trim() }));
     if (!name.trim()) { setErr('Give it a name.'); return; }
-    if (!clean.length) { setErr('Say what Friday should do in at least one step.'); return; }
+    if (!clean.length) { setErr(('Say what ' + fridayName() + ' should do in at least one step.')); return; }
     if (ui.repeat === 'once' && !ui.date) { setErr('Pick the day it should run.'); return; }
     setBusy(true);
     wfPost('/api/workflows/save', { name: name.trim(), description: desc.trim(), steps: clean, when, slug: initial.slug || null, schedule_id: initial.schedule_id || null, enabled: initial.enabled === undefined ? true : initial.enabled })
@@ -7923,7 +7945,7 @@ function WfEditor({ initial, onCancel, onSaved }) {
   const ask = initial.asks_first || [];
   return (<div className="card wfx-card" style={{ borderColor: 'rgba(0,212,255,.35)' }} data-testid="wf-editor">
     <div className="card-title" style={{ marginBottom: 10 }}>{isNew ? 'Check the draft, then save' : 'Edit workflow'}</div>
-    {initial.source === 'simple' && isNew && <div className="wfx-quiet" style={{ marginBottom: 10 }}>Friday couldn't reach a model to break this into steps, so it's one step with your words. You can add steps below.</div>}
+    {initial.source === 'simple' && isNew && <div className="wfx-quiet" style={{ marginBottom: 10 }}>{fridayName()} couldn't reach a model to break this into steps, so it's one step with your words. You can add steps below.</div>}
     <label className="wfx-lbl" htmlFor="wf-name">Name</label>
     <input id="wf-name" className="wfx-in" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Council agenda watch" />
     <label className="wfx-lbl" htmlFor="wf-desc" style={{ marginTop: 10 }}>What it's for <span className="wfx-quiet">(optional)</span></label>
@@ -7949,7 +7971,7 @@ function WfEditor({ initial, onCancel, onSaved }) {
     <div style={{ marginTop: 8, color: '#9fe8ff', fontSize: 12.5 }} data-testid="wf-when-sentence">🕒 {wfDescribe(when)}</div>
     {initial.when_note && <div className="wfx-err" style={{ color: '#ffd08a' }}>{initial.when_note}</div>}
 
-    <div className="wfx-h" style={{ marginTop: 16 }}>What Friday does</div>
+    <div className="wfx-h" style={{ marginTop: 16 }}>What {fridayName()} does</div>
     <div className="wfx-quiet" style={{ marginBottom: 8 }}>Steps run in order. Each step gets what the step before it found.</div>
     {steps.map((s, i) => <div key={i} className="wfx-step">
       <div className="wfx-row" style={{ marginBottom: 6 }}>
@@ -7959,15 +7981,15 @@ function WfEditor({ initial, onCancel, onSaved }) {
         {i < steps.length - 1 && <button type="button" className="wfx-icon" title="Move down" aria-label={'Move step ' + (i + 1) + ' down'} onClick={() => move(i, 1)}>↓</button>}
         {steps.length > 1 && <button type="button" className="wfx-icon" title="Remove this step" aria-label={'Remove step ' + (i + 1)} onClick={() => setSteps(steps.filter((_, j) => j !== i))}>✕</button>}
       </div>
-      <textarea aria-label={'Step ' + (i + 1) + ' instructions'} className="wfx-in" style={{ minHeight: 60, resize: 'vertical' }} value={s.prompt} onChange={e => setS(i, 'prompt', e.target.value)} placeholder="Tell Friday what to do, the way you'd tell a colleague." />
+      <textarea aria-label={'Step ' + (i + 1) + ' instructions'} className="wfx-in" style={{ minHeight: 60, resize: 'vertical' }} value={s.prompt} onChange={e => setS(i, 'prompt', e.target.value)} placeholder={("Tell " + fridayName() + " what to do, the way you'd tell a colleague.")} />
     </div>)}
     <button type="button" className="btn" onClick={() => setSteps(steps.concat([{ name: '', prompt: '' }]))}>+ Add a step</button>
 
     <div className="wfx-promise" style={{ marginTop: 14, marginBottom: 0 }}>
       <span aria-hidden="true">🛡️</span>
       <div>{ask.length
-        ? <span>This looks like it will <b>{wfJoin(ask)}</b>. Friday won't do that on her own: when a step gets there, she stops and asks you with an approval card.</span>
-        : <span>If a step ever tries to send, post, buy, delete or change something outside your computer, Friday stops and asks you first with an approval card.</span>}</div>
+        ? <span>This looks like it will <b>{wfJoin(ask)}</b>. {fridayName()} won't do that on her own: when a step gets there, she stops and asks you with an approval card.</span>
+        : <span>If a step ever tries to send, post, buy, delete or change something outside your computer, {fridayName()} stops and asks you first with an approval card.</span>}</div>
     </div>
     {err && <div className="wfx-err" role="alert">{err}</div>}
     <div className="wfx-row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
@@ -7997,7 +8019,7 @@ function WfCard({ w, onRun, onToggle, onEdit, onDelete, busy }) {
       {w.when && w.enabled && w.next_run && !w.running && <span title="Next run">Next: {wfNext(w.next_run)}</span>}
       {w.steps.length > 1 && <span className="wfx-quiet">{w.steps.length} steps</span>}
     </div>
-    {w.asks_first && w.asks_first.length > 0 && <div className="wfx-shield" title="Friday stops and asks you before doing these">🛡️ Asks you before it can {wfJoin(w.asks_first)}</div>}
+    {w.asks_first && w.asks_first.length > 0 && <div className="wfx-shield" title={(fridayName() + " stops and asks you before doing these")}>🛡️ Asks you before it can {wfJoin(w.asks_first)}</div>}
     {open && <div style={{ marginTop: 10, borderTop: '1px solid rgba(255,255,255,.08)', paddingTop: 8 }}>
       <ol className="wfx-steps">{w.steps.map((s, i) => {
         const ls = last && last.steps && last.steps[i];
@@ -8048,7 +8070,7 @@ function WorkflowsWS() {
     return () => { alive = false; clearInterval(t); };
   }, []);
   const draft = () => {
-    if (!ask.trim()) { setDraftErr('Describe what you want Friday to do.'); return; }
+    if (!ask.trim()) { setDraftErr(('Describe what you want ' + fridayName() + ' to do.')); return; }
     setDrafting(true); setDraftErr('');
     wfPost('/api/workflows/draft', { text: ask }).then(d => { setDrafting(false); setEditing(d.draft); })
       .catch(e => { setDrafting(false); setDraftErr(e.message); });
@@ -8083,7 +8105,7 @@ function WorkflowsWS() {
         <button type="button" className="btn wfx-go" style={{ height: 38, whiteSpace: 'nowrap' }} disabled={drafting} onClick={draft}>{drafting ? 'Drafting…' : 'Draft it →'}</button>
       </div>
       {(composing || !wfs.length) && <>
-        <div className="wfx-quiet" style={{ marginTop: 8 }}>Use your own words. Friday writes a draft for you to check; nothing is saved until you say so.</div>
+        <div className="wfx-quiet" style={{ marginTop: 8 }}>Use your own words. {fridayName()} writes a draft for you to check; nothing is saved until you say so.</div>
         {!ask && <div style={{ marginTop: 8 }}>{WF_EXAMPLES.map(x => <button key={x} type="button" className="wfx-chip" onClick={() => setAsk(x)}>{x}</button>)}</div>}
         <div className="wfx-row" style={{ marginTop: 4 }}>
           <button type="button" className="wfx-link" onClick={() => setEditing({ name: '', steps: [], when: null })}>Or build it step by step</button>
@@ -8097,7 +8119,7 @@ function WorkflowsWS() {
 
     <div className="wfx-promise" data-testid="wf-promise" style={{ padding: '8px 12px', alignItems: 'center' }}>
       <span aria-hidden="true">🛡️</span>
-      <div className="wfx-grow">Workflows run on their own, but Friday <b>asks you first</b> before any of them sends, posts, buys or deletes anything.</div>
+      <div className="wfx-grow">Workflows run on their own, but {fridayName()} <b>asks you first</b> before any of them sends, posts, buys or deletes anything.</div>
       {pending > 0 && <button type="button" className="btn" style={{ borderColor: 'rgba(245,158,11,.6)', color: '#ffd08a', whiteSpace: 'nowrap' }} onClick={wfOpenApprovals}>{pending === 1 ? '1 waiting for your OK' : pending + ' waiting for your OK'} →</button>}
     </div>
 
@@ -8113,10 +8135,10 @@ function WorkflowsWS() {
 
     {routines.length > 0 && <>
       <button type="button" className="wfx-h wfx-link" style={{ textDecoration: 'none', display: 'block', marginTop: 20 }} aria-expanded={showRoutines} onClick={() => setShowRoutines(!showRoutines)}>
-        {showRoutines ? '▾' : '▸'} Friday's built-in routines ({onCount} of {routines.length} on)
+        {showRoutines ? '▾' : '▸'} {fridayName()}'s built-in routines ({onCount} of {routines.length} on)
       </button>
       {showRoutines && <div className="card" style={{ padding: '4px 12px' }}>
-        <div className="wfx-quiet" style={{ padding: '6px 0' }}>Jobs that come with Friday, like the news briefings. You can switch them on or off.</div>
+        <div className="wfx-quiet" style={{ padding: '6px 0' }}>Jobs that come with {fridayName()}, like the news briefings. You can switch them on or off.</div>
         {routines.map(r => {
           const st = r.running ? WF_STATUS.running : r.last_run ? (WF_STATUS[r.last_run.status] || WF_STATUS.finished) : null;
           return <div key={r.schedule_id} className="wfx-row" style={{ padding: '8px 0', borderTop: '1px solid rgba(255,255,255,.06)' }}>
@@ -8159,12 +8181,12 @@ function FridayChangesCard(){
   const when=at=>{const d=new Date(at);return isNaN(d)?String(at||''):d.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})};
   const DOM={email:'✉️',files:'📁',wiki:'🌌'};
   return(<div className="card" data-testid="friday-changes" style={{marginBottom:10,padding:10,border:'1px solid rgba(0,212,255,0.18)'}}>
-    <div className="card-title" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span>↩ Changes Friday made</span>
+    <div className="card-title" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span>↩ Changes {fridayName()} made</span>
       <button className="btn" aria-label="Refresh the changes" title="Refresh" style={{fontSize:11,padding:'2px 8px'}} onClick={load}>↻ Refresh</button></div>
-    <div style={{fontSize:11,color:'#7f93ad',margin:'2px 2px 8px'}}>Mail, files and wiki pages Friday organized for you. Undo puts each one back; nothing was ever deleted.</div>
+    <div style={{fontSize:11,color:'#7f93ad',margin:'2px 2px 8px'}}>Mail, files and wiki pages {fridayName()} organized for you. Undo puts each one back; nothing was ever deleted.</div>
     {err?<div style={{fontSize:11,color:'#ff9a9a'}}>Couldn't read the changes: {err}</div>
       :recs===null?<div style={{fontSize:11,color:'#888'}}>Loading…</div>
-      :recs.length===0?<div style={{fontSize:11,color:'#888',padding:'4px 2px'}}>No changes yet. When Friday archives mail, moves files or tidies wiki pages for you, each change appears here with its Undo.</div>
+      :recs.length===0?<div style={{fontSize:11,color:'#888',padding:'4px 2px'}}>No changes yet. When {fridayName()} archives mail, moves files or tidies wiki pages for you, each change appears here with its Undo.</div>
       :recs.map(r=>(<div key={r.receipt_id} data-receipt={r.receipt_id} style={{display:'flex',gap:8,alignItems:'flex-start',padding:'6px 2px',borderTop:'1px solid rgba(255,255,255,0.05)',fontSize:12}}>
         <span aria-hidden="true">{DOM[r.domain]||'⚙️'}</span>
         <div style={{flex:1,minWidth:0}}><div style={{color:r.undone?'#7f93ad':'#dbe6f5',textDecoration:r.undone?'line-through':'none'}}>{r.summary||r.tool}</div>
@@ -8193,7 +8215,7 @@ function WhatFridayDidCard(){
   const taskLink=(id,name)=>id?<a href={'/api/tasks/'+encodeURIComponent(id)+'/digest'} target="_blank" rel="noopener" title="Open this task's record" style={{color:'#00d4ff'}}>{name||id.slice(0,8)}</a>:null;
   return(<div className="card" style={{marginBottom:10,padding:10,border:'1px solid rgba(0,255,128,0.18)'}}>
     <div className="card-title" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-      <span>🧾 What Friday did</span>
+      <span>🧾 What {fridayName()} did</span>
       <span style={{display:'flex',gap:4,alignItems:'center'}}>
         <select aria-label="Receipt window" value={mode} onChange={e=>setMode(e.target.value)} style={{fontSize:11,background:'rgba(255,255,255,0.04)',color:'#ccc',border:'1px solid rgba(255,255,255,0.1)',borderRadius:4}}>
           <option value="visit">Since last visit</option><option value="24h">Last 24 hours</option><option value="day">A day…</option>
@@ -8202,7 +8224,7 @@ function WhatFridayDidCard(){
         <button aria-label={'Refresh receipts'} title={'Refresh receipts'} className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={load}>↻</button>
       </span>
     </div>
-    <div style={{fontSize:11,color:'#888',padding:'4px 2px'}}>Every action Friday decided on, from the signed receipts the governance checkpoint writes. Each signature is checked; a receipt that does not verify says so.</div>
+    <div style={{fontSize:11,color:'#888',padding:'4px 2px'}}>Every action {fridayName()} decided on, from the signed receipts the governance checkpoint writes. Each signature is checked; a receipt that does not verify says so.</div>
     {err&&<div style={{fontSize:11,color:'#ff0080'}}>Could not load receipts: {err}</div>}
     {data&&<>
       <div style={{fontSize:11,color:'#ccc',margin:'4px 2px'}}>
@@ -8375,7 +8397,7 @@ function SystemWS(){
         <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={runSelfImp} disabled={siBusy}>{siBusy?'Reviewing…':'↻ Run now'}</button>
       </div>
       {!selfImp
-        ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>No self-review yet. Friday reviews her own recent responses every Sunday — or run one now.</div>
+        ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>No self-review yet. {fridayName()} reviews her own recent responses every Sunday — or run one now.</div>
         :(()=>{
           const epi=selfImp.epistemic||{};const syc=selfImp.sycophancy||{};
           const eo=epi.overall;const eCol=eo==null?'#888':eo>0.6?'#00ff80':eo>=0.4?'#f59e0b':'#ff0080';
@@ -8398,7 +8420,7 @@ function SystemWS(){
               </div>
             </div>
             {selfImp.reflection&&<div style={{margin:'8px 0',padding:'8px 10px',background:'rgba(0,212,255,0.05)',borderLeft:'2px solid rgba(0,212,255,0.4)',borderRadius:'0 6px 6px 0'}}>
-              <div className="stat-label" style={{fontSize:10,marginBottom:4}}>Friday's reflection</div>
+              <div className="stat-label" style={{fontSize:10,marginBottom:4}}>{fridayName()}'s reflection</div>
               <FridayDoc text={selfImp.reflection} compact style={{fontSize:12,color:'#cdd',lineHeight:1.55}}/>
             </div>}
             <div className="stat-label" style={{fontSize:10,marginTop:8,marginBottom:4}}>Focus this week</div>
@@ -8428,7 +8450,7 @@ function SystemWS(){
         <button aria-label={'Refresh approvals'} title={'Refresh approvals'} className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={refreshApprovals}>↻ Refresh</button>
       </div>
       {approvals.length===0
-        ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>Nothing waiting on you. Actions Friday won't take on her own — connecting Google, gated goal steps, spend — show up here.</div>
+        ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>Nothing waiting on you. Actions {fridayName()} won't take on her own — connecting Google, gated goal steps, spend — show up here.</div>
         :approvals.map(a=><ApprovalCardBody key={a.approval_id} a={a} busy={apBusy} onDecide={decideApproval}/>)}
     </div>
 
@@ -8602,7 +8624,7 @@ function DevVibe({repos,onLog}){
     setCommitting(false);
   };
   return(<div>
-    <FridaySays text="Describe a change in plain English. Friday drafts a plan, you preview the diff, then apply and commit."/>
+    <FridaySays text={("Describe a change in plain English. " + fridayName() + " drafts a plan, you preview the diff, then apply and commit.")}/>
     <div className="card" style={{padding:10,marginBottom:10}}>
       <div style={{display:'flex',gap:6,marginBottom:6,alignItems:'center'}}>
         <span style={{fontSize:11,color:'#9ad'}}>Repo</span>
@@ -8938,7 +8960,7 @@ function DeepDive({it,category}){
   return(<div className="deepdive-wrap">
     <button className="deepdive-btn" onClick={e=>{e.stopPropagation();run()}}>{open?'▾ Deep Dive':'🔬 Deep Dive'}</button>
     {open&&<div className="deepdive-panel" onClick={e=>e.stopPropagation()}>
-      {busy?<div className="deepdive-loading"><span className="gen-spinner"></span> Friday is reading the full article…</div>:
+      {busy?<div className="deepdive-loading"><span className="gen-spinner"></span> {fridayName()} is reading the full article…</div>:
        err?<div className="deepdive-err">Couldn't deep-dive: {err}</div>:
        data?<div>
          <div className="deepdive-summary">{(data.summary||'').split(/\n\n+/).map((p,i)=><p key={i}>{p}</p>)}</div>
@@ -9232,12 +9254,12 @@ function NewsWS(){
       let sourcesMd='';
       const srcs=(d.sources||[]).filter(s=>s&&s.url);
       if(srcs.length){
-        sourcesMd='🎙️ **Now reading the Front Page** — *'+(d.headline||"Friday's Front Page")+'*. Interrupt any time to ask about a story. Sources:\n\n'
+        sourcesMd='🎙️ **Now reading the Front Page** — *'+(d.headline||(fridayName() + "'s Front Page"))+'*. Interrupt any time to ask about a story. Sources:\n\n'
           +srcs.map(s=>'- '+(s.title||'Story')+(s.source?' · '+s.source:'')+' [web:'+s.url+']').join('\n');
       }
       window.fridayVoice.startAnchor({prompt:d.prompt,sourcesMd});
       setAnchorReading(true);
-      flashNews('Anchor mode — Friday is reading the Front Page');
+      flashNews(('Anchor mode — ' + fridayName() + ' is reading the Front Page'));
     }catch(e){flashNews(e.message||'Anchor briefing failed')}
     finally{setAnchorBusy(false)}
   };
@@ -9370,7 +9392,7 @@ function NewsWS(){
             interruptible by voice) was removed as redundant — "Listen to Front
             Page" (anchor mode, natively interruptible) is the one way to hear
             the Front Page. The player logic stays for programmatic callers. */}
-        {tab==='frontpage'&&fp&&!anchorReading&&<button className="btn" style={{fontSize:11}} onClick={startAnchorBriefing} disabled={anchorBusy} title="Friday reads the Front Page aloud like a live news anchor — interrupt any time to ask about a story.">{anchorBusy?'Starting…':'🎙️ Listen to Front Page'}</button>}
+        {tab==='frontpage'&&fp&&!anchorReading&&<button className="btn" style={{fontSize:11}} onClick={startAnchorBriefing} disabled={anchorBusy} title={(fridayName() + " reads the Front Page aloud like a live news anchor — interrupt any time to ask about a story.")}>{anchorBusy?'Starting…':'🎙️ Listen to Front Page'}</button>}
         {tab==='frontpage'&&anchorReading&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={stopAnchorBriefing} title="End the live anchor briefing.">⏹ Stop Anchor</button>}
         {tab==='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={genFrontPage} disabled={fpGen}>{fpGen?'Curating…':'✨ Generate Front Page'}</button>}
         {tab!=='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={generateBriefing} disabled={generating}>{generating?'Generating…':'✨ Generate Briefing'}</button>}
@@ -9380,7 +9402,7 @@ function NewsWS(){
     {/* Generate progress */}
     {generating&&<div className="gen-progress">
       <span className="gen-spinner"></span>
-      <span>Friday is assembling your briefing…</span>
+      <span>{fridayName()} is assembling your briefing…</span>
       <span className="gen-steps">{NEWS_GEN_STEPS.map((s,i)=><span key={i} className={'gen-step '+(genDone.includes(s)?'done':i===genStep?'active':'')}>{s}</span>)}</span>
     </div>}
 
@@ -9401,7 +9423,7 @@ function NewsWS(){
         <div style={{fontSize:11,color:'#888'}}>{feedTotal.toLocaleString()} archived stor{feedTotal===1?'y':'ies'}{streamCat!=='All'?(' in '+streamCat):''}{feed.length<feedTotal?(' · showing '+feed.length):''}{feedAt?(' · updated '+new Date(feedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):''}{sources.banned.length?(' · '+sources.banned.length+' source'+(sources.banned.length>1?'s':'')+' banned'):''}</div>
       </div>
       {feedLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading your news archive…</div>:
-       streamItems.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No archived stories{streamCat!=='All'?(' in '+streamCat):''} yet. Friday archives articles every few minutes as it fetches them — check back shortly, or open the 🗞 Front Page.</div>:
+       streamItems.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No archived stories{streamCat!=='All'?(' in '+streamCat):''} yet. {fridayName()} archives articles every few minutes as it fetches them — check back shortly, or open the 🗞 Front Page.</div>:
        <div>
        {clusters.length>0&&<div className="cluster-strip">
          <div className="cluster-strip-head">🔥 Trending — one story, covered by multiple sources</div>
@@ -9449,7 +9471,7 @@ function NewsWS(){
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>{if(it.url){window.open(it.url,'_blank');newsRecord(it.source,'click',it.category)}}}>↗ Open article</span>
              <TalkToFridayButton contentType="article" title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
            </div>
-           {i===0&&<div className="editorial-note"><b>Friday's note:</b> {editorialFor(it)}</div>}
+           {i===0&&<div className="editorial-note"><b>{fridayName()}'s note:</b> {editorialFor(it)}</div>}
            <div className="relevance-tag">{relevanceFor(it)}</div>
            <NewsWikiLink it={it}/>
            <DeepDive it={it} category={it.category}/>
@@ -9467,16 +9489,16 @@ function NewsWS(){
 
     {/* ── FRONT PAGE TAB (AI-curated editorial) ── */}
     {tab==='frontpage'&&<div>
-      {fpGen&&<div className="gen-progress"><span className="gen-spinner"></span><span>Friday is curating your Front Page — fetching every feed, scoring against your profile, writing the lead…</span></div>}
+      {fpGen&&<div className="gen-progress"><span className="gen-spinner"></span><span>{fridayName()} is curating your Front Page — fetching every feed, scoring against your profile, writing the lead…</span></div>}
       {fpLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading your Front Page…</div>:
        !fp?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>
-         No edition yet. Friday publishes automatically at 7 AM &amp; 6 PM Central — or hit ✨ Generate Front Page to make one now.
+         No edition yet. {fridayName()} publishes automatically at 7 AM &amp; 6 PM Central — or hit ✨ Generate Front Page to make one now.
        </div>:
        <div>
          {/* Masthead */}
          <div className="fp-masthead">
            <div>
-             <div className="fp-title">{fp.headline||"Friday's Front Page"}</div>
+             <div className="fp-title">{fp.headline||(fridayName() + "'s Front Page")}</div>
              <div className="fp-sub">{(fp.slot==='evening'?'Evening edition':'Morning edition')+(fp.generated_central?(' · '+fp.generated_central):'')}{fp.stats&&fp.stats.total_considered?(' · '+fp.stats.total_considered+' stories from '+fp.stats.sources+' sources'):''}</div>
            </div>
            {fpList.length>1&&<select className="input" style={{fontSize:11,maxWidth:200}} value={fp.id} onChange={e=>loadFpEdition(e.target.value)}>
@@ -9485,7 +9507,7 @@ function NewsWS(){
          </div>
          {anchorReading&&<div className="fp-anchor-bar">
            <span className="fp-anchor-dot"></span>
-           <span className="fp-anchor-label">🎙️ Now Reading: Front Page — speak any time to ask Friday about a story</span>
+           <span className="fp-anchor-label">🎙️ Now Reading: Front Page — speak any time to ask {fridayName()} about a story</span>
            <button aria-label="End the live anchor briefing" className="fp-audio-btn close" title="End the live anchor briefing" onClick={stopAnchorBriefing}>⏹</button>
          </div>}
          {fp.day_in_context&&<div className="fp-daycontext">
@@ -9501,7 +9523,7 @@ function NewsWS(){
            {fp.lead.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
            <div className="fp-lead-headline" onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>{fp.lead.title}</div>
            <div className="fp-lead-snippet">{fp.lead.snippet}</div>
-           {fp.lead.editorial_note&&<div className="editorial-note"><b>Friday's note:</b> {fp.lead.editorial_note}</div>}
+           {fp.lead.editorial_note&&<div className="editorial-note"><b>{fridayName()}'s note:</b> {fp.lead.editorial_note}</div>}
            {fp.lead.thread_update&&<div className="fp-thread"><b>What's new today:</b> {fp.lead.thread_update}</div>}
            <div className="source-row" style={{marginTop:8}}>
              <span className="source-badge"><TrustBadge it={fp.lead}/>{fp.lead.source}</span>
@@ -9558,7 +9580,7 @@ function NewsWS(){
     {tab==='weekly'&&<div>
       {wkLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading the Weekly Digest…</div>:
        !weekly?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>
-         No weekly digest yet. Friday publishes one every Sunday at 8 AM Central.
+         No weekly digest yet. {fridayName()} publishes one every Sunday at 8 AM Central.
          <div style={{marginTop:12}}><button className="btn active" style={{fontSize:11}} onClick={genWeekly} disabled={wkGen}>{wkGen?'Synthesizing…':'✨ Generate Weekly Digest'}</button></div>
        </div>:
        <div>
@@ -9576,7 +9598,7 @@ function NewsWS(){
          </div>
          {weekly.editorial&&<div className="fp-lead cat-business">
            <div className="news-cardtop"><span className="cat-chip">EDITORIAL TAKE</span></div>
-           <div className="editorial-note" style={{marginTop:4}}><b>Friday's take:</b> {weekly.editorial}</div>
+           <div className="editorial-note" style={{marginTop:4}}><b>{fridayName()}'s take:</b> {weekly.editorial}</div>
          </div>}
          {(weekly.top_stories||[]).length>0&&<div className="fp-section">
            <div className="fp-section-head cat-tech"><span className="fp-section-title">Top 5 Stories of the Week</span></div>
@@ -9596,16 +9618,16 @@ function NewsWS(){
 
     {/* ── EDITORIAL TAB (Friday's independent weekly opinion) ── */}
     {tab==='editorial'&&<div>
-      {edLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading Friday's editorial…</div>:
+      {edLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading {fridayName()}'s editorial…</div>:
        !editorial?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>
-         No editorial yet. Friday writes one every Friday at 7 PM Central — her one fully independent space.
+         No editorial yet. {fridayName()} writes one every Friday at 7 PM Central — her one fully independent space.
          <div style={{marginTop:12}}><button className="btn active" style={{fontSize:11}} onClick={genEditorial} disabled={edGen}>{edGen?'Writing…':"✨ Write this week's editorial"}</button></div>
        </div>:
        <div>
          <div className="ed-disclaimer">⚠ This editorial draws from my full source index, not your curated feed. My job here is to tell you what I actually think.</div>
          <div className="fp-masthead" style={{marginTop:12}}>
            <div>
-             <div className="fp-title">Friday's Editorial</div>
+             <div className="fp-title">{fridayName()}'s Editorial</div>
              <div className="fp-sub">{(editorial.generated_central||editorial.week||'')+(editorial.regenerated?' · rewritten for stronger pushback':'')+(typeof editorial.independence_score==='number'?(' · independence '+editorial.independence_score.toFixed(2)):'')}</div>
            </div>
            <div style={{display:'flex',gap:6,alignItems:'center'}}>
@@ -9613,7 +9635,7 @@ function NewsWS(){
                {edList.map(w=><option key={w.id} value={w.id}>{w.week||w.id}</option>)}
              </select>}
              <button className="btn" style={{fontSize:11}} onClick={genEditorial} disabled={edGen}>{edGen?'Writing…':'↻ Rewrite'}</button>
-             <TalkToFridayButton contentType="editorial" title={"Friday's Editorial"+(editorial.week?' — '+editorial.week:'')} summary={editorial.preview||''} style={{fontSize:10}}/>
+             <TalkToFridayButton contentType="editorial" title={(fridayName() + "'s Editorial")+(editorial.week?' — '+editorial.week:'')} summary={editorial.preview||''} style={{fontSize:10}}/>
            </div>
          </div>
          <div className="ed-body"><FridayDoc text={(editorial.markdown||'').replace(/^# .*(\r?\n)+/,'').replace(/^> .*(\r?\n)+/,'')}/></div>
@@ -9639,9 +9661,9 @@ function NewsWS(){
         {fedStatus&&fedStatus.agent_id&&<span className="fed-id" title={'This agent’s Ed25519 identity: '+fedStatus.agent_id}>id {fedStatus.agent_id.slice(0,10)}…</span>}
         {fedStatus&&!fedStatus.agent_id&&<span className="fed-id" style={{color:'#f59e0b'}}>no signing key (install pynacl)</span>}
       </div>
-      <div style={{fontSize:11,color:'#888',margin:'8px 0'}}>Friday scores every source on six dimensions, learned by cross-referencing claims across outlets on every fetch. Click a source for its breakdown and observation history.</div>
+      <div style={{fontSize:11,color:'#888',margin:'8px 0'}}>{fridayName()} scores every source on six dimensions, learned by cross-referencing claims across outlets on every fetch. Click a source for its breakdown and observation history.</div>
       {trustLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading source trust scores…</div>:
-       trustBoard.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>No sources scored yet. Friday builds the graph as it fetches news — check back after a fetch cycle (every few minutes).</div>:
+       trustBoard.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>No sources scored yet. {fridayName()} builds the graph as it fetches news — check back after a fetch cycle (every few minutes).</div>:
        <div className="trust-layout">
          {/* Leaderboard */}
          <div className="trust-board">
@@ -9980,7 +10002,7 @@ function MessagesWS(){
 
               {/* Actions */}
               <div className="msg-actions" style={{opacity:1}}>
-                <span className="mini-btn" onClick={()=>draft(m)}>💬 Reply with Friday</span>
+                <span className="mini-btn" onClick={()=>draft(m)}>💬 Reply with {fridayName()}</span>
                 <span className="mini-btn" onClick={()=>act(m,'archive')}>🗄 Archive</span>
                 <span className="mini-btn" onClick={()=>act(m,'snooze')}>😴 Snooze 4h</span>
                 <span className={'mini-btn'+(m.flagged?' flagged':'')} onClick={()=>act(m,m.flagged?'unflag':'flag')}>{m.flagged?'🚩 Unflag':'🏳 Flag'}</span>
@@ -9992,10 +10014,10 @@ function MessagesWS(){
               {/* Draft panel */}
               {draftFor===m.id&&<div className="msg-draft-panel">
                 <div style={{display:'flex',gap:6,marginBottom:6}}>
-                  <input className="input" style={{flex:1,fontSize:11}} value={draftInstr} onChange={e=>setDraftInstr(e.target.value)} placeholder="Optional: how should Friday angle this reply?"/>
+                  <input className="input" style={{flex:1,fontSize:11}} value={draftInstr} onChange={e=>setDraftInstr(e.target.value)} placeholder={("Optional: how should " + fridayName() + " angle this reply?")}/>
                   <button className="btn" style={{fontSize:11}} onClick={()=>draft(m)} disabled={draftBusy}>{draftBusy?'…':'↻ Regenerate'}</button>
                 </div>
-                {draftBusy&&!draftText?<div style={{fontSize:11,color:'#b794f6'}}>Friday is drafting a reply…</div>:
+                {draftBusy&&!draftText?<div style={{fontSize:11,color:'#b794f6'}}>{fridayName()} is drafting a reply…</div>:
                  <><textarea value={draftText} onChange={e=>setDraftText(e.target.value)}/>
                    <div style={{display:'flex',gap:6,marginTop:6}}>
                      <button className="btn" style={{fontSize:11}} onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(draftText);flash('Copied draft')}}>📋 Copy</button>
@@ -10139,7 +10161,7 @@ function CalendarWS(){
           </div>
           {open&&<div onClick={ev=>ev.stopPropagation()} style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.08)'}}>
             {e.related_emails&&e.related_emails.length>0&&<div style={{fontSize:10,color:'#8fb8c8',marginBottom:6}}>Related threads: {e.related_emails.map(r=>r.subject).join(' · ')}</div>}
-            {prepBusy&&!prepText?<div style={{fontSize:11,color:'#c4b5fd'}}>Friday is building your prep card…</div>:
+            {prepBusy&&!prepText?<div style={{fontSize:11,color:'#c4b5fd'}}>{fridayName()} is building your prep card…</div>:
              <><FridayDoc text={prepText} compact style={{fontSize:11}}/>
                <div style={{display:'flex',gap:6,marginTop:6}}>
                  <button className="btn" style={{fontSize:10}} onClick={()=>genPrep(e)} disabled={prepBusy}>↻ Regenerate</button>
@@ -10830,7 +10852,7 @@ function RelationshipPanel({onImported}){
   const small={fontSize:11};const readOnly=accts.filter(a=>!a.can_save);
   return(<div className="card" style={{marginBottom:10}}>
     <div className="card-title">Relationship memory</div>
-    <div style={{fontSize:11,color:'#999',marginBottom:8,lineHeight:1.5}}>Friday keeps a timeline of who you have emailed and met, from mail and calendar headers only, never message text. It stays on this computer.{info.last_sync?' Last sync '+String(info.last_sync).slice(0,16).replace('T',' ')+' · '+(info.interactions||0)+' interactions.':''}</div>
+    <div style={{fontSize:11,color:'#999',marginBottom:8,lineHeight:1.5}}>{fridayName()} keeps a timeline of who you have emailed and met, from mail and calendar headers only, never message text. It stays on this computer.{info.last_sync?' Last sync '+String(info.last_sync).slice(0,16).replace('T',' ')+' · '+(info.interactions||0)+' interactions.':''}</div>
     {cfg&&<div style={{display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',marginBottom:8}}>
       <label style={{...small,display:'flex',gap:4,alignItems:'center'}}><input type="checkbox" checked={!!cfg.sync_enabled} onChange={ev=>saveCfg({sync_enabled:ev.target.checked})}/>Build the timeline from mail and calendar</label>
       <label style={{...small,display:'flex',gap:4,alignItems:'center'}}>Nudge me when nobody has replied after<input className="input" type="number" min={0} max={90} value={cfg.cold_after_days} style={{width:56,fontSize:11,padding:'2px 4px'}} onChange={ev=>saveCfg({cold_after_days:ev.target.value===''?0:Number(ev.target.value)})}/>days (0 = off)</label>
@@ -10839,7 +10861,7 @@ function RelationshipPanel({onImported}){
       <button className="btn" style={small} disabled={!!busy} onClick={syncNow}>{busy==='sync'?'Syncing…':'↻ Sync now'}</button>
       <input ref={fileRef} type="file" accept=".csv,text/csv" style={{display:'none'}} onChange={ev=>{const f=ev.target.files&&ev.target.files[0];ev.target.value='';importFile(f)}}/>
       <button className="btn" style={small} disabled={!!busy} title="LinkedIn → Settings → Data privacy → Get a copy of your data → Connections" onClick={()=>fileRef.current&&fileRef.current.click()}>{busy==='import'?'Importing…':'⬆ Import LinkedIn connections (CSV)'}</button>
-      {readOnly.map(a=><button key={a.id} className="btn" style={small} title="Friday can only read contacts on this account. Saving still waits for your approval each time." onClick={()=>allowSaving(a)}>{'Allow saving to Google Contacts: '+(a.email||a.label)}</button>)}
+      {readOnly.map(a=><button key={a.id} className="btn" style={small} title={(fridayName() + " can only read contacts on this account. Saving still waits for your approval each time.")} onClick={()=>allowSaving(a)}>{'Allow saving to Google Contacts: '+(a.email||a.label)}</button>)}
     </div>
     {consent&&<div style={{fontSize:11,color:'#bbb',margin:'6px 0',lineHeight:1.5}}>
       {consent.brief?<div style={{marginBottom:4}}>{consent.brief}</div>:null}
@@ -10860,7 +10882,7 @@ function PersonTimelineCard({name}){
   const load=()=>{fetch('/api/relationships/person/'+encodeURIComponent(name)).then(r=>r.json()).then(d=>setT(d.status==='ok'?d.timeline:null)).catch(()=>setT(null))};
   useEffect(()=>{if(name)load()},[name]);
   const addFollowUp=async()=>{setMsg('');try{const r=await fetch('/api/relationships/follow-ups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({person:name,note,in_days:Number(days)||0})});const d=await r.json();
-    if(d.status==='ok'){setNote('');setMsg('Friday will remind you on '+String(d.follow_up.due).slice(0,10)+'.');load()}else setMsg(d.message||'Could not set the follow-up.')}catch(err){setMsg('Could not set the follow-up.')}};
+    if(d.status==='ok'){setNote('');setMsg((fridayName() + ' will remind you on ')+String(d.follow_up.due).slice(0,10)+'.');load()}else setMsg(d.message||'Could not set the follow-up.')}catch(err){setMsg('Could not set the follow-up.')}};
   const when=s=>s?String(s).slice(0,10):'—';
   return(<div className="card" style={{marginBottom:10}}>
     <div className="card-title">Timeline</div>
@@ -11050,7 +11072,7 @@ function ContentIdeasTab({onGraduate}){
   }
   const by=pipe?.by_stage||{};
   return(<div>
-    <FridaySays text={`${pipe?.total||0} items in pipeline · ${savedDrafts.length} saved drafts · ${templates.length} templates. Capture an idea, start from a template, or 💬 ask Friday to reshape this studio.`}/>
+    <FridaySays text={`${pipe?.total||0} items in pipeline · ${savedDrafts.length} saved drafts · ${templates.length} templates. Capture an idea, start from a template, or 💬 ask ${fridayName()} to reshape this studio.`}/>
     <div style={{display:'flex',gap:4,marginBottom:10}}>
       <button className={'btn'+(view==='pipeline'?' active':'')} aria-pressed={view==='pipeline'} style={{fontSize:11}} onClick={()=>setView('pipeline')}>Pipeline</button>
       <button className={'btn'+(view==='templates'?' active':'')} aria-pressed={view==='templates'} style={{fontSize:11}} onClick={()=>{setView('templates');loadTemplates()}}>Templates</button>
@@ -11058,7 +11080,7 @@ function ContentIdeasTab({onGraduate}){
     </div>
     {view==='templates'&&<div>
       
-      <div style={{fontSize:11,color:'#999',marginBottom:8}}>One-click scaffolds — Friday fills in the structure when you hit ✨ Draft.</div>
+      <div style={{fontSize:11,color:'#999',marginBottom:8}}>One-click scaffolds — {fridayName()} fills in the structure when you hit ✨ Draft.</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(210px,1fr))',gap:8}}>
         {templates.map(t=><div key={t.id} className="card" style={{cursor:'pointer',padding:'10px 12px'}} onClick={()=>startFromTemplate(t)}>
           <div style={{fontSize:13,fontWeight:600,color:'#e8e8f0',marginBottom:3}}>{t.icon} {t.label}</div>
@@ -11285,7 +11307,7 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
     
     <div className="card" style={{marginBottom:12,padding:14,border:'1px solid rgba(0,212,255,0.18)'}}>
       <input className="input" style={{width:'100%',marginBottom:6,fontSize:12,boxSizing:'border-box'}} value={title} onChange={e=>setTitle(e.target.value)} placeholder="Working title (YouTube, Reddit and articles use it)…"/>
-      <textarea className="input" rows={4} style={{width:'100%',resize:'vertical',minHeight:72,marginBottom:8,boxSizing:'border-box',fontSize:12.5,lineHeight:1.55}} value={body} onChange={e=>setBody(e.target.value)} placeholder="Write the canonical post — Friday adapts it to each platform's native voice and limits…"/>
+      <textarea className="input" rows={4} style={{width:'100%',resize:'vertical',minHeight:72,marginBottom:8,boxSizing:'border-box',fontSize:12.5,lineHeight:1.55}} value={body} onChange={e=>setBody(e.target.value)} placeholder={("Write the canonical post — " + fridayName() + " adapts it to each platform's native voice and limits…")}/>
       <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center',marginBottom:6}}>
         {chipList.map(p=>{const m=cpMeta(p);const on=sel.includes(p);const conn=connected(p);
           return(<button key={p} className="btn" onClick={()=>{if(!conn){onNavAccounts&&onNavAccounts();return}setSel(s=>on?s.filter(x=>x!==p):[...s,p])}}
@@ -11344,7 +11366,7 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
       <div className="card-title" style={{fontSize:11}}>Pick a slot</div>
       <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:6}}>
         <input type="datetime-local" className="input" style={{fontSize:11}} value={schedAt} onChange={e=>{setSchedAt(e.target.value);setOptimal(false)}}/>
-        <label style={{fontSize:11,color:'#a8a8b4',display:'flex',gap:4,alignItems:'center'}}><input type="checkbox" checked={optimal&&!schedAt} onChange={e=>{setOptimal(e.target.checked);if(e.target.checked)setSchedAt('')}}/> ✨ Let Friday pick the optimal time</label>
+        <label style={{fontSize:11,color:'#a8a8b4',display:'flex',gap:4,alignItems:'center'}}><input type="checkbox" checked={optimal&&!schedAt} onChange={e=>{setOptimal(e.target.checked);if(e.target.checked)setSchedAt('')}}/> ✨ Let {fridayName()} pick the optimal time</label>
       </div>
       {slots.length>0&&<div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:6}}>
         {slots.map((s,i)=>{const at=s.at?cpLocalInput(s.at):cpNextSlot(s);return(<button key={i} className="btn" style={{fontSize:10,borderStyle:'dashed'}} onClick={()=>{setSchedAt(at);setOptimal(false)}}>
@@ -11629,7 +11651,7 @@ function ContentAccountsTab({platforms,reload}){
     }catch(e){flash('Connect failed')}
   };
   const disconnect=async(name)=>{
-    if(!window.confirm('Disconnect '+cpMeta(name).label+'? Friday revokes the platform-side grant where the API allows it and purges the local credential.'))return;
+    if(!window.confirm('Disconnect '+cpMeta(name).label+('? ' + fridayName() + ' revokes the platform-side grant where the API allows it and purges the local credential.')))return;
     try{await fetch('/api/content/platforms/'+name,{method:'DELETE'});flash('Disconnected');reload&&reload()}catch(e){flash('Disconnect failed')}
   };
   const testPost=async(name)=>{try{const r=await fetch('/api/content/platforms/'+name+'/test',{method:'POST'});const d=await r.json();flash(d&&d.ok===false?(d.message||'Test failed'):(d.message||'✓ Test post sent (private/self where the platform allows)'))}catch(e){flash('Test failed')}};
@@ -11663,7 +11685,7 @@ function ContentAccountsTab({platforms,reload}){
             {(sc.cannot||[]).map((c,i)=><div key={i} style={{color:'#c98a8a'}}>✗ {c}</div>)}
           </div>}
           {st.last_error&&<div style={{fontSize:10,color:'#ff8aa0',marginBottom:6}}>⚠ {st.last_error}</div>}
-          {isManual&&!conn&&<div style={{fontSize:10,color:'#a8a8b4',lineHeight:1.5,marginBottom:6,fontStyle:'italic'}}>No public API. Friday prepares a ready-to-paste package and opens the editor — you paste, publish, and confirm the URL back. Honest handoff, never fake automation.</div>}
+          {isManual&&!conn&&<div style={{fontSize:10,color:'#a8a8b4',lineHeight:1.5,marginBottom:6,fontStyle:'italic'}}>No public API. {fridayName()} prepares a ready-to-paste package and opens the editor — you paste, publish, and confirm the URL back. Honest handoff, never fake automation.</div>}
           <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
             {!conn&&<button className="btn" style={{fontSize:11,fontWeight:700,padding:'4px 14px'}} onClick={()=>connect(p)}>{isManual?'Enable manual mode':'🔗 Connect'}</button>}
             {conn&&<button className="btn" style={{fontSize:10}} onClick={()=>connect(p)}>Re-authenticate</button>}
@@ -11681,7 +11703,7 @@ function ContentAccountsTab({platforms,reload}){
             </React.Fragment>}
             {name!=='bluesky'&&name!=='mastodon'&&<input type="password" className="input" style={{width:'100%',fontSize:11,marginBottom:4,boxSizing:'border-box'}} placeholder="Paste access token" value={(authVals[name]||{}).secret||''} onChange={e=>setAV(name,'secret',e.target.value)}/>}
             <button className="btn" style={{fontSize:10,fontWeight:600}} onClick={()=>submitAuth(name)}>Save & connect</button>
-            <div style={{fontSize:9,color:'#666',marginTop:3}}>Stored encrypted in Friday's credential vault — never plaintext, never logged.</div>
+            <div style={{fontSize:9,color:'#666',marginTop:3}}>Stored encrypted in {fridayName()}'s credential vault — never plaintext, never logged.</div>
           </div>}
           {authOpen===name&&isManual&&<div style={{marginTop:8}}>
             <button className="btn" style={{fontSize:10}} onClick={()=>submitAuth(name)}>Enable manual handoff</button>
@@ -11696,7 +11718,7 @@ function ContentAccountsTab({platforms,reload}){
           <input className="input" style={{width:44,fontSize:11,padding:'2px 6px'}} value={confWin} onChange={e=>setConfWin(e.target.value)}/>
         </label>
       </div>
-      <div style={{fontSize:10.5,color:'#a8a8b4',marginBottom:4}}>Staging host — a public base URL <i>you</i> already host and control, used only when Instagram/TikTok insist on fetching media from a URL. Friday does not upload or stage anything herself — the asset must already be public at that URL before publishing. Leave empty to hold such posts instead.</div>
+      <div style={{fontSize:10.5,color:'#a8a8b4',marginBottom:4}}>Staging host — a public base URL <i>you</i> already host and control, used only when Instagram/TikTok insist on fetching media from a URL. {fridayName()} does not upload or stage anything herself — the asset must already be public at that URL before publishing. Leave empty to hold such posts instead.</div>
       <div style={{display:'flex',gap:6}}>
         <input className="input" style={{flex:1,fontSize:11,boxSizing:'border-box'}} placeholder="https://your-host.example/staging (optional)" value={staging} onChange={e=>setStaging(e.target.value)}/>
         <button className="btn" style={{fontSize:10}} onClick={saveGlobals}>Save</button>
@@ -14220,7 +14242,7 @@ function WizardGemmaPull({hw}){
   if(!hw||!BUNDLED_MODEL)return null;
   if(!hw.ollama_available){
     return <div style={{padding:'10px 12px',borderRadius:8,border:'1px solid rgba(245,158,11,0.25)',background:'rgba(245,158,11,0.05)',marginBottom:14,fontSize:11,color:'rgba(255,210,140,0.9)',lineHeight:1.6}}>
-      Install <a href="https://ollama.com" target="_blank" rel="noreferrer" style={{color:'#00d4ff'}}>Ollama</a> to run Friday fully offline with no cloud key. Then come back here, or to Settings &gt; Models, to pull the bundled model.
+      Install <a href="https://ollama.com" target="_blank" rel="noreferrer" style={{color:'#00d4ff'}}>Ollama</a> to run {fridayName()} fully offline with no cloud key. Then come back here, or to Settings &gt; Models, to pull the bundled model.
     </div>;
   }
   if(has||state==='done'){
@@ -14241,7 +14263,7 @@ function WizardGemmaPull({hw}){
       }).catch(()=>{setState('error');setDetail('Could not reach the server');});
   };
   return <div style={{padding:'10px 12px',borderRadius:8,border:'1px solid rgba(0,212,255,0.2)',background:'rgba(0,212,255,0.04)',marginBottom:14}}>
-    <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8,lineHeight:1.6}}>Pull <b style={{color:'#00d4ff'}}>{BUNDLED_MODEL}</b> so Friday chats fully on-device with no API key.</div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8,lineHeight:1.6}}>Pull <b style={{color:'#00d4ff'}}>{BUNDLED_MODEL}</b> so {fridayName()} chats fully on-device with no API key.</div>
     {state==='pulling'
       ?<div style={{fontSize:10,color:'rgba(0,212,255,0.8)',fontFamily:'JetBrains Mono'}}>⏳ {detail}</div>
       :<button className="settings-btn" style={{fontSize:12}} onClick={startPull}>↓ Pull {BUNDLED_MODEL}</button>}
@@ -14268,7 +14290,7 @@ async function scJSON(url, method, body) {
   }
   let r;
   try { r = await fetch(url, opts); } catch (e) {
-    return { ok: false, status: 0, data: { message: 'Could not reach Friday. Try again.' } };
+    return { ok: false, status: 0, data: { message: ('Could not reach ' + fridayName() + '. Try again.') } };
   }
   let d = {};
   try { d = await r.json(); } catch (_) {}
@@ -14305,7 +14327,7 @@ function scKeyNote(hit, shapes) {
 
 const SC_STATUS = {
   connected: 'Connected', needs_attention: 'Needs attention', not_connected: 'Not connected',
-  skipped: 'Skipped', external: 'Set up outside Friday'
+  skipped: 'Skipped', external: ('Set up outside ' + FRIDAY_BRAND.name)
 };
 
 function scSafeUrl(u) {
@@ -14605,7 +14627,7 @@ function SetupResearchReview({ research, onChanged }) {
           </div>
         </div>
       ))}
-      {!items.length && <p className="sc-sub">{r.accepted ? r.accepted + ' finding(s) kept in Friday\'s knowledge graph, each with its source.' : 'Nothing is waiting for review.'}</p>}
+      {!items.length && <p className="sc-sub">{r.accepted ? r.accepted + (' finding(s) kept in ' + fridayName() + '\'s knowledge graph, each with its source.') : 'Nothing is waiting for review.'}</p>}
       {err && <div role="alert" className="sc-msgline bad">{err}</div>}
     </div>
   );
@@ -14637,7 +14659,7 @@ function SetupStyleCard({ style, sliders, floor, examplePrompt, onSave, onSkip, 
   const by = (style && style.by) || {};
   return (
     <div className="sc-card">
-      <h2 tabIndex={-1} data-sc-focus="">Friday for you</h2>
+      <h2 tabIndex={-1} data-sc-focus="">{fridayName()} for you</h2>
       <div className="sc-badge">
         {by.kind === 'local' ? 'Read by ' + by.model + ' (on this computer)'
           : by.kind === 'cloud' ? 'Read by ' + by.model + ' (' + by.provider + ', cloud)'
@@ -14658,7 +14680,7 @@ function SetupStyleCard({ style, sliders, floor, examplePrompt, onSave, onSkip, 
           </div>
         );
       })}
-      <p className="sc-sub">Pushback never goes below {floor}: Friday still tells you when you're wrong, just more gently. Honesty and asking before real-world actions can't be tuned.</p>
+      <p className="sc-sub">Pushback never goes below {floor}: {fridayName()} still tells you when you're wrong, just more gently. Honesty and asking before real-world actions can't be tuned.</p>
       <div className="sc-row">
         <button type="button" className="sc-btn" onClick={() => onSave(moved ? vals : null)}>{saveLabel || 'Save this style'}</button>
         {onSkip && <button type="button" className="sc-btn quiet" onClick={onSkip}>Keep my default style</button>}
@@ -14688,8 +14710,8 @@ function SetupBasicsCard({ initial, onDone, busy }) {
   return (
     <div className="sc-card">
       <h2 tabIndex={-1} data-sc-focus="">The basics</h2>
-      <div className="sc-group">Who is this Friday for?</div>
-      <div role="radiogroup" aria-label="Who is this Friday for?">
+      <div className="sc-group">Who is this {fridayName()} for?</div>
+      <div role="radiogroup" aria-label={("Who is this " + fridayName() + " for?")}>
         {radio(!minor, 'For me', 'Full, unfiltered creative range', () => setMinor(false), 'me')}
         {radio(minor, 'For my child', 'Family mode: age-appropriate filtering', () => setMinor(true), 'child')}
       </div>
@@ -14708,7 +14730,7 @@ function SetupBasicsCard({ initial, onDone, busy }) {
         </div>
       )}
       <button type="button" className="sc-chip quiet" aria-expanded={addr} onClick={() => setAddr(!addr)}>
-        {(addr ? '▾ ' : '▸ ') + "Friday's own address on this PC (optional)"}
+        {(addr ? '▾ ' : '▸ ') + (FRIDAY_BRAND.name + "'s own address on this PC (optional)")}
       </button>
       {addr && (
         <div data-testid="setup-local-address" style={{ marginTop: 8 }}>
@@ -14885,9 +14907,9 @@ function SetupChat({ onDone }) {
   }
   const connectDone = ((st.groups || []).find(g => g.id === 'connect') || {}).state;
   return (
-    <div className="st-root sc-root" role="dialog" aria-modal="true" aria-label="Set up Friday">
+    <div className="st-root sc-root" role="dialog" aria-modal="true" aria-label={("Set up " + fridayName())}>
       <header className="sc-head">
-        <div className="sc-brand st-brand">{String(st.agent_name || 'Friday').toUpperCase()}</div>
+        <div className="sc-brand st-brand">{String(st.agent_name || fridayName()).toUpperCase()}</div>
         <nav className="sc-rail" aria-label="Setup progress">
           {(st.groups || []).map(g => (
             <button key={g.id} type="button" className={'sc-step ' + g.state}
@@ -14903,11 +14925,11 @@ function SetupChat({ onDone }) {
         </button>
       </header>
       <div className="sc-body">
-        <section className="sc-chat" aria-label="Conversation with Friday">
+        <section className="sc-chat" aria-label={("Conversation with " + fridayName())}>
           <div className="sc-log" ref={logRef} role="log" aria-live="polite" aria-relevant="additions">
             {(st.transcript || []).map((m, i) => (
               <div key={i} className={'sc-msg ' + (m.role === 'user' ? 'user' : 'friday')}>
-                <span className="sc-sr">{m.role === 'user' ? 'You: ' : (st.agent_name || 'Friday') + ': '}</span>
+                <span className="sc-sr">{m.role === 'user' ? 'You: ' : (st.agent_name || fridayName()) + ': '}</span>
                 {m.text}
                 {m.model && <div className="sc-badge">{'Read by ' + m.model}</div>}
                 {m.task_id && <div className="sc-badge">Running as a background task: see the tray</div>}
@@ -14962,7 +14984,7 @@ function SetupChat({ onDone }) {
 // ── Settings: the setup checklist and "Your profile" ────────────────────────
 function SettingsSetupChecklist() {
   return (
-    <StSection title="Setup checklist" desc="Everything Friday can connect to, with exactly what each one asks for. Anything you skipped in the setup chat waits here.">
+    <StSection title="Setup checklist" desc={("Everything " + fridayName() + " can connect to, with exactly what each one asks for. Anything you skipped in the setup chat waits here.")}>
       <SetupConnectionsPanel />
     </StSection>
   );
@@ -15018,8 +15040,8 @@ function SettingsYourProfile() {
   const rs = research && research.state;
   return (
     <React.Fragment>
-      <StSection title="Your profile" desc="What you told Friday in the setup chat, and the speaking style made from it. Stored encrypted on this computer. Only the style reaches Friday's prompt, never your answers.">
-        {p.name && <div className="sc-sub">{'Friday calls you ' + p.name + '.'}</div>}
+      <StSection title="Your profile" desc={("What you told " + fridayName() + " in the setup chat, and the speaking style made from it. Stored encrypted on this computer. Only the style reaches " + fridayName() + "'s prompt, never your answers.")}>
+        {p.name && <div className="sc-sub">{(fridayName() + ' calls you ') + p.name + '.'}</div>}
         {(p.questions || []).map(q => (
           <label key={q.id} className="sc-field">
             <span>{q.question}</span>
@@ -15039,11 +15061,11 @@ function SettingsYourProfile() {
               saveLabel="Save style"
               onSave={async sl => {
                 const r = await scJSON('/api/setup-chat/profile/style', 'POST', { sliders: sl || p.style.sliders });
-                if (r.ok) { setP(r.data); setMsg('Style saved. It is part of Friday\'s personality now.'); }
+                if (r.ok) { setP(r.data); setMsg(('Style saved. It is part of ' + fridayName() + '\'s personality now.')); }
               }} />
           </div>
         )}
-        <div className="sc-sub">{p.style_in_prompt ? 'Your style is part of Friday\'s personality (SOUL.md) and keeps evolving.' : 'No first-run style is in Friday\'s personality.'}</div>
+        <div className="sc-sub">{p.style_in_prompt ? ('Your style is part of ' + fridayName() + '\'s personality (SOUL.md) and keeps evolving.') : ('No first-run style is in ' + fridayName() + '\'s personality.')}</div>
         <div className="sc-row">
           <button type="button" className="sc-btn" onClick={rerun}>Run the setup chat again</button>
           <button type="button" className="sc-btn danger" onClick={del}>{confirmDel ? 'Confirm: delete my answers and style' : 'Delete my profile'}</button>
@@ -15358,7 +15380,7 @@ function CcGrantPanel({enabled}){
   return <div style={{marginTop:10,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.06)'}}>
     <Line ok={st.available===null?null:st.available} label="Installed" detail={st.available===false?'pyautogui is not installed — run: pip install pyautogui':st.available===null?'checking…':'pyautogui is available on this machine.'}/>
     <Line ok={enabled} label="Enabled in Settings" detail={enabled?'The toggle above is on.':'Turn the toggle above on first.'}/>
-    <Line ok={st.granted} label="Session grant" detail={st.granted?'Held. Friday can control the apps listed under Apps below. This grant persists across restarts until revoked.':'Not held. Press Grant below. Once given, the grant persists across restarts until revoked.'}/>
+    <Line ok={st.granted} label="Session grant" detail={st.granted?('Held. ' + fridayName() + ' can control the apps listed under Apps below. This grant persists across restarts until revoked.'):'Not held. Press Grant below. Once given, the grant persists across restarts until revoked.'}/>
     {st.killed&&<div style={{fontSize:11,color:'#ffb347',marginBottom:8,lineHeight:1.5}}>⚠ The kill switch was used. Granting again clears it.</div>}
     <div style={{display:'flex',gap:6,marginTop:10}}>
       <button className={`settings-btn ${st.granted?'':'active'}`} disabled={busy||!ready||st.granted} style={{fontSize:12,opacity:(!ready||st.granted)?0.45:1}} onClick={()=>act('grant')}>{busy?'…':'Grant'}</button>
@@ -15397,7 +15419,7 @@ function CcAppGrants(){
   const add=async()=>{if(await send({app:name.trim(),tier}))setName('')};
   return <div style={{marginTop:14,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.06)'}}>
     <div style={{fontSize:12,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono',marginBottom:2}}>Apps</div>
-    <div style={{...dim,marginBottom:8}}>Friday can only look at (Observe) or click and type in (Act) the apps listed here. Typing into a password field, and clicking anything named Delete, Send, Pay or Submit, always asks you first.</div>
+    <div style={{...dim,marginBottom:8}}>{fridayName()} can only look at (Observe) or click and type in (Act) the apps listed here. Typing into a password field, and clicking anything named Delete, Send, Pay or Submit, always asks you first.</div>
     {apps===null?<div style={dim}>Loading…</div>:rows.length===0?<div style={{...dim,marginBottom:6}}>No apps yet.</div>:rows.map(a=><div key={a} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
       <span style={{flex:1,minWidth:0,fontSize:12,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.7)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{label(a)}</span>
       {pick(apps[a],t=>send({app:a,tier:t}),`Access for ${label(a)}`)}
@@ -15456,7 +15478,7 @@ function LocalAddressSettings() {
       if (!r.ok || d.ok === false) setMsg(d.message || 'That did not work.');
       if (d.status) setSt(d.status);else await load(false);
     } catch (e) {
-      setMsg('Could not reach Friday.');
+      setMsg(('Could not reach ' + fridayName() + '.'));
     }
     setBusy('');
   };
@@ -15470,7 +15492,7 @@ function LocalAddressSettings() {
   const o = st.oauth || {};
   const onWindows = st.platform === 'win32';
   const goal = st.preferred_origin || 'https://' + host;
-  const via = s => s === 'friday' ? 'Friday answers there itself, for this PC only.' : s === 'this Friday, through another program' ? 'Friday answers there through another program already on this PC (the older demo proxy).' : s === 'another program' ? 'Something else on this PC answers there, not this Friday.' : '';
+  const via = s => s === 'friday' ? (FRIDAY_BRAND.name + ' answers there itself, for this PC only.') : s === 'this Friday, through another program' ? (FRIDAY_BRAND.name + ' answers there through another program already on this PC (the older demo proxy).') : s === 'another program' ? ('Something else on this PC answers there, not this ' + FRIDAY_BRAND.name + '.') : '';
   const portTrouble = [];
   ['https', 'http'].forEach(k => {
     const a = ((st.listeners || {})[k] || {}).addrs || {};
@@ -15499,21 +15521,21 @@ function LocalAddressSettings() {
           h('button', { className: 'settings-btn active', disabled: !!busy || waiting, onClick: () => post('/api/local-address/hosts-entry', { add: true }, 'hosts') }, 'Add ' + host + ' to this PC'),
           h('span', { className: 'la-hint' }, 'Windows asks for permission first (its shield prompt). Nothing else on the PC changes.')),
         st.resolves && (st.hosts_entry || {}).ours && h('button', { className: 'la-link', disabled: !!busy || waiting, onClick: () => post('/api/local-address/hosts-entry', { add: false }, 'hosts') }, 'Remove it from this PC')),
-      h(Line, { ok: st.resolves ? answers : null, label: 'Friday answers there' },
+      h(Line, { ok: st.resolves ? answers : null, label: (FRIDAY_BRAND.name + ' answers there') },
         !st.resolves ? 'Once this PC knows the name.' : answers ? via(https.works ? https.served_by : http.served_by) : via(https.served_by || http.served_by) || 'Nothing answers at ' + host + ' yet.',
         portTrouble.map(t => h('div', { key: t, className: 'la-warn' }, t.charAt(0).toUpperCase() + t.slice(1) + '.')),
         !answers && !st.serve && h('div', { className: 'la-actions' },
-          h('button', { className: 'settings-btn active', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: true }, 'serve') }, 'Turn on Friday’s local address'),
-          h('span', { className: 'la-hint' }, 'No system change: Friday listens on ' + host + ' for this PC only.')),
-        st.serve && h('button', { className: 'la-link', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: false }, 'serve') }, 'Turn Friday’s listener off')),
+          h('button', { className: 'settings-btn active', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: true }, 'serve') }, ('Turn on ' + FRIDAY_BRAND.name + '’s local address')),
+          h('span', { className: 'la-hint' }, ('No system change: ' + FRIDAY_BRAND.name + ' listens on ') + host + ' for this PC only.')),
+        st.serve && h('button', { className: 'la-link', disabled: !!busy, onClick: () => post('/api/local-address/serve', { on: false }, 'serve') }, ('Turn ' + FRIDAY_BRAND.name + '’s listener off'))),
       h(Line, { ok: st.resolves && answers ? secure : null, label: 'Secure (the padlock)' },
         secure ? 'Your browser trusts https://' + host + '.' : 'Not yet. Until it is, browsers switch off the microphone and camera on this address, so voice keeps working at localhost.',
         !secure && onWindows && ca.exists && !ca.trusted && !consent && h('div', { className: 'la-actions' },
           h('button', { className: 'settings-btn active', disabled: !!busy || waiting, onClick: () => setConsent(true) }, 'Enable secure local address')),
-        (ca.trusted || (ca.previous_trusted || []).length > 0) && h('button', { className: 'la-link', disabled: !!busy || waiting, onClick: () => post('/api/local-address/untrust', {}, 'untrust') }, 'Stop trusting Friday’s certificate')),
+        (ca.trusted || (ca.previous_trusted || []).length > 0) && h('button', { className: 'la-link', disabled: !!busy || waiting, onClick: () => post('/api/local-address/untrust', {}, 'untrust') }, ('Stop trusting ' + FRIDAY_BRAND.name + '’s certificate'))),
       consent && !secure && h('div', { className: 'la-consent', role: 'region', 'aria-label': 'Make ' + host + ' secure' },
         h('div', { className: 'la-consent-title' }, 'Make ' + host + ' secure'),
-        h('p', null, 'Friday made its own certificate authority on this PC, called “', h('b', null, ca.subject), '”. For your browser to show a padlock at https://' + host + ', Windows has to trust it. That changes what this PC trusts, so it is your decision.'),
+        h('p', null, (FRIDAY_BRAND.name + ' made its own certificate authority on this PC, called “'), h('b', null, ca.subject), '”. For your browser to show a padlock at https://' + host + ', Windows has to trust it. That changes what this PC trusts, so it is your decision.'),
         h('ul', null,
           h('li', null, 'It can vouch for ', h('b', null, host), ' and nothing else. It was made unable to vouch for any other website or any IP address, so even a copy of it could not pass for your bank or your email.'),
           h('li', null, 'It stays on this PC, and only your Windows account will trust it.'),
@@ -15526,7 +15548,7 @@ function LocalAddressSettings() {
           h('button', { className: 'settings-btn active', disabled: !!busy || waiting, onClick: () => {
             setConsent(false);
             post('/api/local-address/trust', {}, 'trust');
-          } }, 'Trust Friday’s certificate'),
+          } }, ('Trust ' + FRIDAY_BRAND.name + '’s certificate')),
           h('button', { className: 'settings-btn', onClick: () => setConsent(false) }, 'Not now'))),
       recentJob && h('div', { className: 'la-job ' + recentJob.state, role: 'status' }, recentJob.message),
       h(Line, { ok: true, label: 'Google sign-in' },
@@ -15536,7 +15558,7 @@ function LocalAddressSettings() {
             h('input', { type: 'checkbox', checked: registered, onChange: e => setRegistered(e.target.checked) }),
             h('span', null, 'I added ', h('code', null, (o.named_callbacks || [])[0]), ' and ', h('code', null, (o.named_callbacks || [])[1]), ' as Authorized redirect URIs in my Google Cloud project.')),
           h('button', { className: 'settings-btn', disabled: !registered || !!busy, onClick: () => post('/api/local-address/google', { use: true, confirmed: true }, 'google') }, 'Use ' + host + ' for Google sign-in')),
-        secure && !o.override && o.client_type && o.client_type !== 'web' && h('div', { className: 'la-hint' }, 'Friday’s Google client is a Desktop client, and Google only lets those return to localhost, so there is nothing to change.'),
+        secure && !o.override && o.client_type && o.client_type !== 'web' && h('div', { className: 'la-hint' }, (FRIDAY_BRAND.name + '’s Google client is a Desktop client, and Google only lets those return to localhost, so there is nothing to change.')),
         o.override && h('button', { className: 'la-link', disabled: !!busy, onClick: () => post('/api/local-address/google', { use: false }, 'google') }, 'Return Google sign-in to localhost')),
       msg && h('div', { className: 'la-err', role: 'alert' }, msg),
       h('div', { className: 'la-actions' },
@@ -15558,7 +15580,7 @@ function SettingsTabGeneral({
     title: "Identity"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Name",
-    desc: "What Friday calls herself in chat and voice."
+    desc: ("What " + fridayName() + " calls herself in chat and voice.")
   }, /*#__PURE__*/React.createElement("input", {
     className: "input",
     "aria-label": "Name",
@@ -15573,7 +15595,7 @@ function SettingsTabGeneral({
     placeholder: "Friday"
   })), /*#__PURE__*/React.createElement(StRow, {
     label: "Personality",
-    desc: "How Friday presents herself. Saved when you click away."
+    desc: ("How " + fridayName() + " presents herself. Saved when you click away.")
   }, /*#__PURE__*/React.createElement("textarea", {
     className: "input",
     "aria-label": "Personality",
@@ -15587,7 +15609,7 @@ function SettingsTabGeneral({
     onBlur: e => save({
       personality: e.target.value
     }),
-    placeholder: "Describe Friday's personality..."
+    placeholder: ("Describe " + fridayName() + "'s personality...")
   }))), /*#__PURE__*/React.createElement(LocalAddressSettings, null), /*#__PURE__*/React.createElement(StSection, {
     title: "Workspaces"
   }, /*#__PURE__*/React.createElement(StToggle, {
@@ -15619,7 +15641,7 @@ function SettingsTabWork(){
     <StSection title="Proposed work">
       {props===null&&<div style={{fontSize:11,color:'rgba(255,255,255,0.35)'}}>loading…</div>}
       {props&&props.length===0&&<div style={{fontSize:11,color:'rgba(255,255,255,0.35)',lineHeight:1.5}}>
-        Nothing waiting on you. When Friday judges a job might be heavy she will lay out the steps here and ask how you want it run — she will not decide that on her own.
+        Nothing waiting on you. When {fridayName()} judges a job might be heavy she will lay out the steps here and ask how you want it run — she will not decide that on her own.
       </div>}
       {(props||[]).map(p=><WorkProposal key={p.id} p={p} onDecided={load}/>)}
     </StSection>
@@ -15835,7 +15857,7 @@ function PushToTranscribeRows({s,save}){
   const hotkey=s.push_to_transcribe_hotkey||'alt+t';
   const pretty=k=>k.split('+').map(p=>p.length===1?p.toUpperCase():p.charAt(0).toUpperCase()+p.slice(1)).join('+');
   return <>
-    <StRow label="Push-to-Transcribe" desc="Hold the key, say a sentence, let go. It is transcribed on this machine and typed into whatever window you were looking at — any application, not just Friday. A quick tap is passed through to that application, so the key keeps working where it already did. Press Esc while it is listening to throw the recording away.">
+    <StRow label="Push-to-Transcribe" desc={("Hold the key, say a sentence, let go. It is transcribed on this machine and typed into whatever window you were looking at — any application, not just " + fridayName() + ". A quick tap is passed through to that application, so the key keeps working where it already did. Press Esc while it is listening to throw the recording away.")}>
       <div>
         <button className={`settings-btn ${on?'active':''}`} style={{fontSize:12,padding:'7px 14px'}}
           onClick={()=>save({push_to_transcribe:!on})}>{on?`On everywhere — hold ${pretty(hotkey)}`:'Off'}</button>
@@ -15857,7 +15879,7 @@ function PushToTranscribeRows({s,save}){
           onChange={e=>setDraft(e.target.value)}
           onBlur={()=>{if(draft&&draft!==hotkey)save({push_to_transcribe_hotkey:draft.trim().toLowerCase()});setDraft(null);}}/>
         <div style={{fontSize:11,opacity:0.7,marginTop:6}}>
-          Modifiers plus one key, e.g. <code>ctrl+shift+space</code>. A shortcut Friday cannot honour is refused rather than quietly replaced with a different one.
+          Modifiers plus one key, e.g. <code>ctrl+shift+space</code>. A shortcut {fridayName()} cannot honour is refused rather than quietly replaced with a different one.
         </div>
       </div>
     </StRow>}
@@ -15920,7 +15942,7 @@ function TtsEngineRows({s,save,mc}){
         {[['af_heart','Heart \u2014 US English (female)'],['af_bella','Bella \u2014 US English (female)'],['af_nicole','Nicole \u2014 US English (female)'],['am_michael','Michael \u2014 US English (male)'],['am_puck','Puck \u2014 US English (male)'],['bf_emma','Emma \u2014 UK English (female)'],['bm_george','George \u2014 UK English (male)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
       </select>
     </StRow>}
-    {sel==='kokoro'&&<StRow label="Allow Kokoro on CPU" desc="Off by design. Kokoro synthesizes at roughly realtime on CPU, which is too slow to hold a conversation, so Friday refuses instead of quietly being slow. Turning this on accepts that trade.">
+    {sel==='kokoro'&&<StRow label="Allow Kokoro on CPU" desc={("Off by design. Kokoro synthesizes at roughly realtime on CPU, which is too slow to hold a conversation, so " + fridayName() + " refuses instead of quietly being slow. Turning this on accepts that trade.")}>
       <button className={`settings-btn ${s.local_voice_kokoro_allow_cpu?'active':''}`} style={{fontSize:12,padding:'7px 14px'}}
         onClick={()=>save({local_voice_kokoro_allow_cpu:!s.local_voice_kokoro_allow_cpu})}>{s.local_voice_kokoro_allow_cpu?'Allowed (slow)':'Refused (default)'}</button>
     </StRow>}
@@ -16009,32 +16031,32 @@ function SettingsTabVoice({s,save}){
       </StRow>}
     </StSection>
     <StSection title="Listening">
-      {gem&&<StRow label="Interrupting Friday" desc="Talk over her and she stops, which works best with headphones. On open speakers her own voice can echo back and cut her off; choose no interruption there and press Esc to stop her instead.">
+      {gem&&<StRow label={("Interrupting " + fridayName())} desc="Talk over her and she stops, which works best with headphones. On open speakers her own voice can echo back and cut her off; choose no interruption there and press Esc to stop her instead.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {[{k:'auto',l:'Talk over her (default)',match:['auto','speaker','headphones','headphone','barge','barge-in','bargein','']},{k:'no-barge',l:'No interruption (open speakers)',match:['no-barge','no_barge','nobarge','speaker-safe','speaker_safe','none','off']}].map(o=>(
             <button key={o.k} className={`settings-btn ${o.match.includes((s.voice_interruption_mode||'auto').toLowerCase())?'active':''}`} onClick={()=>save({voice_interruption_mode:o.k})} style={{fontSize:11}}>{o.l}</button>
           ))}
         </div>
       </StRow>}
-      {gem&&<StRow label="Who is talking" desc="With several people in the room, Friday answers only when she is spoken to by name, or when someone replies to her. Takes effect on the next voice session.">
+      {gem&&<StRow label="Who is talking" desc={("With several people in the room, " + fridayName() + " answers only when she is spoken to by name, or when someone replies to her. Takes effect on the next voice session.")}>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {[{k:'one',l:'Just me (default)'},{k:'room',l:'Several people'}].map(o=>(
             <button key={o.k} className={`settings-btn ${(s.voice_room_mode==='room'?'room':'one')===o.k?'active':''}`} onClick={()=>save({voice_room_mode:o.k})} style={{fontSize:11}}>{o.l}</button>
           ))}
         </div>
       </StRow>}
-      {!gem&&<StSavedSlider label="Pause before Friday replies" desc="How long a silence counts as the end of what you said. Longer suits slow speech; shorter feels snappier."
+      {!gem&&<StSavedSlider label={("Pause before " + fridayName() + " replies")} desc="How long a silence counts as the end of what you said. Longer suits slow speech; shorter feels snappier."
         value={s.voice_silence_ms??800} min={300} max={2000} step={100} fmt={v=>Math.round(v)+' ms'}
         onSave={v=>save({voice_silence_ms:Math.round(v)})}/>}
     </StSection>
-    <StSection title="What voice can't do, and why" desc="Voice can do anything chat can: what its quick tools do not cover, it hands to Friday in the background. These limits remain, and why.">
+    <StSection title="What voice can't do, and why" desc={("Voice can do anything chat can: what its quick tools do not cover, it hands to " + fridayName() + " in the background. These limits remain, and why.")}>
       <VoiceRestrictions/>
     </StSection>
     {gem&&<StSection title="Gemini Live options" desc="These apply only to the Gemini Live session.">
       <StToggle label="Expressive speech" value={!!s.voice_affective} onChange={()=>save({voice_affective:!s.voice_affective})} desc="Lets the voice carry emotion. Only some Gemini voice models support it."/>
-      <StToggle label="Friday may speak first" value={!!s.voice_proactive} onChange={()=>save({voice_proactive:!s.voice_proactive})} desc="She can ask a follow-up question without waiting to be spoken to."/>
+      <StToggle label={(fridayName() + " may speak first")} value={!!s.voice_proactive} onChange={()=>save({voice_proactive:!s.voice_proactive})} desc="She can ask a follow-up question without waiting to be spoken to."/>
       <StToggle label="Keep long sessions going" value={s.voice_context_compression!==false} onChange={()=>save({voice_context_compression:s.voice_context_compression===false})} desc="Drops the oldest turns as a session grows so it can run for hours. Off, a session ends after about 15 minutes."/>
-      <StToggle label="Use tools while talking" value={s.voice_tools!==false} onChange={()=>save({voice_tools:s.voice_tools===false})} desc="Lets Friday call her tools mid-conversation."/>
+      <StToggle label="Use tools while talking" value={s.voice_tools!==false} onChange={()=>save({voice_tools:s.voice_tools===false})} desc={("Lets " + fridayName() + " call her tools mid-conversation.")}/>
       <StSavedSlider label={<span>Variety{s.voice_temperature!=null&&<button type="button" onClick={()=>save({voice_temperature:null})} style={{marginLeft:10,background:'none',border:'none',padding:0,color:'var(--st-accent)',cursor:'pointer',fontSize:11.5,textDecoration:'underline'}}>use the model default</button>}</span>}
         desc="How much the wording varies from one reply to the next. Unset uses the model's own default."
         value={s.voice_temperature??1.0} min={0} max={2} step={0.05}
@@ -16062,7 +16084,7 @@ function ClawsRepinPanel(){
   const load=useCallback(()=>{apiFetch('/api/governance/claws').then(r=>r.json()).then(setSt).catch(()=>setSt({state:'error',summary:'Could not read the status.'}))},[]);
   useEffect(()=>{load()},[load]);
   const repin=()=>{
-    if(!window.confirm("Re-confirm Friday's rules on this PC?\n\nDo this only if you moved Friday's data to this PC or Windows account, or updated Friday. "+
+    if(!window.confirm(("Re-confirm " + fridayName() + "'s rules on this PC?\n\nDo this only if you moved " + FRIDAY_BRAND.name + "'s data to this PC or Windows account, or updated " + FRIDAY_BRAND.name + ". ")+
       "It accepts the current rules text under this PC's signing key, and outward actions stop being held for this reason."))return;
     setBusy(true);setMsg('');
     apiFetch('/api/governance/claws/repin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})})
@@ -16075,8 +16097,8 @@ function ClawsRepinPanel(){
   return <div data-testid="claws-repin">
     <div style={{fontSize:12,color:colour,marginBottom:6,lineHeight:1.6}}>{st.summary||st.state}</div>
     <div style={{...muted,fontFamily:'JetBrains Mono',marginBottom:10}}>Rules text SHA-256 {(st.text_sha256||'').slice(0,16)}…{st.pinned_at?' · pinned '+new Date(st.pinned_at*1000).toLocaleString():''}</div>
-    <div style={{...muted,marginBottom:10}}>Friday signs her rules with a key kept in this PC’s Credential Manager. After moving her data to another PC or Windows account, or after an update that changed the rules, the signature no longer matches and every outward action waits. Reads keep working.</div>
-    <button className="settings-btn" style={{fontSize:12}} disabled={busy||st.state!=='mismatch'} onClick={repin}>{busy?'Re-confirming…':'Re-confirm Friday’s rules on this PC'}</button>
+    <div style={{...muted,marginBottom:10}}>{fridayName()} signs her rules with a key kept in this PC’s Credential Manager. After moving her data to another PC or Windows account, or after an update that changed the rules, the signature no longer matches and every outward action waits. Reads keep working.</div>
+    <button className="settings-btn" style={{fontSize:12}} disabled={busy||st.state!=='mismatch'} onClick={repin}>{busy?'Re-confirming…':('Re-confirm ' + fridayName() + '’s rules on this PC')}</button>
     {msg&&<div style={{fontSize:11,color:'#cfefff',marginTop:8}}>{msg}</div>}
   </div>;
 }
@@ -16269,11 +16291,11 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Cloud mode">
       <PrivacyCloudConsent/>
     </StSection>
-    <StSection title="Privacy check" desc="Which of Friday's privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.">
+    <StSection title="Privacy check" desc={("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")}>
       <PrivacyCheckLayers/>
     </StSection>
     <StSection title="Fonts">
-      <StToggle label="Load fonts from Google Fonts" value={s.web_fonts_from_google!==false} onChange={()=>save({web_fonts_from_google:s.web_fonts_from_google===false})} desc="Only used while Friday's own font files are not installed in static\fonts. On, every page load asks Google for the typefaces, which shows Google this PC's address. Off, Friday uses similar fonts already on this PC. Takes effect when the page reloads."/>
+      <StToggle label="Load fonts from Google Fonts" value={s.web_fonts_from_google!==false} onChange={()=>save({web_fonts_from_google:s.web_fonts_from_google===false})} desc={("Only used while " + FRIDAY_BRAND.name + "'s own font files are not installed in static\\fonts. On, every page load asks Google for the typefaces, which shows Google this PC's address. Off, " + FRIDAY_BRAND.name + " uses similar fonts already on this PC. Takes effect when the page reloads.")}/>
     </StSection>
     <StSection title="What needs your sign-off">
       <ApprovalScannerPanel s={s} save={save}/>
@@ -16284,14 +16306,14 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Scheduled jobs: what they may do on their own">
       <GovernanceGrantsPanel/>
     </StSection>
-    <StSection title="Friday’s rules on this PC">
+    <StSection title={(fridayName() + "’s rules on this PC")}>
       <ClawsRepinPanel/>
     </StSection>
     <StSection title="Stored keys">
       <KeystoreWrapPanel/>
     </StSection>
     <StSection title="Computer control">
-      <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High risk. Lets Friday move the mouse, click, type and take screenshots. It needs both this switch and a grant below; once granted, the grant lasts across restarts until you revoke it.</div>
+      <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High risk. Lets {fridayName()} move the mouse, click, type and take screenshots. It needs both this switch and a grant below; once granted, the grant lasts across restarts until you revoke it.</div>
       <StToggle label="Allow computer control" value={!!s.computer_control_enabled} onChange={()=>save({computer_control_enabled:!s.computer_control_enabled})}/>
       <CcGrantPanel enabled={!!s.computer_control_enabled}/>
     </StSection>
@@ -16307,7 +16329,7 @@ function SettingsTabPrivacy({s,save}){
       <button className="settings-btn" style={{width:'100%',fontSize:12,marginTop:6}} onClick={()=>window.open('/api/context/export','_blank')}>Export conversation log (ZIP)</button>
     </StSection>
     <StSection title="Your data">
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Everything Friday knows lives on this device. Take it with you, or erase it completely — no server copy exists. The export leaves out stored API keys, account sign-ins and the key that decrypts them; for a backup that includes them, run “friday export --full”, which encrypts it with a passphrase you choose.</div>
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Everything {fridayName()} knows lives on this device. Take it with you, or erase it completely — no server copy exists. The export leaves out stored API keys, account sign-ins and the key that decrypts them; for a backup that includes them, run “friday export --full”, which encrypts it with a passphrase you choose.</div>
       <button className="settings-btn" style={{width:'100%',fontSize:12,marginBottom:10}} onClick={()=>window.open('/api/data/export','_blank')}>Export all my data (ZIP)</button>
       <div style={{fontSize:11,color:'rgba(255,180,180,0.75)',marginBottom:6,lineHeight:1.6}}>Permanently delete ALL local data — vault, wiki, memory, chat, credentials, identity. This cannot be undone. Type <b>ERASE</b> to confirm.</div>
       <div style={{display:'flex',gap:6}}>
@@ -16427,7 +16449,7 @@ function LayaPilotPanel({s, save}) {
     E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',margin:'8px 0'}},
       !enabled ? 'Pilot is off.' : (st && st.off_record) ? 'Paused while off the record.'
         : (st && st.ready) ? 'Laya is ready. Late or busy predictions are skipped without holding the chat.'
-        : 'Waiting for Laya to be ready. Chats continue with ordinary preparation. If Laya stays unavailable, restart Friday to warm it.'),
+        : ('Waiting for Laya to be ready. Chats continue with ordinary preparation. If Laya stays unavailable, restart ' + FRIDAY_BRAND.name + ' to warm it.')),
     E('button', {className:'settings-btn',onClick:load,style:{fontSize:11}}, 'Refresh measurements'),
     error && E('div', {role:'status',style:{fontSize:11,color:'#f59e0b',marginTop:6}}, error),
     st && E('div', {style:{fontSize:11,color:'var(--st-dim)',marginTop:8}},
@@ -16513,7 +16535,7 @@ function ApprovalScannerPanel({s,save}){
   },[st&&st.laya&&st.laya.loading]);
   const mode=(st&&st.mode)||'on';
   const opts=[
-    {k:'off',l:'Off',d:'The keyword scan alone decides. This is how Friday behaved before Laya.'},
+    {k:'off',l:'Off',d:('The keyword scan alone decides. This is how ' + fridayName() + ' behaved before Laya.')},
     {k:'shadow',l:'Shadow',d:'The keyword scan still decides. Laya scores the same actions alongside it and both answers are logged — no verdict changes.'},
     {k:'on',l:'On',d:'Both scanners vote. An action waits for you when either says it should — so this can add approval cards, never remove one.'}
   ];
@@ -16522,7 +16544,7 @@ function ApprovalScannerPanel({s,save}){
   const degraded=!!(st&&st.degraded);
   return <div>
     <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:10,lineHeight:1.6}}>
-      Before Friday sends mail as you, spends money, or does something it cannot undo, a scanner decides whether to stop and ask. Adding a second opinion can only ever raise more approval cards — the keyword scan is still one of the two votes, so turning this on cannot let something through that it would have caught.
+      Before {fridayName()} sends mail as you, spends money, or does something it cannot undo, a scanner decides whether to stop and ask. Adding a second opinion can only ever raise more approval cards — the keyword scan is still one of the two votes, so turning this on cannot let something through that it would have caught.
     </div>
     <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
       {opts.map(o=>(
@@ -16571,7 +16593,7 @@ function CallModePanel({
   const opts = [{
     k: 'automatic',
     l: 'Stand back on her own (recommended)',
-    d: 'When a call takes the camera or the mic, Friday lets go of both, holds the scene still and parks the local brain; she comes back when the call ends.'
+    d: ('When a call takes the camera or the mic, ' + fridayName() + ' lets go of both, holds the scene still and parks the local brain; she comes back when the call ends.')
   }, {
     k: 'ask',
     l: 'Ask me first',
@@ -16579,11 +16601,11 @@ function CallModePanel({
   }, {
     k: 'off',
     l: 'Don\'t',
-    d: 'Friday keeps going through calls. "I\'m on a call" still works by voice or from the chip.'
+    d: (fridayName() + ' keeps going through calls. "I\'m on a call" still works by voice or from the chip.')
   }];
   return /*#__PURE__*/React.createElement(StSection, {
     title: "Calls",
-    desc: "A video call needs the camera, the mic and most of this computer's memory: the same things Friday's local brain and 3D scene use."
+    desc: ("A video call needs the camera, the mic and most of this computer's memory: the same things " + fridayName() + "'s local brain and 3D scene use.")
   }, /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
     "aria-label": "Call mode",
@@ -16775,7 +16797,7 @@ function TrackingPanel({
 }
 function SettingsTabFederation(){
   return <div>
-    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Connect with other Friday instances. Each instance has its own signed identity, and messages between them are encrypted end to end.</div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Connect with other {FRIDAY_BRAND.name} instances. Each instance has its own signed identity, and messages between them are encrypted end to end.</div>
     <FederationPanel/>
     <div style={{marginTop:24}}><StSection title="Blocking instances"><DefederationPanel/></StSection></div>
   </div>;
@@ -16795,7 +16817,7 @@ function SettingsTabEconomy(){
 const GA_STATE_COLORS={connected:'#00ff80',needs_reauth:'#ff8c42',error:'#ff5470',disconnected:'#7a8699',unknown:'#888888'};
 function gaHealth(acc){
   const h=(acc&&acc.health)||null;
-  if(!h)return{state:'unknown',label:'Status unknown',summary:'Status unknown — Friday could not read this account’s state',healthy:false,actionable:true,stale:false,color:GA_STATE_COLORS.unknown};
+  if(!h)return{state:'unknown',label:'Status unknown',summary:('Status unknown — ' + fridayName() + ' could not read this account’s state'),healthy:false,actionable:true,stale:false,color:GA_STATE_COLORS.unknown};
   return Object.assign({},h,{color:GA_STATE_COLORS[h.state]||GA_STATE_COLORS.unknown});
 }
 function gaSyncTitle(acc){
@@ -16859,7 +16881,7 @@ function WorkspaceHistory({wsId,label,onClose,top}){
         <button style={_btn} onClick={onClose}>Close</button>
       </div>
       <div style={{..._dim,marginBottom:10}}>{currentKeys.length
-        ?'Friday has customized this workspace: '+currentKeys.join(', ')+'. Every step below is reversible — reverting is snapshotted too.'
+        ?(fridayName() + ' has customized this workspace: ')+currentKeys.join(', ')+'. Every step below is reversible — reverting is snapshotted too.'
         :'This workspace is at its baseline. Nothing has been customized.'}</div>
       {err&&<div style={{..._dim,color:'rgba(255,120,120,0.85)',marginBottom:8}}>{err}</div>}
       <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
@@ -16867,7 +16889,7 @@ function WorkspaceHistory({wsId,label,onClose,top}){
         <button style={{..._btn,borderColor:'rgba(255,255,255,0.18)',color:'rgba(255,255,255,0.6)'}} disabled={!!busy||!currentKeys.length} onClick={()=>act('/reset',{},'reset')}>{busy==='reset'?'…':'Back to baseline'}</button>
       </div>
       {!data&&!err&&<div style={_dim}>Reading the history…</div>}
-      {data&&!entries.length&&<div style={_dim}>No changes recorded yet. Friday snapshots this workspace before every change it makes, so the first one will show up here.</div>}
+      {data&&!entries.length&&<div style={_dim}>No changes recorded yet. {fridayName()} snapshots this workspace before every change it makes, so the first one will show up here.</div>}
       {entries.map((e,i)=>(
         <div key={e.version_id||i} style={{borderLeft:'2px solid rgba(0,212,255,0.3)',paddingLeft:10,marginBottom:12}}>
           <div style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{e.label||(e.describes||'a change').replace(/^state BEFORE: /,'')}</div>
@@ -17048,7 +17070,7 @@ function GoogleAccountsPanel(){
         <span style={{color:x.new?'#ffb86b':'rgba(255,255,255,0.35)',fontWeight:700,width:34,flex:'none'}}>{x.new?'NEW':'has'}</span>
         <span><span style={{color:x.new?'#fff':'rgba(255,255,255,0.6)'}}>{x.what}</span><code style={{display:'block',fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',overflowWrap:'anywhere'}}>{x.scope}</code></span>
       </div>)}
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginTop:6}}>Leave every box ticked on Google’s screen. If you untick one, Friday says so afterwards and that part stays off.</div>
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginTop:6}}>Leave every box ticked on Google’s screen. If you untick one, {fridayName()} says so afterwards and that part stays off.</div>
       <div style={{display:'flex',gap:8,marginTop:10}}>
         <button className="settings-btn" style={{fontSize:12,color:'#00d4ff'}} onClick={()=>{const a=mailboxAsk.account;setMailboxAsk(null);startConnect({account:a,mailbox:true});}}>Continue to Google</button>
         <button className="settings-btn" style={{fontSize:12}} onClick={()=>setMailboxAsk(null)}>Not now</button>
@@ -17057,7 +17079,7 @@ function GoogleAccountsPanel(){
     {accounts.length===0&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:12,marginBottom:12}}>No Google accounts connected yet.</div>}
     {accounts.length>0&&accounts.some(a=>!gaHealth(a).healthy)&&<div style={{background:'rgba(255,140,66,0.08)',border:'1px solid rgba(255,140,66,0.3)',borderRadius:8,padding:'10px 12px',marginBottom:12}}>
       <div style={{color:'#ff8c42',fontSize:12,fontWeight:600,marginBottom:4}}>{accounts.filter(a=>!gaHealth(a).healthy).length} of {accounts.length} account(s) are not working</div>
-      <div style={{color:'rgba(255,255,255,0.6)',fontSize:11,lineHeight:1.5}}>Friday cannot read mail or calendar for these accounts, and anything it says about them is out of date. Reconnecting signs you back in to Google &mdash; nothing is deleted and your settings are kept.</div>
+      <div style={{color:'rgba(255,255,255,0.6)',fontSize:11,lineHeight:1.5}}>{fridayName()} cannot read mail or calendar for these accounts, and anything it says about them is out of date. Reconnecting signs you back in to Google &mdash; nothing is deleted and your settings are kept.</div>
     </div>}
     {accounts.map(acc=>{const h=gaHealth(acc);return(
       <div key={acc.id} style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:8,padding:14,marginBottom:10}}>
@@ -17079,7 +17101,7 @@ function GoogleAccountsPanel(){
           </div>
           <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
             {!h.healthy&&<button className="settings-btn" style={{fontSize:11,padding:'4px 12px',color:'#ff8c42',borderColor:'#ff8c42',whiteSpace:'nowrap'}} onClick={()=>reconnectAccount(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect'}</button>}
-            {!(acc.mail&&acc.mail.send&&acc.mail.modify)&&<button className="settings-btn" data-testid="ga-reconnect-sending" title="Sign in again and allow Friday to send mail (each message waits for your approval) and to change this mailbox (labels, archive, star, read). One Google screen; it shows you the exact permissions first." style={{fontSize:11,padding:'4px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.5)',whiteSpace:'nowrap'}} onClick={()=>reconnectWithSending(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect with sending'}</button>}
+            {!(acc.mail&&acc.mail.send&&acc.mail.modify)&&<button className="settings-btn" data-testid="ga-reconnect-sending" title={("Sign in again and allow " + fridayName() + " to send mail (each message waits for your approval) and to change this mailbox (labels, archive, star, read). One Google screen; it shows you the exact permissions first.")} style={{fontSize:11,padding:'4px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.5)',whiteSpace:'nowrap'}} onClick={()=>reconnectWithSending(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect with sending'}</button>}
             {acc.mail&&acc.mail.send&&acc.mail.modify&&<span data-testid="ga-mail-full" style={{fontSize:10,color:'#00ff80',whiteSpace:'nowrap'}}>✓ can send + update mailbox</span>}
             <button className="settings-btn" style={{fontSize:11,color:'#ff6060'}} onClick={()=>removeAccount(acc.id,acc.email||acc.label||'account')}>Remove</button>
           </div>
@@ -17375,7 +17397,7 @@ function ModelBrowser({save}){
             </div>}
           </div>
           <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use for everyday conversation (the main model)" onClick={()=>useAs('orchestrator_model',m.id)}>Use for chat</button>
-          <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use for sub-tasks Friday hands off to a helper" onClick={()=>useAs('subagent_model',m.id)}>Use for sub-tasks</button>
+          <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title={("Use for sub-tasks " + fridayName() + " hands off to a helper")} onClick={()=>useAs('subagent_model',m.id)}>Use for sub-tasks</button>
           {(m.modalities||[]).includes('image')&&<button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use as image generation model" onClick={()=>useAs('creative_model',m.id)}>Image</button>}
           {(m.modalities||[]).includes('video')&&<button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use as video generation model" onClick={()=>useAsVideo(m)}>Video</button>}
         </div>
@@ -17441,7 +17463,7 @@ function SettingsTabConnectors({
       marginBottom: 10,
       lineHeight: 1.5
     }
-  }, "Model Context Protocol servers add tools Friday can call. Configured in ", /*#__PURE__*/React.createElement("code", {
+  }, ("Model Context Protocol servers add tools " + fridayName() + " can call. Configured in "), /*#__PURE__*/React.createElement("code", {
     style: {
       color: '#00d4ff'
     }
@@ -17599,7 +17621,7 @@ function SettingsTabSigning() {
     }
   }, msg), /*#__PURE__*/React.createElement(StSection, {
     title: "SIGNING PDFS",
-    desc: "Friday never signs on her own: every signature waits for your approval on a card that shows the page and where the signature goes."
+    desc: (fridayName() + " never signs on her own: every signature waits for your approval on a card that shows the page and where the signature goes.")
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Signature image",
     desc: 'A picture of your signature, stamped onto a page. Status: ' + label(st && st.signature_image)
@@ -17675,8 +17697,8 @@ function SettingsTabBrowser() {
     }).catch(() => setMsg('✗ Could not reach the server.')).finally(() => setBusy(false));
   };
   const clear = () => {
-    if (!window.confirm("Delete Friday's browser profile? Every site you signed in to in Friday's window will ask you to sign in again.")) return;
-    post('/api/browser/profile/clear', "Friday's browser profile cleared");
+    if (!window.confirm(("Delete " + fridayName() + "'s browser profile? Every site you signed in to in " + fridayName() + "'s window will ask you to sign in again."))) return;
+    post('/api/browser/profile/clear', (fridayName() + "'s browser profile cleared"));
   };
   const size = b => (b || 0) > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round((b || 0) / 1024) + ' KB';
   const running = !!(st && st.running);
@@ -17691,23 +17713,23 @@ function SettingsTabBrowser() {
     }
   }, msg), /*#__PURE__*/React.createElement(StSection, {
     title: "FRIDAY'S BROWSER",
-    desc: "Friday works in web pages in her own window, which you can watch. It uses her own profile, never your normal browser. She never types passwords: when a site needs you to sign in, she stops and asks you to do it in that window. Anything that submits, sends or pays waits for your approval card."
+    desc: (fridayName() + " works in web pages in her own window, which you can watch. It uses her own profile, never your normal browser. She never types passwords: when a site needs you to sign in, she stops and asks you to do it in that window. Anything that submits, sends or pays waits for your approval card.")
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Window",
-    desc: running ? 'Open: ' + (st.url || 'a blank page') : 'Closed. It opens when Friday needs it and closes itself after 15 minutes idle.'
+    desc: running ? 'Open: ' + (st.url || 'a blank page') : ('Closed. It opens when ' + fridayName() + ' needs it and closes itself after 15 minutes idle.')
   }, running && /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     disabled: busy,
-    onClick: () => post('/api/browser/close', "Friday's browser closed")
+    onClick: () => post('/api/browser/close', (fridayName() + "'s browser closed"))
   }, "Close")), /*#__PURE__*/React.createElement(StRow, {
     label: "Sign-ins and cookies",
-    desc: st && st.profile_exists ? 'Kept in Friday’s profile on this computer (' + size(st.profile_bytes) + '). Clearing it signs Friday out of every site.' : 'Nothing stored yet.'
+    desc: st && st.profile_exists ? ('Kept in ' + fridayName() + '’s profile on this computer (') + size(st.profile_bytes) + ('). Clearing it signs ' + fridayName() + ' out of every site.') : 'Nothing stored yet.'
   }, /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     disabled: busy || !(st && st.profile_exists),
-    "aria-label": "Clear Friday's browser profile",
+    "aria-label": ("Clear " + fridayName() + "'s browser profile"),
     onClick: clear
-  }, "Clear Friday's browser profile"))));
+  }, ("Clear " + fridayName() + "'s browser profile")))));
 }
 // ── Settings → Accounts & Keys → Phone (Twilio). Off by default. Secrets go in, never come back:
 // the server reports "stored"/"missing"/"unreadable" for each one. Every
@@ -17808,10 +17830,10 @@ function SettingsTabPhone() {
     onChange: () => patch({
       enabled: !c.enabled
     }, c.enabled ? 'Phone switched off' : 'Phone switched on'),
-    desc: "Off by default. When off, nothing listens for Twilio and Friday sends nothing."
+    desc: ("Off by default. When off, nothing listens for Twilio and " + fridayName() + " sends nothing.")
   }), /*#__PURE__*/React.createElement("div", {
     style: note
-  }, st.ingress && st.ingress.running ? 'Listening for Twilio on 127.0.0.1:' + st.ingress.port + ' (only the phone webhooks; nothing else of Friday is reachable there).' : c.enabled ? 'Not listening yet: the auth token is needed before the webhook listener starts.' : 'Not listening.')), /*#__PURE__*/React.createElement(StSection, {
+  }, st.ingress && st.ingress.running ? 'Listening for Twilio on 127.0.0.1:' + st.ingress.port + (' (only the phone webhooks; nothing else of ' + FRIDAY_BRAND.name + ' is reachable there).') : c.enabled ? 'Not listening yet: the auth token is needed before the webhook listener starts.' : 'Not listening.')), /*#__PURE__*/React.createElement(StSection, {
     title: "TWILIO ACCOUNT"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Account SID",
@@ -17849,7 +17871,7 @@ function SettingsTabPhone() {
     }).then(() => set('api_key_sid', ''))
   }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
     label: "API key secret",
-    desc: 'Used for everything Friday sends. Status: ' + secretLabel(c.api_key_secret)
+    desc: ('Used for everything ' + fridayName() + ' sends. Status: ') + secretLabel(c.api_key_secret)
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -17866,7 +17888,7 @@ function SettingsTabPhone() {
     onClick: () => saveSecret('api_key_secret', 'key_secret', 'API key secret stored')
   }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
     label: "Auth token",
-    desc: 'Twilio signs every webhook with the account auth token, not the API key, so Friday needs it to check that a text or call really came from Twilio. Status: ' + secretLabel(c.auth_token)
+    desc: ('Twilio signs every webhook with the account auth token, not the API key, so ' + fridayName() + ' needs it to check that a text or call really came from Twilio. Status: ') + secretLabel(c.auth_token)
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -17882,7 +17904,7 @@ function SettingsTabPhone() {
     disabled: busy || !d.auth_token,
     onClick: () => saveSecret('auth_token', 'auth_token', 'Auth token stored')
   }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
-    label: "Friday's number"
+    label: (fridayName() + "'s number")
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -17901,7 +17923,7 @@ function SettingsTabPhone() {
     title: "YOUR CELL"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Your cell number",
-    desc: "The only number Friday will text or call without you naming another one. A one-time code proves it is yours."
+    desc: ("The only number " + fridayName() + " will text or call without you naming another one. A one-time code proves it is yours.")
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -17939,7 +17961,7 @@ function SettingsTabPhone() {
     }, 'Calling your cell with the code')
   }, "Call me with a code")), /*#__PURE__*/React.createElement("div", {
     style: note
-  }, !c.enabled ? 'Switch the phone on first. ' : '', !ready ? 'Enter the account SID, API key and secret, and Friday’s number first. ' : '', "While carrier registration is pending, a text may be filtered; the call works either way."), st.verification_pending && /*#__PURE__*/React.createElement("div", {
+  }, !c.enabled ? 'Switch the phone on first. ' : '', !ready ? ('Enter the account SID, API key and secret, and ' + fridayName() + '’s number first. ') : '', "While carrier registration is pending, a text may be filtered; the call works either way."), st.verification_pending && /*#__PURE__*/React.createElement("div", {
     style: {
       ...row,
       marginTop: 8
@@ -17977,7 +17999,7 @@ function SettingsTabPhone() {
     style: note
   }, "Checked ", new Date(num.checked_at * 1000).toLocaleString(), ". Texts go to: ", num.webhooks && num.webhooks.sms || 'nowhere set', ". Calls go to: ", num.webhooks && num.webhooks.voice || 'nowhere set', ".")), /*#__PURE__*/React.createElement(StRow, {
     label: "Public address of the phone tunnel",
-    desc: "The https:// hostname your Cloudflare tunnel serves. It must reach only the phone listener, never Friday itself."
+    desc: ("The https:// hostname your Cloudflare tunnel serves. It must reach only the phone listener, never " + FRIDAY_BRAND.name + " itself.")
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -17995,8 +18017,8 @@ function SettingsTabPhone() {
   }, "Save"))), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     disabled: busy || !ready || !c.public_base_url,
-    onClick: () => call('/api/phone/point-webhooks', {}, 'The number now points at Friday')
-  }, "Point the number at Friday"), /*#__PURE__*/React.createElement("div", {
+    onClick: () => call('/api/phone/point-webhooks', {}, ('The number now points at ' + fridayName()))
+  }, ("Point the number at " + fridayName())), /*#__PURE__*/React.createElement("div", {
     style: note
   }, "Changes the number's SMS and voice webhooks in Twilio to ", c.public_base_url || 'the address above', "/twilio/\u2026")), /*#__PURE__*/React.createElement(StSection, {
     title: "TEXTING REGISTRATION (A2P 10DLC)"
@@ -18025,7 +18047,7 @@ function SettingsTabPhone() {
       color: 'rgba(255,255,255,0.78)',
       lineHeight: 1.6
     }
-  }, /*#__PURE__*/React.createElement("div", null, "\u2713 ", c.owner_cell_verified ? c.owner_cell : 'your cell, once verified', ": alerts, approval codes and replies, within ", c.owner_sms_per_hour, " texts an hour and ", c.owner_sms_per_day, " a day."), /*#__PURE__*/React.createElement("div", null, "\u2022 Anyone else: only when you type their number in your message, and only after you approve a card for that exact text or call."), /*#__PURE__*/React.createElement("div", null, "\u2022 Every call, including to you, waits for your approval. Calls to anyone else start by saying Friday is an AI assistant."), /*#__PURE__*/React.createElement("div", null, "\u2022 Nothing that arrives by phone can make Friday contact anyone. A text from your number is still treated as unverified and can only get answers, not actions."))), /*#__PURE__*/React.createElement(StSection, {
+  }, /*#__PURE__*/React.createElement("div", null, "\u2713 ", c.owner_cell_verified ? c.owner_cell : 'your cell, once verified', ": alerts, approval codes and replies, within ", c.owner_sms_per_hour, " texts an hour and ", c.owner_sms_per_day, " a day."), /*#__PURE__*/React.createElement("div", null, "\u2022 Anyone else: only when you type their number in your message, and only after you approve a card for that exact text or call."), /*#__PURE__*/React.createElement("div", null, ("\u2022 Every call, including to you, waits for your approval. Calls to anyone else start by saying " + fridayName() + " is an AI assistant.")), /*#__PURE__*/React.createElement("div", null, ("\u2022 Nothing that arrives by phone can make " + fridayName() + " contact anyone. A text from your number is still treated as unverified and can only get answers, not actions.")))), /*#__PURE__*/React.createElement(StSection, {
     title: "BEHAVIOUR"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Answer my texts",
@@ -18033,7 +18055,7 @@ function SettingsTabPhone() {
     onChange: () => patch({
       sms_conversation: !c.sms_conversation
     }),
-    desc: "Texts from your verified cell get a reply. Read-only: Friday can look things up but not act."
+    desc: ("Texts from your verified cell get a reply. Read-only: " + fridayName() + " can look things up but not act.")
   }), /*#__PURE__*/React.createElement(StToggle, {
     label: "Approve by text",
     value: !!c.sms_approvals,
@@ -18054,7 +18076,7 @@ function SettingsTabPhone() {
     onChange: () => patch({
       live_calls: !c.live_calls
     }),
-    desc: "Talk with Friday in its own voice. Needs local voice ready; falls back to voicemail when it is not. Not yet tested on a real call."
+    desc: ("Talk with " + fridayName() + " in its own voice. Needs local voice ready; falls back to voicemail when it is not. Not yet tested on a real call.")
   }), /*#__PURE__*/React.createElement(StToggle, {
     label: "Ask Twilio to forget",
     value: !!c.redact_after_delivery,
@@ -18064,7 +18086,7 @@ function SettingsTabPhone() {
     desc: "Blank message bodies at Twilio once delivered and delete voicemail recordings once transcribed."
   }), /*#__PURE__*/React.createElement(StRow, {
     label: "Greeting",
-    desc: "Said to every caller. Keep the part saying Friday is an AI."
+    desc: ("Said to every caller. Keep the part saying " + fridayName() + " is an AI.")
   }, /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("input", {
@@ -18144,7 +18166,7 @@ function SettingsTabPhone() {
     title: "WHAT TWILIO CAN STILL SEE"
   }, /*#__PURE__*/React.createElement("div", {
     style: note
-  }, "Twilio carries every text and call, so it sees the numbers, times, durations, and message text while a text is in flight. With \"Ask Twilio to forget\" on, bodies are blanked and recordings deleted afterwards, but the records (numbers, times, prices) stay in your Twilio account. Friday never asks Twilio to record calls or transcribe them. The carriers see the same in-flight content.")));
+  }, ("Twilio carries every text and call, so it sees the numbers, times, durations, and message text while a text is in flight. With \"Ask Twilio to forget\" on, bodies are blanked and recordings deleted afterwards, but the records (numbers, times, prices) stay in your Twilio account. " + fridayName() + " never asks Twilio to record calls or transcribe them. The carriers see the same in-flight content."))));
 }
 // Phone (Twilio) spend inside Cost & Usage: what it has cost so far and the
 // current per-text and per-minute rates, read from /api/phone/status.
@@ -18410,7 +18432,7 @@ function KnowledgeSettings({
   };
   if (part === 'privacy') return /*#__PURE__*/React.createElement(StRow, {
     label: "Where knowledge indexing runs",
-    desc: "Friday reads your wiki, memories and conversations to link facts into the knowledge graph. Local keeps that text on this machine, and cannot run while no local model is serving. Cloud sends it to the cloud model under your cloud consent above."
+    desc: (fridayName() + " reads your wiki, memories and conversations to link facts into the knowledge graph. Local keeps that text on this machine, and cannot run while no local model is serving. Cloud sends it to the cloud model under your cloud consent above.")
   }, /*#__PURE__*/React.createElement(StSelect, {
     ariaLabel: "Where knowledge indexing runs",
     value: kg.indexing_mode || 'local',
@@ -18550,7 +18572,7 @@ function LoopGuardSwitch({ on, onToggle }) {
     /*#__PURE__*/React.createElement("div", {
       style: { fontSize: 10.5, color: 'rgba(255,255,255,0.45)',
                fontFamily: mono, lineHeight: 1.6, marginBottom: 10 }
-    }, "Nothing limits how long Friday may work or how many rounds she may " +
+    }, ("Nothing limits how long " + fridayName() + " may work or how many rounds she may ") +
        "take — only the limits you set above. This is the one exception, and " +
        "it is not a limit on usage: it stops a turn when the same call, or the " +
        "same short cycle of calls, repeats without the conversation moving on. " +
@@ -18778,7 +18800,7 @@ function SettingsTabCosts() {
       marginTop: 8,
       lineHeight: 1.5
     }, mono)
-  }, "Friday's own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here."), (s && s.unpriced_calls > 0) && /*#__PURE__*/React.createElement("div", {
+  }, (fridayName() + "'s own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here.")), (s && s.unpriced_calls > 0) && /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       fontSize: 10,
       color: '#ffb347',
@@ -18981,7 +19003,7 @@ function SettingsTabCosts() {
       marginTop: 12,
       lineHeight: 1.5
     }, mono)
-  }, "Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.")), /*#__PURE__*/React.createElement(StSection, {
+  }, ("Alert-only: crossing 80% warns, 100% alerts. " + fridayName() + " is never blocked from working."))), /*#__PURE__*/React.createElement(StSection, {
     title: "Hard stop"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
@@ -18990,7 +19012,7 @@ function SettingsTabCosts() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, "The cap that actually stops. When an enabled period's spend reaches its limit, Friday refuses every further cloud call until you raise it or switch it off. Local models keep working. Off by default — your choice, like local vs cloud."), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
+  }, ("The cap that actually stops. When an enabled period's spend reaches its limit, " + fridayName() + " refuses every further cloud call until you raise it or switch it off. Local models keep working. Off by default — your choice, like local vs cloud.")), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
     style: {
       border: '1px solid #ff0080',
       background: 'rgba(255,0,128,0.08)',
@@ -19132,7 +19154,7 @@ const SETTINGS_TAB_ALIASES = {
 const SETTINGS_HELD_TABS = [{
   id: 'federation',
   label: 'Federation',
-  sub: 'Other Friday instances this one can talk to.'
+  sub: ('Other ' + FRIDAY_BRAND.name + ' instances this one can talk to.')
 }, {
   id: 'economy',
   label: 'Economy',
@@ -19171,7 +19193,7 @@ const SETTINGS_TABS = [{
 }, {
   id: 'voice',
   label: 'Voice & Tracking',
-  sub: 'How Friday listens and speaks, and how the camera follows your head and hand.'
+  sub: ('How ' + fridayName() + ' listens and speaks, and how the camera follows your head and hand.')
 }, {
   // This entry must never be dropped: without it the Spending panel's
   // fetches run into nothing and budget alerts cannot be armed.
@@ -19576,19 +19598,19 @@ function ArbiterStrip(){
   const excl=arb.gpu_exclusive_held_by;
   const SHORT={'GPU VRAM':'VRAM','System RAM':'RAM','CPU cores':'CPU','Disk':'DISK'};
   return <span className="arbiter-strip" style={{display:'inline-flex',alignItems:'center',gap:5,fontFamily:'JetBrains Mono',fontSize:10,letterSpacing:'0.04em'}}>
-    {excl&&<span title={'The GPU is held exclusively by '+excl+'. Friday will refuse GPU work rather than add contention, and cannot preempt a process it did not start.'}
+    {excl&&<span title={'The GPU is held exclusively by '+excl+('. ' + fridayName() + ' will refuse GPU work rather than add contention, and cannot preempt a process it did not start.')}
       style={{padding:'3px 8px',borderRadius:10,fontWeight:700,background:'rgba(245,158,11,0.16)',border:'1px solid rgba(245,158,11,0.5)',color:'#f59e0b'}}>
       GPU HELD &middot; {excl}</span>}
     {arb.resources.filter(r=>r.resource!=='gpu_exclusive').map(r=>{
       const ok=r.verifiable;
-      const holders=(r.holders||[]).map(h=>h.holder+' '+fmtUnits(h.amount,r.unit)+(h.holder_kind==='foreign'?' (foreign, not Friday\u2019s to unload)':'')).join(', ');
+      const holders=(r.holders||[]).map(h=>h.holder+' '+fmtUnits(h.amount,r.unit)+(h.holder_kind==='foreign'?(' (foreign, not ' + fridayName() + '\u2019s to unload)'):'')).join(', ');
       const tip=r.label+'\n'
         +'reading: '+r.basis+'\n'
         +'total on this machine: '+fmtUnits(r.total_units,r.unit)+'\n'
         +'reserved for the desktop: '+fmtUnits(r.reserve_units,r.unit)+'\n'
         +'claimed by leases: '+fmtUnits(r.claimed_units,r.unit)+'\n'
         +'measured free right now: '+fmtUnits(r.measured_free,r.unit)+'\n'
-        +'available to new work: '+(ok?fmtUnits(r.available_units,r.unit):'cannot verify \u2014 Friday will refuse rather than guess')+'\n'
+        +'available to new work: '+(ok?fmtUnits(r.available_units,r.unit):('cannot verify \u2014 ' + fridayName() + ' will refuse rather than guess'))+'\n'
         +(r.unexplained_units?('in use with no declared hold: '+fmtUnits(r.unexplained_units,r.unit)+'\n'):'')
         +'holders: '+(holders||'none');
       const claimed=r.claimed_units>0;
@@ -19681,7 +19703,7 @@ function StandaloneApprovals(){
   const decide=(id,decision)=>{setBusy(id);fridayDecideApproval(id,decision).then(()=>setBusy(''))};
   if(!items.length&&!open)return null;
   return(<>
-    <button className={'ws-tab-ask'+(items.length?'':' none')} data-testid="ws-tab-approvals" onClick={()=>setOpen(v=>!v)} title={items.length?'Friday is waiting for your approval':'Nothing is waiting for your approval'}>{items.length?'✋ '+items.length+' waiting for you':'✋ No approvals waiting'}</button>
+    <button className={'ws-tab-ask'+(items.length?'':' none')} data-testid="ws-tab-approvals" onClick={()=>setOpen(v=>!v)} title={items.length?(fridayName() + ' is waiting for your approval'):'Nothing is waiting for your approval'}>{items.length?'✋ '+items.length+' waiting for you':'✋ No approvals waiting'}</button>
     {open&&<div className="ws-tab-drawer" role="dialog" aria-label="Approvals">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><b style={{color:'#ffd699'}}>Waiting for your approval</b><button aria-label={'Close'} title={'Close'} className="ws-tab-link" onClick={()=>setOpen(false)}>✕</button></div>
       {!items.length&&<div style={{color:'#7f93ad',fontSize:12}}>Nothing is waiting.</div>}
@@ -19917,7 +19939,7 @@ function fridayDecideApproval(id, decision) {
       fridayToast('Already decided: this was ' + what + by + '.');
     }
     return d;
-  }).catch(() => { fridayToast('Could not reach Friday to record that. The card is still waiting.'); return null; });
+  }).catch(() => { fridayToast(('Could not reach ' + fridayName() + ' to record that. The card is still waiting.')); return null; });
 }
 // One approval card: what it will do, where its details came from, and the
 // two buttons. The System list and the popup render this same body.
@@ -19940,7 +19962,7 @@ function LocalContextShareCard({a,busy,onDecide}){
     setWorking(true);setErr('');
     return apiFetch('/api/local-context/'+a.approval_id+'/act',{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-      .then(r=>r.json()).catch(()=>({ok:false,error:'Could not reach Friday.'}))
+      .then(r=>r.json()).catch(()=>({ok:false,error:('Could not reach ' + fridayName() + '.')}))
       .finally(()=>setWorking(false));
   };
   const save=(accept)=>act({action:'edit',text:draft,accept}).then(d=>{
@@ -19990,7 +20012,7 @@ function LocalContextShareCard({a,busy,onDecide}){
       {!editing&&btn('Edit',()=>{setDraft(p.text||'');setEditing(true);},'#cfefff','Change the text before it is sent')}
       {editing&&btn('Save',()=>save(),'#00ff80','Save your version; you still choose Send')}
       {editing&&btn('Cancel edit',()=>{setEditing(false);setCheck(null);setDraft(p.text||'');},'#999')}
-      {btn("Don't send",()=>decide('decline'),'#ff0080','Nothing is shared; Friday carries on without it')}
+      {btn("Don't send",()=>decide('decline'),'#ff0080',('Nothing is shared; ' + fridayName() + ' carries on without it'))}
       {!editing&&btn('Allow for this conversation',()=>decide('allow_conversation'),'#8ab4ff',
         'Send this, and share this kind of context without asking again in this conversation (expires in 4 hours)')}
     </div>
@@ -20006,7 +20028,7 @@ function ApprovalCardBody({ a, busy, onDecide }) {
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
     {a.action_description && <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}
     {fridayIsBatchCard(a) && <ul data-testid="batch-lines" style={{ fontSize: 11, color: '#b8c7dc', margin: '6px 0 0', padding: '0 0 0 16px', maxHeight: 220, overflowY: 'auto' }}>{(a.payload.lines || []).map((line, i) => <li key={i}>{line}</li>)}</ul>}
-    {fridayIsBatchCard(a) && <div style={{ fontSize: 10, color: '#7f93ad', marginTop: 4 }}>Approve changes exactly what is listed. Afterwards, “undo that” or System › Changes Friday made puts it back.</div>}
+    {fridayIsBatchCard(a) && <div style={{ fontSize: 10, color: '#7f93ad', marginTop: 4 }}>Approve changes exactly what is listed. Afterwards, “undo that” or System › Changes {fridayName()} made puts it back.</div>}
     <ApprovalPagePreview a={a} />
     <ApprovalProvenance p={a.provenance} />
     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 4 }}>{a.kind} · {a.policy_class}{a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''}</div>
@@ -20041,7 +20063,7 @@ function ApprovalPopups() {
   if (later) return <button type="button" className="btn" data-testid="approval-popup-pill"
     style={Object.assign({}, pos, { borderColor: 'rgba(245,158,11,0.6)', color: '#f59e0b', background: 'rgba(10,14,26,0.9)' })}
     onClick={() => setLater(false)}>✋ {items.length === 1 ? '1 approval waiting' : items.length + ' approvals waiting'}</button>;
-  return (<div className="card" role="dialog" aria-label="Friday is waiting for your approval" data-testid="approval-popup"
+  return (<div className="card" role="dialog" aria-label={(fridayName() + " is waiting for your approval")} data-testid="approval-popup"
     style={Object.assign({}, pos, { width: 'min(400px, calc(100vw - 32px))', maxHeight: 'calc(100vh - 150px)', overflowY: 'auto', padding: 10, border: '1px solid rgba(245,158,11,0.25)' })}>
     <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
       <span>✋ Approvals<span style={{ color: '#f59e0b', fontSize: 11, marginLeft: 6 }}>({items.length} pending)</span></span>
@@ -20301,6 +20323,10 @@ function App(){
     // show_all_workspaces governs. See dockArrangement() near DOCK_GROUPS.
     dock_custom:{order:[],hidden:[]}};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
+  // Her name for every line that speaks of her, before anything below
+  // renders, once settings have come from the server (workspace_layouts is
+  // only in theirs); until then the name this browser last saw stands.
+  if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name);
   useEffect(()=>{fridaySetOffRecord(fridayOffRecordFrom(agentSettings))},[agentSettings.off_record,agentSettings.off_record_stops_storage]);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
@@ -20496,7 +20522,7 @@ function App(){
     setTimeout(()=>setGoogleAcctMsg(''),7000);
   };
   const removeGoogleAccount=async(a)=>{
-    if(!window.confirm('Disconnect '+(a.email||a.label)+'?\n\nThis revokes Friday’s access at Google and deletes the encrypted token from this machine.'))return;
+    if(!window.confirm('Disconnect '+(a.email||a.label)+('?\n\nThis revokes ' + fridayName() + '’s access at Google and deletes the encrypted token from this machine.')))return;
     try{await fetch('/api/google/accounts/'+a.id+'/remove',{method:'POST'});}catch(e){}
     refreshGoogleAccounts();
   };
@@ -21157,7 +21183,7 @@ function App(){
         }
         setVoiceStatus('you: '+(m.text||'').slice(-60));
       }else if(m.type==='text'){
-        setVoiceStatus('Friday: '+(m.text||'').slice(-60));
+        setVoiceStatus((fridayName() + ': ')+(m.text||'').slice(-60));
         // The condensed widget shows one line of this. An event rather than a
         // shared state hook, because the widget also runs inside a
         // Picture-in-Picture document that React does not render into.
@@ -23029,8 +23055,8 @@ function App(){
         </button>
         <button onClick={toggleChat}
           style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
-          title={chatOpen?'Close chat':'Open chat with Friday'}
-          aria-label={chatOpen?'Close chat':'Open chat with Friday'}>
+          title={chatOpen?'Close chat':('Open chat with ' + fridayName())}
+          aria-label={chatOpen?'Close chat':('Open chat with ' + fridayName())}>
           <span style={{fontSize:13}}>&#x1F4AC;</span>
         </button>
         <button onClick={()=>layoutRef.current.toggleLayout()}
@@ -23044,7 +23070,7 @@ function App(){
           aria-label={cameraOn?'Camera on, open controls':'Enable camera mode'}>
           <span>&#x1F4F7;</span>{cameraOn&&cameraSendIndicator&&<span style={{position:'relative',top:-6,marginLeft:-4,fontSize:10,color:'#00d4ff'}}>&#x1F441;</span>}
         </button>)}
-        {ccGranted&&<span className="cc-indicator" title="Computer control ACTIVE — Friday can move your mouse and type. Press Ctrl+Shift+Q or click STOP to terminate."><span className="cc-dot"/><span>CC LIVE</span></span>}
+        {ccGranted&&<span className="cc-indicator" title={("Computer control ACTIVE — " + fridayName() + " can move your mouse and type. Press Ctrl+Shift+Q or click STOP to terminate.")}><span className="cc-dot"/><span>CC LIVE</span></span>}
         <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}}
           style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#bbb',cursor:'pointer',fontSize:15}}
           title="Settings" aria-label="Open settings">
@@ -23390,7 +23416,7 @@ function App(){
       <ApprovalPopups/>
       {shellMeeting}{shellTopBar}{shellKillSwitch}
       {sw?<StandaloneShell ws={sw} histOpen={tabHistOpen} onCloseHistory={()=>setTabHistOpen(false)}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
-        :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the Friday desktop</a></div>}
+        :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the {fridayName()} desktop</a></div>}
       {shellWsChat}{shellChatPanel}{shellTrace}{shellActivity}{shellNotifs}{shellSettings}{shellQuickDraft}{shellPalette}{shellShortcuts}{shellQuickPost}{shellPodcast}{shellTaskModal}
     </WsCustomCtx.Provider>);
   }
@@ -23420,7 +23446,7 @@ function App(){
       {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:16,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
       <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <FridayChatInput value={promptText} onChange={setPromptText} onSend={sendPrompt} maxHeight={120}
-          placeholder="Ask Friday anything..."
+          placeholder={("Ask " + fridayName() + " anything...")}
           style={{width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}/>
         <button aria-label={promptText.trim()?'Send message':(voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)')} onClick={()=>{if(promptText.trim())sendPrompt();else toggleVoice()}}
           title={promptText.trim()?'Send message':(voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)')}
@@ -23549,7 +23575,7 @@ function App(){
         {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">
           <div className="dock-group-btns">
-            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?('Suggested — ' + fridayName() + ' predicts you’ll want this'):undefined} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
               {w.id==='knowledge'&&wikiPending>0&&<span title={wikiPending+' wiki update'+(wikiPending===1?'':'s')+' waiting for your approval'} style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0e1a',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
               {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
