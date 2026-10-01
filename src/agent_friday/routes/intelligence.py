@@ -1086,16 +1086,14 @@ def api_intelligence():
         # (verified end to end, POST 200 and settings.json updated), but the
         # panel confirms by RE-FETCHING this route -- so the new seat never
         # arrived on screen and the pick looked like it did nothing.
+        # The snapshot computes on a background thread with no request
+        # context, so it reads the route's payload function, never the
+        # login-gated view.
         from agent_friday.services import machine_probe as _mp
-        from agent_friday.routes.residency import status as _residency_status
-
-        def _residency_payload():
-            resp = _residency_status()
-            return (resp.get_json() if hasattr(resp, "get_json")
-                    else resp[0].get_json())
+        from agent_friday.routes.residency import residency_status_payload
 
         st, _res_at, _res_state = _mp.snapshot(
-            "intelligence:residency", _residency_payload,
+            "intelligence:residency", residency_status_payload,
             fresh_for=15.0, budget=1.0, default=None)
         if st is None:
             # Not read yet: omit the seats block rather than guess at it. Every

@@ -36,13 +36,28 @@ def status():
         arb = get_arbiter()
     except Exception as e:
         return api_error(e, "Couldn't read the residency status", 200, shape="bare", governing=False)
+    return jsonify(residency_status_payload(arb))
+
+
+_ARBITER = object()
+
+
+def residency_status_payload(arb=_ARBITER) -> dict:
+    """The body of /api/residency/status as a plain dict.
+
+    Needs no request or app context, so a background snapshot can read it.
+    Without ``arb`` it fetches the Arbiter itself and raises when it cannot.
+    """
+    if arb is _ARBITER:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        arb = get_arbiter()
     if arb is None:
-        return jsonify({
+        return {
             "governing": False,
             "note": "no Arbiter in this process — residency is not governing "
                     "it (FRIDAY_NO_ARBITER=1, a failed import, or tests). "
                     "Dispatch still works; nothing is enforcing placement.",
-        })
+        }
 
     # Recomputed if stale (Arbiter.PLAN_MAX_AGE_S). Every consumer of this
     # route -- including Settings -> Models, which labels the refusals
@@ -82,7 +97,7 @@ def status():
                                            "since the plan pinned it"})
 
     from agent_friday.services import context_budget
-    return jsonify({
+    return {
         "governing": True,
         "state": arb.state,
         "lease": arb.lease,
@@ -96,7 +111,7 @@ def status():
         "refusals": plan.get("refusals"),
         "overhead": context_budget.overhead(),
         "transitions": arb.transitions[-40:],
-    })
+    }
 
 
 @residency_bp.route("/api/machine", methods=["GET"])
