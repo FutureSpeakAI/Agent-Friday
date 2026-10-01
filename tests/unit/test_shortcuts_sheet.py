@@ -89,6 +89,8 @@ console.log(JSON.stringify({
   tab: fridayShortcutRows('tab', '', {on: false, hotkey: 'ctrl+alt+d'}),
   names: ['AGENT FRIDAY', 'Friday', '', '  ', 'JUNO-B', 'juno'].map(fridayNameInText),
   labels: ['alt+t', 'ctrl+shift+f12', 'f9'].map(fridayKeyLabel),
+  groups: [['Ctrl+Alt+←', 'Ctrl+Alt+→'], ['←', '→'], ['Ctrl+K'], ['Ctrl+click'], ['?'],
+           ['Ctrl+Alt+↑', 'Shift+Enter']].map(fridayChordGroups),
   question: {
     plain: typed('?', {shiftKey: true}), ctrl: typed('?', {ctrlKey: true}), alt: typed('?', {altKey: true}),
     meta: typed('?', {metaKey: true}), slash: typed('/'), taken: typed('?', {}, null, true),
@@ -143,6 +145,17 @@ def test_the_dictation_key_is_the_one_settings_has(probe):
     assert on["keys"] == ["Alt+T"] and on["what"].startswith("Hold, speak and let go")
     assert off["keys"] == ["Ctrl+Alt+D"] and "which is off" in off["what"]
     assert probe["labels"] == ["Alt+T", "Ctrl+Shift+F12", "F9"]
+
+
+def test_alternatives_that_share_their_modifiers_are_written_once(probe):
+    assert probe["groups"] == [
+        [{"mods": ["Ctrl", "Alt"], "keys": ["←", "→"]}],
+        [{"mods": [], "keys": ["←", "→"]}],
+        [{"mods": ["Ctrl"], "keys": ["K"]}],
+        [{"mods": ["Ctrl"], "keys": ["click"]}],
+        [{"mods": [], "keys": ["?"]}],
+        [{"mods": ["Ctrl", "Alt"], "keys": ["↑"]}, {"mods": ["Shift"], "keys": ["Enter"]}],
+    ]
 
 
 def test_her_name_reads_as_a_name_in_a_sentence(probe):
@@ -282,11 +295,18 @@ def open_page(browser):
 
 
 def _sheet(page):
-    return page.evaluate("""() => { const s = document.querySelector('[data-testid="shortcuts-sheet"]');
+    return page.evaluate(r"""() => { const s = document.querySelector('[data-testid="shortcuts-sheet"]');
       if (!s) return null;
+      const rows = Array.from(s.querySelectorAll('.keys-row'));
+      const broken = [], overlap = [];
+      rows.forEach(r => { const what = r.querySelector('.keys-what').getBoundingClientRect();
+        r.querySelectorAll('.keys-chord').forEach(c => { const b = c.getBoundingClientRect();
+          if (b.height > 30) broken.push(c.innerText);
+          if (b.right > what.left - 4) overlap.push(c.innerText); }); });
       return {text: s.innerText, groups: Array.from(s.querySelectorAll('h3')).map(h => h.textContent),
               dialog: s.getAttribute('role'), label: document.getElementById(s.getAttribute('aria-labelledby')).textContent,
-              focused: s.contains(document.activeElement)}; }""")
+              focused: s.contains(document.activeElement), broken, overlap,
+              chords: Array.from(s.querySelectorAll('.keys-chord')).map(c => c.innerText.replace(/\s+/g, ''))}; }""")
 
 
 def test_question_mark_shows_the_keys_and_esc_closes_them(open_page):
@@ -298,6 +318,8 @@ def test_question_mark_shows_the_keys_and_esc_closes_them(open_page):
     assert s["groups"] == ["Anywhere", "Windows and the chat tray", "In a chat box", "On the desktop",
                            "Safety", "Anywhere in Windows"], s["groups"]
     assert "Type to Juno" in s["text"] and "Snap the window in front" in s["text"], s["text"]
+    assert not s["broken"] and not s["overlap"], ("a chord broke or ran into its words", s)
+    assert "Ctrl+Alt+←/→" in s["chords"] and "Ctrl+Shift+Space" in s["chords"], s["chords"]
     page.keyboard.press("Escape")
     page.wait_for_selector('[data-testid="shortcuts-sheet"]', state="detached", timeout=5000)
 
@@ -324,5 +346,6 @@ def test_in_a_tab_it_lists_what_the_keys_do_there(open_page):
     assert "On the desktop" not in s["groups"], s["groups"]
     assert "Put the chat tray on that side" in s["text"] and "Snap the window" not in s["text"], s["text"]
     assert "Push-to-transcribe, which is off" in s["text"], s["text"]
+    assert not s["broken"] and not s["overlap"], ("a chord broke or ran into its words", s)
     page.click(".keys-sheet-overlay", position={"x": 12, "y": 900})
     page.wait_for_selector('[data-testid="shortcuts-sheet"]', state="detached", timeout=5000)

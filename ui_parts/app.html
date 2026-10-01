@@ -1283,6 +1283,17 @@ function fridayShortcutRows(where, name, dictation) {
       : 'Hold, speak and let go: what you said is typed into the window you were in' });
   return rows;
 }
+// A row's keys as they are drawn: alternatives that share their modifiers are
+// written once, so "Ctrl+Alt+←" and "Ctrl+Alt+→" read Ctrl + Alt + ← / →.
+function fridayChordGroups(keys) {
+  const out = [];
+  (keys || []).forEach(k => {
+    const mods = String(k).split('+'), key = mods.pop(), last = out[out.length - 1];
+    if (last && last.mods.join('+') === mods.join('+')) last.keys.push(key);
+    else out.push({ mods, keys: [key] });
+  });
+  return out;
+}
 // "?" opens the sheet: typed with no Ctrl, Alt or Cmd, outside a text field,
 // and not already taken by a workspace's own "?" (Mail, the 3D views).
 function fridayShortcutsKey(e) {
@@ -2206,7 +2217,8 @@ function ShortcutsSheet({onClose,settings}){
   const rows=fridayShortcutRows(STANDALONE_WS?'tab':'desktop',s.agent_name,{on:s.push_to_transcribe!==false,hotkey:s.push_to_transcribe_hotkey});
   const groups=[];
   rows.forEach(r=>{let g=groups.find(x=>x.title===r.group);if(!g)groups.push(g={title:r.group,rows:[]});g.rows.push(r)});
-  const chord=k=>k.split('+').map((p,i)=><React.Fragment key={i}>{i>0&&'+'}{p==='click'?'click':<kbd>{p}</kbd>}</React.Fragment>);
+  const kbd=k=>k==='click'?<span className="keys-word">click</span>:<kbd>{k}</kbd>;
+  const chords=keys=>fridayChordGroups(keys).map((g,i)=><span key={i} className="keys-chord">{g.mods.map((m,j)=><React.Fragment key={j}>{kbd(m)}<span className="keys-plus">+</span></React.Fragment>)}{g.keys.map((k,j)=><React.Fragment key={'k'+j}>{j>0&&<span className="keys-or">/</span>}{kbd(k)}</React.Fragment>)}</span>);
   const onKey=e=>{
     if(e.key==='Escape'||e.key==='?'){e.preventDefault();e.stopPropagation();onClose()}
     else if(e.key==='Tab'){e.preventDefault();(document.activeElement===closeRef.current?ref.current:closeRef.current).focus()}};
@@ -2215,7 +2227,7 @@ function ShortcutsSheet({onClose,settings}){
       <div className="keys-sheet-head"><h2 id="keys-sheet-title">Keyboard shortcuts</h2>
         <button ref={closeRef} type="button" className="keys-sheet-close" aria-label="Close the keyboard shortcuts" onClick={onClose}>×</button></div>
       <div className="keys-sheet-body">{groups.map(g=><section key={g.title} aria-label={g.title}><h3>{g.title}</h3>
-        {g.rows.map((r,i)=><div key={i} className="keys-row"><span className="keys-chords">{r.keys.map((k,j)=><React.Fragment key={j}>{j>0&&<span className="keys-or">/</span>}{chord(k)}</React.Fragment>)}</span><span className="keys-what">{r.what}</span></div>)}</section>)}</div>
+        {g.rows.map((r,i)=><div key={i} className="keys-row"><span className="keys-chords">{chords(r.keys)}</span><span className="keys-what">{r.what}</span></div>)}</section>)}</div>
       <div className="keys-sheet-foot">{FRIDAY_SHORTCUTS_ELSEWHERE}</div>
     </div>
   </div>;

@@ -1652,7 +1652,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .keys-sheet {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: min(780px, calc(100vw - 32px)); max-height: min(82vh, 760px);
+            width: min(860px, calc(100vw - 32px)); max-height: min(82vh, 760px);
             background: var(--fr-glass);
             backdrop-filter: var(--fr-glass-blur); -webkit-backdrop-filter: var(--fr-glass-blur);
             border: 1px solid rgba(0,212,255,0.15); border-radius: 12px;
@@ -1678,7 +1678,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .keys-sheet-body {
             overflow-y: auto; padding: 4px 20px 14px;
-            columns: 2 320px; column-gap: 32px;
+            columns: 2 360px; column-gap: 32px;
         }
         .keys-sheet-body section { break-inside: avoid; padding-top: 12px; }
         .keys-sheet-body h3 {
@@ -1691,11 +1691,14 @@ window.addEventListener('DOMContentLoaded',function(){
             font-size: var(--fr-text-md); line-height: 1.45;
         }
         .keys-chords {
-            flex: 0 0 132px; display: inline-flex; flex-wrap: wrap; align-items: center;
-            gap: 3px; color: var(--fr-dim); font-size: var(--fr-text-xs);
+            flex: 0 0 188px; display: inline-flex; flex-wrap: wrap; align-items: center;
+            gap: 4px 10px; color: var(--fr-dim); font-size: var(--fr-text-xs);
         }
-        .keys-or { margin: 0 3px; color: var(--fr-faint); }
-        .keys-what { color: var(--fr-label); }
+        .keys-chord { display: inline-flex; align-items: center; white-space: nowrap; }
+        .keys-plus { margin: 0 3px; color: var(--fr-faint); }
+        .keys-or { margin: 0 5px; color: var(--fr-faint); }
+        .keys-word { margin-left: 1px; color: var(--fr-label); font-size: var(--fr-text-sm); }
+        .keys-what { flex: 1 1 auto; min-width: 0; color: var(--fr-label); }
         .keys-sheet kbd {
             font-family: var(--fr-font-mono); font-size: var(--fr-text-sm); color: #fff;
             background: rgba(255,255,255,0.06); border: 1px solid rgba(0,212,255,0.25);
@@ -8883,6 +8886,17 @@ function fridayShortcutRows(where, name, dictation) {
       : 'Hold, speak and let go: what you said is typed into the window you were in' });
   return rows;
 }
+// A row's keys as they are drawn: alternatives that share their modifiers are
+// written once, so "Ctrl+Alt+←" and "Ctrl+Alt+→" read Ctrl + Alt + ← / →.
+function fridayChordGroups(keys) {
+  const out = [];
+  (keys || []).forEach(k => {
+    const mods = String(k).split('+'), key = mods.pop(), last = out[out.length - 1];
+    if (last && last.mods.join('+') === mods.join('+')) last.keys.push(key);
+    else out.push({ mods, keys: [key] });
+  });
+  return out;
+}
 // "?" opens the sheet: typed with no Ctrl, Alt or Cmd, outside a text field,
 // and not already taken by a workspace's own "?" (Mail, the 3D views).
 function fridayShortcutsKey(e) {
@@ -12420,9 +12434,21 @@ function ShortcutsSheet({
     });
     g.rows.push(r);
   });
-  const chord = k => k.split('+').map((p, i) => /*#__PURE__*/React.createElement(React.Fragment, {
-    key: i
-  }, i > 0 && '+', p === 'click' ? 'click' : /*#__PURE__*/React.createElement("kbd", null, p)));
+  const kbd = k => k === 'click' ? /*#__PURE__*/React.createElement("span", {
+    className: "keys-word"
+  }, "click") : /*#__PURE__*/React.createElement("kbd", null, k);
+  const chords = keys => fridayChordGroups(keys).map((g, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "keys-chord"
+  }, g.mods.map((m, j) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: j
+  }, kbd(m), /*#__PURE__*/React.createElement("span", {
+    className: "keys-plus"
+  }, "+"))), g.keys.map((k, j) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: 'k' + j
+  }, j > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "keys-or"
+  }, "/"), kbd(k)))));
   const onKey = e => {
     if (e.key === 'Escape' || e.key === '?') {
       e.preventDefault();
@@ -12466,11 +12492,7 @@ function ShortcutsSheet({
     className: "keys-row"
   }, /*#__PURE__*/React.createElement("span", {
     className: "keys-chords"
-  }, r.keys.map((k, j) => /*#__PURE__*/React.createElement(React.Fragment, {
-    key: j
-  }, j > 0 && /*#__PURE__*/React.createElement("span", {
-    className: "keys-or"
-  }, "/"), chord(k)))), /*#__PURE__*/React.createElement("span", {
+  }, chords(r.keys)), /*#__PURE__*/React.createElement("span", {
     className: "keys-what"
   }, r.what)))))), /*#__PURE__*/React.createElement("div", {
     className: "keys-sheet-foot"
