@@ -209,7 +209,13 @@ def test_owner_lookups_that_hold_no_secret_are_not_refused(test_home, rel, body)
     (".config/gh/config.yml", "oauth_token: ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3\n"),
 ])
 def test_the_same_lookup_is_refused_when_it_actually_holds_a_secret(test_home, rel, body):
-    assert cred.check(_mk(test_home / rel, body))
+    # test_home is shared across the session: the secret-bearing lookup must not
+    # outlive this test, or later tests that treat the lookup as clean see it.
+    f = _mk(test_home / rel, body)
+    try:
+        assert cred.check(f)
+    finally:
+        f.unlink(missing_ok=True)
 
 
 @pytest.mark.parametrize("rel", [
