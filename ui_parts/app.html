@@ -1663,7 +1663,7 @@ function FridayChatInput({value,onChange,onSend,placeholder,disabled,inputRef,cl
   const own=useRef(null);const ref=inputRef||own;
   React.useLayoutEffect(()=>{const el=ref.current;if(!el)return;el.style.height='auto';el.style.height=Math.min(el.scrollHeight+2,maxHeight||160)+'px'},[value]);
   return <textarea ref={ref} rows={1} className={className} value={value} disabled={disabled} autoFocus={autoFocus} placeholder={placeholder} aria-label={placeholder} title={offRecord?FRIDAY_OFF_RECORD_TEXT:undefined} data-chat-input="" data-off-record={offRecord?"true":undefined}
-    onChange={e=>onChange(e.target.value)} onKeyDown={e=>fridayEnterSends(e,onSend)}
+    onChange={e=>{onChange(e.target.value);try{window.fridayAvatar&&window.fridayAvatar.typed()}catch(_){}}} onKeyDown={e=>fridayEnterSends(e,onSend)}
     style={{resize:'none',overflowY:'auto',boxSizing:'border-box',lineHeight:1.45,fontFamily:'Inter, sans-serif',display:'block',...(style||{}),...(offRecord?{borderColor:'#ff0080',boxShadow:'0 0 0 1px rgba(255,0,128,0.45)'}:{})}}/>;
 }
 // ═══ WINDOW EDGES ═══ four edges and four corners resize a floating window.
@@ -20790,6 +20790,8 @@ function App(){
     window._fridayHoloAmplitude=0;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;
     v._voiceSpokeAt=0;v._ampQuietUntil=performance.now()+250;
     if(!/^voiceStop/.test(caller||'')){try{window.fridayVibe&&window.fridayVibe.setSystemMood&&window.fridayVibe.setSystemMood('LISTENING')}catch(_){}}
+    // Talked over (the server's interrupt, or Escape): the structure yields.
+    if(/interrupted|barge/i.test(caller||'')){try{window.fridayAvatar&&window.fridayAvatar.yielded()}catch(_){}}
     _wsSpeak(false);
     if(v.activeSources){
       v.activeSources.forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}});

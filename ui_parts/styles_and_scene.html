@@ -1038,21 +1038,39 @@
 
         // <presence-gestures>
         // Processing states on the lattice (docs/design/active/avatar-visual-
-        // genome.md §13). Every gesture starts from a real presence frame sent
-        // where the thing happens in Friday's loop (services/presence.py),
-        // relayed to every tab by fridayApprovalFeed: no event, no motion, and
-        // the same event always makes the same move. The engine below is plain
-        // arithmetic over an "anatomy" (units, layers, blocks, the side facing
-        // the user, the top) so every structure can speak the same language;
-        // FridayGestureScene applies its output to the real meshes.
+        // genome.md §13). Every gesture starts from a real event: a presence
+        // frame sent where the thing happens in Friday's loop
+        // (services/presence.py), relayed to every tab by fridayApprovalFeed,
+        // or the page's own record of the user typing, talking or talking over
+        // her. No event, no motion, and the same event always makes the same
+        // move. The engine below is plain arithmetic over an "anatomy" (units,
+        // layers, blocks, the side facing the user, the top), so every
+        // structure speaks the same abstract language; FridayGestureScene
+        // applies its output to the real meshes.
         //
-        // Gestures (first set): listening ripples the facing side with the
-        // user's voice; each reasoning round rolls one layer; a sealed cloud
-        // send opens the top like a vent and a thread of light leaves; each tool
-        // call twists a 2x2 block 90 degrees until the tool returns; each
-        // pending approval steps one cube forward in the approval hue until it
-        // is decided; a verification sweeps a scan plane that settles each cube
-        // it passes. Under reduced motion every gesture is brightness only.
+        // Friday's own state only (owner: "a window into her soul and nobody
+        // else's"): a frame labelled with any other agent (a helper, another
+        // model, a background job) is dropped here. The label, not the event's
+        // name, decides. Her helpers show only as her own state: one calm,
+        // held "helpers working" motion, the same for one helper or ten.
+        //
+        // Gestures: listening ripples the facing side with the user's voice;
+        // typing sends a data-in wave across it; each reasoning round rolls
+        // one layer; a sealed cloud send opens the top like a vent and a
+        // thread of light leaves; each tool call twists a 2x2 block until the
+        // tool returns, then it locks home, or, if it failed, knocks out of
+        // alignment and corrects; each pending approval steps one unit forward
+        // in the approval hue; a verification sweeps a scan plane; a memory
+        // search draws one unit per source toward the core; a reflex snaps one
+        // unit; a saved memory sinks one unit into the core; private local
+        // work frosts the outer units and one floats out when the scrubbed
+        // summary is sent; being talked over draws the facing side back. Every
+        // one-shot plays three times per trigger. Under reduced motion every
+        // gesture is brightness only.
+        //
+        // Evolution sets the style, never the meaning (§13.7): gesture.tempo
+        // scales every gesture's time, gesture.ease picks its curve, and
+        // gesture.trail lengthens how glow fades.
         const FridayGestures = (function () {
             const TWIST_IN = 0.45, TWIST_OUT = 0.35, MAX_TWISTS = 4;
             // Every one-shot gesture plays three times per trigger, then rests
@@ -1062,13 +1080,32 @@
             const STEP_IN = 0.6, APPROVAL_MAX = 3, BREATH_HZ = 0.3;
             const B_MIN = 0.6, B_MAX = 1.5, B_RATE = 0.08;     // brightness per frame
             const G_RATE = 0.08, ALIGN_IN = 0.8, ALIGN_OUT = 1.2, LIFT = 0.35;
-            let reduced = false, now = 0;
-            let twists = [], queue = [], waves = [], vents = [], scans = [], knocks = [];
             // A knock: out of alignment fast, back slowly; LOOPS of them per failure.
             const KNOCK_S = 0.9, KNOCK_OUT = 0.2, KNOCK_TILT = 0.24, KNOCK_SAG = 0.14;
+            // One cycle of each newer one-shot, in seconds.
+            const LOCK_S = 0.3, DRAW_S = 1.0, SNAP_S = 0.35, SINK_S = 1.2, FLOAT_S = 1.2, YIELD_S = 0.5;
+            const DRAW_MAX = 6, HELPERS_MAX = 999, COORD_HZ = 0.25, COORD_IN = 0.8;
+            const FRIDAY = 'friday';                            // the orchestrator's own label
+            let reduced = false, now = 0;
+            let twists = [], queue = [], waves = [], vents = [], scans = [], knocks = [];
+            let locks = [], draws = [], snaps = [], sinks = [], floats = [], yields = [];
             let approvals = 0, approvalEnv = [], approvalLoop = [], mic = 0, micS = 0, micPhase = 0;
+            let typing = 0, typingS = 0, typePhase = 0;
+            let helpers = new Set(), coord = 0, coordPhase = 0, frost = false, frostE = 0;
             let route = null, round = 0, verifyOk = null, lastB = {}, lastG = {}, align = 0;
-            const ease = t => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+            let found = 0;                                      // sources, for the status line
+            let style = { tempo: 1, ease: 'spring', trail: 0 };
+            const smooth = t => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+            // The evolved curve family (gesture.ease): the same start and end,
+            // a different feel in between.
+            const ease = t => {
+                if (t <= 0) return 0; if (t >= 1) return 1;
+                if (style.ease === 'snap') return 1 - Math.pow(1 - t, 3);
+                if (style.ease === 'glide') return 0.5 - 0.5 * Math.cos(Math.PI * t);
+                return smooth(t);
+            };
+            // A one-shot's envelope: up and back, LOOPS times over LOOPS cycles.
+            const pulse = (t, cycle) => (t >= cycle * LOOPS ? 0 : Math.abs(Math.sin(Math.PI * Math.min(LOOPS, t / cycle))));
             const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
             const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
             const scl = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
@@ -1083,6 +1120,9 @@
 
             function frame(f) {
                 if (!f || f.type !== 'presence') return;
+                // Friday's own frames only: a label for anyone else is dropped.
+                // (A frame with no label is hers until every frame carries one.)
+                if (f.agent !== undefined && f.agent !== FRIDAY) return;
                 const st = f.state, ph = f.phase;
                 if (st === 'tool' && ph === 'start') {
                     if (twists.length < MAX_TWISTS) twists.push({ ref: f.ref, t: 0, phase: 'in', block: null });
@@ -1092,8 +1132,11 @@
                     // Home from wherever the twist is, never a snap.
                     if (tw) { tw.from = tw.a === undefined ? 0 : tw.a; tw.phase = 'out'; tw.t = 0; }
                     else queue = queue.filter(r => r !== f.ref);
+                    const blk = tw && tw.block !== null ? tw.block : null;
                     // A tool that failed: its block knocks out of alignment.
-                    if (f.ok === false) knocks.push({ t: 0, block: tw && tw.block !== null ? tw.block : null });
+                    // One that worked: its block locks home.
+                    if (f.ok === false) knocks.push({ t: 0, block: blk });
+                    else if (blk !== null) locks.push({ t: -TWIST_OUT, block: blk });   // once home
                 } else if (st === 'error') {
                     knocks.push({ t: 0, block: null });
                 } else if (st === 'round' && ph === 'step' && Number.isInteger(f.n)) {
@@ -1107,11 +1150,42 @@
                 } else if (st === 'verify') {
                     verifyOk = f.ok === true;
                     scans.push({ t: 0, ok: f.ok === true });
+                } else if (st === 'retrieval' && Number.isInteger(f.n) && f.n > 0) {
+                    found = f.n;
+                    draws.push({ t: 0, n: Math.min(DRAW_MAX, f.n) });
+                } else if (st === 'reflex') {
+                    snaps.push({ t: 0 });
+                } else if (st === 'memory_saved') {
+                    sinks.push({ t: 0 });
+                } else if (st === 'handoff' && ph === 'start') {
+                    frost = true;
+                } else if (st === 'handoff' && ph === 'sent') {
+                    frost = false;
+                    floats.push({ t: 0 });
+                } else if (st === 'handoff' && ph === 'end') {
+                    frost = false;              // the local work is over, whatever came of it
+                } else if (st === 'subagent' && ph === 'start' && f.ref) {
+                    if (helpers.size < HELPERS_MAX) helpers.add(f.ref);
+                } else if (st === 'subagent' && ph === 'end' && f.ref) {
+                    helpers.delete(f.ref);
                 }
             }
             function setApprovals(n) { approvals = Math.max(0, Math.min(APPROVAL_MAX, n | 0)); }
             function setMic(level) { mic = Math.max(0, Math.min(1, +level || 0)); }
             function setReduced(r) { reduced = !!r; }
+            // The user typing to her: each keystroke raises the level a little.
+            function typed() { typing = Math.min(1, typing + 0.35); }
+            // The user talked over her: she stopped, and yields.
+            function yielded() { yields.push({ t: 0 }); }
+            function setStyle(s) {
+                s = s || {};
+                const tempo = +s.tempo;
+                style = {
+                    tempo: Number.isFinite(tempo) ? Math.max(0.85, Math.min(1.15, tempo)) : 1,
+                    ease: s.ease === 'snap' || s.ease === 'glide' ? s.ease : 'spring',
+                    trail: Number.isFinite(+s.trail) ? Math.max(0, Math.min(0.5, +s.trail)) : 0,
+                };
+            }
 
             // Pick a block for a twist: the most camera-facing block whose units
             // are free. Deterministic: same anatomy, same state, same choice.
@@ -1124,11 +1198,15 @@
                 return null;
             }
 
-            function step(dt, an) {
-                now += dt;
+            function step(dt0, an) {
+                // Evolution's tempo runs every gesture's clock (the meaning,
+                // counts and directions do not change).
+                const dt = dt0 * style.tempo;
+                now += dt0;
                 const out = {};
                 const unit = i => (out[i] = out[i] || { d: [0, 0, 0], r: [0, 0, 0], s: 1, b: 1, g: 0, hue: null });
                 const busy = new Set();
+                const radial = i => norm(sub(an.units[i], an.core));
                 // Approvals outrank everything: pick their cubes first.
                 while (approvalEnv.length < approvals) { approvalEnv.push(0); approvalLoop.push({ n: 0, back: false }); }
                 // The cube nearest the middle of the side facing the user: on
@@ -1161,6 +1239,10 @@
                     else { u.d = add(u.d, scl(an.toward, 0.9 * e)); u.s = 1 + 0.04 * breath * e; }
                 }
                 while (approvalEnv.length > approvals && approvalEnv[approvalEnv.length - 1] <= 0) { approvalEnv.pop(); approvalLoop.pop(); }
+                // Single-unit gestures take units from the facing order, after
+                // the approval units: deterministic, and seen best.
+                let pick = APPROVAL_MAX;
+                const nextFacing = () => { while (pick < facing.length && busy.has(facing[pick])) pick++; return facing[pick++]; };
 
                 // Tool twists: one 2x2 block per call, held while it runs.
                 for (const tw of twists) {
@@ -1197,17 +1279,32 @@
                 twists = twists.filter(tw => !(tw.phase === 'out' && tw.t >= TWIST_OUT));
                 while (queue.length && twists.length < MAX_TWISTS) twists.push({ ref: queue.shift(), t: 0, phase: 'in', block: null });
 
+                // A tool that worked: once its block is home, it locks into
+                // place, a small settle, three times.
+                for (const lk of locks) {
+                    lk.t += dt;
+                    if (!an.blocks[lk.block] || lk.t < 0) continue;
+                    const env = pulse(lk.t, LOCK_S);
+                    for (const i of an.blocks[lk.block].units) {
+                        const u = unit(i);
+                        u.g = Math.max(u.g, 0.5 * env);
+                        if (reduced) { u.b *= 1 + 0.15 * env; continue; }
+                        u.s *= 1 - 0.06 * env;
+                    }
+                }
+                locks = locks.filter(lk => lk.t < LOCK_S * LOOPS);
+
                 // Reasoning: one layer per round, rolling outward and back.
                 for (const w of waves) {
                     w.t += dt;
                     const L = an.layers.length || 1;
-                    const env = Math.abs(Math.sin(Math.PI * Math.min(LOOPS, w.t / WAVE_S)));
+                    const env = pulse(w.t, WAVE_S);
                     for (const i of (an.layers[(w.n - 1) % L] || [])) {
                         if (busy.has(i)) continue;
                         const u = unit(i);
                         u.g = Math.max(u.g, 0.8 * env);
                         if (reduced) { u.b *= 1 + 0.3 * env; continue; }
-                        u.d = add(u.d, scl(norm(sub(an.units[i], an.core)), 0.4 * env));
+                        u.d = add(u.d, scl(radial(i), 0.4 * env));
                         u.b *= 1 + 0.15 * env;
                     }
                 }
@@ -1232,18 +1329,95 @@
                 }
                 knocks = knocks.filter(k => k.t < KNOCK_S * LOOPS);
 
+                // A memory search: one unit per source found (up to six) is
+                // drawn toward the core and returns, three times.
+                for (const dr of draws) {
+                    dr.t += dt;
+                    if (!dr.units) { dr.units = []; for (let k = 0; k < dr.n; k++) { const i = nextFacing(); if (i !== undefined) dr.units.push(i); } }
+                    const env = pulse(dr.t, DRAW_S);
+                    for (const i of dr.units) {
+                        busy.add(i);
+                        const u = unit(i);
+                        u.g = Math.max(u.g, 0.7 * env);
+                        if (reduced) { u.b *= 1 + 0.25 * env; continue; }
+                        u.d = add(u.d, scl(sub(an.core, an.units[i]), 0.35 * env));
+                    }
+                }
+                draws = draws.filter(dr => dr.t < DRAW_S * LOOPS);
+
+                // A reflex: one unit snaps a quarter turn and back, three times.
+                for (const sn of snaps) {
+                    sn.t += dt;
+                    if (sn.unit === undefined) sn.unit = nextFacing();
+                    if (sn.unit === undefined) continue;
+                    busy.add(sn.unit);
+                    const env = pulse(sn.t, SNAP_S), u = unit(sn.unit);
+                    u.g = Math.max(u.g, 0.6 * env);
+                    if (reduced) { u.b *= 1 + 0.2 * env; continue; }
+                    u.r = add(u.r, scl(norm(an.toward), env * Math.PI / 2));
+                }
+                snaps = snaps.filter(sn => sn.t < SNAP_S * LOOPS);
+
+                // A saved memory: one unit sinks toward the core and settles,
+                // three times, a little dimmer as it goes in.
+                for (const sk of sinks) {
+                    sk.t += dt;
+                    if (sk.unit === undefined) sk.unit = nextFacing();
+                    if (sk.unit === undefined) continue;
+                    busy.add(sk.unit);
+                    const env = pulse(sk.t, SINK_S), u = unit(sk.unit);
+                    u.g = Math.max(u.g, 0.4 * env);
+                    u.b *= 1 - 0.15 * env;
+                    if (!reduced) u.d = add(u.d, scl(sub(an.core, an.units[sk.unit]), 0.5 * env));
+                }
+                sinks = sinks.filter(sk => sk.t < SINK_S * LOOPS);
+
+                // Private local work: the outer units frost (dim a little, draw
+                // in) while it lasts; when the scrubbed summary is sent, one
+                // unit floats out, three times.
+                frostE = Math.max(0, Math.min(1, frostE + (frost ? dt / 0.6 : -dt / 0.6)));
+                if (frostE > 0) {
+                    const r = an.units.map(p => mag(sub(p, an.core)));
+                    const rmax = Math.max(...r);
+                    an.units.forEach((p, i) => {
+                        if (busy.has(i) || r[i] < rmax * 0.8) return;
+                        const u = unit(i), e = ease(frostE);
+                        u.b *= 1 - 0.18 * e;
+                        if (!reduced) u.s *= 1 - 0.04 * e;
+                    });
+                }
+                for (const fl of floats) {
+                    fl.t += dt;
+                    if (fl.unit === undefined) {
+                        // The outermost free unit toward the top, on the side
+                        // facing the user (on a sphere the very top is edge-on).
+                        let best = null, bestV = -Infinity;
+                        an.units.forEach((p, i) => { if (busy.has(i)) return; const q = sub(p, an.core);
+                            const v = dot(q, an.up) + dot(q, an.toward) + mag(q); if (v > bestV) { bestV = v; best = i; } });
+                        fl.unit = best === null ? undefined : best;
+                    }
+                    if (fl.unit === undefined) continue;
+                    busy.add(fl.unit);
+                    const env = pulse(fl.t, FLOAT_S), u = unit(fl.unit);
+                    u.g = Math.max(u.g, 0.5 * env);
+                    if (reduced) { u.b *= 1 + 0.2 * env; continue; }
+                    u.d = add(u.d, add(scl(radial(fl.unit), 0.6 * env), scl(an.up, 0.3 * env)));
+                    u.s *= 1 - 0.25 * env;
+                }
+                floats = floats.filter(fl => fl.t < FLOAT_S * LOOPS);
+
                 // A sealed cloud send: the top opens and a thread leaves.
                 let thread = 0;
                 for (const v of vents) {
                     v.t += dt;
-                    const env = Math.abs(Math.sin(Math.PI * Math.min(LOOPS, v.t / VENT_S)));
+                    const env = pulse(v.t, VENT_S);
                     thread = Math.max(thread, env);
                     for (const i of an.top) {
                         if (busy.has(i)) continue;
                         const u = unit(i);
                         u.g = Math.max(u.g, env);
                         if (reduced) { u.b *= 1 + 0.3 * env; continue; }
-                        const out_ = norm(sub(an.units[i], an.core));
+                        const out_ = radial(i);
                         u.d = add(u.d, add(scl(an.up, 0.7 * env), scl(out_, 0.35 * env)));
                         u.r = add(u.r, scl(an.up, 0.25 * env));
                     }
@@ -1268,21 +1442,60 @@
                 }
                 scans = scans.filter(sc => sc.t < SCAN_S * LOOPS);
 
+                // Helpers working: one calm, held motion for Friday's own state,
+                // whatever the count. The middle layer turns slowly about the
+                // vertical, like a governor, at a fixed rate.
+                coord = Math.max(0, Math.min(1, coord + (helpers.size ? dt / COORD_IN : -dt / COORD_IN)));
+                coordPhase += dt * 2 * Math.PI * COORD_HZ;
+                if (coord > 0 && an.layers.length) {
+                    const layer = an.layers[Math.floor(an.layers.length / 2)] || [];
+                    const e = ease(coord);
+                    for (const i of layer) {
+                        if (busy.has(i)) continue;
+                        const u = unit(i);
+                        u.g = Math.max(u.g, 0.25 * e);
+                        if (reduced) { u.b *= 1 + 0.1 * e; continue; }
+                        const p = sub(an.units[i], an.core);
+                        const ang = Math.atan2(dot(p, an.toward), dot(p, an.across));
+                        u.d = add(u.d, add(scl(an.across, 0.14 * e * Math.cos(coordPhase + ang)),
+                                           scl(an.toward, 0.14 * e * Math.sin(coordPhase + ang))));
+                    }
+                }
+
+                // Talked over: the facing side draws back, yielding, three times.
+                for (const y of yields) {
+                    y.t += dt;
+                    const env = pulse(y.t, YIELD_S);
+                    an.units.forEach((p, i) => {
+                        if (dot(p, an.toward) < fmax - an.spacing / 2 || busy.has(i)) return;
+                        const u = unit(i);
+                        if (reduced) { u.b *= 1 - 0.15 * env; return; }
+                        u.d = add(u.d, scl(an.toward, -0.4 * env));
+                    });
+                }
+                yields = yields.filter(y => y.t < YIELD_S * LOOPS);
+
                 // Listening: rings ripple across the facing side with the voice.
                 micPhase += dt * 2 * Math.PI * 1.6;
                 // The voice level eases in (about 0.12 s): a mic that jumps from
                 // silence to speech must not start the ripple at full height.
                 micS += (mic - micS) * Math.min(1, dt * 8);
-                if (micS > 0.02) {
+                // Typing: a data-in wave runs across the facing side with the
+                // user's keystrokes, fading about half a second after the last.
+                typing = Math.max(0, typing - dt0 / 0.6);
+                typingS += (typing - typingS) * Math.min(1, dt * 8);
+                typePhase += dt * 2 * Math.PI * 1.2;
+                if (micS > 0.02 || typingS > 0.02) {
                     const fdot = Math.max(...an.units.map(u => dot(u, an.toward)));
                     an.units.forEach((p, i) => {
                         if (dot(p, an.toward) < fdot - an.spacing / 2 || busy.has(i)) return;
                         const u = unit(i);
-                        if (reduced) { u.b *= 1 + 0.5 * micS; u.g = Math.max(u.g, 0.5 * micS); return; }
+                        if (reduced) { u.b *= 1 + 0.5 * micS + 0.3 * typingS; u.g = Math.max(u.g, 0.5 * Math.max(micS, typingS)); return; }
                         const d = mag(sub(p, scl(an.toward, dot(p, an.toward))));
                         const ring = Math.max(0, Math.sin(micPhase - 1.8 * d));
-                        u.d = add(u.d, scl(an.toward, 0.5 * micS * ring));
-                        u.g = Math.max(u.g, 0.6 * micS * ring);
+                        const row = Math.max(0, Math.sin(typePhase - 1.6 * dot(p, an.across)));
+                        u.d = add(u.d, scl(an.toward, 0.5 * micS * ring + 0.3 * typingS * row));
+                        u.g = Math.max(u.g, 0.6 * micS * ring, 0.45 * typingS * row);
                     });
                 }
 
@@ -1299,17 +1512,20 @@
                     nextB[k] = b;
                 }
                 lastB = nextB;
+                // Glow rises at G_RATE a frame and fades at G_RATE less the
+                // evolved trail, so an evolved Friday's gestures linger.
+                const gDown = G_RATE * (1 - style.trail);
                 const nextG = {};
                 for (const k of Object.keys(out)) {
                     // A unit that left its gesture this frame (a flowing cloud's
                     // cluster can leave a wave's layer) fades from where it was:
                     // never NaN, which renders a cloud black for a frame.
                     const prev = lastG[k] || 0, want = Number.isFinite(out[k].g) ? out[k].g : 0;
-                    out[k].g = Math.max(0, Math.min(1, Math.max(prev - G_RATE, Math.min(prev + G_RATE, want))));
+                    out[k].g = Math.max(0, Math.min(1, Math.max(prev - gDown, Math.min(prev + G_RATE, want))));
                     nextG[k] = out[k].g;
                 }
                 for (const k of Object.keys(lastG)) if (!(k in nextG) && lastG[k] > 1e-3) {
-                    const g = Math.max(0, lastG[k] - G_RATE);
+                    const g = Math.max(0, lastG[k] - gDown);
                     out[k] = out[k] || { d: [0, 0, 0], r: [0, 0, 0], s: 1, b: nextB[k] || 1, g: 0, hue: null };
                     out[k].g = g; nextG[k] = g;
                 }
@@ -1317,27 +1533,38 @@
                 // Processing makes the lattice attentive: its cubes ease into
                 // alignment so a twist or a step reads as structure, and drift
                 // again once nothing is happening. Motion, so not when reduced.
-                const busyNow = twists.length || queue.length || waves.length || vents.length
-                    || scans.length || knocks.length || approvals || micS > 0.02;
-                align = Math.max(0, Math.min(1, align + (busyNow ? dt / ALIGN_IN : -dt / ALIGN_OUT)));
-                return { units: out, thread: thread, scan: scan, status: status(), dt: dt,
-                         align: reduced ? 0 : ease(align) };
+                align = Math.max(0, Math.min(1, align + (!quiet() ? dt0 / ALIGN_IN : -dt0 / ALIGN_OUT)));
+                return { units: out, thread: thread, scan: scan, status: status(), dt: dt0,
+                         align: reduced ? 0 : smooth(align) };
             }
 
+            function own() {
+                return twists.length || queue.length || waves.length || vents.length || scans.length
+                    || knocks.length || locks.length || draws.length || snaps.length || sinks.length
+                    || floats.length || frost || approvals;
+            }
+            function quiet() {
+                return !own() && !helpers.size && !yields.length && micS <= 0.02 && typingS <= 0.02;
+            }
             function status() {
                 const running = twists.filter(t => t.phase !== 'out').length;
+                const n = helpers.size, h = n === 1 ? '1 helper' : n + ' helpers';
                 if (approvals) return 'Waiting for your OK' + (approvals > 1 ? ' (' + approvals + ')' : '');
                 if (knocks.length) return 'That step failed';
                 if (running) return 'Using a tool' + (queue.length ? ' (' + queue.length + ' waiting)' : '');
+                if (frost) return 'Working privately on this computer';
+                if (floats.length) return 'Sent a scrubbed summary';
                 if (vents.length) return 'Round ' + round + ' sent to the cloud';
                 if (waves.length) return 'Thinking, round ' + round + (route === 'local' ? ' on this computer' : '');
+                if (draws.length) return 'Found ' + found + (found === 1 ? ' source' : ' sources');
                 if (scans.length) return 'Checking the result';
+                if (sinks.length) return 'Saved to memory';
+                if (n) return own() ? h + ' working' : 'Waiting on ' + h;
                 if (mic > 0.02) return 'Listening';
                 return '';
             }
             function idle() {
-                return !twists.length && !queue.length && !waves.length && !vents.length
-                    && !scans.length && !knocks.length && !approvals && !approvalEnv.length && mic <= 0.02 && micS <= 0.02;
+                return quiet() && !approvalEnv.length && mic <= 0.02 && typing <= 0 && frostE === 0 && coord === 0;
             }
             // Nothing active, nothing still fading, the lattice not aligned:
             // the scene can skip gesture work entirely this frame.
@@ -1346,11 +1573,14 @@
             }
             function reset() {
                 twists = []; queue = []; waves = []; vents = []; scans = []; knocks = [];
+                locks = []; draws = []; snaps = []; sinks = []; floats = []; yields = [];
                 approvals = 0; approvalEnv = []; approvalLoop = []; mic = 0; micS = 0; lastB = {}; lastG = {}; align = 0;
-                round = 0; route = null; now = 0;
+                typing = 0; typingS = 0; helpers = new Set(); coord = 0; frost = false; frostE = 0;
+                round = 0; route = null; now = 0; found = 0;
+                style = { tempo: 1, ease: 'spring', trail: 0 };
             }
-            return { frame, setApprovals, setMic, setReduced, step, status, idle, settled, reset,
-                     _twists: () => twists, _queue: () => queue };
+            return { frame, setApprovals, setMic, setReduced, setStyle, typed, yielded, step, status, idle, settled, reset,
+                     _twists: () => twists, _queue: () => queue, _helpers: () => helpers.size };
         })();
         // </presence-gestures>
 
@@ -1816,6 +2046,7 @@
             function end(dt) {
                 subscribe();
                 FridayGenome.sample(dt, FridayGestures.settled());
+                FridayGestures.setStyle(FridayGenome.style());
                 FridayGestures.setReduced(typeof SceneMotion !== 'undefined' && SceneMotion.reduced());
                 // Friday's own voice heard back through the mic is not the
                 // user talking: the ripple follows the mic only while she is quiet.
@@ -1895,6 +2126,9 @@
 
             return { begin, end, anatomyFor, genericAnatomy, ADAPTERS, resetCache };
         })();
+        // The page's own events for the avatar: the user typing to Friday, and
+        // the user talking over her.
+        window.fridayAvatar = { typed: () => FridayGestures.typed(), yielded: () => FridayGestures.yielded() };
         // </presence-gesture-scene>
 
         // <avatar-genome>
@@ -2051,7 +2285,17 @@
                     }
                 });
             }
-            return { EX, rand, start, refresh, sample, heldMessage, current: () => view,
+            // Evolution's style for the gestures (§13.7: style, never
+            // meaning) and its speech amplitude for the speaking motion.
+            function style() {
+                const g = view && view.genome && view.genome.gesture;
+                return g ? { tempo: g.tempo, ease: g.ease, trail: g.trail } : null;
+            }
+            function speechAmplitude() {
+                const s = view && view.genome && view.genome.speech, a = s ? +s.amplitude : 1;
+                return Number.isFinite(a) ? Math.max(0.85, Math.min(1.1, a)) : 1;
+            }
+            return { EX, rand, start, refresh, sample, heldMessage, style, speechAmplitude, current: () => view,
                      _receive: receive, _rebuild: rebuild };
         })();
         window.FridayGenome = FridayGenome;
@@ -3289,7 +3533,8 @@
             });
 
             // --- HOLOGRAPHIC REACTIVITY UPDATE ---
-            holoTargetAmplitude = (window._fridayHoloAmplitude || 0) * SceneMotion.speechGain();
+            holoTargetAmplitude = (window._fridayHoloAmplitude || 0) * SceneMotion.speechGain()
+                * (SceneMotion.reduced() ? 1 : FridayGenome.speechAmplitude());
             holoAmplitude = soundEnvelope(holoAmplitude, holoTargetAmplitude, delta);
             if (processOrbManager) processOrbManager.update(delta, elapsed);
 

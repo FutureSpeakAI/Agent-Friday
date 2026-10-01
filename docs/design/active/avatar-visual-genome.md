@@ -1536,7 +1536,7 @@ approvals snapshot; they are momentary.
 | Verifying | Task evidence gate (`services/agent.py:3875-3878`); delivery receipts (not built) | Task status via `/api/tasks` | After the fact | **Emit** `verify` start and end at the evidence gate. It widens when receipts ship |
 | Long generation | `process_update(progress=)` from `local_image.py:1067`, `local_video.py:684`, `creative_pipeline.py:806` | `/api/processes` poll, 2 s | Yes, polled | **Emit** `progress` on change. Podcast and report have no progress today, so they stay dormant (stages only) |
 | Saving to memory | `ingest_fact` (`services/knowledge_graph/integration.py:89`) → `node_ignited` | KG SSE; only the Knowledge view listens | Not to the scene | **Emit** `memory_saved` at `ingest_fact` success |
-| Private handoff | `local_context.request` (`services/local_context.py:247`) and `_send` (`:224`) | The card via the feed; the send emits nothing | Card only | **Emit** `handoff` start at `request`, and `handoff` sent at `_send` success |
+| Private handoff | `local_context.request` (`services/local_context.py:247`) and `_send` (`:224`) | The card via the feed; the send emits nothing | Card only | **Emit** `handoff` start at `request`, `handoff` end when `request` returns (whatever came of it), and `handoff` sent at `_send` success |
 | Error | Chat stream `{error}` (`routes/chat.py:771`); process error; voice `error`; a tool call ending `ok: false` | Various, sending tab only | Built | `error` is emitted at turn end with failure and at process error. A tool's end frame carries `ok: false` only for a real error (`_tool_call_status == "error"`): a call waiting for the owner's card, or declined by the owner or a policy, did not fail |
 | Background or scheduled | `scheduler.dispatch` (`services/scheduler.py:1000`) → `sched-*` process | `/api/processes` poll | Yes, polled | **Emit** `background` start and end at `process_register` for background categories |
 | Subagents | `_spawn_task` (`services/agent.py:4225`); the worker end | `/api/tasks` poll; trace parents | Polled | **Emit** `subagent` start and end with the parent turn |
@@ -1682,6 +1682,79 @@ About 13-14 days.
 - **Budget.** CPU per frame for 20 simultaneous gestures, and fps, on the
   owner's machine with the resident model loaded. Recorded here with the
   date.
+
+### 13.11 Friday's own state, deeper (owner, 2026-10-01)
+
+The owner's direction:
+- "Make it have a deep level of animation and interactivity, very cool.
+  Evolutions can play into that too."
+- "We want these animations to be the orchestrator only, Friday, like a
+  window into her soul and nobody else's (except the user's, through
+  data)."
+
+The language stays abstract: math, code and science. No mouths, no faces, no
+mouth shapes from speech (visemes), nothing anthropomorphic.
+
+**Orchestrator only.**
+- The engine drops any presence frame labelled for another agent: a helper,
+  another model, a Salon agent, Laya, Needle, a background job. The label
+  decides, never the event's name.
+- Friday's helpers show only as her own state: one calm, held motion. The
+  middle layer turns slowly about the vertical, like a governor, at a fixed
+  0.25 Hz. It is the same for one helper or ten.
+- The status line counts them: "3 helpers working" while she is doing her
+  own work too, "Waiting on 3 helpers" while she is not.
+- A flood of others' frames moves nothing (tests below).
+
+**The label contract** (for P-TURN-ORIGIN, not yet on the bus as of
+2026-10-01):
+- Every presence frame from Friday's own loop carries `agent: "friday"`. Any
+  other value (`helper:<id>`, `salon:<id>`, `laya`, `needle`,
+  `background:<id>`, `model:<id>`) is not hers and is dropped.
+- P-TURN-ORIGIN's entry-point label (chat, voice, automation and so on) is
+  inherited by sub-agents, so it alone cannot tell Friday from her helpers.
+  An agent label is also needed.
+- Until every frame carries one, a frame with no label is treated as hers
+  (today's behaviour). Today a helper's own tool calls and a background
+  process's rounds still reach the scene.
+- Friday's own `subagent` start and end frames, sent by her loop when she
+  starts and joins a helper, are what the helpers-working state counts.
+
+**Every real event has its gesture.** Each one-shot plays three times
+(§13.3):
+
+| Event | Gesture (on every structure) | Status line |
+|---|---|---|
+| Memory search, `n` sources | `n` units (up to six) are drawn toward the core and return | "Found 4 sources" |
+| Reflex | One unit snaps a quarter turn and back | (none) |
+| A memory saved | One unit sinks toward the core and settles, a little dimmer | "Saved to memory" |
+| Private local work | The outer units frost (dim a little, draw in) until the local work ends, whatever came of it | "Working privately on this computer" |
+| …the scrubbed summary sent | One outer unit on the side facing the user floats out and up | "Sent a scrubbed summary" |
+| A tool that worked | Once its block is home, it locks into place: a small settle | (the tool's) |
+| A tool that failed, an error | The block knocks out of alignment and corrects (§13.3) | "That step failed" |
+| The user typing to Friday | A data-in wave runs across the facing side, fading half a second after the last key | (none) |
+| The user talking over her | The facing side draws back, yielding; then the listening ripple | "Listening", while the microphone hears the user |
+
+**Evolution sets the style** (§13.7, now built). The page reads the genome's
+gesture genes:
+- `tempo` scales every gesture's clock;
+- `ease` picks its curve (spring, snap or glide);
+- `trail` lengthens how glow fades.
+
+`speech.amplitude` scales the speaking motion, between 0.85 and 1.1. Under
+reduced motion it is not applied, so the cap of 0.5 holds (§6.3). A test
+runs every gesture at the extremes and checks that the units moved, the
+counts and the directions are unchanged.
+
+**Tests.**
+- `tests/unit/test_avatar_orchestrator_gestures.py` (node, both scene
+  files): the flood, ten helpers looking like one, each new gesture three
+  times, reduced motion as brightness only, and evolution changing style,
+  never meaning.
+- The rendered-frame spec runs every new event and the flood on every
+  structure under the photosensitivity meter.
+- A real-clock test holds the frame budget under the flood: p95 within 10%
+  and 1 ms of the calm frames either side.
 
 ---
 

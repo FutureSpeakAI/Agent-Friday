@@ -64,7 +64,8 @@ out.twist_rot = Object.values(r.units).filter(u => u.r.some(v => Math.abs(v - Ma
 out.twist_bright = Object.values(r.units).filter(u => u.b > 1.001).length;
 out.twist_status = r.status;
 ['c1', 'c2', 'c3'].forEach(ref => G.frame(P('tool', 'end', { ref, ok: true })));
-r = run(0.6);
+// Home, then a tool that worked locks into place three times (§13.11), then rest.
+r = run(1.4);
 out.twist_after = moving(r).length + G._twists().length;
 // more than four at once queue, and start as slots free
 G.reset(); G.setReduced(REDUCED);
@@ -167,7 +168,7 @@ for (let i = 0; i < 240; i++) { const q = G.step(dt, an);
   if (twistUnit === null) twistUnit = Object.keys(q.units).map(Number).find(k => q.units[k].r.some(v => Math.abs(v) > 1e-3));
   ser.push(twistUnit === undefined || twistUnit === null || !q.units[twistUnit] ? 0 : Math.max(...q.units[twistUnit].r.map(Math.abs))); }
 out.loop_twist = peaks(ser, 1.2); out.loop_twist_held = ser[ser.length - 1] > 1.5;
-G.frame(P('tool', 'end', { ref: 't1', ok: true })); out.loop_twist_rest = moving(run(1.0)).length;
+G.frame(P('tool', 'end', { ref: 't1', ok: true })); out.loop_twist_rest = moving(run(1.5)).length;
 G.reset(); G.setReduced(false);
 G.setApprovals(1); ser = []; let hueAll = true, seen = false;
 for (let i = 0; i < 300; i++) { const q = G.step(dt, an);

@@ -62,8 +62,9 @@ function explain(bad: Segment[]): string {
     + (s.contextLost ? ' (the GPU took the scene away during this segment)' : '')).join('\n');
 }
 
-/** Open the app with the given genome, the meter installed and the clock faked. */
-async function openScene(page: Page, view: any, structureIndex = 0) {
+/** Open the app with the given genome, the meter installed and the clock
+ *  faked (or, with realClock, on the real clock, to time real frames). */
+async function openScene(page: Page, view: any, structureIndex = 0, opts: { realClock?: boolean } = {}) {
   await page.addInitScript(() => {
     // The approvals stream is a stand-in the test feeds: real approvals on
     // the server must not move the scene during a measurement.
@@ -86,7 +87,7 @@ async function openScene(page: Page, view: any, structureIndex = 0) {
       .forEach((e: any) => e.onmessage && e.onmessage({ data: JSON.stringify(d) }));
   });
   await page.addInitScript({ path: METER });
-  await page.clock.install();
+  if (!opts.realClock) await page.clock.install();
   if (process.env.FRIDAY_PAGE) {
     const html = fs.readFileSync(process.env.FRIDAY_PAGE, 'utf8');
     await page.route(BASE.replace(/\/$/, '') + '/', async r => {
@@ -106,6 +107,7 @@ async function openScene(page: Page, view: any, structureIndex = 0) {
     : r.fulfill({ json: { status: 'ok' } }));
   const watcher = await openApp(page, 90_000);
   await page.waitForFunction(() => (window as any).fridayVibe && typeof FridayGestures !== 'undefined');
+  if (opts.realClock) { await page.waitForTimeout(10_000); await page.evaluate(DRIVER); return watcher; }
   await page.clock.runFor(10_000);                      // past the load transition
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   // Friday's voice, the room the microphone hears, and the user's mic, all
@@ -131,8 +133,37 @@ const mark = (page: Page, name: string) => page.evaluate(n => (window as any).__
 const emit = (page: Page, d: any) => page.evaluate(x => (window as any).__emit(x), d);
 const P = (state: string, phase: string, extra: any = {}) => ({ type: 'presence', state, phase, ...extra });
 
+/** What the avatar showed while helpers worked under a flood of others' frames. */
+type Flood = { status: string; twists: number; helpers: number };
+
+/** Start ten helpers of Friday's, and a flood of frames from other agents
+ *  (her helpers' own work, other models, background jobs): 100 a second. */
+const floodStart = (page: Page) => page.evaluate(() => {
+    const w = window as any;
+    for (let i = 0; i < 10; i++) w.__emit({ type: 'presence', state: 'subagent', phase: 'start', ref: 'h' + i, agent: 'friday' });
+    const others = ['helper:1', 'helper:2', 'salon:host', 'laya', 'needle', 'background:sched', 'model:other'];
+    const kinds = [{ state: 'tool', phase: 'start' }, { state: 'round', phase: 'step', n: 2 }, { state: 'egress', phase: 'sent', route: 'cloud' },
+                   { state: 'verify', phase: 'once', ok: true }, { state: 'error', phase: 'once' }, { state: 'retrieval', phase: 'once', n: 5 }];
+    let i = 0;
+    w.__flood = setInterval(() => { for (let k = 0; k < 5; k++, i++)
+      w.__emit(Object.assign({ type: 'presence', agent: others[i % others.length], ref: 'x' + i }, kinds[i % kinds.length])); }, 50);
+});
+const floodStop = (page: Page) => page.evaluate(() => { const w = window as any; clearInterval(w.__flood);
+  for (let i = 0; i < 10; i++) w.__emit({ type: 'presence', state: 'subagent', phase: 'end', ref: 'h' + i, agent: 'friday' }); });
+
+/** The flood for `ms` of scene time, and what the avatar showed in the middle of it. */
+async function flood(page: Page, ms: number): Promise<Flood> {
+  await floodStart(page);
+  await run(page, ms / 2);
+  const seen: Flood = await page.evaluate(() => ({ status: (FridayGestures as any).status(),
+    twists: (FridayGestures as any)._twists().length, helpers: (FridayGestures as any)._helpers() }));
+  await run(page, ms / 2);
+  await floodStop(page);
+  return seen;
+}
+
 /** One structure through everything that moves it. */
-async function exercise(page: Page, index: number) {
+async function exercise(page: Page, index: number): Promise<Flood> {
   const id = await page.evaluate(i => EVOLUTION_PATH[i].id, index);
   await mark(page, `${id} arriving`);
   await page.evaluate(i => setEvolution(i), index);
@@ -159,11 +190,28 @@ async function exercise(page: Page, index: number) {
   await emit(page, P('tool', 'start', { ref: 'f1' })); await run(page, 600);
   await emit(page, P('tool', 'end', { ref: 'f1', ok: false })); await run(page, 1200);
   await emit(page, P('error', 'once')); await run(page, 1500);
+  // Friday's other real events, and the user's own: a memory search, a reflex,
+  // a saved memory, private local work, a tool that worked, typing, being
+  // talked over.
+  await emit(page, P('retrieval', 'once', { n: 4 })); await run(page, 900);
+  await emit(page, P('reflex', 'once')); await run(page, 500);
+  await emit(page, P('memory_saved', 'once')); await run(page, 900);
+  await emit(page, P('handoff', 'start')); await run(page, 900);
+  await emit(page, P('handoff', 'sent')); await run(page, 900);
+  await emit(page, P('tool', 'start', { ref: 'w1' })); await run(page, 600);
+  await emit(page, P('tool', 'end', { ref: 'w1', ok: true })); await run(page, 900);
+  await page.evaluate(() => { for (let i = 0; i < 8; i++) setTimeout(() => (window as any).fridayAvatar.typed(), i * 90); });
+  await run(page, 1500);
+  await page.evaluate(() => (window as any).fridayAvatar.yielded()); await run(page, 1500);
+  await mark(page, `${id} helpers and a flood of others' events`);
+  const seen = await flood(page, 4000);
+  await run(page, 1500);
   await mark(page, `${id} listening`);
   await page.evaluate(() => { const w = window as any; w.__mic = 1; w.__room = 1; setSystemMood('LISTENING'); });
   await run(page, 3000);
   await page.evaluate(() => { const w = window as any; w.__mic = 0; w.__room = 0; setSystemMood('IDLE'); });
   await run(page, 800);
+  return seen;
 }
 
 async function finish(page: Page): Promise<Segment[]> {
@@ -214,9 +262,13 @@ for (const [label, key] of [['v1', 'v1'], ['an evolved genome', 'evolved']] as c
     test.setTimeout(45 * 60_000);
     const watcher = await openScene(page, GENOMES[key]);
     const n = await page.evaluate(() => EVOLUTION_PATH.length);
-    for (let i = 0; i < n; i++) await exercise(page, i);
+    const floods: Flood[] = [];
+    for (let i = 0; i < n; i++) floods.push(await exercise(page, i));
     const segs = await finish(page);
-    expect(segs.length).toBeGreaterThanOrEqual(n * 5);
+    expect(segs.length).toBeGreaterThanOrEqual(n * 6);
+    // Under the flood, only Friday's own state: her ten helpers as one, and
+    // nothing of anyone else's work.
+    for (const f of floods) expect(f).toEqual({ status: 'Waiting on 10 helpers', twists: 0, helpers: 10 });
     expect(segs.every(s => s.frames > 60), 'every segment rendered frames').toBe(true);
     const bad = segs.filter(s => !s.ok);
     expect(bad, `The scene flashed:\n${explain(bad)}`).toEqual([]);
@@ -249,6 +301,34 @@ test('Giga Earth does not flash at any form of its track, nor when a step lands'
   }
   const bad = segs.filter(s => !s.ok);
   expect(bad, `Giga Earth flashed:\n${explain(bad)}`).toEqual([]);
+});
+
+test("the frame budget holds while ten helpers work under a flood of others' events", async ({ page }) => {
+  // Real frames on the real clock: dropping others' frames and showing one
+  // calm state for ten helpers must cost no more than the frame budget
+  // (§6.4): p95 within 10% and 1 ms of the calm frames either side of it.
+  test.setTimeout(15 * 60_000);
+  await openScene(page, GENOMES.v1, 0, { realClock: true });
+  const p95 = (ms: number) => page.evaluate(ms => new Promise<number>(res => {
+    const t: number[] = []; let last = performance.now(); const end = last + ms;
+    const f = () => { const x = performance.now(); t.push(x - last); last = x;
+      if (x < end) requestAnimationFrame(f); else { t.sort((a, b) => a - b); res(t[Math.floor(t.length * 0.95)]); } };
+    requestAnimationFrame(f); }), ms);
+  const rows: string[] = [];
+  for (const i of [0, 12, 7]) {                          // the lattice, Giga Earth, the Mandelbrot set
+    await page.evaluate(i => setEvolution(i), i);
+    await page.waitForTimeout(9000);
+    const before = await p95(3000);
+    await floodStart(page);
+    const busy = await p95(3000);
+    await floodStop(page);
+    await page.waitForTimeout(2000);
+    const after = await p95(3000);
+    const calm = Math.max(before, after);
+    rows.push(`structure ${i}: calm p95 ${calm.toFixed(1)} ms, flooded ${busy.toFixed(1)} ms`);
+    expect(busy, rows.join(' | ')).toBeLessThanOrEqual(calm * 1.10 + 1);
+  }
+  console.log(rows.join(' | '));
 });
 
 test('the scene fades back in when the GPU gives it back', async ({ page }) => {
