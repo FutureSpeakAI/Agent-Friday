@@ -22172,10 +22172,13 @@ function App(){
     const onSnapped=e=>{const d=e&&e.detail||{};if(!d.key||String(d.key).indexOf('chat:')===0)return;snapDo.current.rememberLayout(d.key,d.slot?{window:d.slot}:null)};
     // A window placed beside the chat from its menu.
     const onBeside=e=>{const d=e&&e.detail||{};if(!d.workspace||!(d.frac>0.1))return;const t=snapDo.current;t.placeTray(null,d.frac);t.applyLayout(d.workspace,true);t.rememberLayout(d.workspace,{window:'full',chat:{side:t.side,frac:Math.round(d.frac*1000)/1000}})};
-    const onKey=e=>{const dir=fridaySnapKey(e);if(!dir)return;e.preventDefault();const t=snapDo.current,tray=document.querySelector('.chat-panel');const key=t.front();
+    // The chord is the window's: taken in the capture phase and stopped there,
+    // so the scene, which steps its structure on an arrow and listens on the
+    // document, never sees it. A code editor keeps its own Ctrl+Alt+arrows.
+    const onKey=e=>{const dir=fridaySnapKey(e);if(!dir)return;if(e.target&&e.target.closest&&e.target.closest('.monaco-editor, .cm-editor, .CodeMirror'))return;e.preventDefault();e.stopPropagation();const t=snapDo.current,tray=document.querySelector('.chat-panel');const key=t.front();
       if(STANDALONE_WS||!key||tray&&tray.contains(document.activeElement))t.trayKey(dir);else window.dispatchEvent(new CustomEvent('friday:snap',{detail:{key,dir}}))};
-    window.addEventListener('friday:snapped',onSnapped);window.addEventListener('friday:beside-chat',onBeside);window.addEventListener('keydown',onKey);
-    return()=>{window.removeEventListener('friday:snapped',onSnapped);window.removeEventListener('friday:beside-chat',onBeside);window.removeEventListener('keydown',onKey)}},[]);
+    window.addEventListener('friday:snapped',onSnapped);window.addEventListener('friday:beside-chat',onBeside);window.addEventListener('keydown',onKey,true);
+    return()=>{window.removeEventListener('friday:snapped',onSnapped);window.removeEventListener('friday:beside-chat',onBeside);window.removeEventListener('keydown',onKey,true)}},[]);
   // The top bar's panels: the one that opens closes the ones it would cover.
   // The bar's buttons and the command palette both open them through these.
   const toggleNotifs=()=>{setNotifOpen(o=>!o);if(!notifOpen){setSettingsOpen(false);setChatOpen(false);setQuickDraft(false)}};

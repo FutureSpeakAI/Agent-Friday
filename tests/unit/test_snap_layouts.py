@@ -65,6 +65,19 @@ def test_a_chat_window_snaps_too():
     assert "useFridaySnap('chat:' + convId" in win and "SnapMenu" in win and "SnapPreview" in win
 
 
+@pytest.mark.parametrize("rel", PAGES)
+def test_a_snap_chord_is_taken_before_the_scene_sees_it(rel):
+    """The scene steps its structure on an arrow, listening on the document,
+    which hears a key before a listener on the window does. The snap chord is
+    taken in the capture phase and stopped there."""
+    text = _read(rel)
+    i = text.index("fridaySnapKey(e)", text.index("/* fridaySnap:end */"))
+    effect = text[i:i + 1200]
+    assert "stopPropagation()" in effect, rel
+    assert re.search(r"addEventListener\('keydown',\s*onKey,\s*true\)", effect), rel
+    assert re.search(r"removeEventListener\('keydown',\s*onKey,\s*true\)", effect), rel
+
+
 # ── the geometry, in node ────────────────────────────────────────────────────
 
 TILINGS = [["left_half", "right_half"], ["left_third", "right_two_thirds"],
@@ -376,6 +389,34 @@ def test_the_keys_step_a_window_through_the_slots(site):
         s.page.wait_for_timeout(300)
         seen.append(s.boxes()["snap"])
     assert seen == ["right_half", "right_two_thirds", "right_third", "full", None]
+
+
+_SPY_ON_THE_SCENE = """() => { window.__steps = [];
+  window.fridayVibe.nextStructure = () => window.__steps.push('next');
+  window.fridayVibe.prevStructure = () => window.__steps.push('prev'); }"""
+
+
+def test_the_snap_keys_leave_the_scene_alone(site):
+    """A plain arrow is the scene's own key (its next structure); a snap chord
+    belongs to the window or the tray and never reaches the scene."""
+    s = site().desktop().open_news()
+    s.page.evaluate(_SPY_ON_THE_SCENE)
+    s.page.click(".fwin .fwin-title")
+    s.page.keyboard.press("Control+Alt+ArrowRight")
+    s.page.wait_for_timeout(300)
+    assert s.boxes()["snap"] == "right_half"
+    assert s.page.evaluate("window.__steps") == []
+    s.page.keyboard.press("ArrowRight")
+    s.page.wait_for_timeout(150)
+    assert s.page.evaluate("window.__steps") == ["next"], "the scene still has its own key"
+    # in a tab the chord moves the tray, and the scene there is left alone too
+    s.page.goto(s.base + "/w/news", wait_until="domcontentloaded")
+    s.page.wait_for_selector('[data-standalone="news"]', timeout=60000)
+    s.page.wait_for_timeout(500)
+    s.page.evaluate(_SPY_ON_THE_SCENE)
+    s.page.keyboard.press("Control+Alt+ArrowLeft")
+    s.page.wait_for_selector(".chat-panel.open.left", timeout=5000)
+    assert s.page.evaluate("window.__steps") == []
 
 
 def test_dragging_to_an_edge_previews_holds_and_snaps(site):

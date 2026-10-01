@@ -59067,21 +59067,26 @@ function App() {
       t.applyLayout(d.workspace, true);
       t.rememberLayout(d.workspace, { window: 'full', chat: { side: t.side, frac: Math.round(d.frac * 1000) / 1000 } });
     };
+    // The chord is the window's: taken in the capture phase and stopped there,
+    // so the scene, which steps its structure on an arrow and listens on the
+    // document, never sees it. A code editor keeps its own Ctrl+Alt+arrows.
     const onKey = e => {
       const dir = fridaySnapKey(e);
       if (!dir) return;
+      if (e.target && e.target.closest && e.target.closest('.monaco-editor, .cm-editor, .CodeMirror')) return;
       e.preventDefault();
+      e.stopPropagation();
       const t = snapDo.current, tray = document.querySelector('.chat-panel');
       const key = t.front();
       if (STANDALONE_WS || !key || tray && tray.contains(document.activeElement)) t.trayKey(dir);else window.dispatchEvent(new CustomEvent('friday:snap', { detail: { key, dir } }));
     };
     window.addEventListener('friday:snapped', onSnapped);
     window.addEventListener('friday:beside-chat', onBeside);
-    window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('friday:snapped', onSnapped);
       window.removeEventListener('friday:beside-chat', onBeside);
-      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onKey, true);
     };
   }, []);
   // The top bar's panels: the one that opens closes the ones it would cover.
