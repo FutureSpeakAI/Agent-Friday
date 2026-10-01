@@ -706,9 +706,9 @@ CLAUDE_TOOLS = [
                       "required": ["model"]}},
     {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: " + _ws_registry.tool_list() + ".",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
-    {"name": "navigate_to", "description": "Open one specific thing on the user's Friday desktop, on screen: a workspace section or tab, an email thread in Messages, the mail a Gmail search finds (mail_search), a file in Studio's file browser, a creation, a news story, a wiki page or graph node in Knowledge, a Settings tab or section, a calendar day or meeting, a contact card, or a content post. Pass the user's own words as query ('the Harbor Legal email', 'my budget spreadsheet', 'model settings') or an exact id you already have. new_tab opens it in its own Chrome tab, maximized; max fills the desktop with it. It is the user's own screen, so no approval is needed. NAV_OK means the page confirmed it; NAV_PARTIAL, it opened on something else; NAV_FAIL gives the reason and closest matches.",
+    {"name": "navigate_to", "description": "Open one specific thing on the user's Friday desktop, on screen: a workspace section or tab, an email thread in Messages, the mail a Gmail search finds (mail_search), a file in Studio's file browser, a creation, a news story, a wiki page or graph node in Knowledge, a Settings tab or section, a calendar day or meeting, a contact card, a content post, or a Media card (kind=card: anything the user made or is making). Pass the user's own words as query ('the Harbor Legal email', 'my budget spreadsheet', 'model settings') or an exact id you already have. new_tab opens it in its own Chrome tab, maximized; max fills the desktop with it. It is the user's own screen, so no approval is needed. NAV_OK means the page confirmed it; NAV_PARTIAL, it opened on something else; NAV_FAIL gives the reason and closest matches.",
      "input_schema": {"type": "object", "properties": {
-         "kind": {"type": "string", "enum": ["workspace", "email", "mail_search", "file", "creation", "news_article", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post"]},
+         "kind": {"type": "string", "enum": ["workspace", "email", "mail_search", "file", "creation", "news_article", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post", "card"]},
          "new_tab": {"type": "boolean", "description": "Open it in its own Chrome tab, maximized."},
          "max": {"type": "boolean", "description": "Fill the whole window or tab with it."},
          "query": {"type": "string", "description": "The user's words for the thing."},
@@ -8105,6 +8105,8 @@ except Exception as _mte:  # never let optional deps break the agent import
 try:
     from agent_friday.services import podcast_tools as _podcast_tools
     _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+    from agent_friday.services import media_card_tools as _media_card_tools
+    _media_card_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
 except Exception as _pte:  # never let optional deps break the agent import
     print(f"  [PODCASTS] registration skipped: {_pte}")
 

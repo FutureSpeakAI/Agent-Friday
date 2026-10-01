@@ -35,6 +35,26 @@ def test_the_registry_declares_media_as_a_core_work_workspace():
     assert (ROOT / "assets" / "icons" / "media.svg").exists()
 
 
+def test_draft_content_and_studio_are_retired_into_media():
+    """The three workspaces fold into Media (decision D1, 2026-09-30): their
+    registry entries are gone, their words resolve to Media, their old tab
+    URLs redirect, and the page maps their ids onto Media's views."""
+    for old in ("draft", "content", "studio"):
+        assert not re.search(r'\{"id": "%s",' % old, REGISTRY), old + " is no longer a workspace"
+    media = re.search(r'\{"id": "media",.*?\]\}', REGISTRY, re.S).group(0)
+    for word in ("draft", "drafts", "content", "posts", "studio", "creations", "gallery", "writer"):
+        assert '"%s"' % word in media, word + " resolves to Media"
+    for text in (INDEX, APP):
+        for old, view in (("draft", "board"), ("content", "board"), ("studio", "library")):
+            assert re.search(r"%s:\s*\{\s*workspace:\s*'media',\s*view:\s*'%s'" % (old, view), text), old
+    routes = (ROOT / "src" / "agent_friday" / "routes" / "core_routes.py").read_text(encoding="utf-8")
+    for old in ("draft", "content", "studio"):
+        assert "'%s': ('media'" % old in routes, "/w/" + old + " redirects to Media"
+    # accounts live under Settings, analytics under Media → Insights
+    assert "window.MediaChannelsSettings" in INDEX and "window.MediaChannelsSettings" in APP
+    assert "window.MediaInsights = MediaInsights" in JS
+
+
 def test_the_script_defines_the_workspace_and_its_views():
     for name in ("window.MediaWS = MediaWS", "window.MediaBoard = MediaBoard", "window.MediaCalendar = MediaCalendar", "window.MediaCard = MediaCard"):
         assert name in JS
@@ -61,7 +81,7 @@ def test_amber_only_means_needs_you():
         if "f59e0b" in line or "--fr-warn" in line or "245,158,11" in line:
             assert "needs-you" in line or ".md-ev.review" in line, line
     # Hex literals: only the stage's black; every other colour is a token or a token's rgba.
-    assert set(re.findall(r"#[0-9a-fA-F]{3,8}\b", css)) <= {"#000"}
+    assert set(re.findall(r"#[0-9a-fA-F]{3,8}\b", css)) <= {"#000", "#fff"}, "the stage is black and a page frame white; every other colour is a token"
 
 
 def test_publishing_never_happens_in_the_page():

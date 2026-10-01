@@ -8414,6 +8414,18 @@ const WS_ALIASES = {
   wiki: {
     workspace: 'knowledge',
     view: 'pages'
+  },
+  draft: {
+    workspace: 'media',
+    view: 'board'
+  },
+  content: {
+    workspace: 'media',
+    view: 'board'
+  },
+  studio: {
+    workspace: 'media',
+    view: 'library'
   }
 };
 function fridayWorkspaceId(id) {
@@ -54540,7 +54552,7 @@ function SettingsWS() {
   }), /*#__PURE__*/React.createElement(SettingsYourProfile, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
     s: s,
     save: save
-  }), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, null), /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  }), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, null), window.MediaChannelsSettings ? /*#__PURE__*/React.createElement(window.MediaChannelsSettings, null) : null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(SettingsTabConnectors, {

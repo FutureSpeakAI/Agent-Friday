@@ -10,7 +10,7 @@
  *
  * Rules this file keeps:
  *   - the shell owns the frame: the root is .ws-fill, fills what it is given,
- *     never sets a width, a top offset or a 100vh calc; a readable measure goes
+ *     never sets a width, a top offset or a viewport-height calc; a readable measure goes
  *     on text (80ch), never on the root;
  *   - --fr-* tokens only; amber only where something needs the owner; status is
  *     always a word; a selected segment is .btn.active with aria-pressed;
@@ -332,7 +332,7 @@
       const apply = t => {
         if (!t || (t.workspace && t.workspace !== 'media')) return;
         if (t.card) { setCard(t.card); return; }
-        if (t.view && VIEWS.some(v => v[0] === t.view)) { setCard(null); setView(t.view); }
+        if (t.view && (t.view === 'insights' || VIEWS.some(v => v[0] === t.view))) { setCard(null); setView(t.view); }
         const patch = {};
         if (t.q != null) patch.q = String(t.q);
         if (t.kind) patch.kind = t.kind;
@@ -379,11 +379,13 @@
         VIEWS.map(v => h('button', { key: v[0], role: 'tab', className: 'btn' + (view === v[0] && !card ? ' active' : ''), 'aria-selected': view === v[0] && !card, 'aria-pressed': view === v[0] && !card, onClick: () => { setCard(null); setView(v[0]); } }, v[1]))),
       h('span', { className: 'md-count' }, (counts.all != null ? counts.all + ' pieces of work' : '') + (counts.progress != null ? ' · ' + counts.progress + ' in progress' : '') + (counts.published != null ? ' · ' + counts.published + ' published' : '')),
       h('span', { className: 'md-spacer' }),
+      h('button', { className: 'btn' + (view === 'insights' && !card ? ' active' : ''), 'aria-pressed': view === 'insights' && !card, title: 'How published cards did, and the best times to post', onClick: () => { setCard(null); setView('insights'); } }, 'Insights'),
       h('button', { className: 'btn', title: 'Open Media in its own tab', onClick: () => window.fridayOpenWorkspaceTab && window.fridayOpenWorkspaceTab('media', card ? { view: 'card', card } : { view }) }, '⧉ Own tab'),
       h('button', { className: 'btn active', onClick: () => onAction('new') }, '+ New'));
 
     let body;
     if (card) body = h(window.MediaCard || Placeholder, { id: card, onBack: () => setCard(null), onAction });
+    else if (view === 'insights') body = h(window.MediaInsights || Placeholder, { onBack: () => setView('library') });
     else if (view === 'board') body = h(window.MediaBoard || Placeholder, { onOpen: openCard, onAction });
     else if (view === 'calendar') body = h(window.MediaCalendar || Placeholder, { onOpen: openCard, onAction });
     else body = h(Library, { filters, setFilters, sel, setSel, onOpen: openCard, onAction });
@@ -731,6 +733,33 @@
             h('button', { className: 'btn btn-magenta', onClick: () => onAction('delete', c) }, 'Delete')))));
   }
   window.MediaCard = MediaCard;
+
+  // ── Channels and Insights: not pieces of work, so not cards ──────────────
+  // Connected accounts live under Settings → Accounts & Keys (MediaChannelsSettings
+  // re-houses the Content workspace's Accounts tab there). Analytics and best
+  // times are a pane reached from Media's head row (MediaInsights).
+  function usePlatforms() {
+    const [plats, setPlats] = useState(window.__mediaPlatforms || []);
+    const reload = useCallback(() => json('/api/content/platforms').then(d => { const p = d.platforms || d.items || []; window.__mediaPlatforms = p; setPlats(p); }).catch(() => {}), []);
+    useEffect(() => { reload(); }, [reload]);
+    return [plats, reload];
+  }
+  function MediaChannelsSettings() {
+    const [plats, reload] = usePlatforms();
+    if (!window.ContentAccountsTab) return null;
+    return h('div', { style: { marginTop: 14 } },
+      h('div', { className: 'md-label', style: { marginBottom: 6 } }, 'Publishing channels'),
+      h('div', { className: 'md-count', style: { marginBottom: 8 } }, 'Where Media posts go. A post is a card in Media; the accounts it uses live here.'),
+      h(window.ContentAccountsTab, { platforms: plats, reload }));
+  }
+  function MediaInsights({ onBack }) {
+    if (!window.ContentAnalyticsTab) return h('div', { className: 'md-empty' }, 'Insights are not available here.');
+    return h('div', { className: 'md-stage-wrap' },
+      h('div', { className: 'md-ehead' }, h('button', { className: 'btn', onClick: onBack }, '← Media'), h('strong', null, 'Insights'), h('span', { className: 'md-count' }, 'How published cards did, and the best times to post.')),
+      h('div', { style: { overflow: 'auto', flex: 1 } }, h(window.ContentAnalyticsTab, null)));
+  }
+  window.MediaChannelsSettings = MediaChannelsSettings;
+  window.MediaInsights = MediaInsights;
 
   // Shared helpers for the other views (board, calendar, card), defined in this file's siblings.
   window.MediaWS = MediaWS;

@@ -191,7 +191,7 @@ def test_news_engine_still_composes_front_pages():
     assert hasattr(ne, "_read_front_page")
 
 
-@pytest.mark.parametrize("ws", ["news", "studio"])
+@pytest.mark.parametrize("ws", ["news", "media"])
 def test_the_surviving_workspaces_still_serve_as_tabs(client, ws):
     assert client.get("/w/" + ws).status_code == 200
 

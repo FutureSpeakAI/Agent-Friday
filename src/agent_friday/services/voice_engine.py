@@ -646,6 +646,8 @@ _VOICE_SHARED_TOOLS = (
     # cloud voice only through podcast_tools._private_summary.
     "make_podcast",
     "podcast_list",
+    "media_show",
+    "media_turn",
     "podcast_play",
     "podcast_source",
     # Friday's own look: "evolve now", "undo that look", "go back to last
