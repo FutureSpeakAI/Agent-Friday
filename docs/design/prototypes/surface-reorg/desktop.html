@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desktop chrome · Agent Friday™ HIG prototype</title>
+<link rel="stylesheet" href="hig.css">
+<style>
+  .scene-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border: 1px solid var(--fr-glass-edge); border-radius: 12px; font-family: var(--fr-font-mono); font-size: var(--fr-text-xs); color: var(--fr-label); letter-spacing: .04em; cursor: pointer; }
+  .cc { display: inline-flex; align-items: center; gap: 6px; font-family: var(--fr-font-mono); font-size: var(--fr-text-xs); color: var(--fr-warn); border: 1px solid rgba(245,158,11,.5); border-radius: 12px; padding: 3px 8px; }
+  .cc i { width: 6px; height: 6px; border-radius: 50%; background: var(--fr-warn); display: inline-block; }
+  .needs-panel { position: absolute; right: 16px; top: 46px; width: 380px; padding: 12px; z-index: 25; display: none; }
+  .needs-panel.open { display: block; }
+  .needs-panel h3 { margin: 0 0 8px; font-size: var(--fr-text-sm); letter-spacing: var(--fr-track-label); text-transform: uppercase; color: var(--fr-faint); display: flex; align-items: center; gap: 8px; }
+  .needs-panel h3 a { margin-left: auto; letter-spacing: 0; text-transform: none; font-size: var(--fr-text-sm); }
+  .mini-ws { display: flex; flex-direction: column; height: 100%; }
+  .mini-ws .ws-header h1 { font-size: var(--fr-text-base); }
+  .win-note { position: absolute; left: 24px; top: 56px; width: 320px; padding: 12px 14px; font-size: var(--fr-text-md); color: var(--fr-dim); z-index: 15; }
+  .win-note b { color: var(--fr-label); }
+  .win-note ol { margin: 6px 0 0; padding-left: 18px; }
+  .win-note li { margin: 2px 0; }
+  .pop { position: absolute; z-index: 30; padding: 8px; display: none; min-width: 220px; }
+  .pop.open { display: block; }
+  .pop .mi { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; font-size: var(--fr-text-md); cursor: pointer; }
+  .pop .mi:hover { background: var(--fr-hover); }
+  .pop .mi kbd { margin-left: auto; }
+  .pop hr { border: 0; border-top: 1px solid var(--fr-glass-edge); margin: 6px 0; }
+  .ctl { position: absolute; right: 16px; bottom: 92px; z-index: 25; padding: 10px 12px; font-size: var(--fr-text-sm); color: var(--fr-dim); display: flex; gap: 10px; align-items: center; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="stars"></div>
+  <div class="grid-floor"></div>
+
+  <!-- The hologram: a still wireframe standing in for the scene. The scene itself is the avatar session's. Motion only on a real event. -->
+  <div class="holo" aria-hidden="true">
+    <svg viewBox="0 0 200 200">
+      <g transform="translate(100 100)">
+        <g id="cubes"></g>
+      </g>
+    </svg>
+  </div>
+
+  <!-- Top bar: eight controls (HIG §3.3) -->
+  <div class="topbar">
+    <div class="lockup"><span class="p">AGENT FRIDAY<sup>™</sup></span><span class="by">by</span><span class="m">FutureSpeak.AI<sup>™</sup></span></div>
+    <div class="sep"></div>
+    <span class="scene-chip" title="Holographic scene (the avatar session's menu)">GENESIS LATTICE ▾</span>
+    <span class="chip"><span class="dot work"></span> Claude Sonnet 5.5 <span class="dim">bound</span> ▾</span>
+    <span class="chip needs" id="needsPill" title="Open Needs you" role="button" tabindex="0">1 needs you</span>
+    <div class="right">
+      <span class="cc" id="ccLive" title="Computer control is active. Ctrl+Shift+Q stops it. Never hidden while live." style="display:none"><i></i> CONTROL · STOP</span>
+      <button class="ibtn" title="Search and commands (Ctrl+K)" aria-label="Search and commands" id="openPalette"></button>
+      <button class="ibtn" title="Chat with Friday (Ctrl+/)" aria-label="Chat with Friday" id="chatBtn"></button>
+      <button class="ibtn" title="Settings (Ctrl+,)" aria-label="Settings" id="gearBtn"></button>
+      <div class="live" tabindex="0" aria-label="Connected. Hover for this PC's status."><span>● LIVE</span>
+        <div class="pop glass" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Landing cluster: the shell's §10, with his countdowns and their reasons -->
+  <div class="cluster" id="cluster">
+    <div class="greet">Good evening, boss.</div>
+    <div class="lock lockup" style="justify-content:center;font-size:var(--fr-text-xs)"><span class="p">AGENT FRIDAY<sup>™</sup></span><span class="by">by</span><span class="m">FutureSpeak.AI<sup>™</sup></span></div>
+    <div class="counts">
+      <span>Interview with Northwind<b>in 42 min</b><span class="why">from your calendar</span></span>
+      <span>One-pager to Priya<b>Thursday</b><span class="why">you said you'd send it</span></span>
+      <span>Dana's birthday<b>in 3 days</b><span class="why">from your wiki</span></span>
+      <span>Local AI meetup<b>today 5:30</b><span class="why">from your calendar</span></span>
+    </div>
+    <div class="ask"><input type="text" placeholder="Ask Friday anything…" aria-label="Ask Friday"><button class="mic" aria-label="Talk" id="micBtn"></button></div>
+    <div class="day"><button class="btn display" style="height:34px;font-family:var(--fr-font-display);font-size:var(--fr-text-sm)">Start my day</button></div>
+  </div>
+
+  <!-- A window: OS controls in the title bar, the workspace's tools in its header -->
+  <div class="fwin glass" id="win" style="left:160px;top:72px;width:900px;height:560px;display:none">
+    <div class="fwin-bar"><span class="ws-ico" id="winIco"></span><span>Messages</span>
+      <div class="btns">
+        <button class="ibtn" title="Snap left (Win+←)" aria-label="Snap left" data-i="snapL"></button>
+        <button class="ibtn" title="Maximize (double-click the title)" aria-label="Maximize" data-i="max"></button>
+        <button class="ibtn" title="Open in its own tab (Ctrl-click the dock)" aria-label="Open in its own tab" data-i="tab"></button>
+        <button class="ibtn close" title="Close" aria-label="Close" data-i="x" id="winClose"></button>
+      </div>
+    </div>
+    <div class="fwin-body"><div class="ws mini-ws" id="miniws"></div></div>
+  </div>
+
+  <!-- Needs you: one card component, summoned by the pill -->
+  <div class="needs-panel glass" id="needs" role="dialog" aria-label="Needs you">
+    <h3>Needs you · 1 <a href="#" id="openActivity">Open Activity →</a></h3>
+    <div class="card needs">
+      <h4>Send the follow-up to Dana</h4>
+      <div class="what">An email to <span class="mono">dana@example.test</span>: “Thanks for Tuesday, here is the deck.” with one attachment, deck-v3.pdf. <a href="#">See exact text</a></div>
+      <div class="prov"><span>Asked in chat, by you</span><span>Kind: send</span><span>Expires in 58 min</span></div>
+      <div class="acts"><button class="btn ok">Approve</button><button class="btn">Change</button><button class="btn deny">Deny</button><button class="btn" style="margin-left:auto">Later</button></div>
+    </div>
+  </div>
+
+  <!-- Dock: three groups, the core set (HIG §3.4) -->
+  <div class="dock glass" id="dock"></div>
+
+  <div class="ctl glass">
+    <span>Prototype:</span>
+    <button class="btn" id="toggleWin">Open a window</button>
+    <button class="btn" id="toggleCluster">Hide the cluster</button>
+    <button class="btn" id="toggleCC">Computer control on</button>
+  </div>
+</div>
+
+<div class="pop glass" id="moreMenu" role="menu" aria-label="Workspace menu"></div>
+
+<script src="hig.js"></script>
+<script>
+protoNav('desktop.html');
+document.getElementById('openPalette').innerHTML = icon('search');
+document.getElementById('chatBtn').innerHTML = icon('chat');
+document.getElementById('gearBtn').innerHTML = icon('gear');
+document.getElementById('micBtn').innerHTML = icon('mic');
+document.getElementById('winIco').innerHTML = icon('messages');
+document.querySelector('.live .pop').outerHTML = '<div class="pop glass"><dl><dt>Time</dt><dd>19:24:08</dd><dt>Local seat</dt><dd>held · 27B</dd><dt>GPU memory</dt><dd>8.6 / 12 GB</dd><dt>RAM</dt><dd>6.1 / 32 GB</dd><dt>CPU</dt><dd>11%</dd><dt>Disk</dt><dd>42 GB free</dd></dl><div class="faint" style="margin-top:8px;font-size:var(--fr-text-xs)">Telemetry lives here, one hover away. A setting puts it back in the bar.</div></div>';
+
+// A still lattice of cubes, in cyan, no animation.
+(function lattice() {
+  const g = document.getElementById('cubes'); let s = '';
+  const cube = (x, y, r) => { const a = r, b = r * 0.5; return '<g transform="translate(' + x + ' ' + y + ')"><path d="M0 ' + (-a) + ' L' + a + ' ' + (-b) + ' L' + a + ' ' + b + ' L0 ' + a + ' L' + (-a) + ' ' + b + ' L' + (-a) + ' ' + (-b) + ' Z"/><path d="M0 ' + (-a) + ' L0 0 L' + a + ' ' + b + ' M0 0 L' + (-a) + ' ' + b + '"/></g>'; };
+  const pts = [[-34, -22, 26], [30, -26, 24], [0, 14, 30], [-40, 30, 20], [42, 26, 22], [-6, -52, 18], [20, 52, 16]];
+  for (const [x, y, r] of pts) s += cube(x, y, r);
+  g.innerHTML = s;
+})();
+
+// Dock: Life, Work, Friday; the core set; Ctrl-click opens a tab.
+const DOCK = [
+  ['Life', [['news', 'News'], ['messages', 'Messages', { open: true }], ['calendar', 'Calendar'], ['people', 'People']]],
+  ['Work', [['career', 'Career'], ['code', 'Code'], ['sites', 'Sites'], ['media', 'Media']]],
+  ['Friday', [['knowledge', 'Knowledge'], ['routines', 'Routines'], ['activity', 'Activity', { badge: 1 }], ['settings', 'Settings']]],
+];
+const dock = document.getElementById('dock');
+dock.innerHTML = DOCK.map(([g, items]) => '<div class="group"><div class="items">' + items.map(([id, l, o]) => '<button class="dock-btn' + (o && o.open ? ' open' : '') + '" data-id="' + id + '" title="' + l + '"><span class="ico">' + icon(id) + '</span><span>' + l + '</span>' + (o && o.open ? '<span class="dot"></span>' : '') + (o && o.badge ? '<span class="badge">' + o.badge + '</span>' : '') + '</button>').join('') + '</div><div class="gname">' + g + '</div></div>').join('');
+dock.querySelectorAll('.dock-btn').forEach(b => b.addEventListener('click', e => {
+  if (e.ctrlKey || e.metaKey) { toast('Opens ' + b.title + ' in its own tab.'); return; }
+  if (b.dataset.id === 'messages') toggleWin(); else if (b.dataset.id === 'settings') location.href = 'settings.html'; else if (b.dataset.id === 'activity') openNeeds(); else toast('Prototype: opens ' + b.title + ' as a window.');
+}));
+
+// The window
+const win = document.getElementById('win'), cluster = document.getElementById('cluster');
+let winOpen = false;
+function toggleWin() {
+  winOpen = !winOpen; win.style.display = winOpen ? 'flex' : 'none';
+  cluster.classList.toggle('hidden', winOpen);
+  document.querySelector('.dock-btn[data-id="messages"]').classList.toggle('open', winOpen);
+  document.getElementById('toggleWin').textContent = winOpen ? 'Close the window' : 'Open a window';
+  if (winOpen) renderMini();
+}
+document.getElementById('toggleWin').addEventListener('click', toggleWin);
+document.getElementById('winClose').addEventListener('click', toggleWin);
+document.querySelectorAll('.fwin-bar .ibtn').forEach(b => { b.innerHTML = icon(b.dataset.i); if (b.id !== 'winClose') b.addEventListener('click', () => {
+  if (b.dataset.i === 'max') { const m = win.dataset.max === '1'; win.dataset.max = m ? '' : '1'; Object.assign(win.style, m ? { left: '160px', top: '72px', width: '900px', height: '560px' } : { left: '12px', top: '48px', width: 'calc(100% - 24px)', height: 'calc(100% - 140px)' }); }
+  else if (b.dataset.i === 'snapL') { win.dataset.max = ''; Object.assign(win.style, { left: '12px', top: '48px', width: 'calc(50% - 18px)', height: 'calc(100% - 140px)' }); }
+  else toast('Prototype: ' + b.title + '.');
+}); });
+document.querySelector('.fwin-bar').addEventListener('dblclick', () => document.querySelector('.fwin-bar .ibtn[data-i="max"]').click());
+
+const ROWS = [['Dana Whitfield', 'Re: Tuesday\'s deck', 'work', '4:19 PM', true], ['Northwind Renewals', 'Your domain renews in 14 days', 'noise', '4:02 PM', true], ['Priya Raman', 'Interview loop · Thursday 2pm', 'work', '3:40 PM', false], ['Elena Costa', 'Saturday', 'family', '2:55 PM', false], ['Acme Bank', 'Your statement is ready', 'finance', '1:10 PM', false], ['The Weekly Signal', 'Issue 41: the quiet quarter', 'subs', '11:32 AM', false], ['Marcus Lee', 'Offer letter draft', 'work', 'Yesterday', false]];
+function renderMini() {
+  const w = document.getElementById('miniws');
+  w.innerHTML = '<header class="ws-header"><span class="ws-ico">' + icon('messages') + '</span><h1>Messages</h1><span class="status">158 conversations · <span class="needs">1 needs you</span></span>' +
+    '<div class="toolbar"><button class="btn primary t1">' + icon('compose') + '<span>Compose</span></button><button class="btn t2">' + icon('refresh') + '<span>Refresh</span></button><button class="btn t3">' + icon('inbox') + '<span>Filter</span></button><button class="btn t4">' + icon('inspector') + '<span>Details</span></button><button class="ibtn" id="more" title="More" aria-label="More actions">' + icon('more') + '</button></div></header>' +
+    '<div class="ws-body"><nav class="sidebar"><div class="group-label label-caps">Mail</div>' + [['Priority', 'star', 60, true], ['Inbox', 'inbox', 158], ['Starred', 'star', 4], ['Snoozed', 'clock', 2], ['Sent', 'send'], ['Drafts', 'draft', 3]].map(([l, ic, n, c]) => '<button class="sec" aria-current="' + (c ? 'true' : 'false') + '">' + icon(ic) + '<span>' + l + '</span>' + (n ? '<span class="n">' + n + '</span>' : '') + '</button>').join('') +
+    '<div class="group-label label-caps">Lanes</div>' + [['Career', 'career', 17], ['Finance', 'wallet', 2], ['Projects', 'code', 43], ['Family', 'people', 5], ['Noise', 'bell', 77]].map(([l, ic, n]) => '<button class="sec">' + icon(ic) + '<span>' + l + '</span><span class="n">' + n + '</span></button>').join('') + '<div class="foot">Work account read-only · <a href="settings.html#connectors">reconnect</a></div></nav>' +
+    '<div class="content split"><div class="list" tabindex="0"><div class="list-head"><span>Priority</span><span class="mono">7 shown</span></div>' + ROWS.map((r, i) => '<div class="row" tabindex="-1" aria-selected="' + (i === 0) + '">' + (r[4] ? '<span class="ud"></span>' : '<span></span>') + '<div class="t">' + r[0] + ' <span class="sub">· ' + r[1] + '</span></div><div class="m"><span class="lane ' + r[2] + '">' + r[2] + '</span>' + r[3] + '</div></div>').join('') + '</div>' +
+    '<div class="detail"><h2>Re: Tuesday\'s deck</h2><div class="meta"><span>Dana Whitfield</span><span>4:19 PM</span><span>6 in thread</span></div><div class="body"><p>Thanks again for Tuesday. The deck landed well.</p><p>Two small asks before Thursday: can you add the timeline slide we discussed, and send the one-pager to Priya?</p></div><div class="acts"><button class="btn primary">' + icon('send') + '<span>Reply</span></button><button class="btn">' + icon('sparkle') + '<span>Ask Friday to draft</span></button></div></div></div></div>';
+  const list = w.querySelector('.list'); installListKeys(list); list.querySelectorAll('.row').forEach(r => r.addEventListener('click', () => { list.querySelectorAll('.row').forEach(x => x.setAttribute('aria-selected', x === r)); }));
+  w.querySelector('#more').addEventListener('click', e => openMore(e.currentTarget));
+  w.querySelectorAll('.btn').forEach(b => b.addEventListener('click', () => toast('Prototype: ' + b.textContent.trim() + '.')));
+}
+const moreMenu = document.getElementById('moreMenu');
+function openMore(btn) {
+  const items = [['Open in its own tab', 'tab', ['Ctrl', 'Click']], ['Pop out', 'max'], ['Fullscreen with chat', 'chat', ['Ctrl', '⇧', 'F']], null, ['Chat about this', 'chat'], ['Talk about this', 'mic'], ['Earlier versions', 'clock'], ['Friday\'s changes to this workspace', 'sparkle'], null, ['Build the real Gmail layout', 'sparkle'], ['Keyboard shortcuts', 'info', ['?']]];
+  moreMenu.innerHTML = items.map(m => m ? '<div class="mi" role="menuitem" tabindex="0">' + icon(m[1]) + '<span>' + m[0] + '</span>' + (m[2] ? '<kbd>' + m[2].join('</kbd><kbd>') + '</kbd>' : '') + '</div>' : '<hr>').join('');
+  const r = btn.getBoundingClientRect(); moreMenu.style.top = (r.bottom + 6) + 'px'; moreMenu.style.left = Math.min(r.left, window.innerWidth - 280) + 'px'; moreMenu.classList.add('open');
+  moreMenu.querySelectorAll('.mi').forEach(mi => mi.addEventListener('click', () => { moreMenu.classList.remove('open'); toast('Prototype: “' + mi.textContent.trim() + '”.'); }));
+}
+document.addEventListener('click', e => { if (!e.target.closest('#moreMenu, #more')) moreMenu.classList.remove('open'); if (!e.target.closest('#needs, #needsPill, .dock-btn[data-id="activity"]')) document.getElementById('needs').classList.remove('open'); });
+
+// Needs you
+function openNeeds() { document.getElementById('needs').classList.add('open'); }
+document.getElementById('needsPill').addEventListener('click', openNeeds);
+document.getElementById('needsPill').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') openNeeds(); });
+document.getElementById('openActivity').addEventListener('click', e => { e.preventDefault(); toast('Prototype: opens Activity → Needs you.'); });
+document.querySelectorAll('#needs .btn').forEach(b => b.addEventListener('click', () => { document.getElementById('needs').classList.remove('open'); if (b.textContent === 'Later') toast('Folded. The pill stays amber until you decide.'); else { toast(b.textContent === 'Approve' ? 'Sent. The receipt is in Activity → Receipts and Left this machine.' : b.textContent === 'Deny' ? 'Denied. Nothing was sent.' : 'Prototype: a revised card.'); if (b.textContent !== 'Change') { document.getElementById('needsPill').style.display = 'none'; document.querySelector('.dock-btn[data-id="activity"] .badge').remove(); } } }));
+
+// Cluster and computer control toggles
+document.getElementById('toggleCluster').addEventListener('click', e => { const h = cluster.classList.toggle('hidden'); e.target.textContent = h ? 'Show the cluster' : 'Hide the cluster'; });
+document.getElementById('toggleCC').addEventListener('click', e => { const el = document.getElementById('ccLive'); const on = el.style.display === 'none'; el.style.display = on ? 'inline-flex' : 'none'; e.target.textContent = on ? 'Computer control off' : 'Computer control on'; });
+document.getElementById('chatBtn').addEventListener('click', () => toast('Prototype: the chat tray docks on the right; the window stops at its edge.'));
+document.getElementById('gearBtn').addEventListener('click', () => location.href = 'settings.html');
+document.getElementById('micBtn').addEventListener('click', () => toast('Prototype: voice starts; the hologram moves only while she speaks.'));
+
+const pal = installPalette(() => [
+  { name: 'Actions', items: [{ label: 'Show my day', icon: 'sun', run: () => { cluster.classList.remove('hidden'); } }, { label: 'Fullscreen with chat', icon: 'chat', keys: ['Ctrl', '⇧', 'F'] }, { label: 'Go off the record', icon: 'shield', run: () => toast('Prototype: the diff, then the yes.') }, { label: 'Start voice', icon: 'mic', keys: ['Ctrl', '⇧', 'Space'] }] },
+  { name: 'Workspaces', items: DOCK.flatMap(([, items]) => items).flatMap(([id, l]) => [{ label: 'Open ' + l, icon: id }, { label: 'Open ' + l + ' in a tab', icon: 'tab', hint: '/w/' + id }]) },
+  { name: 'Settings', items: [['Where she thinks', 'models'], ['Off the record', 'privacy'], ['Telemetry in the bar', 'appearance'], ['The start screen', 'appearance']].map(([l, p]) => ({ label: l, hint: 'Settings', icon: 'gear', run: () => location.href = 'settings.html#' + p })) },
+  { name: 'Needs you', items: [{ label: 'Approve: send the follow-up to Dana', hint: 'external send', icon: 'check', run: openNeeds }] },
+]);
+document.getElementById('openPalette').addEventListener('click', pal.open);
+document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === '/') { e.preventDefault(); cluster.classList.remove('hidden'); cluster.querySelector('input').focus(); } if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); location.href = 'settings.html'; } });
+</script>
+</body>
+</html>
