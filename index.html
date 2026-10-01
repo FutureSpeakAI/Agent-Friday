@@ -3665,6 +3665,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/vendor/three-r128-UnrealBloomPass.js"></script>
     <!-- Studio › Files: the 3D file browser (defines window.Files3DPanel). -->
     <script src="/static/studio_files3d.js"></script>
+    <!-- Media: one card per piece of work (defines window.MediaWS). -->
+    <script src="/static/media_ws.js"></script>
     <!-- The same 3D engine for News, Contacts, Calendar, Messages, Home tasks, Code and the model library. -->
     <script src="/static/friday3d_records.js"></script>
     <!-- Messages: the Gmail-grade inbox (defines window.FridayMailPanel). -->
@@ -59721,6 +59723,13 @@ function App() {
     futurespeak: showAllWorkspaces ? /*#__PURE__*/React.createElement(FuturespeakWS, null) : /*#__PURE__*/React.createElement(SitesWS, null),
     family: /*#__PURE__*/React.createElement(FamilyWS, null),
     studio: /*#__PURE__*/React.createElement(StudioWS, null),
+    media: window.MediaWS ? /*#__PURE__*/React.createElement(window.MediaWS, null) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: '#888',
+        fontSize: 12,
+        padding: 20
+      }
+    }, "Media did not load."),
     trust: with3D('trust', 'people', /*#__PURE__*/React.createElement(TrustWS, null)),
     system: /*#__PURE__*/React.createElement(SystemWS, null),
     code: with3D('code', 'code', /*#__PURE__*/React.createElement(CodeWS, null)),
