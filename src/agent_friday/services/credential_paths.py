@@ -696,13 +696,25 @@ _IMPLICIT_RECURSION_RE = re.compile(
 #: GNU short flags combined with a capital R (`-laR`, `-Ra`), read on the text
 #: as typed because `_flat` lowercases: capital only, so PowerShell's `-Force`
 #: and `-Filter` are not taken for recursion.
-_GNU_RECURSE_RE = re.compile(r"(?<=\s)-[A-Za-z]{0,4}R[A-Za-z]{0,4}(?=\s|$)")
+_NOT_A_FLAG_CLUSTER = r"(?!(?i:raw|uri|port|sort|dir|bor|bxor|nor|force)(?:\s|$))"
+_GNU_RECURSE_RE = re.compile(
+    r"(?<=\s)-" + _NOT_A_FLAG_CLUSTER + r"[A-Za-z]{0,4}R[A-Za-z]{0,4}(?=\s|$)")
+#: GNU short flags combined with a lowercase r (`-ri`, `-rn`, `-rl`, `-rni`,
+#: `-ir`). At most seven letters, and not the short PowerShell parameters that
+#: happen to contain an r (`-Raw`, `-Uri`, `-Port`, `-Sort`, `-Dir`, `-Force`).
+_GNU_LOWER_RECURSE_RE = re.compile(
+    r"(?<=\s)-" + _NOT_A_FLAG_CLUSTER + r"[a-z]{0,3}r[a-z]{0,3}(?=\s|$)", re.I)
+#: A search tool that descends into a directory (or the working directory,
+#: when it is given no path) without being asked.
+_IMPLICIT_SEARCH_RE = re.compile(r"(?<![a-z0-9_-])(?:rg|ag|ack)(?![a-z0-9_-])")
 _MAX_DIR_ENTRIES = 300
 
 
 def _asks_recursion(typed: str) -> bool:
     """True when `typed` (a command as written) asks for recursion by a flag."""
-    return bool(_RECURSE_RE.search(_flat(typed)) or _GNU_RECURSE_RE.search(typed))
+    return bool(_RECURSE_RE.search(_flat(typed)) or _GNU_RECURSE_RE.search(typed)
+                or _GNU_LOWER_RECURSE_RE.search(typed)
+                or _IMPLICIT_SEARCH_RE.search(_flat(typed)))
 
 #: What a refused walk is called; `refusal_command` reads this to word the
 #: refusal, since no single file was named.
@@ -1054,6 +1066,21 @@ def refusal(path) -> str:
     tail = "You can open it yourself" + (
         "." if where_text in ("", ".") else f" at {where_text}.")
     return f"I won't open {name}: {lead}. {_CLOSED} {tail}"
+
+
+#: The fixed opening of every line `refusal` and `refusal_command` can return.
+#: Result classification reads it, so a refusal is recorded as a denial in the
+#: trace, journal, ledger and voice tray; a new refusal shape adds its opening
+#: here in the same edit (a test walks every shape through the classifier).
+_REFUSAL_LEADS = re.compile(
+    r"^(?:I won't open |I won't run that: |That's a raw device path, "
+    r"|That goes into this PC's own disks "
+    r"|I can't read .{1,300}? to tell whether it holds a private key)", re.S)
+
+
+def is_refusal(text) -> bool:
+    """True when `text` is one of the lines Friday says instead of reading a credential."""
+    return isinstance(text, str) and bool(_REFUSAL_LEADS.match(text))
 
 
 def refusal_command(why: str) -> str:

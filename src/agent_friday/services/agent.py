@@ -10481,7 +10481,7 @@ def _tool_call_status(result):
     r = result if isinstance(result, str) else ""
     if r.startswith(_TOOL_PENDING_SENTINELS):
         return "pending"
-    if r.startswith(_TOOL_DENY_SENTINELS):
+    if r.startswith(_TOOL_DENY_SENTINELS) or _cred_paths.is_refusal(r):
         return "deny"
     if r.startswith(_TOOL_ERROR_SENTINELS):
         return "error"
@@ -10502,6 +10502,8 @@ def _tool_call_reason(result, status):
                      + _TOOL_ERROR_SENTINELS):
         if r.startswith(sentinel):
             return sentinel.strip("[]() ").lower() or status
+    if status == "deny" and _cred_paths.is_refusal(r):
+        return "credential refused"
     return status
 
 
