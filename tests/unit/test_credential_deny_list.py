@@ -83,12 +83,17 @@ def test_scan_command(cmd, denied):
 
 def test_read_file_refuses_and_does_not_leak(friday_dir):
     import agent_friday.services.agent as agent
-    keystore = friday_dir / "security" / "keystore.json"
-    keystore.parent.mkdir(parents=True, exist_ok=True)
-    keystore.write_text('{"root_key": "SENTINEL-DO-NOT-LEAK-9931"}', encoding="utf-8")
-    out = agent._tool_read_file({"path": str(keystore)})
-    assert "SENTINEL-DO-NOT-LEAK-9931" not in out
-    assert "won't open" in out.lower()
+    # A probe file in the keystore's folder, never the session's real keystore.json:
+    # overwriting that one left a malformed root key for every later test.
+    probe = friday_dir / "security" / "keystore-read-probe.json"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.write_text('{"root_key": "SENTINEL-DO-NOT-LEAK-9931"}', encoding="utf-8")
+    try:
+        out = agent._tool_read_file({"path": str(probe)})
+        assert "SENTINEL-DO-NOT-LEAK-9931" not in out
+        assert "won't open" in out.lower()
+    finally:
+        probe.unlink(missing_ok=True)
 
 
 def test_read_file_still_reads_ordinary_files(friday_dir):
