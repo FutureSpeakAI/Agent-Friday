@@ -42,6 +42,10 @@ import pytest
 
 from agent_friday.services import federation as fed
 
+# The federation is a held feature (off by default); these tests exercise
+# the federation code itself, so they run with its switch on.
+pytestmark = pytest.mark.usefixtures("federation_on")
+
 fed._ensure_schema()
 
 

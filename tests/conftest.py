@@ -318,6 +318,24 @@ def friday_dir():
     return d
 
 
+@pytest.fixture
+def federation_on(monkeypatch):
+    """settings.held_features.federation switched on for one test, for tests
+    of the federation, marketplace, economy, compute and defederation code
+    itself. Off is the default; tests/unit/test_held_federation.py and
+    tests/api/test_held_federation_routes.py hold what off means.
+
+    It answers at the reader rather than in the settings, so a test that
+    replaces the settings loaders with its own stubs keeps the switch on."""
+    from agent_friday.services import held_features
+    real = held_features.enabled
+
+    def _enabled(feature, settings=None):
+        return True if feature == held_features.FEDERATION else real(feature, settings)
+    monkeypatch.setattr(held_features, "enabled", _enabled)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _fresh_swr_cache():
     """Cached panel data must not carry from one test into the next."""

@@ -3,6 +3,10 @@ import json
 import pytest
 import base64
 
+# The federation is a held feature (off by default); these tests exercise
+# the federation code itself, so they run with its switch on.
+pytestmark = pytest.mark.usefixtures("federation_on")
+
 
 def auth_headers():
     import agent_friday.core as core

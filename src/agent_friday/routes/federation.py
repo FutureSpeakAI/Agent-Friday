@@ -30,9 +30,16 @@ from agent_friday.services import federation_transport as transport
 from agent_friday.services import marketplace
 from agent_friday.services import economy
 from agent_friday.services import moderation
+from agent_friday.services import held_features
 from agent_friday.routes._errors import error_text, public_result
 
 federation_bp = Blueprint("federation", __name__)
+
+# Held feature: while settings.held_features.federation is off, the
+# federation, marketplace and economy routes answer "not enabled". The
+# identity card, the well-known document and moderation stay open; a purchase
+# is refused by its own route in every configuration.
+federation_bp.before_request(held_features.federation_route_gate)
 
 
 # ── Federation: Identity ──────────────────────────────────────────────────────
@@ -365,6 +372,9 @@ def remove_listing(listing_id):
 @federation_bp.route("/api/marketplace/purchase", methods=["POST"])
 @login_required
 def purchase_content():
+    # Buying is not in this release, whatever the held federation switch says.
+    if not marketplace.PURCHASES_IN_THIS_RELEASE:
+        return jsonify(marketplace.purchase_refusal()), 403
     data = request.get_json(silent=True) or {}
     listing_id = data.get("listing_id")
     buyer_agent_id = data.get("buyer_agent_id")

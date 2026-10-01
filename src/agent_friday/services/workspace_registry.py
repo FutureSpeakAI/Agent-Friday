@@ -8,6 +8,12 @@ and Friday's own prompts name a workspace exactly as the dock does.
 
 A name here is also what people say out loud, so the file keeps each label
 distinct and each alias unique; tests hold that.
+
+A workspace marked `held` names a switch in settings.held_features. While
+that switch is off, the workspace is not one Friday can name or reach: it is
+missing from workspaces(), ids(), labels(), aliases(), resolve(), tool_list()
+and spoken_list(). get() and all_workspaces() still see it, so its own code
+and data keep their names.
 """
 from __future__ import annotations
 
@@ -55,8 +61,24 @@ def registry() -> dict:
         return _CACHE["data"]
 
 
-def workspaces() -> list[dict]:
+def all_workspaces() -> list[dict]:
+    """Every workspace in the file, held or not."""
     return list(registry().get("workspaces") or [])
+
+
+def is_held(ws: dict | str | None) -> bool:
+    """True while the workspace's held switch is off."""
+    w = get(ws) if isinstance(ws, str) else ws
+    feature = (w or {}).get("held")
+    if not feature:
+        return False
+    from agent_friday.services import held_features
+    return not held_features.enabled(feature)
+
+
+def workspaces() -> list[dict]:
+    """The workspaces Friday can offer now: every one but those held."""
+    return [w for w in all_workspaces() if not is_held(w)]
 
 
 def ids() -> list[str]:
@@ -64,7 +86,7 @@ def ids() -> list[str]:
 
 
 def get(ws_id: str) -> dict | None:
-    for w in workspaces():
+    for w in all_workspaces():
         if w["id"] == ws_id:
             return w
     return None
@@ -76,19 +98,21 @@ def label(ws_id: str) -> str:
     return w["label"] if w else str(ws_id or "").replace("_", " ").title()
 
 
-def labels() -> dict[str, str]:
-    return {w["id"]: w["label"] for w in workspaces()}
+def labels(include_held: bool = False) -> dict[str, str]:
+    ws = all_workspaces() if include_held else workspaces()
+    return {w["id"]: w["label"] for w in ws}
 
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip().lower())
 
 
-def aliases() -> dict[str, str]:
+def aliases(include_held: bool = False) -> dict[str, str]:
     """Every word that names a workspace -> its id: the id, the label, and
-    the listed aliases."""
+    the listed aliases. A caller that keeps the table across a change of the
+    held switch builds it with include_held=True and asks is_held() per hit."""
     out: dict[str, str] = {}
-    for w in workspaces():
+    for w in (all_workspaces() if include_held else workspaces()):
         for word in [w["id"], w["label"]] + list(w.get("aliases") or []):
             out.setdefault(_norm(word), w["id"])
     return out

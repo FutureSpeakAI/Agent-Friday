@@ -423,6 +423,7 @@ def test_insights_route_never_500s(client):
 #  Platform accounts
 # ═════════════════════════════════════════════════════════════════════════════
 
+@pytest.mark.usefixtures("federation_on")
 def test_platforms_status_lists_declared_adapters(client):
     res = client.get("/api/content/platforms")
     body = res.get_json()

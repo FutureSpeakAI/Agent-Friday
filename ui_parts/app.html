@@ -400,7 +400,22 @@ if (typeof document !== 'undefined') {
 // always holds every workspace so a deep link resolves whichever subset the
 // dock renders.
 function fridayDockGroups(reg){const R=reg||{};
-  return(R.groups||[]).map(g=>({name:g.label,items:(R.workspaces||[]).filter(w=>w.group===g.id).map(w=>({id:w.id,ico:w.glyph,icon:w.icon||w.id,label:w.label,core:!!w.core,aka:w.aliases||[],blurb:w.blurb||'',accent:w.accent||'cyan'}))})).filter(g=>g.items.length)}
+  return(R.groups||[]).map(g=>({name:g.label,items:(R.workspaces||[]).filter(w=>w.group===g.id).map(w=>({id:w.id,ico:w.glyph,icon:w.icon||w.id,label:w.label,core:!!w.core,aka:w.aliases||[],blurb:w.blurb||'',accent:w.accent||'cyan',held:w.held||''}))})).filter(g=>g.items.length)}
+// ═══ HELD FEATURES ═══
+// Features held back from this release. Each keeps its code, panels and data;
+// while its switch in settings.held_features is off, no surface offers it.
+// App hands every settings load to fridaySetHeldFeatures, so the dock, the
+// palette, Settings and each workspace read one current answer.
+let FRIDAY_HELD_FEATURES={};
+function fridaySetHeldFeatures(held){FRIDAY_HELD_FEATURES=held&&typeof held==='object'?held:{}}
+function fridayHeldOn(feature,settings){
+  const held=settings&&settings.held_features?settings.held_features:FRIDAY_HELD_FEATURES;
+  return !!(held&&held[feature]===true)}
+// A workspace whose `held` switch is off: not in the dock, not in the
+// palette, and it does not open.
+function fridayWsHeld(w){
+  const ws=typeof w==='string'?WS_BY_ID[fridayWorkspaceId(w)]:w;
+  return !!(ws&&ws.held&&!fridayHeldOn(ws.held))}
 const DOCK_GROUPS=fridayDockGroups(window.FRIDAY_WORKSPACE_REGISTRY);
 const WS=DOCK_GROUPS.flatMap(g=>g.items);
 const WS_BY_ID=WS.reduce((m,w)=>(m[w.id]=w,m),{});
@@ -443,8 +458,9 @@ function dockArrangement(custom,showAll){
   // mentioned in its registry position — so a workspace added by a later version
   // of Friday APPEARS rather than vanishing because a saved order predates it.
   const seen=new Set(); const ids=[];
-  rawOrder.forEach(id=>{if(WS_BY_ID[id]&&!seen.has(id)){seen.add(id);ids.push(id)}});
-  WS.forEach(w=>{if(!seen.has(w.id)){seen.add(w.id);ids.push(w.id)}});
+  // A held workspace is not in the dock at all, saved order or not.
+  rawOrder.forEach(id=>{if(WS_BY_ID[id]&&!fridayWsHeld(id)&&!seen.has(id)){seen.add(id);ids.push(id)}});
+  WS.forEach(w=>{if(!fridayWsHeld(w)&&!seen.has(w.id)){seen.add(w.id);ids.push(w.id)}});
   const visible=ids.filter(id=>configured?!hidden.has(id):(showAll||WS_BY_ID[id].core));
   const groups=[];
   visible.forEach(id=>{
@@ -575,7 +591,7 @@ window.__fridayNavDecls = {
 };
 function fridayNavManifest() {
   const workspaces = {};
-  WS.forEach(w => {
+  WS.filter(w => !fridayWsHeld(w)).forEach(w => {
     workspaces[w.id] = {
       label: w.label
     };
@@ -2206,7 +2222,7 @@ function CommandPalette({onClose,onOpenWs,openWins,commands}){
   },[]);
 
   const query=q.trim().toLowerCase();
-  const wsResults=WS.filter(w=>!query||w.label.toLowerCase().includes(query)||w.id.includes(query)||(w.aka||[]).some(a=>a.includes(query)))
+  const wsResults=WS.filter(w=>!fridayWsHeld(w)).filter(w=>!query||w.label.toLowerCase().includes(query)||w.id.includes(query)||(w.aka||[]).some(a=>a.includes(query)))
     .map(w=>({kind:'ws',id:w.id,ico:<WsIcon ws={w}/>,label:w.label,meta:openWins.has(w.id)?'open':w.blurb||'open workspace'}));
   const contactResults=(query?contacts.filter(c=>(c.name||c.label||'').toLowerCase().includes(query)):[]).slice(0,6)
     .map(c=>({kind:'contact',id:c.id||c.name,ico:'👤',label:c.name||c.label,meta:c.email||c.role||'contact'}));
@@ -6499,6 +6515,11 @@ const LICENSE_TERMS=[
   {id:'priced',label:'Priced (sell it)',hint:'commerce · set a price'},
 ];
 const LIC_LBL={'all-rights-reserved':'All rights reserved','CC-BY-4.0':'CC BY 4.0','CC-BY-SA-4.0':'CC BY-SA 4.0','CC0':'CC0','priced':'Priced','custom':'Custom'};
+// A price is set in positrons, which belong to the held federation: 'priced'
+// is offered only while that switch is on. A piece already priced keeps the
+// option, so its saved terms still read back as they were.
+function licenseTermsShown(current){
+  return LICENSE_TERMS.filter(t=>t.id!=='priced'||fridayHeldOn('federation')||current==='priced')}
 function LicensePicker({value,onChange,label='License'}){
   const v=value||{terms:'all-rights-reserved'};
   const set=patch=>onChange&&onChange(Object.assign({},v,patch));
@@ -6508,7 +6529,7 @@ function LicensePicker({value,onChange,label='License'}){
     <div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{label} <span style={{textTransform:'none',color:'#6a8b98'}}>· {cur.hint}</span></div>
     <div style={{display:'flex',gap:8}}>
       <select className="input" style={{flex:1}} value={v.terms} onChange={e=>set({terms:e.target.value})}>
-        {LICENSE_TERMS.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
+        {licenseTermsShown(v.terms).map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
       </select>
       {v.terms==='priced'&&<div style={{display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}>
         <input className="input" type="number" min="0" style={{width:96}} value={price} onChange={e=>set({market:{price:Number(e.target.value)||0}})} placeholder="price"/>
@@ -9654,13 +9675,13 @@ function NewsWS(){
 
     {/* ── TRUST TAB (Source Trust Graph + Federation) ── */}
     {tab==='trust'&&<div>
-      {/* Federation status */}
-      <div className="fed-strip">
+      {/* Federation status, while the held federation switch is on */}
+      {fridayHeldOn('federation')&&<div className="fed-strip">
         <span className="fed-ico">🔗</span>
         <span><b>Federation</b> — {fedStatus?(fedStatus.signed_count||0):0} attestation{(fedStatus&&fedStatus.signed_count===1)?'':'s'} signed, {fedStatus?(fedStatus.imported_count||0):0} imported from peers</span>
         {fedStatus&&fedStatus.agent_id&&<span className="fed-id" title={'This agent’s Ed25519 identity: '+fedStatus.agent_id}>id {fedStatus.agent_id.slice(0,10)}…</span>}
         {fedStatus&&!fedStatus.agent_id&&<span className="fed-id" style={{color:'#f59e0b'}}>no signing key (install pynacl)</span>}
-      </div>
+      </div>}
       <div style={{fontSize:11,color:'#888',margin:'8px 0'}}>{fridayName()} scores every source on six dimensions, learned by cross-referencing claims across outlets on every fetch. Click a source for its breakdown and observation history.</div>
       {trustLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading source trust scores…</div>:
        trustBoard.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>No sources scored yet. {fridayName()} builds the graph as it fetches news — check back after a fetch cycle (every few minutes).</div>:
@@ -11158,6 +11179,9 @@ const CONTENT_PLATFORMS={
   discord:{ico:'🎮',label:'Discord',color:'#5865f2',limit:2000,formats:['announce']},
   telegram:{ico:'✈️',label:'Telegram',color:'#229ed9',limit:4096,formats:['announce']},
 };
+// Publishing onto the federation is part of the held federation: its
+// platform is listed only while that switch is on.
+function contentPlatformShown(p){return p!=='federation'||fridayHeldOn('federation')}
 const cpMeta=p=>CONTENT_PLATFORMS[p]||{ico:'🌐',label:p||'?',color:'#8891a8',limit:0,formats:['post']};
 // Plain-language scope fallbacks (spec §12.3) — the backend's scopes_plain wins
 // when present; these keep the "Cannot:" negative space honest either way.
@@ -11233,7 +11257,7 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
   const flash=t=>{setToast(t);};
   const didInit=useRef(false);
   const connected=p=>{const e=(platforms||[]).find(x=>x.name===p);return!!(e&&e.status&&e.status.connected)};
-  const chipList=(platforms&&platforms.length)?platforms.map(p=>p.name):Object.keys(CONTENT_PLATFORMS).filter(p=>p!=='discord'&&p!=='telegram');
+  const chipList=(platforms&&platforms.length)?platforms.map(p=>p.name):Object.keys(CONTENT_PLATFORMS).filter(p=>p!=='discord'&&p!=='telegram'&&contentPlatformShown(p));
   useEffect(()=>{if(didInit.current)return;const conn=chipList.filter(connected);if(conn.length){didInit.current=true;setSel(s=>s.length?s:conn.slice(0,4))}},[platforms]);
   // Deep-link / Ideas-graduation prefill: load the draft post into the composer.
   useEffect(()=>{
@@ -11627,7 +11651,7 @@ function ContentAccountsTab({platforms,reload}){
   const[paused,setPaused]=useState(false);const[staging,setStaging]=useState('');const[confWin,setConfWin]=useState('2');
   const flash=t=>{setToast(t);};
   useEffect(()=>{fetch('/api/content/queue').then(r=>r.json()).then(d=>setPaused(!!(d.paused||d.pause_all))).catch(()=>{})},[]);
-  const list=(platforms&&platforms.length)?platforms:Object.keys(CONTENT_PLATFORMS).filter(p=>p!=='discord'&&p!=='telegram').map(name=>({name,label:cpMeta(name).label,status:{connected:false}}));
+  const list=(platforms&&platforms.length)?platforms:Object.keys(CONTENT_PLATFORMS).filter(p=>p!=='discord'&&p!=='telegram'&&contentPlatformShown(p)).map(name=>({name,label:cpMeta(name).label,status:{connected:false}}));
   const setAV=(name,k,v)=>setAuthVals(s=>({...s,[name]:{...(s[name]||{}),[k]:v}}));
   const connect=async(p)=>{
     const name=p.name;const m=cpMeta(name);
@@ -11764,7 +11788,7 @@ function QuickPostModal({payload,onClose}){
     }catch(e){flash('Request failed')}
     setBusy(false);
   };
-  const chipSet=plats.length?plats:Object.keys(CONTENT_PLATFORMS).filter(p=>p!=='discord'&&p!=='telegram').map(name=>({name,status:{connected:false}}));
+  const chipSet=plats.length?plats:Object.keys(CONTENT_PLATFORMS).filter(p=>p!=='discord'&&p!=='telegram'&&contentPlatformShown(p)).map(name=>({name,status:{connected:false}}));
   return(<div onClick={onClose} style={{position:'fixed',inset:0,zIndex:210,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
     <div onClick={e=>e.stopPropagation()} style={{width:'min(560px,92vw)',maxHeight:'85vh',overflowY:'auto',background:'rgba(10,10,18,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:12,padding:16,boxShadow:'0 12px 40px rgba(0,0,0,0.8)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
@@ -16934,7 +16958,7 @@ function DockSettingsPanel(){
   const seeded=()=>({
     order:shape.ids.slice(),
     hidden:shape.configured?(custom.hidden||[]).slice()
-                           :WS.filter(w=>!shape.visible.includes(w.id)).map(w=>w.id)});
+                           :WS.filter(w=>!fridayWsHeld(w)&&!shape.visible.includes(w.id)).map(w=>w.id)});
   const toggleVisible=id=>{
     const base=seeded();const hid=new Set(base.hidden);
     if(hid.has(id))hid.delete(id);else hid.add(id);
@@ -19133,10 +19157,12 @@ function SettingsTabCosts() {
   }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")), /*#__PURE__*/React.createElement(ScheduledCloudSection, null), /*#__PURE__*/React.createElement(LoopGuardSwitch, { on: costBudget.loop_guard_enabled !== false, onToggle: () => saveBudget({ loop_guard_enabled: costBudget.loop_guard_enabled === false }) }), /*#__PURE__*/React.createElement(PhoneCostsSection, null));
 }
 
-// Federation and Economy are on hold: the V6 wholeness spec says they must
-// not surface. Their panels, routes and data are untouched; setting this to
-// true puts both back in the Settings rail.
-const SETTINGS_SHOW_HELD_FEATURES = false;
+// Federation and Economy are held features (settings.held_features.federation).
+// Their panels, routes and data stay in the source; while the switch is off
+// neither is a Settings tab, and their old ids land on General.
+function settingsShowHeldFeatures() {
+  return fridayHeldOn('federation');
+}
 // Tab ids that earlier layouts used, from buttons, events and
 // window.__fridaySettingsTab all over the app. Each lands on the tab that now
 // holds that content, never on a blank pane.
@@ -19162,7 +19188,7 @@ const SETTINGS_HELD_TABS = [{
 }];
 function settingsTabId(t) {
   if (!t) return 'general';
-  if (SETTINGS_SHOW_HELD_FEATURES && (t === 'federation' || t === 'economy')) return t;
+  if (settingsShowHeldFeatures() && (t === 'federation' || t === 'economy')) return t;
   return SETTINGS_TAB_ALIASES[t] || t;
 }
 // Two edits, always. An entry here with no branch in the render chain below
@@ -19204,11 +19230,11 @@ const SETTINGS_TABS = [{
   id: 'advanced',
   label: 'Advanced',
   sub: 'Rarely needed controls and diagnostics. Nothing here is required for everyday use.'
-}].concat(SETTINGS_SHOW_HELD_FEATURES ? SETTINGS_HELD_TABS : []).concat([{
+}, {
   id: 'about',
   label: 'About',
   sub: 'Version, updates and credits.'
-}]);
+}];
 fridayDeclareNav('settings', {
   key: 'tab',
   keys: ['tab', 'section'],
@@ -19218,6 +19244,9 @@ fridayDeclareNav('settings', {
     aliases: Object.keys(SETTINGS_TAB_ALIASES).filter(a => SETTINGS_TAB_ALIASES[a] === t.id)
   }))
 });
+// The rail while the held switch is on: every tab above, with the held
+// tabs just before About.
+const SETTINGS_TABS_WITH_HELD = SETTINGS_TABS.slice(0, -1).concat(SETTINGS_HELD_TABS, SETTINGS_TABS.slice(-1));
 // A titled section on the Settings tab now showing, found by its title and
 // scrolled into view below the pane's sticky heading rather than under it.
 // The title it landed on, or '' when there is none.
@@ -19302,7 +19331,7 @@ function SettingsWS() {
     save,
     msg
   } = useSettings();
-  const TABS = SETTINGS_TABS;
+  const TABS = settingsShowHeldFeatures() ? SETTINGS_TABS_WITH_HELD : SETTINGS_TABS;
   const cur = TABS.filter(t => t.id === tab)[0] || TABS[0];
   const ok = msg && msg.indexOf('Error') !== 0;
   return /*#__PURE__*/React.createElement("div", {
@@ -19441,7 +19470,7 @@ function SettingsWS() {
   }))), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'advanced' && /*#__PURE__*/React.createElement(SettingsTabAdvanced, {
     s: s,
     save: save
-  }), SETTINGS_SHOW_HELD_FEATURES && tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), SETTINGS_SHOW_HELD_FEATURES && tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null))));
+  }), settingsShowHeldFeatures() && tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), settingsShowHeldFeatures() && tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null))));
 }
 // Appearance & 3D: the dock, how far it stands out, and the 3D effects.
 function SettingsTabAppearance({
@@ -21998,7 +22027,9 @@ function App(){
   const cancelClose=id=>{clearTimeout(closeTimers.current[id]);delete closeTimers.current[id];setClosingWins(p=>{if(!p.has(id))return p;const n=new Set(p);n.delete(id);return n})};
   // In a workspace tab there are no windows: another workspace opens as its own
   // page, Settings as the panel, and this workspace is already here.
-  const tabGo=rawId=>{if(!STANDALONE_WS||STANDALONE_WS==='settings')return false;const id=fridayWorkspaceId(rawId);if(id==='settings')setSettingsOpen(true);else if(id!==STANDALONE_WS)window.location.href='/w/'+encodeURIComponent(id);return true};
+  // Every open and toggle passes here first. A held workspace counts as
+  // handled: it neither opens a window nor navigates a tab.
+  const tabGo=rawId=>{if(fridayWsHeld(rawId))return true;if(!STANDALONE_WS||STANDALONE_WS==='settings')return false;const id=fridayWorkspaceId(rawId);if(id==='settings')setSettingsOpen(true);else if(id!==STANDALONE_WS)window.location.href='/w/'+encodeURIComponent(id);return true};
   const toggle=id=>{if(tabGo(id))return;if(openWinsRef.current.has(id)&&!closingRef.current.has(id)){close(id);return}cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
   // Ensure a workspace is OPEN (never toggles it closed) — used by deep-link nav
   // so clicking a notification for an already-open workspace doesn't close it.
@@ -22406,10 +22437,13 @@ function App(){
   const showAllWorkspaces=agentSettings.show_all_workspaces!==false;
   // One computation of what the dock is, shared by the dock itself and by
   // Settings → Appearance & 3D. Memoised because App re-renders on every chat token.
-  const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces]);
+  // Held features first: the dock, the palette and every workspace below
+  // read the switch through fridayHeldOn during this same render.
+  fridaySetHeldFeatures(agentSettings.held_features);
+  const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces,agentSettings.held_features]);
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
-  const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:<MarketplaceWS/>,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
+  const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;

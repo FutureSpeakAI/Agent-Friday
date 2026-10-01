@@ -21,10 +21,16 @@ from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import compute_provider as prov
 from agent_friday.services import compute_client as client
+from agent_friday.services import held_features
 from agent_friday.services.web_safety import UnsafeURLError
 from agent_friday.routes._errors import api_error, public_result
 
 compute_bp = Blueprint("compute", __name__)
+
+# Federated compute is part of the held federation: while
+# settings.held_features.federation is off, every route here answers
+# "not enabled".
+compute_bp.before_request(held_features.federation_route_gate)
 
 
 # ── Employee (receive + execute) ──────────────────────────────────────────────

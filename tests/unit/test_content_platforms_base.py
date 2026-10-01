@@ -286,6 +286,7 @@ def test_registry_tolerates_module_without_adapter_class(monkeypatch):
     assert "no PlatformAdapter subclass" in (preg.import_error("zz_empty") or "")
 
 
+@pytest.mark.usefixtures("federation_on")
 def test_registry_status_aggregates_every_declared_adapter():
     st = preg.status()
     assert set(st["platforms"]) == set(preg.ADAPTER_MODULES)

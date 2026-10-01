@@ -117,6 +117,7 @@ CASES = [
 ]
 
 
+@pytest.mark.usefixtures("federation_on")
 @pytest.mark.parametrize("case", CASES, ids=[c[0] for c in CASES])
 def test_a_failing_route_says_what_failed_and_hides_how(client, monkeypatch, case):
     _id, method, url, body, target, exc_type, status, key = case
@@ -190,6 +191,7 @@ def test_take_comparison_keeps_the_real_error_for_the_model_and_hides_it_from_th
     assert resp.get_json()["error_id"]
 
 
+@pytest.mark.usefixtures("federation_on")
 def test_federation_inbox_does_not_hand_a_peer_the_decrypt_error(client, monkeypatch):
     _patch(monkeypatch, R + "federation:transport.decrypt_message",
            lambda *_a, **_k: {"ok": False, "error": _marked()})

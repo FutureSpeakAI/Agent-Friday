@@ -2752,8 +2752,10 @@ def _maybe_handle_open_intent(message):
 # dock does and an alias cannot point at a workspace that does not exist.
 # There is no 'home': the desktop is the landing screen and has no window, so
 # "take me home" means closing the open windows, which is not an alias's job.
-_WORKSPACE_ALIASES = _ws_registry.aliases()
-_WORKSPACE_LABELS = _ws_registry.labels()
+# Both tables hold every workspace, held or not, so turning a held switch on
+# needs no restart; _resolve_workspace refuses a held one while it is off.
+_WORKSPACE_ALIASES = _ws_registry.aliases(include_held=True)
+_WORKSPACE_LABELS = _ws_registry.labels(include_held=True)
 
 
 def _resolve_workspace(name):
@@ -2784,12 +2786,15 @@ def _resolve_workspace(name):
     # "people graph", "trust score") isn't destroyed by the trailing-noise
     # stripper below — "page" would otherwise turn "front page" into "front".
     hit = _WORKSPACE_ALIASES.get(low)
-    if hit:
-        return hit
-    # Fall back to stripping a trailing UI-noise word: "news tab" → "news".
-    stripped = _drop_trailing(low, ('workspace', 'tab', 'panel', 'page', 'screen',
-                                    'view', 'window', 'section', 'menu'), once=True)
-    return _WORKSPACE_ALIASES.get(stripped)
+    if not hit:
+        # Fall back to stripping a trailing UI-noise word: "news tab" → "news".
+        stripped = _drop_trailing(low, ('workspace', 'tab', 'panel', 'page', 'screen',
+                                        'view', 'window', 'section', 'menu'), once=True)
+        hit = _WORKSPACE_ALIASES.get(stripped)
+    # A held workspace is not a target while its switch is off.
+    if hit and _ws_registry.is_held(hit):
+        return None
+    return hit
 
 
 def _maybe_handle_navigate_intent(message):
@@ -2870,7 +2875,7 @@ def _tool_navigate(inp):
     ws = _resolve_workspace(raw)
     if not ws:
         return (f"NAV_FAIL: {raw!r} isn't a known workspace. Valid: "
-                + ", ".join(sorted(set(_WORKSPACE_ALIASES.values()))))
+                + ", ".join(sorted(_ws_registry.ids())))
     label = _WORKSPACE_LABELS.get(ws, ws.title())
     return f"NAV_OK:{ws} — Opening the {label} workspace for the user now."
 

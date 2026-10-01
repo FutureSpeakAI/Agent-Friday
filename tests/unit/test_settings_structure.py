@@ -11,9 +11,10 @@ These tests hold that shape in BOTH UI files (index.html is served;
 ui_parts/app.html is its hand-maintained mirror), and hold the specific
 cleanups that came with it:
 
-  * Federation and Economy are on hold (V6 wholeness spec: they must not
-    surface). Their panels stay in the source behind one switch,
-    SETTINGS_SHOW_HELD_FEATURES, which is false.
+  * Federation and Economy are held features. Their panels stay in the
+    source behind one runtime switch, settings.held_features.federation
+    (read by settingsShowHeldFeatures), which is off by default; the rail
+    above is the rail while it is off.
   * Computer Control is switched on only from Privacy & Approvals, where the
     warning and the grant status sit beside it -- never from the one-click
     Quick Settings menu.
@@ -58,8 +59,9 @@ def _settings_ws(src: str) -> str:
 def _rail(src: str) -> str:
     """The rail's own list, SETTINGS_TABS: SettingsWS draws it, and the
     desktop's navigation manifest declares the same tabs from it."""
-    assert re.search(r"const TABS\s*=\s*SETTINGS_TABS\s*;", _settings_ws(src)), (
-        "SettingsWS no longer draws SETTINGS_TABS")
+    assert re.search(
+        r"const TABS\s*=\s*settingsShowHeldFeatures\(\)\s*\?\s*SETTINGS_TABS_WITH_HELD\s*:\s*SETTINGS_TABS\s*;",
+        _settings_ws(src)), "SettingsWS no longer draws SETTINGS_TABS"
     start = src.index("const SETTINGS_TABS")
     return src[start:src.index("fridayDeclareNav('settings'", start)]
 
@@ -88,15 +90,16 @@ def test_every_rail_tab_has_a_render_branch(path):
 def test_held_features_do_not_surface(path):
     src = path.read_text(encoding="utf-8")
     body = _settings_ws(src)
-    assert re.search(r"const SETTINGS_SHOW_HELD_FEATURES\s*=\s*false;", src), (
-        "%s: the switch for Federation/Economy is missing or on" % path.name)
+    assert re.search(
+        r"function settingsShowHeldFeatures\(\)\s*\{\s*return fridayHeldOn\('federation'\);", src), (
+        "%s: the switch for Federation/Economy is missing" % path.name)
     for held in ("federation", "economy"):
         assert not re.search(r"id:\s*'%s'" % held, body + _rail(src)), (
             "%s: %s is on hold and must not be a Settings tab" % (path.name, held))
         # The panel may stay in the source, but only behind the switch.
         for m in re.finditer(r"SettingsTab%s\b" % held.capitalize(), body):
             before = body[max(0, m.start() - 200):m.start()]
-            assert "SETTINGS_SHOW_HELD_FEATURES" in before, (
+            assert "settingsShowHeldFeatures()" in before, (
                 "%s: %s renders without the held-features switch" % (path.name, held))
 
 

@@ -63,6 +63,23 @@ _ALIASES: Dict[str, str] = {
 }
 
 
+# Adapters that belong to a held feature (settings.held_features). While the
+# switch is off the adapter is not a platform at all: get_adapter() returns
+# None, and status() and list_adapters() leave it out, so nothing can list it
+# or publish through it. Its module, config and data stay.
+_HELD_ADAPTERS: Dict[str, str] = {
+    "federation_pub": "federation",
+}
+
+
+def _held(mod: str) -> bool:
+    feature = _HELD_ADAPTERS.get(mod)
+    if not feature:
+        return False
+    from agent_friday.services import held_features
+    return not held_features.enabled(feature)
+
+
 def _norm(name: str) -> str:
     n = (name or "").strip().lower().replace("-", "_")
     return _ALIASES.get(n, _ALIASES.get((name or "").strip().lower(), n))
@@ -183,7 +200,7 @@ def _make_adapter(mod: str):
 
 def get_adapter(name: str):
     mod = _norm(name)
-    if mod not in ADAPTER_MODULES:
+    if mod not in ADAPTER_MODULES or _held(mod):
         return None
     a = _ADAPTERS.get(mod)
     if a is not None:
@@ -222,6 +239,8 @@ def status() -> Dict[str, Any]:
     per declared adapter, available or not. Never raises."""
     out: Dict[str, Any] = {"pause_all": publishing_paused(), "platforms": {}}
     for mod, platform_id in ADAPTER_MODULES.items():
+        if _held(mod):
+            continue
         a = get_adapter(mod)
         if a is None:
             out["platforms"][mod] = {

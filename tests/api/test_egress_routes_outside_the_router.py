@@ -39,6 +39,7 @@ def transport_spy(monkeypatch):
     return sent
 
 
+@pytest.mark.usefixtures("federation_on")
 def test_federation_send_refuses_a_payload_the_gate_would_alter(client, redacting_gate, transport_spy):
     r = client.post("/api/federation/send", json={
         "endpoint": "http://peer.invalid", "recipient_pubkey": "ab" * 32,
@@ -48,6 +49,7 @@ def test_federation_send_refuses_a_payload_the_gate_would_alter(client, redactin
     assert ("federation", "federation.CONTENT_TRANSFER.text") in redacting_gate
 
 
+@pytest.mark.usefixtures("federation_on")
 def test_federation_send_passes_a_clean_payload(client, redacting_gate, transport_spy):
     r = client.post("/api/federation/send", json={
         "endpoint": "http://peer.invalid", "recipient_pubkey": "ab" * 32,
@@ -56,6 +58,7 @@ def test_federation_send_passes_a_clean_payload(client, redacting_gate, transpor
     assert transport_spy and transport_spy[0][1]["payload"] == {"text": "hello"}
 
 
+@pytest.mark.usefixtures("federation_on")
 def test_federation_settings_sync_gates_free_text_settings(client, monkeypatch, redacting_gate, transport_spy):
     import agent_friday.core as core
     from agent_friday.services import federation as fed
@@ -66,6 +69,7 @@ def test_federation_settings_sync_gates_free_text_settings(client, monkeypatch, 
     assert ("federation", "settings_sync.voice_style_prompt") in redacting_gate
 
 
+@pytest.mark.usefixtures("federation_on")
 def test_federation_settings_sync_sends_when_clean(client, monkeypatch, redacting_gate, transport_spy):
     import agent_friday.core as core
     from agent_friday.services import federation as fed

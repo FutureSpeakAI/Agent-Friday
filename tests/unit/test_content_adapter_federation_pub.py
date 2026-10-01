@@ -468,6 +468,7 @@ def test_prepare_never_raises_on_garbage(adapter):
 
 
 # ── registry integration ─────────────────────────────────────────────────────
+@pytest.mark.usefixtures("federation_on")
 def test_registry_resolves_federation_pub():
     a = preg.get_adapter("federation_pub")
     assert a is not None and a.name == "federation"

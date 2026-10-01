@@ -62,6 +62,7 @@ class TestBudgetRoutes:
         assert r.status_code < 500
 
 
+@pytest.mark.usefixtures("federation_on")
 class TestComputeRoutes:
     def test_capabilities_public(self, client):
         r = client.get("/api/federation/capabilities")

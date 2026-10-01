@@ -14,6 +14,9 @@
    - accent: a brand accent token (--ws-accent-<token>). Cyan is Friday's
      identity; the status hues (green, amber, red) are never an accent.
    - blurb: one plain line saying what it is for.
+   - held: optional. Names a switch in settings.held_features; while that
+     switch is off, nothing offers the workspace (dock, palette, navigate
+     tools, voice) and it does not open. Its code and data stay.
    The brand system owns the values; this file is its front door. */
 window.FRIDAY_WORKSPACE_REGISTRY = /*BEGIN JSON*/{
   "groups": [
@@ -61,7 +64,7 @@ window.FRIDAY_WORKSPACE_REGISTRY = /*BEGIN JSON*/{
     {"id": "trust", "label": "Trust", "group": "system", "core": false, "icon": "trust", "glyph": "🔗", "accent": "cyan",
      "blurb": "How far Friday trusts each person and source, and why.",
      "aliases": ["trust graph", "reputation", "trust score"]},
-    {"id": "marketplace", "label": "Marketplace", "group": "system", "core": false, "icon": "marketplace", "glyph": "🛒", "accent": "cyan",
+    {"id": "marketplace", "label": "Marketplace", "group": "system", "core": false, "icon": "marketplace", "glyph": "🛒", "accent": "cyan", "held": "federation",
      "blurb": "Buy, sell and share creations with other Friday agents.",
      "aliases": ["market", "store", "shop", "skill store"]},
     {"id": "workflows", "label": "Workflows", "group": "system", "core": false, "icon": "workflows", "glyph": "🧩", "accent": "cyan",

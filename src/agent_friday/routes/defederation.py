@@ -9,8 +9,14 @@ from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
 from agent_friday.services import defederation
 from agent_friday.services import content_policies
+from agent_friday.services import held_features
 
 defederation_bp = Blueprint("defederation", __name__)
+
+# Defederation is part of the held federation: while
+# settings.held_features.federation is off, /api/defederation/* answers
+# "not enabled". The content policy packs under /api/policies/* stay open.
+defederation_bp.before_request(held_features.federation_route_gate)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

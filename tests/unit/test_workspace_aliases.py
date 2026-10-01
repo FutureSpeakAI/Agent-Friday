@@ -55,6 +55,9 @@ def test_system_still_resolves_to_system():
     assert _resolve_workspace('system health') == 'system'
 
 
+# The Marketplace is a held workspace; with its switch on it is a target like
+# any other (tests/unit/test_held_federation.py holds the off state).
+@pytest.mark.usefixtures("federation_on")
 def test_marketplace_is_navigable():
     assert _resolve_workspace('marketplace') == 'marketplace'
     assert _resolve_workspace('the marketplace') == 'marketplace'
@@ -81,6 +84,7 @@ def test_every_target_has_a_display_label():
     assert not missing, f"targets missing display labels: {missing}"
 
 
+@pytest.mark.usefixtures("federation_on")
 def test_voice_tool_description_lists_current_ids():
     from agent_friday.services.voice_engine import (
         _VOICE_LIVE_TOOLS, _navigate_tool_description)

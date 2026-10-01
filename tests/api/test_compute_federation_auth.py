@@ -35,6 +35,12 @@ import time
 import uuid
 from pathlib import Path
 
+import pytest
+
+# The federation is a held feature (off by default); these tests exercise
+# the federation code itself, so they run with its switch on.
+pytestmark = pytest.mark.usefixtures("federation_on")
+
 
 NON_LOOPBACK = "203.0.113.7"  # TEST-NET-3 (RFC 5737) -- not a real host
 

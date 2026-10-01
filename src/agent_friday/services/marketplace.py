@@ -16,6 +16,7 @@ purchase_intent(listing_id, buyer_agent_id)
     → {ok, listing, invoice: {amount_mpsi, currency, rail, invoice_id}}
 complete_purchase(invoice_id, buyer_agent_id, payment_confirmed=True)
     → {ok, transfer_record, receipt}
+    (both answer NOT_IN_THIS_RELEASE while PURCHASES_IN_THIS_RELEASE is False)
 update_listing(listing_id, **kwargs)  → updated listing
 remove_listing(listing_id)           → ok bool
 get_policy()                         → marketplace policy dict
@@ -50,9 +51,27 @@ DEFAULT_POLICY: Dict[str, Any] = {
     },
     "selling": {
         "enabled": True,
-        "auto_accept_at_listing_price": True,
+        # Never on in this release: get_policy() forces it false whatever
+        # the stored policy says.
+        "auto_accept_at_listing_price": False,
     },
 }
+
+# Buying is not in this release, in any configuration: the held federation
+# switch (settings.held_features.federation) does not open it. Only a separate
+# switch in a federation release may set this; until then purchase_intent and
+# complete_purchase answer NOT_IN_THIS_RELEASE before touching any record.
+PURCHASES_IN_THIS_RELEASE = False
+NOT_IN_THIS_RELEASE: Dict[str, Any] = {
+    "ok": False,
+    "error": "not_in_this_release",
+    "message": "Buying is not in this release.",
+}
+
+
+def purchase_refusal() -> Dict[str, Any]:
+    """The refusal a purchase gets while buying is not in this release."""
+    return dict(NOT_IN_THIS_RELEASE)
 
 # ── optional service deps ─────────────────────────────────────────────────────
 try:
@@ -190,9 +209,12 @@ def get_policy() -> Dict[str, Any]:
                 merged[k].update(v)
             else:
                 merged[k] = v
-        return merged
     except Exception:
-        return json.loads(json.dumps(DEFAULT_POLICY))
+        merged = json.loads(json.dumps(DEFAULT_POLICY))
+    if not isinstance(merged.get("selling"), dict):
+        merged["selling"] = dict(DEFAULT_POLICY["selling"])
+    merged["selling"]["auto_accept_at_listing_price"] = False
+    return merged
 
 
 def update_policy(policy_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -405,6 +427,8 @@ def purchase_intent(
     buyer_agent_id: str,
 ) -> Dict[str, Any]:
     """Check policy, create a pending purchase record, return invoice."""
+    if not PURCHASES_IN_THIS_RELEASE:
+        return purchase_refusal()
     try:
         listing = get_listing(listing_id)
         if not listing:
@@ -458,6 +482,8 @@ def complete_purchase(
     payment_confirmed: bool = True,
 ) -> Dict[str, Any]:
     """Finalise a purchase: ledger transfer + ownership transfer + signed receipt."""
+    if not PURCHASES_IN_THIS_RELEASE:
+        return purchase_refusal()
     try:
         # Find the pending purchase for this buyer (invoice_id doubles as idempotency key)
         with _conn() as con:

@@ -2309,6 +2309,12 @@ DEFAULT_SETTINGS = {
     # trimmed core set. Default is resolved per-install in _load_settings:
     # existing installs (~/.friday already present) → True; fresh installs → False.
     "show_all_workspaces": True,
+    # Features held back from this release (services/held_features.py). Each
+    # keeps its code, routes and data; while its switch is off nothing offers
+    # it and its routes answer "not enabled". `federation` holds the
+    # Marketplace, positrons, peer federation, federated compute and
+    # defederation. Buying stays refused whatever this says.
+    "held_features": {"federation": False},
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
     # `decision_backend` (which scorer answers Friday's typed judgments) is
     # declared once, with the approval-gate block further down.
