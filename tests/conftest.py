@@ -136,6 +136,17 @@ else:
     _TEST_HOME = Path(tempfile.mkdtemp(prefix="friday_test_home_"))
     os.environ["_FRIDAY_TEST_HOME"] = f"{_PID_TAG}{_TEST_HOME}"
 os.environ["FRIDAY_TESTING"] = "1"
+# The Hugging Face cache stays the machine's shared one. Replacing the home
+# below would otherwise move it into the empty test home, and the first test
+# needing embeddings would download a whole model repository (every format,
+# about a gigabyte) into it, once per pytest process. Read before the home is
+# replaced, and exported so xdist workers, which inherit the replaced home,
+# inherit the real cache too. Offline: tests use what the cache holds.
+if not os.environ.get("HF_HOME"):
+    os.environ["HF_HOME"] = str(Path.home() / ".cache" / "huggingface")
+if "--run-network" not in sys.argv and os.environ.get("_FRIDAY_KEEP_HOST_PROVIDER_KEYS") != "1":
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["USERPROFILE"] = str(_TEST_HOME)
 os.environ["HOMEDRIVE"] = _TEST_HOME.drive or "C:"
 os.environ["HOMEPATH"] = str(_TEST_HOME)[len(_TEST_HOME.drive):] or "\\"
@@ -318,6 +329,34 @@ def _fresh_swr_cache():
     swr_cache.invalidate("")
     yield
     swr_cache.invalidate("")
+
+
+class NetworkModelDownload(RuntimeError):
+    """A test reached for a Hugging Face host: a network model download."""
+
+
+_HF_HOSTS = ("huggingface.co", "hf.co", "cdn-lfs.huggingface.co", "cdn-lfs.hf.co")
+
+
+@pytest.fixture(autouse=True)
+def _no_network_model_download(request, monkeypatch):
+    """Fail any test that reaches for Hugging Face. Resolving the host is the one
+    step every download path shares, whichever library function started it."""
+    if request.config.getoption("--run-network", default=False):
+        yield
+        return
+    import socket
+    real = socket.getaddrinfo
+
+    def guarded(host, *a, **k):
+        h = (host.decode() if isinstance(host, bytes) else str(host or "")).lower().rstrip(".")
+        if any(h == d or h.endswith("." + d) for d in _HF_HOSTS):
+            raise NetworkModelDownload(
+                f"network model download attempted ({h}); tests read the shared "
+                f"Hugging Face cache offline")
+        return real(host, *a, **k)
+    monkeypatch.setattr(socket, "getaddrinfo", guarded)
+    yield
 
 
 @pytest.fixture(autouse=True)
