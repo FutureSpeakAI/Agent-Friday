@@ -35,6 +35,9 @@ def health(monkeypatch):
         "subsystems": {}, "deployment": "test"})
     monkeypatch.setattr(capability_preflight, "status",
                         lambda: {"missing_required": [], "detail": "ok"})
+    # The first computation imports half the app; these tests count
+    # computations, so every caller waits for the one in progress.
+    monkeypatch.setattr(cr, "_HEALTH_WAIT_S", 60.0)
     reset = getattr(cr, "_reset_health_cache_for_tests", None)
     if reset:
         reset()

@@ -515,49 +515,126 @@ def decisions_gate_status():
 
 #: How long one health payload is served to every caller. The UI, the tray
 #: watchdog and the settings panels poll /api/health about 16 times a minute;
-#: each computation reads the vault, memory and creations directories and
-#: sweeps the providers. Five seconds is shorter than any poller's interval
-#: that acts on the answer.
+#: each computation reads the vault and creations directories and sweeps the
+#: providers. Five seconds is shorter than any poller's interval that acts on
+#: the answer.
 _HEALTH_TTL_S = 5.0
+#: The longest any caller waits for a computation in progress. A caller that
+#: cannot have a fresh answer by then gets the last good payload marked stale,
+#: or a minimal "computing" payload when there is none yet.
+_HEALTH_WAIT_S = 2.0
+#: A computation still running after this long is abandoned: its result is
+#: discarded and the next caller starts a new one.
+_HEALTH_COMPUTE_CAP_S = 20.0
+#: Abandoned computations still running block new ones beyond this many, so a
+#: computation that never returns costs a bounded number of threads.
+_HEALTH_MAX_ABANDONED = 2
 _health_lock = threading.Lock()
-_health_cache = {"at": 0.0, "payload": None, "inflight": None}
+_health_cache = {"at": 0.0, "payload": None, "flight": None, "abandoned": []}
+
+
+class _HealthFlight:
+    """One health computation running on its own thread."""
+
+    __slots__ = ("done", "started", "payload", "error", "thread")
+
+    def __init__(self, started):
+        self.done = threading.Event()
+        self.started = started
+        self.payload = None
+        self.error = None
+        self.thread = None
 
 
 def _reset_health_cache_for_tests():
     with _health_lock:
-        _health_cache.update(at=0.0, payload=None, inflight=None)
+        _health_cache.update(at=0.0, payload=None, flight=None, abandoned=[])
+
+
+def _health_run(flight):
+    try:
+        payload = _health_payload()
+    except BaseException as e:  # reported to the callers waiting on it
+        flight.error = e
+        with _health_lock:
+            if _health_cache["flight"] is flight:
+                _health_cache["flight"] = None
+        flight.done.set()
+        return
+    with _health_lock:
+        current = _health_cache["flight"] is flight
+        if current:
+            _health_cache["payload"] = payload
+            _health_cache["at"] = _time.monotonic()
+            _health_cache["flight"] = None
+    if current:
+        flight.payload = payload
+    flight.done.set()
+
+
+def _health_fallback():
+    """An immediate answer while a computation is slow: the last good payload
+    marked stale, else the cheap boot verdict marked as still computing."""
+    with _health_lock:
+        payload = _health_cache["payload"]
+        at = _health_cache["at"]
+    if payload is not None:
+        out = dict(payload)
+        out["stale"] = True
+        out["stale_age_seconds"] = round(max(0.0, _time.monotonic() - at), 1)
+        return out
+    boot_status = None
+    try:
+        from agent_friday.services import health_check as _hc
+        boot_status = _hc.last_boot_status()
+    except Exception:
+        boot_status = None
+    return {
+        "status": "unknown",
+        "boot_status": boot_status or "unknown",
+        "computing": True,
+        "uptime_seconds": int(_time.time() - SERVER_START_TS),
+        "server_start": datetime.fromtimestamp(SERVER_START_TS).isoformat(),
+    }
 
 
 def _health_cached():
     """The health payload, computed at most once per ``_HEALTH_TTL_S``.
 
-    Single flight: a caller that arrives while a computation is running waits
-    for it and shares its result instead of starting a second one. When the
-    computation fails, the next waiter computes; nothing failed is cached.
+    Single flight on its own thread: one computation runs at a time and every
+    caller shares its result. No caller waits longer than ``_HEALTH_WAIT_S``;
+    past that it gets ``_health_fallback()``. A computation running longer
+    than ``_HEALTH_COMPUTE_CAP_S`` is abandoned and its result discarded. A
+    computation that raises is not cached: the callers waiting on it see the
+    error and the next caller computes again.
     """
-    while True:
-        with _health_lock:
-            payload = _health_cache["payload"]
-            if payload is not None and _time.monotonic() - _health_cache["at"] < _HEALTH_TTL_S:
-                return payload
-            ev = _health_cache["inflight"]
-            leader = ev is None
-            if leader:
-                ev = threading.Event()
-                _health_cache["inflight"] = ev
-        if not leader:
-            ev.wait(timeout=60.0)
-            continue
-        try:
-            payload = _health_payload()
-            with _health_lock:
-                _health_cache["payload"] = payload
-                _health_cache["at"] = _time.monotonic()
+    start = None
+    with _health_lock:
+        now = _time.monotonic()
+        payload = _health_cache["payload"]
+        if payload is not None and now - _health_cache["at"] < _HEALTH_TTL_S:
             return payload
-        finally:
-            with _health_lock:
-                _health_cache["inflight"] = None
-            ev.set()
+        flight = _health_cache["flight"]
+        if flight is not None and now - flight.started >= _HEALTH_COMPUTE_CAP_S:
+            _health_cache["abandoned"].append(flight.thread)
+            _health_cache["flight"] = flight = None
+        if flight is None:
+            alive = [t for t in _health_cache["abandoned"] if t.is_alive()]
+            _health_cache["abandoned"] = alive
+            if len(alive) < _HEALTH_MAX_ABANDONED:
+                flight = _HealthFlight(now)
+                flight.thread = threading.Thread(
+                    target=_health_run, args=(flight,), daemon=True,
+                    name="health-compute")
+                _health_cache["flight"] = start = flight
+    if start is not None:
+        start.thread.start()
+    if flight is not None and flight.done.wait(_HEALTH_WAIT_S):
+        if flight.error is not None:
+            raise flight.error
+        if flight.payload is not None:
+            return flight.payload
+    return _health_fallback()
 
 
 @core_bp.route('/api/health')
