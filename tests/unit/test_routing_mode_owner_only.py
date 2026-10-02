@@ -29,8 +29,11 @@ def _mode():
 
 @pytest.fixture
 def local_preferred(friday_dir):
-    core._save_settings({"model_routing": {"mode": "local_preferred"}},
-                        owner_routing_change=True)
+    try:
+        core._save_settings({"model_routing": {"mode": "local_preferred"}},
+                            owner_routing_change=True)
+    except TypeError:          # a build without the rule: any write moves it
+        core._save_settings({"model_routing": {"mode": "local_preferred"}})
     assert _mode() == "local_preferred"
     yield
 
