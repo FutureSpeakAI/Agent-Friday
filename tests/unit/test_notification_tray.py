@@ -121,3 +121,51 @@ def test_clear_all_keeps_pending_approvals():
             dedupe_key="appr:3")
     assert ne.dismiss_all() == 2
     assert [c["kind"] for c in _cards()] == ["approval_pending"]
+
+
+# ── wiring: the scheduler, the voice/chat tool ────────────────────────────────
+
+def _sched(monkeypatch):
+    from agent_friday.services import scheduler as s
+    from agent_friday.services import voice_engine as ve
+    monkeypatch.setattr(ve, "_notif_engine", ne, raising=False)
+    return s
+
+
+def test_a_job_failing_three_times_is_one_card_and_its_next_success_resolves_it(monkeypatch):
+    s = _sched(monkeypatch)
+    rec = {"id": "sch_afternoon_briefing", "name": "Afternoon briefing"}
+    for _ in range(3):
+        s._notify_run(rec, "failed", "No model provider could generate text")
+    fails = [c for c in _cards() if c["kind"] == "scheduled_failure"]
+    assert len(fails) == 1 and fails[0]["count"] == 3, fails
+    s._notify_run(rec, "complete", "ok")
+    kinds = [c["kind"] for c in _cards()]
+    assert "scheduled_failure" not in kinds, "the failure did not resolve on success"
+    assert kinds == ["scheduled_task"]
+
+
+def test_a_retired_schedule_goes_to_the_activity_log_only(monkeypatch, _clean):
+    s = _sched(monkeypatch)
+    s._notify_run({"id": "sch_edition_daily", "name": "The Friday Edition"}, "retired",
+                  "retired: its built-in task no longer exists")
+    assert _cards() == [] and len(_clean) == 1
+
+
+def test_the_voice_and_chat_tool_summarises_clears_and_mutes():
+    from agent_friday.services import notification_tools as nt
+    ne.push(title="Daily creation ran", source="scheduler", kind="scheduled_task")
+    ne.push(title="Approval needed: send email", source="approvals", kind="approval_pending",
+            dedupe_key="appr:7")
+    said = nt.handle({"action": "summary"})
+    assert "need you" in said and "send email" in said
+    said = nt.handle({"action": "mute"})
+    assert "Muted 1 kind" in said and pol.is_muted("scheduled_task", "scheduler")
+    assert not pol.is_muted("approval_pending", "approvals")
+    said = nt.handle({"action": "clear"})
+    assert "approval" in said and [c["kind"] for c in _cards()] == ["approval_pending"]
+
+
+def test_the_tool_is_shared_into_voice():
+    from agent_friday.services import voice_engine as ve
+    assert "notifications" in ve._VOICE_SHARED_TOOLS

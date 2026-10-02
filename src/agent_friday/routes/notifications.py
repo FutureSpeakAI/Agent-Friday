@@ -44,7 +44,9 @@ def get_notifications():
     derived = _compute_derived_notifications()
     # Normalize legacy keys: queued items already have id/title/body/priority/etc
     items = queued + derived
-    unread = sum(1 for n in items if not n.get('read') and not n.get('dismissed'))
+    # The badge: unread cards that need the owner; FYI rolls into the digest.
+    unread = sum(1 for n in items if not n.get('read') and not n.get('dismissed')
+                 and n.get('tier', 'needs_you') != 'fyi')
     return jsonify({
         "status": "ok",
         "items": items,
@@ -75,6 +77,31 @@ def dismiss_notification():
         return jsonify({"status": "noop"})
     ok = _notif_engine.dismiss(str(nid))
     return jsonify({"status": "ok" if ok else "not_found", "id": nid})
+
+
+@notif_bp.route('/api/notifications/mute', methods=['POST'])
+def mute_notification_kind():
+    """Mute (or with {"unmute": true} unmute) a kind of notification. An
+    approval cannot be muted. Reversible in Settings > Notifications."""
+    data = request.get_json(silent=True) or {}
+    kind, source = str(data.get('kind') or ''), str(data.get('source') or '')
+    if not _notif_engine or not kind:
+        return jsonify({"status": "error", "message": "kind is required"}), 400
+    from agent_friday.services import notification_policy as _pol
+    if _pol.is_approval(kind) and not data.get('unmute'):
+        return jsonify({"status": "refused",
+                        "message": "Approvals always reach you and cannot be muted."})
+    mutes = (_notif_engine.unmute(kind, source) if data.get('unmute')
+             else _notif_engine.mute(kind, source))
+    return jsonify({"status": "ok", "mutes": mutes})
+
+
+@notif_bp.route('/api/notifications/clear-all', methods=['POST'])
+def clear_all_notifications():
+    """Clear the tray; pending approvals stay."""
+    if not _notif_engine:
+        return jsonify({"status": "noop"})
+    return jsonify({"status": "ok", "cleared": _notif_engine.dismiss_all()})
 
 
 @notif_bp.route('/api/notifications/push', methods=['POST'])
