@@ -511,3 +511,85 @@ def test_the_writer_never_recites_the_rules_it_was_given():
     assert "reasoning_leak" in codes(q.reasoning_problems([L(0, "Police made an arrest. " + echo, [])]))
     assert echo not in pe._clean_text("Police made an arrest. " + echo)
     assert not q.REASONING_RE.search("The bridge stands on the old piers, police said.")
+
+
+
+# 10 ── what the orchestrator's read of script #2 showed ─────────────────────
+
+SYNTHESIS = ("The FTC probe and the Senate vote show the gap between voluntary pledges and "
+             "actual enforcement.")
+
+
+def test_a_synthesis_credited_to_outlets_is_fridays_unless_a_source_states_it(ds):
+    """The pinky-swear class again: her judgment under three outlets' names,
+    passing on shared words. Word overlap is not support."""
+    g, r, h = sid(ds, "US trade"), sid(ds, "FTC opens"), sid(ds, "Democrats block")
+    lines = [ftc_lede(ds),
+             L(1, "The Hill reports that on Tuesday Senate Democrats blocked a bill on data center "
+                  "electricity costs, calling it toothless.", [h]),
+             L(2, SYNTHESIS, [g, r, h])]
+    assert any(p["code"] == "misattributed" and p["line"] == 2 for p in check(lines, ds))
+    fixed, _cut = pe.edit_script(lines, ds, n_chapters=3)
+    close = [ln for ln in fixed if ln["chapter"] == 2]
+    assert close and close[0]["own"] and close[0]["cites"] == []
+
+
+def test_a_judgment_a_source_states_stays_with_the_source():
+    docs_ = podcast_sources.number([
+        {"title": "Regulators move on AI", "kind": "news", "outlet": "examplewire.com", "private": False,
+         "url": "https://examplewire.com/a",
+         "text": "Regulators move on AI\nThe probe shows the gap between voluntary pledges and actual "
+                 "enforcement, the commission said on Tuesday."}])
+    st = q.stories(docs_)
+    said = "The probe shows the gap between voluntary pledges and actual enforcement."
+    assert q.support(said, [st[0]["sid"]], st, docs_)[0] == "ok"
+
+
+def test_an_aggregator_item_is_credited_to_the_outlet_it_relays():
+    wsj = {"outlet": "techmeme.com", "title": "Sources: executives asked a lab chief why he was so outspoken",
+           "text": "Sources: executives asked a lab chief why he was so outspoken\nOutlet: techmeme.com\n"
+                   "Wall Street Journal : Sources: executives asked a lab chief why he was so outspoken"}
+    bi = {"outlet": "techmeme.com", "title": "A startup CEO alleges a board observer shared plans",
+          "text": "Rya Jetha / Business Insider : A startup CEO alleges a board observer shared plans"}
+    assert q.spoken_outlet(wsj) == "Wall Street Journal" and q.spoken_outlet(bi) == "Business Insider"
+    assert "wall street journal" in q.outlet_aliases(wsj) and "techmeme" not in q.outlet_aliases(wsj)
+
+
+TRUNCATED = ("Governor Ana Ruiz responded to questions on Tuesday. She said her earlier claims that "
+             "fears about the budget were a hoax invented by her rivals no longer apply now t")
+ARTICLE = ("Governor Ana Ruiz responded to questions on Tuesday. She said her earlier claims that fears "
+           "about the budget were a hoax invented by her rivals no longer apply now that the transit "
+           "bill has passed the legislature.")
+
+
+def _speech_docs():
+    return podcast_sources.number([
+        {"title": "What the governor said about the budget", "kind": "news", "outlet": "examplepost.com",
+         "private": False, "url": "https://examplepost.com/ruiz", "text": "What the governor said about the budget\n" + TRUNCATED}])
+
+
+def test_reported_speech_needs_the_source_sentence_that_carries_it(monkeypatch):
+    monkeypatch.setattr(pe, "article_text", lambda url: "")
+    docs_ = _speech_docs()
+    s1 = docs_[0]["sid"]
+    faithful = ("Example Post reports that Governor Ana Ruiz said her earlier claims that budget fears "
+                "were a hoax invented by her rivals no longer apply.")
+    # A claim the source does not carry. (A reversal that reuses the source's
+    # own words is beyond a word-level check; that would take the local model
+    # as a judge.)
+    twisted = ("Example Post reports that Governor Ana Ruiz said her rivals apologised to her in "
+               "private and promised to vote for the transit bill.")
+    fixed, cut = pe.edit_script([L(0, faithful, [s1]), L(0, twisted, [s1])], docs_, n_chapters=1)
+    assert [ln["text"] for ln in fixed] == [faithful]
+    assert any(c["text"] == twisted for c in cut)
+
+
+def test_a_cut_off_snippet_is_checked_against_the_fetched_article(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(pe, "article_text", lambda url: fetched.append(url) or ARTICLE)
+    docs_ = _speech_docs()
+    s1 = docs_[0]["sid"]
+    full = ("Example Post reports that Governor Ana Ruiz said her earlier claims no longer apply now "
+            "that the transit bill has passed the legislature.")
+    fixed, _cut = pe.edit_script([L(0, full, [s1])], docs_, n_chapters=1)
+    assert [ln["text"] for ln in fixed] == [full] and fetched == ["https://examplepost.com/ruiz"]

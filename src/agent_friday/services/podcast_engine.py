@@ -791,6 +791,46 @@ def _drop_echoes(new: list[dict], before: list[dict]) -> tuple[list, list]:
     return kept, cut
 
 
+_ARTICLES: dict = {}
+
+
+def article_text(url: str) -> str:
+    """The article's own text, fetched through the guarded fetcher (publisher
+    link first), or "" when it cannot be had. Cached for the process."""
+    if not url:
+        return ""
+    if url not in _ARTICLES:
+        try:
+            from agent_friday.services import news_engine, news_links
+            _t, text = news_engine._extract_article_text(news_links.resolve_url(url))
+            _ARTICLES[url] = (text or "")[:20000]
+        except Exception:
+            _ARTICLES[url] = ""
+    return _ARTICLES[url]
+
+
+def _fetch_for_speech(lines: list[dict], docs: list[dict]) -> None:
+    """Reported speech is checked against the source sentence that carries it;
+    when the item's snippet cannot (it is often cut off mid-sentence), the
+    article itself is fetched, for that story only."""
+    story_list = quality.stories(docs)
+    by = {d["sid"]: d for d in docs}
+    sids = {s["sid"]: s for s in story_list}
+    for ln in lines:
+        cited = [c for c in ln.get("cites") or [] if c in sids]
+        if not cited or ln.get("signature"):
+            continue
+        cluster = set().union(*[sids[c]["cluster"] for c in cited])
+        for sent in quality.sentences(ln["text"]):
+            if quality.is_speech(sent) and not quality.states(sent, cluster, story_list,
+                                                              quality.SPEECH_STATES_MIN):
+                for c in cluster:
+                    d = by.get(c)
+                    if d is not None and "article" not in d:
+                        d["article"] = article_text(d.get("url") or "")
+                story_list = quality.stories(docs)
+
+
 def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
                 home: str = "") -> tuple[list, list]:
     """The script-quality rules a program applies itself, to every draft,
@@ -805,6 +845,7 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
     * The close is one sentence.
     * Each story is told once: a later sentence that comes back to it is cut.
     """
+    _fetch_for_speech(lines, docs)
     story_list = quality.stories(docs)
     by = {s["sid"]: s for s in story_list}
     hurt = quality.safety_clusters(story_list)

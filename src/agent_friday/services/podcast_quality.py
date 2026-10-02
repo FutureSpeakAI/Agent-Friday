@@ -184,15 +184,39 @@ def outlet_aliases(story: dict) -> list[str]:
     if m and (story.get("outlet") or "").lower().removeprefix("www.") in _AGGREGATORS:
         names.append(m.group(1).strip().lower())
     dom = (story.get("outlet") or "").lower().removeprefix("www.")
-    if dom:
+    relayed = relayed_outlet(story)
+    if relayed:
+        # The aggregator relayed it: the original outlet is the one named.
+        names.append(relayed.lower())
+        names += [n.lower() for d, ns in OUTLET_NAMES.items() for n in ns
+                  if relayed.lower() in (x.lower() for x in ns)]
+    elif dom:
         names += [n.lower() for n in OUTLET_NAMES.get(dom, [])]
         if dom != "news.google.com":
             names.append(_site_name(dom))
     return [n for n in dict.fromkeys(names) if n]
 
 
+def relayed_outlet(story: dict) -> str:
+    """The outlet an aggregator's item relays: its snippet opens with it
+    ("Wall Street Journal : ...", "Rya Jetha / Business Insider : ...")."""
+    dom = (story.get("outlet") or "").lower().removeprefix("www.")
+    if dom not in _AGGREGATORS:
+        return ""
+    for line in (story.get("text") or story.get("snippet") or "").splitlines():
+        m = re.match(r"^\s*(?:[^:/\n]{2,60}/\s*)?([A-Z][^:/\n]{1,60}?)\s+:\s+\S", line)
+        if m:
+            return m.group(1).strip()
+    m = re.search(r"\((?:[^()/]{1,60}/\s*)?([^()/]{2,60})\)\s*$", story.get("title") or "")
+    return m.group(1).strip() if m else ""
+
+
 def spoken_outlet(story: dict) -> str:
-    """The outlet as it is written and said: "The Guardian", "ABC News", "KXAN"."""
+    """The outlet as it is written and said: "The Guardian", "ABC News", "KXAN";
+    for an aggregator's item, the outlet it relays."""
+    relayed = relayed_outlet(story)
+    if relayed:
+        return relayed
     dom = (story.get("outlet") or "").lower().removeprefix("www.")
     if dom in OUTLET_NAMES:
         return OUTLET_NAMES[dom][0]
@@ -291,7 +315,8 @@ def stories(docs: list[dict]) -> list[dict]:
             text = text.strip()[len(d["title"]):]
         ents = _entities(d["title"], text)
         out.append({"sid": d["sid"], "title": d["title"], "url": d.get("url") or "",
-                    "outlet": d.get("outlet") or "", "text": d.get("text") or "",
+                    "outlet": d.get("outlet") or "",
+                    "text": (d.get("text") or "") + ("\n" + d["article"] if d.get("article") else ""),
                     "entities": ents, "places": _places(body),
                     "keys": {_stem(w) for w in _content(d["title"])},
                     "safety": is_safety_story(d)})
@@ -1018,6 +1043,54 @@ def safety_thread_problems(lines: list[dict], story_list: list[dict], n_chapters
 #: Below this share of a sentence's content words found in its cited source,
 #: the sentence is not the source's reporting.
 SUPPORT_MIN = 0.34
+#: A judgment, a synthesis or reported speech is the source's only when one
+#: source sentence holds this share of its words: shared words spread across
+#: the sources are not a source saying it.
+STATES_MIN = 0.6
+#: Reported speech is held closer: what someone said, nearly in the source's words.
+SPEECH_STATES_MIN = 0.75
+_JUDGMENT_RE = re.compile(
+    r"\b(?:shows?|showed|suggests?|signals?|underscores?|highlights?|reveals?|illustrates?|proves?|"
+    r"means|marks? a|points? to|the gap between|matters?|most (?:significant|important)|clearest|"
+    r"the key (?:question|issue)|the real story|adds? up to|a sign (?:of|that))\b", re.I)
+_SPEECH_RE = re.compile(r"\b(?:said|says|say|told|called|claimed|claims|argued|accused|denied|warned|"
+                        r"insisted|admitted|pledged|vowed)\b", re.I)
+_CREDIT_RE = re.compile(r"^(.{2,80}?) (?:reports?|reported|confirms?|confirmed|notes?|noted|writes?|wrote) that ",
+                        re.I)
+
+
+def is_judgment(sent: str) -> bool:
+    return bool(_JUDGMENT_RE.search(sent or ""))
+
+
+def is_speech(sent: str) -> bool:
+    return bool(_SPEECH_RE.search(sent or ""))
+
+
+def _claim_part(sent: str, story_list: list[dict]) -> str:
+    """The sentence without its outlet credit ("Example Post reports that ...")."""
+    m = _CREDIT_RE.match(sent or "")
+    if m and any(said_outlet(m.group(1), outlet_aliases(s)) for s in story_list if outlet_aliases(s)):
+        return sent[m.end():]
+    return sent
+
+
+def states(sent: str, cluster_sids: set, story_list: list[dict], need: float = STATES_MIN) -> bool:
+    """Whether one passage of the cited stories (a sentence, or two that
+    follow each other) says this one."""
+    claim = {_stem(w) for w in _content(_claim_part(sent, story_list))} - _PLAIN_NEWS
+    if not claim:
+        return True
+    for s in story_list:
+        if s["sid"] not in cluster_sids:
+            continue
+        srcs = [x for x in re.split(r"(?<=[.!?;])\s+|\n", "%s\n%s" % (s["title"], s["text"])) if x.strip()]
+        for k in range(len(srcs)):
+            for passage in (srcs[k], " ".join(srcs[k:k + 2])):
+                have = {_stem(w) for w in _content(passage)}
+                if len(claim & have) / len(claim) >= need:
+                    return True
+    return False
 
 
 def _odd_case(text: str) -> set:
@@ -1058,6 +1131,14 @@ def support(sent: str, cited: list[str], story_list: list[dict], docs: list[dict
         said_outlet(sent, outlet_aliases(s)) for s in story_list if outlet_aliases(s))
     verdict, why = _support_verdict(sent, cluster, words, docs, story_list, missing, content,
                                     stems, overlap)
+    if verdict == "ok" and is_speech(_claim_part(sent, story_list)) \
+            and not states(sent, cluster, story_list, SPEECH_STATES_MIN):
+        # What someone said is a fact about them: no source sentence carries
+        # it, so it is not hers to say either.
+        return "cut", ["what was said is not in the source's words"]
+    named = {s["cluster"] for s in story_list if names_story(sent, s)}
+    if verdict == "ok" and (is_judgment(sent) or len(named) > 1) and not states(sent, cluster, story_list):
+        verdict, why = "own", ["a judgment no source states"]
     if verdict == "own" and credits:
         return "cut", why or ["an outlet named for Friday's own words"]
     return verdict, why
