@@ -1806,16 +1806,16 @@
                     p -= normalize(p + vec3(1e-4)) * uCurrent * 1.8 * (0.5 + 0.5 * sin(phase * 40.0 + uDist * 0.6));
                     float near = 1.0 - smoothstep(4.0, 16.0, length(p));
                     float zf = (p.z - uMin.z) / uSize3.z;
-                    vBright = (0.45 + uGlow * near * 1.2) * smoothstep(0.0, 0.12, zf) * (1.0 - smoothstep(0.86, 1.0, zf));
+                    vBright = (0.8 + uGlow * near * 1.4) * smoothstep(0.0, 0.12, zf) * (1.0 - smoothstep(0.86, 1.0, zf));
                     vec4 mv = modelViewMatrix * vec4(p, 1.0);
-                    gl_PointSize = uSize * (300.0 / max(1.0, -mv.z));
+                    gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)), 1.0, 6.0);
                     gl_Position = projectionMatrix * mv;
                 }`;
             const FS = `uniform vec3 uColor; varying float vBright;
                 void main() {
                     float d = length(gl_PointCoord - 0.5);
                     float a = 1.0 - smoothstep(0.15, 0.5, d);
-                    gl_FragColor = vec4(uColor * vBright, a * vBright * 0.6);
+                    gl_FragColor = vec4(uColor * vBright, a * vBright * 0.75);
                 }`;
             let pts = null, mat = null, seeds = null, phases = null, n = 0, dist = 0, current = 0, scn = null;
             let web = null, webGeo = null, webMat = null, webNodes = null, webEdges = null, pulse = null, offlineAt = -1, clock = 0;
@@ -1851,7 +1851,7 @@
                 g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 200);   // drawn wherever the shader puts them
                 mat = new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false,
                     blending: THREE.AdditiveBlending, uniforms: { uDist: { value: 0 }, uCurrent: { value: 0 }, uGlow: { value: 0 },
-                    uSize: { value: 0.16 }, uMin: { value: new THREE.Vector3(...MIN) }, uSize3: { value: new THREE.Vector3(...SIZE) },
+                    uSize: { value: 0.4 }, uMin: { value: new THREE.Vector3(...MIN) }, uSize3: { value: new THREE.Vector3(...SIZE) },
                     uColor: { value: new THREE.Color(0x5fa8ff) } } });
                 pts = new THREE.Points(g, mat);
                 pts.userData.worldField = true;
