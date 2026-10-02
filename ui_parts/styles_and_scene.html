@@ -4253,14 +4253,15 @@
             const TORI = 5, SECT = 5, U = TORI * SECT, M = 64;
             const ETA0 = 0.2, ETA1 = 0.60, A_REST = 0.12, A_THINK = 0.22;   // ETA1 + A_THINK < asin(0.75): |w| <= 0.73
             const SCALE = 2.6, TILT = 0.62;
-            const VIOLET = new THREE.Color(0xa78bfa);
+            const VIOLET = new THREE.Color(0xa78bfa), WHITE = new THREE.Color(1, 1, 1);
+            const _eT = new THREE.Euler(), _qZ = new THREE.Quaternion(), Z = new THREE.Vector3(0, 0, 1);
             let lines = null, mat = null, holder = null, nFib = 0, perTorus = 0;
             let clock = 0, turn = 0, think = 0, voice = 0, flow = 0, flowAmp = 0, taut = 0, ang = 0;
             const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, ownColour: true }; return m; };
             const _q = new THREE.Quaternion(), _qi = new THREE.Quaternion(), _v = new THREE.Vector3(), _t = new THREE.Color();
             const etaOf = k => ETA0 + (ETA1 - ETA0) * k / (TORI - 1);
             const deltaOf = (k, j) => 2 * Math.PI * j / perTorus + k * 0.37;
-            const tiltQ = () => _q.setFromEuler(new THREE.Euler(TILT, 0, 0)).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), lines ? lines.rotation.z : 0));
+            const tiltQ = () => _q.setFromEuler(_eT.set(TILT, 0, 0)).multiply(_qZ.setFromAxisAngle(Z, lines ? lines.rotation.z : 0));
             // The page's own arithmetic for one fibre point (for the gesture
             // engine), in the holder's space before the tilt.
             function at(eta, delta, t, a, out) {
@@ -4353,7 +4354,7 @@
                 flowAmp += (Math.min(0.85, voice * 1.5) - flowAmp) * Math.min(1, dt / 0.5);
                 const u = mat.uniforms;
                 u.uA.value = ang; u.uFlow.value = flow; u.uFlowAmp.value = flowAmp; u.uTaut.value = taut;
-                u.uIn.value.copy(s.accent).lerp(new THREE.Color(1, 1, 1), 0.15).multiplyScalar(0.7);
+                u.uIn.value.copy(s.accent).lerp(WHITE, 0.15).multiplyScalar(0.7);
                 u.uOut.value.copy(s.base).lerp(VIOLET, 0.4).multiplyScalar(0.62);
                 u.uOpacity.value = mat.opacity;
                 for (let c = 0; c < U; c++) { u.uD.value[c].set(0, 0, 0, 1); u.uG.value[c].set(0, 0, 0, 1); }
@@ -4412,7 +4413,7 @@
         // first, the ring sharp, steady and brighter later.
         const FridayWormhole = (function () {
             const RS = 1.0, R_MOUTH = 4.9, RINGS = 20, SPOKES = 36, SEG = 72, FAR = 0.45, CL = 24, TILT = 0.87;
-            const SAND = new THREE.Color(0xd6c7a1), WHITE = new THREE.Color(1, 1, 1);
+            const SAND = new THREE.Color(0xd6c7a1), WHITE = new THREE.Color(1, 1, 1), VIOLET = new THREE.Color(0xa78bfa);
             let holder = null, grid = null, ring = null, portal = null, stream = null;
             let clock = 0, ripple = 0, voice = 0, think = 0, listen = 0, stable = 0, local = 0, web = 0, flow = 0;
             const _c = new THREE.Color(), _wp = new THREE.Vector3();
@@ -4599,7 +4600,7 @@
                 ru.uOpacity.value = ring.material.opacity;
                 const pu = portal.material.uniforms;
                 pu.uStable.value = stable; pu.uLocal.value = local; pu.uWeb.value = web; pu.uTime.value = clock;
-                pu.uSky.value.copy(s.base).lerp(new THREE.Color(0xa78bfa), 0.5).multiplyScalar(0.5);
+                pu.uSky.value.copy(s.base).lerp(VIOLET, 0.5).multiplyScalar(0.5);
                 pu.uNet.value.setHex(0x00d4ff).multiplyScalar(0.8);
                 pu.uOpacity.value = portal.material.opacity;
                 portal.scale.setScalar(1 - 0.2 * think);
@@ -4680,8 +4681,9 @@
             const pairs = [], motes = [], grains = [];
             let clusterOf = null, layersL = [], blocksL = [];
             const _m = new THREE.Matrix4(), _s = new THREE.Matrix4(), _v = new THREE.Vector3(), _w = new THREE.Vector3(), _u = new THREE.Vector3();
-            const _c = new THREE.Color(), WHITE = new THREE.Color(1, 1, 1);
+            const _c = new THREE.Color(), WHITE = new THREE.Color(1, 1, 1), _hot = new THREE.Color(), _dot = new THREE.Color(), _up2 = new THREE.Vector3();
             const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, ownColour: true }; return m; };
+            const put = (arr, j, c) => { arr[j] = c.r; arr[j + 1] = c.g; arr[j + 2] = c.b; };
             function stepNo() {
                 const v = (typeof FridayGenome !== 'undefined' && FridayGenome.current) ? FridayGenome.current() : null;
                 return v && v.step && isFinite(v.step.step) ? +v.step.step : 0;
@@ -4847,9 +4849,8 @@
                 // The plane facing the eye, for the pairs just outside the shadow's edge.
                 _v.set(...(s.toward || [0, 0, 1])).normalize();
                 _u.set(0, 1, 0).cross(_v); if (_u.lengthSq() < 1e-6) _u.set(1, 0, 0); _u.normalize();
-                const up2 = new THREE.Vector3().crossVectors(_v, _u);
-                const emit = (c, a) => [c.r * a, c.g * a, c.b * a];
-                const hot = new THREE.Color().copy(s.accent).lerp(WHITE, 0.7);
+                const up2 = _up2.crossVectors(_v, _u);
+                const hot = _hot.copy(s.accent).lerp(WHITE, 0.7);
                 // Pairs: new ones at a rate set by her state.
                 const rate = reduced ? 0 : 1.2 + 3.2 * think + 4.5 * voice;
                 emitAcc += rate * dt;
@@ -4882,10 +4883,10 @@
                         }
                     }
                     al[i * 2] = a1; al[i * 2 + 1] = a2; sz[i * 2] = sz[i * 2 + 1] = 0.24;
-                    col.set(emit(hot, 1), i * 6); col.set(emit(hot, 1), i * 6 + 3);
+                    put(col, i * 6, hot); put(col, i * 6 + 3, hot);
                 });
                 // Motes drift out, slow down and become dots of the world.
-                const dotCol = new THREE.Color().copy(s.accent).multiplyScalar(0.8);
+                const dotCol = _dot.copy(s.accent).multiplyScalar(0.8);
                 motes.forEach((m, k) => {
                     const j = PAIRS * 2 + k;
                     if (!m.live) { al[j] = 0; return; }
@@ -4894,7 +4895,7 @@
                     const f = Math.min(1, m.t / 7);
                     pos[j * 3] = m.p.x; pos[j * 3 + 1] = m.p.y; pos[j * 3 + 2] = m.p.z;
                     _c.copy(hot).lerp(dotCol, f);
-                    col.set(emit(_c, 1), j * 3);
+                    put(col, j * 3, _c);
                     al[j] = 0.9 * (1 - 0.35 * f) * (m.t > 9 ? Math.max(0, 1 - (m.t - 9) / 3) : 1);
                     sz[j] = 0.24 + 0.16 * f;
                     if (m.t > 12) m.live = false;
@@ -4915,7 +4916,7 @@
                     const rr = g.r * rs;
                     dp[i * 3] = Math.cos(g.a) * rr; dp[i * 3 + 1] = g.y * rs * (g.r / 14); dp[i * 3 + 2] = Math.sin(g.a) * rr;
                     da[i] = 0.55 * g.fade * Math.min(1, (g.r - 2.7) / 2); ds[i] = 0.18 + 0.12 * g.seed;
-                    dc.set(emit(dotCol, 1), i * 3);
+                    put(dc, i * 3, dotCol);
                 }
                 D.position.needsUpdate = D.aA.needsUpdate = D.aS.needsUpdate = D.aC.needsUpdate = true;
                 dust.material.uniforms.uOpacity.value = dust.material.opacity;
