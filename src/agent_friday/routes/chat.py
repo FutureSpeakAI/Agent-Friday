@@ -1567,6 +1567,13 @@ def chat():
                 sp = sp + _cbs.context_block(_conversation_id)
             except Exception:
                 pass
+            # The project this chat is filed in: its standing instructions, files
+            # and codebases (services/projects). A chat outside one gets nothing.
+            try:
+                from agent_friday.services import projects as _projs
+                sp = sp + _projs.context_block(_conversation_id)
+            except Exception:
+                pass
             # A plan awaiting approval, or approved and under way (services/plans).
             try:
                 from agent_friday.services import plans as _plans
@@ -2669,6 +2676,11 @@ def chat_send():
             try:
                 from agent_friday.services import codebases as _cbs
                 prompt = prompt + _cbs.context_block(_conversation_id)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import projects as _projs
+                prompt = prompt + _projs.context_block(_conversation_id)
             except Exception:
                 pass
             try:

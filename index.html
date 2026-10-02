@@ -47885,7 +47885,9 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
     editing ? E(ProjectSettings, {
       project: editing, apiFetch: apiFetch,
       onClose: () => setEditing(null),
-      onSaved: () => { setEditing(null); onRefresh(); },
+      // A file added or a codebase connected refreshes the list and keeps the
+      // editor open (keep = true); a save closes it.
+      onSaved: keep => { if (keep !== true) setEditing(null); onRefresh(); },
     }) : null);
 }
 
@@ -47896,6 +47898,39 @@ function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
   const [seat, setSeat] = useState(project.seat || null);
   const [picking, setPicking] = useState(false);
   const [saving, setSaving] = useState(false);
+  // What every chat in the project inherits besides the seat and the
+  // instructions: its files and its connected codebases (Chat Hub M2).
+  const [files, setFiles] = useState(null);
+  const [codebases, setCodebases] = useState([]);
+  const [connected, setConnected] = useState(project.codebases || []);
+  const [fileNote, setFileNote] = useState('');
+  const base = '/api/projects/' + encodeURIComponent(project.id);
+  const loadFiles = () => apiFetch(base + '/files').then(r => r.json()).then(d => setFiles(d.files || [])).catch(() => setFiles([]));
+  useEffect(() => {
+    loadFiles();
+    apiFetch('/api/codebases').then(r => r.json()).then(d => setCodebases(d.codebases || [])).catch(() => {});
+    apiFetch(base).then(r => r.json()).then(d => setConnected((d.project && d.project.codebases) || [])).catch(() => {});
+  }, [project.id]);
+  const addFile = e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = String(reader.result).split(',')[1] || '';
+      apiFetch(base + '/files', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: f.name, content_base64: b64 }) })
+        .then(r => r.json().then(j => { setFileNote(r.ok ? '' : (j.error || 'Not added.')); loadFiles(); onSaved && onSaved(true); }))
+        .catch(() => setFileNote('Not added.'));
+    };
+    reader.readAsDataURL(f);
+    e.target.value = '';
+  };
+  const removeFile = n => apiFetch(base + '/files/' + encodeURIComponent(n), { method: 'DELETE' })
+    .then(() => { loadFiles(); onSaved && onSaved(true); }).catch(() => {});
+  const toggleCodebase = (cid, on) => (on
+    ? apiFetch(base + '/codebases', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codebase: cid }) })
+    : apiFetch(base + '/codebases/' + encodeURIComponent(cid), { method: 'DELETE' }))
+    .then(r => r.json()).then(d => { setConnected((d.project && d.project.codebases) || []); onSaved && onSaved(true); }).catch(() => {});
 
   const save = () => {
     setSaving(true);
@@ -48000,6 +48035,27 @@ function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
       rows: 4, className: 'input',
       style: { width: '100%', resize: 'vertical', fontSize: 11 },
     }),
+
+    label('Files the chats in this project can read'),
+    E('div', { 'data-project-files': project.id, style: { fontSize: 11, fontFamily: 'JetBrains Mono' } },
+      files === null ? E('div', { style: { color: 'rgba(255,255,255,0.45)' } }, 'Reading…')
+        : !files.length ? E('div', { style: { color: 'rgba(255,255,255,0.45)' } }, 'No files yet. Text files are quoted to her each turn; the rest are named.')
+        : files.map(f => E('div', { key: f.name, 'data-project-file': f.name, style: { display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0' } },
+            E('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#cfefff' } }, f.name),
+            E('span', { style: { color: 'rgba(255,255,255,0.45)' } }, f.bytes < 1024 ? f.bytes + ' B' : Math.round(f.bytes / 1024) + ' KB'),
+            E('button', { onClick: () => removeFile(f.name), title: 'Remove this file from the project', 'aria-label': 'Remove ' + f.name,
+              style: { background: 'none', border: 'none', color: '#ff8095', cursor: 'pointer', fontSize: 11 } }, 'remove'))),
+      E('label', { style: { display: 'inline-block', marginTop: 6, cursor: 'pointer', color: '#cfefff', border: '1px solid rgba(0,212,255,0.35)', borderRadius: 8, padding: '4px 10px' } },
+        '+ Add a file', E('input', { type: 'file', onChange: addFile, 'aria-label': 'Add a file to the project', style: { display: 'none' } })),
+      fileNote ? E('div', { role: 'status', style: { color: '#ffd28a', marginTop: 4 } }, fileNote) : null),
+
+    label('Codebases the Build panel works on'),
+    E('div', { 'data-project-codebases': project.id, style: { fontSize: 11, fontFamily: 'JetBrains Mono' } },
+      !codebases.length ? E('div', { style: { color: 'rgba(255,255,255,0.45)' } }, 'No codebases yet. Start one with "+ Codebase" beside the chats.')
+        : codebases.map(c => E('label', { key: c.id, style: { display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0', cursor: 'pointer' } },
+            E('input', { type: 'checkbox', checked: connected.indexOf(c.id) >= 0, onChange: e => toggleCodebase(c.id, e.target.checked), 'aria-label': 'Connect ' + c.title }),
+            E('span', { style: { color: '#cfefff' } }, c.title),
+            E('span', { style: { color: 'rgba(255,255,255,0.45)' } }, c.template || '')))),
 
     E('div', {
       style: {

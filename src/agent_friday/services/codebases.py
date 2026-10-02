@@ -300,6 +300,16 @@ def bind(cid: str, conversation_id: str) -> None:
         _log.warning("could not bind conversation %s to codebase %s: %s", conversation_id, cid, e)
 
 
+def set_project(cid: str, pid: Optional[str]) -> None:
+    """The project this codebase is connected to (services/projects owns the
+    list on the project's side; both are written together)."""
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    rec["project"] = pid or None
+    _save(rec)
+
+
 def set_workspace(cid: str, ws_id: Optional[str]) -> None:
     """Mark the codebase as the one that improves a bundle workspace."""
     rec = load(cid)
@@ -690,6 +700,7 @@ def _with_defaults(rec: Optional[dict]) -> Optional[dict]:
     seats.update({k: v for k, v in (rec.get("seats") or {}).items() if k in DEFAULT_SEATS})
     rec["seats"] = seats
     rec.setdefault("key_profile", "mine")
+    rec.setdefault("project", None)
     return rec
 
 
