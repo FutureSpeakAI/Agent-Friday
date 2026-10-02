@@ -153,7 +153,7 @@
 
   // ── The per-frame step ───────────────────────────────────────────────────────
   const snap = Core.snapController({ engageRadius: 40, releaseRadius: 64, friction: 0.35 });
-  const pinch = Core.pinchMachine({ onset: 0.5, release: 0.5, dragSlopPx: 24, holdMs: 700 }); // the engine's hysteresis is authoritative; strength is 0 or 1
+  const pinch = Core.pinchMachine({ onset: 0.5, release: 0.5, dragSlopPx: 36, holdMs: 700 }); // a pinch moves the tracked midpoint up to ~30 px; past 36 px it is a drag // the engine's hysteresis is authoritative; strength is 0 or 1
   const dwell = Core.dwellMachine({ dwellMs: 700 });
   const zoom = Core.zoomTracker();
   let locked = null, lastPoint = { x: -100, y: -100 }, trackingOn = false, secondHand = null, lastZoomEmit = 0;
@@ -248,6 +248,7 @@
     foldRows(on);
     if (on && !applyBig.watching) { applyBig.watching = true; new MutationObserver(() => { if (document.body.classList.contains('fr-big')) { clearTimeout(applyBig.t); applyBig.t = setTimeout(() => foldRows(true), 120); } }).observe(document.body, { childList: true, subtree: true }); }
     dirty = true;
+    if (locked && locked.el) setTimeout(() => { if (locked && locked.el && locked.el.isConnected) { const r = locked.el.getBoundingClientRect(); locked.rect = { left: r.left, top: r.top, width: r.width, height: r.height }; highlight(locked); } }, 400);
     return on;
   }
   function setTracking(on) { trackingOn = !!on; if (!on) { highlight(null); locked = null; } return applyBig(); }
@@ -275,5 +276,5 @@
   document.addEventListener('DOMContentLoaded', watch);
   if (document.body) watch();
 
-  window.FridayHandCursor = { frame, second, targets: () => targets(performance.now()), has, setTracking, applySettings, setBigMode, next, select, back, isGuarded, get locked() { return locked; }, get big() { return document.body.classList.contains('fr-big'); } };
+  window.FridayHandCursor = { frame, second, refresh: () => { dirty = true; }, targets: () => targets(performance.now()), has, setTracking, applySettings, setBigMode, next, select, back, isGuarded, get locked() { return locked; }, get big() { return document.body.classList.contains('fr-big'); } };
 })();

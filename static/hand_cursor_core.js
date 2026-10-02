@@ -7,7 +7,7 @@
  * onset (the pinch motion itself drags a raw cursor off small targets) and tells a click from
  * a drag from a hold, and a dwell machine offers click-by-hovering as an alternative.
  *
- * Loaded by the page as window.FridayHandCore and by node tests through module.exports.
+ * Loaded by the page onto the global as FridayHandCore, and by node tests through module.exports.
  * Invariants a test can hold:
  *   - snap: once locked, the lock survives until the cursor is farther than releaseRadius
  *     from the locked rect; it engages only within engageRadius; smaller targets win ties.

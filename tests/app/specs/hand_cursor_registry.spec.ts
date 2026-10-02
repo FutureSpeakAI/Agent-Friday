@@ -40,22 +40,26 @@ test.describe('hand cursor registry', () => {
     });
   }
 
-  test('a pinch that drifts off a small button still clicks it (freeze at onset)', async ({ page }) => {
+  test('a pinch whose own motion drifts off a small button still clicks it (freeze at onset)', async ({ page }) => {
     await page.goto(`${BASE}/w/system`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2500);
     const out = await page.evaluate(() => new Promise(resolve => {
       const HC = (window as any).FridayHandCursor;
       // A 24 px button of our own, so the test does not depend on a workspace's content.
-      const b = document.createElement('button'); b.textContent = 'tiny'; b.style.cssText = 'position:fixed;left:300px;top:300px;width:24px;height:24px;z-index:5';
+      const b = document.createElement('button'); b.textContent = 'tiny'; b.style.cssText = 'position:fixed;left:300px;top:300px;width:24px;height:24px;z-index:10000'; // on top, as a real control is; a covered element is rightly not a target
       let clicks = 0; b.addEventListener('click', () => { clicks++; }); document.body.appendChild(b);
       const cursor = document.getElementById('hand-cursor'); if (cursor) cursor.classList.add('active');
+      // In the page a frame runs on requestAnimationFrame, after the registry's mutation
+      // observer has seen the new element; the test waits the same way.
+      requestAnimationFrame(() => {
       let t = 1000; const f = (x: number, y: number, pinching: boolean) => HC.frame({ x, y, visible: true, pinching, t: (t += 33) });
       for (let i = 0; i < 6; i++) f(311, 311, false);          // settle on the button
       const lockedBefore = HC.locked && HC.locked.el === b;
       f(311, 311, true);                                        // pinch onset: freeze here
-      for (let i = 0; i < 8; i++) f(311 + i * 6, 311 + i * 6, true); // the pinch drags the raw hand 48 px away
+      for (let i = 0; i < 8; i++) f(311 + i * 3, 311 + i * 3, true); // the pinch itself drags the raw hand ~30 px, off the button
       f(360, 360, false);                                       // release far off the button
       setTimeout(() => { b.remove(); resolve({ clicks, lockedBefore }); }, 50);
+      });
     })) as any;
     expect(out.lockedBefore, 'the cursor did not lock onto the 24 px button').toBe(true);
     expect(out.clicks, 'the click did not land on the button the pinch started on').toBe(1);

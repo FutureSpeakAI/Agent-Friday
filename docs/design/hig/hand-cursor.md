@@ -1,7 +1,10 @@
 # HIG chapter: the hand cursor and big mode
 
-> **Status:** in build on `feat/hand-cursor` (Layer 1 first, then Layer 2), owner-approved
-> 2026-10-02. Part of the [Agent Friday™ Human Interface Guidelines](README.md).
+> **Status:** built on `feat/hand-cursor` (Layer 1 and the first four surfaces of Layer 2),
+> owner-approved 2026-10-02; handed to the program lead's daytime lane. What ships:
+> `static/hand_cursor_core.js` (the maths), `static/hand_cursor.js` (registry, reticle, snap,
+> freeze, dwell, drag, big mode), `services/hand_cursor_tools.py` (voice), the settings rows,
+> and the tests named in §4. Part of the [Agent Friday™ Human Interface Guidelines](README.md).
 > **Builds on:** the existing hand and head tracking (MediaPipe hands and face, the pinch
 > click, the "Minority Report hands" toggle in the scene menu, the `tracking.*` settings), the
 > unified shell, and the HIG's target sizes (§9). It forks none of them.
@@ -53,9 +56,10 @@ average, no fixed delay.
 The pinch gesture moves the fingertip the tracker follows, which is exactly what used to drag
 the cursor off a 24 px button. At pinch onset (strength above 0.6) the cursor **freezes** at
 the snapped point; it stays frozen until release (strength below 0.4; the gap keeps a
-wavering pinch from double-firing). A release without movement past 24 px is a **click at
-the frozen point**. A pinch that moves past 24 px is a **drag** (§1.5), and its release is
-not a click.
+wavering pinch from double-firing). A release without movement past 36 px is a **click at
+the frozen point**. A pinch that moves past 36 px is a **drag** (§1.5), and its release is
+not a click; the pinch's own motion moves the tracked midpoint by up to about 30 px, which
+stays under that slop.
 
 ### 1.4 Dwell to click
 
@@ -109,10 +113,19 @@ and scale only, no colour strobing, no flashing. The scene's own flash limits ar
 
 ### 1.8 Orbs
 
-Orbs keep their gravity and their click. The registry holds each orb's rect; snapping to an
-orb hands the pointer to the orb's own hover and click handlers, so from the orb layer's
-point of view nothing changed but a steadier pointer. The reticle never draws over an orb's
-label.
+Orbs keep their gravity and their click. The orb manager exposes three bridges and nothing
+else changes: `fridayOrbTargets()` (each on-screen orb's projected position, from the map
+the manager already builds every frame), `fridayOrbPointer(x, y)` (feeds the manager the
+same pointer and velocity a mouse would, so gravity and hover work by hand) and
+`fridayOrbClickAt(x, y)` (the manager's own hit test). The registry holds each orb as a 44 px
+target with weight 1.4; snapping to one hands the pointer to the orb, and a pinch clicks
+through its own hit test. The reticle never draws over an orb's label.
+
+### 1.9 What a covered element is
+
+A target whose centre is under another element (a dropdown over a list, a panel over the
+page) is not clickable by hand, so the registry marks it covered and the snap passes over
+it. The test that proves the freeze creates its button on top for that reason.
 
 ## 2. Layer 2: big mode
 
@@ -165,6 +178,7 @@ mode off": the last five are two tools per the voice tool contract, `big_mode(on
 | Dwell time | `tracking.dwell_ms` (exists) | 650 |
 | Snap to targets | `tracking.snap` | on |
 | Snap reach | `tracking.snap_radius` | 40 px (engage; release is 1.6×) |
+| Two-hand zoom | `tracking.two_hand_zoom` | off (a second tracked hand costs CPU; takes effect when tracking next starts) |
 | Big mode | `big_mode` | auto |
 
 `tracking` is written whole (it is not deep-merged).
@@ -175,7 +189,14 @@ mode off": the last five are two tools per the voice tool contract, `big_mode(on
   tie to the smaller target, pinch freeze at onset, drag past the slop, guarded hold, dwell
   once per visit, One Euro jitter and lag, zoom, the change limiter). Shown red on a broken
   hysteresis and a broken freeze, then green.
-- A registry discovery spec (Playwright, scratch server, `FRIDAY_BASE` set): every workspace.
+- `tests/unit/test_hand_cursor_tools.py`: the two tools are declared, shared into voice and
+  internal; big_mode persists before it pushes and reports the page's answer; `select` on a
+  guarded target never fires; no move is claimed without a page.
+- `tests/app/specs/hand_cursor_registry.spec.ts` (Playwright, scratch server, `FRIDAY_BASE`
+  set, refuses the live :3000): walks ten workspaces' DOM for anything focusable, with an
+  interactive role or a click handler, and fails on what the registry misses (10 of 10
+  passed on 2026-10-02); and proves the freeze in the page: a pinch that starts on a 24 px
+  button and whose own motion drifts the hand off it clicks that button.
 - Frames, looked at: snap engaged on a small button, pinch freeze during a pinch, before and
   after big mode on each rolled-out surface.
 - The critic's checklist: reticle abstract · lock visible · no flicker between neighbours ·

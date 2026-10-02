@@ -237,7 +237,10 @@ window.addEventListener('DOMContentLoaded',function(){
         .fr-snap { outline: none !important; }
         /* Big mode (hand-cursor.md §2): large targets, fewer items, generous spacing. One switch, body.fr-big. */
         body.fr-big { --fr-gap: 16px; }
-        body.fr-big .dock-btn { min-width: 88px; min-height: 88px; font-size: 13px; }
+        body.fr-big .dock-btn { min-width: 72px; min-height: 72px; font-size: 13px; }
+        body.fr-big .chat-panel { width: min(600px, 100vw) !important; }
+        body.fr-big .chat-panel [data-chat-input] { flex: 1 1 100% !important; width: 100% !important; order: -1; }
+        body.fr-big .chat-panel .chat-compose, body.fr-big .chat-panel [data-chat-compose], body.fr-big .chat-panel form { flex-wrap: wrap; row-gap: 10px; }
         body.fr-big .dock .items, body.fr-big .dock-items { gap: 10px; }
         body.fr-big .landing-cluster .landing-countdowns > * { font-size: 1.25em; padding: 10px 14px; }
         body.fr-big .landing-cluster button, body.fr-big .landing-cluster .btn { min-height: 72px; min-width: 96px; font-size: 1.15em; padding: 0 26px; }
