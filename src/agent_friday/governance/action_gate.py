@@ -212,6 +212,9 @@ INTERNAL_TOOLS = frozenset({
     # format is the owner's own podcast setting on this computer.
     "make_podcast", "podcast_list", "podcast_play", "podcast_source", "podcast_format",
     "media_show", "media_cards", "media_turn",
+    # A media diet note only proposes: an approval card in the owner's own
+    # approvals; the rule is applied by the approved card, with a receipt.
+    "media_diet_note",
     # Friday's own look: it changes only the owner's own desktop and history.
     # A step authored by a cloud model sends numbers only, through the spend
     # guard and the egress gate like any model call; it reaches no one.

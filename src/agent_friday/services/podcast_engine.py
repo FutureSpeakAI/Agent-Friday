@@ -817,7 +817,9 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
     def clusters(ids):
         return {by[c]["cluster"] for c in ids if c in by}
 
-    own_notes = {d["sid"] for d in docs if quality.is_own_doc(d)}
+    # The edition's own framing (the Front Page overview) is never a source;
+    # the written briefing's sections are the sources of a digest-only run.
+    own_notes = {d["sid"] for d in docs if d.get("role") == "overview"}
 
     out = []
     for ln in lines:
@@ -826,8 +828,7 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
             continue
         ch = ln.get("chapter", 0)
         cited = [c for c in ln.get("cites") or [] if c in by]
-        # Friday's own notes (the edition's framing, her written digest) are
-        # never cited: a line resting on them is her own.
+        # The edition's framing is never cited: a line resting on it is her own.
         notes = [c for c in ln.get("cites") or [] if c in own_notes]
         other = [c for c in ln.get("cites") or [] if c not in by and c not in own_notes]
         if notes and not cited and not ln.get("own"):

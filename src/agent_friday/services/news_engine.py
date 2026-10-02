@@ -1083,6 +1083,9 @@ def _gather_live_briefing_context():
             cats = [c for c in NEWS_CATEGORIES
                     if prefs.get("categories_enabled", {}).get(c, True)]
             items = _fetch_news_items(categories=cats, limit_per=4)
+            # The owner's approved media diet holds here, with a receipt.
+            from agent_friday.services import media_diet
+            items, _ = media_diet.enforce(items, "briefing")
             # Each story gets an id the model cites; its link is attached by
             # code from the fetched URL (services/news_links.py), never typed.
             from agent_friday.services import news_links
@@ -1119,6 +1122,8 @@ def _gather_live_briefing_context():
                     dom = r.get("source") or _extract_domain(r.get("url", ""))
                     if dom and dom not in banned:
                         found.append(dict(r, source=dom, category=cat))
+            from agent_friday.services import media_diet
+            found, _ = media_diet.enforce(found, "briefing")
             stories = news_links.number(found)
             _keep_briefing_sources(news=stories)
             if stories:
@@ -2167,6 +2172,9 @@ def _generate_front_page(slot="morning"):
     from agent_friday.services import news_seen
     past = [_read_front_page(e["id"]) for e in _list_front_pages() if e.get("id") != edition_id][:14]
     pool, held_back = news_seen.filter_pool(pool, news_seen.index([e for e in past if e]))
+    # The owner's approved media diet holds here, with a receipt.
+    from agent_friday.services import media_diet
+    pool, diet_removed = media_diet.enforce(pool, "front_page")
     editorial = _editorialize_front_page(
         pool, slot=slot, prev_stories=prev_titles,
         calendar_events=calendar_events)
@@ -2239,6 +2247,7 @@ def _generate_front_page(slot="morning"):
         "continuing_threads": continuing_threads,
         "prev_edition_id": (prev or {}).get("id") if prev else None,
         "held_back": held_back,
+        "diet_removed": [{"title": a.get("title", ""), "source": a.get("source", "")} for a in diet_removed],
         # "curated" when the editor answered, otherwise the reason it did not.
         # Stored ON the edition so the page can say what it is and a later
         # reader (or a re-run) can tell an un-curated edition from a curated
@@ -2563,6 +2572,8 @@ def _generate_weekly_digest():
                 continue
             seen.add(key)
             week.append(s)
+    from agent_friday.services import media_diet
+    week, _ = media_diet.enforce(week, "weekly")
     stories = news_links.number(week[:120], prefix="W")
     story_block = news_links.prompt_lines(stories) or "(no stories archived this week)"
     try:

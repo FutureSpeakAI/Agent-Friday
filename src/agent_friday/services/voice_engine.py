@@ -655,6 +655,8 @@ _VOICE_SHARED_TOOLS = (
     "podcast_play",
     "podcast_source",
     "podcast_format",
+    # A media preference heard in conversation becomes a proposal card.
+    "media_diet_note",
     # Friday's own look: "evolve now", "undo that look", "go back to last
     # month's look", "turn evolution off", "what changed?". The same tool the
     # screen uses, so what she says is what the history shows.

@@ -301,6 +301,9 @@ def run_documents(routine: str, run_id: str) -> list[dict]:
             for d in docs:
                 d.update(role="digest", heading=d["title"], title=_heading_title(d["title"]))
     docs = [d for d in docs if d["text"]]
+    # The owner's approved media diet holds in every episode, with a receipt.
+    from agent_friday.services import media_diet
+    docs = media_diet.enforce_docs(docs, "podcast")
     if not docs:
         raise SourceError("that run has no stories to talk about")
     return docs

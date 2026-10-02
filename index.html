@@ -13862,6 +13862,45 @@ function PodcastsView() {
         ['failed', 'cancelled'].includes(ep.status) ? h('button', { className: 'btn', onClick: () => act(ep, 'retry') }, 'Retry') : null,
         h('button', { className: 'btn', 'aria-label': 'Delete ' + (ep.title || 'episode'), onClick: () => act(ep, 'delete') }, '🗑')))));
 }
+// The owner's media diet rules: what is in force, what Friday proposed from
+// conversation (approve or reject: nothing applies until approved), and what
+// the rules removed, as receipts.
+function MediaDietRules() {
+  const h = React.createElement;
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState('');
+  const load = () => fetch('/api/news/media-diet').then(r => r.json()).then(setD).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const decide = (id, decision) => {
+    setBusy(id);
+    fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) })
+      .then(() => { setBusy(''); load(); }).catch(() => setBusy(''));
+  };
+  const drop = outlet => fetch('/api/news/media-diet/rule', { method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outlet }) }).then(load);
+  if (!d) return null;
+  const muted = { fontSize: 11, color: '#777' };
+  return h('div', { style: { marginBottom: 12 } },
+    h('div', { className: 'card-title', style: { marginTop: 8 } }, 'Your rules'),
+    (d.rules || []).length === 0
+      ? h('div', { style: muted }, 'No rules yet. Tell ' + fridayName() + ' which outlets to avoid or prefer; she proposes a rule here, and nothing applies until you approve it.')
+      : d.rules.map(r => h('div', { key: r.outlet, className: 'manage-row' },
+          h('span', null, (r.kind === 'block' ? 'Never cite ' : 'Prefer ') + (r.name || r.outlet)),
+          h('button', { className: 'btn', style: { fontSize: 10 }, onClick: () => drop(r.outlet),
+            'aria-label': 'Remove the rule for ' + (r.name || r.outlet) }, 'Remove'))),
+    (d.pending || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'Waiting for you') : null,
+    (d.pending || []).map(p => h('div', { key: p.approval_id, className: 'manage-row', style: { display: 'block' } },
+      h('pre', { style: { whiteSpace: 'pre-wrap', fontSize: 11, margin: '4px 0', fontFamily: 'inherit' } }, p.diff),
+      h('button', { className: 'btn active', style: { fontSize: 10 }, disabled: busy === p.approval_id,
+        onClick: () => decide(p.approval_id, 'approve') }, 'Approve'), ' ',
+      h('button', { className: 'btn', style: { fontSize: 10 }, disabled: busy === p.approval_id,
+        onClick: () => decide(p.approval_id, 'deny') }, 'Reject'))),
+    (d.receipts || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'What your rules removed') : null,
+    (d.receipts || []).slice(0, 8).map((x, i) => h('div', { key: i, style: muted },
+      String(x.at || '').replace('T', ' ').slice(0, 16) + ' \u00b7 ' + String(x.where || '').replace('_', ' ') + ' \u00b7 '
+      + x.rule + ': ' + (x.removed || []).length + ' removed')));
+}
 const NEWS_PODCAST_ROUTINE = { frontpage: 'front_page', briefings: 'briefing', weekly: 'weekly', editorial: 'editorial' };
 function SendTo({
   content,
@@ -32979,7 +33018,7 @@ function NewsWS() {
       color: '#777',
       marginBottom: 8
     }
-  }, "How you engage with the news \u2014 what you read, save, boost, and ban."), dietLoading ? /*#__PURE__*/React.createElement("div", {
+  }, "How you engage with the news \u2014 what you read, save, boost, and ban."), /*#__PURE__*/React.createElement(MediaDietRules, null), dietLoading ? /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#999',
       textAlign: 'center',

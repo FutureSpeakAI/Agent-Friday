@@ -1054,6 +1054,30 @@ def api_federation_trust_scores():
         return api_error(e, "Couldn't load the trust scores")
 
 
+@news_bp.route('/api/news/media-diet', methods=['GET'])
+def news_media_diet():
+    """The owner's media diet: rules in force, proposals waiting for a
+    decision (approval cards), and what the rules recently removed."""
+    from agent_friday.services import media_diet
+    pending = [{"approval_id": r.get("approval_id"), "title": r.get("title"),
+                "diff": r.get("action_description"), "created_at": r.get("created_at")}
+               for r in media_diet.pending()]
+    return jsonify({"status": "ok", "rules": media_diet.rules(), "pending": pending,
+                    "receipts": media_diet.recent_receipts()})
+
+
+@news_bp.route('/api/news/media-diet/rule', methods=['DELETE'])
+def news_media_diet_remove():
+    """The owner takes a rule back."""
+    from agent_friday.services import media_diet
+    data = request.get_json(silent=True) or {}
+    try:
+        removed = media_diet.remove(str(data.get("outlet") or ""))
+    except Exception as e:
+        return api_error(e, "Couldn't change the media diet", status=400)
+    return jsonify({"status": "ok", "removed": removed})
+
+
 @news_bp.route('/api/news/source-stats', methods=['GET', 'POST'])
 def news_source_stats():
     """Per-source engagement data for the 'Your Media Diet' panel.
