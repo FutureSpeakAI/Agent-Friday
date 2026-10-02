@@ -8142,6 +8142,8 @@ try:
     _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
     from agent_friday.services import media_diet as _media_diet
     _media_diet.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+    from agent_friday.services import news_discuss as _news_discuss
+    _news_discuss.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
     from agent_friday.services import media_card_tools as _media_card_tools
     _media_card_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
 except Exception as _pte:  # never let optional deps break the agent import

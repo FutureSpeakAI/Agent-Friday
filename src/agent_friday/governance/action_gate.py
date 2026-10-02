@@ -215,6 +215,9 @@ INTERNAL_TOOLS = frozenset({
     # A media diet note only proposes: an approval card in the owner's own
     # approvals; the rule is applied by the approved card, with a receipt.
     "media_diet_note",
+    # Discuss reads the web through the guarded fetcher and the local model;
+    # it writes only the owner's own files (follows, notes, a queued episode).
+    "discuss_story",
     # Friday's own look: it changes only the owner's own desktop and history.
     # A step authored by a cloud model sends numbers only, through the spend
     # guard and the egress gate like any model call; it reaches no one.

@@ -2135,6 +2135,15 @@ def _front_page_story_titles(edition):
     return out
 
 
+def _follow_report(pool):
+    try:
+        from agent_friday.services import news_discuss
+        return news_discuss.follow_report(pool)
+    except Exception as e:
+        _log.warning("follow report failed: %s", e)
+        return []
+
+
 def _previous_front_page(current_id):
     """The most recent saved edition that isn't current_id (the prior one)."""
     for e in _list_front_pages():
@@ -2248,6 +2257,8 @@ def _generate_front_page(slot="morning"):
         "prev_edition_id": (prev or {}).get("id") if prev else None,
         "held_back": held_back,
         "diet_removed": [{"title": a.get("title", ""), "source": a.get("source", "")} for a in diet_removed],
+        # Stories the owner follows (Discuss, Follow): what changed, or that nothing did.
+        "follows": _follow_report(pool),
         # "curated" when the editor answered, otherwise the reason it did not.
         # Stored ON the edition so the page can say what it is and a later
         # reader (or a re-run) can tell an un-curated edition from a curated
