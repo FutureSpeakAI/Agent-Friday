@@ -179,6 +179,7 @@
       if (top && top !== res.target.el && !res.target.el.contains(top) && !top.closest('#hand-cursor,.fr-snap-box')) { res.target.disabled = true; snap.release(); }
     }
     if (res.target !== locked) { locked = res.target; highlight(locked); if (locked && locked.orb && typeof window.fridayOrbPointer === 'function') window.fridayOrbPointer(locked.orb.sx, locked.orb.sy); }
+    else if (locked && locked.el) { const lr = locked.el.getBoundingClientRect(); if (Math.abs(lr.left - locked.rect.left) > 0.5 || Math.abs(lr.width - locked.rect.width) > 0.5 || Math.abs(lr.top - locked.rect.top) > 0.5) { locked.rect = { left: lr.left, top: lr.top, width: lr.width, height: lr.height }; highlight(locked); } }
     const drawAt = frozen || (locked ? Core.center(locked.rect) : res.point);
     reticle.style.left = drawAt.x + 'px'; reticle.style.top = drawAt.y + 'px';
     lastPoint = drawAt;
@@ -218,9 +219,34 @@
 
   // ── Big mode ─────────────────────────────────────────────────────────────────
   let bigSetting = 'auto';
+  // Long rows of actions fold in big mode: the first four stay as big cards, the rest sit
+  // behind one "More" card (HIG hand-cursor.md §2.2). Rows opt in by selector or data-fr-fold.
+  const FOLD_SELECTOR = '[data-fr-fold], .news-toolbar, .notif-dropdown .notif-head, .landing-cluster .landing-actions';
+  const FOLD_KEEP = 4;
+  function foldRows(on) {
+    document.querySelectorAll(FOLD_SELECTOR).forEach(row => {
+      const kids = Array.from(row.children).filter(k => !k.classList.contains('fr-more'));
+      const more = row.querySelector(':scope > .fr-more');
+      if (!on || kids.length <= FOLD_KEEP + 1) {
+        kids.forEach(k => { k.classList.remove('fr-folded'); });
+        if (more) more.remove();
+        return;
+      }
+      const open = more && more.getAttribute('aria-expanded') === 'true';
+      kids.forEach((k, i) => k.classList.toggle('fr-folded', i >= FOLD_KEEP && !open));
+      if (!more) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'fr-more btn'; b.setAttribute('aria-expanded', 'false');
+        b.textContent = 'More'; b.title = 'The rest of this row';
+        b.addEventListener('click', () => { const o = b.getAttribute('aria-expanded') !== 'true'; b.setAttribute('aria-expanded', String(o)); b.textContent = o ? 'Less' : 'More'; foldRows(true); });
+        row.appendChild(b);
+      }
+    });
+  }
   function applyBig() {
     const on = bigSetting === 'on' || (bigSetting === 'auto' && trackingOn);
     document.body.classList.toggle('fr-big', on);
+    foldRows(on);
+    if (on && !applyBig.watching) { applyBig.watching = true; new MutationObserver(() => { if (document.body.classList.contains('fr-big')) { clearTimeout(applyBig.t); applyBig.t = setTimeout(() => foldRows(true), 120); } }).observe(document.body, { childList: true, subtree: true }); }
     dirty = true;
     return on;
   }
