@@ -483,6 +483,16 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
             "mode and the provider key in Settings > Models."
             % (chosen, actual, chosen))
 
+    # A local pick answered in the cloud because the mode is Cloud only: the
+    # model is installed and the setting is the cause, so name the setting.
+    if not chosen_is_cloud and actual_is_cloud and \
+            str(routing_mode or "").strip().lower() == "cloud_only":
+        return (
+            "You chose %s for the reasoning seat, but routing mode is 'Cloud "
+            "only', so this turn was sent to %s. To be answered by %s on this "
+            "machine, set routing mode to Smart, Local preferred or Local only "
+            "in Settings > Models." % (chosen, actual, chosen))
+
     # Two cloud models: not an absent local install, so offer no install advice.
     if chosen_is_cloud and actual_is_cloud:
         return (

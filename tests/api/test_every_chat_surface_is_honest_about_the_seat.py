@@ -68,6 +68,19 @@ def test_a_local_pick_that_is_absent_still_says_so():
     assert "gemma4:12b" in text and "bonsai2:27b" in text
 
 
+def test_a_local_pick_sent_to_the_cloud_by_cloud_only_blames_the_mode():
+    """The seat names an installed local model; routing mode Cloud only sent
+    the turn to the cloud. "Not installed" would send the owner hunting for a
+    download when the cause is one setting."""
+    text = chat_mod._seat_divergence_text(
+        "bonsai2:27b", "claude-sonnet-5-5", routing_mode="cloud_only")
+
+    assert text and "bonsai2:27b" in text and "claude-sonnet-5-5" in text
+    assert "not installed" not in text, text
+    low = text.lower()
+    assert "cloud only" in low and "routing mode" in low, text
+
+
 def test_the_computer_control_override_keeps_its_own_words():
     text = chat_mod._seat_divergence_text(
         "bonsai2:27b", "claude-sonnet-5", routing_mode="local_preferred",
