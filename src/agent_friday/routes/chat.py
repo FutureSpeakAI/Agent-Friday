@@ -863,6 +863,13 @@ def chat_stream():
 
 @chat_bp.route('/api/chat', methods=['POST'])
 @_traced_turn
+def _ag_tools_for_turn(workspace, conversation_id):
+    """A turn's tool catalogue: the always-on tools, the workspace's own, and
+    the hub's when the chat is in the hub (services/agent.tools_for_workspace)."""
+    from agent_friday.services.agent import tools_for_workspace as _tfw
+    return _tfw(workspace, conversation_id=conversation_id)
+
+
 @_privacy_hold_turn
 def chat():
     """Text chat — powered by Anthropic Claude.
@@ -1789,17 +1796,21 @@ def chat():
             # assembler" rule in docs/design/active/one-tool-registry.md:
             # two builders, two answers.
             _catalogue_all = None
+            # The turn's catalogue (services/agent.tools_for_workspace): the
+            # always-on tools, the workspace's own, and the hub's when this
+            # chat is in the hub. One assembler for every seat.
+            _turn_catalogue = _ag_tools_for_turn(workspace, _conversation_id)
             try:
                 from agent_friday.services import tool_catalogue as _TCat
-                if _TCat.enabled() and CLAUDE_TOOLS:
-                    _local_tools = _TCat.opening_set(CLAUDE_TOOLS, pilot=_pilot)
-                    _catalogue_all = CLAUDE_TOOLS
+                if _TCat.enabled() and _turn_catalogue:
+                    _local_tools = _TCat.opening_set(_turn_catalogue, pilot=_pilot)
+                    _catalogue_all = _turn_catalogue
                     _tool_note = ''
             except Exception:
                 _catalogue_all = None
             if _catalogue_all is None:
                 _local_tools, _tool_note = _fit_tools(
-                    _route_info.get('model'), CLAUDE_TOOLS,
+                    _route_info.get('model'), _turn_catalogue,
                     prompt_cost=_prompt_cost, intent=_intent,
                     system=system_prompt, messages=messages)
             if _tool_note:
@@ -1807,7 +1818,7 @@ def chat():
                 # Make the loss legible to the person, not only to the model.
                 try:
                     _kept_n = {str(t.get('name')) for t in (_local_tools or [])}
-                    _lost = sorted(str(t.get('name')) for t in CLAUDE_TOOLS
+                    _lost = sorted(str(t.get('name')) for t in _turn_catalogue
                                    if str(t.get('name')) not in _kept_n)
                     _tool_surface = {
                         "kept": len(_kept_n),
@@ -1938,7 +1949,7 @@ def chat():
                     messages, system=system_prompt, model=_route_info.get('model'),
                     temperature=settings.get('temperature'),
                     orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
-                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    tools=_turn_catalogue, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                     provider=_route_info.get('provider_name'),
                 )
             else:
@@ -1991,7 +2002,7 @@ def chat():
                     _retry_messages, system=system_prompt, model=_route_info.get('model'),
                     temperature=settings.get('temperature'),
                     orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
-                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    tools=_turn_catalogue, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                     provider=_route_info.get('provider_name'),
                 )
             _cloud_model = _route_info.get('model')
@@ -2032,7 +2043,7 @@ def chat():
             ), []
 
         reply, tool_trace, _integrity_meta = validate_toolcall_integrity(
-            reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
+            reply, tool_trace, [t['name'] for t in _ag_tools_for_turn(workspace, _conversation_id)],
             redispatch=_redispatch_for_integrity,
             redispatch_no_tools=_redispatch_no_tools,
         )
@@ -2809,7 +2820,7 @@ def chat_send():
             )
 
         reply, tool_trace, _send_integrity = validate_toolcall_integrity(
-            reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
+            reply, tool_trace, [t['name'] for t in _ag_tools_for_turn(workspace, _conversation_id)],
             redispatch=_send_redispatch,
         )
         if _send_integrity.get('final_leaks') or _send_integrity.get('final_claims'):

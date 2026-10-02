@@ -340,7 +340,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         return _call_openai(
             messages, system=_system_for('openai'), model=use_model,
             max_tokens=max_tokens, temperature=temperature,
-            orb_label=orb_label, tools=(tools or tools_for_workspace(workspace)),
+            orb_label=orb_label, tools=(tools or tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             provider=routed_provider_name if use_model else None,
         )
@@ -368,7 +368,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # nothing left for it to drop, which is the point.
         from agent_friday.services import tool_catalogue as _TCat
         if _TCat.enabled() and CLAUDE_TOOLS:
-            _turn_tools = tools or tools_for_workspace(workspace)
+            _turn_tools = tools or tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
             _open = _TCat.opening_set(
                 _turn_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
             try:
@@ -6143,10 +6143,28 @@ def _tool_personality_check_sycophancy(inp):
 WORKSPACE_TOOLS: dict = {}
 
 
-def tools_for_workspace(workspace=None, base=None):
-    """The catalogue for one turn: the always-on tools plus the front workspace's own."""
-    extra = WORKSPACE_TOOLS.get(str(workspace or ""), [])
-    return list(CLAUDE_TOOLS if base is None else base) + list(extra)
+def _hub_chat(conversation_id=None) -> bool:
+    """A chat in the Chat Hub (docs/design/active/chat-hub.md): bound to a
+    codebase, or filed in a project. Its turns carry the hub's own tools."""
+    cid = conversation_id or _CURRENT_CONVERSATION.get()
+    if not cid:
+        return False
+    try:
+        from agent_friday.services import conversations as _convs
+        conv = _convs.load(cid) or {}
+        return bool(conv.get("codebase") or conv.get("project"))
+    except Exception:
+        return False
+
+
+def tools_for_workspace(workspace=None, base=None, conversation_id=None):
+    """The catalogue for one turn: the always-on tools, the front workspace's
+    own, and the hub's when the chat is in the hub. A tool outside the turn's
+    catalogue is still handed over by name through load_tools."""
+    extra = list(WORKSPACE_TOOLS.get(str(workspace or ""), []))
+    if str(workspace or "") != "hub" and _hub_chat(conversation_id):
+        extra += [t for t in WORKSPACE_TOOLS.get("hub", []) if t not in extra]
+    return list(CLAUDE_TOOLS if base is None else base) + extra
 
 
 CLAUDE_TOOL_HANDLERS = {
@@ -8120,18 +8138,16 @@ TOOL_RINGS.update({
 # store, and off the record it writes nothing at all.
 CLAUDE_TOOLS.append({
     "name": "artifact_put",
-    "description": "Put an artifact in this chat's panel. Kinds: markdown, table, chart, html, diff, image, svg; an update is a new version the user can scrub back through.",
+    "description": "Put an artifact in this chat's panel. An update is a new version.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "kind": {"type": "string",
-                     "enum": ["markdown", "table", "chart", "html", "diff", "image", "svg"],
-                     "description": "What it is; decides how the panel renders it."},
-            "title": {"type": "string", "description": "A short human title, e.g. 'FOIA tracker' or 'Rent by month'."},
-            "content": {"description": "The content, in the shape for its kind (text, or an object for table/chart)."},
-            "artifact_id": {"type": "string", "description": "Update THIS artifact (a new version) instead of creating one."},
-            "conversation_id": {"type": "string", "description": "Only when acting for another conversation; normally omitted."},
-            "meta": {"type": "object", "description": "Optional: {sensitivity, source_refs: [..], task_id, goal_id}."},
+            "kind": {"type": "string", "enum": ["markdown", "table", "chart", "html", "diff", "image", "svg"]},
+            "title": {"type": "string", "description": "Short title."},
+            "content": {"description": "Text, or an object for table/chart."},
+            "artifact_id": {"type": "string", "description": "Update this one."},
+            "conversation_id": {"type": "string"},
+            "meta": {"type": "object", "description": "Optional: sensitivity, source_refs, task_id, goal_id."},
         },
         "required": ["kind", "title", "content"],
     },
@@ -8337,7 +8353,7 @@ TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0, "
 # ── "Improve this workspace" (services/workspace_bundles; spec §4.9.1) ───────
 CLAUDE_TOOLS.append({
     "name": "improve_workspace",
-    "description": "Open the salon on a copy of a workspace. A native workspace is refused plainly: improving it means Friday's own source, which is not built.",
+    "description": "Open the salon on a copy of a workspace. A native one is refused: Friday's own source is not built.",
     "input_schema": {"type": "object", "properties": {
         "workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'rent-board', 'the chore wheel', 'news'."}},
         "required": ["workspace"]},
@@ -8657,7 +8673,7 @@ def _hub_find_project(words):
 
 CLAUDE_TOOLS.append({
     "name": "open_project",
-    "description": "Open one of the user's projects. Its latest chat comes to the front, a new one when it has none; say the result's line as is.",
+    "description": "Open a project's latest chat, made if none. Say the result's line as is.",
     "input_schema": {"type": "object", "properties": {"project": {"type": "string", "description": "The project, as the user said it."}},
                      "required": ["project"]},
 })
@@ -11602,7 +11618,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         if _alt:
             return _call_openai(
                 messages, system=system, model=_alt, max_tokens=max_tokens,
-                orb_label=orb_label, orb_icon=orb_icon, tools=tools_for_workspace(workspace),
+                orb_label=orb_label, orb_icon=orb_icon, tools=tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id")),
                 pii_lookup=pii_lookup, session_ctx=session_ctx,
                 provider=_one_key.OPENROUTER)
         raise RuntimeError(
@@ -11849,7 +11865,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 "model": model or ANTHROPIC_MODEL_DEFAULT,
                 "max_tokens": max_tokens,
                 "messages": convo,
-                "tools": tools_for_workspace(workspace),
+                "tools": tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id")),
             }
             _sys = safe_system
             if _steer_inject:
@@ -12885,3 +12901,25 @@ def _start_kill_hotkey():
         _log.warning("Kill hotkey listener failed: %s", e)
 
 
+# ── The Chat Hub's tools are on demand (docs/design/active/chat-hub.md) ───────
+# The hub's tools live in the workspace-tools pool, not the always-on catalogue:
+# a chat in the hub (bound to a codebase, or filed in a project) gets them in
+# its turn's catalogue (as index lines; codebase_edit resident, see
+# tool_catalogue.HUB_RESIDENT), and any other chat can still load one by name.
+# The always-on catalogue keeps its budget (tests/unit/test_latency_budget.py):
+# measured, the always-on tools alone sit within a hundred tokens of it, so no
+# hub tool is always-on, not even the ways in. The loader's index names the
+# whole pool on one line, so any chat can load one by name (artifact_put for
+# the panel, improve_workspace, open_project).
+#: The ways into the hub from any chat; the loader's index names these three
+#: in every chat (tool_catalogue._by_name_only).
+HUB_ENTRY_NAMES = ("artifact_put", "improve_workspace", "open_project")
+HUB_TOOL_NAMES = (
+    "artifact_put", "improve_workspace", "open_project",
+    "publish_artifact", "codebase_edit", "codebase_undo", "codebase_read", "codebase_export",
+    "plan_first", "plan_approve", "plan_milestone", "workspace_swap",
+    "codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent",
+    "codebase_run", "show_preview", "build_mode",
+)
+WORKSPACE_TOOLS["hub"] = [t for t in CLAUDE_TOOLS if t.get("name") in HUB_TOOL_NAMES]
+CLAUDE_TOOLS[:] = [t for t in CLAUDE_TOOLS if t.get("name") not in HUB_TOOL_NAMES]

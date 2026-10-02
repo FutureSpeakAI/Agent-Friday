@@ -21,7 +21,7 @@ def _store(monkeypatch, tmp_path):
 
 
 def _schema():
-    hits = [t for t in ag.CLAUDE_TOOLS if t.get("name") == "artifact_put"]
+    hits = [t for t in (ag.CLAUDE_TOOLS + ag.WORKSPACE_TOOLS.get("hub", [])) if t.get("name") == "artifact_put"]
     assert len(hits) == 1, "artifact_put must be declared exactly once"
     return hits[0]
 

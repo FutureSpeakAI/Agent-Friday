@@ -94,6 +94,17 @@ Tests: `tests/unit/test_codebase_run.py`, `tests/unit/test_codebase_run_gate.py`
 `tests/unit/test_chat_hub_build_switch.py`, `tests/unit/test_chat_hub_terminal_ui_files.py`,
 `tests/api/test_conversation_codebase_bind.py`.
 
+**The hub's tools are on demand.** The always-on tool catalogue keeps its ceilings
+(`tests/unit/test_latency_budget.py`: 23,000 tokens with the index off, 4,500 for what a turn
+sends, 9,000 standing), and measured, the always-on tools alone sit within two hundred tokens of
+the first. So the hub's twenty tools (`agent.HUB_TOOL_NAMES`) live in the workspace-tools pool
+(`agent.WORKSPACE_TOOLS["hub"]`), as Media's do: a chat in the hub (bound to a codebase, or filed
+in a project) gets them in its turn's catalogue as index lines, with `codebase_edit` resident;
+every other chat sees the three ways in (`artifact_put`, `improve_workspace`, `open_project`) on
+the loader's by-name line and loads any of them with `load_tools`. Voice declares its own. A hub
+chat's turn costs about 500 tokens more than a plain one, which is the hub's own cost, not every
+chat's. `tests/unit/test_hub_tools_on_demand.py` holds the rule.
+
 **M3c, voice (built).** Three tools through the governed path, each with the layout tool's page
 round trip (a chat-kind `hub` event; the page that applies it acks, and only that earns `HUB_OK`;
 `HUB_SAVED` says what was remembered when no page showed it; `HUB_FAIL` says why not):

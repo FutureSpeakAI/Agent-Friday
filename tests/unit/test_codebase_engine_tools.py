@@ -24,7 +24,7 @@ def _root(monkeypatch, tmp_path):
 
 def test_the_two_tools_are_declared_inside_and_by_voice():
     for name in ("codebase_engine", "codebase_agent"):
-        assert any(t["name"] == name for t in ag.CLAUDE_TOOLS)
+        assert any(t["name"] == name for t in (ag.CLAUDE_TOOLS + ag.WORKSPACE_TOOLS.get("hub", [])))
         assert name in action_gate.INTERNAL_TOOLS and ag.TOOL_RINGS.get(name) == 1 and name in ag.CLAUDE_TOOL_HANDLERS
         assert name in [v[0] for v in voice_engine._VOICE_LIVE_TOOLS]
     assert '"codebase_engine", "codebase_agent"' in inspect.getsource(voice_engine._voice_tool_run)

@@ -38,26 +38,24 @@ MAX_SYSTEM_PROMPT_TOKENS = 6_000
 #: it is the fallback's cost, and it still grows with every tool added. Raised
 #: from 20,000 for the organize tools (mail, files, wiki, undo, and answering
 #: their cards), about 1,100 tokens, which voice needs as real tools rather
-#: than a hand-over to chat. Raised again for the Chat Hub (the salon's tools:
-#: artifacts, codebases, plans, publishing, build and run, projects by voice),
-#: twenty tools at about 2,300 tokens with their descriptions cut to a
-#: sentence or two; measured ~25,000 for 144 tools.
-MAX_TOOL_CATALOGUE_TOKENS = 27_000
+#: than a hand-over to chat. The Chat Hub's tools (artifacts, codebases,
+#: plans, publishing, build and run, projects by voice) are NOT in this
+#: catalogue: they are a workspace's own tools (agent.WORKSPACE_TOOLS), sent
+#: only to a chat that is in the hub and handed over by name anywhere else.
+MAX_TOOL_CATALOGUE_TOKENS = 23_000
 
 #: What a turn actually sends by default: the tool index (name and one line
 #: per tool, services/tool_catalogue.py) plus the few resident tools. ~3,425
 #: tokens for 107 tools. This is the number that decides prompt-eval time.
-#: ~4,700 for 144 tools with the Chat Hub: one index line per tool, and the
-#: panel's artifact tool no longer resident (it loads through the index like
-#: every other tool, which costs the opening nothing).
-MAX_TOOL_OPENING_TOKENS = 5_200
+#: The panel's artifact tool is not resident: it loads through the index like
+#: every other tool, which costs the opening nothing.
+MAX_TOOL_OPENING_TOKENS = 4_500
 
 #: What the seat reads before the conversation starts, with the tool index on
 #: (the default): the system prompt plus the opening tool set. Measured ~6,900
 #: (3,476 + 3,425 for 107 tools). At the 500 tokens/second a local seat
-#: sustains, 9,000 is about 18 seconds on a cache miss. Measured ~9,400 with
-#: the Chat Hub (4,662 + ~4,700); 10,500 is twenty-one seconds.
-MAX_STANDING_PROMPT_TOKENS = 10_500
+#: sustains, 9,000 is about 18 seconds on a cache miss.
+MAX_STANDING_PROMPT_TOKENS = 9_000
 
 
 def _system_prompt_tokens() -> int:

@@ -57,6 +57,11 @@ ALWAYS_RESIDENT = ("search_web", "read_file", "search_files",
 #: round to learn how, and a model without one should not pay the rent.
 PANEL_RESIDENT = ("artifact_put",)
 
+#: Resident when present in a turn's catalogue, which is only in a chat in the
+#: Chat Hub (agent.WORKSPACE_TOOLS["hub"]): the one tool a build turn reaches
+#: for every time. Elsewhere it is not in the catalogue, so it costs nothing.
+HUB_RESIDENT = ("codebase_edit",)
+
 
 def always_resident(settings: dict | None = None) -> tuple:
     """The resident tool names for these settings (the live settings when
@@ -70,8 +75,9 @@ def always_resident(settings: dict | None = None) -> tuple:
     # The panel's artifact tool is not resident: its index line names it and it
     # loads like every other tool, so the opening set pays nothing for it
     # (tests/unit/test_latency_budget.py). PANEL_RESIDENT stays as the name of
-    # that tool for the catalogue's own bookkeeping.
-    return ALWAYS_RESIDENT
+    # that tool for the catalogue's own bookkeeping. The hub's resident tool is
+    # only ever present in a hub chat's catalogue.
+    return ALWAYS_RESIDENT + HUB_RESIDENT
 
 
 #: ON by default, because the risk is understood rather than assumed.
@@ -125,6 +131,27 @@ def index(tools: list) -> list:
     return out
 
 
+def _by_name_only(tools: list) -> list:
+    """Names the loader hands over that are not in this turn's catalogue: a
+    workspace's own tools, and the Chat Hub's ways in (agent.HUB_ENTRY_NAMES;
+    the rest of the hub's pool is in a hub chat's own index). One short line
+    of names, so any chat can reach them without paying their index."""
+    have = {_name_of(t) for t in (tools or [])}
+    try:
+        from agent_friday.services.agent import HUB_ENTRY_NAMES as _entry, WORKSPACE_TOOLS as _ws
+    except Exception:
+        return []
+    out = []
+    for key, _lst in _ws.items():
+        for t in _lst:
+            n = _name_of(t)
+            if key == "hub" and n not in _entry:
+                continue
+            if n and n not in have and n not in out:
+                out.append(n)
+    return sorted(out)
+
+
 def loader_spec(tools: list) -> dict:
     """The one tool that is always present: fetch schemas by name.
 
@@ -133,6 +160,7 @@ def loader_spec(tools: list) -> dict:
     """
     lines = ["%s — %s" % (r["name"], r["summary"]) if r["summary"] else r["name"]
              for r in index(tools)]
+    more = _by_name_only(tools)
     return {
         "name": LOADER_NAME,
         "description": (
@@ -140,6 +168,7 @@ def loader_spec(tools: list) -> dict:
             "tools; only a few are described in full above. Call this with the "
             "names you need and their schemas arrive before your next turn, "
             "then call them normally.\n\nAvailable tools:\n" + "\n".join(lines)
+            + (("\n\nBy name only: " + ", ".join(more)) if more else "")
         ),
         "input_schema": {
             "type": "object",

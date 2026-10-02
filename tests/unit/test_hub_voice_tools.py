@@ -37,7 +37,7 @@ def page(monkeypatch):
 
 
 def test_the_three_tools_are_registered_everywhere():
-    names = {t["name"] for t in ag.CLAUDE_TOOLS}
+    names = {t["name"] for t in (ag.CLAUDE_TOOLS + ag.WORKSPACE_TOOLS.get("hub", []))}
     for n in ("open_project", "show_preview", "build_mode"):
         assert n in names and n in ag.CLAUDE_TOOL_HANDLERS and ag.TOOL_RINGS.get(n) == 1, n
         assert n in action_gate.INTERNAL_TOOLS, n + " touches only Friday's own screen and state"

@@ -18,7 +18,7 @@ def _store(monkeypatch, tmp_path):
 
 
 def _schema(name):
-    hits = [t for t in ag.CLAUDE_TOOLS if t.get("name") == name]
+    hits = [t for t in (ag.CLAUDE_TOOLS + ag.WORKSPACE_TOOLS.get("hub", [])) if t.get("name") == name]
     assert len(hits) == 1, name
     return hits[0]
 

@@ -27,7 +27,7 @@ def _root(monkeypatch, tmp_path):
 
 
 def _tool(name):
-    return next(t for t in ag.CLAUDE_TOOLS if t["name"] == name)
+    return next(t for t in (ag.CLAUDE_TOOLS + ag.WORKSPACE_TOOLS.get("hub", [])) if t["name"] == name)
 
 
 def _scoped(monkeypatch):
