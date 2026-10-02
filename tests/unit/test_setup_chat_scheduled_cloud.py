@@ -63,9 +63,12 @@ def test_without_a_local_model_the_question_is_asked_with_the_cost(home):
     assert _through_style() == "scheduled_cloud"
     v = sc.view()
     question = v["transcript"][-1]["text"]
-    for job in ("Morning news", "Evening front page", "Afternoon briefing",
-                "Daily creation", "Heartbeat"):
+    for job in ("Daily creation", "Heartbeat"):
         assert job in question
+    # News is local-only at $0: never offered a cloud model, never priced.
+    for job in ("Morning news", "Evening front page", "Afternoon briefing"):
+        assert job not in question
+    assert "never uses a cloud model" in question
     assert "Claude Haiku 4.5" in question
     assert "a month in total" in question and "$" in question
     assert "Settings > Spending" in question
