@@ -63,6 +63,9 @@ import re
 import threading
 import time
 
+# Every encode runs on the inference thread (services/inference_executor.py).
+from agent_friday.services.inference_executor import run as _infer
+
 _log = logging.getLogger("friday.tool_selector")
 
 # Tools that ship on every turn regardless of the query. These are the ones
@@ -136,8 +139,8 @@ def _ensure_index(tools) -> bool:
                 embedder_cache.ensure_available("tool selection")
             model = _STATE.get("model") or SentenceTransformer("all-MiniLM-L6-v2")
             texts = _corpus(tools)
-            emb = model.encode(texts, normalize_embeddings=True,
-                               show_progress_bar=False)
+            emb = _infer(model.encode, texts, normalize_embeddings=True,
+                         show_progress_bar=False)
             docs = [set(_tokens(t)) for t in texts]
             df: dict = {}
             for d in docs:
@@ -194,8 +197,8 @@ def select(tools, query: str, k: int = _DEFAULT_K):
         import numpy as np
         emb = _STATE["emb"]
         names = _STATE["names"]
-        qe = _STATE["model"].encode([query], normalize_embeddings=True,
-                                    show_progress_bar=False)[0]
+        qe = _infer(_STATE["model"].encode, [query], normalize_embeddings=True,
+                    show_progress_bar=False)[0]
         sem = emb @ qe
         span = (sem.max() - sem.min()) or 1.0
         sem = (sem - sem.min()) / span
@@ -242,10 +245,10 @@ def rank_texts(texts, query: str):
         # subject in the first lines; the tail is detail that dilutes the
         # similarity signal and costs time to encode.
         heads = [(t or "")[:600] for t in texts]
-        emb = model.encode(heads, normalize_embeddings=True,
-                           show_progress_bar=False)
-        qe = model.encode([query], normalize_embeddings=True,
-                          show_progress_bar=False)[0]
+        emb = _infer(model.encode, heads, normalize_embeddings=True,
+                     show_progress_bar=False)
+        qe = _infer(model.encode, [query], normalize_embeddings=True,
+                    show_progress_bar=False)[0]
         sem = np.asarray(emb) @ qe
         span = (sem.max() - sem.min()) or 1.0
         sem = (sem - sem.min()) / span

@@ -288,7 +288,9 @@ def _load_embedder():
             from agent_friday.services import embedder_cache
             embedder_cache.ensure_available("the privacy classifier")
             model = SentenceTransformer('all-MiniLM-L6-v2')
-            return model, model.encode(_SENSITIVE_EXEMPLARS, normalize_embeddings=True)
+            from agent_friday.services.inference_executor import run as _infer
+            return model, _infer(model.encode, _SENSITIVE_EXEMPLARS,
+                                 normalize_embeddings=True)
 
         try:
             from agent_friday.services.ml_imports import guarded
@@ -641,7 +643,10 @@ def _embedding_tier(text: str) -> tuple[int, float]:
         return -1, 0.0       # unavailable (not "below threshold")
     try:
         import numpy as _np
-        embed = embedder.encode([text[:512]], normalize_embeddings=True)[0]
+        # On the inference thread: a model run on each caller's thread leaves
+        # a native worker team behind per thread (services/inference_executor.py).
+        from agent_friday.services.inference_executor import run as _infer
+        embed = _infer(embedder.encode, [text[:512]], normalize_embeddings=True)[0]
         sims = (_EXEMPLAR_EMBEDS @ embed).tolist()
         max_sim = float(max(sims))
         if max_sim >= 0.65:

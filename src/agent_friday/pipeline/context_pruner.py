@@ -163,9 +163,9 @@ class ContextPruner:
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        emb = self._get_model().encode(
-            text, convert_to_numpy=True, normalize_embeddings=True
-        )
+        from agent_friday.services.inference_executor import run as _infer
+        emb = _infer(self._get_model().encode,
+                     text, convert_to_numpy=True, normalize_embeddings=True)
         emb = np.asarray(emb, dtype="float32")
         self._cache[key] = emb
         return emb
