@@ -7630,15 +7630,17 @@ window.addEventListener('DOMContentLoaded',function(){
             // frame (begin), so it is right whether or not the structure's
             // own animation rewrites that value.
             const ADAPTERS = {
-                ICOSAHEDRON: { kind: 'objects', concentric: true, pick: g => g.children },
+                ICOSAHEDRON: { kind: 'module', mod: () => FridayDyson, ball: true },
                 ASTROLABE:   { kind: 'objects', concentric: true, pick: g => g.children },
                 QUANTUM:     { kind: 'objects', concentric: true, pick: g => g.children.filter(o => o.type === 'LineLoop') },
                 DOME:        { kind: 'objects', pick: g => g.children.filter(o => o.geometry && /Cylinder|Octahedron/.test(o.geometry.type)) },
                 CABLES:      { kind: 'objects', pick: g => g.children },
                 NONE:        { kind: 'objects', pick: g => g.children },
-                // Giga Earth's units are the boss's tiles (FridayRez): its sections
-                // are the layers, 2x2 blocks of tiles flip for a tool call.
-                EDEN:        { kind: 'rez' },
+                // A module draws its own units and hands them over: Giga Earth's
+                // are the boss's tiles (FridayRez), its sections the layers, 2x2
+                // blocks of tiles flip for a tool call. A ball-shaped module
+                // (`ball`) keeps its approval unit on the side facing the viewer.
+                EDEN:        { kind: 'module', mod: () => FridayRez, ball: true },
                 NETWORK:     { kind: 'points', cloud: g => g.children[0] },
                 MANDELBROT:  { kind: 'points', cloud: g => g.children[0] },
                 MOBIUS:      { kind: 'points', cloud: g => g.children[0] },
@@ -7679,9 +7681,9 @@ window.addEventListener('DOMContentLoaded',function(){
             function build(id, group) {
                 const spec = ADAPTERS[id];
                 if (!spec) return null;
-                if (spec.kind === 'rez') {
-                    const n = FridayRez.units();
-                    return n ? { kind: 'rez', spec, n, blocks: FridayRez.blocks() } : null;
+                if (spec.kind === 'module') {
+                    const mod = spec.mod(), n = mod.units();
+                    return n ? { kind: 'module', spec, mod, n, blocks: mod.blocks() } : null;
                 }
                 if (spec.kind === 'objects') {
                     const objs = spec.pick(group).filter(Boolean);
@@ -7741,7 +7743,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (!group || !group.visible || !ADAPTERS[id]) return null;
                 const C = cache[id] || (cache[id] = build(id, group));
                 if (!C || !C.n) return null;
-                const pts = C.kind === 'objects' ? C.pts : C.kind === 'rez' ? FridayRez.points() : clusterPoints(C);
+                const pts = C.kind === 'objects' ? C.pts : C.kind === 'module' ? C.mod.points() : clusterPoints(C);
                 if (C.kind !== 'objects' && !C.blocks) {
                     // A cloud's twist is one cluster lifting and glowing in place:
                     // swapping whole patches of an ocean under a low camera moved
@@ -7749,21 +7751,22 @@ window.addEventListener('DOMContentLoaded',function(){
                     C.blocks = (C.kind === 'vertices' ? groupsOf(pts, 4) : pts.map((p, i) => [i]))
                         .map(u => ({ units: u, axis: C.kind === 'vertices' ? unitv(meanOf(pts, u)) : C.thin, centre: meanOf(pts, u) }));
                 }
-                if (C.kind !== 'objects') C.blocks.forEach(b => { b.centre = meanOf(pts, b.units); if (C.kind === 'rez') b.axis = unitv(b.centre); });
+                if (C.kind !== 'objects') C.blocks.forEach(b => { b.centre = meanOf(pts, b.units); if (C.kind === 'module') b.axis = unitv(b.centre); });
                 const wp = group.getWorldPosition(V(0, 0, 0));
                 const tw = localDir(group, camera.position.clone()), up = localDir(group, wp.clone().add(V(0, 1, 0)));
                 const ac = V(0, 0, 0).crossVectors(up, tw).normalize();
                 const toward = [tw.x, tw.y, tw.z], upv = [up.x, up.y, up.z], across = [ac.x, ac.y, ac.z];
-                // The boss's centre is the ball's: with its front blasted away, the
-                // mean of the tiles left would sit behind it.
-                const core = C.kind === 'rez' ? [0, 0, 0] : meanOf(pts, pts.map((p, i) => i));
+                // A module's centre is its own origin: with the boss's front
+                // blasted away, the mean of the tiles left would sit behind it.
+                const core = C.kind === 'module' ? [0, 0, 0] : meanOf(pts, pts.map((p, i) => i));
                 const rel = pts.map(p => [p[0] - core[0], p[1] - core[1], p[2] - core[2]]);
-                // Giga Earth's gestures are sized to the ball, not to its arms.
-                const extent = C.kind === 'rez' ? FridayRez.radius * 1.05 : (Math.max(...rel.map(p => Math.hypot(...p))) || 1);
+                // A module's gestures are sized to its own radius (Giga Earth's
+                // to the ball, not to its arms).
+                const extent = C.kind === 'module' ? C.mod.radius * 1.05 : (Math.max(...rel.map(p => Math.hypot(...p))) || 1);
                 const spacing = extent / Math.max(1.5, Math.cbrt(pts.length));
-                const L = C.kind === 'rez' ? FridayRez.layers().length : Math.max(2, Math.min(8, Math.round(Math.cbrt(pts.length) + 1)));
+                const L = C.kind === 'module' ? C.mod.layers().length : Math.max(2, Math.min(8, Math.round(Math.cbrt(pts.length) + 1)));
                 const layers = Array.from({ length: L }, () => []);
-                if (C.kind === 'rez') FridayRez.layers().forEach((l, k) => { layers[k] = l; });
+                if (C.kind === 'module') C.mod.layers().forEach((l, k) => { layers[k] = l; });
                 else if (C.spec.concentric) {
                     pts.map((p, i) => [Math.hypot(...p), i]).sort((a, b) => a[0] - b[0])
                         .forEach(([, i], k) => layers[Math.min(L - 1, Math.floor(k * L / pts.length))].push(i));
@@ -7780,10 +7783,10 @@ window.addEventListener('DOMContentLoaded',function(){
                 // is the one that steps forward for an approval.
                 const facing = pts.map((p, i) => {
                     const s = group.localToWorld(V(p[0], p[1], p[2])).project(camera);
-                    const away = C.kind === 'rez' && (rel[i][0] * toward[0] + rel[i][1] * toward[1] + rel[i][2] * toward[2]) < 0.35 * extent ? 1 : 0;
+                    const away = C.spec.ball && (rel[i][0] * toward[0] + rel[i][1] * toward[1] + rel[i][2] * toward[2]) < 0.35 * extent ? 1 : 0;
                     return [(s.z < 1 && Math.abs(s.x) < 1 && Math.abs(s.y) < 1 ? 0 : 1) + away, Math.hypot(s.x, s.y), i];
                 }).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
-                if (C.kind === 'rez') {
+                if (C.spec.ball) {
                     const L = C.lock, front = L !== undefined && rel[L]
                         && (rel[L][0] * toward[0] + rel[L][1] * toward[1] + rel[L][2] * toward[2]) >= 0.2 * extent;
                     if (front && facing.indexOf(L) > 0) { facing.splice(facing.indexOf(L), 1); facing.unshift(L); }
@@ -7807,15 +7810,15 @@ window.addEventListener('DOMContentLoaded',function(){
             function applyGeneric(A, r, accent) {
                 const C = A.C;
                 let approvalAt = null;
-                if (C.kind === 'rez') {
+                if (C.kind === 'module') {
                     Object.keys(r.units).forEach(k => {
                         const u = r.units[k];
-                        FridayRez.applyUnit(+k, u, accent, _amber);
+                        C.mod.applyUnit(+k, u, accent, _amber);
                         if (u.hue === 'approval') approvalAt = [A.an.units[+k], u.d, u.g];
                     });
                     showMarker(A, approvalAt);
                     const core = A.absCore || [0, 0, 0];
-                    FridayRez.lockOn(approvalAt ? [0, 1, 2].map(j => approvalAt[0][j] + approvalAt[1][j] + core[j]) : null,
+                    if (C.mod.lockOn) C.mod.lockOn(approvalAt ? [0, 1, 2].map(j => approvalAt[0][j] + approvalAt[1][j] + core[j]) : null,
                         marker && marker.visible ? marker.material.opacity : 0, camera);
                     return;
                 }
@@ -8011,7 +8014,8 @@ window.addEventListener('DOMContentLoaded',function(){
                         marker.material.opacity = Math.max(0, marker.material.opacity - 0.03);
                         if (marker.material.opacity <= 0.01) marker.visible = false;
                     }
-                    if (targetStructure === 'EDEN') FridayRez.lockOn(null, marker && marker.visible ? marker.material.opacity : 0, camera);
+                    const S = ADAPTERS[targetStructure], M = S && S.kind === 'module' ? S.mod() : null;
+                    if (M && M.lockOn) M.lockOn(null, marker && marker.visible ? marker.material.opacity : 0, camera);
                     return;
                 }
                 const A = anatomyFor(targetStructure) || genericAnatomy(targetStructure);
@@ -8070,7 +8074,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     scanPlane.material.opacity = 0.32 * r.scan.alpha * nearFade;
                     scanPlane.visible = true;
                 } else scanPlane.visible = false;
-                if (A.C && A.C.kind === 'rez') FridayRez.afterGestures(r.thread, A.an.up, A.an.toward, reduced);
+                if (A.C && A.C.kind === 'module' && A.C.mod.afterGestures) A.C.mod.afterGestures(r.thread, A.an.up, A.an.toward, reduced);
             }
 
             return { begin, end, anatomyFor, genericAnatomy, ADAPTERS, resetCache };
@@ -8250,6 +8254,301 @@ window.addEventListener('DOMContentLoaded',function(){
         window.FridayGenome = FridayGenome;
         // </avatar-genome>
 
+        // <dyson-sphere>
+        // The Dyson Sphere (avatar-visual-genome.md §19). Her light is a star.
+        // Around it stand shells of hexagonal collector panels, each at its own
+        // inclination and rate, built ring by ring out from the shell's own
+        // equator and still being built: every step of her look adds panels,
+        // eased in, so the inner shells fill first and the outer ones are rings.
+        // Starlight leaks through the gaps, and prominences, loops of plasma
+        // along the star's field lines, rise between them; now and then one
+        // lifts toward the panels.
+        //   speaking: the star brightens through the gaps with her voice
+        //     (smoothed to well under a beat a second) and the loops pulse and
+        //     arch higher;
+        //   thinking: the shells turn faster and the loops twist;
+        //   listening: the panels turn toward the viewer.
+        // It colours its own parts from her colours (ownColour) and hands its
+        // panels to the gesture engine as units (kind 'module').
+        const FridayDyson = (function () {
+            const STAR_R = 1.6, GLOW_R = 5.2, R_IN = 3.3, R_OUT = 5.7;
+            const TILT = [[0.25, 0, 0.12], [-0.6, 0.35, 0], [0.45, -0.25, 0.75], [-0.2, 0.65, -0.5]];
+            const RATE = [0.09, -0.065, 0.05, -0.075];          // rad/s at rest, per shell
+            const MAX_TURN = 0.3;                               // rad/s: under one panel a second past any point
+            const LOOPS = 8, PER_LOOP = 240;
+            const SILVER = new THREE.Color(0xc9d3e3), WHITE = new THREE.Color(0xffffff);
+            let root = null, body = null, rims = null, star = null, glow = null, proms = null, promGroup = null;
+            let shells = [], panels = [], unitIdx = [], layers = [], blocks = [], shown = 0, done = 0;
+            let spin = [], think = 0, listen = 0, voice = 0, swell = 0, clock = 0, starSpin = 0;
+            let erupt = null, nextErupt = 6, loopBase = [], loopRand = null;
+            const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _e = new THREE.Euler();
+            const _v = new THREE.Vector3(), _n = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color(), _ax = new THREE.Vector3();
+            const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3(), _basis = new THREE.Matrix4();
+            const cur = [];                                     // per panel: this frame's p, q, s
+
+            const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, ownColour: true }; return m; };
+            function faceOut(n, q) {
+                _z.copy(n).normalize();
+                _x.set(0, 1, 0).cross(_z); if (_x.lengthSq() < 1e-6) _x.set(1, 0, 0); _x.normalize();
+                _y.copy(_z).cross(_x);
+                return q.setFromRotationMatrix(_basis.makeBasis(_x, _y, _z));
+            }
+            // How built the sphere is: about two fifths at first, a little more
+            // with every step of her look, whole after about ten.
+            function target() {
+                const v = (typeof FridayGenome !== 'undefined' && FridayGenome.current) ? FridayGenome.current() : null;
+                const n = v && v.step && isFinite(v.step.step) ? +v.step.step : 0;
+                return Math.max(0.42, Math.min(1, 0.42 + 0.06 * n));
+            }
+            // A shell's own share built: the inner ones ahead, all whole together.
+            const builtOf = k => Math.max(0, Math.min(1, done + shells[k].bias * (1 - done) / 0.58));
+
+            const STAR_VS = `varying vec3 vN; varying vec3 vP;
+                void main() { vN = normalize(normalMatrix * normal); vP = position;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+            const STAR_FS = `uniform vec3 uCore; uniform vec3 uEdge; uniform float uBright; uniform float uOpacity; uniform float uTime;
+                varying vec3 vN; varying vec3 vP;
+                float h(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453); }
+                float n3(vec3 p) { vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+                    return mix(mix(mix(h(i), h(i + vec3(1,0,0)), f.x), mix(h(i + vec3(0,1,0)), h(i + vec3(1,1,0)), f.x), f.y),
+                               mix(mix(h(i + vec3(0,0,1)), h(i + vec3(1,0,1)), f.x), mix(h(i + vec3(0,1,1)), h(i + vec3(1,1,1)), f.x), f.y), f.z); }
+                void main() {
+                    float mu = clamp(vN.z, 0.0, 1.0);
+                    float limb = 0.4 + 0.6 * pow(mu, 0.55);
+                    float gran = 0.82 + 0.18 * n3(vP * 6.0 + vec3(0.0, uTime * 0.12, 0.0));
+                    vec3 c = mix(uEdge, uCore, pow(mu, 1.4)) * limb * gran * uBright;
+                    gl_FragColor = vec4(min(c, vec3(0.9)), uOpacity);
+                }`;
+            // A prominence is a loop along a field line: it leaves the surface at
+            // one foot, arches, and comes down at the other. uA: the loop's middle
+            // (a direction) and its half-span; uB: the direction of its feet and
+            // its height. Plasma runs along it as a slow wave of light.
+            const PROM_VS = `attribute float aLoop; attribute float aT; attribute vec3 aJit;
+                uniform vec4 uA[${LOOPS}]; uniform vec4 uB[${LOOPS}];
+                uniform float uTime; uniform float uTwist; uniform float uR; uniform float uSize;
+                varying float vB;
+                vec3 rot(vec3 v, vec3 k, float a) { return v * cos(a) + cross(k, v) * sin(a) + k * dot(k, v) * (1.0 - cos(a)); }
+                void main() {
+                    int i = int(aLoop + 0.5);
+                    vec4 A = uA[i]; vec4 B = uB[i];
+                    vec3 axis = normalize(cross(A.xyz, B.xyz));
+                    float t = aT, lift = sin(3.14159 * t);
+                    vec3 g = rot(A.xyz, axis, (2.0 * t - 1.0) * A.w);
+                    vec3 p = g * uR * (1.0 + B.w * lift) + axis * uTwist * B.w * uR * 0.55 * sin(6.2832 * t);
+                    p += aJit * (0.012 + 0.025 * lift) * uR;
+                    vB = (0.55 + 0.45 * sin(6.2832 * (2.0 * t - uTime * 0.3) + aJit.x * 17.0))
+                         * smoothstep(0.0, 0.07, t) * smoothstep(1.0, 0.93, t);
+                    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                    gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)), 1.5, 6.0);
+                    gl_Position = projectionMatrix * mv;
+                }`;
+            const PROM_FS = `uniform vec3 uColor; uniform float uOpacity; varying float vB;
+                void main() { float d = length(gl_PointCoord - 0.5); float a = 1.0 - smoothstep(0.1, 0.5, d);
+                    gl_FragColor = vec4(uColor * vB, a * vB * uOpacity); }`;
+
+            function build(group, opts) {
+                opts = opts || {};
+                const rnd = opts.rand || Math.random;
+                const nShell = Math.max(2, Math.min(4, Math.round(+opts.shells || 3)));
+                const total = opts.coarse ? 315 : 420;
+                root = new THREE.Group(); group.add(root);
+                shells = []; panels = []; unitIdx = []; layers = []; blocks = []; spin = []; cur.length = 0;
+                shown = 0; done = 0; think = 0; listen = 0; voice = 0; swell = 0; erupt = null; nextErupt = 6;
+                // Panels shared by area; each shell's own construction order: its
+                // equator first, then ring by ring toward its poles, a little ragged.
+                let area = 0; const radii = [];
+                for (let k = 0; k < nShell; k++) { const r = R_IN + (R_OUT - R_IN) * k / Math.max(1, nShell - 1); radii.push(r); area += r * r; }
+                for (let k = 0; k < nShell; k++) {
+                    const r = radii[k], n = Math.max(24, Math.round(total * r * r / area));
+                    const q = new THREE.Quaternion().setFromEuler(_e.set(TILT[k][0], TILT[k][1], TILT[k][2]));
+                    shells.push({ r, n, tilt: q, size: 0.5 * r * Math.sqrt(4 * Math.PI / n) * 0.74, bias: 0.3 - 0.2 * k });
+                    spin.push(rnd() * Math.PI * 2);
+                    const mine = [];
+                    for (let i = 0; i < n; i++) {
+                        const y = 1 - (i + 0.5) / n * 2, rr = Math.sqrt(1 - y * y), th = i * Math.PI * (3 - Math.sqrt(5));
+                        const d = new THREE.Vector3(Math.cos(th) * rr, y, Math.sin(th) * rr);
+                        mine.push({ shell: k, d, twist: rnd() * Math.PI / 3, shade: rnd(), key: Math.abs(y) + rnd() * 0.12, grow: 0 });
+                    }
+                    mine.sort((a, b) => a.key - b.key);
+                    mine.forEach((p, j) => { p.rank = j / n; panels.push(p); });
+                }
+                const N = panels.length;
+                for (let i = 0; i < N; i++) cur.push({ p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() });
+                const hex = new THREE.CylinderGeometry(1, 1, 0.1, 6, 1, false); hex.rotateX(Math.PI / 2);
+                body = new THREE.InstancedMesh(hex, own(new THREE.MeshBasicMaterial({ color: 0xffffff }), 0.94), N);
+                body.material.depthWrite = true;
+                const ring = new THREE.RingGeometry(0.84, 1.0, 6, 1); ring.translate(0, 0, 0.055);
+                rims = new THREE.InstancedMesh(ring, own(new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide,
+                    blending: THREE.AdditiveBlending, depthWrite: false }), 0.42), N);
+                for (let i = 0; i < N; i++) { body.setColorAt(i, WHITE); rims.setColorAt(i, WHITE); }
+                body.frustumCulled = rims.frustumCulled = false;
+                root.add(body); root.add(rims);
+                star = new THREE.Mesh(new THREE.IcosahedronGeometry(STAR_R, 4), own(new THREE.ShaderMaterial({ vertexShader: STAR_VS, fragmentShader: STAR_FS,
+                    transparent: true, uniforms: { uCore: { value: new THREE.Color() }, uEdge: { value: new THREE.Color() },
+                    uBright: { value: 0.8 }, uOpacity: { value: 1 }, uTime: { value: 0 } } }), 1));
+                root.add(star);
+                glow = new THREE.Sprite(own(new THREE.SpriteMaterial({ map: typeof glowTexture !== 'undefined' ? glowTexture : null,
+                    blending: THREE.AdditiveBlending, depthWrite: false }), 0.45));
+                glow.scale.setScalar(GLOW_R * 2); root.add(glow);
+                // Prominences: loops footed round the star, a fixed set per install.
+                promGroup = new THREE.Group(); root.add(promGroup);
+                const P = LOOPS * PER_LOOP, aLoop = new Float32Array(P), aT = new Float32Array(P), aJit = new Float32Array(P * 3);
+                for (let i = 0; i < P; i++) {
+                    aLoop[i] = Math.floor(i / PER_LOOP); aT[i] = (i % PER_LOOP) / (PER_LOOP - 1);
+                    for (let j = 0; j < 3; j++) aJit[i * 3 + j] = (rnd() - 0.5) * 2;
+                }
+                const pg = new THREE.BufferGeometry();
+                pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P * 3), 3));
+                pg.setAttribute('aLoop', new THREE.BufferAttribute(aLoop, 1));
+                pg.setAttribute('aT', new THREE.BufferAttribute(aT, 1));
+                pg.setAttribute('aJit', new THREE.BufferAttribute(aJit, 3));
+                pg.boundingSphere = new THREE.Sphere(new THREE.Vector3(), R_IN);
+                const uA = [], uB = [];
+                loopBase = [];
+                for (let k = 0; k < LOOPS; k++) {
+                    const mid = new THREE.Vector3(rnd() - 0.5, (rnd() - 0.5) * 1.4, rnd() - 0.5).normalize();
+                    const feet = new THREE.Vector3(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).cross(mid).normalize();
+                    const h0 = 0.4 + 0.35 * rnd();
+                    loopBase.push(h0);
+                    uA.push(new THREE.Vector4(mid.x, mid.y, mid.z, 0.22 + 0.2 * rnd()));
+                    uB.push(new THREE.Vector4(feet.x, feet.y, feet.z, h0));
+                }
+                loopRand = rnd;
+                proms = new THREE.Points(pg, own(new THREE.ShaderMaterial({ vertexShader: PROM_VS, fragmentShader: PROM_FS,
+                    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+                    uniforms: { uA: { value: uA }, uB: { value: uB }, uTime: { value: 0 }, uTwist: { value: 0 }, uR: { value: STAR_R },
+                        uSize: { value: 0.3 }, uColor: { value: new THREE.Color() }, uOpacity: { value: 0.6 } } }), 0.6));
+                promGroup.add(proms);
+                done = target();
+                // Already-built panels stand from the first frame, and they are
+                // the units: a panel still to come is no unit until the next
+                // build. Layers are the shells; a block is up to four
+                // neighbouring panels of one shell (they turn together, so a
+                // block never tears).
+                panels.forEach((p, i) => { p.grow = p.rank < builtOf(p.shell) ? 1 : 0; if (p.grow) unitIdx.push(i); });
+                for (let k = 0; k < nShell; k++) {
+                    const mine = unitIdx.map((i, u) => u).filter(u => panels[unitIdx[u]].shell === k);
+                    if (mine.length) layers.push(mine);
+                    const left = mine.slice(), dir = u => panels[unitIdx[u]].d;
+                    while (left.length) {
+                        const seed = left.shift(), d0 = dir(seed);
+                        left.sort((a, b) => dir(a).distanceTo(d0) - dir(b).distanceTo(d0));
+                        blocks.push([seed].concat(left.splice(0, 3)));
+                    }
+                }
+                return root;
+            }
+
+            // s: { voice, thinking, listening, base, accent, reduced, toward } (toward: the
+            // viewer's direction in the structure's own space).
+            function animate(dt, s) {
+                if (!root) return;
+                dt = Math.max(0, Math.min(0.1, dt));
+                clock += dt;
+                const reduced = !!s.reduced;
+                // Her state, eased: nothing here jumps.
+                think += ((s.thinking ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                listen += ((s.listening ? 1 : 0) - listen) * Math.min(1, dt / 0.9);
+                const v = reduced ? 0 : Math.max(0, Math.min(1, s.voice || 0));
+                voice += (v - voice) * Math.min(1, dt / 0.16);    // a low-pass well under a beat a second for syllables
+                swell += (voice - swell) * Math.min(1, dt / 0.6);
+                // Built a little more after a step: new panels ease in.
+                done += (target() - done) * Math.min(1, dt / 4);
+                const rate = reduced ? 0 : 1;
+                for (let k = 0; k < shells.length; k++) spin[k] += rate * Math.max(-MAX_TURN, Math.min(MAX_TURN, RATE[k] * (1 + 1.8 * think))) * dt;
+                starSpin += rate * 0.04 * dt;
+                const tw = s.toward ? _v.set(s.toward[0], s.toward[1], s.toward[2]).normalize() : _v.set(0, 0, 1);
+                const tilt = 0.75 * listen * (reduced ? 0.4 : 1);
+                shown = 0;
+                for (let i = 0; i < panels.length; i++) {
+                    const P = panels[i], S = shells[P.shell], C = cur[i];
+                    const want = P.rank < builtOf(P.shell) ? 1 : 0;
+                    P.grow += (want - P.grow) * Math.min(1, dt / 1.2);
+                    if (P.grow < 0.01) { C.s.set(0, 0, 0); C.p.set(0, 0, 0); C.q.identity(); body.setMatrixAt(i, _m.makeScale(0, 0, 0)); rims.setMatrixAt(i, _m); continue; }
+                    shown++;
+                    _q.setFromAxisAngle(_ax.set(0, 1, 0), spin[P.shell]).premultiply(S.tilt);
+                    _n.copy(P.d).applyQuaternion(_q);
+                    C.p.copy(_n).multiplyScalar(S.r);
+                    // Listening: the panel turns toward the viewer, as far as it can.
+                    if (tilt > 0) _n.addScaledVector(tw, tilt).normalize();
+                    faceOut(_n, C.q);
+                    C.q.multiply(_q2.setFromAxisAngle(_ax.set(0, 0, 1), P.twist));
+                    const g = P.grow * P.grow * (3 - 2 * P.grow);
+                    C.s.set(S.size * g, S.size * g, 1);
+                    _m.compose(C.p, C.q, C.s);
+                    body.setMatrixAt(i, _m); rims.setMatrixAt(i, _m);
+                    // Collectors: dark, in her colour, each its own shade; the rims in her accent.
+                    _c.copy(s.base).lerp(SILVER, 0.25 + 0.15 * P.shade).multiplyScalar(0.11 + 0.08 * P.shade);
+                    body.setColorAt(i, _c);
+                    _c.copy(s.accent).lerp(WHITE, 0.2).multiplyScalar(0.3 + 0.18 * P.shade);
+                    rims.setColorAt(i, _c);
+                }
+                body.instanceMatrix.needsUpdate = rims.instanceMatrix.needsUpdate = true;
+                if (body.instanceColor) body.instanceColor.needsUpdate = true;
+                if (rims.instanceColor) rims.instanceColor.needsUpdate = true;
+                // The star: her light, brighter through the gaps while she speaks.
+                const su = star.material.uniforms;
+                su.uCore.value.copy(s.accent).lerp(WHITE, 0.55);
+                su.uEdge.value.copy(s.base).lerp(s.accent, 0.4);
+                su.uBright.value = 0.78 + 0.22 * voice;
+                su.uOpacity.value = star.material.opacity;
+                su.uTime.value = clock;
+                star.rotation.y = starSpin;
+                glow.material.color.copy(s.accent).lerp(WHITE, 0.4);
+                glow.scale.setScalar(GLOW_R * 2 * (1 + 0.12 * voice));
+                // Prominences: a pulse and a higher arch with her voice, a twist
+                // while she thinks; now and then one lifts toward the panels.
+                const pu = proms.material.uniforms;
+                pu.uTime.value = reduced ? pu.uTime.value : clock;
+                pu.uTwist.value = 0.25 + 0.9 * think;
+                pu.uColor.value.copy(s.accent).lerp(WHITE, 0.45);
+                pu.uOpacity.value = proms.material.opacity * (0.75 + 0.35 * swell);
+                if (!reduced) {
+                    nextErupt -= dt;
+                    if (!erupt && nextErupt <= 0) { erupt = { k: Math.floor(loopRand() * LOOPS), t: 0 }; nextErupt = 10 + loopRand() * 8; }
+                    if (erupt) { erupt.t += dt; if (erupt.t > 11) erupt = null; }
+                }
+                const reach = R_IN / STAR_R - 1.08;              // to just under the inner shell
+                for (let k = 0; k < LOOPS; k++) {
+                    let h = loopBase[k] * (1 + 0.35 * swell);
+                    if (erupt && erupt.k === k) {
+                        const t = erupt.t, up = t < 4 ? t / 4 : t < 5.5 ? 1 : Math.max(0, 1 - (t - 5.5) / 5.5);
+                        h += (reach - h) * up * up * (3 - 2 * up);
+                    }
+                    pu.uB.value[k].w = Math.min(reach, h);
+                }
+                promGroup.rotation.y = starSpin;
+            }
+
+            // The gesture engine's view: the panels standing now, in the
+            // structure's own space. Layers are the shells.
+            function units() { return unitIdx.length; }
+            function points() { return unitIdx.map(i => [cur[i].p.x, cur[i].p.y, cur[i].p.z]); }
+            function blocksOf() { return blocks.map(u => ({ units: u, axis: [0, 0, 1], centre: [0, 0, 0] })); }
+            function applyUnit(j, u, accent, amber) {
+                const k = unitIdx[j], C = cur[k];
+                if (!C || panels[k].grow < 0.01) return;
+                _v.copy(C.p).add(_ax.set(u.d[0], u.d[1], u.d[2]));
+                _q.copy(C.q);
+                const th = Math.hypot(u.r[0], u.r[1], u.r[2]);
+                if (th > 1e-6) _q.premultiply(_q2.setFromAxisAngle(_ax.set(u.r[0] / th, u.r[1] / th, u.r[2] / th), th));
+                _s.copy(C.s).multiplyScalar(u.s || 1);
+                _m.compose(_v, _q, _s);
+                body.setMatrixAt(k, _m); rims.setMatrixAt(k, _m);
+                rims.getColorAt(k, _c);
+                const g = Number.isFinite(u.g) ? u.g : 0;
+                if (u.hue === 'approval') _c.lerp(amber, g);
+                else if (g > 0) _c.lerp(accent, 0.6 * g).multiplyScalar(1 + 0.35 * g);
+                if (u.b !== 1 && Number.isFinite(u.b)) _c.multiplyScalar(u.b);
+                rims.setColorAt(k, _c);
+                body.instanceMatrix.needsUpdate = rims.instanceMatrix.needsUpdate = true;
+                if (rims.instanceColor) rims.instanceColor.needsUpdate = true;
+            }
+            return { build, animate, units, points, layers: () => layers, blocks: blocksOf, applyUnit, radius: R_OUT,
+                     shown: () => shown, done: () => done, shells: () => shells.length, LOOPS, PER_LOOP, STAR_R, R_IN,
+                     _erupt: () => erupt, _shellOf: i => panels[i].shell, _parts: () => ({ root, body, rims, star, glow, proms }) };
+        })();
+        // </dyson-sphere>
         // <rez-boss>
         // Giga Earth: the Area 1 boss from Rez, in Friday's own palette
         // (docs/design/active/avatar-visual-genome.md §15). A ball of 200 tiles
@@ -8814,12 +9113,11 @@ window.addEventListener('DOMContentLoaded',function(){
             gCubes.scale.set(1.5, 1.5, 1.5);
             structures['CUBES'] = gCubes;
 
-            // 2. ICOSAHEDRON
+            // 2. ICOSAHEDRON: the Dyson Sphere (FridayDyson). Its genes: how
+            // many shells, and a coarser build (fewer, bigger panels).
             const gIco = new THREE.Group();
-            gIco.add(new THREE.Mesh(new THREE.IcosahedronGeometry(5.0, 3), createMaterial('mesh', 0x00ffff, 0.15, true, true)));
-            const midIco = createMaterial('mesh', 0x00ffff, 0.3, true, true); midIco.userData.isAccent = true;
-            gIco.add(new THREE.Mesh(new THREE.IcosahedronGeometry(3.5, 2), midIco));
-            gIco.add(new THREE.Mesh(new THREE.IcosahedronGeometry(2.0, 1), createMaterial('mesh', 0xffffff, 0.6, true, true)));
+            FridayDyson.build(gIco, { shells: FridayGenome.EX('ICOSAHEDRON', 'shells', 3),
+                coarse: FridayGenome.EX('ICOSAHEDRON', 'detail_delta', 0) < 0, rand: () => FridayGenome.rand('ICOSAHEDRON') });
             structures['ICOSAHEDRON'] = gIco;
 
             // 3. DOME (Cathedral)
@@ -9046,8 +9344,9 @@ window.addEventListener('DOMContentLoaded',function(){
                         child.geometry.attributes.color.needsUpdate = true;
                     } else if (child.material.userData.isTunnelSolid) {
                         child.material.color.copy(moodLerpValues.baseColor).multiplyScalar(0.05);
-                    } else if (child.material.userData.edenOwn) {
-                        // Giga Earth's boss colours its own parts from the mood (FridayRez.animate).
+                    } else if (child.material.userData.edenOwn || child.material.userData.ownColour) {
+                        // Giga Earth's boss and the Dyson sphere colour their own parts
+                        // from the mood (FridayRez.animate, FridayDyson.animate).
                     } else if (child.material.userData.isBossSphere) {
                         child.material.color.copy(moodLerpValues.baseColor);
                     } else if (child.material.userData.isBossWire) {
@@ -9378,7 +9677,7 @@ window.addEventListener('DOMContentLoaded',function(){
             const voiceBreath = isExecutingMood ? voiceBreathRaw * 1.8 : voiceBreathRaw;
             const idlePulse = Math.sin(elapsed * 0.5) * 0.08;
 
-            if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN'].includes(targetStructure)) {
+            if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN','ICOSAHEDRON'].includes(targetStructure)) {
                 activeGroup.rotation.y += moodLerpValues.rotationSpeed * idleFactor;
                 if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * idleFactor;
                 // Voice-reactive scale breathing for all structures without custom vertex displacement
@@ -9553,6 +9852,14 @@ window.addEventListener('DOMContentLoaded',function(){
                         }
                     }
                 });
+            }
+
+            if (structures['ICOSAHEDRON'] && structures['ICOSAHEDRON'].visible) {
+                // Her state only: her voice, and her own thinking and listening moods.
+                const g = structures['ICOSAHEDRON'], tw = g.worldToLocal(camera.position.clone());
+                FridayDyson.animate(delta, { voice: holoAmplitude, thinking: currentMood === 'REASONING',
+                    listening: currentMood === 'LISTENING', base: moodLerpValues.baseColor, accent: moodLerpValues.accentColor,
+                    reduced: SceneMotion.reduced(), toward: [tw.x, tw.y, tw.z] });
             }
 
             if (structures['EDEN'] && structures['EDEN'].visible) {
