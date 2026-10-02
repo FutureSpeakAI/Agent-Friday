@@ -220,6 +220,11 @@
 .md-multibar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px;border:1px solid var(--fr-cyan);border-radius:10px;background:rgba(0,229,255,.06);font-size:var(--fr-text-sm)}
 .md-multibar input{font:inherit;color:var(--fr-text);background:rgba(0,0,0,.35);border:1px solid var(--fr-glass-edge);border-radius:8px;padding:4px 8px;width:160px}
 .md-detail input.md-in{font:inherit;color:var(--fr-text);background:rgba(0,0,0,.35);border:1px solid var(--fr-glass-edge);border-radius:8px;padding:5px 8px;width:100%}
+.md-tidy{display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:0;padding:2px}
+.md-tidy .grp{border:1px solid var(--fr-glass-edge);border-radius:10px;padding:8px 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.md-tidy .grp img{width:72px;height:45px;object-fit:cover;border-radius:6px;border:1px solid var(--fr-glass-edge)}
+.md-tidy .keep{outline:2px solid var(--fr-cyan);outline-offset:1px}
+.md-tidy .why{color:var(--fr-dim);font-size:var(--fr-text-sm);width:100%}
 .md-hit{font-size:var(--fr-text-xs);color:var(--fr-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .md-hit mark{background:rgba(0,229,255,.18);color:var(--fr-text);border-radius:3px;padding:0 2px}
 .md-tx{width:min(72ch,100%);max-height:38vh;overflow:auto;display:flex;flex-direction:column;gap:2px;font-size:var(--fr-text-sm);line-height:1.45}
@@ -449,6 +454,41 @@
     return out;
   }
 
+  // ── clean-up help: Friday offers, the owner decides, the trash restores ──
+  function TidyPanel({ onClose }) {
+    const [rep, setRep] = useState(null);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => { json('/api/media/tidy').then(setRep).catch(() => setRep({ status: 'error' })); }, []);
+    if (!rep) return h('div', { className: 'md-empty' }, 'Looking for near-duplicates and stale drafts\u2026');
+    const n = rep.count || 0;
+    const offer = () => { setBusy(true); post('/api/media/tidy', {}).then(d => { setBusy(false); toast(d.status === 'pending' ? 'One card is asking you first: ' + (d.count || n) + ' items would move to the trash.' : d.status === 'nothing' ? 'Nothing to tidy.' : d.status === 'ok' ? 'Tidied.' : (d.message || 'That did not work.')); if (d.status === 'ok') changed(); }); };
+    return h('div', { className: 'md-tidy', 'aria-label': 'Tidy up' },
+      h('div', { className: 'md-head-row' }, h('strong', null, n ? n + ' item' + (n === 1 ? '' : 's') + ' Friday would move to the trash (' + fmtBytes(rep.bytes || 0) + ')' : 'Nothing to tidy'), h('span', { className: 'md-spacer' }),
+        n ? h('button', { className: 'btn active', disabled: busy, onClick: offer }, 'Ask me with one card') : null,
+        h('button', { className: 'btn', onClick: onClose }, 'Close')),
+      h('div', { className: 'md-count' }, 'Nothing moves until you approve the card. Whatever moves can be restored from the Trash; Friday never deletes for good.'),
+      (rep.groups || []).map((g, i) => h('div', { key: 'g' + i, className: 'grp' },
+        h('div', { className: 'why' }, g.why + ': keep ' + g.keep.title + (g.keep.favorite ? ' (your favourite)' : '') + ', move ' + g.remove.length),
+        g.keep.thumb ? h('img', { className: 'keep', src: g.keep.thumb, alt: '', title: 'Kept: ' + g.keep.title }) : h('span', { className: 'md-tag keep' }, g.keep.title),
+        g.remove.map(r => r.thumb ? h('img', { key: r.id, src: r.thumb, alt: '', title: 'Moves: ' + r.title }) : h('span', { key: r.id, className: 'md-tag' }, r.title)))),
+      (rep.stale || []).length ? h('div', { className: 'grp' }, h('div', { className: 'why' }, 'Stale drafts, untouched for a month with little in them:'), rep.stale.map(s => h('span', { key: s.id, className: 'md-tag', title: s.when || '' }, s.title))) : null);
+  }
+  function TrashPanel({ onClose }) {
+    const [d, setD] = useState(null);
+    const load = () => json('/api/media/trash').then(setD).catch(() => setD({ status: 'error', entries: [] }));
+    useEffect(() => { load(); }, []);
+    if (!d) return h('div', { className: 'md-empty' }, 'Opening the trash\u2026');
+    const entries = d.entries || [];
+    return h('div', { className: 'md-tidy', 'aria-label': 'Trash' },
+      h('div', { className: 'md-head-row' }, h('strong', null, entries.length ? entries.length + ' in the trash' : 'The trash is empty'), h('span', { className: 'md-spacer' }), h('button', { className: 'btn', onClick: onClose }, 'Close')),
+      h('div', { className: 'md-count' }, 'Everything here can be put back. Friday never empties this folder; it is yours: ' + (d.folder || '')),
+      entries.map(e => h('div', { key: e.entry, className: 'grp' },
+        h('span', null, glyph((e.card || {}).kind), ' ', h('b', null, (e.card || {}).title || e.entry)),
+        h('span', { className: 'md-count' }, (e.files || []).length + ' file' + ((e.files || []).length === 1 ? '' : 's') + ' \u00b7 ' + fmtBytes(e.bytes || 0) + ' \u00b7 ' + (e.reason || '')),
+        h('span', { className: 'md-spacer' }),
+        h('button', { className: 'btn', onClick: () => post('/api/media/trash/' + encodeURIComponent(e.entry) + '/restore', {}).then(r => { toast(r.status === 'ok' ? 'Restored.' : (r.message || 'Could not restore it.')); load(); changed(); }) }, 'Restore'))));
+  }
+
   // ── the quick look ───────────────────────────────────────────────────────
   // Space or a click on the picture: the whole thing, full size, with inline
   // playback, a page in a sandboxed frame, a document's rendered pages, and
@@ -504,6 +544,7 @@
   function Library({ filters, setFilters, sel, setSel, onOpen, onAction }) {
     const [state] = useCards(filters);
     const [ql, setQl] = useState(false);
+    const [panel, setPanel] = useState(null);     // 'tidy' | 'trash' | null
     const [groupBy, setGroupBy] = useState('none');
     const [multi, setMulti] = useState([]);       // ids picked with Ctrl/Shift-click or X, for one change on many
     const [bulkProj, setBulkProj] = useState('');
@@ -585,6 +626,10 @@
           railBtn('priv:private', 'Private to this PC', counts.private, { privacy: 'private' }),
           railBtn('priv:shared', 'Shared or published', counts.shared, { privacy: 'shared' }),
           railBtn('unsigned', 'Unsigned', counts.unsigned, { unsigned: true })),
+        h('div', { className: 'md-label' }, 'Housekeeping'),
+        h('div', { className: 'md-group' },
+          h('button', { 'aria-current': panel === 'tidy' ? 'true' : undefined, onClick: () => setPanel(panel === 'tidy' ? null : 'tidy'), title: 'Near-duplicate renders and stale drafts, offered as one card' }, 'Tidy up\u2026'),
+          h('button', { 'aria-current': panel === 'trash' ? 'true' : undefined, onClick: () => setPanel(panel === 'trash' ? null : 'trash'), title: 'What was removed; everything here can be restored' }, 'Trash')),
         h('div', { className: 'md-rail-note' }, 'Not here: the News editions and their shows (in News); your wiki (in Knowledge). Search finds them and links across.')),
       h('section', { className: 'md-main', 'aria-label': 'Cards' },
         h('div', { className: 'md-toolbar' },
@@ -598,6 +643,8 @@
             h('button', { className: 'btn' + (layout === 'grid' ? ' active' : ''), 'aria-pressed': layout === 'grid', onClick: () => setLayout('grid') }, 'Grid'),
             h('button', { className: 'btn' + (layout === 'list' ? ' active' : ''), 'aria-pressed': layout === 'list', onClick: () => setLayout('list') }, 'List'),
             h('button', { className: 'btn' + (layout === '3d' ? ' active' : ''), 'aria-pressed': layout === '3d', title: 'The creations folder in the 3D file browser', onClick: () => setLayout('3d') }, '3D'))),
+        panel === 'tidy' ? h(TidyPanel, { onClose: () => setPanel(null) }) :
+        panel === 'trash' ? h(TrashPanel, { onClose: () => setPanel(null) }) :
         multi.length ? h('div', { className: 'md-multibar', role: 'toolbar', 'aria-label': 'Selected cards' },
           h('b', null, multi.length + ' selected'),
           h('input', { 'aria-label': 'Move to project', placeholder: 'Move to project\u2026', value: bulkProj, onChange: e => setBulkProj(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && bulkProj.trim()) bulk({ project: bulkProj.trim() }); } }),
@@ -690,8 +737,8 @@
         }); return;
       }
       if (what === 'delete') {
-        if (!confirm('Delete "' + c.title + '"? The receipt stays.')) return;
-        json('/api/media/' + encodeURIComponent(c.id), { method: 'DELETE' }).then(d => { if (d.status === 'ok') { toast('Deleted.'); setSel(null); setCard(null); changed(); } else if (d.status === 'pending') toast('Deleting that asks on a card first.'); else toast(d.message || 'Could not delete.'); });
+        if (!confirm('Move "' + c.title + '" to Friday\u2019s trash? You can restore it from the Trash in Media.')) return;
+        json('/api/media/' + encodeURIComponent(c.id), { method: 'DELETE' }).then(d => { if (d.status === 'ok') { toast('Moved to the trash. Restore it from Housekeeping \u203a Trash.'); setSel(null); setCard(null); changed(); } else if (d.status === 'pending') toast('Deleting that asks on a card first.'); else toast(d.message || 'Could not move it.'); });
       }
     }, []);
 
@@ -1141,7 +1188,7 @@
 
   // Shared helpers for the other views (board, calendar, card), defined in this file's siblings.
   window.MediaWS = MediaWS;
-  window.__media = { h, api, json, post, toast, STATUSES, KEPT, STATUS_WORD, QuickLook, Thumb, Hit, Transcript, Organize, grouped, fmtBytes, facts, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
+  window.__media = { h, api, json, post, toast, STATUSES, KEPT, STATUS_WORD, QuickLook, Thumb, Hit, Transcript, Organize, TidyPanel, TrashPanel, grouped, fmtBytes, facts, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
 
   // Navigation: the views the dock, the palette and navigate_to may name.
   (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['media', {

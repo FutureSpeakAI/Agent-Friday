@@ -416,6 +416,16 @@ filter with a name ("this week's podcasts", "decks for Harbour"), kept in
 rail shows Favourites, the collections and the tags with counts; the grid groups by project,
 date or type. `tests/api/test_media_organize.py` is the proof.
 
+**Clean-up help** (`services/media_tidy.py`). Friday spots near-duplicate renders (the
+preview pass's difference hash for pictures and video posters, Hamming distance at most 6;
+word shingles with Jaccard at least 0.9 for documents) and stale drafts (Media's own drafts
+and ideas untouched for thirty days with little in them), and OFFERS a tidy-up as one
+batched card through the governed-action gate, the same gate publishing uses. Nothing moves
+before the owner approves; in a group the favourite, else the larger file, else the newer
+one is kept. What moves goes to `<home>/media/trash/<entry>/` with a manifest, the card's
+Delete goes the same way, Restore puts an entry back, and Friday never empties the trash:
+there is no hard delete anywhere in Media. `tests/api/test_media_tidy.py` is the proof.
+
 ### 4.4 Three views of the same cards
 
 **Library** (`library.html`): a rail of default views (Today, In progress, Needs you,

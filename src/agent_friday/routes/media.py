@@ -26,6 +26,10 @@
 | /api/media/collections/<id>            | GET    | the collection's cards, evaluated now             |
 | /api/media/collections/<id>            | DELETE | forget the collection; its cards stay             |
 | /api/media/bulk                        | POST   | {ids, project?, add_tags?, remove_tags?, favorite?}|
+| /api/media/tidy                        | GET    | what a tidy-up would do (near-duplicates, stale)  |
+| /api/media/tidy                        | POST   | offer it: ONE approval card; nothing moves before |
+| /api/media/trash                       | GET    | Friday's recoverable trash                        |
+| /api/media/trash/<entry>/restore       | POST   | put an entry back where it came from              |
 
 Local user only, like podcasts. Every write wants a JSON body from this origin.
 """
@@ -52,6 +56,11 @@ def _gate():
     except Exception:
         return jsonify({"status": "denied", "message": "could not establish that this request is local"}), 403
     mi.register_hooks()
+    try:
+        from agent_friday.services import media_tidy
+        media_tidy.register_hooks()
+    except Exception:
+        pass
     return None
 
 
@@ -164,6 +173,39 @@ def media_collection_get(collection_id):
 @media_bp.route('/api/media/collections/<collection_id>', methods=['DELETE'])
 def media_collection_delete(collection_id):
     res = mi.delete_collection(collection_id)
+    return jsonify(res), (200 if res.get("status") == "ok" else 404)
+
+
+@media_bp.route('/api/media/tidy', methods=['GET'])
+def media_tidy_report():
+    from agent_friday.services import media_tidy
+    rep = media_tidy.report()
+    rep["status"] = "ok"
+    return jsonify(rep)
+
+
+@media_bp.route('/api/media/tidy', methods=['POST'])
+def media_tidy_propose():
+    from agent_friday.services import media_tidy
+    b = _json()
+    ids = [str(x) for x in b.get('ids')] if isinstance(b.get('ids'), list) else None
+    res = media_tidy.propose(requested_by="user", ids=ids)
+    code = {"pending": 202, "denied": 403, "error": 500, "nothing": 200}.get(res.get("status"), 200)
+    return jsonify(res), code
+
+
+@media_bp.route('/api/media/trash', methods=['GET'])
+def media_trash():
+    from agent_friday.services import media_tidy
+    return jsonify({"status": "ok", "entries": media_tidy.trash_list(), "folder": str(media_tidy.trash_dir())})
+
+
+@media_bp.route('/api/media/trash/<entry>/restore', methods=['POST'])
+def media_trash_restore(entry):
+    from agent_friday.services import media_tidy
+    if "/" in entry or "\\" in entry or ".." in entry:
+        return jsonify({"status": "denied"}), 400
+    res = media_tidy.restore(entry)
     return jsonify(res), (200 if res.get("status") == "ok" else 404)
 
 

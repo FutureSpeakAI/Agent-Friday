@@ -1484,24 +1484,25 @@ def _rewrite_media_record(c: Dict[str, Any], **changes: Any) -> None:
 
 
 def delete(card_id: str) -> Dict[str, Any]:
+    """Delete a card. A file on this PC and Media's own records move to Friday's
+    recoverable trash (services/media_tidy.py), never a hard delete; a post is
+    deleted in the content store; a legacy item's card goes, its item stays."""
     c = get(card_id)
     if c is None:
         return {"status": "not_found"}
-    if c["source_kind"] == "media":
-        for suf in (".json", ".md"):
-            p = cards_dir() / (c["source_ref"] + suf)
-            if p.exists():
-                p.unlink()
-    elif c["source_kind"] == "post":
+    if c["source_kind"] == "post":
         from agent_friday.services import content_pipeline as cp
         r = cp.delete_post(c["source_ref"])
         if not r.get("ok"):
             return {"status": "error", "message": r.get("error") or "Could not delete the post."}
-    elif c["source_kind"] in ("draft_html", "legacy_item"):
-        # The original is the owner's; the card goes, the file or item stays until they clear it.
+    elif c["source_kind"] == "legacy_item":
+        # The original is the owner's; the card goes, the item stays until they clear it.
         _set_override(card_id, status="idea")
     else:
-        return {"status": "denied", "message": "A file is deleted from Files 3D, where a card asks first."}
+        from agent_friday.services import media_tidy
+        r = media_tidy.trash_card(card_id, reason="deleted from Media")
+        if r.get("status") != "ok":
+            return r
     with _LOCK:
         con = _connect()
         try:
