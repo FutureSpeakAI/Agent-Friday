@@ -219,6 +219,10 @@ INTERNAL_TOOLS = frozenset({
     "hologram_window",
     # Standing back for a call: the owner's own machine and own setting.
     "call_mode",
+    # Big mode and the hand cursor: the owner's own screen and own setting;
+    # select never fires a guarded action.
+    "big_mode",
+    "hand_cursor",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
     # find_free_slots reads free/busy only. release_holds deletes nothing but

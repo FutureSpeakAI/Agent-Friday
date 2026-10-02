@@ -662,6 +662,10 @@ _VOICE_SHARED_TOOLS = (
     "hologram_window",
     # Call mode: "I'm on a call", "the call is over", "ask me first on calls".
     "call_mode",
+    # Big mode and the hand cursor: "big mode", "big mode off", "next card",
+    # "select", "back". select never fires a guarded action.
+    "big_mode",
+    "hand_cursor",
 )
 
 

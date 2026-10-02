@@ -8154,6 +8154,15 @@ try:
 except Exception as _hte:  # never let optional deps break the agent import
     print(f"  [HOLOGRAM] registration skipped: {_hte}")
 
+# The hand cursor and big mode (big_mode, hand_cursor): the large-target layout
+# and "next card", "select", "back" by voice. Shared into voice. See
+# services/hand_cursor_tools.py and docs/design/hig/hand-cursor.md.
+try:
+    from agent_friday.services import hand_cursor_tools as _hand_cursor_tools
+    _hand_cursor_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _hcte:  # never let optional deps break the agent import
+    print(f"  [HAND CURSOR] registration skipped: {_hcte}")
+
 # Call mode (call_mode): standing back for a call, and the setting that
 # decides whether that happens on its own. Shared into voice. See
 # services/call_tools.py.
