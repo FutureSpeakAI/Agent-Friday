@@ -1973,9 +1973,9 @@
         let timeLapseActive = false;
         let timeLapseTimer = 0;
         
-        let coreCubes = [], matrixLines = [], gridOcean = null, mandelbrotSystem = null;
+        let coreCubes = [], gridOcean = null, mandelbrotSystem = null;
         let tesseractLines = null, astrolabeRings = [], shannonNodes = [], shannonLines = null;
-        let mobiusSystem = null, quantumRings = [], abyssParticles = null, cathedralRings = [];
+        let mobiusSystem = null, abyssParticles = null, cathedralRings = [];
         let edenDebris = [], edenPlayer = null, edenLady = null; 
         
         let audioContext, analyser, dataArray;
@@ -3088,10 +3088,10 @@
             const ADAPTERS = {
                 ICOSAHEDRON: { kind: 'module', mod: () => FridayDyson, ball: true },
                 ASTROLABE:   { kind: 'objects', concentric: true, pick: g => g.children },
-                QUANTUM:     { kind: 'objects', concentric: true, pick: g => g.children.filter(o => o.type === 'LineLoop') },
+                QUANTUM:     { kind: 'module', mod: () => FridayDirac },
                 DOME:        { kind: 'objects', pick: g => g.children.filter(o => o.geometry && /Cylinder|Octahedron/.test(o.geometry.type)) },
                 CABLES:      { kind: 'objects', pick: g => g.children },
-                NONE:        { kind: 'objects', pick: g => g.children },
+                NONE:        { kind: 'module', mod: () => FridayHopf },
                 // A module draws its own units and hands them over: Giga Earth's
                 // are the boss's tiles (FridayRez), its sections the layers, 2x2
                 // blocks of tiles flip for a tool call. A ball-shaped module
@@ -3611,7 +3611,7 @@
                     });
                 });
                 coreCubes.length = 0; cathedralRings.length = 0; astrolabeRings.length = 0;
-                shannonNodes.length = 0; quantumRings.length = 0; matrixLines.length = 0;
+                shannonNodes.length = 0;
                 buildAllStructures();
                 Object.values(structures).forEach(g => { if (g) { scene.add(g); g.visible = false; setGroupOpacity(g, 0); } });
                 const cur = structures[targetStructure];
@@ -4005,6 +4005,361 @@
                      _erupt: () => erupt, _shellOf: i => panels[i].shell, _parts: () => ({ root, body, rims, star, glow, proms }) };
         })();
         // </dyson-sphere>
+        // <dirac-cloud>
+        // Dirac Probability (avatar-visual-genome.md §19): an electron's
+        // probability cloud. Thousands of translucent points, dense where the
+        // orbital's |psi|^2 is, with its nodal gaps empty: 1s, 2p_z, 3d_z2 and
+        // 3d_xy. Each point keeps one direction from the nucleus; an orbital is
+        // its distance and its brightness along it, so one orbital morphs into
+        // another by points gliding in and out and lobes brightening and
+        // fading. Indigo at the core to her accent to sand at the edges.
+        //   thinking: the orbitals morph, one into the next;
+        //   speaking: interference ripples run outward (the wave gene is their
+        //     wavenumber), slow enough never to flicker;
+        //   listening: the cloud collapses inward and sharpens.
+        // Normal blending with capped colours: the cloud can never pile up into
+        // glare, however close the viewer leans. Gestures move whole patches:
+        // 24 clusters by direction, through uniforms (kind 'module').
+        const FridayDirac = (function () {
+            const ORB = 4, CL = 24, R_VIS = 4.8;
+            const REST = [0.0, 0.25, 0.75, 0.0];                // at rest: mostly 3d_z2, a little 2p_z
+            const CYCLE = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+            const VIOLET = new THREE.Color(0xa78bfa), SAND = new THREE.Color(0xd6c7a1), WHITE = new THREE.Color(0xffffff);
+            let pts = null, mat = null, n = 0, clusterDirs = [], clusterMean = [], layersL = [], blocksL = [];
+            let mix = REST.slice(), clock = 0, ripple = 0, collapse = 0, voice = 0, phase = 0, cycleT = 0, cycleK = 2, think = 0;
+            const _c = new THREE.Color(), _t = new THREE.Color();
+            const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, ownColour: true }; return m; };
+
+            // Angular densities |Y|^2, each with a mean of 1 over the sphere.
+            function ang(o, x, y, z) {
+                if (o === 0) return 1;
+                if (o === 1) return 3 * z * z;
+                if (o === 2) { const q = 3 * z * z - 1; return 1.25 * q * q; }
+                const s = 2 * x * y; return 3.75 * s * s;          // sin^2(th) sin(2 phi) = 2xy on the unit sphere
+            }
+            // Radial densities r^2 |R(r)|^2 for 1s, 2p, 3d (Bohr radii), as
+            // inverse-CDF tables scaled so 95% of each lies within R_VIS.
+            function radial(k) {
+                const f = [r => r * r * Math.exp(-2 * r), r => Math.pow(r, 4) * Math.exp(-r), r => Math.pow(r, 6) * Math.exp(-2 * r / 3)][k];
+                const R = [8, 20, 40][k], N = 2048, cdf = new Float64Array(N + 1);
+                for (let i = 1; i <= N; i++) cdf[i] = cdf[i - 1] + f(R * (i - 0.5) / N);
+                for (let i = 0; i <= N; i++) cdf[i] /= cdf[N];
+                const inv = u => { let lo = 0, hi = N; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cdf[m] < u) lo = m; else hi = m; } return R * hi / N; };
+                const scale = R_VIS / inv(0.95);
+                return u => inv(u) * scale;
+            }
+
+            const VS = `attribute vec3 aDir; attribute vec4 aR; attribute vec4 aW; attribute float aCl;
+                uniform vec4 uMix; uniform float uPhase; uniform float uWaveK; uniform float uRipple; uniform float uCollapse; uniform float uSize;
+                uniform vec4 uD[${CL}]; uniform vec4 uG[${CL}];
+                uniform vec3 uCore; uniform vec3 uMid; uniform vec3 uEdge;
+                varying vec3 vC; varying float vA;
+                void main() {
+                    float r = dot(aR, uMix) * mix(1.0, 0.62, uCollapse);
+                    float w = dot(aW, uMix);
+                    float rip = uRipple * sin(uWaveK * r * 0.55 - uPhase);
+                    vec3 p = aDir * r * (1.0 + 0.03 * rip);
+                    int c = int(aCl + 0.5); vec4 D = uD[c]; vec4 G = uG[c];
+                    p = p * D.w + D.xyz;
+                    float f = clamp(r / ${R_VIS.toFixed(1)}, 0.0, 1.0);
+                    vec3 col = f < 0.45 ? mix(uCore, uMid, f / 0.45) : mix(uMid, uEdge, (f - 0.45) / 0.55);
+                    vC = col * G.a + G.rgb;
+                    vA = clamp(w * 0.75 * (0.75 + 0.25 * rip) * mix(1.0, 1.35, uCollapse), 0.0, 0.85);
+                    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                    gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)) * mix(1.0, 0.8, uCollapse), 1.2, 3.2);
+                    gl_Position = projectionMatrix * mv;
+                }`;
+            const FS = `uniform float uOpacity; varying vec3 vC; varying float vA;
+                void main() { float d = length(gl_PointCoord - 0.5); float a = 1.0 - smoothstep(0.2, 0.5, d);
+                    gl_FragColor = vec4(min(vC, vec3(0.8)), a * vA * uOpacity); }`;
+
+            function build(group, opts) {
+                opts = opts || {};
+                const rnd = opts.rand || Math.random;
+                n = opts.count || 6000;
+                const aDir = new Float32Array(n * 3), aR = new Float32Array(n * 4), aW = new Float32Array(n * 4), aCl = new Float32Array(n);
+                const rad = [radial(0), radial(1), radial(2), radial(2)];
+                clusterDirs = [];
+                for (let i = 0; i < CL; i++) {
+                    const y = 1 - (i + 0.5) / CL * 2, rr = Math.sqrt(1 - y * y), th = i * Math.PI * (3 - Math.sqrt(5));
+                    clusterDirs.push([Math.cos(th) * rr, y, Math.sin(th) * rr]);
+                }
+                const MMAX = (1 + 3 + 5 + 3.75) / ORB;
+                const sums = Array.from({ length: CL }, () => [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]), cnt = new Array(CL).fill(0);
+                for (let i = 0; i < n; i++) {
+                    // A direction from the four orbitals' mixture, so points sit where any of them is dense.
+                    let x, y, z, m;
+                    do {
+                        z = 2 * rnd() - 1; const ph = 2 * Math.PI * rnd(), s = Math.sqrt(1 - z * z);
+                        x = s * Math.cos(ph); y = s * Math.sin(ph);
+                        m = (ang(0, x, y, z) + ang(1, x, y, z) + ang(2, x, y, z) + ang(3, x, y, z)) / ORB;
+                    } while (rnd() * MMAX > m);
+                    aDir[i * 3] = x; aDir[i * 3 + 1] = z; aDir[i * 3 + 2] = y;        // the orbitals' z axis is the scene's up
+                    const u = rnd();
+                    for (let o = 0; o < ORB; o++) {
+                        aR[i * 4 + o] = rad[o](Math.min(0.995, Math.max(0.005, u)));       // one quantile: a point keeps its rank in every orbital
+                        aW[i * 4 + o] = Math.min(2.5, ang(o, x, y, z) / m);
+                    }
+                    let best = 0, bd = -2;
+                    for (let k = 0; k < CL; k++) { const d = x * clusterDirs[k][0] + z * clusterDirs[k][1] + y * clusterDirs[k][2]; if (d > bd) { bd = d; best = k; } }
+                    aCl[i] = best; cnt[best]++;
+                    for (let o = 0; o < ORB; o++) { const r = aR[i * 4 + o], wgt = aW[i * 4 + o];
+                        sums[best][0][o] += x * r * wgt; sums[best][1][o] += z * r * wgt; sums[best][2][o] += y * r * wgt; }
+                }
+                // A cluster's centre for each orbital (weighted by brightness), for the gesture engine.
+                const wsum = Array.from({ length: CL }, () => [0, 0, 0, 0]);
+                for (let i = 0; i < n; i++) for (let o = 0; o < ORB; o++) wsum[aCl[i]][o] += aW[i * 4 + o];
+                clusterMean = sums.map((s, k) => [0, 1, 2].map(a => s[a].map((v, o) => v / Math.max(1e-6, wsum[k][o]))));
+                // position holds the resting shape, so bounds and picking see the
+                // cloud where it is; the shader draws from the orbitals.
+                const pos = new Float32Array(n * 3);
+                for (let i = 0; i < n; i++) { let r = 0; for (let o = 0; o < ORB; o++) r += REST[o] * aR[i * 4 + o];
+                    for (let a = 0; a < 3; a++) pos[i * 3 + a] = aDir[i * 3 + a] * r; }
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                g.setAttribute('aDir', new THREE.BufferAttribute(aDir, 3));
+                g.setAttribute('aR', new THREE.BufferAttribute(aR, 4));
+                g.setAttribute('aW', new THREE.BufferAttribute(aW, 4));
+                g.setAttribute('aCl', new THREE.BufferAttribute(aCl, 1));
+                g.computeBoundingBox(); g.computeBoundingSphere();
+                const uD = [], uG = [];
+                for (let k = 0; k < CL; k++) { uD.push(new THREE.Vector4(0, 0, 0, 1)); uG.push(new THREE.Vector4(0, 0, 0, 1)); }
+                mat = own(new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false,
+                    uniforms: { uMix: { value: new THREE.Vector4(...REST) }, uPhase: { value: 0 }, uWaveK: { value: 10 }, uRipple: { value: 0 },
+                        uCollapse: { value: 0 }, uSize: { value: 0.22 }, uD: { value: uD }, uG: { value: uG },
+                        uCore: { value: new THREE.Color() }, uMid: { value: new THREE.Color() }, uEdge: { value: new THREE.Color() },
+                        uOpacity: { value: 1 } } }), 1);
+                pts = new THREE.Points(g, mat);
+                pts.frustumCulled = false;
+                group.add(pts);
+                mix = REST.slice(); clock = 0; ripple = 0; collapse = 0; voice = 0; phase = 0; cycleT = 0; cycleK = 2; think = 0;
+                // Layers: bands of latitude; blocks: neighbouring clusters, up to four.
+                layersL = [[], [], [], []];
+                clusterDirs.forEach((d, k) => layersL[Math.min(3, Math.floor((d[1] + 1) / 2 * 4))].push(k));
+                layersL = layersL.filter(l => l.length);
+                blocksL = [];
+                const left = clusterDirs.map((d, k) => k);
+                const dd = (a, b) => Math.hypot(clusterDirs[a][0] - clusterDirs[b][0], clusterDirs[a][1] - clusterDirs[b][1], clusterDirs[a][2] - clusterDirs[b][2]);
+                while (left.length) { const s = left.shift(); left.sort((a, b) => dd(a, s) - dd(b, s)); blocksL.push([s].concat(left.splice(0, 3))); }
+                return pts;
+            }
+
+            // s: { voice, thinking, listening, base, accent, reduced, wave }
+            function animate(dt, s) {
+                if (!pts) return;
+                dt = Math.max(0, Math.min(0.1, dt));
+                clock += dt;
+                const reduced = !!s.reduced;
+                think += ((s.thinking && !reduced ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                // Thinking walks the orbitals, one into the next every few
+                // seconds; otherwise the cloud settles back to its rest.
+                let want = REST;
+                if (think > 0.05) {
+                    cycleT += dt * think;
+                    if (cycleT > 3.6) { cycleT = 0; cycleK = (cycleK + 1) % ORB; }
+                    want = CYCLE[cycleK];
+                }
+                const k = Math.min(1, dt / 1.1);
+                for (let o = 0; o < ORB; o++) mix[o] += (want[o] - mix[o]) * k;
+                const sum = mix.reduce((a, b) => a + b, 0) || 1;
+                const v = reduced ? 0 : Math.max(0, Math.min(1, s.voice || 0));
+                voice += (v - voice) * Math.min(1, dt / 0.25);
+                ripple += (Math.min(1, voice * 1.6) - ripple) * Math.min(1, dt / 0.5);
+                if (!reduced) phase += dt * 2.2;                   // rings move out at a calm pace
+                collapse += ((s.listening ? 1 : 0) - collapse) * Math.min(1, dt / 0.9);
+                const u = mat.uniforms;
+                u.uMix.value.set(mix[0] / sum, mix[1] / sum, mix[2] / sum, mix[3] / sum);
+                u.uPhase.value = phase;
+                u.uWaveK.value = Math.max(8, Math.min(12, +s.wave || 10));
+                u.uRipple.value = ripple;
+                u.uCollapse.value = collapse * (reduced ? 0.5 : 1);
+                u.uOpacity.value = mat.opacity;
+                u.uCore.value.copy(s.base).lerp(VIOLET, 0.45).multiplyScalar(0.9);
+                u.uMid.value.copy(s.accent).lerp(WHITE, 0.15);
+                u.uEdge.value.copy(SAND).multiplyScalar(0.85);
+                for (let c = 0; c < CL; c++) { u.uD.value[c].set(0, 0, 0, 1); u.uG.value[c].set(0, 0, 0, 1); }
+            }
+
+            // The gesture engine's view: one unit per cluster, at its centre
+            // in the orbital shown now.
+            function points() {
+                const m = mat ? mat.uniforms.uMix.value : { x: 0, y: 0.25, z: 0.75, w: 0 };
+                const w = [m.x, m.y, m.z, m.w], sc = 1 - 0.38 * collapse;
+                return clusterMean.map(cm => [0, 1, 2].map(a => cm[a].reduce((s, v, o) => s + v * w[o], 0) * sc));
+            }
+            function applyUnit(k, un, accent, amber) {
+                if (!mat || k < 0 || k >= CL) return;
+                const D = mat.uniforms.uD.value[k], G = mat.uniforms.uG.value[k];
+                D.set(un.d[0], un.d[1], un.d[2], un.s || 1);
+                const g = Number.isFinite(un.g) ? un.g : 0, b = (un.b !== 1 && Number.isFinite(un.b)) ? un.b : 1;
+                let m = 0, kk = b;
+                if (un.hue === 'approval') { m = g; _t.copy(amber); }
+                else if (g > 0) { m = 0.6 * g; _t.copy(accent); kk = b * (1 + 0.35 * g); }
+                G.set(_t.r * m * kk, _t.g * m * kk, _t.b * m * kk, (1 - m) * kk);
+            }
+            return { build, animate, units: () => CL, points, layers: () => layersL,
+                     blocks: () => blocksL.map(u => ({ units: u, axis: [0, 0, 1], centre: [0, 0, 0] })), applyUnit, radius: R_VIS,
+                     _mix: () => mix.slice(), _mat: () => mat, _n: () => n, ORB, CL };
+        })();
+        // </dirac-cloud>
+        // <hopf-fibration>
+        // Transcendence (avatar-visual-genome.md §19): the Hopf fibration.
+        // Every point of the 3-sphere lies on exactly one great circle, and the
+        // circles over one latitude of the base sphere fill a torus; nested,
+        // the tori wrap a core circle, and every circle links every other.
+        // Hundreds of them (the lines gene, two fibres a line), turned
+        // through the fourth dimension and projected stereographically, drawn
+        // in one batch on the GPU. The turn is bounded so no circle ever passes
+        // through the projection's pole (none runs off to infinity).
+        //   speaking: light flows along the fibres with her voice;
+        //   thinking: the turn through the fourth dimension speeds up and
+        //     widens, so the tori swell and lean;
+        //   listening: the rings pull taut, true circles on true tori.
+        // Normal blending, so crossing fibres never pile up into glare.
+        // Gestures move whole sectors of a torus (25 units, kind 'module').
+        const FridayHopf = (function () {
+            const TORI = 5, SECT = 5, U = TORI * SECT, M = 64;
+            const ETA0 = 0.2, ETA1 = 0.60, A_REST = 0.12, A_THINK = 0.22;   // ETA1 + A_THINK < asin(0.75): |w| <= 0.73
+            const SCALE = 2.6, TILT = 0.62;
+            const VIOLET = new THREE.Color(0xa78bfa);
+            let lines = null, mat = null, holder = null, nFib = 0, perTorus = 0;
+            let clock = 0, turn = 0, think = 0, voice = 0, flow = 0, flowAmp = 0, taut = 0, ang = 0;
+            const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, ownColour: true }; return m; };
+            const _q = new THREE.Quaternion(), _qi = new THREE.Quaternion(), _v = new THREE.Vector3(), _t = new THREE.Color();
+            const etaOf = k => ETA0 + (ETA1 - ETA0) * k / (TORI - 1);
+            const deltaOf = (k, j) => 2 * Math.PI * j / perTorus + k * 0.37;
+            const tiltQ = () => _q.setFromEuler(new THREE.Euler(TILT, 0, 0)).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), lines ? lines.rotation.z : 0));
+            // The page's own arithmetic for one fibre point (for the gesture
+            // engine), in the holder's space before the tilt.
+            function at(eta, delta, t, a, out) {
+                const ce = Math.cos(eta), se = Math.sin(eta);
+                const x = ce * Math.cos(t), y = ce * Math.sin(t), z = se * Math.cos(t + delta), w = se * Math.sin(t + delta);
+                const ca = Math.cos(a), sa = Math.sin(a);
+                const X = ca * x - sa * w, Y = ca * y - sa * z, Z = sa * y + ca * z, W = sa * x + ca * w;
+                const k = SCALE * (1 - 0.07 * taut) / (1 - W);
+                out[0] = X * k; out[1] = Y * k; out[2] = Z * k; out[3] = W;
+                return out;
+            }
+            const VS = `attribute float aEta; attribute float aDelta; attribute float aT; attribute float aUnit; attribute float aTor;
+                uniform float uA; uniform float uFlow; uniform float uFlowAmp; uniform float uTaut;
+                uniform vec4 uD[${U}]; uniform vec4 uG[${U}];
+                uniform vec3 uIn; uniform vec3 uOut;
+                varying vec3 vC; varying float vA;
+                void main() {
+                    float ce = cos(aEta), se = sin(aEta);
+                    vec4 x = vec4(ce * cos(aT), ce * sin(aT), se * cos(aT + aDelta), se * sin(aT + aDelta));
+                    float ca = cos(uA), sa = sin(uA);
+                    vec4 y = vec4(ca * x.x - sa * x.w, ca * x.y - sa * x.z, sa * x.y + ca * x.z, sa * x.x + ca * x.w);
+                    vec3 p = y.xyz * (${SCALE.toFixed(2)} * (1.0 - 0.07 * uTaut) / (1.0 - y.w));
+                    int u = int(aUnit + 0.5); vec4 D = uD[u]; vec4 G = uG[u];
+                    p = p * D.w + D.xyz;
+                    vec3 col = mix(uIn, uOut, aTor / ${(TORI - 1).toFixed(1)});
+                    vC = col * G.a + G.rgb;
+                    float wave = 0.55 + 0.45 * sin(3.0 * aT - uFlow);
+                    vA = mix(1.0, wave, uFlowAmp) * (0.5 + 0.2 * uTaut) * (0.55 + 0.45 * aTor / ${(TORI - 1).toFixed(1)}) * (1.0 - 0.35 * smoothstep(0.35, 0.73, y.w));
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+                }`;
+            const FS = `uniform float uOpacity; varying vec3 vC; varying float vA;
+                void main() { gl_FragColor = vec4(min(vC, vec3(0.75)), vA * uOpacity); }`;
+
+            function build(group, opts) {
+                opts = opts || {};
+                nFib = Math.max(TORI * SECT, Math.round((+opts.lines || 100) * 2));
+                perTorus = Math.max(SECT, Math.round(nFib / TORI));
+                const V = TORI * perTorus * M * 2;
+                const aEta = new Float32Array(V), aDelta = new Float32Array(V), aT = new Float32Array(V), aUnit = new Float32Array(V), aTor = new Float32Array(V);
+                // position holds the untilted, unturned fibration, so bounds and
+                // picking see it where it is; the shader draws the turned one.
+                const pos = new Float32Array(V * 3), q = [0, 0, 0, 0];
+                let v = 0;
+                for (let k = 0; k < TORI; k++) for (let j = 0; j < perTorus; j++) {
+                    const eta = etaOf(k), delta = deltaOf(k, j), unit = k * SECT + Math.floor(j * SECT / perTorus);
+                    for (let s = 0; s < M; s++) for (const e of [s, s + 1]) {
+                        aEta[v] = eta; aDelta[v] = delta; aT[v] = 2 * Math.PI * (e % M) / M; aUnit[v] = unit; aTor[v] = k;
+                        at(eta, delta, aT[v], 0, q); pos[v * 3] = q[0]; pos[v * 3 + 1] = q[1]; pos[v * 3 + 2] = q[2];
+                        v++;
+                    }
+                }
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                g.setAttribute('aEta', new THREE.BufferAttribute(aEta, 1));
+                g.setAttribute('aDelta', new THREE.BufferAttribute(aDelta, 1));
+                g.setAttribute('aT', new THREE.BufferAttribute(aT, 1));
+                g.setAttribute('aUnit', new THREE.BufferAttribute(aUnit, 1));
+                g.setAttribute('aTor', new THREE.BufferAttribute(aTor, 1));
+                g.computeBoundingBox(); g.computeBoundingSphere();
+                const uD = [], uG = [];
+                for (let k = 0; k < U; k++) { uD.push(new THREE.Vector4(0, 0, 0, 1)); uG.push(new THREE.Vector4(0, 0, 0, 1)); }
+                mat = own(new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false,
+                    uniforms: { uA: { value: 0 }, uFlow: { value: 0 }, uFlowAmp: { value: 0 }, uTaut: { value: 0 },
+                        uD: { value: uD }, uG: { value: uG }, uIn: { value: new THREE.Color() }, uOut: { value: new THREE.Color() },
+                        uOpacity: { value: 0.8 } } }), 0.8);
+                lines = new THREE.LineSegments(g, mat);
+                lines.frustumCulled = false;
+                holder = new THREE.Group(); holder.rotation.x = TILT; holder.add(lines); group.add(holder);
+                clock = 0; turn = 0; think = 0; voice = 0; flow = 0; flowAmp = 0; taut = 0; ang = 0;
+                return lines;
+            }
+
+            // s: { voice, thinking, listening, base, accent, reduced }
+            function animate(dt, s) {
+                if (!lines) return;
+                dt = Math.max(0, Math.min(0.1, dt));
+                clock += dt;
+                const reduced = !!s.reduced;
+                think += ((s.thinking && !reduced ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                taut += ((s.listening ? 1 : 0) - taut) * Math.min(1, dt / 0.9);
+                const v = reduced ? 0 : Math.max(0, Math.min(1, s.voice || 0));
+                voice += (v - voice) * Math.min(1, dt / 0.25);
+                // The turn through the fourth dimension: a slow swing, faster and
+                // wider while she thinks, eased to nothing as the rings pull taut.
+                if (!reduced) turn += dt * (0.22 + 0.55 * think);
+                // Under reduced motion it holds the shape it has.
+                if (!reduced) ang = (A_REST + (A_THINK - A_REST) * think) * (1 - taut) * Math.sin(turn);
+                // A slow turn about the tori's own axis keeps the view through their holes.
+                if (!reduced) { flow += dt * (1.2 + 3.0 * voice); lines.rotation.z += dt * 0.05; }
+                flowAmp += (Math.min(0.85, voice * 1.5) - flowAmp) * Math.min(1, dt / 0.5);
+                const u = mat.uniforms;
+                u.uA.value = ang; u.uFlow.value = flow; u.uFlowAmp.value = flowAmp; u.uTaut.value = taut;
+                u.uIn.value.copy(s.accent).lerp(new THREE.Color(1, 1, 1), 0.15).multiplyScalar(0.7);
+                u.uOut.value.copy(s.base).lerp(VIOLET, 0.4).multiplyScalar(0.62);
+                u.uOpacity.value = mat.opacity;
+                for (let c = 0; c < U; c++) { u.uD.value[c].set(0, 0, 0, 1); u.uG.value[c].set(0, 0, 0, 1); }
+            }
+
+            // The gesture engine's view: one unit per sector of a torus, at the
+            // mean of its middle fibre, in the structure's own space.
+            function points() {
+                const out = [], p = [0, 0, 0, 0];
+                tiltQ();
+                for (let k = 0; k < TORI; k++) for (let s = 0; s < SECT; s++) {
+                    const j = Math.floor((s + 0.5) * perTorus / SECT), c = [0, 0, 0];
+                    for (let i = 0; i < 8; i++) { at(etaOf(k), deltaOf(k, j), i * Math.PI / 4, ang, p); c[0] += p[0] / 8; c[1] += p[1] / 8; c[2] += p[2] / 8; }
+                    _v.set(c[0], c[1], c[2]).applyQuaternion(_q);
+                    out.push([_v.x, _v.y, _v.z]);
+                }
+                return out;
+            }
+            function applyUnit(k, un, accent, amber) {
+                if (!mat || k < 0 || k >= U) return;
+                const D = mat.uniforms.uD.value[k], G = mat.uniforms.uG.value[k];
+                _qi.copy(tiltQ()).invert();
+                _v.set(un.d[0], un.d[1], un.d[2]).applyQuaternion(_qi);      // the engine's offsets are in the structure's space
+                D.set(_v.x, _v.y, _v.z, un.s || 1);
+                const g = Number.isFinite(un.g) ? un.g : 0, b = (un.b !== 1 && Number.isFinite(un.b)) ? un.b : 1;
+                let m = 0, kk = b;
+                if (un.hue === 'approval') { m = g; _t.copy(amber); }
+                else if (g > 0) { m = 0.6 * g; _t.copy(accent); kk = b * (1 + 0.35 * g); }
+                G.set(_t.r * m * kk, _t.g * m * kk, _t.b * m * kk, (1 - m) * kk);
+            }
+            const layersL = Array.from({ length: TORI }, (_, k) => Array.from({ length: SECT }, (_, s) => k * SECT + s));
+            const blocksL = [];
+            for (let k = 0; k < TORI; k++) for (let s = 0; s < SECT; s += 2) blocksL.push(s + 1 < SECT ? [k * SECT + s, k * SECT + s + 1] : [k * SECT + s]);
+            return { build, animate, units: () => U, points, layers: () => layersL,
+                     blocks: () => blocksL.map(u => ({ units: u, axis: [0, 0, 1], centre: [0, 0, 0] })), applyUnit, radius: 5.5,
+                     _at: at, _ang: () => ang, _mat: () => mat, _fibres: () => TORI * perTorus, TORI, SECT, M, ETA1, A_THINK, SCALE };
+        })();
+        // </hopf-fibration>
         // <rez-boss>
         // Giga Earth: the Area 1 boss from Rez, in Friday's own palette
         // (docs/design/active/avatar-visual-genome.md §15). A ball of 200 tiles
@@ -4651,29 +5006,14 @@
             mobiusSystem.userData = { data: mobPts, isAccent: true }; gMobius.add(mobiusSystem); gMobius.scale.set(4,4,4);
             structures['MOBIUS'] = gMobius;
 
-            // 11. QUANTUM
+            // 11. QUANTUM: Dirac Probability, an electron's probability cloud (FridayDirac).
             const gQuantum = new THREE.Group();
-            gQuantum.add(new THREE.Points(new THREE.SphereGeometry(3.5, 64, 64), new THREE.PointsMaterial({ size: 0.4, map: glowTexture, color: 0xffffff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false })));
-            const numQRings = 30;
-            for(let i=0; i<numQRings; i++) {
-                const qLineMat = createMaterial('line', 0xffffff, 0.5, true, false); qLineMat.userData.isAccent = true;
-                const qGeo = new THREE.BufferGeometry(); qGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(300 * 3), 3));
-                const qLine = new THREE.LineLoop(qGeo, qLineMat);
-                qLine.rotation.x = Math.random()*Math.PI; qLine.rotation.y = Math.random()*Math.PI;
-                qLine.userData = { radius: 6 + (i*0.4), waveSpeed: 2 + Math.random()*4, colorPhase: i/numQRings };
-                gQuantum.add(qLine); quantumRings.push(qLine);
-            }
+            FridayDirac.build(gQuantum, { count: window.__fridayLowCost ? 2500 : 6000, rand: () => FridayGenome.rand('QUANTUM') });
             structures['QUANTUM'] = gQuantum;
 
-            // 12. NONE (Transcendence)
+            // 12. NONE (Transcendence): the Hopf fibration (FridayHopf), three fibres a line.
             const gNone = new THREE.Group();
-            const lineMat = createMaterial('line', 0x00ffff, 0.2, true, false); lineMat.userData.isAccent = true;
-            for(let i=0; i<FridayGenome.EX('NONE', 'lines', 100); i++) {
-                const x = (Math.random()-0.5)*40; const z = (Math.random()-0.5)*40; const y = (Math.random()-0.5)*40;
-                const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, y-5, z), new THREE.Vector3(x, y+5, z)]), lineMat);
-                line.userData = { speed: 0.01 + Math.random()*0.02, baseY: y }; 
-                gNone.add(line); matrixLines.push(line);
-            }
+            FridayHopf.build(gNone, { lines: FridayGenome.EX('NONE', 'lines', 100) });
             structures['NONE'] = gNone;
 
             // 13. EDEN TRANCE (Giga Earth Rez Tribute)
@@ -4768,7 +5108,7 @@
                         child.material.color.copy(moodLerpValues.accentColor).multiplyScalar(0.3);
                     } else if (child.material.userData.isPlayerBody) {
                         child.material.color.setHex(0xffffff); 
-                    } else if (child.material.color && targetStructure !== 'QUANTUM') {
+                    } else if (child.material.color) {
                         child.material.color.copy(targetColor);
                         if(child.geometry && child.geometry.type === 'BoxGeometry' && !child.material.wireframe && (currentStructure === 'CUBES' || targetStructure === 'CUBES')) {
                             child.material.color.copy(moodLerpValues.baseColor).multiplyScalar(0.15); 
@@ -5005,7 +5345,7 @@
             const voiceBreath = isExecutingMood ? voiceBreathRaw * 1.8 : voiceBreathRaw;
             const idlePulse = Math.sin(elapsed * 0.5) * 0.08;
 
-            if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN','ICOSAHEDRON'].includes(targetStructure)) {
+            if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN','ICOSAHEDRON','NONE'].includes(targetStructure)) {
                 activeGroup.rotation.y += moodLerpValues.rotationSpeed * idleFactor;
                 if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * idleFactor;
                 // Voice-reactive scale breathing for all structures without custom vertex displacement
@@ -5164,23 +5504,12 @@
                 mobiusSystem.geometry.attributes.position.needsUpdate = true;
             }
 
-            if (structures['QUANTUM'] && structures['QUANTUM'].visible && quantumRings.length > 0) {
-                quantumRings.forEach(qLine => {
-                    if(qLine && qLine.geometry && qLine.geometry.attributes.position && qLine.userData) {
-                        const positions = qLine.geometry.attributes.position.array;
-                        for(let i=0; i<300; i++) {
-                            const theta = (i/300) * Math.PI * 2;
-                            const wave = Math.sin(theta * 10 + elapsed * qLine.userData.waveSpeed) * (audioData.high * 4.0);
-                            const r = qLine.userData.radius + wave + voiceBreath * 0.4;
-                            positions[i*3] = Math.cos(theta) * r; positions[i*3+1] = Math.sin(theta) * r; positions[i*3+2] = 0;
-                        }
-                        qLine.geometry.attributes.position.needsUpdate = true;
-                        if (qLine.material && qLine.material.color) {
-                            qLine.material.color.setHSL((qLine.userData.colorPhase + elapsed*0.1 + audioData.mid) % 1.0, 1.0, 0.5);
-                        }
-                    }
-                });
-            }
+            // Dirac and Transcendence: her state only (her voice, her own thinking
+            // and listening moods), like the Dyson sphere's.
+            const herState = { voice: holoAmplitude, thinking: currentMood === 'REASONING', listening: currentMood === 'LISTENING',
+                base: moodLerpValues.baseColor, accent: moodLerpValues.accentColor, reduced: SceneMotion.reduced() };
+            if (structures['QUANTUM'] && structures['QUANTUM'].visible) FridayDirac.animate(delta, Object.assign({ wave: FridayGenome.EX('QUANTUM', 'wave', 10) }, herState));
+            if (structures['NONE'] && structures['NONE'].visible) FridayHopf.animate(delta, herState);
 
             if (structures['ICOSAHEDRON'] && structures['ICOSAHEDRON'].visible) {
                 // Her state only: her voice, and her own thinking and listening moods.
@@ -5217,15 +5546,6 @@
                             d.position.x = (Math.random()-0.5)*35;
                             d.position.y = (Math.random()-0.5)*35;
                         }
-                    }
-                });
-            }
-
-            if (structures['NONE'] && structures['NONE'].visible && matrixLines.length > 0) {
-                matrixLines.forEach(line => { 
-                    if(line && line.position && line.userData) {
-                        line.position.y += line.userData.speed * (1 + audioData.mid * 3); 
-                        if (line.position.y > 20) line.position.y = -20; 
                     }
                 });
             }
