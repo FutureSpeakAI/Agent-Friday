@@ -957,7 +957,9 @@ def _run_task(rec):
                 # The owner allowed these jobs onto a cloud model when no local
                 # one serves: run on exactly that model, and NOT inside the
                 # local-only guard, which would refuse it.
-                _cm = _cloud_model_for(rec)
+                # News routines never take the cloud pin: News is local-only
+                # and waits for the seat instead (`local_news_run`).
+                _cm = None if rec.get("id") in NEWS_ROUTINES else _cloud_model_for(rec)
                 if _cm and not _resolve_local_seat():
                     with _log_guard.cloud_pinned(_cm, meta.get("label") or ref):
                         return meta["fn"]()

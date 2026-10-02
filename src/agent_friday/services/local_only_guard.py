@@ -73,6 +73,10 @@ class local_only:
     def __enter__(self):
         self._prev = getattr(_state, "active", False)
         self._prev_label = getattr(_state, "label", "")
+        # The stricter mark wins: a local-only scope inside a cloud pin is
+        # local-only for its duration, so the pin is lifted until it exits.
+        self._prev_pin = (getattr(_state, "pin", ""), getattr(_state, "pin_label", ""))
+        _state.pin, _state.pin_label = "", ""
         _state.active = True
         _state.label = self.job_label
         return self
@@ -80,6 +84,7 @@ class local_only:
     def __exit__(self, *exc):
         _state.active = self._prev
         _state.label = self._prev_label
+        _state.pin, _state.pin_label = self._prev_pin
         return False
 
 

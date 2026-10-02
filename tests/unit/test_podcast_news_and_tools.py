@@ -143,21 +143,23 @@ def test_a_routine_started_from_news_runs_local_only(monkeypatch, fn, inner):
     assert not local_only_guard.is_active()
 
 
-def test_the_owner_can_turn_news_local_only_off(monkeypatch):
+def test_no_setting_turns_news_local_only_off(monkeypatch):
+    """News is local-only with no opt-out: the owner's rule is $0 on every
+    News path."""
     import agent_friday.core as core
     monkeypatch.setattr(core, "_load_settings", lambda: {"news_local_only": False})
     seen = _guard_state_inside(monkeypatch, "_gather_weekly_editions")
     with pytest.raises(_Stop):
         ne._generate_weekly_digest()
-    assert seen == [False]
+    assert seen == [True]
 
 
-def test_an_owner_approved_cloud_pin_is_honoured(monkeypatch):
+def test_a_scheduled_cloud_pin_does_not_reach_a_news_routine(monkeypatch):
     seen = _guard_state_inside(monkeypatch, "_gather_weekly_editions")
     with local_only_guard.cloud_pinned("claude-haiku-4-5-20251001", "Weekly"):
         with pytest.raises(_Stop):
             ne._generate_weekly_digest()
-    assert seen == [False]
+    assert seen == [True]
 
 
 def test_both_briefing_producers_write_locally(monkeypatch):

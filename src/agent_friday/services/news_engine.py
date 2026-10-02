@@ -1147,27 +1147,17 @@ WEEKLY_DIGESTS_DIR = FRONT_PAGES_DIR / "weekly"
 # archive including banned sources, and that is disclosed in the output.
 WEEKLY_EDITORIAL_HOUR = 19
 EDITORIALS_DIR = FRIDAY_DIR / "editorials"
-# The four News routines (Front Page, Briefing, Weekly Digest, Editorial) write
-# on the local model, whether a schedule, the News buttons or the offline queue
-# started them. Scheduled runs already carried `task.local_only`; the buttons
-# did not, so a click could reach a cloud model. `news_local_only` (on by
-# default) puts every run inside the same guard the cloud transports refuse in.
-# Fetching the articles still reaches the web: that is reading the news, not
-# writing it. An owner who allowed scheduled jobs onto a cloud model
-# (`scheduled_cloud`) keeps that choice for scheduled runs.
+# Every News path writes and speaks on this computer and costs nothing: the
+# routines (Front Page, Briefing, Weekly Digest, Editorial), the News buttons,
+# the article deep dive and the read-aloud, whoever started them. There is no
+# cloud fallback, no cloud voice and no opt-out; a News run that cannot reach
+# the local seat waits for it and says so. Every run is inside the guard the
+# cloud transports refuse in, which also lifts any scheduled cloud pin for its
+# duration. Fetching the articles still reaches the web: that is reading the
+# news, not writing it.
 def local_news_run(label):
-    """Context manager: this routine's model calls are local-only, when the
-    owner's `news_local_only` setting is on (the default)."""
-    import contextlib
-    try:
-        on = bool((core._load_settings() or {}).get("news_local_only", True))
-    except Exception:
-        on = True
+    """Context manager: this News run's model and voice calls are local-only."""
     from agent_friday.services import local_only_guard
-    # A scheduled run the owner explicitly allowed onto one cloud model
-    # (`scheduled_cloud`) is already pinned to it; that consent stands.
-    if not on or local_only_guard.pinned_model():
-        return contextlib.nullcontext()
     return local_only_guard.local_only(label)
 
 
@@ -3238,6 +3228,7 @@ def _read_cached_dive(path):
         return None
 
 
+@_local_news('News deep dive')
 def _deep_dive_article(url, title=None, refresh=False, quick=False):
     """Fetch an article, summarize it with the local/cloud model, and cache it.
 
@@ -3332,13 +3323,15 @@ def _quick_dive(url, headline, body, cache_path):
     box = {}
 
     def work():
+        # Its own thread: the local-only mark is per thread, so it is set here.
         try:
-            system = _get_friday_system_prompt(
-                keywords=headline, workspace="news",
-                provider=_predict_route_provider(keywords=headline, workspace="news"),
-                vault_control=_gated_vault_control())
-            raw = _generate_text([{"role": "user", "content": prompt}], system=system,
-                                 max_tokens=DEEP_DIVE_QUICK_MAX_TOKENS, workspace='news')
+            with local_news_run('News deep dive'):
+                system = _get_friday_system_prompt(
+                    keywords=headline, workspace="news",
+                    provider=_predict_route_provider(keywords=headline, workspace="news"),
+                    vault_control=_gated_vault_control())
+                raw = _generate_text([{"role": "user", "content": prompt}], system=system,
+                                     max_tokens=DEEP_DIVE_QUICK_MAX_TOKENS, workspace='news')
         except Exception as e:
             box["error"] = e
             return

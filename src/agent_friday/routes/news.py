@@ -561,7 +561,9 @@ def front_page_audio():
         return jsonify({"status": "error",
                         "message": "This Front Page has no content to read."}), 400
     try:
-        buf = _synthesize_tts_wav(script, voice=data.get("voice"), style="briefing")
+        from agent_friday.services.news_engine import local_news_run
+        with local_news_run("Front Page read-aloud"):
+            buf = _synthesize_tts_wav(script, voice=data.get("voice"), style="briefing")
         return send_file(buf, mimetype='audio/wav')
     except Exception as e:
         traceback.print_exc()

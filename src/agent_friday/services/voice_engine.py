@@ -1565,6 +1565,17 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
     """
     from agent_friday import brand
     text = brand.spoken(text)
+    # Inside a local-only run (every News path) the voice is this computer's,
+    # with no cloud fallback: no local voice means a visible refusal, never
+    # Gemini.
+    from agent_friday.services import local_only_guard as _log_guard
+    if _log_guard.is_active() and not _log_guard.pinned_model():
+        _buf = _synthesize_tts_wav_local(text)
+        if _buf is not None:
+            return _buf
+        raise _log_guard.CloudRefused(
+            "%s is local-only and no local voice engine is ready, so it is not "
+            "spoken rather than sent to Gemini TTS." % _log_guard.label())
     try:
         _pii_lookup = core._scrub_pii(text)[1]
     except Exception:
@@ -1635,6 +1646,8 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
 
 def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
     """The Gemini-TTS synthesis path (cloud). Raises on any failure."""
+    from agent_friday.services import local_only_guard as _log_guard
+    _log_guard.refuse_if_active("google-gemini", "gemini-tts")
     from agent_friday import brand
     text = brand.spoken(text)
     import wave

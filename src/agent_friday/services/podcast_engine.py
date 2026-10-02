@@ -709,6 +709,10 @@ def produce(eid: str, *, should_stop=None) -> dict:
         ep = _update(eid, status="speaking", stage_detail="speaking on this computer")
         speak = None
         if ep.get("voice_engine") == "cloud":
+            if (ep.get("attached") or {}).get("routine"):
+                raise PodcastRefused(
+                    "News episodes are spoken on this computer only; a cloud "
+                    "voice is not used for them.")
             _refuse_cloud_voice(ep.get("privacy") == "private")
             speak = _cloud_speak()
         pcm, timings = render.render_lines(
