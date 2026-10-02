@@ -148,3 +148,37 @@ def test_the_briefing_uses_only_current_articles():
              item("The case for a robot tax to redistribute wealth", "exampleworld.org", 340),
              item("Your latest headlines", "examplelocal.com", 2)]
     assert [i["title"] for i in ns.current(items, "briefing", now=NOW)] == ["Council passes the transit budget, 7-2"]
+
+
+
+# ── from the first regenerated edition ──────────────────────────────────────
+
+def test_an_outlets_own_name_does_not_make_two_articles_one_event():
+    pool = [item("ExampleTech Summit 2031: Kareem Amin on the rise of the sales engineer", "exampletech.com", 1),
+            item("The founder's guide to ExampleTech Summit 2031: everything you need to know", "exampletech.com", 2)]
+    assert len(ns.merge_events(pool)) == 2
+
+
+def test_a_second_report_from_the_same_outlet_is_not_another_outlet():
+    pool = [item("Motive probed in mass shooting at Riverton bar, FBI says", "examplenews.com", 1),
+            item("Three victims killed in Riverton mass shooting identified as search for motive continues",
+                 "examplenews.com", 3),
+            item("Riverton bar mass shooting: FBI probes motive", "exampleglobe.com", 2)]
+    merged = ns.merge_events(pool)
+    shooting = [m for m in merged if "shooting" in m["title"].lower()]
+    assert len(shooting) == 1
+    assert [a["source"] for a in shooting[0].get("also", [])] == ["exampleglobe.com"]
+
+
+def test_a_headline_word_or_an_older_date_is_not_an_update():
+    past = [{"id": "2031-03-11-evening", "generated_at": "2031-03-11T19:00:00",
+             "lead": item("Bain and Company brainstorms where the AI revenue will come from", "examplememo.com", 20,
+                          snippet="Consultants brainstorm where AI revenue will come from.")}]
+    again = item("Bain & Company Brainstorms Where The AI Revenue's Gonna Come From", "examplememo.com", 16,
+                 snippet="Consultants brainstorm where AI revenue will come from.")
+    kept, held = ns.edition_pool([again], past, now=NOW, window_h=36)
+    assert not kept and held[0]["why"] == "ran before, nothing new"
+
+
+def test_an_obituary_is_not_front_page_news():
+    assert not ns.is_article(item("Ana Ruiz Obituary (2031) - Riverton - Example Funeral Home", "examplelegacy.com", 1))

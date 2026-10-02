@@ -79,7 +79,15 @@ def index(editions: list[dict]) -> list[dict]:
             rec["facts"] |= _facts("%s. %s" % (a.get("title") or "", a.get("snippet") or ""))
             rec["sources"].add((a.get("source") or "").lower())
             rec["last_ran"] = ed.get("id")
+            rec["last_ran_at"] = _when(ed.get("generated_at"))
     return out
+
+
+def _when(iso) -> float | None:
+    try:
+        return time.mktime(time.strptime(str(iso)[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _find(seen: list[dict], story: dict) -> dict | None:
@@ -99,7 +107,13 @@ def _development(story: dict, rec: dict) -> list[str]:
     text = "%s. %s" % (story.get("title") or "", story.get("snippet") or "")
     # Compared in lower case; said as written ("Ledgerline", not "ledgerline").
     written = {w.strip(".,;:!?()\"'“”‘’").lower(): w.strip(".,;:!?()\"'“”‘’") for w in text.split()}
-    new_facts = [written.get(f, f) for f in sorted(_facts(text) - rec["facts"])]
+    # A word of the story's own headline is its identity, not a development;
+    # nor is anything published before the edition it last ran in.
+    ts = float(story.get("ts") or 0)
+    if ts and rec.get("last_ran_at") and ts <= rec["last_ran_at"]:
+        return []
+    new_facts = [written.get(f, f) for f in sorted(_facts(text) - rec["facts"])
+                 if f[:6] not in rec["headline"]]
     source = (story.get("source") or "").lower()
     what = []
     if new_facts:
@@ -171,6 +185,9 @@ def is_article(item: dict) -> bool:
         return False
     if _NOT_ARTICLE_RE.match(title.rstrip(".! ")) or _PROMO_RE.match(title):
         return False
+    # A death notice is a private person's page, not front-page news.
+    if re.search(r"\bobituary\b|\bobituaries\b", title, re.I):
+        return False
     words = re.findall(r"[A-Za-z0-9']+", title)
     if (title.endswith("\u2026") or title.endswith("...")) and len(words) <= 3:
         return False
@@ -186,7 +203,12 @@ def is_article(item: dict) -> bool:
 def merge_events(pool: list[dict]) -> list[dict]:
     """One event reported by several outlets is one story: the freshest report
     leads, and `also` lists every other outlet's report."""
-    heads = [_headline(p.get("title")) for p in pool]
+    def head(p):
+        # The outlet's own name ("TechCrunch Disrupt") is not what the story is about.
+        site = re.sub(r"[^a-z0-9]", "", (p.get("source") or "").lower().removeprefix("www.").split(".")[0])
+        words = [w for w in re.findall(r"[a-z0-9]+", (p.get("title") or "").lower()) if w != site]
+        return {w[:6] for w in words if w not in _STOP and len(w) > 2}
+    heads = [head(p) for p in pool]
     parent = list(range(len(pool)))
 
     def root(i):
@@ -210,6 +232,16 @@ def merge_events(pool: list[dict]) -> list[dict]:
         if g is None or g[0] != i:
             continue
         members = sorted((pool[k] for k in g), key=lambda p: -(float(p.get("ts") or 0)))
+        # One outlet once: its other report of the same event is dropped,
+        # never listed as another outlet.
+        seen_src, uniq = set(), []
+        for m in members:
+            src = (m.get("source") or "").lower()
+            if src in seen_src:
+                continue
+            seen_src.add(src)
+            uniq.append(m)
+        members = uniq
         lead = dict(members[0])
         if len(members) > 1:
             lead["also"] = [{"source": m.get("source") or "", "url": m.get("url") or "",
