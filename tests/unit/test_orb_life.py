@@ -117,7 +117,8 @@ out.stars = { same: st[0].x === st[3].x && st[0].y === st[3].y, distinct: st[0].
 
 // keep-out
 out.keep = { prompt: L.inKeepOut(640, 650, W, H), dock: L.inKeepOut(100, 760, W, H), topbar: L.inKeepOut(640, 10, W, H),
-             side: L.inKeepOut(150, 300, W, H), lift: L.liftFor(640, 650, W, H), noLift: L.liftFor(150, 300, W, H) };
+             side: L.inKeepOut(150, 300, W, H), lift: L.liftFor(640, 650, W, H), noLift: L.liftFor(150, 300, W, H),
+             below: L.liftFor(640, 880, W, H) };
 out.keep.lifted = !L.inKeepOut(640, 650 - out.keep.lift, W, H);
 
 // sparks: at most one per orb per 0.4 s and three a second in all
@@ -225,6 +226,7 @@ def test_orbs_keep_out_of_the_centre_ui(o):
     k = o["keep"]
     assert k["prompt"] is True and k["dock"] is True and k["topbar"] is True and k["side"] is False
     assert k["lift"] > 0 and k["noLift"] == 0 and k["lifted"] is True
+    assert k["below"] > 0                 # out of sight below, its label on the dock: lifted too
 
 
 def test_sparks_stay_well_inside_the_flash_limit(o):

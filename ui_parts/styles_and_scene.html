@@ -767,12 +767,14 @@
             }
 
             // The centre UI the orbs keep out of: the top bar, the prompt row
-            // and greeting above the dock, and the dock.
+            // and greeting above the dock, and the dock. The bottom bands run
+            // on below the screen: an orb there is out of sight while its
+            // label, held to the screen's edge, sits on the dock.
             function keepOut(w, h) {
                 return [
                     { x0: 0, x1: w, y0: 0, y1: 40 },
-                    { x0: w / 2 - 380, x1: w / 2 + 380, y0: h - 116 - 300, y1: h },
-                    { x0: 0, x1: w, y0: h - 116, y1: h },
+                    { x0: w / 2 - 380, x1: w / 2 + 380, y0: h - 116 - 300, y1: Infinity },
+                    { x0: 0, x1: w, y0: h - 116, y1: Infinity },
                 ];
             }
             const inKeepOut = (x, y, w, h) => keepOut(w, h).some(b => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1);
@@ -1174,6 +1176,10 @@
                 }
                 el.textContent = '';
                 const span = document.createElement('span'); span.textContent = text; el.appendChild(span);
+                if (opts && opts.onClick) {
+                    el.style.cursor = 'pointer';
+                    el.onclick = ev => { ev.stopPropagation(); opts.onClick(); el.remove(); };
+                }
                 if (opts && opts.undo) {
                     const b = document.createElement('button');
                     b.type = 'button'; b.textContent = 'Undo';
@@ -1260,6 +1266,12 @@
                 return { ok: true, where: 'window' };
             }
             function open(o) {
+                // A failed helper opens on its fix, and has now been looked at.
+                if (/^(failed|error|timeout)$/.test(String(o.status || ''))) {
+                    if (typeof fridayNavigate === 'function') fridayNavigate({ workspace: 'system', tab: 'task', task: o.task_id || o.id });
+                    call('lookedAt', o.id);
+                    return { ok: true, opened: 'fix' };
+                }
                 if (o.approval_id) {
                     window.dispatchEvent(new CustomEvent('friday:approval-focus', { detail: { approval_id: o.approval_id } }));
                     return { ok: true, opened: 'approval' };
@@ -1312,9 +1324,292 @@
                 return { ok: results.every(r => r.ok !== false), results };
             }
 
-            return { attach, run, act, onScene, statusLine, _undo: U };
+            return { attach, run, act, onScene, statusLine, note, _undo: U };
         })();
         // </orb-hands>
+        // <orb-scene>
+        // What an orb shows (avatar-visual-genome.md §16.2, §16.3), drawn over
+        // the orb layer's own orbs: install() wraps ProcessOrbManager's
+        // addOrb, updateOrb, removeOrb and update, so the layer keeps its own
+        // routing and orbit and this only adds meaning. An orb is a helper,
+        // never Friday: nothing here reads Friday's frames or moves her form.
+        //   form:    the kind's abstract form in the orb's identity hue, a
+        //            paler tint and an outer ring when the work runs in the
+        //            cloud;
+        //   orbit:   closes in on Friday only with real progress, and lifts
+        //            out of the centre UI (the prompt row, the dock, the bar);
+        //   OK:      amber, a slow gentle glow, a little forward: the one
+        //            place amber shows;
+        //   failed:  error red with the word, dim, and it stays until looked at;
+        //   sparks:  one small spark per tool call, rate-limited;
+        //   moons:   a helper's own helpers orbit it, small;
+        //   done:    it spirals into Friday and leaves its receipt.
+        // It is FridayOrbHands' source: where each orb is on screen, and
+        // what the hand is doing to it.
+        const FridayOrbScene = (function () {
+            const INNER = 6.5, SPIN = 0.35, MOON_R = 1.1, SPARK_S = 0.45, LIFT_RATE = 2.5;
+            const AMBER = 0xf59e0b, ERROR = 0xef4444;
+            let mgr = null, cam = null;
+            const sparkGate = FridayOrbLife.sparkGate();
+            let clock = 0, taskPoll = 0, subscribed = false;
+            const tasks = new Map();                // task_id -> task row (trace, parent, seat)
+
+            const seed = () => {
+                try { const v = FridayGenome.current(); return (v && v.step && v.step.content_hash) || 'v1'; } catch (_) { return 'v1'; }
+            };
+            const state = o => o && o.__s;
+            const each = fn => { if (mgr) for (const [, o] of mgr.orbs) if (state(o)) fn(o, state(o)); };
+            const lineCircle = (r, color, opacity) => {
+                const pts = [];
+                for (let i = 0; i <= 64; i++) { const a = (i / 64) * Math.PI * 2; pts.push(Math.cos(a) * r, Math.sin(a) * r, 0); }
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+                return new THREE.Line(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity,
+                    blending: THREE.AdditiveBlending, depthWrite: false }));
+            };
+            function cloudOf(s) {
+                const t = s.row.task_id && tasks.get(s.row.task_id);
+                if (s.row.seat_is_local === false || (t && t.seat_is_local === false) || (t && t.cloud_pin)) return true;
+                return false;
+            }
+            function label(o, s) {
+                // Built from text nodes: a process label is never parsed as markup.
+                const el = o.labelEl;
+                el.textContent = '';
+                const dot = document.createElement('span');
+                dot.textContent = '● ';
+                dot.style.color = '#' + FridayOrbLife.HUES[s.hue].hex.toString(16).padStart(6, '0');
+                const name = document.createElement('span');
+                name.className = 'orb-name';
+                name.textContent = FridayOrbLife.hueWord(s.hue) + (s.failed ? ' · Failed' : s.approval ? ' · needs your OK' : '');
+                const text = document.createElement('span');
+                text.className = 'orb-text';
+                text.textContent = ' ' + String(o.label || '').slice(0, 22);
+                el.appendChild(dot); el.appendChild(name); el.appendChild(text);
+                if (o.model) {
+                    const m = document.createElement('span');
+                    m.className = s.cloud ? 'model-badge-cloud' : 'model-badge-local';
+                    m.title = String(o.model);
+                    m.textContent = ' ' + String(o.model).split('/').slice(-1)[0];
+                    el.appendChild(m);
+                }
+            }
+            function paint(o, s) {
+                s.cloud = cloudOf(s);
+                const hex = FridayOrbLife.tint(FridayOrbLife.HUES[s.hue].hex, s.cloud);
+                FridayOrbForms.setColor(s.form, s.approval ? AMBER : hex);
+                o.glow.material.color.setHex(s.failed ? ERROR : s.approval ? AMBER : hex);
+                s.cloudRing.visible = s.cloud && !s.failed;
+                s.failRing.visible = s.failed;
+                label(o, s);
+            }
+            function dress(o, spec) {
+                if (o.__s || o.id === 'helper-swarm') return;
+                const others = []; each((x, xs) => others.push(xs));
+                const row = Object.assign({}, spec);
+                const kind = FridayOrbLife.kindOf(row);
+                const s = { row, kind, hue: FridayOrbLife.pickHue(others), mark: null, approval: null, failed: false,
+                            drag: null, spiral: null, sparks: [], sx: NaN, sy: NaN, baseR: o.oRadius, lift: 0 };
+                s.form = FridayOrbForms.build(kind, FridayOrbLife.formParams(kind, seed()), FridayOrbLife.HUES[s.hue].hex);
+                s.cloudRing = lineCircle(0.66, 0xdfe8f5, 0.35);
+                s.failRing = lineCircle(0.6, ERROR, 0.8);
+                o.group.add(s.form); o.group.add(s.cloudRing); o.group.add(s.failRing);
+                o.sphere.visible = false;
+                o.baseGlowOpacity = 0.28;
+                o.__s = s;
+                paint(o, s);
+            }
+            function merge(o, s, upd) {
+                Object.assign(s.row, upd || {});
+                const st = String((upd && upd.status) || o.status || '');
+                const failed = /^(failed|error|timeout)$/.test(st);
+                if (failed !== s.failed) { s.failed = failed; if (failed) s.spiral = null; }
+                paint(o, s);
+            }
+            function finish(o, s) {
+                // Done: spiral into Friday, then the layer's own exit; and the receipt.
+                const p = o.group.position;
+                s.spiral = { t: 0, r0: Math.hypot(p.x, p.z), a0: Math.atan2(p.z, p.x), y0: p.y };
+                receipt(o, s);
+            }
+            async function receipt(o, s) {
+                const id = s.row.task_id;
+                if (!id || typeof FridayOrbHands === 'undefined') return;
+                try {
+                    const t = await fetch('/api/tasks/' + encodeURIComponent(id)).then(r => (r.ok ? r.json() : null));
+                    const d = await fetch('/api/tasks/' + encodeURIComponent(id) + '/digest').then(r => (r.ok ? r.json() : null)).catch(() => null);
+                    const rc = FridayOrbLife.receipt(t || { task_id: id, status: 'completed' }, d);
+                    const bits = [rc.did || 'Done', rc.model, rc.duration_s != null ? fridayDuration(rc.duration_s) : null,
+                                  rc.cost_usd != null ? '$' + rc.cost_usd.toFixed(rc.cost_usd < 0.01 ? 4 : 2) : null].filter(Boolean);
+                    const who = FridayOrbLife.speakable(Object.assign({}, s, { kind: s.kind }));
+                    FridayOrbHands.note('receipt:' + o.id, who.charAt(0).toUpperCase() + who.slice(1) + ': ' + bits.join(' · '),
+                        { ms: 12000, onClick: () => fridayNavigate({ workspace: 'system', tab: 'task', task: id }) });
+                } catch (_) {}
+            }
+            function lookedAt(id) {
+                const o = mgr && mgr.orbs.get(id), s = state(o);
+                if (!s) return;
+                s.failed = false; s.looked = true;
+                if (s.row.pid) fetch('/api/processes/' + encodeURIComponent(s.row.pid) + '/dismiss', { method: 'POST' }).catch(() => {});
+                mgr.__rm0(id);
+            }
+            function syncApprovals(items) {
+                const byTask = new Map();
+                for (const a of items || []) { const t = FridayOrbLife.approvalTask(a); if (t) byTask.set(t, a.approval_id); }
+                each((o, s) => {
+                    const ap = (s.row.task_id && byTask.get(s.row.task_id)) || null;
+                    if (ap !== s.approval) { s.approval = ap; paint(o, s); }
+                });
+            }
+            async function pollTasks() {
+                if (!mgr || !mgr.orbs.size) return;
+                try {
+                    const d = await fetch('/api/tasks').then(r => (r.ok ? r.json() : null));
+                    for (const t of (d && d.tasks) || []) if (t && t.task_id && !t.process) tasks.set(t.task_id, t);
+                    each((o, s) => { const c = cloudOf(s); if (c !== s.cloud) paint(o, s); });
+                } catch (_) {}
+            }
+            // A helper's own frame (the orb layer's routed states only): a tool
+            // call starting is one spark on its orb.
+            function frame(f) {
+                if (!f || f.type !== 'presence' || f.state !== 'tool' || f.phase !== 'start') return;
+                const o = mgr && f.agent && mgr.orbs.get(f.agent), s = state(o);
+                if (!s || SceneMotion.reduced() || !sparkGate.allow(o.id, clock)) return;
+                const a = Math.random() * Math.PI * 2, el = Math.random() - 0.5;
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
+                const pt = new THREE.Points(g, new THREE.PointsMaterial({ color: FridayOrbLife.HUES[s.hue].hex, size: 0.09,
+                    transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+                pt.userData.dir = new THREE.Vector3(Math.cos(a), el, Math.sin(a)).normalize();
+                pt.userData.t = 0;
+                o.group.add(pt); s.sparks.push(pt);
+            }
+            function moonOf(s) {
+                const t = s.row.task_id && tasks.get(s.row.task_id);
+                if (!t || !t.parent_trace_id) return null;
+                let parent = null;
+                each((o, xs) => { const pt = xs.row.task_id && tasks.get(xs.row.task_id); if (pt && pt.trace_id === t.parent_trace_id) parent = o; });
+                return parent;
+            }
+            function step(dt) {
+                clock += dt;
+                const W = window.innerWidth, H = window.innerHeight, v = new THREE.Vector3();
+                const reduced = SceneMotion.reduced();
+                each((o, s) => {
+                    if (o.dying) return;
+                    // the form turns slowly; a paused one is still
+                    if (s.mark !== 'paused' && !reduced) s.form.rotation.y += SPIN * dt;
+                    s.cloudRing.lookAt(cam.position); s.failRing.lookAt(cam.position);
+                    // real progress closes the orbit; unknown never moves it
+                    const p = FridayOrbLife.progressOf({ progress: o.progress, step_n: s.row.step_n, step_total: s.row.step_total });
+                    const target = FridayOrbLife.orbitRadius(p, s.baseR, INNER);
+                    o.oRadius += (target - o.oRadius) * Math.min(1, dt * 0.6);
+                    // a helper's own helpers are its moons
+                    const parent = moonOf(s);
+                    if (parent && !s.drag && !s.spiral) {
+                        const a = clock * 0.6 + s.hue;
+                        o.group.position.copy(parent.group.position).add(v.set(Math.cos(a) * MOON_R, 0.3 * Math.sin(a * 0.7), Math.sin(a) * MOON_R));
+                        o.group.scale.setScalar(Math.min(o.group.scale.x, 0.55));
+                    }
+                    // the one in your hand follows it, at its own depth
+                    if (s.drag) {
+                        const depth = o.group.position.clone().project(cam).z;
+                        o.group.position.copy(v.set((s.drag.x / W) * 2 - 1, -(s.drag.y / H) * 2 + 1, depth).unproject(cam));
+                    }
+                    // waiting on you: a little forward, toward the camera
+                    if (s.approval && !s.drag) o.group.position.lerp(v.copy(cam.position), 0.04 * Math.min(1, dt * 60) * 0.25);
+                    // done: the spiral home
+                    if (s.spiral) {
+                        s.spiral.t += dt;
+                        const sp = FridayOrbLife.spiralAt(s.spiral.t, s.spiral.r0, s.spiral.a0);
+                        o.group.position.set(Math.cos(sp.a) * sp.r, s.spiral.y0 * (sp.r / Math.max(1e-6, s.spiral.r0)), Math.sin(sp.a) * sp.r);
+                        o.group.scale.setScalar(sp.s);
+                        if (sp.done && !s.spiralled) { s.spiralled = true; mgr.__rm0(o.id); }
+                    }
+                    // where it is on screen; out of the centre UI
+                    const q = o.group.position.clone().project(cam);
+                    s.sx = (q.x * 0.5 + 0.5) * W; s.sy = (-q.y * 0.5 + 0.5) * H;
+                    if (!s.drag && !s.spiral && q.z < 1) {
+                        if (FridayOrbLife.liftFor(s.sx, s.sy, W, H) > 0) o.oHeight += LIFT_RATE * dt;     // above the prompt row and dock
+                        else if (s.sy < 48) o.oHeight -= LIFT_RATE * dt;                                // below the top bar
+                    }
+                    // brightness by state: gentle, never a flash
+                    const k = s.mark === 'cancelling' ? 0.35 : s.mark === 'paused' ? 0.6 : s.failed ? 0.5 : 1;
+                    const glowK = s.approval ? 0.85 + 0.15 * Math.sin(clock * Math.PI * 0.5) : 1;
+                    FridayOrbForms.setOpacity(s.form, k * glowK);
+                    o.glow.material.opacity *= k;
+                    // sparks fly out and fade
+                    s.sparks = s.sparks.filter(pt => {
+                        pt.userData.t += dt;
+                        const t = pt.userData.t / SPARK_S;
+                        if (t >= 1) { o.group.remove(pt); pt.geometry.dispose(); pt.material.dispose(); return false; }
+                        pt.position.copy(pt.userData.dir).multiplyScalar(0.3 + 0.6 * t);
+                        pt.material.opacity = 0.8 * (1 - t);
+                        return true;
+                    });
+                });
+            }
+            function source() {
+                return {
+                    orbs: () => {
+                        const out = [];
+                        each((o, s) => {
+                            if (o.dying || s.spiral) return;
+                            out.push({ id: o.id, task_id: s.row.task_id || null, trace_id: s.row.trace_id || null, kind: s.kind, hue: s.hue,
+                                       label: o.label, status: s.failed ? 'failed' : (s.row.status || o.status), step_n: s.row.step_n,
+                                       step_total: s.row.step_total, approval_id: s.approval, started: o.createdAt, pausable: !!s.row.pausable,
+                                       category: o.category, icon: o.icon, progress: o.progress, steps: o.steps, sx: s.sx, sy: s.sy, sr: 26 });
+                        });
+                        return out;
+                    },
+                    core: () => {
+                        const q = new THREE.Vector3(0, 0, 0).project(cam);
+                        return { x: (q.x * 0.5 + 0.5) * window.innerWidth, y: (-q.y * 0.5 + 0.5) * window.innerHeight,
+                                 r: Math.min(window.innerWidth, window.innerHeight) * 0.16 };
+                    },
+                    drag: (id, x, y) => { const s = state(mgr.orbs.get(id)); if (s) s.drag = { x, y }; },
+                    release: id => { const s = state(mgr.orbs.get(id)); if (s) s.drag = null; },
+                    hover: () => {},
+                    mark: (id, m) => { const o = mgr.orbs.get(id), s = state(o); if (s) s.mark = m; },
+                    lookedAt,
+                };
+            }
+            function install(m, camera) {
+                if (!m || m.__orbScene) return;
+                mgr = m; cam = camera; m.__orbScene = true;
+                const add0 = m.addOrb.bind(m), upd0 = m.updateOrb.bind(m), rm0 = m.removeOrb.bind(m), frame0 = m.update.bind(m), clean0 = m._cleanup.bind(m);
+                m.__rm0 = rm0;
+                m.addOrb = spec => { add0(spec); const o = m.orbs.get(spec && spec.id); if (o) { if (o.__s) merge(o, o.__s, spec); else dress(o, spec); } };
+                m.updateOrb = (id, upd) => {
+                    const o = m.orbs.get(id), s = state(o);
+                    upd0(id, upd);
+                    if (s) {
+                        merge(o, s, upd);
+                        if (upd && upd.status === 'completed' && !s.spiral) finish(o, s);
+                    }
+                };
+                m.removeOrb = id => {
+                    const o = m.orbs.get(id), s = state(o);
+                    if (!s) return rm0(id);
+                    if (s.failed && !s.looked) return;                  // a failure stays until looked at
+                    if (s.spiral) return;                               // already on its way home
+                    return rm0(id);
+                };
+                m._cleanup = id => {
+                    const o = m.orbs.get(id), s = state(o);
+                    if (s) { FridayOrbForms.dispose(s.form); [s.cloudRing, s.failRing].forEach(r => { r.geometry.dispose(); r.material.dispose(); });
+                             s.sparks.forEach(pt => { pt.geometry.dispose(); pt.material.dispose(); }); }
+                    clean0(id);
+                };
+                m.update = (dt, elapsed) => { frame0(dt, elapsed); step(dt); };
+                if (typeof FridayOrbHands !== 'undefined') FridayOrbHands.attach(source());
+                try { if (!subscribed && window.fridayApprovalFeed) { subscribed = true; window.fridayApprovalFeed.subscribe(syncApprovals); } } catch (_) {}
+                if (!taskPoll) taskPoll = setInterval(pollTasks, 5000);
+                if (typeof FridayOrbSky !== 'undefined') FridayOrbSky.start();
+            }
+            return { install, frame, _state: id => state(mgr && mgr.orbs.get(id)), _tasks: tasks };
+        })();
+        // </orb-scene>
 
         // --- THREE.JS ENGINE ---
         let scene, camera, renderer, composer, bloomPass, holoPass;
@@ -3500,7 +3795,12 @@
             const _evo = document.getElementById('evolution-day-text');
             if (_evo) _evo.innerText = `DAY 1: ${EVOLUTION_PATH[0].name}`;
 
+            // A rebuilt scene (the GPU gave it back) gets a new orb layer: the old
+            // one's labels go with it rather than stay on the page.
+            if (processOrbManager && processOrbManager.labelContainer) processOrbManager.labelContainer.remove();
             processOrbManager = new ProcessOrbManager(scene, camera, renderer);
+            // What each orb shows, and the hand and voice on it (§16).
+            FridayOrbScene.install(processOrbManager, camera);
             animate();
         }
 
