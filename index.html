@@ -5268,14 +5268,17 @@ window.addEventListener('DOMContentLoaded',function(){
                     return new THREE.Points(geo(pts), pointMat(color));
                 },
                 code(p, color) {
-                    const g = new THREE.Group(), n = p.n, s = 1 / n, edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(s - p.gap * s, s - p.gap * s, s - p.gap * s));
+                    // Every cube's edges in one geometry: one draw for the lattice.
+                    const n = p.n, s = 1 / n, k = s - p.gap * s, box = new THREE.EdgesGeometry(new THREE.BoxGeometry(k, k, k));
+                    const src = box.attributes.position.array, pts = [], v = new THREE.Vector3(), m = new THREE.Matrix4();
+                    const q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1), at = new THREE.Vector3();
                     for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) for (let z = 0; z < n; z++) {
-                        const c = new THREE.LineSegments(edges, lineMat(color, 0.75));
-                        c.position.set((x - (n - 1) / 2) * s, (y - (n - 1) / 2) * s, (z - (n - 1) / 2) * s);
-                        c.rotation.y = p.twist * (y - (n - 1) / 2);
-                        g.add(c);
+                        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.twist * (y - (n - 1) / 2));
+                        m.compose(at.set((x - (n - 1) / 2) * s, (y - (n - 1) / 2) * s, (z - (n - 1) / 2) * s), q, one);
+                        for (let i = 0; i < src.length; i += 3) { v.fromArray(src, i).applyMatrix4(m); pts.push(v.x, v.y, v.z); }
                     }
-                    return g;
+                    box.dispose();
+                    return new THREE.LineSegments(geo(pts), lineMat(color, 0.75));
                 },
                 media(p, color) {
                     return new THREE.Line(geo(curve(240, t => [Math.sin(p.a * t + p.delta), Math.sin(p.b * t), 0.35 * Math.cos((p.a + p.b) * t)])),

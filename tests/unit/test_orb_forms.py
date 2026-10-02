@@ -84,6 +84,8 @@ def test_every_kind_builds_a_real_form_inside_the_orb(o):
         assert s["lines"] + s["points"] >= 1, k
         assert o["R"] * 0.85 <= s["r"] <= o["R"] * 1.001, (k, s["r"])
     assert o["kinds"]["research"]["points"] == 1                 # a point sphere
+    for k, s in o["kinds"].items():
+        assert s["lines"] + s["points"] == 1, k                   # one draw per form
     assert o["unknown"] == "general"
 
 
