@@ -185,7 +185,7 @@ no CSS variables. So a genome palette has **one** injection point. **VERIFIED**
 | # | id / name | v1 form (the literals a genome would parameterise) | Colour path |
 |---|---|---|---|
 | 0 | CUBES / Genesis Lattice | 3×3×3 grid, 1.4 boxes, spacing 1.6, ~15% dropped with unseeded `Math.random()`, scale 1.5, `LATTICE_SPREAD` 0.65 (`:4734-4752`, `:5281-5305`) | faces base×0.15, edges accent |
-| 1 | ICOSAHEDRON / Sacred Sphere | 3 nested wire icosahedra, r 5/3.5/2, detail 3/2/1, opacity .15/.3/.6 (`:4754-4760`) | base, accent, white |
+| 1 | ICOSAHEDRON / Dyson Sphere (was Sacred Sphere; answers to both) | 3 nested wire icosahedra, r 5/3.5/2, detail 3/2/1, opacity .15/.3/.6 (`:4754-4760`); the Dyson build replaces them, §18 | base, accent, white |
 | 2 | NETWORK / Shannon Network | 120 nodes in 20³, link distance 6(+audio), ≤4 links (`:4854-4865`) | base/accent |
 | 3 | DOME / Geodesic Cathedral | r35 hemisphere, 8 pillars, 6 octahedra, 2,000-point funnel (`:4762-4783`) | base, accent crystals |
 | 4 | ASTROLABE / Lovelace Astrolabe | 8 rings r=2i, random tilt (`:4826-4838`) | base, accent dashes |

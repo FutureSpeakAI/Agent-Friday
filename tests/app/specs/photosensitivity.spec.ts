@@ -105,6 +105,8 @@ async function openScene(page: Page, view: any, structureIndex = 0,
   await page.route('**/api/**', r => r.request().method() === 'GET' ? r.fallback()
     : r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await page.route('**/api/avatar/genome', r => r.fulfill({ json: view }));
+  // Run against a scratch server (never the live one): the app is set up.
+  await page.route('**/api/setup/status', r => r.fulfill({ json: { initialized: true } }));
   await page.route('**/api/approvals?**', r => r.fulfill({ json: { approvals: [] } }));
   await page.route('**/api/evolution', r => r.request().method() === 'GET'
     ? r.fulfill({ json: { day: 1, structure: 'DAY 1', structure_index: structureIndex, calendar_index: structureIndex,

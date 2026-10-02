@@ -167,7 +167,7 @@ VOICE_PERSONAS = [
 
 EVOLUTION_STRUCTURES = [
     (0,  "CUBES",       "Genesis Lattice",        "Crystalline birth — the origin"),
-    (1,  "ICOSAHEDRON", "Sacred Sphere",          "Perfect geometry — pure potential"),
+    (1,  "ICOSAHEDRON", "Dyson Sphere",           "A star in a shell still being built"),
     (2,  "NETWORK",     "Shannon Network",        "Signal and noise — communication"),
     (3,  "DOME",        "Geodesic Cathedral",     "Buckminster Fuller's dream"),
     (4,  "ASTROLABE",   "Lovelace Astrolabe",     "Ada Lovelace's celestial engine"),

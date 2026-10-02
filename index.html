@@ -4760,7 +4760,7 @@ window.addEventListener('DOMContentLoaded',function(){
         };
 
         const EVOLUTION_PATH = [
-            { id: 'CUBES', name: 'GENESIS LATTICE' }, { id: 'ICOSAHEDRON', name: 'SACRED SPHERE' }, { id: 'NETWORK', name: 'SHANNON NETWORK' },
+            { id: 'CUBES', name: 'GENESIS LATTICE' }, { id: 'ICOSAHEDRON', name: 'DYSON SPHERE', aliases: ['SACRED SPHERE'] }, { id: 'NETWORK', name: 'SHANNON NETWORK' },
             { id: 'DOME', name: 'GEODESIC CATHEDRAL' }, { id: 'ASTROLABE', name: 'LOVELACE ASTROLABE' }, { id: 'TESSERACT', name: 'VON NEUMANN TESSERACT' },
             { id: 'QUANTUM', name: 'DIRAC PROBABILITY' }, { id: 'MANDELBROT', name: 'MANDELBROT SET' }, { id: 'MOBIUS', name: 'TURING MOBIUS' },
             { id: 'GRID', name: 'OCEAN OF LIGHT' }, { id: 'CABLES', name: 'FIBONACCI NERVE' }, { id: 'NONE', name: 'TRANSCENDENCE' },
@@ -10369,6 +10369,19 @@ function fridayHttpUrl(u) {
     return '';
   }
 }
+// A structure by its spoken or typed name: its name, or an alias it keeps
+// (a renamed structure answers to its old name: "sacred sphere" is the
+// Dyson Sphere). The index, or -1.
+function fridayStructureIndex(text) {
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const t = norm(text).replace(/^(the|a|an) /, '');
+  const list = window.fridayVibe && window.fridayVibe.getStructures ? window.fridayVibe.getStructures() || [] : [];
+  if (!t) return -1;
+  const names = s => [s.name].concat(s.aliases || []).map(norm);
+  let i = list.findIndex(s => names(s).includes(t));
+  if (i < 0) i = list.findIndex(s => names(s).some(n => n.includes(t) || t.includes(n)));
+  return i;
+}
 function fridayRunActions(actions) {
   if (!Array.isArray(actions) || !actions.length) return;
   try {
@@ -10433,6 +10446,18 @@ function fridayRunActions(actions) {
         // Voice or chat acting on a helper's orb (FridayOrbHands): the phrase is
         // resolved where the orbs are, and what happened rides back in the ack.
         a.result = typeof FridayOrbHands !== 'undefined' ? FridayOrbHands.run(a) : { ok: false, reason: 'no orb layer on this page' };
+      } else if (a.type === 'scene') {
+        // Voice or chat choosing a structure by name; kept like the picker's choice.
+        const i = fridayStructureIndex(a.target || a.name || '');
+        if (i >= 0 && window.fridayVibe) {
+          window.fridayVibe.setStructure(i);
+          fetch('/api/evolution', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preferred_scene_index: i })
+          }).catch(() => {});
+          a.result = { ok: true, index: i, name: window.fridayVibe.getStructures()[i].name };
+        } else a.result = { ok: false, reason: 'no structure by that name' };
       } else if (a.type === 'podcast') {
         // Voice or chat steering the podcast player (podcast_tools.podcast_play).
         fridayPodcast(a.op || 'play', a.episode_id, { t: a.t });
@@ -44918,8 +44943,8 @@ const WIZARD_STRUCTURES = [{
 }, {
   idx: 1,
   id: 'ICOSAHEDRON',
-  name: 'Sacred Sphere',
-  desc: 'Pure geometric potential'
+  name: 'Dyson Sphere',
+  desc: 'A star in a shell still being built'
 }, {
   idx: 2,
   id: 'NETWORK',
