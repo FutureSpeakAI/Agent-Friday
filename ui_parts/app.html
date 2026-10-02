@@ -2797,7 +2797,7 @@ function PodcastsView() {
       PODCAST_SHOWS.map(([key, label]) => formats[key] ? h('label', { key: key, style: { display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: PODCAST_C.md } },
         label,
         h('select', { value: formats[key].format, 'aria-label': label + ': who is on the show', onChange: (e) => setFormat(key, e.target.value), style: field },
-          [['solo', 'Friday alone'], ['duo', 'Two hosts']].map(([v, t]) => h('option', { key: v, value: v, style: { color: PODCAST_C.text, background: PODCAST_C.surface } },
+          [['solo', fridayName() + ' alone'], ['duo', 'Two hosts']].map(([v, t]) => h('option', { key: v, value: v, style: { color: PODCAST_C.text, background: PODCAST_C.surface } },
             t + (formats[key].recommended === v ? ' (recommended)' : ''))))) : null)) : null,
     h('section', { 'aria-label': 'Make a podcast', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
       rows.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'flex-start' } },

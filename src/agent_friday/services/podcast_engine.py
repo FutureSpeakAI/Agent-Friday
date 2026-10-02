@@ -143,12 +143,28 @@ def _merge_into(base: dict, over: dict) -> None:
             base[k] = copy.deepcopy(v)
 
 
+def her_name() -> str:
+    """Her name as the owner gave it (Settings, her name), as it is said."""
+    from agent_friday import brand
+    try:
+        from agent_friday.core import _load_settings
+        return brand.her_name((_load_settings() or {}).get("agent_name"))
+    except Exception:
+        return brand.her_name("")
+
+
 def settings() -> dict:
     try:
         from agent_friday.core import _load_settings
-        return _merge(DEFAULTS, (_load_settings() or {}).get("podcasts") or {})
+        own = (_load_settings() or {}).get("podcasts") or {}
+        cfg = _merge(DEFAULTS, own)
     except Exception:
-        return copy.deepcopy(DEFAULTS)
+        own, cfg = {}, copy.deepcopy(DEFAULTS)
+    # The first host is her, by the name the owner gave her, unless the owner
+    # named the show's host themselves.
+    if not (((own.get("hosts") or {}).get("a") or {}).get("name")):
+        cfg["hosts"]["a"]["name"] = her_name()
+    return cfg
 
 
 def home_city() -> str:
@@ -172,7 +188,7 @@ def set_format(routine: str, fmt: str) -> None:
     if key not in RECOMMENDED_FORMAT:
         raise PodcastRefused("no such show %r; one of: %s" % (routine, ", ".join(RECOMMENDED_FORMAT)))
     if fmt not in FORMATS:
-        raise PodcastRefused("a show is \"solo\" (Friday alone) or \"duo\" (two hosts)")
+        raise PodcastRefused("a show is \"solo\" (%s alone) or \"duo\" (two hosts)" % her_name())
     from agent_friday.core import _save_settings
     _save_settings({"podcasts": {"format": {key: fmt}}})
 
@@ -597,7 +613,7 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
         use = {s for s in (ch.get("sources") or []) if s in valid} or valid
         tail = "\n".join("%s: %s" % (ep["hosts"][ln["speaker"]]["name"], ln["text"])
                          for ln in lines[-3:])
-        opening = ("naming the show and %s" % ("Friday" if solo else "both hosts"))
+        opening = ("naming the show and %s" % (ep["hosts"]["a"]["name"] if solo else "both hosts"))
         where = ("This is the opening. The show's fixed opening, %s, plays just "
                  "before it: do not greet or introduce anyone. Start with the "
                  "single most important thing." % opening
@@ -1282,7 +1298,8 @@ def transcript_bytes(ep: dict) -> bytes:
     names = {k: v["name"] for k, v in (ep.get("hosts") or {}).items()}
     out = [ep.get("title") or ep.get("show") or "Episode",
            "%s · %s · %s" % (ep.get("show") or "", mmss(ep.get("duration_s")),
-                             "Friday alone" if ep.get("format") == "solo" else "two hosts"), ""]
+                             "%s alone" % names.get("a", her_name()) if ep.get("format") == "solo"
+                             else "two hosts"), ""]
     chk = ep.get("check") or {}
     if chk.get("wer") is not None:
         out.append("Audio matches script: %d%% of words (a transcription check, not an "
@@ -1303,7 +1320,7 @@ def transcript_bytes(ep: dict) -> bytes:
         if c != chap and c is not None and c < len(chapters):
             chap = c
             out += ["", "== %s ==" % chapters[c]["title"]]
-        tags = ["Friday's analysis"] if ln.get("own") else []
+        tags = ["%s's analysis" % names.get("a", her_name())] if ln.get("own") else []
         for cid in ln.get("cites") or []:
             s = src.get(cid) or {}
             tags.append(s.get("outlet") or ("Calendar " + s["when"] if s.get("when") else "")

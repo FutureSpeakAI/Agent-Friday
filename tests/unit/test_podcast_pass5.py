@@ -376,3 +376,33 @@ def test_a_briefing_run_that_gathered_nothing_speaks_from_its_written_sections(h
     p.write_text(json.dumps({"version": 1, "date": "2031-03-12", "calendar": [], "news": []}), encoding="utf-8")
     said = " ".join(d["text"] for d in podcast_news.run_documents("briefing", "2031-03-12"))
     assert "The budget passed 7-2." in said and "The 3pm review moved." in said
+
+
+# 6 ── her name is the one the owner gave her ────────────────────────────────
+
+def test_her_name_reads_like_the_page_does():
+    from agent_friday import brand
+    assert brand.her_name("AGENT FRIDAY") == "Friday"
+    assert brand.her_name("NOVA") == "Nova" and brand.her_name("Jarvis") == "Jarvis"
+    assert brand.her_name("") == "Friday" and brand.her_name(None) == "Friday"
+
+
+def test_the_show_speaks_and_shows_her_chosen_name(monkeypatch):
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "_load_settings", lambda: {"agent_name": "NOVA"})
+    assert pe.settings()["hosts"]["a"]["name"] == "Nova"
+    ep = pe.create([{"kind": "text", "text": "x", "title": "t"}], origin="routine",
+                   attached={"routine": "front_page", "run_id": "2031-03-12-evening"})
+    opening, closing = pe.signature_lines(ep)
+    assert opening[0]["text"].endswith("I'm Nova.") and closing[0]["text"].endswith("I'm Nova.")
+    text = pe.transcript_bytes(dict(ep, chapters=[{"title": "Open"}], sources=[], lines=[
+        {"speaker": "a", "chapter": 0, "text": "A framework you can verify.", "cites": [], "own": True, "start": 1}
+    ])).decode("utf-8-sig")
+    assert "Nova alone" in text and "(Nova's analysis)" in text and "Friday" not in text.replace("Agent Friday", "")
+
+
+def test_a_host_name_the_owner_set_for_the_show_wins(monkeypatch):
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "_load_settings", lambda: {"agent_name": "NOVA",
+                                                         "podcasts": {"hosts": {"a": {"name": "Ada"}}}})
+    assert pe.settings()["hosts"]["a"]["name"] == "Ada"
