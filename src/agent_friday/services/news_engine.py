@@ -1083,6 +1083,9 @@ def _gather_live_briefing_context():
             cats = [c for c in NEWS_CATEGORIES
                     if prefs.get("categories_enabled", {}).get(c, True)]
             items = _fetch_news_items(categories=cats, limit_per=4)
+            # Today's news only: inside the Briefing's window, and articles.
+            from agent_friday.services import news_seen
+            items = news_seen.current(items, "briefing")
             # The owner's approved media diet holds here, with a receipt.
             from agent_friday.services import media_diet
             items, _ = media_diet.enforce(items, "briefing")
@@ -2135,6 +2138,11 @@ def _front_page_story_titles(edition):
     return out
 
 
+def alt_ok(lead_idx, editorial):
+    """The editor's lead note belongs to the lead the editor chose."""
+    return lead_idx == editorial.get("lead_index")
+
+
 def _follow_report(pool):
     try:
         from agent_friday.services import news_discuss
@@ -2180,7 +2188,11 @@ def _generate_front_page(slot="morning"):
     # update; the rest is held back, and the edition says what.
     from agent_friday.services import news_seen
     past = [_read_front_page(e["id"]) for e in _list_front_pages() if e.get("id") != edition_id][:14]
-    pool, held_back = news_seen.filter_pool(pool, news_seen.index([e for e in past if e]))
+    # The edition is today's news: inside its window (a per-routine setting),
+    # a story that ran before only as a dated update with something new, no
+    # page that is not an article, and one event from several outlets as one
+    # story listing them all.
+    pool, held_back = news_seen.edition_pool(pool, past, window_h=news_seen.window_hours("front_page"))
     # The owner's approved media diet holds here, with a receipt.
     from agent_friday.services import media_diet
     pool, diet_removed = media_diet.enforce(pool, "front_page")
@@ -2193,19 +2205,29 @@ def _generate_front_page(slot="morning"):
     def _tag(story):
         """Stamp new_since_last / continuing (+ any thread update) onto a story."""
         u = story.get("url", "")
-        # A story that ran before is back only as an update (news_seen).
+        # A story that ran before is back only as an update with something
+        # new (news_seen); the editor's own note is never the update.
         cont = (have_prev and u in prev_urls) or bool(story.get("update"))
         story["new_since_last"] = bool(have_prev and not cont)
         story["continuing"] = bool(cont)
-        upd = thread_updates.get(u) or story.get("update_note")
-        if cont and upd:
-            story["thread_update"] = upd
+        if cont and story.get("update"):
+            story["thread_update"] = story.get("update_note") or thread_updates.get(u) or ""
         return story
+
+    def _shown(story):
+        """Continuing needs a real update; an empty one is never shown."""
+        return not story.get("continuing") or bool(story.get("update") and story.get("thread_update"))
 
     lead = None
     if pool:
         lead = _tag(dict(pool[lead_idx]))
-        lead["editorial_note"] = editorial["lead_note"]
+        if not _shown(lead):
+            # The lead is new since the last edition, or a dated update.
+            alt = next((i for i, p in enumerate(pool) if _shown(_tag(dict(p)))), None)
+            lead_idx = alt
+            lead = _tag(dict(pool[alt])) if alt is not None else None
+        if lead is not None:
+            lead["editorial_note"] = editorial["lead_note"] if alt_ok(lead_idx, editorial) else ""
 
     # Group remaining stories into sections by category, in interest order.
     rest = [p for i, p in enumerate(pool) if i != lead_idx]
@@ -2213,7 +2235,7 @@ def _generate_front_page(slot="morning"):
     order = sorted(NEWS_CATEGORIES.keys(),
                    key=lambda c: _CATEGORY_WEIGHT.get(c, 0), reverse=True)
     for cat in order:
-        group = [_tag(dict(p)) for p in rest if p["category"] == cat][:6]
+        group = [a for a in (_tag(dict(p)) for p in rest if p.get("category") == cat) if _shown(a)][:6]
         if not group:
             continue
         sections.append({

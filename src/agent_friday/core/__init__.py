@@ -2163,6 +2163,8 @@ DEFAULT_SETTINGS = {
     # The four News routines write on the local model (news_engine.local_news_run).
     "news_local_only": True,
     "news_local_area": "",
+    # Hours a story stays eligible for each routine's edition (news_seen).
+    "news_edition_window_hours": {"front_page": 36, "briefing": 36},
     "news_local_sources": [],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5

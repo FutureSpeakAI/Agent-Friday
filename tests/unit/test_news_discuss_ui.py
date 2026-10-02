@@ -38,3 +38,10 @@ def test_the_media_diet_shows_rules_proposals_and_receipts(page):
     comp = s[s.index("function MediaDietRules"):s.index("// ═══ PODCASTS — player, Studio view, News chip")]
     assert "/api/news/media-diet" in comp and "/decide" in comp and "'approve'" in comp and "'deny'" in comp
     assert "MediaDietRules" in s[s.index("YOUR MEDIA DIET"):]
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_a_merged_story_names_every_outlet_on_its_card(page):
+    s = (ROOT / page).read_text(encoding="utf-8")
+    assert "function FpAlso" in s and "Also reported by" in s
+    assert s.count("FpAlso, { it:") + s.count("<FpAlso it=") == 2

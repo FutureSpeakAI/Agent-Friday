@@ -13337,6 +13337,15 @@ function ShortcutsSheet({
 }
 
 // ═══ SEND-TO DROPDOWN (Data Flow) ═══
+// One event from several outlets is one story (news_seen.merge_events): the
+// card names every other outlet that reported it, each linked.
+function FpAlso({ it }) {
+  const h = React.createElement;
+  if (!it || !(it.also || []).length) return null;
+  return h('div', { className: 'fp-also', style: { fontSize: 11, color: '#999', margin: '4px 0' } }, 'Also reported by ',
+    it.also.map((a, i) => h(React.Fragment, { key: i }, i ? ', ' : '',
+      h('a', { href: a.url, target: '_blank', rel: 'noopener noreferrer', title: a.title }, a.source))));
+}
 // The owner's media diet rules: what is in force, what Friday proposed from
 // conversation (approve or reject: nothing applies until approved), and what
 // the rules removed, as receipts.
@@ -32222,7 +32231,7 @@ function NewsWS() {
     className: "fp-lead-snippet"
   }, fp.lead.snippet), fp.lead.editorial_note && /*#__PURE__*/React.createElement("div", {
     className: "editorial-note"
-  }, /*#__PURE__*/React.createElement("b", null, (fridayName() + "'s note:")), " ", fp.lead.editorial_note), fp.lead.thread_update && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, (fridayName() + "'s note:")), " ", fp.lead.editorial_note), /*#__PURE__*/React.createElement(FpAlso, { it: fp.lead }), fp.lead.thread_update && /*#__PURE__*/React.createElement("div", {
     className: "fp-thread"
   }, /*#__PURE__*/React.createElement("b", null, "What's new today:"), " ", fp.lead.thread_update), /*#__PURE__*/React.createElement("div", {
     className: "source-row",
@@ -32314,7 +32323,7 @@ function NewsWS() {
     className: "fp-badge update"
   }, "UPDATE") : it.new_since_last ? /*#__PURE__*/React.createElement("span", {
     className: "fp-badge new"
-  }, "NEW") : null, cardActions(it)), it.thread_update && /*#__PURE__*/React.createElement("div", {
+  }, "NEW") : null, cardActions(it)), /*#__PURE__*/React.createElement(FpAlso, { it: it }), it.thread_update && /*#__PURE__*/React.createElement("div", {
     className: "fp-thread sm"
   }, /*#__PURE__*/React.createElement("b", null, "New:"), " ", it.thread_update), it.breaking && /*#__PURE__*/React.createElement("span", {
     className: "breaking-badge",

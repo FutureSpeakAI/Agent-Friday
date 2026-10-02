@@ -2310,6 +2310,15 @@ function ShortcutsSheet({onClose,settings}){
 }
 
 // ═══ SEND-TO DROPDOWN (Data Flow) ═══
+// One event from several outlets is one story (news_seen.merge_events): the
+// card names every other outlet that reported it, each linked.
+function FpAlso({ it }) {
+  const h = React.createElement;
+  if (!it || !(it.also || []).length) return null;
+  return h('div', { className: 'fp-also', style: { fontSize: 11, color: '#999', margin: '4px 0' } }, 'Also reported by ',
+    it.also.map((a, i) => h(React.Fragment, { key: i }, i ? ', ' : '',
+      h('a', { href: a.url, target: '_blank', rel: 'noopener noreferrer', title: a.title }, a.source))));
+}
 // The owner's media diet rules: what is in force, what Friday proposed from
 // conversation (approve or reject: nothing applies until approved), and what
 // the rules removed, as receipts.
@@ -9821,7 +9830,7 @@ function NewsWS(){
            <div className="fp-lead-headline" onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>{fp.lead.title}</div>
            <div className="fp-lead-snippet">{fp.lead.snippet}</div>
            {fp.lead.editorial_note&&<div className="editorial-note"><b>{fridayName()}'s note:</b> {fp.lead.editorial_note}</div>}
-           {fp.lead.thread_update&&<div className="fp-thread"><b>What's new today:</b> {fp.lead.thread_update}</div>}
+           <FpAlso it={fp.lead}/>{fp.lead.thread_update&&<div className="fp-thread"><b>What's new today:</b> {fp.lead.thread_update}</div>}
            <div className="source-row" style={{marginTop:8}}>
              <span className="source-badge"><TrustBadge it={fp.lead}/>{fp.lead.source}</span>
              {annoBadge(fp.lead)}
@@ -9855,7 +9864,7 @@ function NewsWS(){
            </div>
            <div className="news-masonry">
              {(sec.articles||[]).map((it,i)=><div key={i} className={'news-card cat-'+(it.color||sec.color||'tech')}>
-               <div className="news-cardtop"><span className="cat-chip">{it.source}</span>{it.continuing?<span className="fp-badge update">UPDATE</span>:it.new_since_last?<span className="fp-badge new">NEW</span>:null}{cardActions(it)}</div>{it.thread_update&&<div className="fp-thread sm"><b>New:</b> {it.thread_update}</div>}
+               <div className="news-cardtop"><span className="cat-chip">{it.source}</span>{it.continuing?<span className="fp-badge update">UPDATE</span>:it.new_since_last?<span className="fp-badge new">NEW</span>:null}{cardActions(it)}</div><FpAlso it={it}/>{it.thread_update&&<div className="fp-thread sm"><b>New:</b> {it.thread_update}</div>}
                {it.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
                <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
                <div className="news-snippet">{it.snippet}</div>

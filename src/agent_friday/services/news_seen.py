@@ -1,4 +1,4 @@
-"""Stories that already ran, across editions.
+"""Stories that already ran, across editions, and what an edition may carry.
 
 A story the Front Page already carried comes back only with a material new
 development: a fact its earlier run did not have (a figure, a name, a day) or
@@ -12,6 +12,7 @@ re-linked copy is still recognised.
 from __future__ import annotations
 
 import re
+import time
 from urllib.parse import urlsplit, urlunsplit
 
 #: Headlines this alike (shared content words over all of them) are one story.
@@ -92,6 +93,36 @@ def _find(seen: list[dict], story: dict) -> dict | None:
     return None
 
 
+def _development(story: dict, rec: dict) -> list[str]:
+    """What a story brings that its earlier run did not: new facts (names,
+    figures, days) and new outlets. Empty: nothing new."""
+    text = "%s. %s" % (story.get("title") or "", story.get("snippet") or "")
+    # Compared in lower case; said as written ("Ledgerline", not "ledgerline").
+    written = {w.strip(".,;:!?()\"'“”‘’").lower(): w.strip(".,;:!?()\"'“”‘’") for w in text.split()}
+    new_facts = [written.get(f, f) for f in sorted(_facts(text) - rec["facts"])]
+    source = (story.get("source") or "").lower()
+    what = []
+    if new_facts:
+        what.append("new: " + ", ".join(new_facts[:5]))
+    if source and source not in rec["sources"]:
+        what.append("newly reported by " + source)
+    return what
+
+
+def _day(ts) -> str:
+    try:
+        t = time.localtime(float(ts))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+    return "%s %d" % (time.strftime("%b", t), t.tm_mday)
+
+
+def _update_note(story: dict, rec: dict, what: list[str]) -> str:
+    day = _day(story.get("ts"))
+    return "Update%s on a story that ran in %s (%s)." % ((" (%s)" % day) if day else "", rec["last_ran"],
+                                                         "; ".join(what))
+
+
 def filter_pool(pool: list[dict], seen: list[dict]) -> tuple[list[dict], list[dict]]:
     """(stories to offer, stories held back). A seen story is offered only
     with something new, marked `update` with an `update_note` saying what."""
@@ -101,21 +132,127 @@ def filter_pool(pool: list[dict], seen: list[dict]) -> tuple[list[dict], list[di
         if rec is None:
             kept.append(story)
             continue
-        text = "%s. %s" % (story.get("title") or "", story.get("snippet") or "")
-        # Compared in lower case; said as written ("Ledgerline", not "ledgerline").
-        written = {w.strip(".,;:!?()\"'“”‘’").lower(): w.strip(".,;:!?()\"'“”‘’") for w in text.split()}
-        new_facts = [written.get(f, f) for f in sorted(_facts(text) - rec["facts"])]
-        source = (story.get("source") or "").lower()
-        new_source = source and source not in rec["sources"]
-        if not new_facts and not new_source:
+        what = _development(story, rec)
+        if not what:
             held.append({"title": story.get("title") or "", "url": story.get("url") or "",
-                         "first_ran": rec["first_ran"], "last_ran": rec["last_ran"]})
+                         "first_ran": rec["first_ran"], "last_ran": rec["last_ran"], "why": "ran before, nothing new"})
             continue
-        what = []
-        if new_facts:
-            what.append("new: " + ", ".join(new_facts[:5]))
-        if new_source:
-            what.append("newly reported by " + source)
-        kept.append(dict(story, update=True,
-                         update_note="Update on a story that ran in %s (%s)." % (rec["last_ran"], "; ".join(what))))
+        kept.append(dict(story, update=True, update_note=_update_note(story, rec, what)))
     return kept, held
+
+
+# ── what an edition may carry ───────────────────────────────────────────────
+
+#: Hours a story stays eligible for an edition, by routine (settings
+#: `news_edition_window_hours` overrides).
+DEFAULT_WINDOW_H = 36
+
+_NOT_ARTICLE_RE = re.compile(
+    r"^(?:your (?:latest|daily|local|morning|evening|weekly) (?:forecast|headlines|news|weather|updates?)"
+    r"|(?:latest|top) (?:headlines|stories|news)|(?:weather )?forecast|weather|headlines)$", re.I)
+_PROMO_RE = re.compile(r"^[^:]{2,40}:\s.*\b(?:keeping you|stay (?:safe|informed)|download|get the app|"
+                       r"sign up|subscribe)\b", re.I)
+
+
+def window_hours(routine: str) -> float:
+    try:
+        from agent_friday.core import _load_settings
+        v = ((_load_settings() or {}).get("news_edition_window_hours") or {}).get(routine)
+        return float(v) if v else float(DEFAULT_WINDOW_H)
+    except Exception:
+        return float(DEFAULT_WINDOW_H)
+
+
+def is_article(item: dict) -> bool:
+    """A story, not a page: no forecast, headline index, app promo, homepage,
+    untitled or cut-off post ("Yet More …")."""
+    title = (item.get("title") or "").strip()
+    if not title:
+        return False
+    if _NOT_ARTICLE_RE.match(title.rstrip(".! ")) or _PROMO_RE.match(title):
+        return False
+    words = re.findall(r"[A-Za-z0-9']+", title)
+    if (title.endswith("\u2026") or title.endswith("...")) and len(words) <= 3:
+        return False
+    try:
+        path = urlsplit(item.get("url") or "").path
+    except ValueError:
+        path = ""
+    if item.get("url") and not path.strip("/"):
+        return False
+    return True
+
+
+def merge_events(pool: list[dict]) -> list[dict]:
+    """One event reported by several outlets is one story: the freshest report
+    leads, and `also` lists every other outlet's report."""
+    heads = [_headline(p.get("title")) for p in pool]
+    parent = list(range(len(pool)))
+
+    def root(i):
+        while parent[i] != i:
+            i = parent[i]
+        return i
+    for i in range(len(pool)):
+        for j in range(i + 1, len(pool)):
+            a, b = heads[i], heads[j]
+            if not a or not b:
+                continue
+            shared = len(a & b)
+            if (shared >= 3 and shared / len(a | b) >= 0.2) or shared / len(a | b) >= 0.5:
+                parent[root(i)] = root(j)
+    groups: dict = {}
+    for i in range(len(pool)):
+        groups.setdefault(root(i), []).append(i)
+    out = []
+    for i in range(len(pool)):
+        g = groups.get(root(i))
+        if g is None or g[0] != i:
+            continue
+        members = sorted((pool[k] for k in g), key=lambda p: -(float(p.get("ts") or 0)))
+        lead = dict(members[0])
+        if len(members) > 1:
+            lead["also"] = [{"source": m.get("source") or "", "url": m.get("url") or "",
+                             "title": m.get("title") or ""} for m in members[1:]]
+        out.append(lead)
+    return out
+
+
+def current(items: list[dict], routine: str, *, now: float | None = None) -> list[dict]:
+    """The items a routine may use: articles inside its window (an item with
+    no date is kept; nothing says it is old)."""
+    now = time.time() if now is None else now
+    limit = window_hours(routine) * 3600
+    return [i for i in items if is_article(i)
+            and not (float(i.get("ts") or 0) and now - float(i.get("ts") or 0) > limit)]
+
+
+def edition_pool(pool: list[dict], past: list[dict], *, now: float | None = None,
+                 window_h: float = DEFAULT_WINDOW_H) -> tuple[list[dict], list[dict]]:
+    """(stories an edition may carry, stories held back with why).
+
+    A story is eligible inside the window; one that ran before (or one older
+    than the window) only with a material new development, as a dated update.
+    Pages that are not articles are never stories, and one event from several
+    outlets is one story.
+    """
+    now = time.time() if now is None else now
+    seen = index([e for e in past if e])
+    kept, held = [], []
+    for story in pool:
+        title = story.get("title") or ""
+        if not is_article(story):
+            held.append({"title": title, "url": story.get("url") or "", "why": "not an article"})
+            continue
+        ts = float(story.get("ts") or 0) or None
+        old = ts is not None and now - ts > window_h * 3600
+        rec = _find(seen, story)
+        what = _development(story, rec) if rec else []
+        if rec and what and not old:
+            kept.append(dict(story, update=True, update_note=_update_note(story, rec, what)))
+        elif rec is None and not old:
+            kept.append(story)
+        else:
+            held.append({"title": title, "url": story.get("url") or "",
+                         "why": "older than the edition window" if old else "ran before, nothing new"})
+    return merge_events(kept), held
