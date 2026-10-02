@@ -27,7 +27,10 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(core, "_SETUP_MARKER", tmp_path / ".setup_complete")
     saved = []
-    monkeypatch.setattr(core, "_save_settings", lambda delta, **kw: saved.append(dict(delta)))
+
+    def _save(delta, **kw):
+        saved.append(dict(delta, _owner_routing_change=kw.get("owner_routing_change", False)))
+    monkeypatch.setattr(core, "_save_settings", _save)
     monkeypatch.setattr(core, "_load_settings",
                         lambda: {"model_routing": {"mode": "cloud_only",
                                                    "ollama_url": "http://127.0.0.1:11434"}})
@@ -173,6 +176,8 @@ def test_finishing_saves_the_routing_mode_the_user_chose(home):
     final = home["settings"][-1]
     assert final["setup_complete"] is True
     assert final["model_routing"]["mode"] == "local_only"
+    # The setup choice is the owner's own answer, so it survives the owner-only rule.
+    assert final["_owner_routing_change"] is True
     # Merged, not replaced: the rest of the block survives.
     assert final["model_routing"]["ollama_url"] == "http://127.0.0.1:11434"
 
