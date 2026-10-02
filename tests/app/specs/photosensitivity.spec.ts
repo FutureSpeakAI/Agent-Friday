@@ -560,3 +560,41 @@ test('nothing that moves leaves a trail: the backstop never draws an earlier fra
   const settled = await page.evaluate(() => (window as any).__region(100, 140));
   expect(settled, `it arrives in full where it went: ${said}`).toBeGreaterThan(before.left * 0.8);
 });
+
+test('head tracking leaves no trail: the backstop shows light only where the new frame has it', async ({ page }) => {
+  // A synthetic head sweeps side to side (the hook the hologram test uses).
+  // On every frame, the backstop's output is read beside the frame it was
+  // given: a pixel lit far beyond what the new frame has there (more than the
+  // backstop's largest lift could make of it) can only be light from an
+  // earlier frame, which is the trail that read as motion blur.
+  test.setTimeout(5 * 60_000);
+  await openScene(page, GENOMES.v1, 0);
+  await page.evaluate(() => {
+    const w = window as any, T = w.THREE, comp = (0, eval)('composer'), r = (0, eval)('renderer');
+    const gov = comp.passes[comp.passes.length - 1];
+    const W = 256, H = 160, a = new Uint8Array(W * H * 4), b = new Uint8Array(W * H * 4);
+    w.__ghost = { frames: 0, ghost: 0, lit: 0 };
+    const render0 = gov.render;
+    gov.render = function (renderer: any, writeBuffer: any, readBuffer: any, ...rest: unknown[]) {
+      const res = render0.call(this, renderer, writeBuffer, readBuffer, ...rest);
+      const out = this.shown[1 - this.shownAt];
+      const x = Math.floor((readBuffer.width - W) / 2), y = Math.floor((readBuffer.height - H) / 2);
+      r.readRenderTargetPixels(readBuffer, x, y, W, H, a);
+      r.readRenderTargetPixels(out, x, y, W, H, b);
+      const lum = (d: Uint8Array, i: number) => (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+      let ghost = 0, lit = 0;
+      for (let i = 0; i < a.length; i += 4) { const lin = lum(a, i), lout = lum(b, i); if (lin > 0.1) lit++; if (lout > 0.1 && lout > 4 * lin + 0.03) ghost++; }
+      w.__ghost.frames++; w.__ghost.ghost += ghost; w.__ghost.lit += lit;
+      return res;
+    };
+    const t0 = performance.now();
+    w.__sweep = setInterval(() => { const t = (performance.now() - t0) / 1000;
+      w.FridayTracking.debugHead(0.7 * Math.sin(2 * Math.PI * 0.6 * t), 0.15 * Math.sin(2 * Math.PI * 0.9 * t), 0.18 * Math.pow(2, 0.4 * Math.sin(2 * Math.PI * 0.4 * t))); }, 16);
+  });
+  await run(page, 4000);
+  const g = await page.evaluate(() => { const w = window as any; clearInterval(w.__sweep); w.FridayTracking.debugHead(0, 0, 0); return w.__ghost; });
+  const said = JSON.stringify(g);
+  expect(g.frames, `frames measured: ${said}`).toBeGreaterThan(200);
+  expect(g.lit, `the view had something in it: ${said}`).toBeGreaterThan(1000);
+  expect(g.ghost, `light only where the new frame has it: ${said}`).toBe(0);
+});
