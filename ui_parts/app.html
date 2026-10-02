@@ -3041,7 +3041,7 @@ function TalkToFridayButton({contentType,title,summary,style,onDiscuss}){
     transition:'all .2s',whiteSpace:'nowrap',fontFamily:'inherit',
     boxShadow:active?'0 0 10px rgba(123,97,255,0.35)':'none',
   },style||{})}>
-    <span style={{fontSize:11}}>🎤</span>{active?'Starting…':('Discuss with ' + fridayName())}
+    <span style={{fontSize:11}}>{onDiscuss?'💬':'🎤'}</span>{active?'Starting…':('Discuss with ' + fridayName())}
   </button>;
 }
 
