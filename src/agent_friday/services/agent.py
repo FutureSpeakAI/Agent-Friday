@@ -8120,22 +8120,7 @@ TOOL_RINGS.update({
 # store, and off the record it writes nothing at all.
 CLAUDE_TOOLS.append({
     "name": "artifact_put",
-    "description": (
-        "Put something in the panel beside this chat, where the user can see, "
-        "edit and keep it: use it whenever the result is better SEEN than read "
-        "- a table of results, a chart, a draft or letter they may want to "
-        "edit, a small working web app or mockup (kind html: one complete "
-        "HTML document with inline CSS/JS; packages only from https://esm.sh "
-        "pinned to exact versions), a diff, or an image/svg. Do not paste the "
-        "same content into your reply as well - say in one line what is in "
-        "the panel. To CHANGE an artifact, pass its artifact_id (listed for "
-        "you under 'ARTIFACTS' in your context) instead of making a new one; "
-        "every call is a new version and the user can go back. If the "
-        "context says the user edited it by hand, keep their changes. "
-        "Content shapes: markdown -> text; table -> {columns:[..], rows:[[..]]}; "
-        "chart -> {type: bar|line|area|pie|donut|scatter, columns:[..], "
-        "rows:[[..]], x?: column, y?: [columns], title?}; html/svg/diff -> "
-        "text; image -> a data: URL."),
+    "description": "Put an artifact in this chat's panel. Kinds: markdown, table, chart, html, diff, image, svg; an update is a new version the user can scrub back through.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -8189,17 +8174,7 @@ TOOL_RINGS.update({"artifact_put": 1})   # writes Friday's own artifact store; I
 # (SELF_GATED in action_gate, like draft_email).
 CLAUDE_TOOLS.append({
     "name": "publish_artifact",
-    "description": (
-        "Ask to publish an artifact from this chat's panel to the web as a "
-        "self-contained static page (a document, table, chart, drawing or "
-        "small client-side app; nothing with a backend). This ONLY files an "
-        "approval card showing the files, a preview, the privacy scan and the "
-        "licence check; NOTHING is public until the user approves it, so never "
-        "say it is published - say a publish card is waiting and read back its "
-        "'spoken' line. The default host is this PC (up only while it is on); "
-        "cloudflare_pages or github_pages stay up around the clock once the "
-        "user has connected an account. If the result says refused, tell the "
-        "user plainly why and what to change."),
+    "description": "Publish a page or codebase to the web, by one card. The card shows files, scan and licences; nothing goes out before approval.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -8247,15 +8222,7 @@ TOOL_RINGS.update({"publish_artifact": 2})   # publishing is outward; its own ca
 # ══════════════════════════════════════════════════════════════
 CLAUDE_TOOLS.append({
     "name": "codebase_edit",
-    "description": (
-        "Change files in this chat's codebase (the panel's Preview/Files/Changes). "
-        "Pass the FULL new content of each file you change (or null to delete "
-        "one) and a one-line plain-language summary for the user. Every call is "
-        "one step: a commit the user can undo by saying 'undo that'. The preview "
-        "is one index.html with relative css/js inlined, running in a sandboxed "
-        "frame with no server; packages only from https://esm.sh pinned to exact "
-        "versions. Do not say the change is done until the result names the step; "
-        "then say what changed in one line and do not paste the code."),
+    "description": "Change files in this chat's codebase as one step. The user can undo it; pass whole file contents, null deletes a file.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -8269,14 +8236,13 @@ CLAUDE_TOOLS.append({
 })
 CLAUDE_TOOLS.append({
     "name": "codebase_undo",
-    "description": ("Undo the last step in this chat's codebase ('undo that'). Each call goes one step further back; "
-                    "an undo is itself a step. Say which step was undone, from the result."),
+    "description": "Undo the last step in this chat's codebase. It is a new step.",
     "input_schema": {"type": "object", "properties": {
         "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
 })
 CLAUDE_TOOLS.append({
     "name": "codebase_read",
-    "description": "Read one file of this chat's codebase that your context did not show in full (large files are listed by name only).",
+    "description": "Read a file of this chat's codebase, or list its files.",
     "input_schema": {"type": "object", "properties": {
         "path": {"type": "string", "description": "Relative path, e.g. 'app.js'."},
         "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}},
@@ -8349,9 +8315,7 @@ def _tool_codebase_read(inp):
 
 CLAUDE_TOOLS.append({
     "name": "codebase_export",
-    "description": ("Give the user this chat's codebase as a plain project: a zip of the working tree with a README, "
-                    "nothing of Friday's inside (no lock-in). Returns the download path to tell the user; "
-                    "the panel's Export button does the same."),
+    "description": "Hand the user a zip of this chat's codebase. No .git, no .friday.",
     "input_schema": {"type": "object", "properties": {
         "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
 })
@@ -8373,27 +8337,14 @@ TOOL_RINGS.update({"codebase_edit": 1, "codebase_undo": 1, "codebase_read": 0, "
 # ── "Improve this workspace" (services/workspace_bundles; spec §4.9.1) ───────
 CLAUDE_TOOLS.append({
     "name": "improve_workspace",
-    "description": (
-        "Open the codebase chat that improves one of the user's workspaces, by id or spoken name "
-        "('improve the News workspace'). While it runs, say you are opening it. Only a bundle workspace "
-        "(one the user built in the salon, under \"Mine\" in the dock) can be improved this way: its live "
-        "version keeps running and nothing changes until the user approves a swap. A NATIVE workspace "
-        "(News, Messages, Calendar and the rest of Friday's own) is part of Friday herself; improving it "
-        "means editing Friday's own source, which is not built yet, and the result says so: tell the user "
-        "that plainly, do not promise it. The result carries conversation_id: tell the user the chat is open."),
+    "description": "Open the salon on a copy of a workspace. A native workspace is refused plainly: improving it means Friday's own source, which is not built.",
     "input_schema": {"type": "object", "properties": {
         "workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'rent-board', 'the chore wheel', 'news'."}},
         "required": ["workspace"]},
 })
 CLAUDE_TOOLS.append({
     "name": "workspace_swap",
-    "description": (
-        "Ask the user to swap this chat's codebase in as the live version of the workspace it improves "
-        "(or to install a fresh bundle codebase as a new workspace). Raises ONE approval card after the "
-        "manifest check, the brand check and a browser load check; the user decides on the card or by "
-        "saying yes or no. Call it only when the user says they are happy with the change. If the result "
-        "is refused, say why in one line (a reserved colour, a broken manifest, a page that throws) and "
-        "fix it; never say the workspace is swapped until the card is approved."),
+    "description": "Raise the one card that installs or swaps in the improved workspace. Nothing changes before approval.",
     "input_schema": {"type": "object", "properties": {
         "codebase_id": {"type": "string", "description": "Only when acting outside this chat's own codebase."}}},
 })
@@ -8465,11 +8416,7 @@ TOOL_RINGS.update({"improve_workspace": 1, "workspace_swap": 1})
 # ── Seats, keys and costs per codebase (services/codebases; spec §4.7) ───────
 CLAUDE_TOOLS.append({
     "name": "codebase_seat",
-    "description": (
-        "Change which model this chat's codebase uses: which='small' for small edits (a model, or 'local' "
-        "for the resident local brain) or which='heavy' for big ones ('use Opus for this one'). The header "
-        "line changes at once and the chat gets a system line. Speak the result's `say` as is; if refused, "
-        "say the model name was not recognised and offer the catalogue names."),
+    "description": "Set which model takes this codebase's small or big edits. 'local', or a model as the user says it; speak the result's `say` as is.",
     "input_schema": {"type": "object", "properties": {
         "which": {"type": "string", "enum": ["small", "heavy"]},
         "model": {"type": "string", "description": "A model as people say it ('Opus 5.5') or its id; 'local' for the resident brain; empty to clear the heavy seat."},
@@ -8478,18 +8425,14 @@ CLAUDE_TOOLS.append({
 })
 CLAUDE_TOOLS.append({
     "name": "codebase_key",
-    "description": (
-        "Change whose key pays for this chat's codebase: 'mine' (the user's own key) or the label of a "
-        "guest key added under Settings \u2192 Accounts & Keys ('use Alex's key'). A guest key is used only by this "
-        "codebase; nothing falls back to the user's key if it fails. Speak the result's `say` as is."),
+    "description": "Choose whose key pays for this codebase. 'mine' or a guest key's label.",
     "input_schema": {"type": "object", "properties": {
         "profile": {"type": "string", "description": "'mine' or a guest key's label."},
         "codebase_id": {"type": "string"}}, "required": ["profile"]},
 })
 CLAUDE_TOOLS.append({
     "name": "codebase_costs",
-    "description": ("What this chat's codebase has cost so far, split by whose key paid ('how much has this cost?'). "
-                    "Speak the result's `say` as is; do not add up or estimate anything yourself."),
+    "description": "This codebase's spend so far, by key.",
     "input_schema": {"type": "object", "properties": {"codebase_id": {"type": "string"}}},
 })
 
@@ -8571,21 +8514,14 @@ TOOL_RINGS.update({"codebase_seat": 1, "codebase_key": 1, "codebase_costs": 0})
 # ── Claude's agent as an engine (services/claude_engine; spec §4.7) ──────────
 CLAUDE_TOOLS.append({
     "name": "codebase_engine",
-    "description": (
-        "Change which engine edits this chat's codebase: 'friday' (Friday's own loop, the default) or "
-        "'claude_agent' (the user's Claude Code, run as a process on this PC with the salon proxy injecting "
-        "the key). Choosing claude_agent is the user's call: say the disclosure in the result plainly."),
+    "description": "Choose which engine edits this codebase. 'friday', or 'claude_agent', which runs as a process on this PC (say so).",
     "input_schema": {"type": "object", "properties": {
         "engine": {"type": "string", "enum": ["friday", "claude_agent"]},
         "codebase_id": {"type": "string"}}, "required": ["engine"]},
 })
 CLAUDE_TOOLS.append({
     "name": "codebase_agent",
-    "description": (
-        "Run one task with Claude's agent in this chat's codebase folder (only when the codebase's engine is "
-        "claude_agent). While it runs, say the agent is working in the folder. The result carries the step, "
-        "the hosts the agent reached through the proxy, and the disclosure; speak `say` as is. A refusal names "
-        "why (engine not chosen, not installed, or the run failed) and promises nothing."),
+    "description": "Run one task with Claude's agent in this chat's codebase. Only when its engine is claude_agent; gated like codebase_run; speak the result's `say` as is.",
     "input_schema": {"type": "object", "properties": {
         "task": {"type": "string", "description": "What the agent should do, in the user's words."},
         "codebase_id": {"type": "string"}}, "required": ["task"]},
@@ -8626,11 +8562,7 @@ def _codebase_task_gate(rec, tool, args):
 
 CLAUDE_TOOLS.append({
     "name": "codebase_run",
-    "description": (
-        "Run ONE shell command in this chat's codebase folder (tests, a build, a script): the Terminal of the "
-        "Build panel. The first command of a task raises one approval card; once approved, the rest of the task "
-        "runs without asking. The result carries exit code and output; report both plainly. Never run commands "
-        "that read key material, reach Friday's own API, or touch Friday's own source."),
+    "description": "Run one shell command in this chat's codebase folder. The first command of a task raises one approval card; once approved the task's commands run without asking. Report exit code and output.",
     "input_schema": {"type": "object", "properties": {
         "command": {"type": "string", "description": "The command, as it would be typed in PowerShell."},
         "codebase_id": {"type": "string"}}, "required": ["command"]},
@@ -8725,25 +8657,18 @@ def _hub_find_project(words):
 
 CLAUDE_TOOLS.append({
     "name": "open_project",
-    "description": (
-        "Open one of the user's projects in the chat: its latest chat comes to the front (a new one is made "
-        "when the project has none). 'Open my Friday project' -> project='Friday'. Say the result's line as is."),
+    "description": "Open one of the user's projects. Its latest chat comes to the front, a new one when it has none; say the result's line as is.",
     "input_schema": {"type": "object", "properties": {"project": {"type": "string", "description": "The project, as the user said it."}},
                      "required": ["project"]},
 })
 CLAUDE_TOOLS.append({
     "name": "show_preview",
-    "description": (
-        "Show the preview beside this chat: the page the codebase renders, or the chat's artifacts. "
-        "'Show me the preview'. Says plainly when there is nothing to preview."),
+    "description": "Show the preview beside this chat. The codebase's page, or the chat's artifacts; say the result's line as is.",
     "input_schema": {"type": "object", "properties": {}},
 })
 CLAUDE_TOOLS.append({
     "name": "build_mode",
-    "description": (
-        "Switch this chat into build mode (its panel becomes the Build panel for one of the project's codebases: "
-        "editor, preview, changes, terminal) or back out of it. 'Build mode' -> on=true; 'build mode with the rent "
-        "tracker' names the codebase; 'leave build mode' -> on=false."),
+    "description": "Enter or leave build mode in this chat. The panel becomes the Build panel for one of the project's codebases (a codebase can be named); on=false leaves. Say the result's line as is.",
     "input_schema": {"type": "object", "properties": {
         "on": {"type": "boolean", "description": "true to enter, false to leave. Default true."},
         "codebase": {"type": "string", "description": "Which codebase, as the user said it (optional)."}}},
@@ -8852,12 +8777,7 @@ TOOL_RINGS.update({"open_project": 1, "show_preview": 1, "build_mode": 1})
 # ── Plan-first for big asks (services/plans; spec §4.11 item 4) ──────────────
 CLAUDE_TOOLS.append({
     "name": "plan_first",
-    "description": (
-        "For a BIG ask (a new feature, several files, anything that takes more than one or two steps), "
-        "write a short plan FIRST and stop. The plan appears in the panel as an editable draft with its "
-        "milestones; nothing is built until the user approves it there or says so in chat. Keep the plan "
-        "under 200 words and the milestones to 3-7 plain lines. After calling this, tell the user in one "
-        "line that the plan is in the panel and ask if they want changes. Small edits do not need a plan."),
+    "description": "Write a short plan first for a big ask, then STOP. Title, plan, 3-7 milestones; nothing is built until the user approves it in the panel or in chat.",
     "input_schema": {"type": "object", "properties": {
         "title": {"type": "string", "description": "What is being built, e.g. 'Rent tracker with a chart'."},
         "plan": {"type": "string", "description": "Markdown: what, why, how, what is out of scope."},
@@ -8866,10 +8786,7 @@ CLAUDE_TOOLS.append({
 })
 CLAUDE_TOOLS.append({
     "name": "plan_approve",
-    "description": (
-        "Record that the USER approved the current plan, in their own words, in chat ('go ahead', 'build it'). "
-        "Pass their words. Never call this on your own initiative: a plan approved by the model is not approved. "
-        "The panel's 'Build this plan' button does the same thing on screen."),
+    "description": "Record the user's own words approving the plan. Never on your own initiative.",
     "input_schema": {"type": "object", "properties": {
         "user_words": {"type": "string", "description": "The user's own words that approve the plan."},
         "artifact_id": {"type": "string", "description": "Only when several plans exist; normally omitted."}},
@@ -8877,10 +8794,7 @@ CLAUDE_TOOLS.append({
 })
 CLAUDE_TOOLS.append({
     "name": "plan_milestone",
-    "description": (
-        "Move one milestone of the approved plan: 'doing' when you start it, 'done' with the step sha when it is "
-        "built, or 'blocked' with one typed blocker and a note the user can act on when you must stop. Then say "
-        "in one line what happened."),
+    "description": "Mark a milestone of the approved plan done. Say what changed; refused before the plan is approved.",
     "input_schema": {"type": "object", "properties": {
         "n": {"type": "integer", "description": "The milestone number, from the PLAN context."},
         "status": {"type": "string", "enum": ["todo", "doing", "done", "blocked"]},

@@ -67,8 +67,10 @@ def always_resident(settings: dict | None = None) -> tuple:
             settings = _load_settings() or {}
         except Exception:
             settings = {}
-    if (settings or {}).get("artifact_panel_enabled", True) is not False:
-        return ALWAYS_RESIDENT + PANEL_RESIDENT
+    # The panel's artifact tool is not resident: its index line names it and it
+    # loads like every other tool, so the opening set pays nothing for it
+    # (tests/unit/test_latency_budget.py). PANEL_RESIDENT stays as the name of
+    # that tool for the catalogue's own bookkeeping.
     return ALWAYS_RESIDENT
 
 

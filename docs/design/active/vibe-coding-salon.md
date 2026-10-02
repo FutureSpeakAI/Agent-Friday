@@ -675,10 +675,12 @@ output store.
   ```` ```friday-artifact ```` block instead. The server parses it into the
   same call. This is the pattern `workspace_studio`'s ```` ```friday-customize ````
   block already uses.
-- **The artifact tool is in the always-resident tool set only when the panel
-  is enabled.** Its schema is small (about 150 tokens, **INFERRED** from the
-  other tools of that shape). `tool_catalogue.ALWAYS_RESIDENT` is where it
-  goes.
+- **The artifact tool loads through the tool index like every other tool;
+  it is not resident.** As built, its schema measured about 255 tokens, and
+  the opening set every turn pays (tests/unit/test_latency_budget.py) could
+  not carry it with the hub's twenty tools; the index line names it and the
+  model loads it when the panel is in play. The panel's own switch
+  (`artifact_panel_enabled`) still governs the panel.
 
 **Where it lives.**
 

@@ -84,15 +84,18 @@ def _tools():
             for n in ("search_web", "artifact_put", "tool_a")]
 
 
-def test_artifact_put_is_resident_only_while_the_panel_is_enabled():
+def test_artifact_put_loads_through_the_index_and_is_never_resident():
+    """The opening set pays nothing for the panel's tool: its index line names
+    it and it loads like every other tool (tests/unit/test_latency_budget.py).
+    The always-resident tools stay resident whatever the panel setting."""
     on = {n["name"] for n in TC.resident(_tools(), settings={"artifact_panel_enabled": True})}
     off = {n["name"] for n in TC.resident(_tools(), settings={"artifact_panel_enabled": False})}
-    assert "artifact_put" in on
-    assert "artifact_put" not in off
+    assert "artifact_put" not in on and "artifact_put" not in off
     assert "search_web" in on and "search_web" in off
+    assert "artifact_put" in {t["name"] for t in TC.opening_set(_tools())} or any(
+        "artifact_put" in (t.get("description") or "") for t in TC.opening_set(_tools())), "the index must name it"
 
 
 def test_the_panel_is_enabled_by_default():
     from agent_friday.core import DEFAULT_SETTINGS
     assert DEFAULT_SETTINGS["artifact_panel_enabled"] is True
-    assert "artifact_put" in {n["name"] for n in TC.resident(_tools(), settings={})}
