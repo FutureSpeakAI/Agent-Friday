@@ -223,6 +223,10 @@
 .fa-rail-label{writing-mode:vertical-rl;transform:rotate(180deg);font-family:Orbitron,Inter,sans-serif;font-size:9px;letter-spacing:.22em;color:${ACCENT};opacity:.85;white-space:nowrap}
 .fa-rail-count{font-family:'JetBrains Mono',monospace;font-size:10px;color:#eafcff;background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.35);border-radius:10px;padding:0 6px}
 .fa-strip{display:flex;align-items:stretch;flex-shrink:0;border-bottom:1px solid rgba(0,212,255,0.12);background:rgba(10,14,26,0.55)}
+.fa-host{flex-wrap:wrap}
+.fa-buildbar{flex-basis:100%;display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid rgba(0,212,255,0.12);background:rgba(10,14,26,0.55);font-family:Inter,system-ui,sans-serif;font-size:11px}
+.fa-buildbar-label{color:rgba(255,255,255,0.6);font-family:JetBrains Mono,Consolas,monospace;font-size:10px;letter-spacing:.06em;margin-right:auto}
+.fa-unbuild{position:absolute;right:8px;bottom:8px;z-index:2}
 .fa-strip .fa-widen{flex:0 0 auto;color:${ACCENT};font-size:11px;padding:4px 10px;white-space:nowrap}
 .fa-strip button{flex:1;background:transparent;border:none;border-bottom:2px solid transparent;color:rgba(255,255,255,0.6);cursor:pointer;
   font:11px Inter,system-ui,sans-serif;padding:6px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -727,6 +731,11 @@
     const [items, setItems] = useState([]);
     const [sel, setSel] = useState(null);
     const [codebase, setCodebase] = useState(null);
+    // The chat's project and the codebases it connects (chat-hub.md M3a): what
+    // the Build switch offers when the chat is not yet bound to one.
+    const [project, setProject] = useState(null);
+    const [choices, setChoices] = useState([]);
+    const [picking, setPicking] = useState(false);
     const [stepKey, setStepKey] = useState(0);
     const [open, setOpen] = useState(() => ls.get('friday_artifact_panel_open', '1') === '1');
     const [width, setWidth] = useState(() => Math.max(PANEL_MIN_W, +ls.get('friday_artifact_panel_w', 440) || 440));
@@ -759,12 +768,32 @@
       if (!convId) return;
       let dead = false;
       getJ('/api/conversations/' + encodeURIComponent(convId)).then(d => {
-        const id = d && d.conversation && d.conversation.codebase;
+        const conv = (d && d.conversation) || {};
+        const pid = conv.project;
+        if (pid && !dead) {
+          getJ('/api/projects/' + encodeURIComponent(pid)).then(p => {
+            if (dead || !p.project) return;
+            setProject(p.project);
+            const ids = p.project.codebases || [];
+            if (!ids.length) { setChoices([]); return; }
+            return getJ('/api/codebases').then(all => { if (!dead) setChoices((all.codebases || []).filter(c => ids.indexOf(c.id) >= 0)); });
+          }).catch(() => {});
+        } else { setProject(null); setChoices([]); }
+        const id = conv.codebase;
         if (!id || dead) return;
         return getJ('/api/codebases/' + encodeURIComponent(id)).then(c => { if (!dead && c.codebase) { setCodebase(c.codebase); setOpen(true); } });
       }).catch(() => {});
       return () => { dead = true; };
     }, [convId]);
+
+    // Build: bind this chat to one of its project's codebases, so its panel
+    // becomes the Build panel (Preview, Files, Changes). One call, both sides
+    // written together (the conversation carries the codebase, the codebase
+    // names the conversation). Chat: unbind, and the canvas is the artifacts.
+    const bindCodebase = cid => postJ('/api/conversations/' + encodeURIComponent(convId) + '/codebase', { codebase: cid })
+      .then(() => cid ? getJ('/api/codebases/' + encodeURIComponent(cid)).then(c => { if (c.codebase) { setCodebase(c.codebase); setOpen(true); } }) : setCodebase(null))
+      .then(() => { setPicking(false); try { window.dispatchEvent(new CustomEvent('friday:conversations-changed')); } catch (e) {} })
+      .catch(() => setPicking(false));
 
     // News from the server: an artifact_put landed in this conversation. The
     // event carries no content; the store is re-read.
@@ -810,9 +839,20 @@
     // placement, which it remembers per workspace. Offered only when two
     // thirds of the screen would hold a side panel (SIDE_MIN_HOST_W), and only
     // on the owner's click: Friday never rearranges the screen on her own.
-    const canWiden = mode === 'panel' && typeof onTrayPlace === 'function' && (trayFrac || 0) < 0.6 && window.innerWidth * 2 / 3 >= SIDE_MIN_HOST_W;
+    const canWiden = mode === 'panel' && window.__FRIDAY_CHROME__ !== 'chat' && typeof onTrayPlace === 'function' && (trayFrac || 0) < 0.6 && window.innerWidth * 2 / 3 >= SIDE_MIN_HOST_W;
+    // The Build switch (chat-hub.md M3a): offered when the chat's project
+    // connects codebases and the chat is not bound to one yet. One choice
+    // binds on the click; several open a short list.
+    const buildBar = !codebase && choices.length ? h('div', { className: 'fa-buildbar', 'data-build-switch': picking ? 'open' : 'closed' },
+      h('span', { className: 'fa-buildbar-label' }, (project && project.name ? project.name + ' · ' : '') + 'Build'),
+      picking ? choices.map(c => h('button', { key: c.id, type: 'button', className: 'fa-btn fa-quiet', 'data-build-choice': c.id, onClick: () => bindCodebase(c.id) }, c.title))
+        : h('button', { type: 'button', className: 'fa-btn fa-primary', 'data-build-open': '1', title: 'Work on this project\'s code beside the chat',
+            onClick: () => choices.length === 1 ? bindCodebase(choices[0].id) : setPicking(true) }, choices.length === 1 ? '\u2692 Build ' + choices[0].title : '\u2692 Build\u2026'),
+      picking ? h('button', { type: 'button', className: 'fa-btn fa-quiet', onClick: () => setPicking(false) }, 'Not now') : null) : null;
+    const unbuild = codebase && project ? h('button', { type: 'button', className: 'fa-btn fa-quiet', 'data-build-close': '1', title: 'Back to the chat\'s own canvas', onClick: () => bindCodebase(null) }, '\u2190 Chat') : null;
 
     return h('div', { ref, className: 'fa-host', style: { flexDirection: side ? 'row' : 'column' }, 'data-artifact-host': has ? (open ? 'open' : 'closed') : 'none' },
+      buildBar,
       has && !side ? h('div', { className: 'fa-strip', role: 'tablist' },
         h('button', { role: 'tab', 'aria-selected': !open, className: open ? '' : 'fa-on', onClick: () => setOpen(false) }, 'Chat'),
         h('button', { role: 'tab', 'aria-selected': open, className: open ? 'fa-on' : '', onClick: () => setOpen(true), title: stripTitle },
@@ -820,6 +860,7 @@
         canWiden ? h('button', { type: 'button', className: 'fa-widen', 'data-widen-tray': '1', title: 'Place the chat at two thirds of the screen, so the panel sits beside it',
           onClick: () => { onTrayPlace(traySide || 'right', 2 / 3); setOpen(true); } }, '\u21E4 Beside the chat') : null) : null,
       h('div', { className: 'fa-chat', style: has && !side && open ? { display: 'none' } : undefined }, children),
+      has && open && unbuild && side ? h('div', { className: 'fa-unbuild' }, unbuild) : null,
       has && side && open ? h('div', { className: 'fa-divider' + (dragging ? ' fa-dragging' : ''), title: 'Drag to resize', onMouseDown: e => { e.preventDefault(); dragStart.current = { x: e.clientX, w: panelW }; setDragging(true); } }) : null,
       has && open ? panel : null,
       has && side && !open ? h('div', { className: 'fa-rail', role: 'button', title: 'Open the panel', 'aria-label': 'Open the panel', onClick: () => setOpen(true) },

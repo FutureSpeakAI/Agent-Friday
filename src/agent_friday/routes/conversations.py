@@ -408,6 +408,30 @@ def project_disconnect_codebase(pid, cid):
     return jsonify({"status": "ok", "project": _project_summary(proj)})
 
 
+@conversations_bp.route("/api/conversations/<cid>/codebase", methods=["POST"])
+def conversation_codebase(cid):
+    """Bind this chat to a codebase (the Build switch, chat-hub.md M3a), or
+    unbind it with {codebase: null}. Both sides are written together."""
+    from agent_friday.services import codebases as _cb
+    if _conv.load(cid) is None:
+        return jsonify({"status": "error", "error": "no such conversation: %s" % cid}), 404
+    data = request.get_json(silent=True) or {}
+    target = data.get("codebase")
+    if target:
+        if _cb.load(str(target)) is None:
+            return jsonify({"status": "error", "error": "no such codebase: %s" % target}), 404
+        _cb.bind(str(target), cid)
+    else:
+        current = (_conv.load(cid) or {}).get("codebase")
+        _conv.patch(cid, codebase=None)
+        if current:
+            rec = _cb.load(current)
+            if rec is not None and rec.get("conversation_id") == cid:
+                rec["conversation_id"] = None
+                _cb._save(rec)
+    return jsonify({"status": "ok", "conversation": _summary(_conv.load(cid), _project_seats())})
+
+
 @conversations_bp.route("/api/conversations/<cid>/messages", methods=["GET"])
 def conversation_messages(cid):
     if _conv.load(cid) is None:

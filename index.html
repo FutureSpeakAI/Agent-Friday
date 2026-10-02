@@ -47701,7 +47701,8 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
     api('/api/codebases', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    }).then(r => r.json()).then(d => {
+    }).then(d => {
+      // api() already returns the parsed body.
       if (d && d.conversation) onOpenConversation(d.conversation.id);
       else if (d && d.error) note(d);
       onRefresh();
@@ -47835,7 +47836,16 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
                 },
               }, prettyModel(pseat)) : null,
               E('span', { style: { fontSize: 9, opacity: 0.4 } },
-                rows.length || '')),
+                rows.length || ''),
+              // What the project holds for its chats (chat-hub.md M2): files
+              // they can read, codebases the Build panel works on.
+              (p.files || (p.codebases && p.codebases.length)) ? E('span', {
+                'data-project-counts': p.id,
+                title: (p.files ? p.files + ' file' + (p.files === 1 ? '' : 's') : '') +
+                       (p.files && p.codebases && p.codebases.length ? ', ' : '') +
+                       (p.codebases && p.codebases.length ? p.codebases.length + ' codebase' + (p.codebases.length === 1 ? '' : 's') : ''),
+                style: { fontSize: 8.5, opacity: 0.45, flexShrink: 0 },
+              }, (p.files ? '\u{1F4CE}' + p.files : '') + (p.codebases && p.codebases.length ? ' \u2692' + p.codebases.length : '')) : null),
             E('button', {
               onClick: () => setEditing(p), title: 'Project settings',
               'aria-label': 'Settings for ' + p.name,
