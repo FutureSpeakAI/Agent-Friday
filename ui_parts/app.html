@@ -9162,7 +9162,7 @@ function archiveToCard(a,boostedSet){
 function _fmtDur(sec){if(!sec||!isFinite(sec)||sec<0)return'0:00';const s=Math.floor(sec);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 
 const NEWS_TABS=[{id:'frontpage',label:'Front Page'},{id:'feed',label:'Feed'},{id:'readlater',label:'Read Later'},{id:'notes',label:'My Notes'},{id:'briefings',label:'Briefings'},{id:'weekly',label:'Weekly'},{id:'editorial',label:'Editorial'},{id:'trust',label:'Trust'}];
-fridayDeclareNav('news',{key:'tab',keys:['tab','article','url','title','source'],sections:NEWS_TABS});
+fridayDeclareNav('news',{key:'tab',keys:['tab','article','url','title','source','episode'],sections:NEWS_TABS});
 // The Local beat is the owner's setting: the place Local news covers and the
 // outlets it reads (news_local_area, news_local_sources). Nothing ships with a
 // city; both empty means no Local section. Listed outlets are trusted like the

@@ -235,6 +235,8 @@ def test_solo_friday_is_evidence_first_and_dry_and_no_real_person_is_named():
 
 def test_the_briefing_run_saves_its_story_list_and_calendar(home, monkeypatch):
     from agent_friday.services import news_engine as ne
+    # The run's sources live in the module: restored after the test.
+    monkeypatch.setattr(ne, "_LAST_BRIEFING_SOURCES", {})
     cal = [dict(e, attendees=["someone@example.com"], description="private notes") for e in fx.events()]
     monkeypatch.setattr(ne, "_fetch_calendar_today", lambda: cal)
     monkeypatch.setattr(ne, "_fetch_news_items", lambda categories=None, limit_per=4: [

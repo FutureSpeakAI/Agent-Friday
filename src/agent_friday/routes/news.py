@@ -371,6 +371,8 @@ def generate_briefing():
     try:
         # Pull live sources BEFORE writing the briefing so it never runs on stale
         # cached context. This mirrors the scheduled morning-briefing routine.
+        from agent_friday.services.news_engine import _start_briefing_sources
+        _start_briefing_sources()
         live_context = _gather_live_briefing_context()
 
         prompt = (

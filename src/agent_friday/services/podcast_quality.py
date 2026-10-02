@@ -310,7 +310,12 @@ def stories(docs: list[dict]) -> list[dict]:
         others = set().union(*[o["entities"] for o in out if o["sid"] not in s["cluster"]]) \
             if len(out) > 1 else set()
         s["unique"] = s["entities"] - others
-        s["names"] = s["unique"] & s["proper"]
+        # The story's identity: names only it uses. Topic vocabulary ("AI",
+        # "state", "bill") is shared, or written in lower case, so it is never
+        # one; a mention of it never counts as a mention of the story.
+        vocab = set().union(*[set(_words("%s %s" % (o["title"], o["text"])))
+                              for o in out if o["sid"] not in s["cluster"]]) if len(out) > 1 else set()
+        s["names"] = (s["unique"] & s["proper"]) - vocab
     return out
 
 
@@ -352,7 +357,8 @@ def _mentions(line: dict, story: dict) -> bool:
     # or two of its other words.
     written = {re.sub(r"['’]s$", "", w).lower() for w in re.findall(r"\b[A-Z][\w'’-]*", line["text"])}
     written |= {w for w in ws if re.search(r"\d", w)}
-    if story.get("names", story["unique"]) & ws & written or len(story["unique"] & ws) >= 2:
+    names = story.get("names", story["unique"])
+    if names & ws & written or len(story["unique"] & story.get("proper", story["unique"]) & ws) >= 2:
         return True
     return len({_stem(w) for w in _content(line["text"])} & story["keys"]) >= 3
 

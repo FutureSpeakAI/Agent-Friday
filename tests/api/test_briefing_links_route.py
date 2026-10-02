@@ -46,3 +46,26 @@ def test_the_briefing_route_links_its_stories_from_the_feed(client, tmp_path, mo
     side = json.loads(podcast_news.sidecar_path(date).read_text(encoding="utf-8"))
     assert [n["id"] for n in side["news"]][:2] == ["N1", "N2"]
     assert side["link_check"] == []
+
+
+def test_a_briefing_run_never_keeps_an_earlier_runs_stories(client, tmp_path, monkeypatch):
+    """Each run's sources are its own: stories kept by an earlier run (or an
+    earlier test in the same process) never become this run's sidecar."""
+    import agent_friday.core as core
+    import agent_friday.routes.news as rn
+    from agent_friday.services import news_engine as ne
+    from agent_friday.services import podcast_news
+    today = ne.datetime.now().strftime("%Y-%m-%d")
+    monkeypatch.setattr(ne, "_LAST_BRIEFING_SOURCES", {"version": 1, "date": today, "calendar": [],
+                                                       "news": nl.number([dict(i) for i in ITEMS])})
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(rn, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(rn, "_gather_live_briefing_context", lambda: "")
+    monkeypatch.setattr(rn, "_generate_text", lambda *a, **k: "# Briefing\n## Calendar\nNothing today.\n")
+    monkeypatch.setattr(rn, "_get_friday_system_prompt", lambda **k: "")
+    monkeypatch.setattr(ne, "_queue_podcast", lambda *a, **k: None)
+    r = client.post("/api/briefing/generate", json={})
+    assert r.status_code == 200, r.get_json()
+    p = podcast_news.sidecar_path(today)
+    side = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"news": []}
+    assert side.get("news") == []

@@ -316,3 +316,63 @@ def test_blocking_rules_are_satisfied_before_the_script_ships(ds, monkeypatch):
     for code in ("story_split", "close_recap", "misattributed", "safety_threaded"):
         assert code not in left, got["script_check"]["problems"]
     assert not any("cLaws" in ln["text"] for ln in got["lines"])
+
+
+# 5 ── a lede keys on the story, not its topic's vocabulary ─────────────────
+
+def test_a_story_first_said_without_its_outlet_or_what_happened_blocks(ds):
+    """Modelled on the real misses: the bill is referred to as if already known."""
+    h = sid(ds, "Democrats block")
+    lines = [ftc_lede(ds),
+             L(1, "Senate Democrats and their data center bill are next, and it is a setback.", [h])]
+    probs = [p for p in check(lines, ds) if p["code"] == "no_lede" and p["sid"] == h]
+    assert probs and "no_lede" in q.HARD_CODES
+    assert "outlet" in probs[0]["message"] and "what happened" in probs[0]["message"]
+
+
+def test_a_well_introduced_story_that_says_ai_passes(ds):
+    lines = [ftc_lede(ds),
+             L(0, "The FTC says it is the first enforcement action on rogue AI agents.",
+               [sid(ds, "FTC opens")])]
+    assert "no_lede" not in codes(check(lines, ds))
+
+
+def test_topic_vocabulary_is_not_a_mention_of_a_story(ds):
+    """AI, the state, a bill: words of the day's topics, not any one story."""
+    vocab = L(0, "AI is in every headline this week, and the state and a new bill are in most of them.", [])
+    stories_named = [s["sid"] for s in q.stories(ds) if q._mentions(vocab, s)]
+    assert stories_named == []
+    lines = [vocab, ftc_lede(ds)]
+    assert not [p for p in check(lines, ds) if p["code"] == "no_lede" and p["line"] == 0]
+
+
+def test_two_everyday_words_a_story_happens_to_capitalise_are_not_its_identity():
+    """"Officials" and "Budget" capitalised in one item, written in lower case
+    by another: vocabulary, so "officials want a budget" names neither story."""
+    docs_ = podcast_sources.number([
+        {"title": "Transit chiefs meet on fares", "kind": "news", "outlet": "examplewire.com",
+         "url": "https://examplewire.com/fares", "private": False,
+         "text": "Transit chiefs meet on fares\nThe chiefs met Tuesday. Then Officials and Budget "
+                 "writers argued over Riverton fares."},
+        {"title": "Library hours cut", "kind": "news", "outlet": "exampleledger.com",
+         "url": "https://exampleledger.com/library", "private": False,
+         "text": "Library hours cut\nThe officials set the budget for Elmford libraries."}])
+    line = L(0, "Everyone's officials want a budget this year.", [])
+    assert [s["title"] for s in q.stories(docs_) if q._mentions(line, s)] == []
+    assert [s["title"] for s in q.stories(docs_) if q._mentions(L(0, "Riverton fares rise.", []), s)] \
+        == ["Transit chiefs meet on fares"]
+
+
+def test_a_briefing_run_that_gathered_nothing_speaks_from_its_written_sections(home):
+    """A run's sidecar with no stories and no calendar is no structured source:
+    the episode is made from the written briefing, as for a run from before
+    sources were kept."""
+    (home / "wiki" / "briefings").mkdir(parents=True)
+    (home / "wiki" / "briefings" / "2031-03-12.md").write_text(
+        "# Briefing\nIntro\n## Calendar\nThe 3pm review moved.\n## News\nThe budget passed 7-2.\n",
+        encoding="utf-8")
+    p = podcast_news.sidecar_path("2031-03-12")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"version": 1, "date": "2031-03-12", "calendar": [], "news": []}), encoding="utf-8")
+    said = " ".join(d["text"] for d in podcast_news.run_documents("briefing", "2031-03-12"))
+    assert "The budget passed 7-2." in said and "The 3pm review moved." in said

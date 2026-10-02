@@ -290,11 +290,12 @@ def run_documents(routine: str, run_id: str) -> list[dict]:
                 side = None
         if side and routine == "editorial":
             docs = editorial_docs(side, text, run_id)
-        elif side:
+        elif side and (side.get("news") or side.get("calendar")):
             docs = briefing_docs(side, text, run_id)
         else:
-            # A run from before its sources were kept: the written sections,
-            # headings cleaned so none is read out as a heading.
+            # A run from before its sources were kept, or one that gathered
+            # none: the written sections, headings cleaned so none is read out
+            # as a heading.
             docs = _markdown_docs(text, "%s %s" % (routine.title(), run_id),
                                   private=(routine == "briefing"))
             for d in docs:

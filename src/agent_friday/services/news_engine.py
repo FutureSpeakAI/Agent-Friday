@@ -953,6 +953,14 @@ def warm_news_cache(limit_per: int = 8) -> None:
 _LAST_BRIEFING_SOURCES: dict = {}
 
 
+def _start_briefing_sources():
+    """A briefing run's sources are its own: each run starts with none, so a
+    run that gathers nothing never inherits an earlier run's stories."""
+    _LAST_BRIEFING_SOURCES.clear()
+    _LAST_BRIEFING_SOURCES.update({"version": 1, "date": datetime.now().strftime('%Y-%m-%d'),
+                                   "calendar": [], "news": []})
+
+
 def _keep_briefing_sources(**parts):
     today = datetime.now().strftime('%Y-%m-%d')
     if _LAST_BRIEFING_SOURCES.get("date") != today:
