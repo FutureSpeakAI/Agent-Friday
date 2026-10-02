@@ -27,7 +27,7 @@ def home(tmp_path, monkeypatch):
     settings = {"model_routing": {"mode": "cloud_only"}}
     saved = []
 
-    def _save(delta):
+    def _save(delta, **kw):
         saved.append(dict(delta))
         settings.update(delta)
     monkeypatch.setattr(core, "_save_settings", _save)

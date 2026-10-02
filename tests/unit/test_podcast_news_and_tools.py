@@ -189,7 +189,8 @@ def test_the_weekly_jobs_ship_local_only_and_are_not_silently_cloud_eligible(mon
     monkeypatch.setattr(scheduled_cloud, "settings",
                         lambda: dict(scheduled_cloud.defaults(), answered=True, allow=True))
     # The owner's "yes" covers the jobs they were shown, and no others.
-    assert scheduler._cloud_model_for({"id": "sch_news_morning"})
+    assert scheduler._cloud_model_for({"id": "sch_daily_creation"})
+    assert scheduler._cloud_model_for({"id": "sch_news_morning"}) is None   # News is $0
     assert scheduler._cloud_model_for({"id": "sch_weekly_digest"}) is None
     assert scheduler._cloud_model_for({"id": "sch_weekly_editorial"}) is None
 

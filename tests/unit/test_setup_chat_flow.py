@@ -27,7 +27,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(core, "_SETUP_MARKER", tmp_path / ".setup_complete")
     saved = []
-    monkeypatch.setattr(core, "_save_settings", lambda delta: saved.append(dict(delta)))
+    monkeypatch.setattr(core, "_save_settings", lambda delta, **kw: saved.append(dict(delta)))
     monkeypatch.setattr(core, "_load_settings",
                         lambda: {"model_routing": {"mode": "cloud_only",
                                                    "ollama_url": "http://127.0.0.1:11434"}})

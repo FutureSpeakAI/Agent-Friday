@@ -18,10 +18,10 @@ def saved(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "_SETUP_MARKER", tmp_path / ".setup_complete")
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
     out = []
-    monkeypatch.setattr(core, "_save_settings", lambda d: out.append(dict(d)))
+    monkeypatch.setattr(core, "_save_settings", lambda d, **kw: out.append(dict(d)))
     # The route module holds its own binding from `from agent_friday.core import`.
     from agent_friday.routes import core_routes
-    monkeypatch.setattr(core_routes, "_save_settings", lambda d: out.append(dict(d)))
+    monkeypatch.setattr(core_routes, "_save_settings", lambda d, **kw: out.append(dict(d)))
     return out
 
 
