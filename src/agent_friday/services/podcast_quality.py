@@ -202,6 +202,14 @@ def spoken_outlet(story: dict) -> str:
     name = _site_name(dom) if "." in dom else dom
     if not name:
         return ""
+    # A news feed's snippet ends with the publisher's own name, as it writes
+    # it ("... police say Click2Houston"): that spelling wins when it is the
+    # domain's name.
+    tail = (story.get("text") or story.get("snippet") or "").split()[-4:]
+    for k in range(1, len(tail) + 1):
+        said = " ".join(tail[-k:])
+        if said[:1].isupper() and re.sub(r"[^a-z0-9]", "", said.lower()) == name:
+            return said
     if len(name) > 6 and name.startswith("the") and name.isalpha():
         return "The " + name[3:].capitalize()       # "thetribune" is "The Tribune"
     return name.upper() if len(name) <= 5 else name.capitalize()

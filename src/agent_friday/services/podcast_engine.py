@@ -507,7 +507,9 @@ NEWS_RULES = (
     "- Every fact in a sentence comes from the story that sentence is about; "
     "never carry a day, a name or a number over from another story.\n"
     "- Tell each story once, in one place: its lede, its facts and your read "
-    "together. Never come back to a story later in the episode.\n"
+    "together. Never come back to a story later in the episode. One event "
+    "reported by several outlets gets one lede that names them (\"KUT, "
+    "Click2Houston and KVUE report that ...\"), then only the facts each adds.\n"
     "- A story about violence, a threat, death or local safety is introduced "
     "plainly and humanely, on its own, with only what is confirmed and who "
     "confirmed it. It is never background or noise, never a thread in another "
@@ -530,8 +532,8 @@ NEWS_RULES = (
     "person would (the venue or the street), never a postal code or country.\n"
     "- Cover as many stories as fit, and spend the words on the news. Never "
     "repeat a phrase or an image. The close is one sentence of synthesis: what "
-    "the news adds up to, or the one thing to watch. It never re-reads earlier "
-    "lines or recaps the stories.\n"
+    "the news adds up to, or the one thing to watch, and it names the stories it "
+    "connects. It never re-reads earlier lines or recaps the stories.\n"
     "- \"Friday's written briefing\" sources are your own notes: use them for "
     "context and your read. Never read a heading aloud, and never mention the "
     "written briefing or your notes: say the thing itself.\n")
@@ -791,6 +793,8 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
     def clusters(ids):
         return {by[c]["cluster"] for c in ids if c in by}
 
+    own_notes = {d["sid"] for d in docs if quality.is_own_doc(d)}
+
     out = []
     for ln in lines:
         if ln.get("signature"):
@@ -798,7 +802,12 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
             continue
         ch = ln.get("chapter", 0)
         cited = [c for c in ln.get("cites") or [] if c in by]
-        other = [c for c in ln.get("cites") or [] if c not in by]
+        # Friday's own notes (the edition's framing, her written digest) are
+        # never cited: a line resting on them is her own.
+        notes = [c for c in ln.get("cites") or [] if c in own_notes]
+        other = [c for c in ln.get("cites") or [] if c not in by and c not in own_notes]
+        if notes and not cited and not ln.get("own"):
+            ln = dict(ln, own=True, about=list(ln.get("about") or []))
         in_close = close is not None and ch == close
         pieces = []
         last: list = []
@@ -854,10 +863,14 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
                 first = quality.sentences(ln["text"])[:1]
                 for rest in quality.sentences(ln["text"])[1:]:
                     drop(rest, close, "the close is one sentence")
-                if first:
+                if first and story_list and not any(quality.names_story(first[0], s) for s in story_list):
+                    drop(first[0], close, "the close names no story: an empty wrap")
+                elif first:
                     kept.append(dict(ln, text=first[0]))
                     said = 1
         out = kept
+
+    out = _one_lede_per_event(out, story_list, drop)
 
     for _ in range(3):
         again = quality.retold(out, story_list, n_chapters)
@@ -886,6 +899,54 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
                                     if ln.get("own") else {})))
         out = kept
     return merge_turns(out), cut
+
+
+_LEDE_RE = re.compile(r"^(?P<who>.{2,80}?) (?:reports?|reported|says|said|confirms?) that (?P<what>.+)$")
+
+
+def _one_lede_per_event(lines: list[dict], story_list: list[dict], drop) -> list[dict]:
+    """Several outlets saying the same thing about one event become one lede
+    that names them all ("KUT, Click2Houston and KVUE report that ..."). A
+    following line from another of the event's outlets that adds little is
+    folded in; one with new facts stays."""
+    by = {s["sid"]: s for s in story_list}
+
+    def outlet_of(who, cites):
+        for c in cites:
+            if c in by and quality.said_outlet(who, quality.outlet_aliases(by[c])):
+                return c
+        return None
+
+    def name(c):
+        return quality.spoken_outlet(by[c]) or by[c]["outlet"]
+
+    out: list = []
+    lede = None                 # {"i", "cluster", "names", "stems", "what", "rest"}
+    for ln in lines:
+        sents = quality.sentences(ln["text"]) if not ln.get("signature") else []
+        m = _LEDE_RE.match(sents[0]) if sents else None
+        c = outlet_of(m.group("who"), ln.get("cites") or []) if m else None
+        if lede and c and by[c]["cluster"] == lede["cluster"] and len(sents) == 1:
+            new = {quality._stem(w) for w in quality._content(m.group("what"))}
+            if new and len(new - lede["stems"]) / len(new) < 0.5 and name(c) not in lede["names"]:
+                lede["names"].append(name(c))
+                head = out[lede["i"]]
+                who = ", ".join(lede["names"][:-1]) + " and " + lede["names"][-1]
+                out[lede["i"]] = dict(head, cites=sorted(set(head["cites"]) | {c}),
+                                      text=" ".join(["%s report that %s" % (who, lede["what"])] + lede["rest"]))
+                drop(ln["text"], ln.get("chapter", 0),
+                     "a second outlet saying the same thing: folded into one lede")
+                continue
+        if m and c:
+            out.append(dict(ln))
+            lede = {"i": len(out) - 1, "cluster": by[c]["cluster"], "names": [name(c)],
+                    "stems": {quality._stem(w) for w in quality._content(m.group("what"))},
+                    "what": m.group("what"), "rest": sents[1:]}
+            continue
+        if lede and not ({by[x]["cluster"] for x in ln.get("cites") or [] if x in by} & {lede["cluster"]}):
+            lede = None
+        out.append(ln)
+    return out
 
 
 def stamp_open(ep: dict) -> dict:

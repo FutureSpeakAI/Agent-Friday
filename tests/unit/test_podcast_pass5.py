@@ -196,13 +196,13 @@ def test_the_close_is_one_sentence_of_synthesis(ds):
     lines = [ftc_lede(ds),
              L(1, "The Hill reports that on Tuesday Senate Democrats blocked a bill on data center "
                   "electricity costs, calling it toothless.", [h]),
-             L(2, "Regulators are moving faster than lawmakers this week. The FTC action suggests "
+             L(2, "The FTC is moving faster than the Senate this week. The FTC action suggests "
                   "voluntary commitments may not be enough. The FTC probe will define what comes next.", [g, h])]
     assert "close_recap" in q.HARD_CODES
     assert "close_recap" in codes(check(lines, ds))
     fixed, _cut = pe.edit_script(lines, ds, n_chapters=3)
     close = [ln for ln in fixed if ln["chapter"] == 2]
-    assert [ln["text"] for ln in close] == ["Regulators are moving faster than lawmakers this week."]
+    assert [ln["text"] for ln in close] == ["The FTC is moving faster than the Senate this week."]
     assert "close_recap" not in codes(check(fixed, ds))
 
 
@@ -456,3 +456,48 @@ def test_fridays_own_notes_cited_show_as_her_analysis():
           "lines": [{"speaker": "a", "chapter": 0, "text": "It adds up to a tense week.", "cites": ["S1"], "start": 1}]}
     text = pe.transcript_bytes(ep).decode("utf-8-sig")
     assert "It adds up to a tense week.   (Friday's analysis)" in text
+
+
+# 9 ── polish from the editorial read ────────────────────────────────────────
+
+def test_an_outlet_is_named_as_it_publishes_itself():
+    """A news-feed snippet ends with the publisher's own name: "Click2Houston",
+    not the domain capitalised ("Click2houston")."""
+    story = {"outlet": "click2houston.com", "title": "Suspect arrested after alleged plot, police say",
+             "text": "Suspect arrested after alleged plot, police say\nOutlet: click2houston.com\n"
+                     "Suspect arrested after alleged plot, police say Click2Houston"}
+    assert q.spoken_outlet(story) == "Click2Houston"
+    assert q.spoken_outlet({"outlet": "click2houston.com", "title": "x"}) == "Click2houston"
+
+
+def test_several_outlets_on_one_event_become_one_lede(ds):
+    """KUT, Click2Houston and KVUE each said the same arrest: one lede names
+    the outlets, and only a line with new facts stays."""
+    g, r = sid(ds, "US trade"), sid(ds, "FTC opens")
+    lines = [L(0, "The Guardian reports that on Tuesday the Federal Trade Commission opened an "
+                  "investigation into AI companies including Anthropic and OpenAI.", [g]),
+             L(0, "Reuters reports that the Federal Trade Commission opened a probe into Anthropic "
+                  "and OpenAI on Tuesday.", [r]),
+             L(0, "Reuters adds that it is the first enforcement action on rogue AI agents.", [r])]
+    fixed, cut = pe.edit_script(lines, ds, n_chapters=3)
+    assert fixed[0]["text"].startswith("The Guardian and Reuters report that on Tuesday the Federal")
+    assert sorted(fixed[0]["cites"]) == sorted([g, r])
+    assert any(c["text"].startswith("Reuters reports that the Federal") for c in cut)
+    assert any("first enforcement action" in ln["text"] for ln in fixed)
+
+
+def test_fridays_own_notes_are_never_cited_and_an_empty_wrap_is_cut(ds):
+    g, h = sid(ds, "US trade"), sid(ds, "Democrats block")
+    overview = next(d["sid"] for d in ds if d.get("role") == "overview")
+    lines = [ftc_lede(ds),
+             L(1, "The Hill reports that on Tuesday Senate Democrats blocked a bill on data center "
+                  "electricity costs, calling it toothless.", [h]),
+             L(1, "A promise is not a control you can check.", [overview]),
+             L(2, "The news adds up to a moment of tension between enforcement and inaction.", [overview])]
+    fixed, cut = pe.edit_script(lines, ds, n_chapters=3)
+    assert not any(overview in ln["cites"] for ln in fixed)
+    mine = next(ln for ln in fixed if ln["text"].startswith("A promise"))
+    assert mine.get("own") and mine["cites"] == []
+    assert not any(ln["chapter"] == 2 for ln in fixed)
+    assert any("moment of tension" in c["text"] for c in cut)
+    assert "names the stories it connects" in pe.NEWS_RULES and "one lede that names" in pe.NEWS_RULES
