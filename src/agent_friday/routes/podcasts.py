@@ -3,6 +3,7 @@
     GET    /api/podcasts                   episodes, newest first (?routine, ?run_id, ?limit)
     POST   /api/podcasts                   {sources, title, length, mode, instructions, voice}
     GET    /api/podcasts/for-run           ?routine=&run_id= -> that run's episode or null
+    POST   /api/podcasts/listen            {routine, run_id} -> that run's episode, queued to be spoken now (local voice)
     GET    /api/podcasts/voices            installed local voices and the podcast settings
     POST   /api/podcasts/now-playing       {episode_id, t, playing} from the desktop player
     GET    /api/podcasts/<id>              one episode: chapters, cited lines, sources, check
@@ -88,6 +89,17 @@ def podcasts_create():
 def podcasts_for_run():
     ep = pe.for_run(request.args.get("routine") or "", request.args.get("run_id") or "")
     return jsonify({"status": "ok", "episode": pe.summary(ep) if ep else None})
+
+
+@podcasts_bp.route('/api/podcasts/listen', methods=['POST'])
+def podcasts_listen():
+    """A News run's episode to listen to now, spoken on this computer."""
+    data = request.get_json(silent=True) or {}
+    try:
+        ep = pe.listen(str(data.get("routine") or ""), str(data.get("run_id") or ""))
+    except Exception as e:
+        return api_error(e, "Couldn't start the episode", status=400)
+    return jsonify(public_result({"status": "ok", "episode": pe.summary(ep)}, "Couldn't start the episode"))
 
 
 @podcasts_bp.route('/api/podcasts/voices', methods=['GET'])

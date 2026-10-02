@@ -125,3 +125,44 @@ def test_the_recommended_formats_are_the_shipped_defaults():
     from agent_friday.core import DEFAULT_SETTINGS
     from agent_friday.services import podcast_engine as pe
     assert DEFAULT_SETTINGS["podcasts"]["format"] == pe.RECOMMENDED_FORMAT
+
+
+# ── Listen: the run's own episode, spoken on this computer ──────────────────
+
+def _run(tmp, monkeypatch):
+    from agent_friday.services import podcast_news
+    started = []
+    monkeypatch.setattr(pe, "start_worker", lambda: started.append(1))
+    p = podcast_news.run_path("front_page", "2031-03-12-evening")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text('{"id": "2031-03-12-evening", "headline": "H", "lead": {"title": "Council passes '
+                 'the budget", "source": "examplewire.com", "url": "https://examplewire.com/a", '
+                 '"snippet": "7-2."}}', encoding="utf-8")
+    return started
+
+
+def test_listen_queues_the_editions_episode_to_be_spoken_now(client, _home, monkeypatch):
+    started = _run(_home, monkeypatch)
+    r = client.post("/api/podcasts/listen", json={"routine": "front_page", "run_id": "2031-03-12-evening"})
+    assert r.status_code == 200, r.get_json()
+    ep = pe.load(r.get_json()["episode"]["id"])
+    assert ep["priority"] == "now" and ep["voice_engine"] == "local" and started
+
+
+def test_listen_speaks_a_scripted_episode_and_never_with_a_cloud_voice(client, _home, monkeypatch):
+    _run(_home, monkeypatch)
+    from agent_friday.services import podcast_news
+    ep = podcast_news.queue_for_run("front_page", "2031-03-12-evening")
+    pe._update(ep["id"], status="scripted", voice_engine="cloud", lines=[{"speaker": "a", "text": "x", "cites": [], "chapter": 0}])
+    r = client.post("/api/podcasts/listen", json={"routine": "front_page", "run_id": "2031-03-12-evening"})
+    got = pe.load(r.get_json()["episode"]["id"])
+    assert got["id"] == ep["id"] and got["status"] == "queued" and got["voice_engine"] == "local"
+
+
+def test_listen_on_a_ready_episode_only_returns_it(client, _home, monkeypatch):
+    _run(_home, monkeypatch)
+    from agent_friday.services import podcast_news
+    ep = podcast_news.queue_for_run("front_page", "2031-03-12-evening")
+    pe._update(ep["id"], status="ready", audio="audio.mp3")
+    r = client.post("/api/podcasts/listen", json={"routine": "front_page", "run_id": "2031-03-12-evening"})
+    assert r.get_json()["episode"]["status"] == "ready"

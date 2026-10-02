@@ -93,6 +93,8 @@ def _spoken_credit(ep: dict) -> str:
 FORMATS = ("solo", "duo")
 RECOMMENDED_FORMAT = {"briefing": "solo", "front_page": "solo", "editorial": "solo",
                       "weekly": "duo", "any": "duo"}
+#: Commit headroom the out-of-process voice (Kokoro on the CPU) needs, in MB.
+VOICE_HEADROOM_MB = 3584
 #: Revision passes the writer gets when the script-quality gate finds problems.
 MAX_REVISIONS = 2
 #: Fewer words than this that survived the source check is no episode.
@@ -280,6 +282,28 @@ def for_run(routine: str, run_id: str) -> dict | None:
     eps = list_episodes(routine=routine, run_id=run_id, limit=5)
     live = [e for e in eps if e.get("status") != "cancelled"]
     return live[0] if live else None
+
+
+def listen(routine: str, run_id: str) -> dict:
+    """The run's episode, to listen to now: spoken on this computer, never by
+    a cloud voice. A ready episode is returned as it is; one not yet spoken
+    (or only scripted) is queued to be spoken now; a run with no episode gets
+    one."""
+    ep = for_run(routine, run_id)
+    if ep is None:
+        from agent_friday.services import podcast_news
+        ep = podcast_news.queue_for_run(routine, run_id)
+        if ep is None:
+            raise PodcastRefused("that run has no episode and none can be made for it")
+    if ep.get("status") == "ready":
+        return ep
+    if ep.get("status") == "failed" and (ep.get("error") or {}).get("code") not in RETRYABLE:
+        return ep
+    ep = _update(ep["id"], priority="now", voice_engine="local",
+                 **({"status": "queued", "stage_detail": "queued to be spoken on this computer"}
+                    if ep.get("status") in ("scripted", "failed", "waiting") else {}))
+    start_worker()
+    return ep
 
 
 def summary(ep: dict) -> dict:
@@ -1543,6 +1567,13 @@ def _gate_reason(ep: dict) -> str:
     * A long episode waits for the owner's own idle window.
     """
     from agent_friday.services import scheduler
+    if ep.get("voice_engine") != "cloud":
+        # The local voice runs in its own process; it is started only when the
+        # machine can hold it, whoever asked.
+        head = render.commit_headroom_mb()
+        if head is not None and head < VOICE_HEADROOM_MB:
+            return ("waiting for memory: the voice needs about %.1f GB free to commit, %.1f GB is"
+                    % (VOICE_HEADROOM_MB / 1024, head / 1024))
     if ep.get("priority") == "now":
         try:
             from agent_friday.services import stand_down

@@ -30351,6 +30351,7 @@ function NewsWS() {
   // News Anchor Mode — interactive live voice read of the Front Page.
   const [anchorReading, setAnchorReading] = useState(false);
   const [anchorBusy, setAnchorBusy] = useState(false);
+  const [listenState, setListenState] = useState('');
   // Track the live session ending from anywhere (stop button in chat, errors)
   // so the "Now Reading" indicator clears itself rather than going stale.
   useEffect(() => {
@@ -31017,6 +31018,33 @@ function NewsWS() {
   // clickable citation chips in the chat panel, then hand the script to the
   // live voice bridge so Friday reads the Front Page like a broadcast anchor —
   // interruptible via Gemini's server-side VAD for sourced Q&A.
+  // Listen: the edition's own episode, spoken by her on this computer and
+  // played in the podcast player. Not spoken yet, it is made now, with its
+  // progress on the button; never a cloud voice.
+  const playFrontPageEpisode = async () => {
+    if (!fp || !fp.id || listenState) return;
+    setListenState('🎧 Asking for the episode…');
+    try {
+      const r = await fetch('/api/podcasts/listen', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ routine: 'front_page', run_id: fp.id }) });
+      const d = await r.json();
+      if (!r.ok || d.status !== 'ok' || !d.episode) throw new Error(d.message || 'Could not start the episode');
+      let ep = d.episode;
+      while (ep.status !== 'ready') {
+        if (ep.status === 'failed' || ep.status === 'cancelled') throw new Error((ep.error || {}).message || 'The episode could not be made');
+        const pr = ep.progress && ep.progress.of ? ' · ' + ep.progress.done + '/' + ep.progress.of : '';
+        setListenState('🎧 ' + (ep.waiting_reason || ep.stage_detail || ep.status) + pr);
+        await new Promise(res => setTimeout(res, 3000));
+        const g = await fetch('/api/podcasts/' + encodeURIComponent(ep.id)).then(x => x.json());
+        ep = g.episode || ep;
+      }
+      fridayPodcast('play', ep.id);
+    } catch (e) {
+      flashNews(e.message || 'Could not play the episode');
+    } finally {
+      setListenState('');
+    }
+  };
   const startAnchorBriefing = async () => {
     if (anchorBusy) return;
     if (!window.fridayVoice) {
@@ -31676,10 +31704,10 @@ function NewsWS() {
     style: {
       fontSize: 11
     },
-    onClick: startAnchorBriefing,
-    disabled: anchorBusy,
-    title: (fridayName() + " reads the Front Page aloud like a live news anchor \u2014 interrupt any time to ask about a story.")
-  }, anchorBusy ? 'Starting…' : '🎙️ Listen to Front Page'), tab === 'frontpage' && anchorReading && /*#__PURE__*/React.createElement("button", {
+    onClick: playFrontPageEpisode,
+    disabled: !!listenState,
+    title: ("The Front Page's episode, spoken by " + fridayName() + " on this computer")
+  }, listenState || '🎧 Listen to Front Page'), tab === 'frontpage' && anchorReading && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-magenta",
     style: {
       fontSize: 11

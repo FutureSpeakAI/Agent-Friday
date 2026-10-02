@@ -343,6 +343,7 @@ def test_episodes_notify_and_never_autoplay(monkeypatch):
 
 def test_a_request_waits_only_for_stand_down_and_the_gpu_lease(monkeypatch):
     from agent_friday.services import residency_arbiter, scheduler, stand_down
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 64 * 1024)
     monkeypatch.setattr(scheduler, "idle_work_blocked_reason",
                         lambda *a, **k: pytest.fail("a request must not wait for idle"))
     monkeypatch.setattr(stand_down, "is_stood_down", lambda: False)
@@ -354,6 +355,7 @@ def test_a_request_waits_only_for_stand_down_and_the_gpu_lease(monkeypatch):
 
 def test_routine_and_long_episodes_use_the_scheduler_idle_gate(monkeypatch):
     from agent_friday.services import scheduler
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 64 * 1024)
     seen = []
     monkeypatch.setattr(scheduler, "idle_work_blocked_reason",
                         lambda rec=None, spec=None, now=None: seen.append(spec) or "")
@@ -575,3 +577,21 @@ def test_lines_with_their_own_sources_are_not_merged_so_each_chip_stays_by_its_s
     out = pe.merge_turns(ls)
     assert [o["text"] for o in out] == ["Story one. Why it matters.", "Story two."]
     assert [o["cites"] for o in out] == [["S1"], ["S2"]]
+
+
+def test_a_local_render_waits_for_the_voice_s_memory(monkeypatch):
+    """The out-of-process voice needs about 3.5 GB of commit headroom; below
+    that every local episode waits, whatever its priority. A cloud voice does
+    not load one."""
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 2000)
+    assert "memory" in pe._gate_reason({"priority": "now"})
+    assert pe.VOICE_HEADROOM_MB == 3584
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 4000)
+    assert pe._gate_reason({"priority": "now"}) == ""
+    monkeypatch.setattr(render, "commit_headroom_mb", lambda: 2000)
+    assert pe._gate_reason({"priority": "now", "voice_engine": "cloud"}) == ""
+
+
+def test_commit_headroom_is_a_number_of_megabytes():
+    v = render.commit_headroom_mb()
+    assert v is None or (isinstance(v, int) and v >= 0)

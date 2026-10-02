@@ -318,6 +318,30 @@ _SPEAKER = None
 _SPEAKER_LOCK = threading.Lock()
 
 
+def commit_headroom_mb() -> int | None:
+    """Memory the system can still commit, in MB (Windows: the commit limit
+    less what is committed; elsewhere, free memory and swap), or None."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class _Status(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            st = _Status()
+            st.dwLength = ctypes.sizeof(_Status)
+            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return None
+            return int(st.ullAvailPageFile // (1024 * 1024))
+        import psutil
+        return int((psutil.virtual_memory().available + psutil.swap_memory().free) // (1024 * 1024))
+    except Exception:
+        return None
+
+
 def speaker() -> ProcessKokoro:
     """The render queue's speaker: Kokoro in its own process, never the server's."""
     global _SPEAKER
