@@ -858,10 +858,17 @@ simply never grows, and everything else works.
     both the newly drawn image and the frame shown before on a 32 × 20 grid
     of cells, and averages every 10-degree field (11 × 7 cells).
     - A field that would change its average lightness faster than 2.5 L* per
-      100 ms keeps just enough of the frame shown before to change at that
-      rate, so it fades toward the new image instead of jumping.
-    - Each pixel keeps as much as the most demanding field around it, so
+      100 ms is held to that rate, so it changes gradually instead of
+      jumping.
+    - Each cell is held as much as the most demanding field around it, so
       every field is held, wherever it lies.
+    - It holds a field by scaling the new frame's own light in each cell:
+      dimming it, or lifting what is there, up to 16 times. The cell's
+      average lands exactly where a mix with the frame shown before would
+      have put it. It never draws an earlier frame. (It used to mix the
+      frame shown before back in; under head tracking every moving edge
+      left a trail, which read as motion blur. The check: 1,658 pixels of
+      an earlier frame over 250 frames of a head sweep before, none after.)
     - A small bright thing moving within a field barely changes the field's
       average, so it is left alone and stays crisp.
     - Below the rate, it changes nothing.
@@ -2183,6 +2190,97 @@ to a speech service: a new path for data to leave the machine.
   places, a ring for a failure; a tap opens one, a drag does not).
 - Every rule in these files was broken on purpose once, and each break failed
   a test.
+
+## 17. The world: an ocean of dots, a clear picture (owner, 2026-10-02)
+
+The owner's direction:
+- "Motion blur when I turn on head tracking mode ... should be eliminated
+  entirely."
+- "A lot of aliasing on the hard lines of the genesis lattice ... a 3D
+  improvement pass."
+- "That 2D plane of dots [should] be an actual 3D ocean of dots, kinda like
+  we're flying/floating through space," whose behaviour telegraphs the
+  system's state. A cloud call "spool[s] out a cool web-like or
+  network-like effect" across the dots.
+
+All four were approved.
+
+### 17.1 No blur under head tracking
+
+- **The backstop.** The trail came from the photosensitivity backstop
+  (§6.3), which mixed the frame shown before back into the new one. It now
+  scales the new frame's own light instead and never draws an earlier
+  frame.
+- **The view.** The face is seen 15 to 30 times a second and the scene is
+  drawn 60 or more. The view now glides toward the newest head position at
+  the render rate (a 45 ms time constant) instead of stepping at each
+  detection.
+- **The zoom.** Lean depth ignores the detector's jitter in face width (a
+  0.035-octave backlash), so the zoom does not wobble while the head is
+  still.
+- **Tests (rendered frames):**
+  - A bright square that jumps across the view leaves nothing in the very
+    next frame: 0.68 of its light stayed before, none after.
+  - A head sweep shows no light from an earlier frame: 1,658 pixels over
+    250 frames before, 0 after.
+
+### 17.2 Anti-aliasing and a clear picture
+
+- **Multisampling.** The scene was drawn into the composer's own render
+  targets, so the canvas's anti-aliasing never reached it. The composer now
+  draws into a 4× multisampled target on WebGL2, and a plain target where
+  the GPU has no WebGL2. Every pass after it reads the resolved image.
+- **Pixel ratio.** It is read again on each resize, capped at 2 (1 in the
+  low-cost widget), and handed to the composer.
+- **Bloom.** Its radius is 0.4 and threshold 0.3 (was 0.55 and 0.25), so
+  edges stay edges. The holographic colour split is about a pixel (was 4
+  to 17).
+- **Screen-space strokes.** Fat lines in place of 1-pixel lines: only where
+  multisampling still leaves a hard line ragged (§17.5).
+
+### 17.3 The ocean of dots (`FridayField`)
+
+- **What it replaces.** A volume of 2,000 to 7,000 dots (by hardware; 1,200
+  in the low-cost widget) around the view, drifting toward the viewer so
+  you float through it. It replaces a shell of 800 dots that a structure
+  change flattened into a disc that never came back (the "2D plane").
+- **Cost.** Drift, sway, the current and the glow run in the vertex shader;
+  no dot is touched on the CPU.
+- **Depth.** A dot's size follows its depth (1 to 6 pixels). Dots fade at
+  the box's ends, so wrapping never pops. Head-tracking parallax comes from
+  the off-axis frustum (§16.2's camera), because the dots really are at
+  depth.
+- **Layer.** It is the world layer: it never drives Friday's form, and it
+  is not the helpers' orb layer.
+
+### 17.4 What the dots say (`FridayFieldState`)
+
+Only Friday's own frames (agent "friday") move it.
+
+| State | Signal | The dots |
+|---|---|---|
+| Idle | no signal | a slow drift |
+| Thinking | her `round` frames | a faint current toward her, fading when the rounds stop |
+| Local work | her `handoff` start to end; a `route` local answer briefly | the dots nearest her glow |
+| A cloud call | her `egress` `sent` with route `cloud`, and nothing else | a pulse leaves her and spools a web of links across the dots (each dot in a cone toward "the cloud" linked to its nearest three, revealed outward) |
+| The answer | her next `route`, `tool` start, `round`, `verify` or `error` frame; or 15 s with none | the web pulls back in |
+| Offline | the network check (`body.net-offline`) | the field goes still, gently |
+
+The web is a privacy signal: it fires only on a real, sealed cloud send of
+hers, never for decoration. It fades in. Tested in
+`tests/unit/test_world_field.py`; every rule was broken once and caught.
+
+### 17.5 Not built, and asks
+
+- An explicit "answer received" frame for a cloud call (an `egress` end).
+  The web pulls back on her next frame of the kinds above.
+- Helpers' cloud calls do not reach the field: `egress` routes to Friday
+  only (§16.4). If the web should show every send off the machine, the
+  field needs helpers' `egress` too.
+- The page's own "server unreachable" state (`connHealth`) is React state
+  only. The field goes still on the network check alone.
+- Fat-line strokes: decided after looking at the multisampled frames of
+  every structure.
 
 ## Appendix A. The market side and ratings (carried from 2026-09-22 §7; not built; federation is deferred)
 
