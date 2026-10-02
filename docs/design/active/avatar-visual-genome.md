@@ -2001,9 +2001,10 @@ helpers, models or background jobs, never Friday herself.
 
 > **Status (2026-10-02):** built and tested: the rules (`FridayOrbLife`), the
 > forms (`FridayOrbForms`), hands-on control and voice actions
-> (`FridayOrbHands`), and one helper in its own tab (`TaskFocus`). Not built
-> yet: drawing §16.2's colours and marks and §16.3's life on the orbs
-> themselves. That waits on the restored orb layer.
+> (`FridayOrbHands`), the day's stars (`FridayOrbSky`), and one helper in its
+> own tab (`TaskFocus`). Not built yet: drawing §16.2's colours and marks and
+> the rest of §16.3's life on the orbs themselves. That waits on the restored
+> orb layer.
 
 **Fixed rules.**
 - An orb never drives Friday's core form.
@@ -2021,6 +2022,7 @@ The code:
 - `FridayOrbLife` (`<orb-life>`): the rules as plain arithmetic.
 - `FridayOrbForms` (`<orb-forms>`): the shapes.
 - `FridayOrbHands` (`<orb-hands>`): the pointer and voice.
+- `FridayOrbSky` (`<orb-sky>`): the day's stars.
 - `TaskFocus`: one helper in its own tab.
 
 ### 16.1 Hands-on control
@@ -2153,8 +2155,9 @@ to a speech service: a new path for data to leave the machine.
   is real, finite, fitted and distinct, and follows the step.
 - `tests/unit/test_orb_hands.py` (node, a stand-in page): voice and pointer
   through one path, the undo window, the stop-after-step-then-delete order,
-  honest pausing, pop-out by voice, the approval card, and the pointer only
-  over the bare scene.
+  honest pausing, pop-out by voice, the approval card, the pointer only over
+  the bare scene, and the day's stars (today's finished tasks only, fixed
+  places, a ring for a failure; a tap opens one, a drag does not).
 - Every rule in these files was broken on purpose once, and each break failed
   a test.
 

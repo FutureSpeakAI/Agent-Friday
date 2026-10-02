@@ -17,6 +17,9 @@ under node from both scene files with a small stand-in for the page.
 - The pointer is read at the window and acts only over the bare scene: a
   press on a control is never taken for an orb, and a throw away from Friday
   over the bare scene schedules a cancel.
+- The day's stars are the server's finished tasks of today, each in a fixed
+  place in the upper band, a ring for a failure; a tap on one opens its
+  receipt, a drag across it does not.
 """
 import json
 import pathlib
@@ -31,6 +34,7 @@ SCENES = [ROOT / "index.html", ROOT / "ui_parts" / "styles_and_scene.html"]
 node = shutil.which("node")
 LIFE = re.compile(r"// <orb-life>\n(.*?)// </orb-life>", re.S)
 HANDS = re.compile(r"// <orb-hands>\n(.*?)// </orb-hands>", re.S)
+SKY = re.compile(r"// <orb-sky>\n(.*?)// </orb-sky>", re.S)
 
 HARNESS = r"""
 let clock = 1000;
@@ -38,7 +42,8 @@ const listeners = {}, events = [], fetches = [], navs = [], opens = [];
 const fakeEl = () => ({ style: {}, dataset: {}, children: [], appendChild(c) { this.children.push(c); }, querySelector() { return null; },
   remove() {}, addEventListener() {}, textContent: '', isConnected: true, className: '' });
 global.window = { addEventListener: (t, f) => { (listeners[t] = listeners[t] || []).push(f); },
-                  dispatchEvent: e => { events.push([e.type, e.detail]); return true; }, open: (u, n) => { opens.push(u); return null; } };
+                  dispatchEvent: e => { events.push([e.type, e.detail]); return true; }, open: (u, n) => { opens.push(u); return null; },
+                  innerWidth: 1280, innerHeight: 800 };
 global.innerWidth = 1280; global.innerHeight = 800;
 global.document = { documentElement: {}, body: fakeEl(), createElement: fakeEl };
 global.CustomEvent = class { constructor(t, o) { this.type = t; this.detail = o && o.detail; } };
@@ -52,6 +57,7 @@ global.fridayNavigate = t => navs.push(t);
 global.fridayWorkspaceTabUrl = (id, p) => '/w/' + id + '?' + new URLSearchParams(p);
 global.getComputedStyle = el => el._cs || { backgroundColor: 'rgba(0, 0, 0, 0)', backgroundImage: 'none' };
 LIFE
+SKY
 HANDS
 const H = FridayOrbHands, out = {};
 const orbs = [
@@ -117,6 +123,22 @@ const flush = () => new Promise(r => setImmediate(r));
   clock += 40; fire('pointermove', { target: backdrop, clientX: 420, clientY: 280 });
   clock += 40; fire('pointerup', { target: backdrop, clientX: 520, clientY: 320 });
   out.toward = H._undo.keys();
+  // the day's stars: finished today only, fixed places, a ring for a failure
+  const now = Date.now() / 1000, d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const tasks = [{ task_id: 's1', status: 'completed', ended: now - 60 }, { task_id: 's2', status: 'failed', ended: now - 30 },
+    { task_id: 's3', status: 'running', ended: now - 20 /* resumed: still carries its interrupted run's end */ }, { task_id: 's4', status: 'completed', ended: d0.getTime() / 1000 - 3600 },
+    { id: 'p5', process: true, status: 'completed', ended: now - 10 }];
+  FridayOrbSky.sync(tasks); const first = FridayOrbSky.list(); FridayOrbSky.sync(tasks);
+  out.stars = { ids: FridayOrbSky.list().map(s => s.id), failed: FridayOrbSky.list().map(s => s.failed),
+                stable: JSON.stringify(first) === JSON.stringify(FridayOrbSky.list()),
+                upper: FridayOrbSky.list().every(s => s.y >= 40 && s.y <= 800 * 0.32) };
+  navs.length = 0;
+  const s1 = FridayOrbSky.list()[0];
+  fire('pointerdown', { target: backdrop, clientX: s1.x + 2, clientY: s1.y });
+  fire('pointerup', { target: backdrop, clientX: s1.x + 2, clientY: s1.y });
+  fire('pointerdown', { target: backdrop, clientX: s1.x, clientY: s1.y });
+  fire('pointerup', { target: backdrop, clientX: s1.x + 40, clientY: s1.y });
+  out.star_navs = navs.slice();
   out.lines = [H.statusLine(orbs[0]), H.statusLine(orbs[4]), H.statusLine({ kind: 'general', hue: 2, status: 'failed', label: 'boom' }),
                H.statusLine({ kind: 'media', hue: 2, status: 'queued' })];
   console.log(JSON.stringify(out));
@@ -126,9 +148,9 @@ const flush = () => new Promise(r => setImmediate(r));
 
 def _run(path):
     text = path.read_text(encoding="utf-8")
-    life, hands = LIFE.search(text), HANDS.search(text)
-    assert life and hands, f"{path.name}: missing <orb-life> or <orb-hands>"
-    src = HARNESS.replace("LIFE", life.group(1)).replace("HANDS", hands.group(1))
+    life, hands, sky = LIFE.search(text), HANDS.search(text), SKY.search(text)
+    assert life and hands and sky, f"{path.name}: missing <orb-life>, <orb-sky> or <orb-hands>"
+    src = HARNESS.replace("LIFE", life.group(1)).replace("SKY", sky.group(1)).replace("HANDS", hands.group(1))
     r = subprocess.run([node, "-"], input=src, capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stderr[-3000:]
     return json.loads(r.stdout.strip().splitlines()[-1])
@@ -186,6 +208,16 @@ def test_the_pointer_acts_only_over_the_bare_scene(o):
     assert o["on_control"] == 0
     assert o["thrown"]["pending"] == ["agent-b"] and ["agent-b", "cancelling"] in o["thrown"]["marks"]
     assert o["toward"] == []
+
+
+def test_the_days_stars_come_from_the_servers_finished_tasks(o):
+    st = o["stars"]
+    assert st["ids"] == ["s1", "s2"] and st["failed"] == [False, True]
+    assert st["stable"] is True and st["upper"] is True
+
+
+def test_a_tap_on_a_star_opens_its_receipt_and_a_drag_does_not(o):
+    assert o["star_navs"] == [{"workspace": "system", "tab": "task", "task": "s1"}]
 
 
 def test_status_lines_come_from_the_servers_fields(o):

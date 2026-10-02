@@ -952,6 +952,79 @@
             return { R, KINDS: Object.keys(BUILD), build, setColor, setOpacity, dispose };
         })();
         // </orb-forms>
+        // <orb-sky>
+        // The day's finished helpers as faint stars (avatar-visual-genome.md
+        // §16.3), from the server's own task list: one fixed place per task in
+        // the band above the scene's centre, a dot for work done and a small
+        // hollow ring for work that failed (a shape, not colour alone).
+        // Tapping one (FridayOrbHands reads the pointer) opens that helper's
+        // receipt in its own view. A new star fades in; nothing blinks.
+        const FridayOrbSky = (function () {
+            const POLL_MS = 30000, HIT_PX = 10;
+            let layer = null, timer = 0, day = '';
+            const stars = new Map();
+            const dayKey = () => { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+            const dayStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; };
+            const W = () => window.innerWidth, H = () => window.innerHeight;
+            function ensure() {
+                if (layer && layer.isConnected) return layer;
+                layer = document.createElement('div');
+                layer.className = 'friday-orb-sky';
+                layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:54;';
+                document.body.appendChild(layer);
+                return layer;
+            }
+            function place(s) {
+                const p = FridayOrbLife.starAt(s.id, W(), H());
+                s.x = p.x; s.y = p.y;
+                s.el.style.transform = 'translate(' + (p.x - 3) + 'px,' + (p.y - 3) + 'px)';
+            }
+            function clear() { stars.forEach(s => s.el.remove()); stars.clear(); }
+            function sync(tasks) {
+                if (dayKey() !== day) { clear(); day = dayKey(); }
+                const t0 = dayStart();
+                for (const t of tasks || []) {
+                    const id = t && (t.task_id || t.id);
+                    if (!id || t.process || stars.has(id)) continue;
+                    const st = String(t.status || '');
+                    if (!/^(completed|done|failed|error|timeout|cancelled)$/.test(st)) continue;
+                    if (!(Number(t.ended) >= t0)) continue;
+                    const failed = /^(failed|error|timeout)$/.test(st);
+                    const el = document.createElement('div');
+                    el.className = 'friday-star' + (failed ? ' failed' : '');
+                    el.style.cssText = 'position:absolute;left:0;top:0;width:6px;height:6px;border-radius:50%;opacity:0;'
+                        + 'transition:opacity 1.2s ease;' + (failed ? 'box-sizing:border-box;border:1px solid #ef4444;'
+                        : 'background:radial-gradient(circle,#dfe8f5 0 1.5px,transparent 2.5px);');
+                    const s = { id, el, failed, task: t };
+                    stars.set(id, s);
+                    ensure().appendChild(el);
+                    place(s);
+                    requestAnimationFrame(() => { el.style.opacity = failed ? '0.7' : '0.5'; });
+                }
+            }
+            async function poll() {
+                try {
+                    const r = await fetch('/api/tasks');
+                    if (r.ok) { const d = await r.json(); sync((d && d.tasks) || []); }
+                } catch (_) {}
+            }
+            function start() {
+                if (timer) return;
+                poll();
+                timer = setInterval(poll, POLL_MS);
+                window.addEventListener('resize', () => stars.forEach(place));
+            }
+            function hit(x, y) {
+                let best = null, bd = Infinity;
+                for (const s of stars.values()) { const d = Math.hypot(s.x - x, s.y - y); if (d <= HIT_PX && d < bd) { bd = d; best = s; } }
+                return best;
+            }
+            function open(id) {
+                if (typeof fridayNavigate === 'function') fridayNavigate({ workspace: 'system', tab: 'task', task: id });
+            }
+            return { start, sync, hit, open, list: () => [...stars.values()].map(s => ({ id: s.id, x: s.x, y: s.y, failed: s.failed })) };
+        })();
+        // </orb-sky>
         // <orb-hands>
         // Hands-on control of the process orbs (avatar-visual-genome.md §16.1),
         // one path for the pointer and for voice. The scene's canvas takes no
@@ -972,7 +1045,8 @@
         const FridayOrbHands = (function () {
             const UNDO_MS = 5000, HIT_PX = 30, CAPTION_MS = 7000;
             const G = FridayOrbLife.gestures(), U = FridayOrbLife.undoQueue(UNDO_MS);
-            let src = null, pressed = null, focusId = null, hoverId = null, raf = 0, swallowUntil = 0, undoTimer = 0;
+            let src = null, pressed = null, focusId = null, hoverId = null, raf = 0, swallowUntil = 0, undoTimer = 0, star = null;
+            const sky = () => (typeof FridayOrbSky !== 'undefined' ? FridayOrbSky : null);
             let layer = null;
 
             function attach(s) { src = s; }
@@ -1020,9 +1094,14 @@
                 raf = requestAnimationFrame(holdLoop);
             };
             window.addEventListener('pointerdown', e => {
-                if (e.button !== 0 || !src || !onScene(e.target)) return;
-                const o = hit(e.clientX, e.clientY);
-                if (!o) return;
+                if (e.button !== 0 || !onScene(e.target)) return;
+                const o = src ? hit(e.clientX, e.clientY) : null;
+                if (!o) {
+                    // A star of the day's finished work: a tap opens its receipt.
+                    const s = sky() && sky().hit(e.clientX, e.clientY);
+                    if (s) { e.preventDefault(); e.stopPropagation(); star = { id: s.id, x: e.clientX, y: e.clientY }; }
+                    return;
+                }
                 e.preventDefault(); e.stopPropagation();
                 pressed = o.id; focusId = o.id;
                 G.down(o.id, e.clientX, e.clientY, performance.now());
@@ -1042,6 +1121,13 @@
                 }
             }, true);
             window.addEventListener('pointerup', e => {
+                if (star) {
+                    const s = star; star = null;
+                    swallowUntil = performance.now() + 350;
+                    e.stopPropagation();
+                    if (Math.hypot(e.clientX - s.x, e.clientY - s.y) <= 10 && sky()) sky().open(s.id);
+                    return;
+                }
                 if (!pressed) return;
                 const id = pressed; pressed = null;
                 const r = G.up(e.clientX, e.clientY, performance.now(), ctx());
@@ -1058,9 +1144,11 @@
                 // The click that ends a press on an orb is the orb's, not the page's.
                 if (performance.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); return; }
                 // A synthetic click (hand-tracking dwell) on the bare scene opens the orb under it.
-                if (e.detail !== 0 || !src || !onScene(e.target)) return;
-                const o = hit(e.clientX, e.clientY);
-                if (o) { e.stopPropagation(); act('open', [o.id], 'hand'); }
+                if (e.detail !== 0 || !onScene(e.target)) return;
+                const o = src ? hit(e.clientX, e.clientY) : null;
+                if (o) { e.stopPropagation(); act('open', [o.id], 'hand'); return; }
+                const s = sky() && sky().hit(e.clientX, e.clientY);
+                if (s) { e.stopPropagation(); sky().open(s.id); }
             }, true);
 
             // ---- the notices: an undo pill, a status line (top centre, clear of the centre UI) ----
