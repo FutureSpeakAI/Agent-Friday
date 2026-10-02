@@ -375,3 +375,117 @@ test('a window resize keeps the picture', async ({ page }) => {
   // frame's light from one frame to the next as it fell.
   expect(s.wholeFrameRatio, `the whole frame kept its light through the resize: ${JSON.stringify(s)}`).toBeLessThan(1.25);
 });
+
+/** The process orbs' own server rows, so nothing live wanders into a measurement. */
+async function quietOrbRoutes(page: Page) {
+  await page.route('**/api/processes**', r => r.fulfill({ json: { processes: [] } }));
+  await page.route(/\/api\/tasks(\?.*)?$/, r => r.fulfill({ json: { tasks: [
+    { task_id: 'tmail', status: 'running', seat_is_local: false, trace_id: 'tr-m' },
+    { task_id: 'tpar', status: 'running', trace_id: 'tr-p' },
+    { task_id: 'tkid', status: 'running', trace_id: 'tr-k', parent_trace_id: 'tr-p' } ] } }));
+  await page.route(/\/api\/tasks\/[^/]+(\/digest)?$/, r => r.fulfill({ json: { status: 'completed', model: 'model-x', cost_usd: 0.01 } }));
+}
+/** One orb of every kind, as the orb layer adds them (avatar-visual-genome.md §16). */
+const addAllKinds = (page: Page) => page.evaluate(() => {
+  const w = window as any, add = (o: any) => w.fridayAddOrb(o);
+  add({ id: 'agent-r', label: 'Research', category: 'default', research_commission_id: 'rc1', task_id: 'tres' });
+  add({ id: 'image-m', label: 'Poster', category: 'creative' });
+  add({ id: 'sched-s', label: 'Digest', category: 'monitoring' });
+  add({ id: 'agent-mail', label: 'Inbox', category: 'communication', task_id: 'tmail' });
+  add({ id: 'code-x', label: 'Tests', category: 'default', task_id: 'tcode' });
+  add({ id: 'pull-y', name: 'Pulling Model', label: 'Model', category: 'default' });
+  add({ id: 'agent-p', label: 'Parent', category: 'default', task_id: 'tpar' });
+  add({ id: 'agent-k', label: 'Moon', category: 'default', task_id: 'tkid' });
+});
+
+test('the process orbs never flash: every kind, every state, the hand on them', async ({ page }) => {
+  test.setTimeout(25 * 60_000);
+  await quietOrbRoutes(page);
+  const watcher = await openScene(page, GENOMES.v1, 0);
+  for (const idx of [0, EDEN_INDEX, 6]) {                 // the lattice, Giga Earth, the Dirac cloud
+    await page.evaluate(i => setEvolution(i), idx);
+    await run(page, 5000);
+    await mark(page, `orbs arrive (structure ${idx})`);
+    await addAllKinds(page);
+    await run(page, 3000);
+    await mark(page, `orbs at work (structure ${idx})`);
+    await page.evaluate(() => {
+      const w = window as any;
+      w.fridayUpdateOrb('agent-r', { progress: 0.7 }); w.fridayUpdateOrb('image-m', { progress: 0.3 });
+      w.__sparks = setInterval(() => ['agent-r', 'agent-mail', 'code-x', 'agent-p'].forEach(id =>
+        FridayOrbScene.frame({ type: 'presence', state: 'tool', phase: 'start', agent: id })), 120);
+    });
+    await run(page, 4000);
+    await page.evaluate(() => clearInterval((window as any).__sparks));
+    await mark(page, `the hand on the orbs (structure ${idx})`);
+    // a drag across the screen, a throw and its undo, a status, a pause asked of a row that cannot
+    for (let i = 0; i <= 60; i++) {
+      await page.evaluate(k => { const s = FridayOrbScene._state('agent-r'); if (s) s.drag = { x: 200 + k * 14, y: 220 + 3 * k }; }, i);
+      await run(page, FRAME);
+    }
+    await page.evaluate(() => { const s = FridayOrbScene._state('agent-r'); if (s) s.drag = null; });
+    await page.evaluate(() => { FridayOrbHands.run({ op: 'cancel', target: 'the media one' }); });
+    await run(page, 1500);
+    await page.evaluate(() => { FridayOrbHands.run({ op: 'undo', target: 'it' }); FridayOrbHands.run({ op: 'status', target: 'the research one' });
+                                FridayOrbHands.run({ op: 'pause', target: 'the scheduled one' }); });
+    await run(page, 2500);
+    await mark(page, `an orb needs the owner's OK (structure ${idx})`);
+    await emit(page, { type: 'pending', approval: { approval_id: 'ap-orb', status: 'pending', kind: 'cloud_spill', title: 'Move to the cloud',
+      subject_type: 'task', subject_id: 'tcode', created_at: Date.now() / 1000 } });
+    await run(page, 4000);
+    await emit(page, { type: 'resolved', approval_id: 'ap-orb', status: 'approved' });
+    await run(page, 1500);
+    await mark(page, `orbs finish, fail and leave (structure ${idx})`);
+    await page.evaluate(() => {
+      const w = window as any;
+      for (const id of ['agent-r', 'image-m', 'agent-p', 'agent-k']) { w.fridayUpdateOrb(id, { status: 'completed' }); w.fridayRemoveOrb(id); }
+      w.fridayUpdateOrb('pull-y', { status: 'error' }); w.fridayRemoveOrb('pull-y');
+    });
+    await run(page, 4000);
+    await page.evaluate(() => { const w = window as any;
+      for (const id of ['sched-s', 'agent-mail', 'code-x']) w.fridayRemoveOrb(id);
+      FridayOrbHands.run({ op: 'open', target: 'the system one' }); });
+    await run(page, 3000);
+  }
+  const segs = await finish(page);
+  expect(segs.length).toBe(15);
+  expect(segs.every(s => s.frames > 60), 'every segment rendered frames').toBe(true);
+  const bad = segs.filter(s => !s.ok);
+  expect(bad, `The orbs flashed:\n${explain(bad)}`).toEqual([]);
+  expect(watcher.errors.filter(e => /is not defined|is not a function|Cannot read/.test(e))).toEqual([]);
+  // nothing is left behind once every orb has gone (a failure goes when it is looked at)
+  expect(await page.evaluate(() => (window as any).fridayGetOrbs().filter((o: any) => o.id !== 'helper-swarm').length)).toBe(0);
+});
+
+test('the frame budget holds with a full sky of busy orbs', async ({ page }) => {
+  // Real frames on the real clock: eight orbs at work (forms, sparks,
+  // labels, the keep-out) cost no more than the frame budget: p95 within 10%
+  // and 1 ms of the calm frames either side.
+  test.setTimeout(15 * 60_000);
+  await quietOrbRoutes(page);
+  await openScene(page, GENOMES.v1, 0, { realClock: true });
+  const p95 = (ms: number) => page.evaluate(ms => new Promise<number>(res => {
+    const t: number[] = []; let last = performance.now(); const end = last + ms;
+    const f = () => { const x = performance.now(); t.push(x - last); last = x;
+      if (x < end) requestAnimationFrame(f); else { t.sort((a, b) => a - b); res(t[Math.floor(t.length * 0.95)]); } };
+    requestAnimationFrame(f); }), ms);
+  const rows: string[] = [];
+  for (const i of [0, EDEN_INDEX, 7]) {
+    await page.evaluate(i => setEvolution(i), i);
+    await page.waitForTimeout(9000);
+    const before = await p95(3000);
+    await addAllKinds(page);
+    await page.evaluate(() => { (window as any).__sparks = setInterval(() => ['agent-r', 'agent-mail', 'code-x', 'agent-p'].forEach(id =>
+      FridayOrbScene.frame({ type: 'presence', state: 'tool', phase: 'start', agent: id })), 120); });
+    await page.waitForTimeout(1500);
+    const busy = await p95(3000);
+    await page.evaluate(() => { const w = window as any; clearInterval(w.__sparks);
+      for (const o of w.fridayGetOrbs()) { w.fridayUpdateOrb(o.id, { status: 'completed' }); w.fridayRemoveOrb(o.id); } });
+    await page.waitForTimeout(4000);
+    const after = await p95(3000);
+    const calm = Math.max(before, after);
+    rows.push(`structure ${i}: calm p95 ${calm.toFixed(1)} ms, with orbs ${busy.toFixed(1)} ms`);
+    expect(busy, rows.join(' | ')).toBeLessThanOrEqual(calm * 1.10 + 1);
+  }
+  console.log(rows.join(' | '));
+});
