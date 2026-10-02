@@ -5566,9 +5566,10 @@ window.addEventListener('DOMContentLoaded',function(){
 
             function frame(f) {
                 if (!f || f.type !== 'presence') return;
-                // Friday's own frames only: a label for anyone else is dropped.
-                // (A frame with no label is hers until every frame carries one.)
-                if (f.agent !== undefined && f.agent !== FRIDAY) return;
+                // Friday's own frames only: her loop labels every frame it
+                // sends 'friday'. Anyone else's label, and no label at all, is
+                // dropped (services/presence.py).
+                if (f.agent !== FRIDAY) return;
                 const st = f.state, ph = f.phase;
                 if (st === 'tool' && ph === 'start') {
                     if (twists.length < MAX_TWISTS) twists.push({ ref: f.ref, t: 0, phase: 'in', block: null });

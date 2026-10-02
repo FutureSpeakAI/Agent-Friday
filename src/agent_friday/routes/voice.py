@@ -2372,25 +2372,28 @@ if sock is not None:
             from agent_friday.services.model_router import TIMINGS_SINK
             _timings.clear()
             _tok = TIMINGS_SINK.set(lambda t: _timings.update(t or {}))
+            # A local voice turn is Friday's own: her presence label.
+            from agent_friday.services import presence as _presence
             try:
-                reply, _trace = _generate_agent(
-                    [{"role": "user",
-                      "content": _voice_user_message(user_text, settings)}],
-                    system=system_prompt,
-                    model=_brain,
-                    max_tokens=_voice_reply_cap(settings),
-                    temperature=settings.get("temperature"),
-                    # The owner's own words for this turn, and that they were
-                    # spoken: a card is decided by those words (answer_card),
-                    # exactly as a typed or cloud-voice answer is.
-                    session_ctx={"authenticated": _ws_authenticated,
-                                 "provider": _prov,
-                                 "is_voice": True,
-                                 "surface": "voice-local",
-                                 "owner_text": str(user_text or "")[:4000]},
-                    workspace=settings.get("active_workspace") or "",
-                    on_text_delta=on_delta,
-                )
+                with _presence.acting_as(_presence.FRIDAY):
+                    reply, _trace = _generate_agent(
+                        [{"role": "user",
+                          "content": _voice_user_message(user_text, settings)}],
+                        system=system_prompt,
+                        model=_brain,
+                        max_tokens=_voice_reply_cap(settings),
+                        temperature=settings.get("temperature"),
+                        # The owner's own words for this turn, and that they were
+                        # spoken: a card is decided by those words (answer_card),
+                        # exactly as a typed or cloud-voice answer is.
+                        session_ctx={"authenticated": _ws_authenticated,
+                                     "provider": _prov,
+                                     "is_voice": True,
+                                     "surface": "voice-local",
+                                     "owner_text": str(user_text or "")[:4000]},
+                        workspace=settings.get("active_workspace") or "",
+                        on_text_delta=on_delta,
+                    )
             finally:
                 TIMINGS_SINK.reset(_tok)
             return reply

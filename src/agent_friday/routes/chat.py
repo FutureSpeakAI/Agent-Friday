@@ -625,7 +625,10 @@ def _traced_turn(fn):
         status = "failed"
         reply_text = None
         try:
-            with _rt.activate(tid):
+            # The turn is Friday's own: every presence frame it sends says so
+            # (services/presence.py). A helper it spawns runs as its own id.
+            from agent_friday.services import presence as _presence
+            with _rt.activate(tid), _presence.acting_as(_presence.FRIDAY):
                 rv = fn(*args, **kwargs)
             status = "complete"
             if tid:
@@ -740,7 +743,7 @@ def chat_stream():
             # A cube knocks out of line on the lattice (§13).
             try:
                 from agent_friday.services import presence as _presence
-                _presence.emit("error", "once", turn=_tid)
+                _presence.emit("error", "once", turn=_tid, agent=_presence.FRIDAY)
             except Exception:
                 pass
         finally:

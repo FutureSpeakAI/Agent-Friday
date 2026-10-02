@@ -465,7 +465,9 @@ def resume(task_id, *, confirm_pending: bool = False,
     if blob.get("local_only"):
         from agent_friday.services.local_only_guard import local_only
         guard = local_only(blob["local_only"])
-    with guard:
+    # A resumed task is a helper: its frames carry its own id, never Friday's.
+    from agent_friday.services import presence as _presence
+    with guard, _presence.acting_as(_presence.helper_id(task_id)):
         return _call_claude_agent(
             convo,
             model=blob.get("model"),

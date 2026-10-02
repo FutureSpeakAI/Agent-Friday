@@ -54,7 +54,7 @@ const top = []; units.forEach((u, i) => { if (u[1] > 1) top.push(i); });
 const an = { units, layers, blocks, top, core: [0, 0, 0], toward: [0, 0, 1], up: [0, 1, 0],
              across: [1, 0, 0], extent: S * 1.5, spacing: S };
 const G = FridayGestures, dt = 1 / 60;
-const P = (state, phase, extra) => Object.assign({ type: 'presence', state, phase }, extra || {});
+const P = (state, phase, extra) => Object.assign({ type: 'presence', agent: 'friday', state, phase }, extra || {});
 const mag = v => Math.hypot(v[0], v[1], v[2]);
 const peaks = (series, thr) => { let n = 0, up = false;
   for (const v of series) { if (!up && v > thr) { n++; up = true; } else if (up && v < thr * 0.3) up = false; } return n; };
@@ -71,7 +71,9 @@ const watchB = q => { for (const k of Object.keys(q.units)) { const b = q.units[
 
 // ── 1. a flood of other agents' frames moves nothing ──────────────────────
 fresh(REDUCED);
-const OTHERS = ['helper:1', 'helper:2', 'salon:host', 'laya', 'needle', 'background:sched-1', 'model:gemini'];
+// An unlabelled frame (undefined) is not hers either: only agent === 'friday' is.
+const OTHERS = ['helper:1', 'helper-0a1b2c3d4e5f', 'salon:host', 'laya', 'needle', 'background:sched-1',
+                'model:gemini', undefined, 'FRIDAY', ''];
 let k = 0;
 for (let i = 0; i < 300; i++) {
   const a = OTHERS[i % OTHERS.length];

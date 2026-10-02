@@ -3938,12 +3938,16 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                           task_id=task_id, parent_id=parent, trace_id=tid)
     # A helper cluster splits off the lattice (avatar-visual-genome.md §13).
     # A scheduled run is shown as background work by its process instead.
+    # The start and end of a helper are Friday's own state (she has a helper
+    # working), so they carry her label; everything the helper does runs as
+    # the helper's own id, whatever context this thread was started from.
+    from agent_friday.services import presence as _presence
     _helper_ref = None
     if kind == "subagent":
         try:
-            from agent_friday.services import presence as _presence
             _helper_ref = _presence.opaque(task_id)
-            _presence.emit("subagent", "start", ref=_helper_ref, turn=parent)
+            _presence.emit("subagent", "start", ref=_helper_ref, turn=parent,
+                           agent=_presence.FRIDAY)
         except Exception:
             _helper_ref = None
     # A cloud pin taken on the spawning thread (a scheduled job the owner
@@ -3963,7 +3967,8 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
     else:
         _pin_ctx = _ctxlib.nullcontext()
     try:
-        with _rtrace.activate(trace), _pin_ctx:
+        with _rtrace.activate(trace), _pin_ctx, \
+                _presence.acting_as(_presence.helper_id(task_id)):
             return _task_worker_untraced(task_id, name, prompt, description,
                                          orb_icon=orb_icon, model=model, tools=tools)
     finally:
@@ -3974,11 +3979,10 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                            reply=(TASKS.get(task_id) or {}).get('result'))
         if _helper_ref:
             try:
-                from agent_friday.services import presence as _presence
                 with TASKS_LOCK:
                     _st = str((TASKS.get(task_id) or {}).get('status') or '')
                 _presence.emit("subagent", "end", ref=_helper_ref, turn=parent,
-                               ok=_st.startswith("complete"))
+                               ok=_st.startswith("complete"), agent=_presence.FRIDAY)
             except Exception:
                 pass
 
@@ -5367,7 +5371,10 @@ def _runner_task_worker(task_id, runner, resumed=False):
     if resumed:
         _task_log(task_id, 'Resumed after a restart: completed steps are not redone.')
     try:
-        out = runner(task_id) or {}
+        # A runner is a helper: its frames carry its own id, never Friday's.
+        from agent_friday.services import presence as _presence
+        with _presence.acting_as(_presence.helper_id(task_id)):
+            out = runner(task_id) or {}
         status = out.get('status') or 'complete'
         _task_set(task_id, status=status, result=str(out.get('result') or ''),
                   ended=_time.time())

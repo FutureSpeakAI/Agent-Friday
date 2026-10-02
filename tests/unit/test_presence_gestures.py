@@ -45,7 +45,7 @@ const run = (sec) => { let r; for (let i = 0; i < Math.round(sec / dt); i++) r =
 const moving = r => Object.keys(r.units).filter(k => {
   const u = r.units[k]; return u.d.some(v => Math.abs(v) > 1e-6) || u.r.some(v => Math.abs(v) > 1e-6) || Math.abs(u.s - 1) > 1e-6;
 }).map(Number).sort((a, b) => a - b);
-const P = (state, phase, extra) => Object.assign({ type: 'presence', state, phase }, extra || {});
+const P = (state, phase, extra) => Object.assign({ type: 'presence', agent: 'friday', state, phase }, extra || {});
 const out = {};
 
 // 1. nothing happens without an event
@@ -333,9 +333,9 @@ const an = { units: [[0,0,1.6],[1.6,0,1.6]], layers: [[0],[1]], blocks: [{ units
              top: [0], core: [0,0,0], toward: [0,0,1], up: [0,1,0], across: [1,0,0], extent: 2.4, spacing: 1.6 };
 const G = FridayGestures, out = {};
 G.reset(); out.fresh = G.settled();
-G.frame({ type: 'presence', state: 'tool', phase: 'start', ref: 'a' });
+G.frame({ type: 'presence', agent: 'friday', state: 'tool', phase: 'start', ref: 'a' });
 G.step(1/60, an); out.busy = G.settled();
-G.frame({ type: 'presence', state: 'tool', phase: 'end', ref: 'a' });
+G.frame({ type: 'presence', agent: 'friday', state: 'tool', phase: 'end', ref: 'a' });
 for (let i = 0; i < 20; i++) G.step(1/60, an);
 out.fading = G.settled();
 for (let i = 0; i < 300; i++) G.step(1/60, an);
@@ -360,12 +360,12 @@ const an = { units: [[0,0,1.6],[1.6,0,1.6],[0,1.6,1.6],[1.6,1.6,1.6]], layers: [
              core: [0,0,0], toward: [0,0,1], up: [0,1,0], across: [1,0,0], extent: 2.4, spacing: 1.6 };
 const G = FridayGestures, bad = [];
 G.reset();
-G.frame({ type: 'presence', state: 'round', phase: 'step', n: 1 });
-G.frame({ type: 'presence', state: 'tool', phase: 'start', ref: 'a' });
-G.frame({ type: 'presence', state: 'verify', phase: 'once', ok: true });
+G.frame({ type: 'presence', agent: 'friday', state: 'round', phase: 'step', n: 1 });
+G.frame({ type: 'presence', agent: 'friday', state: 'tool', phase: 'start', ref: 'a' });
+G.frame({ type: 'presence', agent: 'friday', state: 'verify', phase: 'once', ok: true });
 G.setApprovals(1);
 for (let i = 0; i < 400; i++) {
-  if (i === 60) { G.frame({ type: 'presence', state: 'tool', phase: 'end', ref: 'a' }); G.setApprovals(0); }
+  if (i === 60) { G.frame({ type: 'presence', agent: 'friday', state: 'tool', phase: 'end', ref: 'a' }); G.setApprovals(0); }
   const r = G.step(1/60, an);
   for (const k of Object.keys(r.units)) {
     const u = r.units[k];
@@ -392,7 +392,7 @@ const base = { units: [[0,0,0],[1,0,0],[2,0,0],[3,0,0]], blocks: [], top: [3], c
                toward: [0,0,1], up: [0,1,0], across: [1,0,0], extent: 3, spacing: 1 };
 const G = FridayGestures, bad = [];
 G.reset();
-G.frame({ type: 'presence', state: 'round', phase: 'step', n: 1 });
+G.frame({ type: 'presence', agent: 'friday', state: 'round', phase: 'step', n: 1 });
 for (let i = 0; i < 200; i++) {
   // unit 1 flows out of layer 0 at frame 30 and back at frame 50
   const layers = (i >= 30 && i < 50) ? [[0], [1, 2, 3]] : [[0, 1], [2, 3]];

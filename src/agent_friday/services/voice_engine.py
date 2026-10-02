@@ -596,12 +596,15 @@ def _tool_ask_friday(inp):
         "read aloud by another model. Do not mention the relay.\n\n"
         + question, settings, volatile=_meta.get("volatile"))
     try:
-        text, _trace = _generate_agent(
-            [{"role": "user", "content": user}], system=system, model=seat,
-            max_tokens=_voice_reply_cap(settings),
-            session_ctx={"authenticated": True, "provider": "local",
-                         "is_voice": True, "surface": "voice-live-relay"},
-            workspace=settings.get("active_workspace") or "")
+        # Friday's own brain answering her own voice session: her label.
+        from agent_friday.services import presence as _presence
+        with _presence.acting_as(_presence.FRIDAY):
+            text, _trace = _generate_agent(
+                [{"role": "user", "content": user}], system=system, model=seat,
+                max_tokens=_voice_reply_cap(settings),
+                session_ctx={"authenticated": True, "provider": "local",
+                             "is_voice": True, "surface": "voice-live-relay"},
+                workspace=settings.get("active_workspace") or "")
     except Exception as e:
         _log.error("ask_friday failed: %s: %s", type(e).__name__, e, exc_info=True)
         return f"Friday's local model could not answer ({type(e).__name__})."

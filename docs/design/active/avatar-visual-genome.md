@@ -1706,19 +1706,26 @@ mouth shapes from speech (visemes), nothing anthropomorphic.
   own work too, "Waiting on 3 helpers" while she is not.
 - A flood of others' frames moves nothing (tests below).
 
-**The label contract** (for P-TURN-ORIGIN, not yet on the bus as of
-2026-10-01):
-- Every presence frame from Friday's own loop carries `agent: "friday"`. Any
-  other value (`helper:<id>`, `salon:<id>`, `laya`, `needle`,
-  `background:<id>`, `model:<id>`) is not hers and is dropped.
+**The label contract** (P-TURN-ORIGIN; built in `services/presence.py`):
+- Every presence frame from Friday's own turn carries `agent: "friday"`. The
+  label comes from the context the code runs in (`presence.acting_as`), set
+  around her chat turns (`routes/chat._traced_turn`) and her voice turns;
+  callers never pass it by hand.
+- A helper (a sub-agent task, a runner task, a resumed task) runs as its own
+  opaque id, `helper-<hash>`, which never equals `friday`. A new thread starts
+  with no agent, and the task worker sets the helper's id even when it runs
+  on a context that was Friday's, so a helper never inherits her label.
+- The label is shape-checked like every other id: a value that is not an
+  opaque id (a colon, a space, a slash, over 64 characters) is dropped.
+- Code that runs under no agent sends no label, never Friday's, and the scene
+  treats only `agent === "friday"` as hers. Any other value, and no label at
+  all, is dropped.
 - P-TURN-ORIGIN's entry-point label (chat, voice, automation and so on) is
-  inherited by sub-agents, so it alone cannot tell Friday from her helpers.
-  An agent label is also needed.
-- Until every frame carries one, a frame with no label is treated as hers
-  (today's behaviour). Today a helper's own tool calls and a background
-  process's rounds still reach the scene.
-- Friday's own `subagent` start and end frames, sent by her loop when she
-  starts and joins a helper, are what the helpers-working state counts.
+  inherited by sub-agents, so it alone cannot tell Friday from her helpers;
+  the agent label is what does.
+- Friday's own `subagent` start and end frames, sent when she starts and
+  joins a helper, carry her label: they are what the helpers-working state
+  counts.
 
 **Every real event has its gesture.** Each one-shot plays three times
 (§13.3):

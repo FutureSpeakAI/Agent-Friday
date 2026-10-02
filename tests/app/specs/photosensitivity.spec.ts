@@ -131,7 +131,7 @@ async function openScene(page: Page, view: any, structureIndex = 0, opts: { real
 const run = (page: Page, ms: number) => page.clock.runFor(Math.round(ms / FRAME) * FRAME);
 const mark = (page: Page, name: string) => page.evaluate(n => (window as any).__flashMeter.mark(n), name);
 const emit = (page: Page, d: any) => page.evaluate(x => (window as any).__emit(x), d);
-const P = (state: string, phase: string, extra: any = {}) => ({ type: 'presence', state, phase, ...extra });
+const P = (state: string, phase: string, extra: any = {}) => ({ type: 'presence', agent: 'friday', state, phase, ...extra });
 
 /** What the avatar showed while helpers worked under a flood of others' frames. */
 type Flood = { status: string; twists: number; helpers: number };

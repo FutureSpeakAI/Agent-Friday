@@ -17,9 +17,20 @@ Frames ride the approvals stream every open page already shares
 (services/approval_feed.py, /api/approvals/events, relayed across tabs by
 fridayApprovalFeed in index.html), as {"type": "presence", ...}. They are
 lossy: a page that falls behind loses presence frames, never approval cards.
+
+Every frame says whose state it is, as `agent`. The label comes from the
+context the code runs in (`acting_as`), never from the caller: Friday's own
+turn runs under `FRIDAY`, a helper or a scheduled run under its own opaque
+id (`helper_id`), which can never equal `FRIDAY`. Code that runs under no
+agent sends no label, never Friday's; the avatar treats only
+`agent == "friday"` as her own state. A new thread starts with no agent, so
+a helper's thread never inherits Friday's label; work that is hers and is
+handed to another thread carries it with `contextvars.copy_context`.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import logging
 import re
@@ -41,6 +52,10 @@ ROUTES = frozenset({"local", "cloud"})
 #: Opaque ids only: a trace id, a call number, a hash. No spaces, slashes or
 #: colons, so no path, sentence or URL fits.
 _ID = re.compile(r"^[A-Za-z0-9_\-.]{1,64}$")
+#: The orchestrator's own label. Only Friday's own turn runs under it.
+FRIDAY = "friday"
+_AGENT: contextvars.ContextVar = contextvars.ContextVar("friday_presence_agent",
+                                                       default=None)
 #: Counts are small non-negative integers.
 _MAX_COUNT = 1_000_000
 
@@ -65,7 +80,7 @@ def _count(v):
 
 def _frame(state, phase, fields) -> dict:
     f = {"type": "presence", "state": state, "phase": phase, "at": time.time()}
-    for key in ("turn", "ref"):
+    for key in ("turn", "ref", "agent"):
         v = fields.get(key)
         if isinstance(v, str) and _ID.match(v):
             f[key] = v
@@ -85,12 +100,36 @@ def emit(state: str, phase: str, **fields) -> bool:
     try:
         if state not in STATES or phase not in PHASES:
             return False
+        if "agent" not in fields:
+            fields["agent"] = _AGENT.get()
         from agent_friday.services import approval_feed
         approval_feed.publish(_frame(state, phase, fields), lossy=True)
         return True
     except Exception as e:
         _log.debug("presence frame not sent: %s", e)
         return False
+
+
+@contextlib.contextmanager
+def acting_as(agent):
+    """Run a block as `agent`: every frame sent inside it, on this context,
+    carries that label. A value that is not an opaque id runs the block
+    under no agent."""
+    token = _AGENT.set(agent if isinstance(agent, str) and _ID.match(agent) else None)
+    try:
+        yield
+    finally:
+        _AGENT.reset(token)
+
+
+def current_agent():
+    """The agent the calling code runs as, or None."""
+    return _AGENT.get()
+
+
+def helper_id(value) -> str:
+    """A helper's own label: opaque, and never `FRIDAY`."""
+    return "helper-" + opaque(value)
 
 
 def opaque(value) -> str:
