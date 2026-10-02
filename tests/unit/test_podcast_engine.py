@@ -333,7 +333,8 @@ def test_episodes_notify_and_never_autoplay(monkeypatch):
     monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw))
     pe._announce({"id": "20260929T100000-abcdef", "title": "T", "privacy": "public",
                   "show": "S", "duration_s": 60})
-    assert pushed and pushed[0]["target"]["view"] == "podcasts"
+    # The note opens the episode (on its Media card, or Studio's Podcasts view).
+    assert pushed and pushed[0]["target"]["episode"] == "20260929T100000-abcdef"
     assert not any("play" in json.dumps(a).lower() and a.get("type") == "podcast"
                    for a in pushed[0].get("actions") or [])
 
