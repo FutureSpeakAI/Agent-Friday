@@ -2195,6 +2195,14 @@ def _generate_front_page(slot="morning"):
     # The owner's approved media diet holds here, with a receipt.
     from agent_friday.services import media_diet
     pool, diet_removed = media_diet.enforce(pool, "front_page")
+    # News value: hard news first (safety, government, courts, the economy),
+    # then analysis, then service pieces; the section is what the story is
+    # about, not the feed it came from; opinion is labelled.
+    for p in pool:
+        p["category"] = news_seen.section_for(p) or p.get("category")
+        p["news_value"] = news_seen.news_value(p)
+        p["opinion"] = news_seen.is_opinion(p)
+    pool = news_seen.rank(pool)
     editorial = _editorialize_front_page(
         pool, slot=slot, prev_stories=prev_titles,
         calendar_events=calendar_events)
@@ -2234,7 +2242,8 @@ def _generate_front_page(slot="morning"):
     order = sorted(NEWS_CATEGORIES.keys(),
                    key=lambda c: _CATEGORY_WEIGHT.get(c, 0), reverse=True)
     for cat in order:
-        group = [a for a in (_tag(dict(p)) for p in rest if p.get("category") == cat) if _shown(a)][:6]
+        group = news_seen.cap_per_outlet(
+            [a for a in (_tag(dict(p)) for p in rest if p.get("category") == cat) if _shown(a)], 2)[:6]
         if not group:
             continue
         sections.append({

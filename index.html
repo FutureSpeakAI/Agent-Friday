@@ -3109,6 +3109,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fp-badge.new { color:#03130a; background:#00ff88; border:1px solid #00ff88; }
         .fp-badge.update { color:#0a0a14; background:#f59e0b; border:1px solid #f59e0b; }
+        .fp-badge.opinion { color:#0a0a14; background:#d6c7a1; border:1px solid #d6c7a1; }
         .fp-thread {
             margin-top:8px; padding:7px 10px; border-radius:7px; font-size:11px; line-height:1.45;
             color:#cfe8ff; background:rgba(0,212,255,0.07); border:1px solid rgba(0,212,255,0.2);
@@ -32218,7 +32219,10 @@ function NewsWS() {
     className: "fp-badge update"
   }, "UPDATE") : fp.lead.new_since_last ? /*#__PURE__*/React.createElement("span", {
     className: "fp-badge new"
-  }, "NEW") : null, cardActions(fp.lead)), fp.lead.breaking && /*#__PURE__*/React.createElement("span", {
+  }, "NEW") : null, fp.lead.opinion ? /*#__PURE__*/React.createElement("span", {
+    className: "fp-badge opinion",
+    title: "Opinion: the writer's view, not news reporting"
+  }, "OPINION") : null, cardActions(fp.lead)), fp.lead.breaking && /*#__PURE__*/React.createElement("span", {
     className: "breaking-badge",
     style: {
       marginBottom: 6,
@@ -32323,7 +32327,10 @@ function NewsWS() {
     className: "fp-badge update"
   }, "UPDATE") : it.new_since_last ? /*#__PURE__*/React.createElement("span", {
     className: "fp-badge new"
-  }, "NEW") : null, cardActions(it)), /*#__PURE__*/React.createElement(FpAlso, { it: it }), it.thread_update && /*#__PURE__*/React.createElement("div", {
+  }, "NEW") : null, it.opinion ? /*#__PURE__*/React.createElement("span", {
+    className: "fp-badge opinion",
+    title: "Opinion: the writer's view, not news reporting"
+  }, "OPINION") : null, cardActions(it)), /*#__PURE__*/React.createElement(FpAlso, { it: it }), it.thread_update && /*#__PURE__*/React.createElement("div", {
     className: "fp-thread sm"
   }, /*#__PURE__*/React.createElement("b", null, "New:"), " ", it.thread_update), it.breaking && /*#__PURE__*/React.createElement("span", {
     className: "breaking-badge",

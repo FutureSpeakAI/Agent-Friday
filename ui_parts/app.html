@@ -9823,7 +9823,7 @@ function NewsWS(){
          {/* Lead story */}
          {fp.lead&&<div className={'fp-lead cat-'+(fp.lead.color||'tech')}>
            <div className="news-cardtop">
-             <span className="cat-chip">LEAD · {fp.lead.category}</span>{fp.lead.continuing?<span className="fp-badge update">UPDATE</span>:fp.lead.new_since_last?<span className="fp-badge new">NEW</span>:null}
+             <span className="cat-chip">LEAD · {fp.lead.category}</span>{fp.lead.continuing?<span className="fp-badge update">UPDATE</span>:fp.lead.new_since_last?<span className="fp-badge new">NEW</span>:null}{fp.lead.opinion?<span className="fp-badge opinion" title="Opinion: the writer's view, not news reporting">OPINION</span>:null}
              {cardActions(fp.lead)}
            </div>
            {fp.lead.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
@@ -9864,7 +9864,7 @@ function NewsWS(){
            </div>
            <div className="news-masonry">
              {(sec.articles||[]).map((it,i)=><div key={i} className={'news-card cat-'+(it.color||sec.color||'tech')}>
-               <div className="news-cardtop"><span className="cat-chip">{it.source}</span>{it.continuing?<span className="fp-badge update">UPDATE</span>:it.new_since_last?<span className="fp-badge new">NEW</span>:null}{cardActions(it)}</div><FpAlso it={it}/>{it.thread_update&&<div className="fp-thread sm"><b>New:</b> {it.thread_update}</div>}
+               <div className="news-cardtop"><span className="cat-chip">{it.source}</span>{it.continuing?<span className="fp-badge update">UPDATE</span>:it.new_since_last?<span className="fp-badge new">NEW</span>:null}{it.opinion?<span className="fp-badge opinion" title="Opinion: the writer's view, not news reporting">OPINION</span>:null}{cardActions(it)}</div><FpAlso it={it}/>{it.thread_update&&<div className="fp-thread sm"><b>New:</b> {it.thread_update}</div>}
                {it.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
                <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
                <div className="news-snippet">{it.snippet}</div>
