@@ -763,17 +763,29 @@ class TestCloudOnlyStillHonoursTheChoice:
         assert result["model"] == "claude-fable-5", (
             "a deliberate per-class rule was never consulted in cloud_only")
 
-    def test_a_local_seat_does_not_defeat_cloud_only(self, monkeypatch):
-        """The mode's guarantee is unchanged: nothing runs on this machine.
-
-        Honouring a cloud pick must not become a way to smuggle a local model
-        past cloud_only, so a local binding still yields the cloud default.
-        """
+    def test_a_chat_bound_to_a_local_model_runs_on_it_under_cloud_only(self, monkeypatch):
+        """The user picks, never the product. A model the owner bound to this
+        conversation is an explicit choice and outranks the global mode; the
+        mode governs only turns with no explicit choice."""
         self._patch_ollama(monkeypatch, available=True)
         r = _router(mode="cloud_only", default_cloud_model="claude-sonnet-5")
         result = r.route(_msgs("what is 2+2?"), {
             "conversation_seat": {"model": "gemma4:12b",
                                   "provider": "ollama-local"}})
+        assert result["provider"] == "local"
+        assert result["is_local"] is True
+        assert result["model"] == "gemma4:12b"
+
+    def test_a_global_local_seat_does_not_defeat_cloud_only(self, monkeypatch):
+        """Without a per-chat choice the global mode decides: a local model in
+        the global reasoning seat still yields the cloud default."""
+        self._patch_ollama(monkeypatch, available=True)
+        import agent_friday.core as core
+        monkeypatch.setattr(core, "_load_settings", lambda: {
+            "capability_routing": {"reasoning": {"model": "gemma4:12b",
+                                                 "provider": "ollama-local"}}})
+        r = _router(mode="cloud_only", default_cloud_model="claude-sonnet-5")
+        result = r.route(_msgs("what is 2+2?"), {})
         assert result["provider"] == "cloud"
         assert result["is_local"] is False
         assert result["model"] == "claude-sonnet-5"
