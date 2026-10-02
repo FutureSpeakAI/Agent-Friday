@@ -945,7 +945,19 @@ class StoodDown(RuntimeError):
 
 
 def _run_task(rec):
-    """Execute a schedule's task and return its result (may raise)."""
+    """Execute a schedule's task and return its result (may raise).
+
+    The WHOLE run, its gates included, is one trace: a run stopped by the
+    stand-down gate, a retired builtin or a local-only pause leaves a record
+    saying why, not nothing."""
+    from agent_friday.services import reasoning_trace as _rt
+    name = rec.get("name") or ((rec.get("task") or {}).get("ref")) or "Scheduled job"
+    with _rt.scope("scheduled", name, nested=True):
+        return _run_task_inner(rec)
+
+
+def _run_task_inner(rec):
+    """`_run_task` inside its trace."""
     # The single gate. Every scheduled job -- builtin and agent_prompt -- comes
     # through here, so "pause all background and scheduled jobs" is one check
     # rather than a flag each job has to remember to read.
@@ -977,7 +989,7 @@ def _run_task(rec):
         # have inherited the interactive 999-round budget with nobody watching.
         from agent_friday.services import reasoning_trace as _rt
         from agent_friday.services import turn_budget as _tbud
-        with _rt.scope("scheduled", rec.get("name") or ref or "Scheduled job", nested=True), \
+        with _rt.scope("scheduled", rec.get("name") or ref or "Scheduled job"), \
                 _tbud.unattended():
             # `local_only` used to be read ONLY on the agent_prompt path below, so
             # every builtin schedule -- daily creation, the briefings, the news front
