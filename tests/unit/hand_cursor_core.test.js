@@ -147,6 +147,19 @@ test('change limiter allows at most one visual state change per 334 ms', () => {
   assert.strictEqual(lim('b', 340), 'b');
 });
 
+// ── Guarded actions ──
+test('guard words: sends, deletes, spends, publishes and approvals are guarded', () => {
+  for (const t of ['Send', 'Send now', 'Post now', 'Publish', 'Delete this record', 'Erase everything', 'Pay $4', 'Approve & Continue', 'Release', 'Transfer funds', 'Share']) assert.strictEqual(core.classifyGuard(t), true, t);
+});
+test('guard words: stops, closes, drafts and previews are not, even beside a guarded verb', () => {
+  for (const t of ['Cancel', 'Cancel send', 'Deny', 'Close', 'Draft a reply', 'Preview post', 'Undo delete', 'Reply', 'Later', 'Change', 'Compose', 'Refresh', '']) assert.strictEqual(core.classifyGuard(t), false, t);
+});
+test('guard: a container can force it on or off, and a danger class forces it on', () => {
+  assert.strictEqual(core.classifyGuard('Open', { force: 'on' }), true);
+  assert.strictEqual(core.classifyGuard('Send', { force: 'off' }), false);
+  assert.strictEqual(core.classifyGuard('Clear', { danger: true }), true);
+});
+
 const failed = results.filter(r => r[0] === 'FAIL');
 for (const [s, n] of results) console.log(s + ' ' + n);
 console.log(results.length - failed.length + ' passed, ' + failed.length + ' failed');

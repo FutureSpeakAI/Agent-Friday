@@ -25,7 +25,6 @@
     '[tabindex]:not([tabindex="-1"])', '[contenteditable=""]', '[contenteditable=true]',
     '[data-fr-target]', '[onclick]', '.dock-btn', '.news-card', '.row[role=option]', '.sec',
   ].join(',');
-  const GUARD_WORDS = /\b(send( it| now)?|post( now)?|publish|delete|erase|remove|pay|buy|purchase|spend|transfer|approve( & continue)?|release|submit)\b/i;
   const TARGET_SELECTOR = ACTIONABLE;
   let cache = { t: 0, list: [] };
   let dirty = true;
@@ -44,10 +43,9 @@
     return true;
   }
   function isGuarded(el) {
-    if (el.closest('[data-fr-guarded]')) return true;
-    if (el.dataset && el.dataset.frGuarded === 'off') return false;
-    const text = ((el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '')).trim().slice(0, 60);
-    return GUARD_WORDS.test(text) && !/cancel|deny|stop|close|later|change|reply|draft/i.test(text) || el.classList.contains('btn-danger') || el.classList.contains('danger');
+    const force = el.dataset && el.dataset.frGuarded === 'off' ? 'off' : (el.closest('[data-fr-guarded]:not([data-fr-guarded="off"])') ? 'on' : null);
+    const text = (el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '');
+    return Core.classifyGuard(text, { force, danger: el.classList.contains('btn-danger') || el.classList.contains('danger') });
   }
   /** Every actionable thing on screen, as snap targets. Rebuilt at most every 120 ms or on change. */
   function targets(now) {

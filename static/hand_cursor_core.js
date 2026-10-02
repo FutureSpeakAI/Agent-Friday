@@ -195,8 +195,8 @@
   // approve are guarded; words that stop, close, step back or only prepare are not, even
   // beside a guarded verb ("Cancel send", "Draft a reply"). A container can force either
   // way with data-fr-guarded (see the DOM layer); this is the default.
-  const GUARD_WORDS = /(send(?: it| now| all)?|post(?: now)?|publish|delete|erase|remove|pay|buy|purchase|spend|transfer|approve(?: & continue| and continue)?|release|submit|share)/i;
-  const SAFE_WORDS = /(cancel|deny|stop|close|later|change|reply|draft|preview|undo|back|dismiss|edit)/i;
+  const GUARD_WORDS = /\b(send(?: it| now| all)?|post(?: now)?|publish|delete|erase|remove|pay|buy|purchase|spend|transfer|approve(?: & continue| and continue)?|release|submit|share)\b/i;
+  const SAFE_WORDS = /\b(cancel|deny|stop|close|later|change|reply|draft|preview|undo|back|dismiss|edit)\b/i;
   function classifyGuard(text, opts) {
     const t = String(text || '').trim().slice(0, 80);
     if (opts && opts.force === 'on') return true;
