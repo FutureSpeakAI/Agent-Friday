@@ -5357,7 +5357,7 @@ window.addEventListener('DOMContentLoaded',function(){
             function place(s) {
                 const p = FridayOrbLife.starAt(s.id, W(), H());
                 s.x = p.x; s.y = p.y;
-                s.el.style.transform = 'translate(' + (p.x - 3) + 'px,' + (p.y - 3) + 'px)';
+                s.el.style.transform = 'translate(' + (p.x - 4.5) + 'px,' + (p.y - 4.5) + 'px)';
             }
             function clear() { stars.forEach(s => s.el.remove()); stars.clear(); }
             function sync(tasks) {
@@ -5372,14 +5372,17 @@ window.addEventListener('DOMContentLoaded',function(){
                     const failed = /^(failed|error|timeout)$/.test(st);
                     const el = document.createElement('div');
                     el.className = 'friday-star' + (failed ? ' failed' : '');
-                    el.style.cssText = 'position:absolute;left:0;top:0;width:6px;height:6px;border-radius:50%;opacity:0;'
-                        + 'transition:opacity 1.2s ease;' + (failed ? 'box-sizing:border-box;border:1px solid #ef4444;'
-                        : 'background:radial-gradient(circle,#dfe8f5 0 1.5px,transparent 2.5px);');
+                    // A small four-point sparkle, not a round dot, so it reads apart
+                    // from the scene's own star field; a failure is a hollow ring.
+                    el.style.cssText = 'position:absolute;left:0;top:0;width:9px;height:9px;opacity:0;transition:opacity 1.2s ease;'
+                        + (failed ? 'box-sizing:border-box;border:1px solid #ef4444;border-radius:50%;'
+                        : 'background:linear-gradient(#bfefff,#bfefff) center/1px 100% no-repeat,'
+                        + 'linear-gradient(#bfefff,#bfefff) center/100% 1px no-repeat,radial-gradient(circle,#ffffff 0 1.5px,transparent 2px);');
                     const s = { id, el, failed, task: t };
                     stars.set(id, s);
                     ensure().appendChild(el);
                     place(s);
-                    requestAnimationFrame(() => { el.style.opacity = failed ? '0.7' : '0.5'; });
+                    requestAnimationFrame(() => { el.style.opacity = failed ? '0.75' : '0.7'; });
                 }
             }
             async function poll() {
@@ -5729,7 +5732,8 @@ window.addEventListener('DOMContentLoaded',function(){
             const AMBER = 0xf59e0b, ERROR = 0xef4444;
             let mgr = null, cam = null;
             const sparkGate = FridayOrbLife.sparkGate();
-            let clock = 0, taskPoll = 0, subscribed = false;
+            let clock = 0, taskPoll = 0, subscribed = false, placed = 0;
+            const GOLDEN = Math.PI * (3 - Math.sqrt(5)), SPEED = 0.12;
             const tasks = new Map();                // task_id -> task row (trace, parent, seat)
 
             const seed = () => {
@@ -5794,11 +5798,29 @@ window.addEventListener('DOMContentLoaded',function(){
                 o.group.add(s.form); o.group.add(s.cloudRing); o.group.add(s.failRing);
                 o.sphere.visible = false;
                 o.baseGlowOpacity = 0.28;
+                // Spread, not bunched: each new orb takes the next golden-angle
+                // slot on one of three tiers, and all keep one speed, so the
+                // spacing holds (the layer's random angles and speeds let
+                // orbs and their labels pile up).
+                o.oAngle = (placed * GOLDEN) % (Math.PI * 2);
+                o.oHeight = ((placed % 3) - 1) * 1.8;
+                o.oSpeed = SPEED;
+                placed++;
+                o.group.position.set(Math.cos(o.oAngle) * o.oRadius, o.oHeight, Math.sin(o.oAngle) * o.oRadius);
                 o.__s = s;
                 paint(o, s);
             }
             function merge(o, s, upd) {
                 Object.assign(s.row, upd || {});
+                // A row can arrive in parts (the poll, then the helper's own
+                // fields): the kind follows what is known now.
+                const kind = FridayOrbLife.kindOf(s.row);
+                if (kind !== s.kind) {
+                    s.kind = kind;
+                    o.group.remove(s.form); FridayOrbForms.dispose(s.form);
+                    s.form = FridayOrbForms.build(kind, FridayOrbLife.formParams(kind, seed()), FridayOrbLife.HUES[s.hue].hex);
+                    o.group.add(s.form);
+                }
                 const st = String((upd && upd.status) || o.status || '');
                 const failed = /^(failed|error|timeout)$/.test(st);
                 if (failed !== s.failed) { s.failed = failed; if (failed) s.spiral = null; }
@@ -59864,7 +59886,9 @@ function App() {
         const sig = window._fridayMoodSignals || {};
         const micOn = window.fridayVibe.isMicActive?.() ?? false;
         let sysMood = 'LISTENING';
-        if (sig.ttsActive) sysMood = 'SPEAKING';else if (sig.chatLoad) sysMood = 'REASONING';else if (sig.taskRunning || sig.routineRunning || (window.fridayGetOrbs?.() || []).length > 0) sysMood = 'EXECUTING';else if (micOn) sysMood = 'LISTENING';
+        // Her own state only: a helper task running, or an orb on the scene, is
+        // the orbs' to show, never her colour (avatar-visual-genome.md §16).
+        if (sig.ttsActive) sysMood = 'SPEAKING';else if (sig.chatLoad) sysMood = 'REASONING';else if (sig.routineRunning) sysMood = 'EXECUTING';else if (micOn) sysMood = 'LISTENING';
         // At rest, the scene subtly takes on the ambient user-state mood (energy /
         // focus / stress / creative-flow) instead of a flat IDLE. Active signals
         // above always win, so this only colors the calm moments.

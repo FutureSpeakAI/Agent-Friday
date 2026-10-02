@@ -142,6 +142,26 @@ mgr.addOrb({ id: 'helper-k', label: 'K', category: 'default', task_id: 'tk' });
 run(3);
 out.moon = +mgr.orbs.get('helper-k').group.position.distanceTo(mgr.orbs.get('helper-p').group.position).toFixed(2);
 
+// a row that arrives in parts: the kind follows what is known now
+mgr.addOrb({ id: 'image-late', label: 'L', category: 'default' });
+const k0 = S('image-late') && S('image-late').kind;
+mgr.addOrb({ id: 'image-late', label: 'L', category: 'default', research_commission_id: 'rc9' });
+out.late = { before: k0, after: S('image-late').kind, oneForm: mgr.orbs.get('image-late').group.children.filter(c => c.isGroup && c.userData.kind).length };
+mgr.updateOrb('image-late', { status: 'completed' }); mgr.removeOrb('image-late'); run(3);
+
+// spread, not bunched: orbs added in a row keep apart, at one speed
+const spreadIds = ['s1', 's2', 's3', 's4'];   // with the four still here: the layer's cap of eight
+spreadIds.forEach(id => mgr.addOrb({ id, label: id, category: 'default' }));
+run(5);
+const ang = spreadIds.map(id => { const q = mgr.orbs.get(id).group.position; return Math.atan2(q.z, q.x); });
+let minGap = Infinity;
+for (let i = 0; i < ang.length; i++) for (let j = i + 1; j < ang.length; j++) {
+  let d = Math.abs(ang[i] - ang[j]) % (2 * Math.PI); d = Math.min(d, 2 * Math.PI - d);
+  const sameTier = Math.abs(mgr.orbs.get(spreadIds[i]).oHeight - mgr.orbs.get(spreadIds[j]).oHeight) < 0.5;
+  if (sameTier) minGap = Math.min(minGap, d); }
+out.spread = { minGapDeg: Math.round(minGap * 180 / Math.PI), oneSpeed: new Set(spreadIds.map(id => mgr.orbs.get(id).oSpeed)).size === 1 };
+spreadIds.forEach(id => { mgr.updateOrb(id, { status: 'completed' }); mgr.removeOrb(id); }); run(3);
+
 // the swarm orb
 mgr.addOrb({ id: 'helper-swarm', label: '+3 helpers', category: 'default', count: 3 });
 out.swarm = { dressed: !!S('helper-swarm'), target: FridayOrbHands.run({ op: 'list' }).helpers.length };
@@ -216,6 +236,29 @@ def test_a_helpers_own_helper_is_its_moon(o):
     assert o["moon"] < 1.5
 
 
+def test_a_kind_follows_what_is_known_now(o):
+    assert o["late"] == {"before": "media", "after": "research", "oneForm": 1}
+
+
+def test_orbs_spread_out_and_keep_their_spacing(o):
+    assert o["spread"]["oneSpeed"] is True
+    assert o["spread"]["minGapDeg"] >= 30
+
+
 def test_the_swarm_orb_is_left_alone(o):
     assert o["swarm"]["dressed"] is False
     assert o["swarm"]["target"] == 4     # helper-a, helper-d, helper-p, helper-k
+
+
+PAGES = [ROOT / "index.html", ROOT / "ui_parts" / "app.html"]
+
+
+@pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
+def test_fridays_mood_never_follows_her_helpers(path):
+    # Her core's colour is hers: a helper task running, or any orb on the
+    # scene, must not turn her to EXECUTING (§16: an orb never drives her form).
+    text = path.read_text(encoding="utf-8")
+    lines = [ln for ln in text.splitlines() if "sysMood" in ln and "EXECUTING" in ln]
+    assert lines, f"{path.name}: the mood decision is gone"
+    for ln in lines:
+        assert "taskRunning" not in ln and "fridayGetOrbs" not in ln, ln.strip()

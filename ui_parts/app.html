@@ -21729,7 +21729,9 @@ function App(){
     let sysMood='LISTENING';
     if(sig.ttsActive)sysMood='SPEAKING';
     else if(sig.chatLoad)sysMood='REASONING';
-    else if(sig.taskRunning||sig.routineRunning||((window.fridayGetOrbs?.()||[]).length>0))sysMood='EXECUTING';
+    // Her own state only: a helper task running, or an orb on the scene, is
+    // the orbs' to show, never her colour (avatar-visual-genome.md §16).
+    else if(sig.routineRunning)sysMood='EXECUTING';
     else if(micOn)sysMood='LISTENING';
     // At rest, the scene subtly takes on the ambient user-state mood (energy /
     // focus / stress / creative-flow) instead of a flat IDLE. Active signals
