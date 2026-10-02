@@ -223,8 +223,7 @@
 .fa-rail-label{writing-mode:vertical-rl;transform:rotate(180deg);font-family:Orbitron,Inter,sans-serif;font-size:9px;letter-spacing:.22em;color:${ACCENT};opacity:.85;white-space:nowrap}
 .fa-rail-count{font-family:'JetBrains Mono',monospace;font-size:10px;color:#eafcff;background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.35);border-radius:10px;padding:0 6px}
 .fa-strip{display:flex;align-items:stretch;flex-shrink:0;border-bottom:1px solid rgba(0,212,255,0.12);background:rgba(10,14,26,0.55)}
-.fa-host{flex-wrap:wrap}
-.fa-buildbar{flex-basis:100%;display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid rgba(0,212,255,0.12);background:rgba(10,14,26,0.55);font-family:Inter,system-ui,sans-serif;font-size:11px}
+.fa-buildbar{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid rgba(0,212,255,0.12);background:rgba(10,14,26,0.55);font-family:Inter,system-ui,sans-serif;font-size:11px}
 .fa-buildbar-label{color:rgba(255,255,255,0.6);font-family:JetBrains Mono,Consolas,monospace;font-size:10px;letter-spacing:.06em;margin-right:auto}
 .fa-unbuild{position:absolute;right:8px;bottom:8px;z-index:2}
 .fa-strip .fa-widen{flex:0 0 auto;color:${ACCENT};font-size:11px;padding:4px 10px;white-space:nowrap}
@@ -852,14 +851,13 @@
     const unbuild = codebase && project ? h('button', { type: 'button', className: 'fa-btn fa-quiet', 'data-build-close': '1', title: 'Back to the chat\'s own canvas', onClick: () => bindCodebase(null) }, '\u2190 Chat') : null;
 
     return h('div', { ref, className: 'fa-host', style: { flexDirection: side ? 'row' : 'column' }, 'data-artifact-host': has ? (open ? 'open' : 'closed') : 'none' },
-      buildBar,
       has && !side ? h('div', { className: 'fa-strip', role: 'tablist' },
         h('button', { role: 'tab', 'aria-selected': !open, className: open ? '' : 'fa-on', onClick: () => setOpen(false) }, 'Chat'),
         h('button', { role: 'tab', 'aria-selected': open, className: open ? 'fa-on' : '', onClick: () => setOpen(true), title: stripTitle },
           stripTitle, stripCount ? h('span', { className: 'fa-count' }, stripCount) : null),
         canWiden ? h('button', { type: 'button', className: 'fa-widen', 'data-widen-tray': '1', title: 'Place the chat at two thirds of the screen, so the panel sits beside it',
           onClick: () => { onTrayPlace(traySide || 'right', 2 / 3); setOpen(true); } }, '\u21E4 Beside the chat') : null) : null,
-      h('div', { className: 'fa-chat', style: has && !side && open ? { display: 'none' } : undefined }, children),
+      h('div', { className: 'fa-chat', style: has && !side && open ? { display: 'none' } : undefined }, buildBar, children),
       has && open && unbuild && side ? h('div', { className: 'fa-unbuild' }, unbuild) : null,
       has && side && open ? h('div', { className: 'fa-divider' + (dragging ? ' fa-dragging' : ''), title: 'Drag to resize', onMouseDown: e => { e.preventDefault(); dragStart.current = { x: e.clientX, w: panelW }; setDragging(true); } }) : null,
       has && open ? panel : null,
