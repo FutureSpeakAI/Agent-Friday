@@ -18,7 +18,9 @@ import { expect, type APIRequestContext } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 
-export const BASE = process.env.FRIDAY_BASE || 'http://localhost:3000';
+// The resolved target (scratch by default; live only read-only): target.js.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const BASE: string = require('../target.js').resolveTarget(process.env).baseURL;
 
 /** A single conversational turn and everything the server told us about it. */
 export type Turn = {

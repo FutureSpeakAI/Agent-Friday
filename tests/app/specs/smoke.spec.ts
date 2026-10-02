@@ -3,7 +3,7 @@
  * does not get run. Everything here answers one question: if I opened Friday
  * right now, would it work at all?
  */
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { bootApp, openApp, attachShot, apiJson, dockButton, BASE } from '../harness';
 import { assertImagesDecoded, assertRenderedOnce } from '../liveness';
 

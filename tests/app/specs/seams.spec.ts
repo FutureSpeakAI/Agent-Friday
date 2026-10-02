@@ -5,7 +5,7 @@
  * fast tier. They catch a class of defect that is invisible to unit tests
  * because each side of the seam is individually correct.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import * as fs from 'fs';
 import * as path from 'path';
 import { apiJson, BASE } from '../harness';

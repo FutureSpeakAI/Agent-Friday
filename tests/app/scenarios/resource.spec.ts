@@ -12,7 +12,7 @@
  * roughly 8 GB for five minutes, and routing to a second model loads another
  * before the first is evicted.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { say, ask, explain, tally, BASE } from './scenario';
 
 const RESERVE_MIB = 768;   // matches the display reserve the guard enforces

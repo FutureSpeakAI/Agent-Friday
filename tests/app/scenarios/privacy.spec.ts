@@ -11,7 +11,7 @@
  * judgment layer is live, and /api/privacy/left-the-machine is a per-cloud-call
  * ledger. These scenarios read them rather than guessing.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { say, ask, explain, tally, BASE } from './scenario';
 
 /** Rows in the egress ledger, newest first. */
