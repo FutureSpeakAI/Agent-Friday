@@ -2468,6 +2468,8 @@ DEFAULT_SETTINGS = {
     # day) shows (unified-shell.md §10.4): "smart" when it is useful, "always"
     # whenever no workspace is open, "never" only when asked (show_my_day).
     "landing_mode": "smart",
+    # Big mode (hand-cursor.md §2): large targets when hand tracking is on. auto | on | off.
+    "big_mode": "auto",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
     # most tasks; Opus 5 remains available for max-reasoning work. Fallback
     # chain: Sonnet 5 → Fable 5 → Opus 5 → Sonnet 5 → Haiku 4.5
@@ -2626,6 +2628,11 @@ DEFAULT_SETTINGS = {
         "pinch_enter": 0.050,
         "pinch_exit": 0.075,
         "dwell_ms": 700,
+        # The hand cursor layer (static/hand_cursor.js): magnetic snap to targets, its reach in
+        # pixels (release is 1.6x), and two-hand zoom (a second tracked hand costs CPU).
+        "snap": True,
+        "snap_radius": 40,
+        "two_hand_zoom": False,
         "debug_overlay": False,
     },
     # ── Which scanner decides whether an action needs your sign-off ──

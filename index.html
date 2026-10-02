@@ -39,6 +39,8 @@ window.addEventListener('error',function(e){
 <!-- Friday's workspaces: the one list the dock, window and tab titles, the
      command palette and the server's navigate tools and voice all read. -->
 <script src="/static/workspace_registry.js"></script>
+<script src="/static/hand_cursor_core.js"></script>
+<script src="/static/hand_cursor.js"></script>
 <!-- Push-to-transcribe inside the tab. One file rather than two
      hand-maintained copies; the tray suppresses the hotkey while the
      system-wide version is on, so only one of them ever fires. -->
@@ -271,20 +273,49 @@ window.addEventListener('DOMContentLoaded',function(){
         }
 
         /* MINORITY REPORT HAND CURSOR */
+        /* The hand cursor is an abstract reticle (HIG, hand-cursor.md §1.7): a ring in cyan,
+           never a hand. Its states are opacity and scale transitions of at least 350 ms. */
         #hand-cursor {
-            position: fixed; top: -50px; left: -50px; width: 24px; height: 24px;
-            border-radius: 50%; border: 4px solid rgba(0, 255, 255, 0.8);
+            position: fixed; top: -50px; left: -50px; width: 20px; height: 20px;
+            border-radius: 50%; border: 1.5px solid rgba(0, 255, 255, 0.85);
             transform: translate(-50%, -50%); pointer-events: none; z-index: 9999;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5), inset 0 0 6px rgba(0, 255, 255, 0.3);
-            display: none; opacity: 0; transition: transform 0.1s, border-color 0.2s, opacity 0.3s;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.45), inset 0 0 6px rgba(0, 212, 255, 0.25);
+            display: none; opacity: 0; transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1), opacity 0.35s, width 0.35s, height 0.35s;
             justify-content: center; align-items: center;
         }
-        #hand-cursor.active { display: flex; opacity: 1; }
+        #hand-cursor.active { display: flex; opacity: 0.7; }
         #hand-cursor.hidden { opacity: 0; }
-        #hand-cursor.pinching { transform: translate(-50%, -50%) scale(0.8); border-color: #fff; box-shadow: 0 0 15px #fff; }
-        
-        #pinch-progress { position: absolute; top: -5px; left: -5px; width: 34px; height: 34px; transform: rotate(-90deg); opacity: 0; }
-        .pinch-circle { fill: none; stroke: #ff00ff; stroke-width: 4; stroke-dasharray: 95; stroke-dashoffset: 95; transition: stroke-dashoffset 0.1s linear; }
+        #hand-cursor.fr-locked { opacity: 1; }
+        #hand-cursor.fr-pinched { opacity: 1; transform: translate(-50%, -50%) scale(0.72); }
+        #hand-cursor.fr-held { opacity: 1; transform: translate(-50%, -50%) scale(1.1); box-shadow: 0 0 18px rgba(0, 212, 255, 0.7); }
+        body.fr-big #hand-cursor { width: 26px; height: 26px; }
+        #hand-cursor .fr-arc { position: absolute; left: -10px; top: -10px; width: 40px; height: 40px; transform: rotate(-90deg); pointer-events: none; }
+        body.fr-big #hand-cursor .fr-arc { left: -7px; top: -7px; }
+        #hand-cursor .fr-arc-bg { fill: none; stroke: rgba(0, 212, 255, 0.15); stroke-width: 2.5; }
+        #hand-cursor .fr-arc-fill { fill: none; stroke: #00d4ff; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 106.8; stroke-dashoffset: 106.8; opacity: 0; transition: stroke-dashoffset 0.08s linear, opacity 0.35s; }
+        /* The locked target: a soft ring drawn around it so the user knows what a pinch will hit. */
+        .fr-snap-box { position: fixed; left: 0; top: 0; width: 0; height: 0; border: 2px solid rgba(0, 212, 255, 0.6); border-radius: 10px;
+            box-shadow: 0 0 14px rgba(0, 212, 255, 0.35); pointer-events: none; z-index: 9990; opacity: 0;
+            transition: left 0.18s ease-out, top 0.18s ease-out, width 0.18s ease-out, height 0.18s ease-out, opacity 0.35s; }
+        .fr-snap { outline: none !important; }
+        /* Big mode (hand-cursor.md §2): large targets, fewer items, generous spacing. One switch, body.fr-big. */
+        body.fr-big { --fr-gap: 16px; }
+        body.fr-big .dock-btn { min-width: 88px; min-height: 88px; font-size: 13px; }
+        body.fr-big .dock .items, body.fr-big .dock-items { gap: 10px; }
+        body.fr-big .landing-cluster .landing-countdowns > * { font-size: 1.25em; padding: 10px 14px; }
+        body.fr-big .landing-cluster button, body.fr-big .landing-cluster .btn { min-height: 72px; min-width: 96px; font-size: 1.15em; padding: 0 26px; }
+        body.fr-big .landing-cluster input, body.fr-big .landing-cluster textarea { min-height: 72px; font-size: 1.25em; padding: 0 22px; border-radius: 36px; }
+        body.fr-big .chat-panel .btn, body.fr-big .chat-panel button, body.fr-big .chat-win button { min-height: 72px; min-width: 72px; font-size: 1.1em; }
+        body.fr-big .chat-panel textarea[data-chat-input], body.fr-big .chat-win textarea[data-chat-input] { min-height: 72px; font-size: 1.2em; line-height: 1.5; }
+        body.fr-big .chat-panel [data-chat-head] .btn { min-height: 56px; }
+        body.fr-big .news-ws .news-toolbar .btn, body.fr-big .news-ws .news-toolbar button { min-height: 72px; min-width: 96px; font-size: 1.1em; padding: 0 22px; }
+        body.fr-big .news-ws .news-masonry { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; column-count: 2 !important; gap: 24px; }
+        body.fr-big .news-ws .news-card { padding: 22px; font-size: 1.15em; min-height: 160px; }
+        body.fr-big .news-ws .news-card .btn, body.fr-big .news-ws .news-card button { min-height: 56px; min-width: 72px; }
+        body.fr-big .notif-dropdown { width: min(560px, 96vw); font-size: 1.15em; }
+        body.fr-big .notif-dropdown button, body.fr-big .notif-dropdown .btn { min-height: 56px; min-width: 72px; }
+        body.fr-big .notif-dropdown .task-card { padding: 18px; }
+        body.fr-big .top-bar .ibtn, body.fr-big .top-bar button { min-height: 44px; min-width: 44px; }
         
         .ripple {
             position: fixed; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 9998;
@@ -3725,6 +3756,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 holo_cues: 0.6, hand_gain: 2.2, hand_accel: 0.6, hand_region: 0.45,
                 hand_deadzone: 0.006, hand_smoothing: 0.30, click_method: 'pinch',
                 pinch_enter: 0.050, pinch_exit: 0.075, dwell_ms: 700,
+                snap: true, snap_radius: 40, two_hand_zoom: false,
                 // The window's depth. How many times bigger the avatar may get
                 // as you lean in, how many times smaller as you lean back, how
                 // quickly a fast lean is followed, and the calibrated face
@@ -4214,6 +4246,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     .then(function (d) {
                         const t = d && d.settings && d.settings.tracking;
                         if (t) window.FridayTracking.apply(t);
+                        if (window.FridayHandCursor && d && d.settings) window.FridayHandCursor.applySettings(d.settings);
                     }).catch(function () {});
             } catch (e) { /* settings are a nicety here, never a blocker */ }
         })();
@@ -4646,14 +4679,16 @@ window.addEventListener('DOMContentLoaded',function(){
                 try { await loadMediaPipe(); }
                 catch (e) { console.warn('[tracking] hand tracking unavailable:', e); isHandTrackingMode = false; return; }
                 if (cursor) cursor.classList.add('active');
+                if (window.FridayHandCursor) window.FridayHandCursor.setTracking(true);
                 if (!handsMP) {
                     handsMP = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-                    handsMP.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                    handsMP.setOptions({ maxNumHands: window.FridayTracking && window.FridayTracking.cfg.two_hand_zoom ? 2 : 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
                     handsMP.onResults(onHandsResults);
                 }
                 await startSharedCamera();
             } else {
                 if (cursor) cursor.classList.remove('active');
+                if (window.FridayHandCursor) window.FridayHandCursor.setTracking(false);
                 releaseCameraIfUnused();
             }
         }
@@ -4676,6 +4711,11 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (!handVisible) { handVisible = true; cursor.classList.remove('hidden'); }
                 rawHandX = window.FridayTracking.hand.x;
                 rawHandY = window.FridayTracking.hand.y;
+                if (window.FridayHandCursor) {
+                    const second = results.multiHandLandmarks[1];
+                    // Only the distance between the hands matters for a zoom, so the raw frame maps to the screen directly.
+                    window.FridayHandCursor.second(second ? { x: (1 - (second[8].x + second[4].x) / 2) * window.innerWidth, y: (second[8].y + second[4].y) / 2 * window.innerHeight } : null);
+                }
             } else {
                 isPinching = false; handVisible = false;
                 window.FridayTracking.handLost();
@@ -5196,6 +5236,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 // forgiving than raycasting against the 0.35-unit sphere — at orbit distance
                 // the sphere is only ~12px wide, which is finicky to point at.
                 const projected = new Map();
+                this._projected = projected;
                 for (const [id, o] of this.orbs) {
                     const p3 = o.group.position.clone().project(this.camera);
                     projected.set(id, {
@@ -7577,70 +7618,12 @@ window.addEventListener('DOMContentLoaded',function(){
             FridayGestureScene.begin();
             const elapsed = clock.getElapsedTime() * 0.5;
 
-            // --- HAND CURSOR LOGIC (Minority Report) ---
-            const cursor = document.getElementById('hand-cursor');
-            const pRing = document.querySelector('.pinch-circle');
-            if (isHandTrackingMode) {
-                // The pointer model already filtered and shaped this; a second
-                // lerp here would just add the lag the model exists to avoid.
+            // --- HAND CURSOR (static/hand_cursor.js): snap, pinch freeze, dwell, drag, big mode ---
+            if (isHandTrackingMode && window.FridayHandCursor) {
+                // The pointer model already filtered and shaped this; the cursor layer decides
+                // what the hand is on and what a pinch does, and draws the reticle.
                 currHandX = rawHandX; currHandY = rawHandY;
-                cursor.style.left = `${currHandX}px`; cursor.style.top = `${currHandY}px`;
-
-                // DWELL CLICK: hold still inside a small radius and it fires.
-                // For anyone whose pinch is unreliable, or who would rather not
-                // hold a pinch at all.
-                if (window.FridayTracking.cfg.click_method === 'dwell' && handVisible) {
-                    const moved = Math.hypot(currHandX - dwellAnchorX, currHandY - dwellAnchorY);
-                    if (moved > 26) {
-                        dwellAnchorX = currHandX; dwellAnchorY = currHandY;
-                        dwellStart = performance.now(); dwellFired = false;
-                        document.getElementById('pinch-progress').style.opacity = 0;
-                    } else {
-                        const held = performance.now() - dwellStart;
-                        const need = Math.max(200, window.FridayTracking.cfg.dwell_ms);
-                        if (held > 150) {
-                            document.getElementById('pinch-progress').style.opacity = 1;
-                            pRing.style.strokeDashoffset = 95 * (1.0 - Math.min(1, held / need));
-                        }
-                        if (held >= need && !dwellFired) {
-                            dwellFired = true;
-                            document.getElementById('pinch-progress').style.opacity = 0;
-                            pRing.style.strokeDashoffset = 95;
-                            spawnRipple(currHandX, currHandY, '#00ffff');
-                            cursor.style.display = 'none';
-                            const el = document.elementFromPoint(currHandX, currHandY);
-                            cursor.style.display = 'flex';
-                            if (el && typeof el.click === 'function') el.click();
-                        }
-                    }
-                }
-
-                if (isPinching && window.FridayTracking.cfg.click_method !== 'dwell') {
-                    if(!wasPinching) { pinchStartTime = performance.now(); rightClickFired = false; cursor.classList.add('pinching'); }
-                    const duration = performance.now() - pinchStartTime;
-                    if (duration > 200) {
-                        document.getElementById('pinch-progress').style.opacity = 1;
-                        const progress = Math.min(1.0, (duration - 200) / PINCH_HOLD_TIME);
-                        pRing.style.strokeDashoffset = 95 * (1.0 - progress);
-                        if (progress >= 1.0 && !rightClickFired) {
-                            rightClickFired = true; spawnRipple(currHandX, currHandY, '#ff00ff');
-                        }
-                    }
-                } else {
-                    if (wasPinching) {
-                        const duration = performance.now() - pinchStartTime;
-                        cursor.classList.remove('pinching');
-                        document.getElementById('pinch-progress').style.opacity = 0; pRing.style.strokeDashoffset = 95;
-                        if (duration < 500) {
-                            spawnRipple(currHandX, currHandY, '#00ffff');
-                            cursor.style.display = 'none'; 
-                            let el = document.elementFromPoint(currHandX, currHandY);
-                            cursor.style.display = 'flex';
-                            if (el && typeof el.click === 'function') el.click();
-                        }
-                    }
-                }
-                wasPinching = isPinching;
+                window.FridayHandCursor.frame({ x: rawHandX, y: rawHandY, visible: handVisible, pinching: isPinching, t: performance.now() });
             }
 
             // --- STABILIZED TRUE 3D HOLOGRAPHIC PARALLAX OFFSET ---
@@ -8240,6 +8223,29 @@ window.fridayUpdateOrb = function(id, upd) {
 };
 window.fridayRemoveOrb = function(id) {
     if (typeof processOrbManager !== 'undefined' && processOrbManager) processOrbManager.removeOrb(id);
+};
+// The hand cursor treats orbs as snap targets (hand-cursor.md §1.8): it reads their screen
+// positions, feeds the manager a pointer so gravity and hover work as with a mouse, and
+// clicks through the manager's own hit test. The orb layer's behaviour is unchanged.
+window.fridayOrbTargets = function() {
+    const m = (typeof processOrbManager !== 'undefined' && processOrbManager) ? processOrbManager : null;
+    if (!m || !m._projected) return [];
+    const out = [];
+    for (const [id, p] of m._projected) { const o = m.orbs.get(id); if (p.onScreen && o && !o.dying) out.push({ id, sx: p.sx, sy: p.sy, label: o.label }); }
+    return out;
+};
+window.fridayOrbPointer = function(x, y) {
+    const m = (typeof processOrbManager !== 'undefined' && processOrbManager) ? processOrbManager : null;
+    if (!m || !m.renderer) return;
+    const rect = m.renderer.domElement.getBoundingClientRect();
+    const now = performance.now(); const lm = m._lastMove || { x: -10000, y: -10000, t: 0 };
+    const nx = x - rect.left, ny = y - rect.top;
+    if (lm.t && lm.x > -1000) { const dt = Math.max(1, now - lm.t) / 1000; m.mouseVel = m.mouseVel * 0.5 + (Math.hypot(nx - lm.x, ny - lm.y) / dt) * 0.5; }
+    m._lastMove = { x: nx, y: ny, t: now }; m._lastMoveT = now; m.mouseScreen.x = nx; m.mouseScreen.y = ny;
+};
+window.fridayOrbClickAt = function(x, y) {
+    const m = (typeof processOrbManager !== 'undefined' && processOrbManager) ? processOrbManager : null;
+    if (m && typeof m._onClick === 'function') m._onClick({ clientX: x, clientY: y });
 };
 window.fridayGetOrbs = function() {
     if (typeof processOrbManager !== 'undefined' && processOrbManager) return processOrbManager.getOrbs();
@@ -9034,6 +9040,16 @@ function fridayRunActions(actions) {
             a.result = { tracking: TK.get() };
           }
         }
+      } else if (a.type === 'hand_cursor') {
+        // Voice: "next card", "select", "back", "big mode", "big mode off" (hand_cursor_tools).
+        const HC = window.FridayHandCursor;
+        if (!HC) a.result = { ok: false, code: 'CURSOR_UNAVAILABLE' };
+        else if (a.op === 'next') a.result = HC.next(1);
+        else if (a.op === 'previous') a.result = HC.next(-1);
+        else if (a.op === 'select') a.result = HC.select();
+        else if (a.op === 'back') a.result = HC.back();
+        else if (a.op === 'big_mode') a.result = { ok: true, code: HC.setBigMode(a.mode) ? 'BIG_MODE_ON' : 'BIG_MODE_OFF', mode: a.mode };
+        else a.result = { ok: false, code: 'CURSOR_BAD_OP' };
       } else if (a.type === 'open_last_source') {
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
@@ -50922,7 +50938,69 @@ function TrackingPanel({
     onClick: () => commit({
       click_method: o.k
     })
-  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
+  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Snap and big mode'), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Snap to targets",
+    value: cfg.snap !== false,
+    onChange: () => commit({
+      snap: cfg.snap === false
+    }),
+    desc: "The cursor locks onto the nearest button, card, link or orb within reach and holds it until you move well away, so neighbours never flicker. The locked target is ringed; a pinch hits it, not where your fingers drift."
+  }), cfg.snap !== false ? sl('snap_radius', 'Snap reach', 'How close the cursor must come to a target to lock on. It lets go at 1.6 times this distance.', 16, 96, 2, v => Math.round(v) + ' px') : null, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Two-hand zoom",
+    value: !!cfg.two_hand_zoom,
+    onChange: () => commit({
+      two_hand_zoom: !cfg.two_hand_zoom
+    }),
+    desc: "Pinch with both hands and move them apart to zoom the galaxy, the 3D views and images. Tracking a second hand costs CPU; off unless you use it. Takes effect the next time hand tracking starts."
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--st-label)',
+      margin: '10px 0 4px',
+      fontWeight: 500
+    }
+  }, "Big mode"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 6,
+      lineHeight: 1.6
+    }
+  }, "Large targets, fewer things per screen, and the primary actions as big cards, for driving Friday by hand. Automatic turns it on with hand tracking and off with it. Anything that sends, deletes or spends needs a held pinch or a spoken yes while it is on; approval cards are unchanged."), /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Big mode",
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginBottom: 10
+    }
+  }, [{
+    k: 'auto',
+    l: 'With hand tracking'
+  }, {
+    k: 'on',
+    l: 'Always'
+  }, {
+    k: 'off',
+    l: 'Never'
+  }].map(o => /*#__PURE__*/React.createElement("button", {
+    key: o.k,
+    type: "button",
+    role: "radio",
+    "aria-checked": (s && s.big_mode || 'auto') === o.k,
+    className: `settings-btn ${(s && s.big_mode || 'auto') === o.k ? 'active' : ''}`,
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      if (typeof window !== 'undefined' && window.FridayHandCursor) window.FridayHandCursor.setBigMode(o.k);
+      save({
+        big_mode: o.k
+      });
+    }
+  }, o.l))), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11.5,
       color: 'var(--st-dim)',
