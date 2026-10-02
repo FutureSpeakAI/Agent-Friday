@@ -349,9 +349,14 @@ def _llm_json(system: str, user: str, *, max_tokens: int = 3000) -> tuple[dict, 
             "No local model is serving, so the script could not be written on "
             "this computer. It was not sent to the cloud. Load a local model and "
             "the episode can be retried.")
-    with local_only_guard.local_only("Podcast"):
+    from agent_friday.services import reasoning_trace as _rt
+    with local_only_guard.local_only("Podcast"), _rt.scope("podcast", "Podcast script"):
         out = local_call.call_json(system, user, seat, max_tokens=max_tokens,
                                    retries=1, timeout=900)
+        if out is None:
+            _rt.set_reason("the local model did not return a usable script")
+        else:
+            _rt.model_call(seat, provider="local", seat="local")
     if out is None:
         raise render.RenderError("writer_failed",
                                  "The local model did not return a usable script.")
@@ -709,6 +714,10 @@ def produce(eid: str, *, should_stop=None) -> dict:
         ep = _update(eid, status="speaking", stage_detail="speaking on this computer")
         speak = None
         if ep.get("voice_engine") == "cloud":
+            if (ep.get("attached") or {}).get("routine"):
+                raise PodcastRefused(
+                    "News episodes are spoken on this computer only; a cloud "
+                    "voice is not used for them.")
             _refuse_cloud_voice(ep.get("privacy") == "private")
             speak = _cloud_speak()
         pcm, timings = render.render_lines(

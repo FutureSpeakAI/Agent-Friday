@@ -10,7 +10,7 @@
  * the creations directory, and deletes it again in afterEach even if the test
  * fails. It never runs image generation, so nothing reaches the real gallery.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';

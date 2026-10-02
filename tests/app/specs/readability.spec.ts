@@ -5,7 +5,7 @@
  * read. This measures the same thing in code, so the complaint becomes a
  * number. Vision finds it; this proves it and keeps it from coming back.
  */
-import { test } from '@playwright/test';
+import { test } from '../fixtures';
 import { bootApp, waitForSettled } from '../harness';
 import { assertReadableContrast } from '../liveness';
 

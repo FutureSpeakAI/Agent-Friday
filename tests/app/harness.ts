@@ -8,7 +8,9 @@
  */
 import { expect, type Page, type TestInfo } from '@playwright/test';
 
-export const BASE = process.env.FRIDAY_BASE || 'http://localhost:3000';
+// The resolved target (scratch by default; live only read-only): target.js.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const BASE: string = require('./target.js').resolveTarget(process.env).baseURL;
 
 /** Everything this suite creates is named with this prefix, and removed after. */
 export const SCRATCH = 'zz-test-';

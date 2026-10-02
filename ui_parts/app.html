@@ -1869,7 +1869,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
              silently answering from the cloud — offer the explicit choice
              to switch instead of a dead end. */}
           {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
-            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
+            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({owner_action:'routing_mode',settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
             {m.role==='user'?'You':fridayName()} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
@@ -9116,7 +9116,7 @@ function NewsWS(){
   const feedOffsetRef=useRef(0);const feedHasMoreRef=useRef(false);const feedBusyRef=useRef(false);
   const feedTopRef=useRef(null);const feedSentinelRef=useRef(null);const loadFeedRef=useRef(null);
   // Front Page (AI-curated editorial), Read Later store, and stream filters.
-  const[fp,setFp]=useState(null);const[fpList,setFpList]=useState([]);const[fpLoading,setFpLoading]=useState(true);const[fpGen,setFpGen]=useState(false);
+  const[fp,setFp]=useState(null);const[fpList,setFpList]=useState([]);const[fpRoutines,setFpRoutines]=useState([]);const[fpLoading,setFpLoading]=useState(true);const[fpGen,setFpGen]=useState(false);
   const[weekly,setWeekly]=useState(null);const[wkList,setWkList]=useState([]);const[wkLoading,setWkLoading]=useState(true);const[wkGen,setWkGen]=useState(false);
   const[editorial,setEditorial]=useState(null);const[edList,setEdList]=useState([]);const[edLoading,setEdLoading]=useState(true);const[edGen,setEdGen]=useState(false);
   const[readLater,setReadLater]=useState([]);const[rlLoading,setRlLoading]=useState(true);const[savedUrls,setSavedUrls]=useState({});
@@ -9182,7 +9182,7 @@ function NewsWS(){
   const loadArchStats=()=>fetch('/api/news/archive/stats').then(r=>r.json()).then(d=>setArchStats(d)).catch(()=>{});
   const loadSources=()=>fetch('/api/sources/preferences').then(r=>r.json()).then(d=>setSources({banned:d.banned||[],boosted:d.boosted||[]})).catch(()=>{});
   const loadPrefs=()=>fetch('/api/briefing/preferences').then(r=>r.json()).then(d=>{setPrefs(d.preferences);setCats(d.categories||[])}).catch(()=>{});
-  const loadFrontPage=()=>{setFpLoading(true);fetch('/api/news/front-page/latest').then(r=>r.json()).then(d=>{setFp(d.edition||null);setFpList(d.editions||[]);setFpLoading(false)}).catch(()=>setFpLoading(false))};
+  const loadFrontPage=()=>{setFpLoading(true);fetch('/api/news/front-page/latest').then(r=>r.json()).then(d=>{setFp(d.edition||null);setFpList(d.editions||[]);setFpRoutines(d.routines||[]);setFpLoading(false)}).catch(()=>setFpLoading(false))};
   const loadFpEdition=(id)=>{fetch('/api/news/front-page/'+encodeURIComponent(id)).then(r=>r.json()).then(d=>{if(d.edition)setFp(d.edition)}).catch(()=>{})};
   const loadWeekly=()=>{setWkLoading(true);fetch('/api/news/front-page/weekly/latest').then(r=>r.json()).then(d=>{setWeekly(d.digest||null);setWkList(d.digests||[]);setWkLoading(false)}).catch(()=>setWkLoading(false))};
   const genWeekly=async()=>{if(wkGen)return;setWkGen(true);try{const r=await fetch('/api/news/front-page/weekly/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.digest)throw new Error(d.message||'Generation failed');setWeekly(d.digest);loadWeekly()}catch(e){fridayToast('Weekly Digest generation failed: '+(e.message||e))}finally{setWkGen(false)}};
@@ -9556,6 +9556,10 @@ function NewsWS(){
              {fpList.map(e=><option key={e.id} value={e.id}>{e.date+' · '+(e.slot==='evening'?'PM':'AM')}</option>)}
            </select>}
          </div>
+         {fpRoutines.map(n=><div key={'fprn-'+n.id} className="fp-degraded fp-routine-notice">
+           <div className="fp-degraded-head">{n.state==='waiting'?'⏳ '+n.name+' is waiting for the local seat':n.state==='late'?'🕒 '+n.name+' ran late':n.state==='failed'?'⚠️ '+n.name+' failed':'⚠️ '+n.name+' did not run'}</div>
+           <div className="fp-degraded-body">{n.reason||''}</div>
+         </div>)}
          {anchorReading&&<div className="fp-anchor-bar">
            <span className="fp-anchor-dot"></span>
            <span className="fp-anchor-label">🎙️ Now Reading: Front Page — speak any time to ask {fridayName()} about a story</span>
@@ -16398,7 +16402,7 @@ function SettingsTabPrivacy({s,save}){
         {armMsg&&<div style={{fontSize:10,color:armMsg[0]==='✓'?'#00ff80':'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
       </div>}
       {armed&&armMsg&&<div style={{fontSize:10,color:'#00ff80',marginBottom:12,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
-      <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{...(s.model_routing||{}),vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
+      <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
     </StSection>
     <StSection title="Cloud mode">
       <PrivacyCloudConsent/>
@@ -18363,7 +18367,7 @@ function ScheduledCloudSection() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, "The morning news, evening front page, afternoon briefing, daily creation and heartbeat run on a model on this PC when it has one, at no cost. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
+  }, "The daily creation and heartbeat run on a model on this PC when it has one, at no cost. News (the front pages and briefings) always runs on this PC and waits for it; it never uses a cloud model. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -20705,6 +20709,7 @@ function App(){
     try{
       const body={settings:patch};
       if(opts.personality!==undefined)body.personality=opts.personality;
+      if(opts.ownerAction)body.owner_action=opts.ownerAction;
       const r=await apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
       // A5: a rejected save (e.g. the FR-1 seat gate 400ing a red model) must
@@ -20882,8 +20887,7 @@ function App(){
     }).catch(()=>{});
   };
   const setRoutingMode=(mode)=>{
-    const cur=agentSettings.model_routing||{};
-    saveAgentSettings({model_routing:{...cur,mode}});
+    saveAgentSettings({model_routing:{mode}},{ownerAction:'routing_mode'});
   };
   // ── A1: in-UI model pull with disk-space preflight; progress = pull orb.
   const[pullName,setPullName]=useState('');

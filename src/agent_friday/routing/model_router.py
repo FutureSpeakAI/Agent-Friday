@@ -857,6 +857,28 @@ class ModelRouter:
             default_cloud = ctx.get("cloud_model") or self.config.get(
                 "default_cloud_model", DEFAULT_CLOUD_MODEL
             )
+            # THE USER PICKS, NEVER THE PRODUCT. A model the owner bound to
+            # this conversation is an explicit choice, and it outranks the
+            # global mode in both directions: the local_preferred branch below
+            # already sends a cloud-bound chat to the cloud, and here a
+            # local-bound chat runs on its local seat. The global mode governs
+            # only turns where no explicit choice exists. If the bound seat
+            # cannot answer, the chat route refuses visibly rather than
+            # substituting a cloud model.
+            _cs = ctx.get("conversation_seat")
+            _cs_model = ((_cs.get("model") or "").strip()
+                         if isinstance(_cs, dict) else "")
+            if task_type != TaskType.VOICE and _cs_model and self._is_local_choice(
+                    _cs_model, (_cs.get("provider") or "").strip().lower()):
+                return {
+                    "provider": "local",
+                    "model": _cs_model,
+                    "task_type": task_type,
+                    "explicit_choice": True,
+                    "reason": ("this conversation is bound to %s, a local model; "
+                               "the owner's per-chat choice outranks the global "
+                               "cloud_only mode" % _cs_model),
+                }
             overrides = self.config.get("task_overrides", {})
             if task_type in overrides:
                 override = overrides[task_type]
@@ -1039,7 +1061,17 @@ class ModelRouter:
             _conv_seat = (ctx or {}).get("conversation_seat")
             _conv_model = ((_conv_seat or {}).get("model") or "").strip() \
                 if isinstance(_conv_seat, dict) else ""
-            if _conv_model and not self._is_registry_local(_conv_model):
+            _conv_prov = ((_conv_seat or {}).get("provider") or "").strip().lower() \
+                if isinstance(_conv_seat, dict) else ""
+            if _conv_model and self._is_local_choice(_conv_model, _conv_prov):
+                return {
+                    "provider": "local",
+                    "model": _conv_model,
+                    "task_type": task_type,
+                    "reason": ("this conversation is bound to %s, a local model; "
+                               "the per-chat binding is honoured" % _conv_model),
+                }
+            if _conv_model and not self._is_local_choice(_conv_model, _conv_prov):
                 return {
                     "provider": "cloud",
                     "model": _conv_model,

@@ -587,15 +587,44 @@ def update(trace_id: str = None, **fields) -> None:
         _log.debug("reasoning_trace.update failed: %s", e)
 
 
-def finish(trace_id: str = None, status: str = "complete", *, reply: str = None) -> Optional[Dict[str, Any]]:
+def set_reason(text: str, *, trace_id: str = None) -> None:
+    """Why this run may end without reasoning (a provider refused, a gate
+    stopped it). Kept on the trace and written by finish() as
+    "No reasoning happened: <reason>" when nothing else was recorded. A
+    caller that catches a failure and returns calls this first."""
+    if not text:
+        return
+    try:
+        with _LOCK:
+            tr = _resolve(trace_id)
+            if tr is not None and tr["status"] == "running":
+                tr["end_reason"] = _clip(str(text), 600)
+    except Exception as e:
+        _log.debug("reasoning_trace.set_reason failed: %s", e)
+
+
+def finish(trace_id: str = None, status: str = "complete", *, reply: str = None,
+           reason: str = None) -> Optional[Dict[str, Any]]:
     """Close a trace and archive it. Returns the archive receipt
-    ({seq, hash}) or None when it could not be written yet."""
+    ({seq, hash}) or None when it could not be written yet.
+
+    EVERY RUN LEAVES A RECORD. A run that recorded nothing (no model call, no
+    tool, no reasoning) is archived with a note saying so and why:
+    "No reasoning happened: <reason>". A blank thread is never the answer."""
     try:
         with _LOCK:
             tr = _resolve(trace_id)
             if tr is None or tr["status"] != "running":
                 return None
             _flush_buffer_locked(tr["trace_id"])
+            if not tr["events"] and not _has_children_locked(tr["trace_id"]):
+                why = reason or tr.get("end_reason") or (
+                    "the run failed before any model call or tool call"
+                    if status == "failed" else
+                    "the run ended before any model call or tool call")
+                ev = {"type": "note", "text": _clip("No reasoning happened: " + str(why), 1000)}
+                _append_event_locked(tr, ev)
+                _emit_locked(tr["trace_id"], dict(ev))
             tr["status"] = status or "complete"
             tr["ended"] = _now()
             if reply:
@@ -603,14 +632,8 @@ def finish(trace_id: str = None, status: str = "complete", *, reply: str = None)
             record = _record_from(tr)
             _emit_locked(tr["trace_id"], {"type": "end", "trace": _header(tr)})
             _gc_locked()
-            empty = not tr["events"] and not _has_children_locked(tr["trace_id"])
         if tr.get("off_record") or _off_record():
             # Off the record: the trace is shown live and never archived.
-            return None
-        if empty:
-            # Nothing ran a model or a tool (a cleanup job, a refused empty
-            # message): there is no reasoning to keep, and an archive full of
-            # empty records hides the ones that matter.
             return None
         receipt = archive(record)
         with _LOCK:
@@ -636,16 +659,31 @@ def scope(kind: str, label: str = "", **kw) -> Iterator[Optional[str]]:
         yield existing
         return
     tid = start(kind, label, **kw)
-    status = "complete"
+    status, why = "complete", None
     try:
         with activate(tid):
             yield tid
-    except BaseException:
+    except BaseException as e:
         status = "failed"
+        why = ("%s: %s" % (type(e).__name__, e)) if str(e) else type(e).__name__
         raise
     finally:
         if tid:
-            finish(tid, status)
+            finish(tid, status, reason=why)
+
+
+def traced(kind: str, label: str = ""):
+    """Decorator: the wrapped run (a voice session, a runner task) is one
+    trace from entry to exit, so every way out leaves a record."""
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def run(*a, **k):
+            with scope(kind, label or fn.__name__):
+                return fn(*a, **k)
+        return run
+    return deco
 
 
 def _record_from(tr: Dict[str, Any]) -> Dict[str, Any]:

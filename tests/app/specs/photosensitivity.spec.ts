@@ -22,7 +22,7 @@
  * FRIDAY_PAGE=<path to index.html> serves that page in place of the
  * server's, to check a branch before it is deployed.
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 import * as fs from 'fs';
 import * as path from 'path';
 import { BASE, openApp } from '../harness';

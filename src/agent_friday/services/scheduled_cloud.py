@@ -1,11 +1,11 @@
 """Whether the built-in scheduled jobs may use a cloud model, and what it costs.
 
-The morning news, the evening front page, the afternoon briefing, daily
-creation and the heartbeat are local-only by default
+Daily creation and the heartbeat are local-only by default
 (`scheduler.LOCAL_ONLY_BY_DEFAULT`): on a PC with a local model serving they
 run there at no cost, and that does not change here. On a PC with no local
 model they are skipped, because running them in the cloud costs money and
-nobody chose that.
+nobody chose that. The News routines (front pages and briefings) are not
+covered by this answer: they always run locally and wait for a local model.
 
 This module holds the owner's explicit answer to "may they use a cloud model
 instead?" -- the `scheduled_cloud` settings block -- and the monthly cost
@@ -37,10 +37,9 @@ from agent_friday.user_errors import UserFacingValueError
 _log = logging.getLogger("friday.scheduled_cloud")
 
 #: The jobs this choice covers, in the order they are shown, with plain names.
+#: The jobs the owner may allow onto a cloud model. News is not among them:
+#: every News path is local-only and waits for the local seat.
 JOBS = (
-    ("sch_news_morning", "Morning news"),
-    ("sch_front_page_evening", "Evening front page"),
-    ("sch_afternoon_briefing", "Afternoon briefing"),
     ("sch_daily_creation", "Daily creation"),
     ("sch_heartbeat", "Heartbeat"),
 )
@@ -335,9 +334,9 @@ def notify_paused(cfg: dict | None = None) -> None:
         import agent_friday.notifications_engine as ne
     except Exception:
         return
-    body = ("This PC has no local model running, so the morning news, evening "
-            "front page, afternoon briefing, daily creation and heartbeat are "
-            "skipped instead of being sent to a paid cloud model. ")
+    body = ("This PC has no local model running, so the daily creation and "
+            "heartbeat are skipped instead of being sent to a paid cloud model, "
+            "and the News front pages and briefings wait for it. ")
     body += ("You chose to keep them off the cloud. " if cfg.get("answered") else "")
     body += "To let them use a cloud model, open Settings > Spending."
     try:

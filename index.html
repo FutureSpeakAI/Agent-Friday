@@ -14707,6 +14707,7 @@ function ChatSurface(props) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
+        owner_action: 'routing_mode',
         settings: {
           model_routing: {
             mode: 'cloud_only'
@@ -32974,6 +32975,7 @@ function NewsWS() {
   // Front Page (AI-curated editorial), Read Later store, and stream filters.
   const [fp, setFp] = useState(null);
   const [fpList, setFpList] = useState([]);
+  const [fpRoutines, setFpRoutines] = useState([]);
   const [fpLoading, setFpLoading] = useState(true);
   const [fpGen, setFpGen] = useState(false);
   const [weekly, setWeekly] = useState(null);
@@ -33114,6 +33116,7 @@ function NewsWS() {
     fetch('/api/news/front-page/latest').then(r => r.json()).then(d => {
       setFp(d.edition || null);
       setFpList(d.editions || []);
+      setFpRoutines(d.routines || []);
       setFpLoading(false);
     }).catch(() => setFpLoading(false));
   };
@@ -34681,6 +34684,19 @@ function NewsWS() {
     key: e.id,
     value: e.id
   }, e.date + ' · ' + (e.slot === 'evening' ? 'PM' : 'AM'))))),
+  // A routine waiting for the local seat, late or missed says so here, with
+  // its reason, so a gap in the morning read is never silent.
+  fpRoutines.map(n => /*#__PURE__*/React.createElement("div", {
+    key: 'fprn-' + n.id,
+    className: "fp-degraded fp-routine-notice"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded-head"
+  }, (n.state === 'waiting' ? '⏳ ' + n.name + ' is waiting for the local seat'
+      : n.state === 'late' ? '🕒 ' + n.name + ' ran late'
+      : n.state === 'failed' ? '⚠️ ' + n.name + ' failed'
+      : '⚠️ ' + n.name + ' did not run')), /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded-body"
+  }, n.reason || ''))),
   // An edition whose editor never answered is still a real page of real
   // stories — it is just ranked, not curated. Saying so here is the whole
   // point: this is the screen the user refreshes, and without it a degraded
@@ -50289,7 +50305,9 @@ function QuickSwitch({ current, onPick, switching }) {
           note: serving && !serving.stale
             ? 'Answering you now: ' + prettyModel(serving.model) + ' · ' + (fmtAgo(serving.at) || 'recently') +
               '. Pick another and the pill changes once it has actually served a turn.'
-            : 'Pick the default model for future turns. Current running turns keep their model.',
+            : 'Pick the default model for every chat that has no model of its own. '
+              + 'Current running turns keep their model. Under Cloud only, a local pick '
+              + 'here is not used until the routing mode allows it (Settings > Models).',
         }))));
 }
 
@@ -51777,16 +51795,22 @@ function SettingsTabIntelligence({ s, save }) {
     setSavingMode(id);
     apiFetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: { model_routing: { mode: id } } }),
-    }).then(r => r.json()).then(() => apiFetch('/api/settings'))
-      .then(r => r.json()).then(d => {
-        const got = ((d || {}).settings || {}).model_routing || {};
-        if ((got.mode || '') !== id) {
-          fridayToast('That mode did not stick — the server still has ' + (got.mode || 'nothing') + '.');
+      body: JSON.stringify({ owner_action: 'routing_mode', settings: { model_routing: { mode: id } } }),
+    }).then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        // The save answers with the settings it wrote; that is the truth, not
+        // a second read that can race other readers.
+        if (!ok || !d || d.status !== 'ok') {
+          fridayToast('The mode was not saved: ' + ((d && (d.message || d.error)) || 'the server refused it') + '.');
           return;
         }
+        const got = ((d.settings || {}).model_routing || {}).mode || '';
+        if (got !== id) {
+          fridayToast('The server kept ' + (got || 'no mode') + ' instead of ' + id + '.');
+        }
         reload();
-      }).catch(() => {}).finally(() => setSavingMode(null));
+      }).catch(() => fridayToast('Could not reach the server to save the mode.'))
+      .finally(() => setSavingMode(null));
   };
 
   return E('div', null,
@@ -53251,7 +53275,6 @@ function SettingsTabPrivacy({
     value: (s.model_routing || {}).vault_local_only !== false,
     onChange: () => save({
       model_routing: {
-        ...(s.model_routing || {}),
         vault_local_only: (s.model_routing || {}).vault_local_only === false
       }
     }),
@@ -55569,10 +55592,10 @@ function AutoRouterControls({ s, save, orReady, compact }) {
   const TIERS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Very high'], ['max', 'Max']];
   const mr = s.model_routing || {};
   const tier = mr.auto_router_cost_tier || 'low';
+  // Only the key being edited: the server deep-merges model_routing, and a
+  // block spread from this page's copy would carry a stale routing mode.
   const setKey = (k, v) => {
-    const next = Object.assign({}, mr);
-    next[k] = v;
-    save({ model_routing: next });
+    save({ model_routing: { [k]: v } });
   };
   const pill = (active, label, onClick, title) => React.createElement("button", {
     key: label,
@@ -56548,7 +56571,7 @@ function ScheduledCloudSection() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, "The morning news, evening front page, afternoon briefing, daily creation and heartbeat run on a model on this PC when it has one, at no cost. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
+  }, "The daily creation and heartbeat run on a model on this PC when it has one, at no cost. News (the front pages and briefings) always runs on this PC and waits for it; it never uses a cloud model. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -59813,6 +59836,7 @@ function App() {
         settings: patch
       };
       if (opts.personality !== undefined) body.personality = opts.personality;
+      if (opts.ownerAction) body.owner_action = opts.ownerAction;
       const r = await apiFetch('/api/settings', {
         method: 'POST',
         headers: {

@@ -123,10 +123,12 @@ def test_nested_scope_opens_a_child_with_or_without_an_active_trace(rt):
             assert child != solo and rt.live_trace(child)["parent_id"] == solo
 
 
-def test_a_trace_with_no_events_is_not_archived(rt):
+def test_a_trace_with_no_events_is_archived_with_the_reason(rt):
+    """Every run leaves a record: an empty run is archived and says why, never
+    a blank thread (owner's rule, 2026-10-02)."""
     tid = rt.start("scheduled", "cleanup job", parent_id=None)
-    assert rt.finish(tid) is None
-    assert not rt.ledger_path().exists()
+    assert rt.finish(tid, reason="nothing to clean up") is not None
+    assert "No reasoning happened: nothing to clean up" in repr(rt.get_tree(tid))
 
 
 # ── archive ──────────────────────────────────────────────────────────────────

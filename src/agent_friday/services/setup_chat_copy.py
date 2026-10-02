@@ -324,11 +324,12 @@ PUSHBACK_FLOOR = 20
 # ── Scheduled jobs on a cloud model (only on a PC with no local model) ───────
 
 SCHEDULED_CLOUD_ASK = (
-    "One more question. I do a few jobs on my own schedule: the morning news, "
-    "the evening front page, an afternoon briefing, a daily creation, and a "
-    "heartbeat that checks your mail and calendar. They are meant to run on a "
-    "model on this computer, which costs nothing, but this computer doesn't "
-    "have one. Until it does, they are paused.\n\n"
+    "One more question. Two jobs run on my own schedule: a daily creation, "
+    "and a heartbeat that checks your mail and calendar. They are meant to "
+    "run on a model on this computer, which costs nothing, but this computer "
+    "doesn't have one. Until it does, they are paused. Your News (the front "
+    "pages and briefings) always runs on this computer and waits for it; it "
+    "never uses a cloud model.\n\n"
     "May they use a cloud model instead? This is the model each would use, "
     "and roughly what it would cost:\n{lines}\n\n"
     "About {total} a month in total, billed to your account with the "

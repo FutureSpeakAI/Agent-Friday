@@ -5354,6 +5354,15 @@ CLAUDE_TOOLS.append({
 
 
 def _runner_task_worker(task_id, runner, resumed=False):
+    """`_runner_task_worker_untraced` under its own trace: a runner task (deep
+    research) leaves a record from start to end, with the reason when it ends
+    before any model call."""
+    from agent_friday.services import reasoning_trace as _rt
+    with _rt.scope("task", "Runner task " + str(task_id)):
+        return _runner_task_worker_untraced(task_id, runner, resumed=resumed)
+
+
+def _runner_task_worker_untraced(task_id, runner, resumed=False):
     """Thread body for a task whose work is a `runner`, not the agent loop.
 
     Same record discipline as `_task_worker_untraced`: the journal's

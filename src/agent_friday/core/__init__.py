@@ -2061,10 +2061,17 @@ _SETTINGS_CACHE_TTL: float = 2.0  # seconds
 _SETTINGS_CACHE_LOCK = threading.Lock()
 
 
+#: Bumped by every invalidation. A reader stores what it read only when no
+#: invalidation happened while it was reading: a read that overlapped a save
+#: holds the pre-save file and must not be served from the cache afterwards.
+_SETTINGS_CACHE_GEN = [0]
+
+
 def _invalidate_settings_cache() -> None:
     with _SETTINGS_CACHE_LOCK:
         _SETTINGS_CACHE["value"] = None
         _SETTINGS_CACHE["ts"] = 0.0
+        _SETTINGS_CACHE_GEN[0] += 1
 
 DEFAULT_AGENT_PERSONALITY = (
     "You are Friday — a calm, perceptive AI partner. "
@@ -3099,6 +3106,7 @@ def _load_settings_raw():
         if (_SETTINGS_CACHE["value"] is not None
                 and (_time.time() - _SETTINGS_CACHE["ts"]) < _SETTINGS_CACHE_TTL):
             return dict(_SETTINGS_CACHE["value"])
+        _gen = _SETTINGS_CACHE_GEN[0]
 
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     if not SETTINGS_FILE.exists():
@@ -3144,8 +3152,9 @@ def _load_settings_raw():
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _sync_capability_routing(merged)
         with _SETTINGS_CACHE_LOCK:
-            _SETTINGS_CACHE["value"] = merged
-            _SETTINGS_CACHE["ts"] = _time.time()
+            if _SETTINGS_CACHE_GEN[0] == _gen:
+                _SETTINGS_CACHE["value"] = merged
+                _SETTINGS_CACHE["ts"] = _time.time()
         return merged
     except Exception as e:
         # NEVER SILENT AGAIN. Reverting to defaults is a defensible last
@@ -3190,7 +3199,18 @@ _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content",
                        "turn_budget", "local_address", "scheduled_cloud")
 
 
-def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
+def _routing_mode_caller() -> str:
+    """'file:function:line' of the code that asked for this settings write."""
+    import traceback as _tb
+    for fr in reversed(_tb.extract_stack()):
+        if fr.name in ("_save_settings", "_routing_mode_caller"):
+            continue
+        return "%s:%s:%s" % (Path(fr.filename).name, fr.name, fr.lineno)
+    return "unknown"
+
+
+def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
+                   owner_routing_change: bool = False):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this
     function — the generic `/api/settings` POST included — has
@@ -3266,6 +3286,35 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
             raise RuntimeError(
                 "settings.json exists but is unreadable (%s); refusing to "
                 "overwrite it with defaults" % e) from e
+    # THE ROUTING MODE CHANGES ONLY ON AN EXPLICIT OWNER ACTION.
+    #
+    # model_routing.mode decides where every turn goes and what it costs. A
+    # write that merely carries a mode (a whole settings dict read earlier, a
+    # UI block spread from a stale copy, a migration, a test) must never move
+    # it. Only the owner's own mode controls pass `owner_routing_change`; any
+    # other change of the mode is dropped from the write and logged with the
+    # caller, and every accepted change is logged old -> new.
+    _mr_in = (data or {}).get("model_routing")
+    if isinstance(_mr_in, dict) and "mode" in _mr_in:
+        _old_mode = (existing.get("model_routing") or {}).get("mode") \
+            if isinstance(existing.get("model_routing"), dict) else None
+        _new_mode = _mr_in.get("mode")
+        if _new_mode != _old_mode and existing:
+            import logging as _lg
+            _who = _routing_mode_caller()
+            if owner_routing_change:
+                _lg.getLogger("friday.settings").warning(
+                    "routing mode changed %s -> %s by an explicit owner action (%s)",
+                    _old_mode, _new_mode, _who)
+            else:
+                _lg.getLogger("friday.settings").warning(
+                    "REFUSED a routing mode change %s -> %s: not an explicit owner "
+                    "action (caller %s); the rest of the write is kept",
+                    _old_mode, _new_mode, _who)
+                data = dict(data)
+                _mr_in = dict(_mr_in)
+                _mr_in.pop("mode", None)
+                data["model_routing"] = _mr_in
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():

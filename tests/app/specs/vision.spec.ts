@@ -15,7 +15,7 @@
  * satisfy a test. Slow — around 30-60s per screen — so this is the full tier,
  * never the smoke tier.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { bootApp, openWorkspace, waitForSettled } from '../harness';
 import { judgeConfirmed, describeVerdict } from '../vision';
 
