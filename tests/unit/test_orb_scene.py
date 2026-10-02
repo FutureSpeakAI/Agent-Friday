@@ -160,13 +160,13 @@ out.labels = { two: lab.length, apart: lab.length === 2 && Math.abs(lab[0].y - l
 // spread, not bunched: orbs added in a row keep apart, at one speed
 const spreadIds = ['s1', 's2', 's3', 's4'];   // with the four still here: the layer's cap of eight
 spreadIds.forEach(id => mgr.addOrb({ id, label: id, category: 'default' }));
-run(5);
-const ang = spreadIds.map(id => { const q = mgr.orbs.get(id).group.position; return Math.atan2(q.z, q.x); });
+const tier = Object.fromEntries(spreadIds.map(id => [id, mgr.orbs.get(id).oHeight]));   // the tier it was given
+run(5);                                                                              // (the keep-out may lift one later)
+const ang = spreadIds.map(id => mgr.orbs.get(id).oAngle);
 let minGap = Infinity;
 for (let i = 0; i < ang.length; i++) for (let j = i + 1; j < ang.length; j++) {
   let d = Math.abs(ang[i] - ang[j]) % (2 * Math.PI); d = Math.min(d, 2 * Math.PI - d);
-  const sameTier = Math.abs(mgr.orbs.get(spreadIds[i]).oHeight - mgr.orbs.get(spreadIds[j]).oHeight) < 0.5;
-  if (sameTier) minGap = Math.min(minGap, d); }
+  if (Math.abs(tier[spreadIds[i]] - tier[spreadIds[j]]) < 0.5) minGap = Math.min(minGap, d); }
 out.spread = { minGapDeg: Math.round(minGap * 180 / Math.PI), oneSpeed: new Set(spreadIds.map(id => mgr.orbs.get(id).oSpeed)).size === 1 };
 spreadIds.forEach(id => { mgr.updateOrb(id, { status: 'completed' }); mgr.removeOrb(id); }); run(3);
 
