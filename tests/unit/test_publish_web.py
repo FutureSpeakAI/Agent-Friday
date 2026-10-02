@@ -52,14 +52,16 @@ def test_a_markdown_artifact_packs_into_a_self_contained_page():
     assert html.index("Content-Security-Policy") < html.index("<h1>")
     assert "default-src 'none'" in html and "form-action 'none'" in html
     assert 'name="referrer" content="no-referrer"' in html
-    assert "Made with Friday" in html
+    from agent_friday import brand
+    assert brand.MADE_WITH in html, "the mark credits the product by its name"
     assert b.slug == "letter"
     assert b.size == sum(len(v) for v in b.files.values())
 
 
 def test_the_mark_is_optional():
     rec = _md()
-    assert "Made with Friday" not in pw.pack(rec, mark=False).files["index.html"].decode()
+    from agent_friday import brand
+    assert brand.MADE_WITH not in pw.pack(rec, mark=False).files["index.html"].decode()
 
 
 def test_an_html_app_keeps_its_scripts_and_gets_the_frame_csp():

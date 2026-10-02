@@ -212,7 +212,14 @@ _BASE_CSS = ("html,body{margin:0;background:#0b0e14;color:#e6eef8;font-family:In
              ".legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin-top:8px}.legend i{display:inline-block;"
              "width:9px;height:9px;border-radius:2px;margin-right:5px}")
 
-_MARK_HTML = '<a class="mark" title="Made with Friday" href="https://futurespeak.ai" rel="noopener noreferrer">MADE WITH <b>FRIDAY</b></a>'
+def _made_with() -> str:
+    """The product's credit line, from the brand (unified-shell.md §1: published pages carry MADE_WITH)."""
+    from agent_friday import brand
+    return brand.MADE_WITH
+
+
+_MARK_HTML = ('<a class="mark" title="' + _made_with() + '" href="https://futurespeak.ai" rel="noopener noreferrer">'
+              + _made_with().upper().replace("AGENT FRIDAY", "<b>AGENT FRIDAY</b>") + '</a>')
 
 
 def _page(title: str, body: str, csp: str, *, mark: bool, extra_head: str = "") -> bytes:
@@ -245,7 +252,7 @@ def _inject_into_app(html_src: str, *, mark: bool) -> str:
     if mark:
         style = ("<style>.friday-mark{position:fixed;right:12px;bottom:10px;font:10px 'JetBrains Mono',monospace;"
                  "letter-spacing:.14em;color:rgba(0,212,255,.7);text-decoration:none;opacity:.8;z-index:2147483647}</style>")
-        mark_html = style + '<a class="friday-mark" title="Made with Friday" href="https://futurespeak.ai" rel="noopener noreferrer">MADE WITH FRIDAY</a>'
+        mark_html = style + '<a class="friday-mark" title="' + _made_with() + '" href="https://futurespeak.ai" rel="noopener noreferrer">' + _made_with().upper() + '</a>'
         i = s.lower().rfind("</body>")
         s = s[:i] + mark_html + s[i:] if i >= 0 else s + mark_html
     return s

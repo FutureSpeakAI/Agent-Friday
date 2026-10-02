@@ -161,7 +161,7 @@
       h(Row, { label: 'Default host', desc: 'This PC is up only while the PC is on. Cloudflare Pages and GitHub Pages stay up around the clock on your own account.' },
         h('select', { className: 'input', value: (s && s.publish_default_adapter) || 'this_pc', onChange: e => save({ publish_default_adapter: e.target.value }), 'aria-label': 'Default host' },
           Object.keys(LABELS).map(k => h('option', { key: k, value: k }, LABELS[k])))),
-      Toggle ? h(Toggle, { label: 'Small "Made with Friday" mark on published pages', value: !(s && s.publish_mark === false), onChange: () => save({ publish_mark: !!(s && s.publish_mark === false) }) }) : null,
+      Toggle ? h(Toggle, { label: 'Small "' + ((window.FRIDAY_BRAND && window.FRIDAY_BRAND.madeWith) || 'Made with Agent Friday™') + '" mark on published pages', value: !(s && s.publish_mark === false), onChange: () => save({ publish_mark: !!(s && s.publish_mark === false) }) }) : null,
       h(Row, { label: 'What is up', desc: list.length ? '' : 'Nothing is published yet.' },
         list.length ? h('table', { style: { width: '100%', fontSize: 11.5, borderCollapse: 'collapse' } }, h('tbody', null, list.map(x => h('tr', { key: x.slug, 'data-published-slug': x.slug },
           h('td', { style: { padding: '4px 0', color: 'var(--st-label, #ddd)' } }, x.title, ' ', chip('v' + x.version, 'rgba(255,255,255,0.5)'), ' ', chip(LABELS[x.adapter] || x.adapter, ACCENT)),
