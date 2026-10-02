@@ -386,6 +386,19 @@ def _mode_filtered_attempts(attempts, routing_cfg, *, vault_access=False):
     """
     if not attempts:
         return attempts
+    # A local-only run (News routines, podcast scripts) refuses every cloud
+    # transport, so its ladder is the local leg alone, whatever the global
+    # mode says. Under cloud_only the mode filter would otherwise drop the
+    # local leg and the run would refuse its way to "no provider" while the
+    # seat sits idle. A cloud-pinned run is not local-only and keeps its ladder.
+    try:
+        from agent_friday.services import local_only_guard as _guard
+        if _guard.is_active() and not _guard.pinned_model():
+            local = [a for a in attempts if a[0] in _LOCAL_LEGS]
+            if local:
+                return local[:1]
+    except ImportError:
+        pass
     mode = str(((routing_cfg or {}).get("mode") or "")).lower()
     if mode == "cloud_only":
         banned = _LOCAL_LEGS
