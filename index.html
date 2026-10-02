@@ -5757,6 +5757,7 @@ window.addEventListener('DOMContentLoaded',function(){
             function label(o, s) {
                 // Built from text nodes: a process label is never parsed as markup.
                 const el = o.labelEl;
+                o.labelW = 0; o.labelH = 0;                     // measured again, once, below
                 el.textContent = '';
                 const dot = document.createElement('span');
                 dot.textContent = '● ';
@@ -5957,7 +5958,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 const shown = [];
                 each((o, s) => {
                     if (o.dying || o.labelEl.style.display === 'none' || !Number.isFinite(s.sx)) return;
-                    shown.push({ o, w: o.labelEl.offsetWidth || 80, x: s.sx, y: s.sy - 28 });
+                    if (!o.labelW) { o.labelW = o.labelEl.offsetWidth || 80; o.labelH = o.labelEl.offsetHeight || 18; }
+                    shown.push({ o, w: o.labelW, x: s.sx, y: s.sy - 28 });
                 });
                 shown.sort((a, b) => a.y - b.y);
                 for (const l of shown) {
@@ -6448,8 +6450,10 @@ window.addEventListener('DOMContentLoaded',function(){
                     if (p3.z < 1) {
                         o.labelEl.style.display='block';
                         // Clamp label inside viewport so perimeter orbs don't push their text off-screen.
-                        const lw = o.labelEl.offsetWidth || 80;
-                        const lh = o.labelEl.offsetHeight || 18;
+                        // A label's size is measured once when it changes (o.labelW,
+                        // o.labelH); reading it every frame forced a layout per orb.
+                        const lw = o.labelW || o.labelEl.offsetWidth || 80;
+                        const lh = o.labelH || o.labelEl.offsetHeight || 18;
                         const margin = 8;
                         const halfW = lw/2;
                         const clampedX = Math.max(halfW + margin, Math.min(window.innerWidth - halfW - margin, sx));
