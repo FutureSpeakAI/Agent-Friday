@@ -209,6 +209,17 @@
 .md-ql-stage .audio{width:min(720px,100%);display:flex;flex-direction:column;gap:10px;align-items:stretch}
 .md-ql-foot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--fr-dim);font-size:var(--fr-text-sm)}
 .md-ql-nav{position:fixed;top:50%;transform:translateY(-50%);width:40px;height:40px;border-radius:50%;border:1px solid var(--fr-glass-edge);background:rgba(0,0,0,.5);color:var(--fr-text);font-size:18px;cursor:pointer}
+.md-thumb .fav{position:absolute;right:6px;top:6px;width:26px;height:26px;border-radius:50%;border:1px solid var(--fr-glass-edge);background:rgba(0,0,0,.55);color:var(--fr-dim);display:grid;place-items:center;cursor:pointer;font-size:13px;opacity:0;transition:opacity .12s}
+.md-thumb:hover .fav,.md-thumb .fav.on{opacity:1}
+.md-thumb .fav.on{color:var(--fr-cyan);border-color:var(--fr-cyan)}
+.md-card.multi{border-color:var(--fr-cyan);box-shadow:0 0 0 2px rgba(0,229,255,.35) inset}
+.md-tags{display:flex;gap:4px;flex-wrap:wrap}
+.md-tag{font-size:var(--fr-text-2xs);padding:1px 6px;border-radius:999px;border:1px solid var(--fr-glass-edge);color:var(--fr-dim);background:rgba(255,255,255,.04)}
+.md-grouphead{grid-column:1/-1;font-family:var(--fr-font-display);font-size:var(--fr-text-2xs);letter-spacing:var(--fr-track-label);text-transform:uppercase;color:var(--fr-dim);padding:10px 2px 2px;border-bottom:1px solid var(--fr-glass-edge);display:flex;gap:8px;align-items:center}
+.md-grouphead .n{color:var(--fr-label)}
+.md-multibar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px;border:1px solid var(--fr-cyan);border-radius:10px;background:rgba(0,229,255,.06);font-size:var(--fr-text-sm)}
+.md-multibar input{font:inherit;color:var(--fr-text);background:rgba(0,0,0,.35);border:1px solid var(--fr-glass-edge);border-radius:8px;padding:4px 8px;width:160px}
+.md-detail input.md-in{font:inherit;color:var(--fr-text);background:rgba(0,0,0,.35);border:1px solid var(--fr-glass-edge);border-radius:8px;padding:5px 8px;width:100%}
 .md-hit{font-size:var(--fr-text-xs);color:var(--fr-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .md-hit mark{background:rgba(0,229,255,.18);color:var(--fr-text);border-radius:3px;padding:0 2px}
 .md-tx{width:min(72ch,100%);max-height:38vh;overflow:auto;display:flex;flex-direction:column;gap:2px;font-size:var(--fr-text-sm);line-height:1.45}
@@ -259,16 +270,19 @@
     if (f.q) p.set('q', f.q);
     if (f.sort) p.set('sort', f.sort);
     if (f.status) p.set('status', f.status);
+    if (f.favorite) p.set('favorite', '1');
+    if (f.tag) p.set('tag', f.tag);
+    if (f.when) p.set('when', f.when);
     return p.toString();
   }
   function useCards(filters) {
-    const [state, setState] = useState({ cards: [], counts: {}, projects: [], loading: true, error: null, indexing: null, previews: null });
+    const [state, setState] = useState({ cards: [], counts: {}, projects: [], collections: [], loading: true, error: null, indexing: null, previews: null });
     const key = buildQuery(filters);
     const reload = useCallback(() => {
       setState(s => Object.assign({}, s, { loading: true }));
       json('/api/media?' + key).then(d => {
         if (d.status !== 'ok') { setState({ cards: [], counts: {}, projects: [], loading: false, error: d.message || 'Media could not load.', indexing: null }); return; }
-        setState({ cards: d.cards || [], counts: d.counts || {}, projects: d.projects || [], loading: false, error: null, indexing: d.indexing || null, previews: d.previews || null });
+        setState({ cards: d.cards || [], counts: d.counts || {}, projects: d.projects || [], collections: d.collections || [], loading: false, error: null, indexing: d.indexing || null, previews: d.previews || null });
       }).catch(() => setState({ cards: [], counts: {}, projects: [], loading: false, error: 'Media could not load.', indexing: null }));
     }, [key]);
     useEffect(() => { reload(); }, [reload]);
@@ -302,6 +316,9 @@
   // The thumbnail: the preview when the pass has made one; a video scrubs on
   // hover through its frame strip; audio plays in place; a type the pass has no
   // image for shows its icon and size. Clicking the picture opens the quick look.
+  function favToggle(c) {
+    return api('/api/media/' + encodeURIComponent(c.id), { method: 'PATCH', body: JSON.stringify({ favorite: !c.favorite }) }).then(() => changed());
+  }
   function Thumb({ c, onQuick }) {
     usePlayerTick();
     const [frac, setFrac] = useState(-1);
@@ -316,6 +333,8 @@
     return h('div', { className: 'md-thumb', onMouseMove: onMove, onMouseLeave: () => setFrac(-1), onClick: e => { if (onQuick) { e.stopPropagation(); onQuick(c); } }, title: onQuick ? 'Quick look (Space)' : undefined },
       c.thumb ? h('img', { src: c.thumb, alt: '', loading: 'lazy' }) : h('span', { className: 'ico' }, glyph(c.kind, ''), h('b', null, (d.suffix ? d.suffix.replace('.', '').toUpperCase() + ' ' : '') + (d.bytes != null ? fmtBytes(d.bytes) : (KIND_WORD[c.kind] || c.kind)))),
       scrub, bar, play,
+      h('span', { role: 'button', tabIndex: 0, className: 'fav' + (c.favorite ? ' on' : ''), 'aria-label': c.favorite ? 'Remove from favourites' : 'Add to favourites', 'aria-pressed': c.favorite ? 'true' : 'false', title: c.favorite ? 'Favourite' : 'Make a favourite',
+        onClick: e => { e.stopPropagation(); favToggle(c); }, onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); favToggle(c); } } }, c.favorite ? '\u2605' : '\u2606'),
       extra ? h('span', { className: 'dur' }, extra) : null);
   }
   // A search hit: the line where the words were found, the words marked.
@@ -332,15 +351,16 @@
     return h('div', { className: 'md-tx', 'aria-label': 'Transcript' },
       tx.segments.map((sg, i) => h('button', { key: i, onClick: () => { const m = mediaRef.current; if (m) { m.currentTime = sg.start || 0; m.play && m.play().catch(() => {}); } } }, h('b', null, fmtT(sg.start)), sg.text)));
   }
-  function Card({ c, selected, onOpen, onSelect, noThumb, onQuick }) {
+  function Tags({ tags }) { return tags && tags.length ? h('div', { className: 'md-tags' }, tags.map(t => h('span', { key: t, className: 'md-tag' }, t))) : null; }
+  function Card({ c, selected, onOpen, onSelect, noThumb, onQuick, multi, onMulti }) {
     const where = c.published_at ? h('div', { className: 'md-meta' }, h('span', null, 'at'), h('span', null, c.published_at))
       : (c.targets && c.targets.length ? h('div', { className: 'md-meta' }, h('span', null, 'to'), h('span', null, c.targets.join(', '))) : null);
     const d = c.details || {};
     const made = d.model ? d.model : (c.maker || '').replace(' · this PC', '');
     return h('button', {
-      className: 'md-card', role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id,
-      onClick: () => onSelect && onSelect(c), onDoubleClick: () => onOpen && onOpen(c),
-      onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); onOpen && onOpen(c); } }
+      className: 'md-card' + (multi ? ' multi' : ''), role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id,
+      onClick: e => { if ((e.ctrlKey || e.metaKey || e.shiftKey) && onMulti) { e.preventDefault(); onMulti(c, e.shiftKey); return; } onSelect && onSelect(c); }, onDoubleClick: () => onOpen && onOpen(c),
+      onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); onOpen && onOpen(c); } if (e.key === 'x' && onMulti) { e.preventDefault(); onMulti(c, false); } }
     },
       noThumb ? null : h(Thumb, { c, onQuick }),
       h('div', { className: 'md-body' },
@@ -349,10 +369,22 @@
         h('div', { className: 'md-facts', title: facts(c) + (made ? ' · ' + made : '') }, facts(c) + (made ? ' · ' + made : '')),
         h('div', { className: 'md-meta' }, glyph(c.kind), h('span', null, '·'), h('span', null, fmtWhen(c.when))),
         h('div', { className: 'md-meta' }, statusPill(c), privacyPill(c), c.signed ? null : pill('md-pill-neutral', 'Unsigned')),
+        h(Tags, { tags: c.tags }),
         where));
   }
 
   // ── the details panel (Library) ──────────────────────────────────────────
+  // Favourite, tags and project, by hand, on one card.
+  function Organize({ c }) {
+    const [tags, setTags] = useState((c.tags || []).join(', '));
+    const [proj, setProj] = useState(c.project || '');
+    useEffect(() => { setTags((c.tags || []).join(', ')); setProj(c.project || ''); }, [c.id, (c.tags || []).join(','), c.project]);
+    const save = body => api('/api/media/' + encodeURIComponent(c.id), { method: 'PATCH', body: JSON.stringify(body) }).then(d => { if (d.status !== 'ok') toast(d.message || 'Could not save that.'); changed(); });
+    return h('div', { className: 'md-actions', style: { flexDirection: 'column', alignItems: 'stretch', gap: 6 } },
+      h('button', { className: 'btn' + (c.favorite ? ' active' : ''), 'aria-pressed': c.favorite ? 'true' : 'false', onClick: () => favToggle(c) }, c.favorite ? '\u2605 Favourite' : '\u2606 Make a favourite'),
+      h('input', { className: 'md-in', 'aria-label': 'Tags', placeholder: 'Tags, comma separated', value: tags, onChange: e => setTags(e.target.value), onBlur: () => save({ tags: tags.split(',').map(x => x.trim()).filter(Boolean) }), onKeyDown: e => { if (e.key === 'Enter') e.target.blur(); } }),
+      h('input', { className: 'md-in', 'aria-label': 'Project', placeholder: 'Project (move to\u2026)', value: proj, onChange: e => setProj(e.target.value), onBlur: () => { if (proj !== (c.project || '')) save({ project: proj }); }, onKeyDown: e => { if (e.key === 'Enter') e.target.blur(); } }));
+  }
   function fmtStamp(iso) { if (!iso) return '—'; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); }
   function Details({ c, onClose, onOpen, onAction, onQuick }) {
     if (!c) return null;
@@ -385,6 +417,8 @@
         h('dt', null, 'Privacy'), h('dd', null, privacyPill(c), ' ', c.published_at ? 'published at ' + c.published_at : 'never left this computer'),
         h('dt', null, 'Project'), h('dd', null, c.project || '—')),
       d.snippet ? h('div', { className: 'md-prompt', title: 'The first lines' }, d.snippet) : null,
+      h('div', { className: 'md-label' }, 'Organize'),
+      h(Organize, { c }),
       h('div', { className: 'md-label' }, 'Actions'),
       h('div', { className: 'md-actions' },
         h('button', { className: 'btn active', onClick: () => onOpen(c) }, 'Open'),
@@ -394,6 +428,25 @@
         h('button', { className: 'btn', onClick: () => onAction('send', c) }, 'Send to…'),
         h('button', { className: 'btn', onClick: () => onAction('publish', c) }, c.status === 'published' ? 'Unpublish…' : 'Publish…'),
         h('button', { className: 'btn btn-magenta', onClick: () => onAction('delete', c) }, 'Delete')));
+  }
+
+  // Groups for the grid: by project, by date (today, yesterday, this week, this month, then months), or by type.
+  function grouped(cards, by) {
+    if (!by || by === 'none') return [{ label: null, items: cards }];
+    const key = c => {
+      if (by === 'project') return c.project || 'No project';
+      if (by === 'type') return KIND_WORD[c.kind] || c.kind;
+      const t = c.when_ts ? new Date(c.when_ts * 1000) : null;
+      if (!t) return 'Undated';
+      const now = new Date(); const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+      const diff = Math.round((day(now) - day(t)) / 86400000);
+      if (diff <= 0) return 'Today'; if (diff === 1) return 'Yesterday'; if (diff < 7) return 'This week';
+      if (t.getFullYear() === now.getFullYear() && t.getMonth() === now.getMonth()) return 'This month';
+      return t.toLocaleString([], { month: 'long', year: 'numeric' });
+    };
+    const out = []; const idx = {};
+    cards.forEach(c => { const k = key(c); if (!(k in idx)) { idx[k] = out.length; out.push({ label: k, items: [] }); } out[idx[k]].items.push(c); });
+    return out;
   }
 
   // ── the quick look ───────────────────────────────────────────────────────
@@ -451,6 +504,21 @@
   function Library({ filters, setFilters, sel, setSel, onOpen, onAction }) {
     const [state] = useCards(filters);
     const [ql, setQl] = useState(false);
+    const [groupBy, setGroupBy] = useState('none');
+    const [multi, setMulti] = useState([]);       // ids picked with Ctrl/Shift-click or X, for one change on many
+    const [bulkProj, setBulkProj] = useState('');
+    const [bulkTag, setBulkTag] = useState('');
+    const onMulti = useCallback((c, range) => setMulti(m => {
+      if (range && m.length) { const ids = cards.map(x => x.id); const a = ids.indexOf(m[m.length - 1]), b = ids.indexOf(c.id); const lo = Math.min(a, b), hi = Math.max(a, b); return Array.from(new Set(m.concat(ids.slice(lo, hi + 1)))); }
+      return m.includes(c.id) ? m.filter(x => x !== c.id) : m.concat([c.id]);
+    }), [cards]);
+    const bulk = body => post('/api/media/bulk', Object.assign({ ids: multi }, body)).then(d => { toast(d.status === 'ok' ? d.done + ' card' + (d.done === 1 ? '' : 's') + ' changed.' : (d.message || 'That did not work.')); changed(); });
+    const saveCollection = () => {
+      const name = window.prompt('Save this view as a collection called\u2026');
+      if (!name) return;
+      post('/api/media/collections', { name, filters: { view: filters.view, kind: filters.kind, project: filters.project, q: filters.q, privacy: filters.privacy, status: filters.status, tag: filters.tag, favorite: filters.favorite, unsigned: filters.unsigned, when: filters.when, sort: filters.sort } })
+        .then(d => { toast(d.status === 'ok' ? 'Saved \u201c' + name + '\u201d.' : (d.message || 'Could not save it.')); changed(); });
+    };
     const [qlCard, setQlCard] = useState(null);   // a card asked for by id that the current list may not hold
     const onQuick = useCallback(c => { setSel(c.id); setQl(true); }, [setSel]);
     useEffect(() => {
@@ -470,8 +538,9 @@
     const searchRef = useRef(null);
     const cards = state.cards;
     const selCard = cards.find(c => c.id === sel) || null;
-    const current = filters.kind ? 'kind:' + filters.kind : filters.project != null ? 'proj:' + filters.project : filters.privacy ? 'priv:' + filters.privacy : filters.unsigned ? 'unsigned' : 'view:' + (filters.view || 'today');
-    const pick = useCallback(patch => { setFilters(Object.assign({ view: 'all', kind: null, project: null, privacy: null, unsigned: false, q: filters.q, sort: filters.sort }, patch)); setSel(null); }, [filters.q, filters.sort, setFilters, setSel]);
+    const current = filters.collection ? 'col:' + filters.collection : filters.favorite ? 'fav' : filters.tag ? 'tag:' + filters.tag : filters.kind ? 'kind:' + filters.kind : filters.project != null ? 'proj:' + filters.project : filters.privacy ? 'priv:' + filters.privacy : filters.unsigned ? 'unsigned' : 'view:' + (filters.view || 'today');
+    const pick = useCallback(patch => { setFilters(Object.assign({ view: 'all', kind: null, project: null, privacy: null, unsigned: false, favorite: false, tag: null, when: null, collection: null, q: filters.q, sort: filters.sort }, patch)); setSel(null); setMulti([]); }, [filters.q, filters.sort, setFilters, setSel]);
+    const openCollection = col => pick(Object.assign({ view: 'all', q: '' }, col.filters || {}, { collection: col.id }));
     useEffect(() => {
       const onKey = e => {
         const typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName) || (document.activeElement && document.activeElement.isContentEditable);
@@ -497,6 +566,13 @@
       h('aside', { className: 'md-rail', 'aria-label': 'Library' },
         h('div', { className: 'md-label' }, 'Default views'),
         h('div', { className: 'md-group' }, DEFAULT_VIEWS.map(v => railBtn('view:' + v[0], v[1], counts[v[0]], { view: v[0] }))),
+        h('div', { className: 'md-group' }, railBtn('fav', '\u2605 Favourites', counts.favorites, { favorite: true })),
+        h('div', { className: 'md-label' }, 'Collections'),
+        h('div', { className: 'md-group', 'data-collections': 'true' },
+          (state.collections || []).map(col => railBtn('col:' + col.id, col.name, null, null) && h('button', { key: 'col:' + col.id, 'aria-current': current === 'col:' + col.id ? 'true' : undefined, onClick: () => openCollection(col), title: 'A saved filter, evaluated now' }, col.name)),
+          h('button', { className: 'dim', onClick: saveCollection, title: 'Save the current filters as a collection' }, '+ Save this view\u2026')),
+        Object.keys(counts.tags || {}).length ? h('div', { className: 'md-label' }, 'Tags') : null,
+        Object.keys(counts.tags || {}).length ? h('div', { className: 'md-group' }, Object.keys(counts.tags).sort().map(t => railBtn('tag:' + t, '# ' + t, counts.tags[t], { tag: t }))) : null,
         h('div', { className: 'md-label' }, 'Projects'),
         h('div', { className: 'md-group' },
           (state.projects || []).map(p => railBtn('proj:' + p.name, p.name, p.n, { project: p.name })),
@@ -516,17 +592,31 @@
           h('span', { className: 'md-spacer' }),
           h('select', { 'aria-label': 'Sort', value: filters.sort || 'next', onChange: e => setFilters(Object.assign({}, filters, { sort: e.target.value })) },
             h('option', { value: 'next' }, 'By what matters next'), h('option', { value: 'newest' }, 'Newest first'), h('option', { value: 'title' }, 'By title'), h('option', { value: 'status' }, 'By status')),
+          h('select', { 'aria-label': 'Group by', value: groupBy, onChange: e => setGroupBy(e.target.value) },
+            h('option', { value: 'none' }, 'No groups'), h('option', { value: 'project' }, 'Group by project'), h('option', { value: 'date' }, 'Group by date'), h('option', { value: 'type' }, 'Group by type')),
           h('div', { className: 'md-seg', role: 'group', 'aria-label': 'Layout' },
             h('button', { className: 'btn' + (layout === 'grid' ? ' active' : ''), 'aria-pressed': layout === 'grid', onClick: () => setLayout('grid') }, 'Grid'),
             h('button', { className: 'btn' + (layout === 'list' ? ' active' : ''), 'aria-pressed': layout === 'list', onClick: () => setLayout('list') }, 'List'),
             h('button', { className: 'btn' + (layout === '3d' ? ' active' : ''), 'aria-pressed': layout === '3d', title: 'The creations folder in the 3D file browser', onClick: () => setLayout('3d') }, '3D'))),
+        multi.length ? h('div', { className: 'md-multibar', role: 'toolbar', 'aria-label': 'Selected cards' },
+          h('b', null, multi.length + ' selected'),
+          h('input', { 'aria-label': 'Move to project', placeholder: 'Move to project\u2026', value: bulkProj, onChange: e => setBulkProj(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && bulkProj.trim()) bulk({ project: bulkProj.trim() }); } }),
+          h('input', { 'aria-label': 'Add a tag', placeholder: 'Add a tag\u2026', value: bulkTag, onChange: e => setBulkTag(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && bulkTag.trim()) { bulk({ add_tags: [bulkTag.trim()] }); setBulkTag(''); } } }),
+          h('button', { className: 'btn', onClick: () => bulk({ favorite: true }) }, '\u2605 Favourite'),
+          h('button', { className: 'btn', onClick: () => bulk({ favorite: false }) }, 'Unfavourite'),
+          h('span', { className: 'md-spacer' }),
+          h('span', { className: 'md-count' }, 'Ctrl-click or X picks; Shift-click picks a run'),
+          h('button', { className: 'btn', onClick: () => setMulti([]) }, 'Clear')) : null,
         layout === '3d' ? h(window.MediaFiles3D || Placeholder, null) :
         h('div', { className: 'md-stage-wrap' },
           state.error ? h('div', { className: 'md-empty', role: 'alert' }, h('b', null, state.error), h('br'), 'Try again in a moment.') :
           cards.length === 0 && state.indexing && state.indexing.state === 'indexing' ? h('div', { className: 'md-empty', role: 'status', 'aria-live': 'polite' }, h('b', null, 'Indexing your library…'), h('br'), (state.indexing.indexed || 0) + ' so far. Everything Friday has made on this PC is being listed; this only takes a moment.') :
           !state.loading && cards.length === 0 ? h('div', { className: 'md-empty' }, h('b', null, 'Nothing here.'), h('br'), 'Pick another view on the left, or press ', h('kbd', null, 'N'), ' for a new card.') :
-          h('div', { className: 'md-grid' + (layout === 'list' ? ' list' : ''), role: 'listbox', 'aria-label': 'Cards', 'aria-busy': state.loading ? 'true' : 'false' },
-            cards.map(c => h(Card, { key: c.id, c, selected: c.id === sel, onSelect: x => setSel(x.id), onOpen, onQuick }))),
+          h('div', { className: 'md-grid' + (layout === 'list' ? ' list' : ''), role: 'listbox', 'aria-label': 'Cards', 'aria-busy': state.loading ? 'true' : 'false', 'aria-multiselectable': 'true' },
+            grouped(cards, groupBy).map(g => [
+              g.label != null ? h('div', { key: 'g:' + g.label, className: 'md-grouphead', role: 'presentation' }, g.label, h('span', { className: 'n' }, g.items.length)) : null,
+              g.items.map(c => h(Card, { key: c.id, c, selected: c.id === sel, onSelect: x => setSel(x.id), onOpen, onQuick, multi: multi.includes(c.id), onMulti }))
+            ])),
           h(Details, { c: selCard, onClose: () => setSel(null), onOpen, onAction, onQuick }),
           ql && (selCard || qlCard) ? h(QuickLook, { c: selCard || qlCard, cards, setSel, onClose: () => { setQl(false); setQlCard(null); }, onOpen, q: filters.q }) : null),
         h('p', { className: 'md-keys' }, 'Keys: ', h('kbd', null, '/'), ' search · ', h('kbd', null, 'N'), ' new · ', h('kbd', null, '←'), ' ', h('kbd', null, '→'), ' move · ', h('kbd', null, 'Enter'), ' open · ', h('kbd', null, 'T'), ' turn this into… · ', h('kbd', null, 'S'), ' send to · ', h('kbd', null, 'O'), ' own tab · ', h('kbd', null, 'Esc'), ' close.')));
@@ -1051,7 +1141,7 @@
 
   // Shared helpers for the other views (board, calendar, card), defined in this file's siblings.
   window.MediaWS = MediaWS;
-  window.__media = { h, api, json, post, toast, STATUSES, KEPT, STATUS_WORD, QuickLook, Thumb, Hit, Transcript, fmtBytes, facts, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
+  window.__media = { h, api, json, post, toast, STATUSES, KEPT, STATUS_WORD, QuickLook, Thumb, Hit, Transcript, Organize, grouped, fmtBytes, facts, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
 
   // Navigation: the views the dock, the palette and navigate_to may name.
   (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['media', {

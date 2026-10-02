@@ -123,6 +123,19 @@ def test_the_quick_look_opens_on_space_and_walks_with_the_arrows():
     assert "setTimeout(reload, 3000)" in JS, "the list asks again while previews are still being made"
 
 
+def test_the_library_organizes_favourites_tags_collections_and_groups():
+    """A star on every card, tags on the card and in the panel, the rail's
+    Favourites, Collections (saved filters) and Tags, group-by in the toolbar,
+    and one change on many cards picked with Ctrl/Shift-click or X."""
+    assert "className: 'fav' + (c.favorite ? ' on' : '')" in JS and "favToggle(c)" in JS
+    assert "function Tags({ tags })" in JS and "function Organize({ c })" in JS
+    assert "railBtn('fav', '\\u2605 Favourites', counts.favorites, { favorite: true })" in JS
+    assert "'data-collections': 'true'" in JS and "'+ Save this view\\u2026'" in JS and "post('/api/media/collections'" in JS
+    assert "railBtn('tag:' + t, '# ' + t, counts.tags[t], { tag: t })" in JS
+    assert "h('option', { value: 'project' }, 'Group by project')" in JS and "function grouped(cards, by)" in JS
+    assert "className: 'md-multibar'" in JS and "post('/api/media/bulk'" in JS and "'aria-multiselectable': 'true'" in JS
+
+
 def test_a_routine_episode_card_opens_in_news():
     """The routine shows' episodes are listed so nothing is missing; opening one
     goes to its show's tab in News, never into Media's editor (spec §4.8)."""

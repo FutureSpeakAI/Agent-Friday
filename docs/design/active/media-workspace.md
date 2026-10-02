@@ -403,6 +403,19 @@ cached), so "find the video where I said X" lands on the card and the quick look
 the player where the words were said. Nothing is sent anywhere.
 `tests/unit/test_media_search.py` is the proof.
 
+**Ask Friday** (`services/media_card_tools.py`). "Find the deck about Covista", "show me
+September's videos", "play the last podcast about AI policy": media_show and media_cards
+take a time in the owner's words as a window on the date that matters; media_play finds the
+newest audio or video for the words and opens the quick look where they were said. One
+line per item.
+
+**Organize.** Favourites and tags are overrides, set by hand on a card or on many at once
+(`POST /api/media/bulk`: move to a project, tag, favourite). A smart collection is a saved
+filter with a name ("this week's podcasts", "decks for Harbour"), kept in
+`media/collections.json` and evaluated when opened, so it is always current. The Library's
+rail shows Favourites, the collections and the tags with counts; the grid groups by project,
+date or type. `tests/api/test_media_organize.py` is the proof.
+
 ### 4.4 Three views of the same cards
 
 **Library** (`library.html`): a rail of default views (Today, In progress, Needs you,

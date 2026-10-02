@@ -128,6 +128,11 @@ def _connect() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS cards_when ON cards(when_ts);
         """
     )
+    for col, typ in (("favorite", "INTEGER"), ("tags", "TEXT")):
+        try:
+            con.execute(f"ALTER TABLE overrides ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass  # already there
     _ensure_fts(con)
     return con
 
@@ -148,6 +153,101 @@ def _ensure_fts(con: sqlite3.Connection) -> bool:
     except sqlite3.OperationalError:
         _FTS = False
     return _FTS
+
+
+# ── collections: a saved set of filters with a name ─────────────────────────
+#: The filter keys a collection may hold; anything else is dropped on save.
+COLLECTION_KEYS = ("view", "kind", "project", "q", "privacy", "status", "tag", "favorite", "unsigned", "when", "sort")
+
+
+def collections_path() -> Path:
+    return media_dir() / "collections.json"
+
+
+def collections() -> List[Dict[str, Any]]:
+    try:
+        d = json.loads(collections_path().read_text(encoding="utf-8"))
+        return [c for c in d if isinstance(c, dict) and c.get("id")] if isinstance(d, list) else []
+    except Exception:
+        return []
+
+
+def _write_collections(items: List[Dict[str, Any]]) -> None:
+    p = collections_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def save_collection(name: str, filters: Dict[str, Any], collection_id: Optional[str] = None) -> Dict[str, Any]:
+    """A smart collection is a saved filter ("this week's podcasts", "decks for
+    Harbour"): it is evaluated when opened, so it is always current."""
+    name = (name or "").strip()[:80]
+    if not name:
+        return {"status": "error", "message": "A collection needs a name."}
+    f = {k: v for k, v in (filters or {}).items() if k in COLLECTION_KEYS and v not in (None, "", False)}
+    items = collections()
+    rec = next((c for c in items if c["id"] == collection_id), None) if collection_id else None
+    if rec is None:
+        rec = {"id": "col_" + uuid.uuid4().hex[:8], "created": time.time()}
+        items.append(rec)
+    rec.update({"name": name, "filters": f, "updated": time.time()})
+    _write_collections(items)
+    return {"status": "ok", "collection": rec}
+
+
+def delete_collection(collection_id: str) -> Dict[str, Any]:
+    items = collections()
+    keep = [c for c in items if c["id"] != collection_id]
+    if len(keep) == len(items):
+        return {"status": "not_found"}
+    _write_collections(keep)
+    return {"status": "ok"}
+
+
+def collection_query(collection_id: str, limit: int = 200) -> Dict[str, Any]:
+    rec = next((c for c in collections() if c["id"] == collection_id), None)
+    if rec is None:
+        return {"status": "not_found"}
+    f = dict(rec.get("filters") or {})
+    since = until = None
+    if f.get("when"):
+        from agent_friday.services.media_card_tools import period
+        since, until = period(str(f["when"]))
+    res = query(view=f.get("view") or "all", q=f.get("q") or "", kind=f.get("kind"), project=f.get("project"),
+                privacy=f.get("privacy"), unsigned=bool(f.get("unsigned")), status=f.get("status"),
+                sort=f.get("sort") or "next", limit=limit, since=since, until=until,
+                favorite=bool(f.get("favorite")), tag=f.get("tag"))
+    res["status"] = "ok"
+    res["collection"] = rec
+    return res
+
+
+def bulk(ids: List[str], project: Any = None, add_tags: Optional[List[str]] = None, remove_tags: Optional[List[str]] = None,
+         favorite: Optional[bool] = None) -> Dict[str, Any]:
+    """One change on many cards: move to a project, tag, favourite. Each card
+    goes through patch(), so the same rules hold."""
+    done, missing = 0, []
+    for cid in ids or []:
+        c = get(cid)
+        if c is None:
+            missing.append(cid)
+            continue
+        tags = None
+        if add_tags or remove_tags:
+            cur = list(c.get("tags") or [])
+            for t in add_tags or []:
+                if str(t).strip() and str(t).strip().lower() not in [x.lower() for x in cur]:
+                    cur.append(str(t).strip())
+            if remove_tags:
+                low = [str(t).strip().lower() for t in remove_tags]
+                cur = [x for x in cur if x.lower() not in low]
+            tags = cur
+        r = patch(cid, project=project if project is not None else None, favorite=favorite, tags=tags)
+        if r.get("status") == "ok":
+            done += 1
+    return {"status": "ok", "done": done, "missing": missing}
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -914,6 +1014,8 @@ def _row_to_card(r: sqlite3.Row, ov: Optional[sqlite3.Row]) -> Dict[str, Any]:
         "signed": bool(r["signed"]), "hash": r["hash"], "privacy": r["privacy"], "published_at": r["published_at"],
         "targets": _dj(r["targets"], []), "project": r["project"], "extra": _dj(r["extra"], {}),
     }
+    c["favorite"] = False
+    c["tags"] = []
     if ov is not None:
         for k in ("status", "project", "title", "privacy", "published_at"):
             if ov[k] not in (None, ""):
@@ -922,6 +1024,11 @@ def _row_to_card(r: sqlite3.Row, ov: Optional[sqlite3.Row]) -> Dict[str, Any]:
             c["when"] = _iso(ov["when_ts"]); c["when_ts"] = ov["when_ts"]
         if ov["body_path"]:
             c["body_path"] = ov["body_path"]
+        try:
+            c["favorite"] = bool(ov["favorite"])
+            c["tags"] = _dj(ov["tags"], []) or []
+        except (IndexError, KeyError):
+            pass
     ex = c["extra"] or {}
     if ex.get("duration_s"):
         s = int(ex["duration_s"]); c["duration"] = f"{s // 60}:{s % 60:02d}"
@@ -1005,16 +1112,17 @@ def _view_sql(view: str) -> Tuple[str, List[Any]]:
 def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: Optional[str] = None,
           privacy: Optional[str] = None, unsigned: bool = False, status: Optional[str] = None,
           sort: str = "next", limit: int = 200, offset: int = 0,
-          since: Optional[float] = None, until: Optional[float] = None) -> Dict[str, Any]:
+          since: Optional[float] = None, until: Optional[float] = None,
+          favorite: bool = False, tag: Optional[str] = None) -> Dict[str, Any]:
     with _LOCK:
         con = _connect()
         try:
-            rows = con.execute("SELECT c.*, o.status AS o_status, o.project AS o_project, o.title AS o_title, o.when_ts AS o_when, o.body_path AS o_body, o.privacy AS o_privacy, o.published_at AS o_pub FROM cards c LEFT JOIN overrides o ON o.id=c.id").fetchall()
+            rows = con.execute("SELECT c.*, o.status AS o_status, o.project AS o_project, o.title AS o_title, o.when_ts AS o_when, o.body_path AS o_body, o.privacy AS o_privacy, o.published_at AS o_pub, o.favorite AS o_fav, o.tags AS o_tags FROM cards c LEFT JOIN overrides o ON o.id=c.id").fetchall()
         finally:
             con.close()
     cards = []
     for r in rows:
-        ov = {"status": r["o_status"], "project": r["o_project"], "title": r["o_title"], "when_ts": r["o_when"], "body_path": r["o_body"], "privacy": r["o_privacy"], "published_at": r["o_pub"]}
+        ov = {"status": r["o_status"], "project": r["o_project"], "title": r["o_title"], "when_ts": r["o_when"], "body_path": r["o_body"], "privacy": r["o_privacy"], "published_at": r["o_pub"], "favorite": r["o_fav"], "tags": r["o_tags"]}
         c = _row_to_card(r, _Ov(ov))
         c["_text"] = (r["text"] or "")
         cards.append(c)
@@ -1038,7 +1146,7 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
         return _parse_when(m) if m else None
 
     # counts over everything, for the rail
-    counts: Dict[str, Any] = {"all": len(cards), "kinds": {}, "private": 0, "shared": 0, "unsigned": 0, "no_project": 0}
+    counts: Dict[str, Any] = {"all": len(cards), "kinds": {}, "private": 0, "shared": 0, "unsigned": 0, "no_project": 0, "favorites": 0, "tags": {}}
     for v in ("today", "progress", "review", "published", "kept"):
         counts[v] = 0
     projects: Dict[str, int] = {}
@@ -1058,6 +1166,10 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
             counts["shared"] += 1
         if not c["signed"]:
             counts["unsigned"] += 1
+        if c.get("favorite"):
+            counts["favorites"] += 1
+        for t in c.get("tags") or []:
+            counts["tags"][t] = counts["tags"].get(t, 0) + 1
         if c["project"]:
             projects[c["project"]] = projects.get(c["project"], 0) + 1
         else:
@@ -1076,6 +1188,11 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
         out = [c for c in out if not c["signed"]]
     if status:
         out = [c for c in out if c["status"] == status]
+    if favorite:
+        out = [c for c in out if c.get("favorite")]
+    if tag:
+        tl = tag.strip().lower()
+        out = [c for c in out if tl in [t.lower() for t in (c.get("tags") or [])]]
     if since is not None or until is not None:
         # "September's videos", "this week's podcasts": the date that matters, else when the file changed
         def _t(c):
@@ -1185,7 +1302,7 @@ def calendar(frm: str, to: str) -> List[Dict[str, Any]]:
     with _LOCK:
         con = _connect()
         try:
-            rows = con.execute("SELECT c.*, o.status AS o_status, o.project AS o_project, o.title AS o_title, o.when_ts AS o_when, o.body_path AS o_body, o.privacy AS o_privacy, o.published_at AS o_pub FROM cards c LEFT JOIN overrides o ON o.id=c.id").fetchall()
+            rows = con.execute("SELECT c.*, o.status AS o_status, o.project AS o_project, o.title AS o_title, o.when_ts AS o_when, o.body_path AS o_body, o.privacy AS o_privacy, o.published_at AS o_pub, o.favorite AS o_fav, o.tags AS o_tags FROM cards c LEFT JOIN overrides o ON o.id=c.id").fetchall()
         finally:
             con.close()
     out = []
@@ -1206,11 +1323,11 @@ def _set_override(card_id: str, **fields: Any) -> None:
         con = _connect()
         try:
             cur = con.execute("SELECT * FROM overrides WHERE id=?", (card_id,)).fetchone()
-            rec = dict(cur) if cur else {"id": card_id, "status": None, "project": None, "title": None, "when_ts": None, "body_path": None, "privacy": None, "published_at": None}
+            rec = dict(cur) if cur else {"id": card_id, "status": None, "project": None, "title": None, "when_ts": None, "body_path": None, "privacy": None, "published_at": None, "favorite": None, "tags": None}
             rec.update(fields)
             rec["updated"] = time.time()
-            con.execute("INSERT OR REPLACE INTO overrides (id, status, project, title, when_ts, body_path, privacy, published_at, updated) VALUES (?,?,?,?,?,?,?,?,?)",
-                        (card_id, rec["status"], rec["project"], rec["title"], rec["when_ts"], rec["body_path"], rec["privacy"], rec["published_at"], rec["updated"]))
+            con.execute("INSERT OR REPLACE INTO overrides (id, status, project, title, when_ts, body_path, privacy, published_at, updated, favorite, tags) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (card_id, rec["status"], rec["project"], rec["title"], rec["when_ts"], rec["body_path"], rec["privacy"], rec["published_at"], rec["updated"], rec.get("favorite"), rec.get("tags")))
             con.commit()
         finally:
             con.close()
@@ -1289,7 +1406,7 @@ def reindex_posts_only() -> None:
 
 
 def patch(card_id: str, status: Optional[str] = None, project: Optional[str] = None, title: Optional[str] = None,
-          when: Any = None) -> Dict[str, Any]:
+          when: Any = None, favorite: Optional[bool] = None, tags: Optional[List[str]] = None) -> Dict[str, Any]:
     """Change what the owner may change by hand. Published is refused here: it
     goes through publish() and the approval card."""
     c = get(card_id)
@@ -1334,6 +1451,15 @@ def patch(card_id: str, status: Optional[str] = None, project: Optional[str] = N
             fields["when_ts"] = ts
     if project is not None:
         fields["project"] = project.strip() or None
+    if favorite is not None:
+        fields["favorite"] = 1 if favorite else 0
+    if tags is not None:
+        clean = []
+        for t in tags:
+            t = str(t).strip().lstrip("#")[:40]
+            if t and t.lower() not in [x.lower() for x in clean]:
+                clean.append(t)
+        fields["tags"] = _j(clean[:30])
     if title is not None and title.strip():
         fields["title"] = title.strip()[:200]
         if c["source_kind"] == "media":

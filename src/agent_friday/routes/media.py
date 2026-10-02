@@ -21,6 +21,11 @@
 | /api/media/<id>/open                   | POST   | open the file in its app on this PC               |
 | /api/media/<id>/reveal                 | POST   | show the file in its folder on this PC            |
 | /api/media/previews/status             | GET    | the preview pass: pending, done, building         |
+| /api/media/collections                 | GET    | the saved collections (smart filters)             |
+| /api/media/collections                 | POST   | save one: {name, filters} (+id to rename/refilter)|
+| /api/media/collections/<id>            | GET    | the collection's cards, evaluated now             |
+| /api/media/collections/<id>            | DELETE | forget the collection; its cards stay             |
+| /api/media/bulk                        | POST   | {ids, project?, add_tags?, remove_tags?, favorite?}|
 
 Local user only, like podcasts. Every write wants a JSON body from this origin.
 """
@@ -65,12 +70,18 @@ def media_list():
         limit = int(a.get('limit', 200))
     except ValueError:
         limit = 200
+    since = until = None
+    if a.get('when'):
+        from agent_friday.services.media_card_tools import period
+        since, until = period(a.get('when'))
     res = mi.query(
         view=a.get('view', 'all') or 'all', q=a.get('q', '') or '', kind=a.get('kind') or None,
         project=a.get('project') if 'project' in a else None, privacy=a.get('privacy') or None,
         unsigned=a.get('unsigned') in ('1', 'true'), status=a.get('status') or None,
         sort=a.get('sort', 'next') or 'next', limit=limit, offset=int(a.get('offset', 0) or 0),
+        since=since, until=until, favorite=a.get('favorite') in ('1', 'true'), tag=a.get('tag') or None,
     )
+    res["collections"] = mi.collections()
     res["status"] = "ok"
     res["indexing"] = indexing
     try:
@@ -128,10 +139,49 @@ def media_get(card_id):
     return jsonify(out)
 
 
+@media_bp.route('/api/media/collections', methods=['GET'])
+def media_collections():
+    return jsonify({"status": "ok", "collections": mi.collections()})
+
+
+@media_bp.route('/api/media/collections', methods=['POST'])
+def media_collection_save():
+    b = _json()
+    res = mi.save_collection(str(b.get('name') or ''), b.get('filters') or {}, b.get('id') or None)
+    return jsonify(res), (200 if res.get("status") == "ok" else 400)
+
+
+@media_bp.route('/api/media/collections/<collection_id>', methods=['GET'])
+def media_collection_get(collection_id):
+    try:
+        limit = int(request.args.get('limit', 200))
+    except ValueError:
+        limit = 200
+    res = mi.collection_query(collection_id, limit=limit)
+    return jsonify(res), (200 if res.get("status") == "ok" else 404)
+
+
+@media_bp.route('/api/media/collections/<collection_id>', methods=['DELETE'])
+def media_collection_delete(collection_id):
+    res = mi.delete_collection(collection_id)
+    return jsonify(res), (200 if res.get("status") == "ok" else 404)
+
+
+@media_bp.route('/api/media/bulk', methods=['POST'])
+def media_bulk():
+    b = _json()
+    ids = [str(x) for x in (b.get('ids') or [])][:500]
+    res = mi.bulk(ids, project=b.get('project') if 'project' in b else None, add_tags=b.get('add_tags') or None,
+                  remove_tags=b.get('remove_tags') or None, favorite=b.get('favorite') if 'favorite' in b else None)
+    return jsonify(res)
+
+
 @media_bp.route('/api/media/<card_id>', methods=['PATCH'])
 def media_patch(card_id):
     b = _json()
-    res = mi.patch(card_id, status=b.get('status'), project=b.get('project'), title=b.get('title'), when=b.get('when'))
+    res = mi.patch(card_id, status=b.get('status'), project=b.get('project'), title=b.get('title'), when=b.get('when'),
+                   favorite=b.get('favorite') if 'favorite' in b else None,
+                   tags=[str(t) for t in b.get('tags')] if isinstance(b.get('tags'), list) else None)
     code = {"not_found": 404, "denied": 403, "error": 400}.get(res.get("status"), 200)
     return jsonify(res), code
 
