@@ -1061,7 +1061,17 @@ class ModelRouter:
             _conv_seat = (ctx or {}).get("conversation_seat")
             _conv_model = ((_conv_seat or {}).get("model") or "").strip() \
                 if isinstance(_conv_seat, dict) else ""
-            if _conv_model and not self._is_registry_local(_conv_model):
+            _conv_prov = ((_conv_seat or {}).get("provider") or "").strip().lower() \
+                if isinstance(_conv_seat, dict) else ""
+            if _conv_model and self._is_local_choice(_conv_model, _conv_prov):
+                return {
+                    "provider": "local",
+                    "model": _conv_model,
+                    "task_type": task_type,
+                    "reason": ("this conversation is bound to %s, a local model; "
+                               "the per-chat binding is honoured" % _conv_model),
+                }
+            if _conv_model and not self._is_local_choice(_conv_model, _conv_prov):
                 return {
                     "provider": "cloud",
                     "model": _conv_model,

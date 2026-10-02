@@ -2061,10 +2061,17 @@ _SETTINGS_CACHE_TTL: float = 2.0  # seconds
 _SETTINGS_CACHE_LOCK = threading.Lock()
 
 
+#: Bumped by every invalidation. A reader stores what it read only when no
+#: invalidation happened while it was reading: a read that overlapped a save
+#: holds the pre-save file and must not be served from the cache afterwards.
+_SETTINGS_CACHE_GEN = [0]
+
+
 def _invalidate_settings_cache() -> None:
     with _SETTINGS_CACHE_LOCK:
         _SETTINGS_CACHE["value"] = None
         _SETTINGS_CACHE["ts"] = 0.0
+        _SETTINGS_CACHE_GEN[0] += 1
 
 DEFAULT_AGENT_PERSONALITY = (
     "You are Friday — a calm, perceptive AI partner. "
@@ -3095,6 +3102,7 @@ def _load_settings_raw():
         if (_SETTINGS_CACHE["value"] is not None
                 and (_time.time() - _SETTINGS_CACHE["ts"]) < _SETTINGS_CACHE_TTL):
             return dict(_SETTINGS_CACHE["value"])
+        _gen = _SETTINGS_CACHE_GEN[0]
 
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     if not SETTINGS_FILE.exists():
@@ -3140,8 +3148,9 @@ def _load_settings_raw():
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _sync_capability_routing(merged)
         with _SETTINGS_CACHE_LOCK:
-            _SETTINGS_CACHE["value"] = merged
-            _SETTINGS_CACHE["ts"] = _time.time()
+            if _SETTINGS_CACHE_GEN[0] == _gen:
+                _SETTINGS_CACHE["value"] = merged
+                _SETTINGS_CACHE["ts"] = _time.time()
         return merged
     except Exception as e:
         # NEVER SILENT AGAIN. Reverting to defaults is a defensible last

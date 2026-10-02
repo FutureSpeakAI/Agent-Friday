@@ -89,3 +89,13 @@ def test_the_uis_mark_mode_changes_and_never_spread_a_stale_block(ui):
     for bad in ("model_routing:{...(s.model_routing", "model_routing:{...cur,mode}",
                 "constnext=Object.assign({},mr);"):
         assert bad not in compact, f"{ui} still spreads a stale model_routing block: {bad}"
+
+
+def test_the_mode_buttons_trust_the_save_response_not_a_second_read():
+    """"That mode did not stick" fired after a 200: the separate read-back could
+    be served a settings copy cached by a reader that overlapped the save."""
+    text = (REPO / "index.html").read_text(encoding="utf-8")
+    i = text.index("const setMode = (id) => {")
+    body = text[i:i + 1600]
+    assert "apiFetch('/api/settings'))" not in body, "setMode still re-reads settings after saving"
+    assert "d.settings" in body and "did not stick" not in body

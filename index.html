@@ -48826,15 +48826,21 @@ function SettingsTabIntelligence({ s, save }) {
     apiFetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ owner_action: 'routing_mode', settings: { model_routing: { mode: id } } }),
-    }).then(r => r.json()).then(() => apiFetch('/api/settings'))
-      .then(r => r.json()).then(d => {
-        const got = ((d || {}).settings || {}).model_routing || {};
-        if ((got.mode || '') !== id) {
-          fridayToast('That mode did not stick — the server still has ' + (got.mode || 'nothing') + '.');
+    }).then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        // The save answers with the settings it wrote; that is the truth, not
+        // a second read that can race other readers.
+        if (!ok || !d || d.status !== 'ok') {
+          fridayToast('The mode was not saved: ' + ((d && (d.message || d.error)) || 'the server refused it') + '.');
           return;
         }
+        const got = ((d.settings || {}).model_routing || {}).mode || '';
+        if (got !== id) {
+          fridayToast('The server kept ' + (got || 'no mode') + ' instead of ' + id + '.');
+        }
         reload();
-      }).catch(() => {}).finally(() => setSavingMode(null));
+      }).catch(() => fridayToast('Could not reach the server to save the mode.'))
+      .finally(() => setSavingMode(null));
   };
 
   return E('div', null,

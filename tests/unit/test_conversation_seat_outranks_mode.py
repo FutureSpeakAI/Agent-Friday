@@ -115,3 +115,17 @@ def test_cloud_only_a_chat_bound_to_a_cloud_model_uses_that_model(monkeypatch):
     r = _router(monkeypatch, mode="cloud_only")
     out = _route(r, {"model": "claude-opus-5-5"})
     assert out.get("provider") == "cloud" and out.get("model") == "claude-opus-5-5", out
+
+
+def test_local_preferred_a_chat_bound_to_a_local_seat_the_registry_does_not_list_stays_local(monkeypatch):
+    """The 09-30 log: "this conversation is bound to bonsai2:27b, which is a
+    cloud model". The branch asked only the provider registry, which does not
+    list a llama.cpp seat, so it reasoned that the LOCAL model was a cloud one;
+    a later retag kept those turns local, but the logged reason was false and
+    the decision rested on the retag rather than on the binding."""
+    r = _router(monkeypatch)
+    monkeypatch.setattr(ModelRouter, "_is_registry_local", lambda self, m: False)
+    out = _route(r, {"model": "bonsai2:27b", "provider": "bonsai2-local"})
+    assert out.get("provider") == "local" and out.get("model") == "bonsai2:27b", out
+    assert "cloud model" not in (out.get("reason") or ""), (
+        "the logged reason calls the local seat a cloud model: %r" % out.get("reason"))
