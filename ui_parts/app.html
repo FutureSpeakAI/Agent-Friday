@@ -2874,6 +2874,71 @@ function MediaDietRules() {
       String(x.at || '').replace('T', ' ').slice(0, 16) + ' \u00b7 ' + String(x.where || '').replace('_', ' ') + ' \u00b7 '
       + x.rule + ': ' + (x.removed || []).length + ' removed')));
 }
+// Discuss with Friday (docs/design/active/news-discuss.md): one story,
+// evidence first. What the sources say, each linked from the fetched URL;
+// then her read, labelled as hers. The local model only.
+const DISCUSS_MODES = [['compare', 'Compare coverage'], ['primary', 'Primary source'], ['background', 'Background'],
+  ['claims', 'Claim check'], ['local', 'Local angle'], ['follow', 'Follow'], ['make', 'Make something']];
+function DiscussPanel({ story, onClose }) {
+  const h = React.createElement;
+  const [mode, setMode] = useState('compare');
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const ask = (m, extra) => {
+    setMode(m); setBusy(true); setRes(null);
+    fetch('/api/news/discuss', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ url: story.url, title: story.title, mode: m }, extra || {})) })
+      .then(r => r.json()).then(d => { setRes(d); setBusy(false); })
+      .catch(() => { setRes({ status: 'error', message: 'Could not reach Friday' }); setBusy(false); });
+  };
+  useEffect(() => { if (story && story.url) ask('compare'); }, [story && story.url]);
+  const draft = () => {
+    const lines = ((res && res.findings) || []).map(f => '- ' + f.text + (f.links && f.links.length ? ' (' + f.links.join(', ') + ')' : ''));
+    fetch('/api/media', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'draft', title: 'On: ' + story.title, body: '# ' + story.title + '\n\n' + story.url + '\n\n' + lines.join('\n') }) })
+      .then(r => r.json()).then(d => { if (d.status === 'ok' && window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'media', card: d.card.id }); });
+  };
+  const link = (u, i) => h('a', { key: i, href: u, target: '_blank', rel: 'noopener noreferrer', style: { marginLeft: 6, fontSize: 11 } }, '[' + (i + 1) + ']');
+  const muted = { fontSize: 11, color: '#777' };
+  const body = busy ? h('div', { style: muted }, 'Reading the sources on this computer…')
+    : !res ? null
+    : res.status !== 'ok' ? h('div', { style: { fontSize: 12 } }, res.message || 'That didn’t work.')
+    : h('div', null,
+      res.note ? h('div', { style: Object.assign({}, muted, { marginBottom: 8 }) }, res.note) : null,
+      res.diet_removed ? h('div', { style: muted }, res.diet_removed + ' source' + (res.diet_removed === 1 ? '' : 's') + ' left out: your media diet') : null,
+      (res.findings || []).length ? h('div', { className: 'card-title', style: { marginTop: 8 } }, 'What the sources say') : null,
+      (res.findings || []).map((f, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } }, f.text, (f.links || []).map(link))),
+      (res.outlets || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'How each outlet framed it') : null,
+      (res.outlets || []).map((o, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } },
+        h('a', { href: o.url, target: '_blank', rel: 'noopener noreferrer' }, o.outlet), ': ', o.framing,
+        o.left_out ? h('div', { style: muted }, 'Left out: ' + o.left_out) : null)),
+      (res.primary || []).map((p, i) => h('div', { key: i, style: { fontSize: 12 } }, 'Primary source: ', h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, p.url))),
+      (res.timeline || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Timeline') : null,
+      (res.timeline || []).map((t, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, t.when), ' ', t.what, (t.links || []).map(link))),
+      (res.who || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Who’s who') : null,
+      (res.who || []).map((w, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, w.name), ': ', w.role, (w.links || []).map(link))),
+      (res.claims || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Claims') : null,
+      (res.claims || []).map((c, i) => h('div', { key: i, style: { fontSize: 12 } }, h('span', { className: 'fp-badge ' + (c.status === 'confirmed' ? 'new' : 'update') }, c.status), ' ', c.claim, (c.links || []).map(link))),
+      (res.read || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, fridayName() + '’s read') : null,
+      (res.read || []).map((r, i) => h('div', { key: i, style: { fontSize: 12, fontStyle: 'italic' } }, r)),
+      (res.sources || []).length ? h('div', { style: Object.assign({}, muted, { marginTop: 10 }) }, 'Sources: ',
+        res.sources.map((s, i) => h('a', { key: i, href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { marginRight: 8 } }, s.outlet || s.title))) : null,
+      res.episode ? h('div', { style: { fontSize: 12 } }, 'A two-host deep dive is being made on this computer; it will be in Media.') : null,
+      res.path ? h('div', { style: { fontSize: 12 } }, 'Notes saved: ' + res.path) : null);
+  return h('div', { className: 'news-side' },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      h('h3', null, '💬 DISCUSS WITH ' + fridayName().toUpperCase()),
+      h('button', { className: 'icon-btn', 'aria-label': 'Close this panel', title: 'Close this panel', onClick: onClose }, '✕')),
+    h('div', { style: { fontSize: 12, marginBottom: 8 } }, story.title),
+    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 } },
+      DISCUSS_MODES.map(([m, label]) => h('button', { key: m, className: 'btn' + (mode === m ? ' active' : ''), style: { fontSize: 10 },
+        onClick: () => m === 'make' ? (setMode('make'), setRes(null)) : ask(m) }, label))),
+    mode === 'make' && !busy ? h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'podcast' }) }, '🎧 A two-host podcast'),
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'notes' }) }, '📝 Notes'),
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: draft }, '✍️ A draft in Media')) : null,
+    body);
+}
 const NEWS_PODCAST_ROUTINE = { frontpage: 'front_page', briefings: 'briefing', weekly: 'weekly', editorial: 'editorial' };
 function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
   const[open,setOpen]=useState(false);const[status,setStatus]=useState(null);const ref=useRef(null);
@@ -9271,7 +9336,7 @@ function NewsWS(){
   const[prefs,setPrefs]=useState(null);const[cats,setCats]=useState([]);
   const[panel,setPanel]=useState(null); // 'sources' | 'customize' | 'diet' | null
   const[clusters,setClusters]=useState([]);const[clLoading,setClLoading]=useState(false);const[clOpen,setClOpen]=useState({});
-  const[diet,setDiet]=useState(null);const[dietLoading,setDietLoading]=useState(false);
+  const[diet,setDiet]=useState(null);const[discussFor,setDiscussFor]=useState(null);const[dietLoading,setDietLoading]=useState(false);
   // Source Trust Graph tab: leaderboard, selected source detail, federation status.
   const[trustBoard,setTrustBoard]=useState([]);const[trustLoading,setTrustLoading]=useState(false);
   const[trustSel,setTrustSel]=useState(null);const[trustDetail,setTrustDetail]=useState(null);
@@ -9564,6 +9629,7 @@ function NewsWS(){
   const streamItems=feed;
   // Reusable card-corner actions: Read Later (toggle) + Open in Background.
   const cardActions=(it)=>(<div className="src-actions">
+    <button aria-label={"Discuss this story with " + fridayName()} className="src-btn discuss" title={"Discuss this story with " + fridayName() + ": coverage, sources, claims"} onClick={e=>{e.stopPropagation();setDiscussFor({url:it.url,title:it.title});setPanel('discuss')}}>💬</button>
     <button aria-label={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} className={'src-btn save'+(savedUrls[it.url]?' on':'')} title={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} onClick={e=>{e.stopPropagation();savedUrls[it.url]?removeLater(it.url):saveLater(it)}}>{savedUrls[it.url]?'🔖':'🏷'}</button>
     <button aria-label="Open in background tab" className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
     <button aria-label="Draft a LinkedIn post / blog response about this" className="src-btn draft" title="Draft a LinkedIn post / blog response about this" onClick={e=>{e.stopPropagation();shareToDraft(it)}}>{shareBusy===it.url?'…':'✍️'}</button>
@@ -10057,6 +10123,7 @@ function NewsWS(){
       <NewsLocalBeatSettings/>
       <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Briefing and the live feed.</div>
     </div>}
+    {panel==='discuss'&&discussFor&&<DiscussPanel story={discussFor} onClose={()=>setPanel(null)}/>}
     {panel==='diet'&&<div className="news-side">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>📊 YOUR MEDIA DIET</h3><button aria-label={'Close this panel'} title={'Close this panel'} className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
       <div style={{fontSize:10,color:'#777',marginBottom:8}}>How you engage with the news — what you read, save, boost, and ban.</div>
