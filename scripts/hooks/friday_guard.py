@@ -29,13 +29,17 @@ Rules, each testable in both directions (``tests/unit/test_friday_guard_hook.py`
    ``pytest_single_file_floor_gb`` of free memory, and while free memory is
    under ``pytest_concurrency_floor_gb`` a new run is refused if another
    pytest process is already running anywhere on the machine, unless it is a
-   single named file at ``-n 0``.
+   single named file at ``-n 0``. Whatever the memory, at most
+   ``pytest_max_concurrent_runs`` runs (2) go at once across every session:
+   eight single-file runs together once took the commit charge to 96 %. A
+   third run waits inside the hook for a slot, then is refused with the reason.
 
 Configuration is per machine and never in the tree:
 ``~/.claude/friday-desktop.local.json`` (or ``$FRIDAY_GUARD_CONFIG``), keys
 ``live_checkout``, ``min_free_ram_gb``, ``min_free_disk_gb``,
 ``deploy_lane_token``, ``deploy_lane_ttl_hours``, ``audit_log``,
-``pytest_concurrency_floor_gb``, ``pytest_single_file_floor_gb``. Without a
+``pytest_concurrency_floor_gb``, ``pytest_single_file_floor_gb``,
+``pytest_max_concurrent_runs``, ``pytest_slot_wait_s``. Without a
 config file rules 1, 2, 4 and 5 still apply with the defaults below; rule 3
 needs ``live_checkout`` and is otherwise inactive.
 
@@ -53,6 +57,7 @@ import os
 import posixpath
 import re
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -67,6 +72,8 @@ DEFAULTS = {
     "suite_lock": None,             # default: <live_checkout>/.claude/SUITE_LOCK
     "pytest_concurrency_floor_gb": 8.0,   # under this, no second pytest on the machine
     "pytest_single_file_floor_gb": 4.0,   # under this, no pytest at all
+    "pytest_max_concurrent_runs": 2,      # runs at once, machine-wide, any memory
+    "pytest_slot_wait_s": 15.0,           # a third run waits this long (hook timeout is 30 s)
 }
 PYTEST_PROCESS_MARKERS = ("pytest", "run_suite_guarded")
 CONFIG_PATH = Path.home() / ".claude" / "friday-desktop.local.json"
@@ -548,6 +555,31 @@ def is_single_file_serial(args: list[str]) -> bool:
     return xdist_workers(args) in (0, "off")
 
 
+def distinct_runs(running) -> list[tuple[int, str]]:
+    """One entry per test run. A venv launcher and the interpreter it starts
+    carry the same command line, so they are one run, not two."""
+    seen, out = set(), []
+    for pid, cmd in running or []:
+        if cmd in seen:
+            continue
+        seen.add(cmd)
+        out.append((pid, cmd))
+    return out
+
+
+def wait_for_pytest_slot(cfg: dict):
+    """The machine's pytest processes once a slot is free, or the last reading
+    when the wait runs out (None when the list could not be read)."""
+    cap = int(cfg["pytest_max_concurrent_runs"])
+    deadline = time.monotonic() + float(cfg["pytest_slot_wait_s"])
+    running = running_pytest_processes()
+    while running is not None and len(distinct_runs(running)) >= cap \
+            and time.monotonic() < deadline:
+        time.sleep(5)
+        running = running_pytest_processes()
+    return running
+
+
 def check_pytest_load(segs: list[Segment], cfg: dict, ram: float | None, running) -> str | None:
     """Refuse a pytest call the machine has no room for. ``running`` is the
     list from ``running_pytest_processes()`` (None when it could not be read)."""
@@ -562,6 +594,13 @@ def check_pytest_load(segs: list[Segment], cfg: dict, ram: float | None, running
     if ram < single_floor:
         return (f"pytest is blocked: free memory is {ram:.1f} GB and any run needs at least "
                 f"{single_floor:.0f} GB. Wait for room, or stop what is holding it.")
+    cap = int(cfg["pytest_max_concurrent_runs"])
+    runs = distinct_runs(running)
+    if len(runs) >= cap:
+        others = "; ".join(f"pid {pid}: {cmd[:80]}" for pid, cmd in runs[:3])
+        return (f"pytest is blocked: {len(runs)} pytest runs already active on this machine "
+                f"and at most {cap} go at once across all sessions ({others}). "
+                "Wait for one to finish, then run it again.")
     if ram >= conc_floor:
         return None
     if all(is_single_file_serial(a) for a in calls):
@@ -853,10 +892,10 @@ def decide(payload: dict, cfg: dict, ram=_PROBE, now: float | None = None, runni
 
     if any(pytest_args(s.words) is not None for s in segs):
         ram = free_ram_gb() if ram is _PROBE else ram
-        if ram is not None and ram < float(cfg["pytest_concurrency_floor_gb"]) and running is _PROBE:
-            running = running_pytest_processes()
-        elif running is _PROBE:
-            running = []
+        if running is _PROBE:
+            # Always read: the run cap holds at any memory level. A full
+            # machine is re-read until a slot frees or the wait runs out.
+            running = wait_for_pytest_slot(cfg)
         why = check_pytest_load(segs, cfg, ram, running)
         if why:
             audit(cfg, f"BLOCK pytest-load tool={tool} ram={ram} running={len(running or [])} cmd={command[:600]!r}")
