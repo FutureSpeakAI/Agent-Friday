@@ -610,7 +610,7 @@
         h('div', { className: 'md-group' }, railBtn('fav', '\u2605 Favourites', counts.favorites, { favorite: true })),
         h('div', { className: 'md-label' }, 'Collections'),
         h('div', { className: 'md-group', 'data-collections': 'true' },
-          (state.collections || []).map(col => railBtn('col:' + col.id, col.name, null, null) && h('button', { key: 'col:' + col.id, 'aria-current': current === 'col:' + col.id ? 'true' : undefined, onClick: () => openCollection(col), title: 'A saved filter, evaluated now' }, col.name)),
+          (state.collections || []).map(col => h('button', { key: 'col:' + col.id, 'aria-current': current === 'col:' + col.id ? 'true' : undefined, onClick: () => openCollection(col), title: 'A saved filter, evaluated now' }, col.name)),
           h('button', { className: 'dim', onClick: saveCollection, title: 'Save the current filters as a collection' }, '+ Save this view\u2026')),
         Object.keys(counts.tags || {}).length ? h('div', { className: 'md-label' }, 'Tags') : null,
         Object.keys(counts.tags || {}).length ? h('div', { className: 'md-group' }, Object.keys(counts.tags).sort().map(t => railBtn('tag:' + t, '# ' + t, counts.tags[t], { tag: t }))) : null,
