@@ -1004,7 +1004,8 @@ def _view_sql(view: str) -> Tuple[str, List[Any]]:
 
 def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: Optional[str] = None,
           privacy: Optional[str] = None, unsigned: bool = False, status: Optional[str] = None,
-          sort: str = "next", limit: int = 200, offset: int = 0) -> Dict[str, Any]:
+          sort: str = "next", limit: int = 200, offset: int = 0,
+          since: Optional[float] = None, until: Optional[float] = None) -> Dict[str, Any]:
     with _LOCK:
         con = _connect()
         try:
@@ -1075,6 +1076,11 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
         out = [c for c in out if not c["signed"]]
     if status:
         out = [c for c in out if c["status"] == status]
+    if since is not None or until is not None:
+        # "September's videos", "this week's podcasts": the date that matters, else when the file changed
+        def _t(c):
+            return c["when_ts"] or r_mod(c) or 0
+        out = [c for c in out if (since is None or _t(c) >= since) and (until is None or _t(c) < until)]
     hits: Dict[str, Dict[str, Any]] = {}
     if q:
         ql = q.lower().strip()

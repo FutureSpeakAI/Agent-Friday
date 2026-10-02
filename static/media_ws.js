@@ -404,7 +404,7 @@
     const [full, setFull] = useState(null);
     const [page, setPage] = useState(0);
     const mediaRef = useRef(null);
-    useEffect(() => { setFull(null); setPage(0); if (c && (c.kind === 'draft' || c.kind === 'article' || c.kind === 'doc' || AV_KINDS[c.kind])) json('/api/media/' + encodeURIComponent(c.id) + (q ? '?q=' + encodeURIComponent(q) : '')).then(d => { if (d.status === 'ok') { setFull(d); if (d.hit_t != null && mediaRef.current) mediaRef.current.currentTime = d.hit_t; } }).catch(() => {}); }, [c && c.id, q]);
+    useEffect(() => { setFull(null); setPage(0); if (c && (c.kind === 'draft' || c.kind === 'article' || c.kind === 'doc' || AV_KINDS[c.kind])) json('/api/media/' + encodeURIComponent(c.id) + (q ? '?q=' + encodeURIComponent(q) : '')).then(d => { if (d.status === 'ok') { setFull(d); const at = c.at != null ? c.at : d.hit_t; if (at != null && mediaRef.current) { mediaRef.current.currentTime = at; mediaRef.current.play && mediaRef.current.play().catch(() => {}); } } }).catch(() => {}); }, [c && c.id, q]);
     useEffect(() => {
       const onKey = e => {
         if (!c) return;
@@ -451,7 +451,21 @@
   function Library({ filters, setFilters, sel, setSel, onOpen, onAction }) {
     const [state] = useCards(filters);
     const [ql, setQl] = useState(false);
+    const [qlCard, setQlCard] = useState(null);   // a card asked for by id that the current list may not hold
     const onQuick = useCallback(c => { setSel(c.id); setQl(true); }, [setSel]);
+    useEffect(() => {
+      const on = e => {
+        const d = e.detail || {};
+        if (!d.id) return;
+        json('/api/media/' + encodeURIComponent(d.id) + (d.q ? '?q=' + encodeURIComponent(d.q) : '')).then(r => {
+          if (r.status !== 'ok') return;
+          const c = Object.assign({}, r.card, { play: true, at: d.at != null ? d.at : r.hit_t });
+          setQlCard(c); setSel(c.id); setQl(true);
+        }).catch(() => {});
+      };
+      window.addEventListener('friday:media-quicklook', on);
+      return () => window.removeEventListener('friday:media-quicklook', on);
+    }, [setSel]);
     const [layout, setLayout] = useState('grid');
     const searchRef = useRef(null);
     const cards = state.cards;
@@ -514,7 +528,7 @@
           h('div', { className: 'md-grid' + (layout === 'list' ? ' list' : ''), role: 'listbox', 'aria-label': 'Cards', 'aria-busy': state.loading ? 'true' : 'false' },
             cards.map(c => h(Card, { key: c.id, c, selected: c.id === sel, onSelect: x => setSel(x.id), onOpen, onQuick }))),
           h(Details, { c: selCard, onClose: () => setSel(null), onOpen, onAction, onQuick }),
-          ql && selCard ? h(QuickLook, { c: selCard, cards, setSel, onClose: () => setQl(false), onOpen, q: filters.q }) : null),
+          ql && (selCard || qlCard) ? h(QuickLook, { c: selCard || qlCard, cards, setSel, onClose: () => { setQl(false); setQlCard(null); }, onOpen, q: filters.q }) : null),
         h('p', { className: 'md-keys' }, 'Keys: ', h('kbd', null, '/'), ' search · ', h('kbd', null, 'N'), ' new · ', h('kbd', null, '←'), ' ', h('kbd', null, '→'), ' move · ', h('kbd', null, 'Enter'), ' open · ', h('kbd', null, 'T'), ' turn this into… · ', h('kbd', null, 'S'), ' send to · ', h('kbd', null, 'O'), ' own tab · ', h('kbd', null, 'Esc'), ' close.')));
   }
 
@@ -535,6 +549,13 @@
     useEffect(() => {
       const apply = t => {
         if (!t || (t.workspace && t.workspace !== 'media')) return;
+        if (t.card && t.play) {
+          // "play the last podcast about X": the Library's quick look, started where the words were said
+          setCard(null); setView('library');
+          if (t.q != null) setFilters(f => Object.assign({}, f, { q: String(t.q), view: 'all' }));
+          window.dispatchEvent(new CustomEvent('friday:media-quicklook', { detail: { id: t.card, q: t.q, at: t.at } }));
+          return;
+        }
         if (t.card) { setCard(t.card); return; }
         if (t.view && (t.view === 'insights' || VIEWS.some(v => v[0] === t.view))) { setCard(null); setView(t.view); }
         const patch = {};
