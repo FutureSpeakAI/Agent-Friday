@@ -149,6 +149,14 @@ mgr.addOrb({ id: 'image-late', label: 'L', category: 'default', research_commiss
 out.late = { before: k0, after: S('image-late').kind, oneForm: mgr.orbs.get('image-late').group.children.filter(c => c.isGroup && c.userData.kind).length };
 mgr.updateOrb('image-late', { status: 'completed' }); mgr.removeOrb('image-late'); run(3);
 
+// labels never sit on each other: two orbs at the same place on screen
+mgr.addOrb({ id: 'twin-1', label: 'Twin one', category: 'default' }); mgr.addOrb({ id: 'twin-2', label: 'Twin two', category: 'default' });
+run(0.5);
+for (const id of ['twin-1', 'twin-2']) { const o = mgr.orbs.get(id); o.labelEl.style.display = 'block'; FridayOrbScene._state(id).sx = 500; FridayOrbScene._state(id).sy = 300; }
+const lab = FridayOrbScene._labels().filter(l => l.id.startsWith('twin'));
+out.labels = { two: lab.length, apart: lab.length === 2 && Math.abs(lab[0].y - lab[1].y) >= 15 };
+['twin-1', 'twin-2'].forEach(id => { mgr.updateOrb(id, { status: 'completed' }); mgr.removeOrb(id); }); run(3);
+
 // spread, not bunched: orbs added in a row keep apart, at one speed
 const spreadIds = ['s1', 's2', 's3', 's4'];   // with the four still here: the layer's cap of eight
 spreadIds.forEach(id => mgr.addOrb({ id, label: id, category: 'default' }));
@@ -243,6 +251,10 @@ def test_a_kind_follows_what_is_known_now(o):
 def test_orbs_spread_out_and_keep_their_spacing(o):
     assert o["spread"]["oneSpeed"] is True
     assert o["spread"]["minGapDeg"] >= 30
+
+
+def test_labels_never_sit_on_each_other(o):
+    assert o["labels"] == {"two": 2, "apart": True}
 
 
 def test_the_swarm_orb_is_left_alone(o):

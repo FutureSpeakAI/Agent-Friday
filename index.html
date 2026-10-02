@@ -5949,6 +5949,26 @@ window.addEventListener('DOMContentLoaded',function(){
                     });
                 });
             }
+            // Labels never sit on each other: sorted top to bottom, each one that
+            // would cover a label already placed moves up a line until it is clear.
+            const LINE = 15;
+            function declutter() {
+                const W = window.innerWidth, placed = [];
+                const shown = [];
+                each((o, s) => {
+                    if (o.dying || o.labelEl.style.display === 'none' || !Number.isFinite(s.sx)) return;
+                    shown.push({ o, w: o.labelEl.offsetWidth || 80, x: s.sx, y: s.sy - 28 });
+                });
+                shown.sort((a, b) => a.y - b.y);
+                for (const l of shown) {
+                    l.x = Math.max(l.w / 2 + 8, Math.min(W - l.w / 2 - 8, l.x));
+                    for (let guard = 0; guard < 8 && placed.some(p => Math.abs(p.x - l.x) < (p.w + l.w) / 2 && Math.abs(p.y - l.y) < LINE); guard++) l.y -= LINE;
+                    l.y = Math.max(LINE / 2 + 44, l.y);
+                    placed.push(l);
+                    l.o.labelEl.style.transform = 'translate(-50%,-50%) translate(' + l.x + 'px,' + l.y + 'px)';
+                }
+                return placed.map(p => ({ id: p.o.id, x: p.x, y: p.y, w: p.w }));
+            }
             function source() {
                 return {
                     orbs: () => {
@@ -6001,13 +6021,13 @@ window.addEventListener('DOMContentLoaded',function(){
                              s.sparks.forEach(pt => { pt.geometry.dispose(); pt.material.dispose(); }); }
                     clean0(id);
                 };
-                m.update = (dt, elapsed) => { frame0(dt, elapsed); step(dt); };
+                m.update = (dt, elapsed) => { frame0(dt, elapsed); step(dt); declutter(); };
                 if (typeof FridayOrbHands !== 'undefined') FridayOrbHands.attach(source());
                 try { if (!subscribed && window.fridayApprovalFeed) { subscribed = true; window.fridayApprovalFeed.subscribe(syncApprovals); } } catch (_) {}
                 if (!taskPoll) taskPoll = setInterval(pollTasks, 5000);
                 if (typeof FridayOrbSky !== 'undefined') FridayOrbSky.start();
             }
-            return { install, frame, _state: id => state(mgr && mgr.orbs.get(id)), _tasks: tasks };
+            return { install, frame, _state: id => state(mgr && mgr.orbs.get(id)), _tasks: tasks, _labels: declutter };
         })();
         // </orb-scene>
 
