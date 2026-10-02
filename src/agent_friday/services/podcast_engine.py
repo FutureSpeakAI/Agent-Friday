@@ -1369,17 +1369,19 @@ NEWS_TABS = {"front_page": "frontpage", "briefing": "briefings", "weekly": "week
 
 def episode_home(ep: dict) -> dict:
     """Where an episode is opened: a News routine's show on its News tab, beside
-    its edition; the owner's own episode in Media once the workspace registry
-    has it, and in Studio until then."""
+    its edition; the owner's own episode on its Media card (Media opens an
+    item by its card id), or in Studio's Podcasts view where Media is absent."""
     routine = (ep.get("attached") or {}).get("routine")
     if routine in NEWS_TABS:
         return {"workspace": "news", "tab": NEWS_TABS[routine], "episode": ep["id"]}
     try:
-        from agent_friday.services import workspace_registry
-        ws = "media" if workspace_registry.get("media") else "studio"
+        from agent_friday.services import media_index, workspace_registry
+        if workspace_registry.get("media"):
+            return {"workspace": "media", "episode": ep["id"],
+                    "card": media_index._id_for("episode", ep["id"])}
     except Exception:
-        ws = "studio"
-    return {"workspace": ws, "view": "podcasts", "episode": ep["id"]}
+        pass
+    return {"workspace": "studio", "view": "podcasts", "episode": ep["id"]}
 
 
 def _announce(ep: dict) -> None:

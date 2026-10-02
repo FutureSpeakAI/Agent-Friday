@@ -383,7 +383,10 @@ def test_an_own_episode_opens_in_media_once_it_exists_and_studio_until_then(monk
     monkeypatch.setattr(workspace_registry, "get", lambda ws: None)
     assert _announced(monkeypatch, ep)["target"]["workspace"] == "studio"
     monkeypatch.setattr(workspace_registry, "get", lambda ws: {"id": "media", "label": "Media"} if ws == "media" else None)
-    assert _announced(monkeypatch, ep)["target"] == {"workspace": "media", "view": "podcasts", "episode": ep["id"]}
+    # Media opens an item by its card: the episode's own card, not a view.
+    from agent_friday.services import media_index
+    assert _announced(monkeypatch, ep)["target"] == {"workspace": "media", "episode": ep["id"],
+                                                     "card": media_index._id_for("episode", ep["id"])}
 
 
 # ── one event, several outlets ──────────────────────────────────────────────
