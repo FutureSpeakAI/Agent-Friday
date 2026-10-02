@@ -8566,11 +8566,15 @@ window.addEventListener('DOMContentLoaded',function(){
             buildBackgroundEnvironment(); buildAllStructures();
 
             const renderScene = new THREE.RenderPass(scene, camera);
-            // Bloom: wider radius + lower threshold so the holographic geometry visibly
-            // glows at rest, not just the rare bright pixels. Strength is modulated below.
-            bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.55, 0.25);
+            // Bloom: the holographic geometry glows at rest, not just the rare
+            // bright pixels, with a radius tight enough that edges stay edges.
+            // Strength is modulated below.
+            bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.4, 0.3);
             holoPass = new THREE.ShaderPass(HolographicShader);
-            composer = new THREE.EffectComposer(renderer);
+            // The scene draws into the composer's own targets, so the canvas's
+            // antialias never reached it: they are multisampled (sceneTarget).
+            composer = new THREE.EffectComposer(renderer, sceneTarget(renderer));
+            composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(window.innerWidth, window.innerHeight);
             composer.addPass(renderScene); composer.addPass(bloomPass); composer.addPass(holoPass);
             // Last: nothing drawn above may flash (see <brightness-governor>).
             composer.addPass(BrightnessGovernor.create());
@@ -8966,7 +8970,21 @@ window.addEventListener('DOMContentLoaded',function(){
         function onWindowResize() {
             if(!camera || !renderer || !composer) return;
             camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+            // The ratio is read again (a window moved to another screen), capped
+            // for cost, and 1 in the low-cost widget; the composer follows it.
+            renderer.setPixelRatio(window.__fridayLowCost ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+            composer.setPixelRatio(renderer.getPixelRatio());
             renderer.setSize(window.innerWidth, window.innerHeight); composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // The composer's render target: 4x multisampled on WebGL2, so hard
+        // lines and edges are anti-aliased before any pass sees them; a plain
+        // target (no anti-aliasing, as before) where the GPU has no WebGL2.
+        function sceneTarget(r) {
+            if (!r.capabilities.isWebGL2 || !THREE.WebGLMultisampleRenderTarget) return undefined;
+            const t = new THREE.WebGLMultisampleRenderTarget(1, 1, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat });
+            t.samples = Math.max(1, Math.min(4, r.capabilities.maxSamples || 4));
+            return t;
         }
 
         function smoothstep(x) { return x * x * (3 - 2 * x); }
@@ -9541,7 +9559,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 const bloomIdle = 0.75 + idleFactor * 0.25;
                 const currentBloom = moodLerpValues.bloomStrength * (0.9 + audioData.low * 2.5 + holoAmplitude * 0.8) * bloomIdle;
                 bloomPass.strength = Math.max(0.7, currentBloom) + SceneMotion.flashBloom(metamorphosisFlash);
-                if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.003 + Math.sin(elapsed * 0.5) * 0.002 + (metamorphosisFlash * 0.01);
+                // The colour split stays a hint (about a pixel), so edges are not doubled.
+                if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.0012 + Math.sin(elapsed * 0.5) * 0.0006 + (metamorphosisFlash * 0.01);
                 if(holoPass.uniforms.angle) holoPass.uniforms.angle.value = Math.sin(elapsed * 0.2);
                 if(holoPass.uniforms.grainAmount) holoPass.uniforms.grainAmount.value = moodLerpValues.grain + (metamorphosisFlash * 0.05);
                 if(holoPass.uniforms.time) holoPass.uniforms.time.value = elapsed;
