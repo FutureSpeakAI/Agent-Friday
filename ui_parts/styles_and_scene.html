@@ -3728,6 +3728,10 @@
             const LAT0 = -75 * Math.PI / 180, DLAT = 15 * Math.PI / 180, DLON = 2 * Math.PI / PER;
             const ARMS = 4;
             const MAX_TURN = 0.5;           // rad/s before each section's own factor (up to 1.8)
+            // The ball drifts from side to side across its place, slowly: 3.2
+            // units either way over 17 s (at most 1.2 units a second), a
+            // little up and down out of step with it.
+            const SWAY_X = 3.2, SWAY_Y = 0.6, SWAY_S = 17;
             // The X: a wide cross, so it shows through the ball's open middle.
             const BLADE_DEG = [35, 145, 215, 325];
             // What each form shows. gone: share of tiles blasted off the ball
@@ -3748,6 +3752,7 @@
             let robot = null, bladeMat = null, coreMat = null, frameMat = null, glow = null;
             let rings = [], ringMat = null, shardMat = null, throws = [], armed = true;
             let reticle = null;
+            let swayT = 0, swayK = 0;
             const cur = [];                     // per tile: this frame's p, q, s
             const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
             const _v = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color(), _ax = new THREE.Vector3();
@@ -3760,6 +3765,11 @@
                 _y.copy(_z).cross(_x);
                 return q.setFromRotationMatrix(_basis.makeBasis(_x, _y, _z));
             }
+            // A rebuilt ball takes up the sway where the last one was.
+            function placeSway() {
+                const sw = 2 * Math.PI * swayT / SWAY_S;
+                root.position.set(SWAY_X * swayK * Math.sin(sw), SWAY_Y * swayK * Math.sin(sw * 0.73), 0);
+            }
             const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, edenOwn: true }; return m; };
 
             function build(group, stage) {
@@ -3767,6 +3777,7 @@
                 form = FORMS[formIndex];
                 secAngle.fill(0); swirl = 0; ringSpin = 0; robotSpin = 0; beat = 0;
                 root = new THREE.Group();
+                placeSway();
                 // Lit only here: the lights sit in Giga Earth's group, so they
                 // are gathered only while it is on screen.
                 root.add(new THREE.HemisphereLight(0xdfe8ff, 0x0a0c14, 0.55));
@@ -3876,6 +3887,11 @@
                 // (a section at 0.9 rad/s, 18 degrees a tile) flicker, seam and
                 // face in turn, which is what speaking at full speed did.
                 const turn = reduced ? 0 : Math.min(rate * 60, MAX_TURN) * dt;
+                // The sway eases in, and under reduced motion eases back to the
+                // middle and stays there.
+                swayK += ((reduced ? 0 : 1) - swayK) * Math.min(1, dt / 1.5);
+                swayT += dt;
+                placeSway();
                 for (let s = 0; s < SECTIONS; s++) secAngle[s] += turn * (s % 2 ? -1 : 1) * (0.8 + 0.25 * s);
                 swirl += turn * 1.6; ringSpin += turn * 2.2; robotSpin += turn * 0.6;
                 // While Friday speaks, the sections pulse in turn from the top,
@@ -4677,7 +4693,8 @@
 
             // --- ANIMATE ACTIVE STRUCTURES ---
             const activeGroup = structures[targetStructure];
-            const interactionForce = Math.min(1.0, Math.abs(currFaceX) + Math.abs(currFaceY) + Math.abs(currFaceZ));
+            // Nothing in an avatar answers to the head: it holds its place in
+            // the world and the head only moves the eye (the window, above).
 
             // Voice-reactive breath factor: SPEAKING/EXECUTING push geometry outward.
             // Declared BEFORE the structure loop below — these consts are read inside it
@@ -4711,7 +4728,7 @@
                         // the mood/color state-shift far easier to read. organicBreathe + idlePulse
                         // (the calm resting breath) are kept at full strength.
                         const LATTICE_SPREAD = 0.65;
-                        const activeExpansion = ((audioData.low * 1.5) + (interactionForce * 1.5) + voiceBreath) * LATTICE_SPREAD;
+                        const activeExpansion = ((audioData.low * 1.5) + voiceBreath) * LATTICE_SPREAD;
                         const expansion = organicBreathe + activeExpansion + idlePulse;
                         c.position.set(
                             c.userData.baseX + c.userData.dir.x * expansion,
@@ -4876,11 +4893,11 @@
                     // the game. Never behind it: a bright figure seen through
                     // the gaps between turning tiles flickers frame to frame.
                     const w = 6 + audioData.mid * 3 * moodLerpValues.particleSpeedScale;
-                    edenPlayer.position.x = Math.sin(elapsed * 0.9) * w + currFaceX * 3.0;
+                    edenPlayer.position.x = Math.sin(elapsed * 0.9) * w;
                     edenPlayer.position.z = FridayRez.radius + 5 + Math.cos(elapsed * 0.9) * 1.5;
-                    edenPlayer.position.y = -4 + Math.sin(elapsed * 1.7) * 1.5 + currFaceY * 3.0;
+                    edenPlayer.position.y = -4 + Math.sin(elapsed * 1.7) * 1.5;
                     edenPlayer.rotation.y = Math.sin(elapsed * 0.9) * 0.4;
-                    edenPlayer.rotation.z = -Math.cos(elapsed * 0.9) * 0.25 - currFaceX * 0.2;
+                    edenPlayer.rotation.z = -Math.cos(elapsed * 0.9) * 0.25;
                     edenPlayer.rotation.x = 0.2;
                 }
                 edenDebris.forEach(d => {

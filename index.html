@@ -3725,12 +3725,17 @@ window.addEventListener('DOMContentLoaded',function(){
                 holo_cues: 0.6, hand_gain: 2.2, hand_accel: 0.6, hand_region: 0.45,
                 hand_deadzone: 0.006, hand_smoothing: 0.30, click_method: 'pinch',
                 pinch_enter: 0.050, pinch_exit: 0.075, dwell_ms: 700,
-                // The window's depth. How many times bigger the avatar may get
-                // as you lean in, how many times smaller as you lean back, how
-                // quickly a fast lean is followed, and the calibrated face
-                // width that counts as sitting normally (0 = not calibrated).
+                // The window's depth. How many times nearer the glass your eye
+                // may come as you lean in, how many times farther as you lean
+                // back, how quickly a fast lean is followed, and the calibrated
+                // face width that counts as sitting normally (0 = not calibrated).
                 zoom_in_max: 1.8, zoom_out_max: 1.5, head_response: 0.5,
                 neutral_face_width: 0,
+                // The window's scale: how far you usually sit from the screen,
+                // and how wide the screen's picture is (0 = worked out from the
+                // display), both in centimetres. Together they turn a head
+                // movement into the same movement behind the glass.
+                viewing_distance_cm: 60, screen_width_cm: 0,
                 dock_depth: 1.0, debug_overlay: false
             };
             const cfg = Object.assign({}, DEFAULTS);
@@ -3779,6 +3784,12 @@ window.addEventListener('DOMContentLoaded',function(){
                 this.x = new LowPass(); this.dx = new LowPass();
                 this.last = null; this.prev = null;
             };
+            // Sets the filter's state to v, at rest, so the next sample is
+            // filtered from there rather than from wherever it last was.
+            OneEuro.prototype.hold = function (v, t) {
+                this.x.y = this.x.s = v; this.dx = new LowPass();
+                this.prev = v; this.last = t;
+            };
 
             // head_smoothing 0..1 is a feel dial, not a cutoff. Map it onto a
             // sane One Euro range: 0 responsive, 1 steady. head_response is
@@ -3816,20 +3827,28 @@ window.addEventListener('DOMContentLoaded',function(){
                 head.y = fy.filter(ny, tSec);
                 head.z = fz.filter(head.raw.z, tSec);
                 head.seen = true;
+                relaxT = null;
             }
             // NO POINTER FALLBACK. The mouse used to stand in for the head
             // whenever the camera was not tracking a face, so the whole scene
             // sheared and slid as the pointer crossed the screen — a haze that
             // follows the mouse, which is not what a window does. A window
             // answers to where your HEAD is, and when nothing knows where your
-            // head is the honest answer is to sit still. Relaxing through the
-            // same filter rather than snapping, so losing the face eases the
-            // scene back to centre instead of jolting it.
+            // head is the honest answer is to sit still. The view eases back to
+            // centre over about 300 ms (RELAX_TAU is a third of that: 95% of
+            // the way) rather than jolting, at the same pace whatever the head
+            // filter's dials say. The filters are held at the eased value, so a
+            // face that comes back is followed from there, not from where it
+            // was lost.
+            const RELAX_TAU = 0.1;
+            let relaxT = null;
             function relaxToNeutral(tSec) {
+                const dt = relaxT === null ? 1 / 60 : Math.max(0, Math.min(0.25, tSec - relaxT));
+                relaxT = tSec;
+                const k = Math.exp(-dt / RELAX_TAU);
                 head.raw.x = 0; head.raw.y = 0; head.raw.z = 0;
-                head.x = fx.filter(0, tSec, true);
-                head.y = fy.filter(0, tSec, true);
-                head.z = fz.filter(0, tSec, true);
+                head.x *= k; head.y *= k; head.z *= k;
+                fx.hold(head.x, tSec); fy.hold(head.y, tSec); fz.hold(head.z, tSec);
                 head.seen = false;
             }
             // The calibrated width is a setting, so it survives a reload and
@@ -3846,13 +3865,14 @@ window.addEventListener('DOMContentLoaded',function(){
                 head.debug = (boxW && boxW > 0) ? { x: +nx || 0, y: +ny || 0, boxW: +boxW } : null;
             }
 
-            // ── ZOOM FROM LEAN ───────────────────────────────────────────
-            // The window magnifies. head.z is octaves nearer (log2 of the
-            // face-width ratio against the calibrated neutral), so at depth
-            // strength 1 halving your distance doubles the avatar: it behaves
-            // as if it sat right at the glass. Higher is a magnifying window,
-            // 0 is off. zoom_in_max / zoom_out_max bound it either way, and
-            // under reduced motion only a gentle zoom remains.
+            // ── LEAN ─────────────────────────────────────────────────────
+            // head.z is octaves nearer (log2 of the face-width ratio against
+            // the calibrated neutral). The "zoom" is how many times nearer the
+            // glass the eye sits than at rest: at depth strength 1 it is your
+            // real distance, so halving your distance to the screen halves the
+            // eye's distance to the glass. 0 is off. zoom_in_max / zoom_out_max
+            // bound it either way, and under reduced motion only a gentle lean
+            // remains.
             const GENTLE_ZOOM = 1.12;
             // The eye may dolly no nearer the glass than this fraction of the
             // neutral distance, so the camera cannot pass through the avatar
@@ -3876,34 +3896,93 @@ window.addEventListener('DOMContentLoaded',function(){
             function lateralGain() {
                 return reducedMotion() ? 0 : fin(cfg.parallax_strength, 0, 4, 1);
             }
-            // The zoom is a real dolly: the eye moves to screenDist / zoom, and
-            // applyFrustum shrinks the glass by the same factor, so a point at
-            // the glass grows by exactly `zoom` and nearer parts grow more.
+            // The lean is a real dolly: the eye moves to screenDist / zoom.
             function eyeDolly(screenDist, zoom) {
                 const Z = (isFinite(zoom) && zoom > 0) ? zoom : 1;
                 return screenDist * (1 - 1 / Z);
             }
 
             // ── OFF-AXIS (ASYMMETRIC) FRUSTUM ────────────────────────────
-            // The window effect. The eye moves relative to a virtual screen
-            // plane a fixed distance ahead of the camera; the frustum shears
-            // so that plane stays nailed to the display while everything
-            // behind it swings. The camera's AIM is untouched — shearing the
+            // The window. The glass is a fixed rectangle screenDist ahead of
+            // the resting eye, the size the plain camera sees there, and it IS
+            // the screen: the frustum runs from the eye through the glass's
+            // four edges, so the glass stays nailed to the display while the
+            // eye moves. The camera's AIM is untouched — shearing the
             // projection instead of turning the camera is exactly the
-            // difference between a window and an orbit.
-            function applyFrustum(cam, ex, ey, ez, screenDist, zoom) {
+            // difference between a window and an orbit. Leaning in brings the
+            // eye nearer the same glass, so the view through it widens.
+            function glassHalf(cam, screenDist) {
+                const h = Math.tan((cam.fov * Math.PI / 180) / 2) * screenDist;
+                return { w: h * cam.aspect, h: h };
+            }
+            function applyFrustum(cam, ex, ey, ez, screenDist) {
                 const n = cam.near, f = cam.far;
-                const Z = (isFinite(zoom) && zoom > 0) ? zoom : 1;
-                const halfH = Math.tan((cam.fov * Math.PI / 180) / 2) * screenDist / Z;
-                const halfW = halfH * cam.aspect;
+                const g = glassHalf(cam, screenDist);
                 const d = Math.max(MIN_GLASS_FRACTION * screenDist, screenDist - ez);
                 const k = n / d;
-                const l = (-halfW - ex) * k, r = (halfW - ex) * k;
-                const b = (-halfH - ey) * k, t = (halfH - ey) * k;
+                const l = (-g.w - ex) * k, r = (g.w - ex) * k;
+                const b = (-g.h - ey) * k, t = (g.h - ey) * k;
                 cam.projectionMatrix.makePerspective(l, r, t, b, n, f);
                 if (cam.projectionMatrixInverse) {
                     cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
                 }
+            }
+
+            // ── THE WINDOW'S SCALE ───────────────────────────────────────
+            // Where the head is, in centimetres from the middle of the
+            // camera's view. head.x/y run -1..1 across the camera frame, which
+            // at your real distance spans about tan(half-angle) of it either
+            // way (a typical webcam sees about 62 degrees across a 4:3 frame).
+            const WEBCAM_TAN_X = 0.6, WEBCAM_TAN_Y = 0.45;
+            const CM_PER_CSS_PX = 2.54 / 96;
+            function viewingCm() { return fin(cfg.viewing_distance_cm, 25, 150, 60); }
+            // The width of the page's picture in centimetres: the window's
+            // CSS width at the screen's measured width, or at the CSS pixel's
+            // nominal 1/96 inch, which the system's display scaling keeps
+            // close to true on most screens.
+            function viewportCm() {
+                const sw = fin(cfg.screen_width_cm, 0, 300, 0);
+                const scr = (window.screen && window.screen.width) || window.innerWidth;
+                const perPx = (sw > 0 && scr > 0) ? sw / scr : CM_PER_CSS_PX;
+                return Math.max(1, window.innerWidth * perPx);
+            }
+            // The eye's offset across the glass, in world units: the head's
+            // offset in centimetres at the glass's own scale, so a head 10 cm
+            // to the right puts the eye 10 screen-centimetres to the right of
+            // the glass's middle. parallax_strength scales it (1 is true).
+            function eyeOffset(hx, hy, zoom, g) {
+                const lat = lateralGain();
+                const realCm = viewingCm() / ((isFinite(zoom) && zoom > 0) ? zoom : 1);
+                const perCm = (2 * g.w) / viewportCm();
+                const ex = fin(hx, -1, 1, 0) * WEBCAM_TAN_X * realCm * perCm * lat;
+                const ey = -fin(hy, -1, 1, 0) * WEBCAM_TAN_Y * realCm * perCm * lat;
+                // No further out than one and a half glass widths: past that
+                // the glass is seen so edge-on that the picture is a sliver.
+                return { x: Math.max(-1.5 * g.w, Math.min(1.5 * g.w, ex)),
+                         y: Math.max(-1.5 * g.h, Math.min(1.5 * g.h, ey)) };
+            }
+
+            // ── THE CAMERA AT THE WINDOW ─────────────────────────────────
+            // basePos and look are where the resting eye is and the way the
+            // glass faces (a unit vector); the glass sits screenDist ahead.
+            // The head moves only the eye and the frustum: nothing behind the
+            // glass is touched, so the avatar keeps its place in the world
+            // and the user's movement is all that changes the view.
+            function placeWindow(cam, basePos, look, screenDist, hx, hy, hz) {
+                cam.position.copy(basePos);
+                cam.lookAt(basePos.x + look.x, basePos.y + look.y, basePos.z + look.z);
+                cam.updateMatrixWorld();
+                const g = glassHalf(cam, screenDist);
+                const zoom = zoomFor(hz);
+                const ez = eyeDolly(screenDist, zoom);
+                const e = eyeOffset(hx, hy, zoom, g);
+                const m = cam.matrixWorld.elements;          // columns: right, up, back
+                cam.position.set(basePos.x + m[0] * e.x + m[4] * e.y + look.x * ez,
+                                 basePos.y + m[1] * e.x + m[5] * e.y + look.y * ez,
+                                 basePos.z + m[2] * e.x + m[6] * e.y + look.z * ez);
+                cam.updateMatrixWorld();
+                applyFrustum(cam, e.x, e.y, ez, screenDist);
+                return { ex: e.x, ey: e.y, ez: ez, zoom: zoom };
             }
 
             // ── hand pointer ─────────────────────────────────────────────
@@ -4023,8 +4102,10 @@ window.addEventListener('DOMContentLoaded',function(){
                 applyFrustum: applyFrustum, calibrate: calibrate, OneEuro: OneEuro,
                 headZoom: headZoom, zoomFor: zoomFor, eyeDolly: eyeDolly,
                 lateralGain: lateralGain, reducedMotion: reducedMotion,
-                debugHead: debugHead,
-                GENTLE_ZOOM: GENTLE_ZOOM, MIN_GLASS_FRACTION: MIN_GLASS_FRACTION
+                glassHalf: glassHalf, eyeOffset: eyeOffset, viewportCm: viewportCm,
+                placeWindow: placeWindow, debugHead: debugHead,
+                GENTLE_ZOOM: GENTLE_ZOOM, MIN_GLASS_FRACTION: MIN_GLASS_FRACTION,
+                RELAX_TAU: RELAX_TAU, WEBCAM_TAN_X: WEBCAM_TAN_X, WEBCAM_TAN_Y: WEBCAM_TAN_Y
             };
         })();
         // </tracking-engine>
@@ -4321,9 +4402,18 @@ window.addEventListener('DOMContentLoaded',function(){
         // (in octaves of face width: 0.035 is about 2.5%).
         const HEAD_TAU = 0.045, HEAD_Z_DEAD = 0.035;
         let headZHeld = 0;
+        // Where the window's glass stands, as a share of the way from the
+        // resting eye to what it looks at: in front of the avatar, which sits
+        // behind the screen like something seen through a window.
+        const GLASS_AT = 0.62;
         let lastFaceBoxW = 0;   // for the calibrate button and the debug overlay
         let isFaceVisible = false;
         let faceLostTimeout = null;
+        // A face counts as lost a quarter second after the last sighting, or
+        // after three of the detector's own gaps on a machine where it runs
+        // slower than that, so a slow detector does not flicker in and out.
+        const FACE_HOLD_MS = 250;
+        let lastFaceAt = 0, faceGapMs = 50;
 
         // Hands State
         let isHandTrackingMode = false;
@@ -4537,7 +4627,7 @@ window.addEventListener('DOMContentLoaded',function(){
             if (isHologramMode && faceDetectionMP) await faceDetectionMP.send({ image: videoElement });
             if (isHandTrackingMode && handsMP) await handsMP.send({ image: videoElement });
         }
-        // The head eases back to neutral through the filter (the render loop
+        // The head eases back to neutral in about 300 ms (the render loop
         // relaxes whenever no face is visible); the hand cursor hides.
         function trackingLost() {
             clearTimeout(faceLostTimeout);
@@ -4730,7 +4820,11 @@ window.addEventListener('DOMContentLoaded',function(){
                 rawFaceZ = window.FridayTracking.head.raw.z;
                 isFaceVisible = true; updateCameraIndicator(true);
                 clearTimeout(faceLostTimeout);
-                faceLostTimeout = setTimeout(() => { isFaceVisible = false; updateCameraIndicator(false); }, 2000); 
+                const now = performance.now();
+                if (lastFaceAt) faceGapMs += (Math.min(1000, now - lastFaceAt) - faceGapMs) * 0.2;
+                lastFaceAt = now;
+                faceLostTimeout = setTimeout(() => { isFaceVisible = false; updateCameraIndicator(false); },
+                                             Math.max(FACE_HOLD_MS, 3 * faceGapMs));
             }
         }
 
@@ -8178,6 +8272,10 @@ window.addEventListener('DOMContentLoaded',function(){
             const LAT0 = -75 * Math.PI / 180, DLAT = 15 * Math.PI / 180, DLON = 2 * Math.PI / PER;
             const ARMS = 4;
             const MAX_TURN = 0.5;           // rad/s before each section's own factor (up to 1.8)
+            // The ball drifts from side to side across its place, slowly: 3.2
+            // units either way over 17 s (at most 1.2 units a second), a
+            // little up and down out of step with it.
+            const SWAY_X = 3.2, SWAY_Y = 0.6, SWAY_S = 17;
             // The X: a wide cross, so it shows through the ball's open middle.
             const BLADE_DEG = [35, 145, 215, 325];
             // What each form shows. gone: share of tiles blasted off the ball
@@ -8198,6 +8296,7 @@ window.addEventListener('DOMContentLoaded',function(){
             let robot = null, bladeMat = null, coreMat = null, frameMat = null, glow = null;
             let rings = [], ringMat = null, shardMat = null, throws = [], armed = true;
             let reticle = null;
+            let swayT = 0, swayK = 0;
             const cur = [];                     // per tile: this frame's p, q, s
             const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
             const _v = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color(), _ax = new THREE.Vector3();
@@ -8210,6 +8309,11 @@ window.addEventListener('DOMContentLoaded',function(){
                 _y.copy(_z).cross(_x);
                 return q.setFromRotationMatrix(_basis.makeBasis(_x, _y, _z));
             }
+            // A rebuilt ball takes up the sway where the last one was.
+            function placeSway() {
+                const sw = 2 * Math.PI * swayT / SWAY_S;
+                root.position.set(SWAY_X * swayK * Math.sin(sw), SWAY_Y * swayK * Math.sin(sw * 0.73), 0);
+            }
             const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, edenOwn: true }; return m; };
 
             function build(group, stage) {
@@ -8217,6 +8321,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 form = FORMS[formIndex];
                 secAngle.fill(0); swirl = 0; ringSpin = 0; robotSpin = 0; beat = 0;
                 root = new THREE.Group();
+                placeSway();
                 // Lit only here: the lights sit in Giga Earth's group, so they
                 // are gathered only while it is on screen.
                 root.add(new THREE.HemisphereLight(0xdfe8ff, 0x0a0c14, 0.55));
@@ -8326,6 +8431,11 @@ window.addEventListener('DOMContentLoaded',function(){
                 // (a section at 0.9 rad/s, 18 degrees a tile) flicker, seam and
                 // face in turn, which is what speaking at full speed did.
                 const turn = reduced ? 0 : Math.min(rate * 60, MAX_TURN) * dt;
+                // The sway eases in, and under reduced motion eases back to the
+                // middle and stays there.
+                swayK += ((reduced ? 0 : 1) - swayK) * Math.min(1, dt / 1.5);
+                swayT += dt;
+                placeSway();
                 for (let s = 0; s < SECTIONS; s++) secAngle[s] += turn * (s % 2 ? -1 : 1) * (0.8 + 0.25 * s);
                 swirl += turn * 1.6; ringSpin += turn * 2.2; robotSpin += turn * 0.6;
                 // While Friday speaks, the sections pulse in turn from the top,
@@ -9192,62 +9302,49 @@ window.addEventListener('DOMContentLoaded',function(){
             leavingStructures.forEach(l => { l.opacity = Math.max(0, l.opacity - delta * 0.125); });
             leavingStructures = leavingStructures.filter(l => l.opacity > 0);
 
-            // --- CINEMATIC TRUE-3D CAMERA PARALLAX ---
+            // --- CINEMATIC CAMERA, AND THE WINDOW ---
             if(camera) {
-                if (targetStructure === 'DOME') { targetCamPos.set(0, -6 + Math.sin(elapsed*0.2)*2, 18); targetCamLook.set(0, 5, 0); } 
-                else if (targetStructure === 'GRID') { targetCamPos.set(0, 2 + Math.sin(elapsed*0.2)*1, 15 - 10 * (1 - Math.abs((elapsed * 0.2) % 2 - 1))); targetCamLook.set(0, 1, 0); } 
-                else if (targetStructure === 'CABLES' || targetStructure === 'ASTROLABE') { targetCamPos.set(Math.sin(elapsed*0.1)*12, Math.cos(elapsed*0.1)*12, 15 + Math.sin(elapsed*0.2)*5); targetCamLook.set(0, 0, 0); } 
-                else if (targetStructure === 'MANDELBROT') { targetCamPos.set(Math.sin(elapsed*0.2)*14, 8 + Math.sin(elapsed*0.3)*3, Math.cos(elapsed*0.2)*14); targetCamLook.set(0, 0, 0); } 
-                else if (targetStructure === 'NETWORK') { targetCamPos.set(Math.sin(elapsed*0.2)*10, Math.sin(elapsed*0.3)*6, Math.cos(elapsed*0.2)*10); targetCamLook.set(0, 0, 0); } 
-                else if (targetStructure === 'EDEN') { targetCamPos.set(Math.sin(elapsed*0.5)*2, Math.cos(elapsed*0.3)*1.5, 28); targetCamLook.set(0, 0, 0); } 
-                else { targetCamPos.set(Math.sin(elapsed*0.15)*6, 5 + Math.cos(elapsed*0.2)*2, 18 + Math.sin(elapsed*0.1)*3); targetCamLook.set(0, 0, 0); }
-
-                baseCamPos.lerp(targetCamPos, delta * 0.8);
-
-                // ── HEAD-COUPLED PERSPECTIVE ────────────────────────────
-                // The cinematic move still decides where the camera IS and
-                // what it looks at. The head only decides where the EYE sits
-                // relative to that view, and the frustum shears to match.
-                //
-                // The old code added the head offset to the camera position
-                // and then re-aimed with lookAt, which cancels most of the
-                // parallax: translate right, turn left, net almost nothing
-                // but a slow swim. Shearing the projection instead is what
-                // makes the scene sit behind the glass.
+                // With head tracking on, the screen is a window and the avatar
+                // holds its place in the world: the cinematic drift stops at
+                // its resting pose (where it is at t = 0, glided to, not
+                // jumped) and only the user's head moves the eye. With it off,
+                // the camera drifts as it always has.
                 const TK = window.FridayTracking;
                 const pStr = TK.cfg.parallax_strength;
+                const windowMode = isHologramMode || !!TK.head.debug;
+                const ct = windowMode ? 0 : elapsed;
+                if (targetStructure === 'DOME') { targetCamPos.set(0, -6 + Math.sin(ct*0.2)*2, 18); targetCamLook.set(0, 5, 0); }
+                else if (targetStructure === 'GRID') { targetCamPos.set(0, 2 + Math.sin(ct*0.2)*1, 15 - 10 * (1 - Math.abs((ct * 0.2) % 2 - 1))); targetCamLook.set(0, 1, 0); }
+                else if (targetStructure === 'CABLES' || targetStructure === 'ASTROLABE') { targetCamPos.set(Math.sin(ct*0.1)*12, Math.cos(ct*0.1)*12, 15 + Math.sin(ct*0.2)*5); targetCamLook.set(0, 0, 0); }
+                else if (targetStructure === 'MANDELBROT') { targetCamPos.set(Math.sin(ct*0.2)*14, 8 + Math.sin(ct*0.3)*3, Math.cos(ct*0.2)*14); targetCamLook.set(0, 0, 0); }
+                else if (targetStructure === 'NETWORK') { targetCamPos.set(Math.sin(ct*0.2)*10, Math.sin(ct*0.3)*6, Math.cos(ct*0.2)*10); targetCamLook.set(0, 0, 0); }
+                else if (targetStructure === 'EDEN') { targetCamPos.set(Math.sin(ct*0.5)*2, Math.cos(ct*0.3)*1.5, 28); targetCamLook.set(0, 0, 0); }
+                else { targetCamPos.set(Math.sin(ct*0.15)*6, 5 + Math.cos(ct*0.2)*2, 18 + Math.sin(ct*0.1)*3); targetCamLook.set(0, 0, 0); }
 
-                // Aim first, from the cinematic target only — head-free.
-                camera.position.copy(baseCamPos);
+                baseCamPos.lerp(targetCamPos, Math.min(1, delta * 0.8));
+
+                // ── HEAD-COUPLED PERSPECTIVE ────────────────────────────
+                // The aim comes from the cinematic target only — head-free.
+                // The head moves the eye across and toward a fixed glass, and
+                // the frustum runs from the eye through the glass's edges
+                // (FridayTracking.placeWindow). Adding the head to the camera
+                // and re-aiming with lookAt would be an orbit: translate
+                // right, turn left, net almost nothing but a slow swim.
                 const currentLook = new THREE.Vector3(); camera.getWorldDirection(currentLook);
-                const idealLook = targetCamLook.clone().sub(camera.position).normalize();
-                currentLook.lerp(idealLook, delta * 2.0);
-                camera.lookAt(camera.position.clone().add(currentLook));
+                const idealLook = targetCamLook.clone().sub(baseCamPos).normalize();
+                currentLook.lerp(idealLook, Math.min(1, delta * 2.0)).normalize();
 
-                // Then offset the eye in the camera's OWN basis, so the effect
-                // is the same whichever way the cinematic camera is facing.
-                //
-                // The virtual glass sits at the scene's centre of interest,
-                // which is where every structure is built. Leaning in is a
-                // dolly toward it with the glass shrunk to match (zoomFor), so
-                // the avatar at the glass grows by exactly the zoom; the
-                // lateral offset stays a shear anchored at the glass. Reduced
-                // motion keeps only the gentle zoom (lateralGain is 0).
-                const screenDist = Math.max(4, baseCamPos.distanceTo(targetCamLook));
-                const lat = TK.lateralGain();
-                const eyeX = currFaceX * 3.2 * lat;
-                const eyeY = -currFaceY * 2.4 * lat;
-                const zoom = TK.zoomFor(currFaceZ);
-                const eyeZ = TK.eyeDolly(screenDist, zoom);   // lean in / out
-                const right = new THREE.Vector3(), up = new THREE.Vector3();
-                right.setFromMatrixColumn(camera.matrixWorld, 0);
-                up.setFromMatrixColumn(camera.matrixWorld, 1);
-                camera.position.addScaledVector(right, eyeX);
-                camera.position.addScaledVector(up, eyeY);
-                camera.position.addScaledVector(currentLook, eyeZ);
-                camera.updateMatrixWorld();
-
-                TK.applyFrustum(camera, eyeX, eyeY, eyeZ, screenDist, zoom);
+                // The glass stands in front of the avatar, GLASS_AT of the way
+                // to what the camera looks at, where every structure is built:
+                // the avatar sits behind it and the world's dots on both sides,
+                // so a head that moves sees the avatar from a new place, and
+                // sees around it, without dragging it along. Leaning in brings
+                // the eye nearer the same glass: the avatar comes closer and
+                // the view through the glass widens. Reduced motion keeps only
+                // a gentle lean (lateralGain is 0).
+                const screenDist = Math.max(4, GLASS_AT * baseCamPos.distanceTo(targetCamLook));
+                const zoom = TK.placeWindow(camera, baseCamPos, currentLook, screenDist,
+                                            currFaceX, currFaceY, currFaceZ).zoom;
 
                 // ── DEPTH-LAYERED PARALLAX + HOLOGRAPHIC CUES ───────────
                 // The DOM HUD floats in front of the glass, so it must move
@@ -9268,7 +9365,8 @@ window.addEventListener('DOMContentLoaded',function(){
 
             // --- ANIMATE ACTIVE STRUCTURES ---
             const activeGroup = structures[targetStructure];
-            const interactionForce = Math.min(1.0, Math.abs(currFaceX) + Math.abs(currFaceY) + Math.abs(currFaceZ));
+            // Nothing in an avatar answers to the head: it holds its place in
+            // the world and the head only moves the eye (the window, above).
 
             // Voice-reactive breath factor: SPEAKING/EXECUTING push geometry outward.
             // Declared BEFORE the structure loop below — these consts are read inside it
@@ -9302,7 +9400,7 @@ window.addEventListener('DOMContentLoaded',function(){
                         // the mood/color state-shift far easier to read. organicBreathe + idlePulse
                         // (the calm resting breath) are kept at full strength.
                         const LATTICE_SPREAD = 0.65;
-                        const activeExpansion = ((audioData.low * 1.5) + (interactionForce * 1.5) + voiceBreath) * LATTICE_SPREAD;
+                        const activeExpansion = ((audioData.low * 1.5) + voiceBreath) * LATTICE_SPREAD;
                         const expansion = organicBreathe + activeExpansion + idlePulse;
                         c.position.set(
                             c.userData.baseX + c.userData.dir.x * expansion,
@@ -9467,11 +9565,11 @@ window.addEventListener('DOMContentLoaded',function(){
                     // the game. Never behind it: a bright figure seen through
                     // the gaps between turning tiles flickers frame to frame.
                     const w = 6 + audioData.mid * 3 * moodLerpValues.particleSpeedScale;
-                    edenPlayer.position.x = Math.sin(elapsed * 0.9) * w + currFaceX * 3.0;
+                    edenPlayer.position.x = Math.sin(elapsed * 0.9) * w;
                     edenPlayer.position.z = FridayRez.radius + 5 + Math.cos(elapsed * 0.9) * 1.5;
-                    edenPlayer.position.y = -4 + Math.sin(elapsed * 1.7) * 1.5 + currFaceY * 3.0;
+                    edenPlayer.position.y = -4 + Math.sin(elapsed * 1.7) * 1.5;
                     edenPlayer.rotation.y = Math.sin(elapsed * 0.9) * 0.4;
-                    edenPlayer.rotation.z = -Math.cos(elapsed * 0.9) * 0.25 - currFaceX * 0.2;
+                    edenPlayer.rotation.z = -Math.cos(elapsed * 0.9) * 0.25;
                     edenPlayer.rotation.x = 0.2;
                 }
                 edenDebris.forEach(d => {
@@ -52519,7 +52617,7 @@ function TrackingPanel({
       marginBottom: 6,
       lineHeight: 1.6
     }
-  }, "Head tracking turns the screen into a window onto the scene: lean in and the avatar comes closer, lean back and it recedes, move sideways and it stays put behind the glass. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out zooms the avatar. At 1, halving your distance doubles it, as if it sat right at the glass; 0 turns the zoom off.', 0, 2.5, 0.05), sl('zoom_in_max', 'Zoom in, at most', 'The biggest the avatar may get as you lean in.', 1, 2.5, 0.05, v => v.toFixed(2) + 'x'), sl('zoom_out_max', 'Zoom out, at most', 'The smallest it may get as you lean back.', 1, 2.5, 0.05, v => '1/' + v.toFixed(2)), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('head_response', 'Head response', 'How quickly a fast lean is followed. Left is calmer with a little lag, right is immediate.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
+  }, "Head tracking turns the screen into a window: the avatar holds its place behind the glass and your head moves the view. Move to one side and you see around it; lean in and it comes closer while the view widens. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the view moves with your head. At 1 it is true to life: the avatar holds still behind the glass and you see it from where you are. 0 turns the sideways movement off.', 0, 2.5, 0.05), sl('viewing_distance_cm', 'Viewing distance', 'How far your eyes usually are from the screen. The window uses it to match the view to how far you really move.', 30, 120, 1, v => Math.round(v) + ' cm'), sl('screen_width_cm', 'Screen width', 'The width of the picture on your screen. 0 works it out from the display; set it if the view moves too much or too little.', 0, 120, 1, v => v > 0 ? Math.round(v) + ' cm' : 'auto'), sl('depth_strength', 'Depth effect', 'How much leaning in and out moves your eye through the window. At 1 it follows your real distance: lean in and the avatar comes closer while the view through the glass widens. 0 turns it off.', 0, 2.5, 0.05), sl('zoom_in_max', 'Lean in, at most', 'How many times nearer the glass your eye may come as you lean in.', 1, 2.5, 0.05, v => v.toFixed(2) + 'x'), sl('zoom_out_max', 'Lean back, at most', 'How many times farther it may go as you lean back.', 1, 2.5, 0.05, v => '1/' + v.toFixed(2)), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('head_response', 'Head response', 'How quickly a fast lean is followed. Left is calmer with a little lag, right is immediate.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
     "aria-label": "Click method",
     style: {
