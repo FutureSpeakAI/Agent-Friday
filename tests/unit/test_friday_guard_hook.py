@@ -554,3 +554,45 @@ def test_the_private_config_is_read_from_the_env_path(tmp_path):
     p = _run_hook(bash("git checkout main", live), cfg_path)
     assert p.returncode == 2 and "live checkout" in p.stderr
     assert "BLOCK" in (tmp_path / "a.log").read_text(encoding="utf-8")
+
+
+# ── while the lane's suite holds SUITE_LOCK ─────────────────────────────────
+
+@pytest.fixture
+def locked(live):
+    lock = live["live"] / ".claude" / "SUITE_LOCK"
+    lock.write_text("holder: program-lead-lane-123\nsession: program-lead\n", encoding="utf-8")
+    cfg = dict(live["cfg"])
+    cfg["suite_lock"] = str(lock)
+    return {**live, "lock": lock, "cfg": cfg}
+
+
+@pytest.mark.parametrize("command", [
+    "python -m pytest tests/unit/test_a.py tests/unit/test_b.py -n 0 -q",
+    "python -m pytest tests/unit -n 0 -q",
+    "python -m pytest tests/unit/test_a.py -n 1 -q",
+])
+def test_a_suite_lock_refuses_anything_but_one_file_at_n0(locked, command):
+    ok, why = decide(bash(command, locked["wt"]), locked["cfg"])
+    assert not ok
+    assert "SUITE_LOCK" in why and "program-lead-lane-123" in why
+    assert "wait" in why.lower() and "orchestrator" in why.lower()
+
+
+def test_a_suite_lock_still_allows_one_named_file_at_n0(locked):
+    ok, why = decide(bash("python -m pytest tests/unit/test_a.py -n 0 -q", locked["wt"]), locked["cfg"])
+    assert ok, why
+
+
+def test_without_the_lock_a_multi_file_run_is_judged_as_before(live):
+    cfg = dict(live["cfg"])
+    cfg["suite_lock"] = str(live["live"] / ".claude" / "SUITE_LOCK")   # absent
+    ok, why = decide(bash("python -m pytest tests/unit/test_a.py tests/unit/test_b.py -n 0 -q", live["wt"]), cfg)
+    assert ok, why
+
+
+def test_the_lock_path_defaults_to_the_live_checkout(tmp_path):
+    cfg_path = tmp_path / "c.json"
+    cfg_path.write_text(json.dumps({"live_checkout": str(tmp_path / "live")}), encoding="utf-8")
+    cfg = g.load_config(cfg_path)
+    assert cfg["suite_lock"].replace("\\", "/").endswith("live/.claude/SUITE_LOCK")

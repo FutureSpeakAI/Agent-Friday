@@ -64,6 +64,7 @@ DEFAULTS = {
     "deploy_lane_token": None,      # default: <live_checkout>/.claude/DEPLOY_LANE
     "deploy_lane_ttl_hours": 4.0,
     "audit_log": None,              # default: <live_checkout>/.claude/receipts/guard-audit.log
+    "suite_lock": None,             # default: <live_checkout>/.claude/SUITE_LOCK
     "pytest_concurrency_floor_gb": 8.0,   # under this, no second pytest on the machine
     "pytest_single_file_floor_gb": 4.0,   # under this, no pytest at all
 }
@@ -131,6 +132,7 @@ def load_config(path: Path | None = None) -> dict:
         cfg["live_checkout"] = live
         cfg["deploy_lane_token"] = cfg["deploy_lane_token"] or live + "/.claude/DEPLOY_LANE"
         cfg["audit_log"] = cfg["audit_log"] or live + "/.claude/receipts/guard-audit.log"
+        cfg["suite_lock"] = cfg["suite_lock"] or live + "/.claude/SUITE_LOCK"
     return cfg
 
 
@@ -577,6 +579,24 @@ def check_pytest_load(segs: list[Segment], cfg: dict, ram: float | None, running
     return None
 
 
+def check_suite_lock(segs: list[Segment], cfg: dict) -> str | None:
+    """While a suite holds SUITE_LOCK, the only pytest allowed is one named file
+    at -n 0: anything broader beside it starves it of memory and, being a run
+    outside its process tree, makes it abort itself."""
+    calls = [pytest_args(s.words) for s in segs]
+    calls = [a for a in calls if a is not None and not any(x in PYTEST_NO_RUN_FLAGS for x in a)]
+    lock = cfg.get("suite_lock")
+    if not calls or not lock or all(is_single_file_serial(a) for a in calls):
+        return None
+    try:
+        holder = Path(lock).read_text(encoding="utf-8", errors="replace").splitlines()[0]
+    except (OSError, IndexError):
+        return None                      # no lock file: no suite running
+    return (f"pytest is blocked: a suite holds SUITE_LOCK ({lock}; {holder.strip()}). While it runs, "
+            "the only pytest allowed is one named test file at -n 0. Wait for the suite to finish "
+            "(the lock disappears), or ask the orchestrator for a window.")
+
+
 # ── rule 2: wsl / docker under the memory floor ──────────────────────────────
 
 def vm_command(seg: Segment) -> str | None:
@@ -824,6 +844,11 @@ def decide(payload: dict, cfg: dict, ram=_PROBE, now: float | None = None, runni
     why = check_pytest(segs)
     if why:
         audit(cfg, f"BLOCK pytest tool={tool} cwd={cwd} cmd={command[:600]!r}")
+        return False, why
+
+    why = check_suite_lock(segs, cfg)
+    if why:
+        audit(cfg, f"BLOCK suite-lock tool={tool} cwd={cwd} cmd={command[:600]!r}")
         return False, why
 
     if any(pytest_args(s.words) is not None for s in segs):
