@@ -71,7 +71,8 @@ _CP_SCHEMA_LOCK = threading.Lock()
 
 def _conn() -> sqlite3.Connection:
     global _CP_SCHEMA_DONE
-    c = sqlite3.connect(str(DB_PATH), timeout=10)
+    from agent_friday.services.db_util import ClosingConnection
+    c = sqlite3.connect(str(DB_PATH), timeout=10, factory=ClosingConnection)
     c.row_factory = sqlite3.Row
     if not _CP_SCHEMA_DONE:
         with _CP_SCHEMA_LOCK:

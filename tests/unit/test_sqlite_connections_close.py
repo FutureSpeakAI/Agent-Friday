@@ -42,6 +42,15 @@ def no_cycle_collector():
     ("arbiter", "_conn"),
     ("content_pipeline", "_connect"),
     ("content_policies", "_conn"),
+    ("budget_enforcer", "_conn"),
+    ("compute_client", "_conn"),
+    ("compute_provider", "_conn"),
+    ("defederation", "_conn"),
+    ("economy", "_conn"),
+    ("federation", "_conn"),
+    ("marketplace", "_conn"),
+    ("ownership", "_conn"),
+    ("work_log", "_conn"),
 ])
 def test_a_with_block_connection_is_closed_on_exit(tmp_path, monkeypatch, no_cycle_collector, module, helper):
     import importlib

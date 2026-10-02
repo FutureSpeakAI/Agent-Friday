@@ -104,7 +104,9 @@ CREATE INDEX IF NOT EXISTS idx_wallets_q  ON wallets(q_score);
 
 def _conn() -> sqlite3.Connection:
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=10)
+    from agent_friday.services.db_util import ClosingConnection
+    con = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=10,
+                          factory=ClosingConnection)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA foreign_keys=ON")
     con.row_factory = sqlite3.Row
