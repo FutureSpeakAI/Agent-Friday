@@ -153,5 +153,8 @@ def test_every_workspace_declares_its_boundary_as_a_set_of_components():
     for w in REG["workspaces"]:
         b = w.get("boundary")
         assert b and b["kind"] == "native" and b["components"], w["id"]
+        # A component lives in index.html, or in a static script the boundary
+        # names (Media's MediaWS is defined by static/media_ws.js).
+        sources = INDEX + "".join((ROOT / p).read_text(encoding="utf-8") for p in b.get("scripts", []))
         for comp in b["components"]:
-            assert re.search(r"(function|const)\s+%s\b" % re.escape(comp), INDEX), "%s: %s is not a component in index.html" % (w["id"], comp)
+            assert re.search(r"(function|const)\s+%s\b" % re.escape(comp), sources), "%s: %s is not a component in index.html or the boundary's scripts" % (w["id"], comp)
