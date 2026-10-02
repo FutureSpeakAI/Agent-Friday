@@ -14152,11 +14152,18 @@ function TalkToFridayButton({
   contentType,
   title,
   summary,
-  style
+  style,
+  onDiscuss
 }) {
   const [active, setActive] = useState(false);
   const onClick = e => {
     e.stopPropagation();
+    // A news story opens Discuss with Friday: evidence first, the local
+    // model only (docs/design/active/news-discuss.md).
+    if (onDiscuss) {
+      onDiscuss();
+      return;
+    }
     if (!window.fridayVoice) {
       fridayToast('Enable voice mode first, then try again.');
       return;
@@ -31602,15 +31609,7 @@ function NewsWS() {
       e.stopPropagation();
       savedUrls[it.url] ? removeLater(it.url) : saveLater(it);
     }
-  }, savedUrls[it.url] ? '🔖' : '🏷'), /*#__PURE__*/React.createElement("button", { "aria-label": "Discuss this story with " + fridayName(),
-    className: "src-btn discuss",
-    title: "Discuss this story with " + fridayName() + ": coverage, sources, claims",
-    onClick: e => {
-      e.stopPropagation();
-      setDiscussFor({ url: it.url, title: it.title });
-      setPanel('discuss');
-    }
-  }, "💬"), /*#__PURE__*/React.createElement("button", { "aria-label": "Open in background tab", 
+  }, savedUrls[it.url] ? '🔖' : '🏷'), /*#__PURE__*/React.createElement("button", { "aria-label": "Open in background tab", 
     className: "src-btn bg",
     title: "Open in background tab",
     onClick: e => {
@@ -32047,6 +32046,10 @@ function NewsWS() {
     }
   }, "\u2197 Open article"), /*#__PURE__*/React.createElement(TalkToFridayButton, {
     contentType: "article",
+    onDiscuss: () => {
+      setDiscussFor({ url: it.url, title: it.title });
+      setPanel('discuss');
+    },
     title: it.title,
     summary: it.snippet,
     style: {
@@ -32246,6 +32249,10 @@ function NewsWS() {
     onClick: () => fp.lead.url && window.open(fp.lead.url, '_blank')
   }, "\u2197 Open article"), /*#__PURE__*/React.createElement(TalkToFridayButton, {
     contentType: "article",
+    onDiscuss: () => {
+      setDiscussFor({ url: fp.lead.url, title: fp.lead.title });
+      setPanel('discuss');
+    },
     title: fp.lead.title,
     summary: fp.lead.snippet || fp.lead.editorial_note,
     style: {
@@ -32340,6 +32347,10 @@ function NewsWS() {
     }
   }, "\uD83D\uDD16"), annoBadge(it), /*#__PURE__*/React.createElement(TalkToFridayButton, {
     contentType: "article",
+    onDiscuss: () => {
+      setDiscussFor({ url: it.url, title: it.title });
+      setPanel('discuss');
+    },
     title: it.title,
     summary: it.snippet,
     style: {

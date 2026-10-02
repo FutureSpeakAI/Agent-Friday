@@ -14,9 +14,11 @@ PAGES = ["index.html", "ui_parts/app.html"]
 @pytest.mark.parametrize("page", PAGES)
 def test_every_story_card_can_be_discussed(page):
     s = (ROOT / page).read_text(encoding="utf-8")
-    actions = s[s.index("cardActions"):]
-    actions = actions[:actions.index("banSource")]
-    assert "setDiscussFor" in actions and "setPanel('discuss')" in actions
+    # The story's own "Discuss with Friday" button opens the panel (no cloud
+    # voice), on the lead, every section story and every feed card.
+    assert s.count("setDiscussFor({") >= 3 or s.count("setDiscussFor({url:") >= 3
+    assert "if (onDiscuss)" in s or "if(onDiscuss)" in s
+    assert "Discuss this story with" not in s       # one button, not two
     assert "DiscussPanel" in s and "panel === 'discuss'" in s.replace("panel==='discuss'", "panel === 'discuss'")
 
 

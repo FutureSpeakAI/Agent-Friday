@@ -501,3 +501,13 @@ def test_fridays_own_notes_are_never_cited_and_an_empty_wrap_is_cut(ds):
     assert not any(ln["chapter"] == 2 for ln in fixed)
     assert any("moment of tension" in c["text"] for c in cut)
     assert "names the stories it connects" in pe.NEWS_RULES and "one lede that names" in pe.NEWS_RULES
+
+
+def test_the_writer_never_recites_the_rules_it_was_given():
+    """From the second script-only Front Page: "This is a local safety story,
+    and it stands on its own." is the instruction read aloud, not news."""
+    echo = "This is a local safety story, and it stands on its own."
+    assert q.REASONING_RE.search(echo)
+    assert "reasoning_leak" in codes(q.reasoning_problems([L(0, "Police made an arrest. " + echo, [])]))
+    assert echo not in pe._clean_text("Police made an arrest. " + echo)
+    assert not q.REASONING_RE.search("The bridge stands on the old piers, police said.")

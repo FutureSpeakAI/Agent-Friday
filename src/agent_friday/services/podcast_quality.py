@@ -862,6 +862,10 @@ REASONING_RE = re.compile(
     r"|(?:that's|that is) a (?:fair|good|sharp) (?:read|point|question)|good (?:point|question)|fair point"
     r"|a sharp listener|the listener (?:would|might) want"
     r"|I only have (?:the )?\w+"
+    # The writer's own rules recited ("it stands on its own", "this is a
+    # safety story"): instructions read aloud, never news.
+    r"|(?:it|this story|the story) (?:stands|is told) (?:on its own|alone)"
+    r"|(?:this|it) is a (?:local )?(?:safety|violence|crime) story"
     r")\b[^.!?]*[.!?]", re.I)
 
 HARD_CODES = frozenset({"reasoning_leak", "duplicate_line", "misattributed", "story_split",

@@ -3014,10 +3014,13 @@ function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
 // Reusable glassmorphic button that triggers voice mode pre-loaded with context.
 // contentType: 'article'|'briefing'|'editorial'|'creation'
 // title/summary: strings used to prime Friday's opening question
-function TalkToFridayButton({contentType,title,summary,style}){
+function TalkToFridayButton({contentType,title,summary,style,onDiscuss}){
   const[active,setActive]=useState(false);
   const onClick=(e)=>{
     e.stopPropagation();
+    // A news story opens Discuss with Friday: evidence first, the local
+    // model only (docs/design/active/news-discuss.md).
+    if(onDiscuss){onDiscuss();return;}
     if(!window.fridayVoice){
       fridayToast('Enable voice mode first, then try again.');
       return;
@@ -9629,7 +9632,6 @@ function NewsWS(){
   const streamItems=feed;
   // Reusable card-corner actions: Read Later (toggle) + Open in Background.
   const cardActions=(it)=>(<div className="src-actions">
-    <button aria-label={"Discuss this story with " + fridayName()} className="src-btn discuss" title={"Discuss this story with " + fridayName() + ": coverage, sources, claims"} onClick={e=>{e.stopPropagation();setDiscussFor({url:it.url,title:it.title});setPanel('discuss')}}>💬</button>
     <button aria-label={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} className={'src-btn save'+(savedUrls[it.url]?' on':'')} title={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} onClick={e=>{e.stopPropagation();savedUrls[it.url]?removeLater(it.url):saveLater(it)}}>{savedUrls[it.url]?'🔖':'🏷'}</button>
     <button aria-label="Open in background tab" className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
     <button aria-label="Draft a LinkedIn post / blog response about this" className="src-btn draft" title="Draft a LinkedIn post / blog response about this" onClick={e=>{e.stopPropagation();shareToDraft(it)}}>{shareBusy===it.url?'…':'✍️'}</button>
@@ -9760,7 +9762,7 @@ function NewsWS(){
              {it.published_at&&<span>{new Date(it.published_at).toLocaleDateString([],{month:'short',day:'numeric'})}</span>}
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>{openBg(it.url);newsRecord(it.source,'click',it.category)}}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>{if(it.url){window.open(it.url,'_blank');newsRecord(it.source,'click',it.category)}}}>↗ Open article</span>
-             <TalkToFridayButton contentType="article" title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
+             <TalkToFridayButton contentType="article" onDiscuss={()=>{setDiscussFor({url:it.url,title:it.title});setPanel('discuss')}} title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
            </div>
            {i===0&&<div className="editorial-note"><b>{fridayName()}'s note:</b> {editorialFor(it)}</div>}
            <div className="relevance-tag">{relevanceFor(it)}</div>
@@ -9825,7 +9827,7 @@ function NewsWS(){
              {annoBadge(fp.lead)}
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>openBg(fp.lead.url)}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>↗ Open article</span>
-             <TalkToFridayButton contentType="article" title={fp.lead.title} summary={fp.lead.snippet||fp.lead.editorial_note} style={{marginLeft:'auto'}}/>
+             <TalkToFridayButton contentType="article" onDiscuss={()=>{setDiscussFor({url:fp.lead.url,title:fp.lead.title});setPanel('discuss')}} title={fp.lead.title} summary={fp.lead.snippet||fp.lead.editorial_note} style={{marginLeft:'auto'}}/>
            </div>
            {annoBox(fp.lead)}
          </div>}
@@ -9862,7 +9864,7 @@ function NewsWS(){
                  {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐</span>}
                  {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖</span>}
                  {annoBadge(it)}
-                 <TalkToFridayButton contentType="article" title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
+                 <TalkToFridayButton contentType="article" onDiscuss={()=>{setDiscussFor({url:it.url,title:it.title});setPanel('discuss')}} title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
                </div>
                {annoBox(it)}
              </div>)}
