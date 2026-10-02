@@ -198,7 +198,9 @@ def running_pytest_processes() -> list[tuple[int, str]] | None:
     return out
 
 
-SHELL_WRAPPERS = {"bash", "sh", "zsh", "cmd", "powershell", "pwsh", "conhost", "wsl"}
+SHELL_WRAPPERS = {"bash", "sh", "zsh", "cmd", "powershell", "pwsh", "conhost", "wsl",
+                  # command wrappers: the run is their child, counted on its own
+                  "timeout", "env", "nice", "time", "stdbuf"}
 
 
 def is_pytest_process(cmdline: str) -> bool:

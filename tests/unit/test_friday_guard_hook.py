@@ -644,3 +644,12 @@ def test_the_lock_path_defaults_to_the_live_checkout(tmp_path):
     cfg_path.write_text(json.dumps({"live_checkout": str(tmp_path / "live")}), encoding="utf-8")
     cfg = g.load_config(cfg_path)
     assert cfg["suite_lock"].replace("\\", "/").endswith("live/.claude/SUITE_LOCK")
+
+
+@pytest.mark.parametrize("wrapper", [
+    '"C:/Program Files/Git/usr/bin/timeout.exe" 1200 ../venv/Scripts/python.exe -m pytest tests/api/test_b.py -n 0',
+    "timeout 300 python -m pytest tests/api/test_b.py -n 0",
+    "env FRIDAY_TESTING=1 python -m pytest tests/api/test_b.py -n 0",
+])
+def test_a_command_wrapper_around_pytest_is_not_a_run_of_its_own(wrapper):
+    assert not g.is_pytest_process(wrapper)
