@@ -532,8 +532,9 @@
   const WIDTHS = [['phone', 390], ['tablet', 768], ['desktop', 0]];
 
   const stepKeyOf = cb => (cb && cb.updated_at) || '';
-  function CodebasePanel({ convId, codebase, artifactsTab, onCollapse, tab, width, refreshKey }) {
+  function CodebasePanel({ convId, codebase, artifactsTab, onCollapse, tab, width, refreshKey, wantView }) {
     const [view, setView] = useState('preview');
+    useEffect(() => { if (wantView && wantView.view) setView(wantView.view); }, [wantView]);
     const [html, setHtml] = useState(null);
     const [files, setFiles] = useState([]);
     const [file, setFile] = useState(null);           // {path, content}
@@ -760,6 +761,11 @@
     const [choices, setChoices] = useState([]);
     const [picking, setPicking] = useState(false);
     const [stepKey, setStepKey] = useState(0);
+    // By voice (chat-hub.md M3c): "show me the preview" opens the panel on
+    // Preview; "build mode" re-reads the binding the tool made. Only the
+    // host of that very chat answers, and it acks what it applied.
+    const [hubKey, setHubKey] = useState(0);
+    const [wantView, setWantView] = useState(null);
     const [open, setOpen] = useState(() => ls.get('friday_artifact_panel_open', '1') === '1');
     const [width, setWidth] = useState(() => Math.max(PANEL_MIN_W, +ls.get('friday_artifact_panel_w', 440) || 440));
     const [hostW, setHostW] = useState(0);
@@ -807,7 +813,25 @@
         return getJ('/api/codebases/' + encodeURIComponent(id)).then(c => { if (!dead && c.codebase) { setCodebase(c.codebase); setOpen(true); } });
       }).catch(() => {});
       return () => { dead = true; };
-    }, [convId]);
+    }, [convId, hubKey]);
+
+    useEffect(() => {
+      const onHub = e => {
+        const d = (e && e.detail) || {};
+        if (!d.conversation_id || d.conversation_id !== convId) return;
+        let applied = false;
+        if (d.action === 'preview') {
+          if (codebase || items.length) { setOpen(true); setWantView({ view: 'preview', at: Date.now() }); applied = true; }
+        } else if (d.action === 'build' || d.action === 'build_off') {
+          setHubKey(k => k + 1); setOpen(d.action === 'build'); applied = true;
+          if (d.action === 'build_off') setCodebase(null);
+        } else return;
+        if (d.id) api('/api/desktop/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: d.id, result: { applied, conversation_id: convId } }) }).catch(() => {});
+      };
+      window.addEventListener('friday:hub', onHub);
+      return () => window.removeEventListener('friday:hub', onHub);
+    }, [convId, codebase, items.length]);
 
     // Build: bind this chat to one of its project's codebases, so its panel
     // becomes the Build panel (Preview, Files, Changes). One call, both sides
@@ -852,7 +876,7 @@
     const onChanged = rec => refresh(rec && rec.id);
     const artifactPanel = items.length ? h(FridayArtifactPanel, { convId, items, selectedId: sel, onSelect: setSel, onCollapse: () => setOpen(false), tab: !side, width: panelW, onChanged }) : null;
     const panel = codebase
-      ? h(CodebasePanel, { convId, codebase, artifactsTab: artifactPanel, onCollapse: () => setOpen(false), tab: !side, width: panelW, refreshKey: stepKey })
+      ? h(CodebasePanel, { convId, codebase, artifactsTab: artifactPanel, onCollapse: () => setOpen(false), tab: !side, width: panelW, refreshKey: stepKey, wantView })
       : artifactPanel;
     const stripTitle = codebase ? codebase.title : (cur ? (KIND_GLYPH[cur.kind] || '') + ' ' + cur.title : 'Panel');
     const stripCount = codebase ? null : items.length;

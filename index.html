@@ -56538,6 +56538,15 @@ function App() {
         } catch (_) {}
         return;
       }
+      // The Chat Hub by voice (chat-hub.md M3c): open a project's chat, show
+      // the preview, build mode. The artifact host answers preview and build
+      // for its own chat; the page answers open_conversation below.
+      if (ev && ev.type === 'hub') {
+        try {
+          window.dispatchEvent(new CustomEvent('friday:hub', { detail: ev }));
+        } catch (_) {}
+        return;
+      }
       if (!ev || ev.type !== 'approval_result') return;
       if (ev.conversation_id && ev.conversation_id !== convId) return;
       apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
@@ -60653,6 +60662,29 @@ function App() {
   };
   // Ctrl+Alt+C hides or shows the tray; Friday's change (set_chat_tray) is
   // applied by the page in front, which says so.
+  const hubDo = useRef({});
+  hubDo.current = { openConversation, showChat };
+  useEffect(() => {
+    const onHub = e => {
+      const d = e && e.detail || {};
+      if (d.action !== 'open_conversation' || !d.conversation_id) return;
+      if (document.visibilityState !== 'visible') return;
+      const t = hubDo.current;
+      let applied = false;
+      try {
+        t.openConversation(d.conversation_id);
+        if (window.__FRIDAY_CHROME__ !== 'chat') t.showChat(true);
+        applied = true;
+      } catch (_) {}
+      if (d.id) apiFetch('/api/desktop/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: d.id, result: { applied: applied, conversation_id: d.conversation_id } })
+      }).catch(() => {});
+    };
+    window.addEventListener('friday:hub', onHub);
+    return () => window.removeEventListener('friday:hub', onHub);
+  }, []);
   const trayDo = useRef({});
   trayDo.current = {
     open: chatOpen,

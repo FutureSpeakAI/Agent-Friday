@@ -352,6 +352,17 @@ _VOICE_LIVE_TOOLS = [
      "Run one shell command in the current codebase's folder ('run the tests', 'build it'). The first command "
      "of a task raises one card; speak the result's say line as is, then the exit code and the gist of the output.",
      {"command": ("string", "The command, as it would be typed.")}, ["command"]),
+    ("open_project",
+     "Open one of the user's projects: its latest chat comes to the front ('open my Friday project'). "
+     "HUB_OK means the page showed it; HUB_SAVED means no page did; HUB_FAIL names the projects that exist.",
+     {"project": ("string", "The project, as the user said it.")}, ["project"]),
+    ("show_preview",
+     "Show the preview beside the current chat ('show me the preview'): the codebase's page or the chat's artifacts.",
+     {}, []),
+    ("build_mode",
+     "Enter build mode in the current chat (its panel becomes the Build panel for one of the project's codebases) "
+     "or leave it ('build mode', 'build mode with the rent tracker', 'leave build mode').",
+     {"on": ("boolean", "true to enter, false to leave."), "codebase": ("string", "Which codebase, if named.")}, []),
     ("delegate_to_friday",
      "Hand ANY request to the full Friday agent, with every tool it has in chat "
      "(email drafting, files, the wiki, browsing, research, workflows, anything the "
@@ -1382,11 +1393,14 @@ def _voice_tool_run(name, args, send_client, session=None):
                 return _governed(name, _fn, args)
             finally:
                 _ag._CURRENT_CONVERSATION.reset(_tok)
-        if name in ("codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent", "codebase_run"):
+        if name in ("codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent", "codebase_run",
+                    "open_project", "show_preview", "build_mode"):
             from agent_friday.services import agent as _ag
             _fn = {"codebase_seat": _ag._tool_codebase_seat, "codebase_key": _ag._tool_codebase_key,
                    "codebase_costs": _ag._tool_codebase_costs, "codebase_engine": _ag._tool_codebase_engine,
-                   "codebase_agent": _ag._tool_codebase_agent, "codebase_run": _ag._tool_codebase_run}[name]
+                   "codebase_agent": _ag._tool_codebase_agent, "codebase_run": _ag._tool_codebase_run,
+                   "open_project": _ag._tool_open_project, "show_preview": _ag._tool_show_preview,
+                   "build_mode": _ag._tool_build_mode}[name]
             _cid = session.get("conversation_id") if isinstance(session, dict) else None
             _tok = _ag._CURRENT_CONVERSATION.set(_cid)
             try:

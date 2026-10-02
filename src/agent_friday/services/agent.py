@@ -8673,6 +8673,182 @@ CLAUDE_TOOL_HANDLERS.update({"codebase_engine": _tool_codebase_engine, "codebase
 TOOL_RINGS.update({"codebase_engine": 1, "codebase_agent": 1, "codebase_run": 1})
 
 
+# ── The Chat Hub by voice (docs/design/active/chat-hub.md M3c) ──────────────
+# Three tools that move the owner's own screen: "open my Friday project",
+# "show me the preview", "build mode". Each follows set_workspace_layout's
+# round trip: the state is saved first, the open pages are told (a chat-kind
+# `hub` event), and only a page that applied it earns HUB_OK; otherwise
+# HUB_SAVED says what was remembered and that no page showed it.
+HUB_ACK_S = 5.0
+
+
+def _hub_send(action, **fields):
+    """Tell the pages; returns (sent, applied)."""
+    import secrets as _secrets
+    import time as _t
+    from agent_friday.services import desktop_bus
+    cid = "hub-%d-%s" % (int(_t.time()), _secrets.token_hex(3))
+    waiter = desktop_bus.expect(cid)
+    event = {"type": "hub", "id": cid, "action": action}
+    event.update({k: v for k, v in fields.items() if v is not None})
+    sent = desktop_bus.broadcast(event, kind="chat")
+    got = desktop_bus.wait(cid, waiter, HUB_ACK_S if sent else 0)
+    return bool(sent), bool(got.get("acked") and (got.get("ack") or {}).get("applied"))
+
+
+def _hub_words(text):
+    drop = {"my", "the", "a", "project", "projects", "open", "folder", "please", "up"}
+    return [w for w in "".join(ch if ch.isalnum() else " " for ch in str(text or "").lower()).split() if w not in drop]
+
+
+def _hub_find_project(words):
+    from agent_friday.services import projects as _proj
+    allp = _proj.list_all()
+    want = " ".join(_hub_words(words))
+    if not want:
+        return None, allp
+    for p in allp:
+        if (p.get("name") or "").strip().lower() == want:
+            return p, allp
+    for p in allp:
+        name = (p.get("name") or "").lower()
+        if want in name or name in want:
+            return p, allp
+    ww = set(want.split())
+    best = None
+    for p in allp:
+        hit = len(ww & set(_hub_words(p.get("name"))))
+        if hit and (best is None or hit > best[0]):
+            best = (hit, p)
+    return (best[1] if best else None), allp
+
+
+CLAUDE_TOOLS.append({
+    "name": "open_project",
+    "description": (
+        "Open one of the user's projects in the chat: its latest chat comes to the front (a new one is made "
+        "when the project has none). 'Open my Friday project' -> project='Friday'. Say the result's line as is."),
+    "input_schema": {"type": "object", "properties": {"project": {"type": "string", "description": "The project, as the user said it."}},
+                     "required": ["project"]},
+})
+CLAUDE_TOOLS.append({
+    "name": "show_preview",
+    "description": (
+        "Show the preview beside this chat: the page the codebase renders, or the chat's artifacts. "
+        "'Show me the preview'. Says plainly when there is nothing to preview."),
+    "input_schema": {"type": "object", "properties": {}},
+})
+CLAUDE_TOOLS.append({
+    "name": "build_mode",
+    "description": (
+        "Switch this chat into build mode (its panel becomes the Build panel for one of the project's codebases: "
+        "editor, preview, changes, terminal) or back out of it. 'Build mode' -> on=true; 'build mode with the rent "
+        "tracker' names the codebase; 'leave build mode' -> on=false."),
+    "input_schema": {"type": "object", "properties": {
+        "on": {"type": "boolean", "description": "true to enter, false to leave. Default true."},
+        "codebase": {"type": "string", "description": "Which codebase, as the user said it (optional)."}}},
+})
+
+
+def _tool_open_project(inp):
+    from agent_friday.services import conversations as _convs
+    inp = inp or {}
+    proj, allp = _hub_find_project(inp.get("project"))
+    if proj is None:
+        names = ", ".join(p.get("name") or p["id"] for p in allp) or "none yet"
+        return "HUB_FAIL: no project is called %r. Projects: %s." % (str(inp.get("project") or "").strip(), names)
+    members = [c for c in _convs.list_all() if c.get("project") == proj["id"]]
+    if members:
+        conv = max(members, key=lambda c: float(c.get("last_active_at") or c.get("created_at") or 0))
+    else:
+        conv = _convs.create(proj.get("name") or "Project chat")
+        _convs.patch(conv["id"], project=proj["id"])
+    sent, applied = _hub_send("open_conversation", conversation_id=conv["id"], title=conv.get("title") or "", project=proj.get("name") or "")
+    what = "%s: %s" % (proj.get("name"), conv.get("title") or conv["id"])
+    if applied:
+        return "HUB_OK:%s — opened %s." % (conv["id"], what)
+    return "HUB_SAVED:%s — %s is the chat to open; no Friday page showed it%s." % (
+        conv["id"], what, "" if sent else " (none is listening)")
+
+
+def _tool_show_preview(inp):
+    from agent_friday.services import artifacts as _art, codebases as _cb, conversations as _convs
+    conv_id = _CURRENT_CONVERSATION.get() or ""
+    conv = _convs.load(conv_id) if conv_id else None
+    if conv is None:
+        return "HUB_FAIL: this is not a chat that can show a preview."
+    rec = _cb.for_conversation(conv_id)
+    if rec is not None:
+        what = "the preview of %s" % (rec.get("title") or "the codebase")
+    else:
+        try:
+            n = len(_art.list_for(conv_id))
+        except Exception:
+            n = 0
+        if not n:
+            return "HUB_FAIL: nothing to preview here yet: no codebase is bound to this chat and it has no artifacts. Say 'build mode' to start one."
+        what = "this chat's artifacts (%d)" % n
+    sent, applied = _hub_send("preview", conversation_id=conv_id)
+    if applied:
+        return "HUB_OK:%s — showing %s." % (conv_id, what)
+    return "HUB_SAVED:%s — %s is there to show; no Friday page is showing this chat%s." % (
+        conv_id, what, "" if sent else " (none is listening)")
+
+
+def _tool_build_mode(inp):
+    from agent_friday.services import codebases as _cb, conversations as _convs, projects as _proj
+    inp = inp or {}
+    on = inp.get("on")
+    on = True if on is None else bool(on)
+    conv_id = _CURRENT_CONVERSATION.get() or ""
+    conv = _convs.load(conv_id) if conv_id else None
+    if conv is None:
+        return "HUB_FAIL: this is not a chat that can enter build mode."
+    if not on:
+        current = conv.get("codebase")
+        if current:
+            _convs.patch(conv_id, codebase=None)
+            rec = _cb.load(current)
+            if rec is not None and rec.get("conversation_id") == conv_id:
+                rec["conversation_id"] = None
+                _cb._save(rec)
+        sent, applied = _hub_send("build_off", conversation_id=conv_id)
+        return "HUB_OK:%s — out of build mode; the panel is the chat's own canvas." % conv_id if applied else                "HUB_SAVED:%s — out of build mode; no Friday page is showing this chat." % conv_id
+    words = " ".join(_hub_words(inp.get("codebase")))
+    proj = _proj.load(conv.get("project")) if conv.get("project") else None
+    pool = [_cb.load(c) for c in ((proj or {}).get("codebases") or [])]
+    pool = [r for r in pool if r]
+    chosen = None
+    if words:
+        for r in pool + [r for r in _cb.list_all() if r not in pool]:
+            t = (r.get("title") or "").lower()
+            if words == t or words in t or set(words.split()) & set(_hub_words(t)):
+                chosen = r
+                break
+        if chosen is None:
+            return "HUB_FAIL: no codebase is called %r. %s" % (str(inp.get("codebase") or "").strip(),
+                   ("This project's: %s." % ", ".join(r.get("title") or r["id"] for r in pool)) if pool else "This chat's project connects no codebase yet.")
+    elif conv.get("codebase") and _cb.load(conv["codebase"]) is not None:
+        chosen = _cb.load(conv["codebase"])
+    elif pool:
+        chosen = pool[0]
+    else:
+        return ("HUB_FAIL: this chat's project connects no codebase yet. Connect one under the project's settings, "
+                "or say 'build mode with <its name>'." if proj else
+                "HUB_FAIL: this chat is in no project and has no codebase. File it in a project with codebases, or say 'build mode with <its name>'.")
+    if conv.get("codebase") != chosen["id"]:
+        _cb.bind(chosen["id"], conv_id)
+    sent, applied = _hub_send("build", conversation_id=conv_id, codebase_id=chosen["id"], title=chosen.get("title") or "")
+    what = "build mode on %s" % (chosen.get("title") or chosen["id"])
+    if applied:
+        return "HUB_OK:%s — %s: editor, preview, changes and terminal beside the chat." % (conv_id, what)
+    return "HUB_SAVED:%s — %s is bound; no Friday page is showing this chat%s." % (conv_id, what, "" if sent else " (none is listening)")
+
+
+CLAUDE_TOOL_HANDLERS.update({"open_project": _tool_open_project, "show_preview": _tool_show_preview, "build_mode": _tool_build_mode})
+TOOL_RINGS.update({"open_project": 1, "show_preview": 1, "build_mode": 1})
+
+
 # ── Plan-first for big asks (services/plans; spec §4.11 item 4) ──────────────
 CLAUDE_TOOLS.append({
     "name": "plan_first",

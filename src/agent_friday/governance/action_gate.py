@@ -190,6 +190,10 @@ INTERNAL_TOOLS = frozenset({
     # reads state the server already holds. None reaches anyone else.
     "navigate_to", "check_situation", "set_workspace_layout", "show_my_day",
     "set_chat_tray",
+    # The Chat Hub by voice (chat-hub.md M3c): open a project's chat, show the
+    # preview beside it, enter or leave build mode. The owner's own screen and
+    # Friday's own records; nothing reaches anyone else.
+    "open_project", "show_preview", "build_mode",
     "get_career_pipeline", "get_briefing", "spawn_task", "propose_wiki_update",
     # Voice's hand-over to the full agent: a background task like spawn_task,
     # whose own actions come back through this checkpoint one by one.

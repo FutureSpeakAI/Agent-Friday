@@ -94,9 +94,15 @@ Tests: `tests/unit/test_codebase_run.py`, `tests/unit/test_codebase_run_gate.py`
 `tests/unit/test_chat_hub_build_switch.py`, `tests/unit/test_chat_hub_terminal_ui_files.py`,
 `tests/api/test_conversation_codebase_bind.py`.
 
-**M3c, voice (next).** "open my Friday project", "show me the preview", "build mode": tools
-through the governed path, with the layout tool's page round trip (a chat-kind event the page
-acks). **M3d.** The hub's targets register with the hand-cursor target registry when it lands.
+**M3c, voice (built).** Three tools through the governed path, each with the layout tool's page
+round trip (a chat-kind `hub` event; the page that applies it acks, and only that earns `HUB_OK`;
+`HUB_SAVED` says what was remembered when no page showed it; `HUB_FAIL` says why not):
+`open_project` ("open my Friday project": the project's latest chat comes to the front, a new one
+when it has none), `show_preview` ("show me the preview": the panel opens on Preview, or says
+there is nothing to preview), `build_mode` ("build mode", "build mode with the rent tracker",
+"leave build mode": binds the chat to one of its project's codebases, or unbinds it). Tests:
+`tests/unit/test_hub_voice_tools.py`. **M3d.** The hub's targets register with the hand-cursor
+target registry when it lands.
 
 **Known, pre-existing, out of scope here:** `/api/vibe-code/launch` opens Claude Code with
 permissions skipped and no card (the salon spec records it); the mirror has no chat sidebar.
