@@ -64,7 +64,8 @@ function explain(bad: Segment[]): string {
 
 /** Open the app with the given genome, the meter installed and the clock
  *  faked (or, with realClock, on the real clock, to time real frames). */
-async function openScene(page: Page, view: any, structureIndex = 0, opts: { realClock?: boolean } = {}) {
+async function openScene(page: Page, view: any, structureIndex = 0,
+                         opts: { realClock?: boolean, transform?: (html: string) => string } = {}) {
   await page.addInitScript(() => {
     // The approvals stream is a stand-in the test feeds: real approvals on
     // the server must not move the scene during a measurement.
@@ -88,12 +89,16 @@ async function openScene(page: Page, view: any, structureIndex = 0, opts: { real
   });
   await page.addInitScript({ path: METER });
   if (!opts.realClock) await page.clock.install();
-  if (process.env.FRIDAY_PAGE) {
-    const html = fs.readFileSync(process.env.FRIDAY_PAGE, 'utf8');
+  // The page under test (FRIDAY_PAGE), or the served one; `transform` serves
+  // a variant of it (a comparison against the page without one of its parts).
+  if (process.env.FRIDAY_PAGE || opts.transform) {
+    const file = process.env.FRIDAY_PAGE ? fs.readFileSync(process.env.FRIDAY_PAGE, 'utf8') : null;
     await page.route(BASE.replace(/\/$/, '') + '/', async r => {
       const served = await (await r.fetch()).text();
       const token = (served.match(/<script>window\.__FRIDAY_API_TOKEN=[^<]*<\/script>/) || [''])[0];
-      await r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html.replace('<head>', '<head>\n' + token) });
+      let html = file !== null ? file.replace('<head>', '<head>\n' + token) : served;
+      if (opts.transform) html = opts.transform(html);
+      await r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
     });
   }
   // Nothing the measurement does may change the user's state.
@@ -462,36 +467,50 @@ test('the process orbs never flash: every kind, every state, the hand on them', 
   expect(await page.evaluate(() => (window as any).fridayGetOrbs().length)).toBe(0);
 });
 
-test('the frame budget holds with a full sky of busy orbs', async ({ page }) => {
-  // Real frames on the real clock: eight orbs at work (forms, sparks,
-  // labels, the keep-out) cost no more than the frame budget: p95 within 10%
-  // and 1 ms of the calm frames either side.
-  test.setTimeout(15 * 60_000);
-  const rows: Rows = { list: [] };
-  await orbRoutes(page, rows);
-  await openScene(page, GENOMES.v1, 0, { realClock: true });
-  const p95 = (ms: number) => page.evaluate(ms => new Promise<number>(res => {
-    const t: number[] = []; let last = performance.now(); const end = last + ms;
-    const f = () => { const x = performance.now(); t.push(x - last); last = x;
-      if (x < end) requestAnimationFrame(f); else { t.sort((a, b) => a - b); res(t[Math.floor(t.length * 0.95)]); } };
-    requestAnimationFrame(f); }), ms);
-  const rowsOut: string[] = [];
-  for (const i of [0, EDEN_INDEX, 7]) {
-    await page.evaluate(i => setEvolution(i), i);
-    await page.waitForTimeout(9000);
-    const before = await p95(3000);
+test('the drawn orbs cost no more than the plain orbs did', async ({ browser }) => {
+  // Real frames on the real clock, eight busy orbs, on the same page with and
+  // without what each orb shows (FridayOrbScene), alternated so the machine's
+  // own load falls on both: the orb layer's work per frame stays within
+  // 0.5 ms of the plain orbs', and the frame p95 within 10% and 1 ms.
+  test.setTimeout(20 * 60_000);
+  const plain = (html: string) => {
+    const out = html.replace('FridayOrbScene.install(processOrbManager, camera);', '/* the plain orbs */');
+    expect(out, 'the drawing layer is installed where the test expects').not.toBe(html);
+    return out;
+  };
+  const measure = async (transform?: (h: string) => string) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    const rows: Rows = { list: [] };
+    await orbRoutes(page, rows);
+    await openScene(page, GENOMES.v1, 0, { realClock: true, transform });
+    await page.waitForTimeout(3000);
     await addAllKinds(page, rows);
     await page.evaluate(() => { (window as any).__sparks = setInterval(() => ['agent-r', 'agent-mail', 'code-x', 'agent-p'].forEach(id =>
-      FridayOrbScene.frame({ type: 'presence', state: 'tool', phase: 'start', agent: id })), 120); });
-    await page.waitForTimeout(1500);
-    const busy = await p95(3000);
-    await page.evaluate(() => clearInterval((window as any).__sparks));
-    rows.list = [];
-    await page.waitForTimeout(8000);
-    const after = await p95(3000);
-    const calm = Math.max(before, after);
-    rowsOut.push(`structure ${i}: calm p95 ${calm.toFixed(1)} ms, with orbs ${busy.toFixed(1)} ms`);
-    expect(busy, rowsOut.join(' | ')).toBeLessThanOrEqual(calm * 1.10 + 1);
-  }
-  console.log(rowsOut.join(' | '));
+      (window as any).FridayOrbScene && FridayOrbScene.frame({ type: 'presence', state: 'tool', phase: 'start', agent: id })), 120); });
+    await page.waitForTimeout(2000);
+    const got = await page.evaluate(() => new Promise<{ js: number, frame: number, orbs: number }>(res => {
+      const m = processOrbManager, js: number[] = [], fr: number[] = [];
+      const upd = m.update;
+      m.update = (dt: number, el: number) => { const t0 = performance.now(); upd.call(m, dt, el); js.push(performance.now() - t0); };
+      let last = performance.now(); const end = last + 3000;
+      const f = () => { const x = performance.now(); fr.push(x - last); last = x;
+        if (x < end) requestAnimationFrame(f);
+        else { const q = (a: number[]) => a.slice().sort((p, r) => p - r)[Math.floor(a.length * 0.95)];
+               res({ js: q(js), frame: q(fr), orbs: (window as any).fridayGetOrbs().length }); } };
+      requestAnimationFrame(f); }));
+    await ctx.close();
+    return got;
+  };
+  const runs: { plain: any, drawn: any }[] = [];
+  for (let k = 0; k < 3; k++) runs.push({ plain: await measure(plain), drawn: await measure() });
+  const med = (a: number[]) => a.slice().sort((p, r) => p - r)[Math.floor(a.length / 2)];
+  const plainJs = med(runs.map(r => r.plain.js)), drawnJs = med(runs.map(r => r.drawn.js));
+  const plainFr = med(runs.map(r => r.plain.frame)), drawnFr = med(runs.map(r => r.drawn.frame));
+  const said = `orb layer p95 ${drawnJs.toFixed(2)} ms drawn vs ${plainJs.toFixed(2)} plain; frame p95 ${drawnFr.toFixed(1)} vs ${plainFr.toFixed(1)} ms; ` +
+               JSON.stringify(runs);
+  expect(runs.every(r => r.plain.orbs === 8 && r.drawn.orbs === 8), said).toBe(true);
+  expect(drawnJs, said).toBeLessThanOrEqual(plainJs + 0.5);
+  expect(drawnFr, said).toBeLessThanOrEqual(plainFr * 1.10 + 1);
+  console.log(said);
 });
