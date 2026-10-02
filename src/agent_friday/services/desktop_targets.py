@@ -24,7 +24,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 KINDS = ("workspace", "email", "mail_search", "file", "wiki_page", "graph_node",
-         "settings", "calendar", "contact", "content_post", "news_article", "creation")
+         "settings", "calendar", "contact", "content_post", "news_article", "creation", "card")
 
 #: Words that say what kind of thing is meant, not which one.
 _FILLER = {
@@ -697,7 +697,27 @@ def resolve_creation(query: str = "", id: str = "") -> dict:
 
 
 #: Other names for a kind, as the model and the desktop say them.
-_KIND_ALIASES = {"wiki": "wiki_page", "page": "wiki_page", "node": "graph_node",
+
+def resolve_card(query: str = "", id: str = "") -> dict:
+    """A Media card: anything the owner made or is making, by id or by title."""
+    from agent_friday.services import media_index as mi
+    if id:
+        c = mi.get(id)
+        if c:
+            return _ok({"workspace": "media", "card": c["id"]}, c["title"], verify=("card", c["id"]))
+        return _fail("no Media card has that id")
+    q = (query or "").strip()
+    if not q:
+        return _fail("say which card: its title, or what it is")
+    res = mi.query(view="all", q=q, limit=5)
+    cards = res.get("cards") or []
+    if not cards:
+        return _fail("no Media card matches " + repr(q))
+    c = cards[0]
+    also = [{"id": x["id"], "label": x["title"]} for x in cards[1:4]]
+    return _ok({"workspace": "media", "card": c["id"]}, c["title"], verify=("card", c["id"]), also=also)
+
+_KIND_ALIASES = {"media": "card", "media_card": "card", "piece": "card", "wiki": "wiki_page", "page": "wiki_page", "node": "graph_node",
                  "graph": "graph_node", "emails": "mail_search", "article": "news_article",
                  "story": "news_article", "news": "news_article",
                  "studio_creation": "creation"}
@@ -733,6 +753,8 @@ def resolve(kind: str, query: str = "", id: str = "", workspace: str = "",
         return resolve_contact(query, id)
     if kind == "content_post":
         return resolve_content_post(query, id)
+    if kind == "card":
+        return resolve_card(query, id)
     return _fail("kind must be one of: " + ", ".join(KINDS))
 
 

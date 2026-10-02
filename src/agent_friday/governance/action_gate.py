@@ -210,6 +210,7 @@ INTERNAL_TOOLS = frozenset({
     # Podcasts: an episode is written and spoken on this computer and saved in
     # Friday's own folder; playing it steers the owner's own screen.
     "make_podcast", "podcast_list", "podcast_play", "podcast_source",
+    "media_show", "media_cards", "media_turn",
     # Friday's own look: it changes only the owner's own desktop and history.
     # A step authored by a cloud model sends numbers only, through the spend
     # guard and the egress gate like any model call; it reaches no one.

@@ -315,6 +315,17 @@ def store_manifest(manifest: Dict[str, Any]) -> Optional[Path]:
         return None
 
 
+def sign_saved(path, tool: str, media_type: str, sources=None, license=None, **detail) -> None:
+    """Credentials as a property of saving: any tool that writes a file Friday
+    made calls this right after the write. Never raises; a file that could not
+    be signed is simply shown as Unsigned."""
+    try:
+        chain = [dict({"tool": tool, "where": "this computer"}, **{k: v for k, v in detail.items() if v is not None})]
+        write(str(path), tool_chain=chain, sources=sources or [], license=license, media_type=media_type)
+    except Exception:
+        pass
+
+
 def write(artifact_path, *, tool_chain=None, sources=None, license=None,
           media_type=None) -> Dict[str, Any]:
     """The one-line hook every generator calls: build → sign → store → return.

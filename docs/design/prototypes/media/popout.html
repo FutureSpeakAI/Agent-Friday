@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media · Agent Friday™</title>
+<link rel="stylesheet" href="friday.css">
+<style>
+  .one { display: grid; grid-template-columns: 1fr 320px; gap: 14px; flex: 1 1 auto; }
+  .one .stagebox { background: #000; border: 1px solid var(--line); border-radius: var(--radius); min-height: 360px; display: grid; place-items: center; color: var(--fr-dim); }
+  .measure { position: fixed; left: 12px; bottom: 12px; z-index: 60; background: var(--fr-glass); backdrop-filter: var(--fr-glass-blur); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-family: var(--fr-font-mono); font-size: var(--fr-text-xs); color: var(--fr-dim); }
+  .measure b { color: var(--fr-cyan); font-weight: 500; }
+  .how { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+  @media (max-width: 900px) { .one { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main id="main">
+  <div class="st-root" id="root">
+    <div class="st-head" id="head"></div>
+    <div id="body"></div>
+    <div class="card" style="margin-top:12px">
+      <h3>How a pop-out works, in the shell's terms</h3>
+      <div class="how">
+        <div><div class="label">Own Chrome tab</div><p class="small">The workspace, or one card, opens at <span class="mono">/w/media?card=…</span>. The shell renders its one top bar, the chat tray and fullscreen-with-chat exactly as in the desktop; the tab title is "Media · Agent Friday™".</p></div>
+        <div><div class="label">Floating window</div><p class="small">On the desktop the same card is a window (<span class="mono">FWin</span>), which maximizes to the tray's edge. "Own tab" on a window moves it to a tab; the lockup brings you back.</p></div>
+        <div><div class="label">What travels</div><p class="small">The card id and the view. Nothing else is in the URL: no titles, no text. The tab asks the index for the rest, so a private card never sits in a browser history line.</p></div>
+      </div>
+    </div>
+  </div>
+</main>
+<div class="measure" id="measure"></div>
+<script src="friday.js"></script>
+<script src="media.js"></script>
+<script>
+  protoNav('popout.html');
+  var q = new URLSearchParams(location.search); var id = q.get('card');
+  var c = id ? cardById(id) : null;
+  shell({ title: c ? 'Media · ' + c.title : 'Media', chatOpen: !!c });
+  document.title = (c ? c.title + ' · Media' : 'Media') + ' · Agent Friday™';
+  if (c) {
+    document.getElementById('head').innerHTML = '<a class="btn sm" href="library.html">← Media</a><span id="t"></span><strong>' + c.title + '</strong><span class="muted small">' + fmtWhen(c.when) + '</span><span class="spacer" style="flex:1"></span>' + statusPill(c.status, c.held) + privacyPill(c);
+    document.getElementById('t').innerHTML = glyph(KIND_GLYPH[c.kind], KIND_WORD[c.kind]);
+    document.getElementById('body').innerHTML = '<div class="one"><div class="stagebox">' + KIND_WORD[c.kind] + ' · the same editor stage as inside the desktop</div><aside class="vside" style="display:flex;flex-direction:column;gap:10px"><div class="card"><h3 style="font-size:var(--fr-text-md);color:var(--fr-dim);font-weight:500">Provenance</h3><dl class="kv"><dt>Made by</dt><dd>' + c.maker + '</dd><dt>From</dt><dd>' + (c.sources.join(', ') || '—') + '</dd></dl></div><div class="card"><h3 style="font-size:var(--fr-text-md);color:var(--fr-dim);font-weight:500">Actions</h3><div class="actions"><button class="btn" onclick="toast(\'Send to…\')">Send to…</button><button class="btn" onclick="toast(\'Turn this into…\')">Turn this into…</button><button class="btn" onclick="toast(\'A card asks first.\')">Publish…</button></div></div></aside></div>';
+  } else {
+    document.getElementById('head').innerHTML = mediaHead('library', 'the whole workspace in its own tab');
+    document.getElementById('body').innerHTML = '<div class="lib-grid" id="grid">' + CARDS.slice(0, 12).map(function (c) { return cardHTML(c); }).join('') + '</div>';
+  }
+  function measure() {
+    var r = document.getElementById('root').getBoundingClientRect().width, v = window.innerWidth;
+    var open = document.querySelector('.shell').classList.contains('chat-open');
+    document.getElementById('measure').innerHTML = 'own tab · root <b>' + Math.round(r) + '</b> of <b>' + v + '</b> px · tray <b>' + (open ? 'docked 320' : 'closed') + '</b>' + (document.body.classList.contains('fr-fs-chat') ? ' · <b>fullscreen with chat</b>' : '');
+  }
+  new MutationObserver(measure).observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class'] });
+  window.addEventListener('resize', measure); measure();
+</script>
+</body>
+</html>

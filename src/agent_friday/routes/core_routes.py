@@ -91,7 +91,9 @@ def serve_ui():
 _WS_ID = re.compile(r'^[a-z][a-z0-9_-]{0,31}$')
 # Workspaces folded into another keep their old tab address. /w/wiki is the
 # Knowledge workspace on its Pages view, still pointing at the same page.
-_WS_TAB_ALIASES = {'wiki': ('knowledge', {'view': 'pages'})}
+_WS_TAB_ALIASES = {'wiki': ('knowledge', {'view': 'pages'}),
+                   'draft': ('media', {'view': 'board'}), 'content': ('media', {'view': 'board'}),
+                   'studio': ('media', {'view': 'library'})}
 
 
 #: Workspaces that used to exist. Their URLs may be bookmarked, linked from an
