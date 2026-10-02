@@ -116,6 +116,8 @@ WIRING_SCENE = [
     "for(let i=1; i<=FridayGenome.EX('ASTROLABE', 'rings', 8); i++) {",
     "const nTubes = FridayGenome.EX('CABLES', 'tubes', 80);",
     "FridayHopf.build(gNone, { lines: FridayGenome.EX('NONE', 'lines', 100) });",
+    "FridayWormhole.build(gWorm, { rings: FridayGenome.EX('WORMHOLE', 'rings', 20) });",
+    "FridayBlackHole.build(gHole, { dust: FridayGenome.EX('BLACKHOLE', 'dust', 320), lowCost: !!window.__fridayLowCost,",
     "FridayDyson.build(gIco, { shells: FridayGenome.EX('ICOSAHEDRON', 'shells', 3),",
     "coarse: FridayGenome.EX('ICOSAHEDRON', 'detail_delta', 0) < 0, rand: () => FridayGenome.rand('ICOSAHEDRON') });",
     "FridayDirac.animate(delta, Object.assign({ wave: FridayGenome.EX('QUANTUM', 'wave', 10) }, herState));",

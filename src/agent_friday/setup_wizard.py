@@ -179,6 +179,8 @@ EVOLUTION_STRUCTURES = [
     (10, "CABLES",      "Fibonacci Nerve",        "Nature's golden spiral"),
     (11, "NONE",        "Transcendence",          "Beyond form — pure consciousness"),
     (12, "EDEN",        "Giga Earth (Rez)",       "Tribute to Rez — the beginning"),
+    (13, "WORMHOLE",    "Einstein-Rosen Bridge",  "A throat through spacetime to somewhere else"),
+    (14, "BLACKHOLE",   "Hawking Radiation",      "A black hole that glows at its edge"),
 ]
 
 CONNECTORS = [
@@ -1410,14 +1412,14 @@ def step_scene(total: int, existing_idx: int) -> int:
 
     while True:
         choice = Prompt.ask(
-            "  [cyan]Scene number (1–13), or 0 to auto-rotate[/cyan]",
+            "  [cyan]Scene number (1–%d), or 0 to auto-rotate[/cyan]" % len(EVOLUTION_STRUCTURES),
             default=str(existing_idx + 1) if existing_idx >= 0 else "0"
         )
         try:
             n = int(choice)
             if n == 0:
                 return -1
-            if 1 <= n <= 13:
+            if 1 <= n <= len(EVOLUTION_STRUCTURES):
                 return n - 1
         except ValueError:
             pass
@@ -1529,7 +1531,7 @@ def step_summary(config: dict, quick: bool) -> bool:
         t.add_row("Voice persona", config.get("tts_voice", "Aoede"))
         scene_idx = config.get("preferred_scene_index", -1)
         scene_name = (
-            EVOLUTION_STRUCTURES[scene_idx][2] if 0 <= scene_idx < 13
+            EVOLUTION_STRUCTURES[scene_idx][2] if 0 <= scene_idx < len(EVOLUTION_STRUCTURES)
             else "Auto-rotate (every 4 days)"
         )
         t.add_row("Holographic scene", scene_name)

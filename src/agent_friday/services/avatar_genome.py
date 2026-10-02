@@ -4,7 +4,7 @@ expresses, kept as signed, versioned steps in a tree.
 docs/design/active/avatar-visual-genome.md §3 (the genome), §6 (guardrails),
 §7 (signed steps and rollback). The weekly step that proposes changes lives in
 services/avatar_growth.py; this module owns what a genome may be, how each of
-the 13 structures expresses it, and the history.
+the 15 structures expresses it, and the history.
 
 Rules this module enforces, so no author (a model, the seeded engine, a
 hand-edited file) can get round them:
@@ -55,7 +55,8 @@ MAX_GENES_PER_STEP = 3
 TRASH_DAYS = 30
 
 STRUCTURE_IDS = ("CUBES", "ICOSAHEDRON", "NETWORK", "DOME", "ASTROLABE", "TESSERACT",
-                 "QUANTUM", "MANDELBROT", "MOBIUS", "GRID", "CABLES", "NONE", "EDEN")
+                 "QUANTUM", "MANDELBROT", "MOBIUS", "GRID", "CABLES", "NONE", "EDEN",
+                 "WORMHOLE", "BLACKHOLE")
 
 #: Accent schemes: how far each accent turns from where v1 put it, in
 #: degrees. All stay in the cool family; a complementary scheme would put an
@@ -141,6 +142,12 @@ STRUCTURE_GENES = {
     # track (TRACKS), moved only by track_step.
     "EDEN":        {"stage":    {"kind": "i", "min": 0, "max": 6, "step": 1, "default": 0,
                                  "track": True}},
+    # The Einstein-Rosen bridge: the rings of its grid. Hawking radiation: the
+    # dust that orbits the hole.
+    "WORMHOLE":    {"rings":    {"kind": "i", "min": 16, "max": 24, "step": 2, "default": 20,
+                                 "count": True}},
+    "BLACKHOLE":   {"dust":     {"kind": "i", "min": 240, "max": 360, "step": 20, "default": 320,
+                                 "count": True}},
 }
 
 #: Structures that evolve on a set track instead of by model (§15). While one
@@ -373,8 +380,11 @@ def _struct_verts(sid, e):
     if sid == "CUBES":
         return 27 * (1 - e["sparsity"]) * 60
     if sid == "ICOSAHEDRON":
-        details = [max(0, d + e["detail_delta"]) for d in (3, 2, 1, 0)][:e["shells"]]
-        return sum(10 * 4 ** d + 2 for d in details)
+        # The Dyson sphere: a fixed allotment of hexagonal panels shared by its
+        # shells (fewer, bigger ones a detail step down), each drawn twice
+        # (collector and rim), the star and the prominences' points.
+        panels = 315 if e["detail_delta"] < 0 else 420
+        return panels * 2 * 14 + 2562 + 8 * 240
     if sid == "NETWORK":
         return e["nodes"] * 9
     if sid == "DOME":
@@ -384,7 +394,7 @@ def _struct_verts(sid, e):
     if sid == "TESSERACT":
         return 80
     if sid == "QUANTUM":
-        return 64 * 64 + 30 * 300
+        return 6000                     # the probability cloud's points
     if sid == "MANDELBROT":
         return (3.0 / e["step"]) ** 2
     if sid == "MOBIUS":
@@ -394,12 +404,19 @@ def _struct_verts(sid, e):
     if sid == "CABLES":
         return e["tubes"] * 576
     if sid == "NONE":
-        return e["lines"] * 2
+        return e["lines"] * 2 * 64 * 2  # two fibres a line, 64 segments a fibre
     if sid == "EDEN":
         # Tunnel, 200 tiles, the robot, two rings and their shards, the rail
         # halos: the same parts at every form (a form shows or places them),
         # so the same count.
         return 40 * 40 * 2 + 200 * 24 + 400 + 12 * 96 + 15 * 20 + 60 * 2
+    if sid == "WORMHOLE":
+        # Rings of the near funnel and the shorter far one, the spokes of both,
+        # the throat's ring, the far side and the stream through it.
+        return e["rings"] * 144 * 1.45 + 36 * 40 * 4 + 160
+    if sid == "BLACKHOLE":
+        # The sphere the light is traced on, the pairs and motes, the dust.
+        return 49 * 33 + 168 + e["dust"]
     return 0
 
 

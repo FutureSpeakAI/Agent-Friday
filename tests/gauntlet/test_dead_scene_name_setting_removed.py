@@ -6,7 +6,7 @@ must not be touched by that removal.
 
 `scene_name` is completely disconnected from the
 real holo-structure system: `preferred_scene_index` (an index into
-`EVOLUTION_PATH`, a list of 13 named 3D structures -- GENESIS LATTICE,
+`EVOLUTION_PATH`, a list of 15 named 3D structures -- GENESIS LATTICE,
 DYSON SPHERE, etc.) is the actual, extensively-wired mechanism that
 selects what the hologram displays (routes/insights.py, core_routes.py,
 `window.fridayVibe.setStructure()`, the real scene-picker UI). `scene_name`

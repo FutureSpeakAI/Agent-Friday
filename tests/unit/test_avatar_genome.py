@@ -8,7 +8,8 @@ import pytest
 from agent_friday.services import avatar_genome as g
 
 STRUCTURES = ["CUBES", "ICOSAHEDRON", "NETWORK", "DOME", "ASTROLABE", "TESSERACT",
-              "QUANTUM", "MANDELBROT", "MOBIUS", "GRID", "CABLES", "NONE", "EDEN"]
+              "QUANTUM", "MANDELBROT", "MOBIUS", "GRID", "CABLES", "NONE", "EDEN",
+              "WORMHOLE", "BLACKHOLE"]
 
 
 @pytest.fixture
@@ -81,12 +82,12 @@ def test_unknown_keys_are_dropped_and_the_anchor_never_moves():
     wild["palette"]["anchor_hue"] = 30
     wild["palette"]["exec"] = "rm -rf"
     wild["structures"]["CUBES"]["colour"] = "#ff0000"
-    wild["structures"]["WORMHOLE"] = {"size": 3}
+    wild["structures"]["STARGATE"] = {"size": 3}
     out = g.clamp_absolute(wild)
     assert out["palette"]["anchor_hue"] == g.ANCHOR_HUE
     assert "exec" not in out["palette"]
     assert "colour" not in out["structures"]["CUBES"]
-    assert "WORMHOLE" not in out["structures"]
+    assert "STARGATE" not in out["structures"]
 
 
 def test_a_step_moves_each_gene_at_most_its_per_step_maximum():

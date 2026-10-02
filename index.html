@@ -4858,7 +4858,8 @@ window.addEventListener('DOMContentLoaded',function(){
             { id: 'DOME', name: 'GEODESIC CATHEDRAL' }, { id: 'ASTROLABE', name: 'LOVELACE ASTROLABE' }, { id: 'TESSERACT', name: 'VON NEUMANN TESSERACT' },
             { id: 'QUANTUM', name: 'DIRAC PROBABILITY' }, { id: 'MANDELBROT', name: 'MANDELBROT SET' }, { id: 'MOBIUS', name: 'TURING MOBIUS' },
             { id: 'GRID', name: 'OCEAN OF LIGHT' }, { id: 'CABLES', name: 'FIBONACCI NERVE' }, { id: 'NONE', name: 'TRANSCENDENCE' },
-            { id: 'EDEN', name: 'GIGA EARTH (REZ)' }
+            { id: 'EDEN', name: 'GIGA EARTH (REZ)' },
+            { id: 'WORMHOLE', name: 'EINSTEIN-ROSEN BRIDGE', aliases: ['WORMHOLE'] }, { id: 'BLACKHOLE', name: 'HAWKING RADIATION', aliases: ['BLACK HOLE'] }
         ];
 
         const HolographicShader = {
@@ -6272,8 +6273,14 @@ window.addEventListener('DOMContentLoaded',function(){
             // The box the dots live in, around the view; travel is toward +z.
             const MIN = [-70, -42, -130], SIZE = [140, 84, 150], TRAVEL = 1.4;        // units per second at full speed
             const WEB_DIR = [0.38, 0.78, -0.5], WEB_N = 240, WEB_K = 3, WEB_R = 46;
+            // A lens (uLens: its centre in view space, uLensR: its Einstein
+            // radius as an angle, 0 = none) moves each dot behind it to where a
+            // point mass would show it: outward along the line from the lens, so
+            // the dots crowd round it as a ring. The radius is also the shadow's:
+            // nothing behind shows inside it, however near behind it is. Dots in
+            // front of the lens are not touched.
             const VS = `attribute float phase; uniform float uDist; uniform float uCurrent; uniform float uGlow; uniform float uSize;
-                uniform vec3 uMin; uniform vec3 uSize3; varying float vBright;
+                uniform vec3 uMin; uniform vec3 uSize3; uniform vec3 uLens; uniform float uLensR; varying float vBright;
                 void main() {
                     vec3 p = position;
                     p.z = uMin.z + mod(position.z - uMin.z + uDist, uSize3.z);
@@ -6284,6 +6291,13 @@ window.addEventListener('DOMContentLoaded',function(){
                     float zf = (p.z - uMin.z) / uSize3.z;
                     vBright = (0.8 + uGlow * near * 1.4) * smoothstep(0.0, 0.12, zf) * (1.0 - smoothstep(0.86, 1.0, zf));
                     vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                    if (uLensR > 0.0 && mv.z < uLens.z - 0.5) {
+                        float ds = -mv.z, dl = -uLens.z;
+                        vec2 c = uLens.xy / dl, th = mv.xy / ds - c;
+                        float t = length(th), te = uLensR * sqrt(max(0.0, (ds - dl) / ds));
+                        vec2 dir = t > 1e-5 ? th / t : vec2(1.0, 0.0);
+                        mv.xy = (c + dir * max(0.5 * t + sqrt(0.25 * t * t + te * te), uLensR * 1.03)) * ds;
+                    }
                     gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)), 1.0, 6.0);
                     gl_Position = projectionMatrix * mv;
                 }`;
@@ -6328,6 +6342,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 mat = new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false,
                     blending: THREE.AdditiveBlending, uniforms: { uDist: { value: 0 }, uCurrent: { value: 0 }, uGlow: { value: 0 },
                     uSize: { value: 0.4 }, uMin: { value: new THREE.Vector3(...MIN) }, uSize3: { value: new THREE.Vector3(...SIZE) },
+                    uLens: { value: new THREE.Vector3() }, uLensR: { value: 0 },
                     uColor: { value: new THREE.Color(0x5fa8ff) } } });
                 pts = new THREE.Points(g, mat);
                 pts.userData.worldField = true;
@@ -6370,6 +6385,12 @@ window.addEventListener('DOMContentLoaded',function(){
                 }
                 webEdges = webEdges.slice(0, WEB_N * WEB_K);
             }
+            // The lens: a world-space centre and an Einstein radius in world
+            // units at that centre, set each frame by whatever bends light (0
+            // or no call: none). Read in view space so it follows the camera.
+            let lensAt = null, lensR = 0, last = null;
+            const _lv = new THREE.Vector3();
+            function setLens(worldPos, radius) { lensAt = worldPos ? (lensAt || new THREE.Vector3()).copy(worldPos) : null; lensR = radius || 0; }
             let subscribed = false;
             function update(dt, opts) {
                 if (!pts) return null;
@@ -6389,6 +6410,13 @@ window.addEventListener('DOMContentLoaded',function(){
                 mat.uniforms.uCurrent.value = current;
                 mat.uniforms.uGlow.value = s.glow;
                 if (opts && opts.color) mat.uniforms.uColor.value.copy(opts.color).multiplyScalar(0.8);
+                if (lensAt && lensR > 0 && opts && opts.camera) {
+                    _lv.copy(lensAt).applyMatrix4(opts.camera.matrixWorldInverse);
+                    mat.uniforms.uLens.value.copy(_lv);
+                    mat.uniforms.uLensR.value = _lv.z < -0.5 ? lensR / -_lv.z : 0;
+                } else mat.uniforms.uLensR.value = 0;
+                lensR = 0;                                         // set again next frame, or gone
+                last = s;
                 // The web.
                 if (s.web) {
                     if (!webNodes) chooseWeb();
@@ -6424,7 +6452,9 @@ window.addEventListener('DOMContentLoaded',function(){
                 for (const o of [pts, web, pulse]) if (o) { if (scn) scn.remove(o); o.geometry.dispose(); o.material.dispose(); }
                 pts = web = pulse = null; webNodes = null;
             }
-            return { build, update, dispose, count, _posOf: posOf, _n: () => n, _web: () => (web ? { visible: web.visible, edges: webEdges ? webEdges.length : 0 } : null) };
+            return { build, update, dispose, count, setLens, state: () => last, _posOf: posOf, _n: () => n,
+                     _lens: () => (mat ? mat.uniforms.uLensR.value : 0),
+                     _web: () => (web ? { visible: web.visible, edges: webEdges ? webEdges.length : 0 } : null) };
         })();
         // </world-field>
 
@@ -7641,6 +7671,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 // blocks of tiles flip for a tool call. A ball-shaped module
                 // (`ball`) keeps its approval unit on the side facing the viewer.
                 EDEN:        { kind: 'module', mod: () => FridayRez, ball: true },
+                WORMHOLE:    { kind: 'module', mod: () => FridayWormhole },
+                BLACKHOLE:   { kind: 'module', mod: () => FridayBlackHole },
                 NETWORK:     { kind: 'points', cloud: g => g.children[0] },
                 MANDELBROT:  { kind: 'points', cloud: g => g.children[0] },
                 MOBIUS:      { kind: 'points', cloud: g => g.children[0] },
@@ -8904,6 +8936,563 @@ window.addEventListener('DOMContentLoaded',function(){
                      _at: at, _ang: () => ang, _mat: () => mat, _fibres: () => TORI * perTorus, TORI, SECT, M, ETA1, A_THINK, SCALE };
         })();
         // </hopf-fibration>
+        // <wormhole>
+        // The Einstein-Rosen Bridge (avatar-visual-genome.md §19): a wormhole.
+        // A luminous grid on Flamm's paraboloid, z = 2 sqrt(rs (r - rs)): the
+        // near funnel curves down from a wide mouth into the throat, and the
+        // far funnel opens again beyond it. It is seen into the mouth at a slight
+        // angle, with a thin photon ring round the throat. The mouth is a lens:
+        // the world's dots bend round it (FridayField.setLens). Through the
+        // throat is somewhere else: a disc whose shader looks out along each
+        // eye ray at a different sky, so under head tracking leaning lets the
+        // viewer peek around inside. The far side shows where her mind is
+        // working, and only that: her own warm lattice while she works
+        // locally, the web of the network only on a real cloud send of hers
+        // (the world field's own state, the same honesty rule as the dots).
+        //   speaking: ripples run down the throat with her voice;
+        //   thinking: the throat tightens and a stream of light flows through;
+        //   listening: the mouth widens toward the viewer.
+        // Over the weeks the throat steadies: soft-edged and wavering at
+        // first, the ring sharp, steady and brighter later.
+        const FridayWormhole = (function () {
+            const RS = 1.0, R_MOUTH = 4.9, RINGS = 20, SPOKES = 36, SEG = 72, FAR = 0.45, CL = 24, TILT = 0.87;
+            const SAND = new THREE.Color(0xd6c7a1), WHITE = new THREE.Color(1, 1, 1);
+            let holder = null, grid = null, ring = null, portal = null, stream = null;
+            let clock = 0, ripple = 0, voice = 0, think = 0, listen = 0, stable = 0, local = 0, web = 0, flow = 0;
+            const _c = new THREE.Color(), _wp = new THREE.Vector3();
+            const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, ownColour: true }; return m; };
+            function stepNo() {
+                const v = (typeof FridayGenome !== 'undefined' && FridayGenome.current) ? FridayGenome.current() : null;
+                return v && v.step && isFinite(v.step.step) ? +v.step.step : 0;
+            }
+            // The embedding: depth along the axis for a radius r >= rs (in rs units).
+            const flamm = r => 2 * Math.sqrt(Math.max(0, r - 1));
+            // GRID: each vertex knows its radius (rs units), its angle, which
+            // funnel (+1 near, -1 far) and its gesture patch; the shader places it.
+            const GVS = `attribute float aR; attribute float aPhi; attribute float aSide; attribute float aCl;
+                uniform float uRs; uniform float uTight; uniform float uWiden; uniform float uRipple; uniform float uPhase; uniform float uWave;
+                uniform vec4 uD[${CL}]; uniform vec4 uG[${CL}]; uniform vec3 uNear; uniform vec3 uDeep;
+                varying vec3 vC; varying float vA;
+                void main() {
+                    float rr = aR * mix(1.0, 1.0 + 0.18 * (aR - 1.0) / ${(R_MOUTH / RS - 1).toFixed(2)}, uWiden * step(0.0, aSide));
+                    float z = 2.0 * sqrt(max(0.0, aR - 1.0)) * mix(1.0, 0.8, uWiden * step(0.0, aSide));
+                    float s = z;                                            // depth down the throat
+                    float rip = uRipple * sin(uWave * s - uPhase) * smoothstep(0.0, 1.5, s);
+                    float rad = (rr + 0.06 * rip) * uRs * mix(1.0, 0.8, uTight * (1.0 - smoothstep(1.0, 3.0, aR)));
+                    vec3 p = vec3(cos(aPhi) * rad, sin(aPhi) * rad, aSide * z * uRs);
+                    int c = int(aCl + 0.5); vec4 D = uD[c]; vec4 G = uG[c];
+                    p = p * D.w + D.xyz;
+                    float deep = clamp(1.0 - z / ${flamm(R_MOUTH / RS).toFixed(2)}, 0.0, 1.0);
+                    vec3 col = mix(uNear, uDeep, deep);
+                    vC = col * G.a + G.rgb;
+                    vA = (aSide > 0.0 ? (0.55 + 0.35 * deep) * (1.0 - smoothstep(${(R_MOUTH / RS * 0.7).toFixed(2)}, ${(R_MOUTH / RS).toFixed(2)}, aR)) : 0.28 * (1.0 - smoothstep(1.5, 3.2, aR))) * (0.8 + 0.35 * rip);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+                }`;
+            const GFS = `uniform float uOpacity; varying vec3 vC; varying float vA;
+                void main() { gl_FragColor = vec4(min(vC, vec3(0.8)), clamp(vA, 0.0, 1.0) * uOpacity); }`;
+            // RING: a soft band at the throat; its width and wobble come from how steady it is.
+            const RVS = `varying vec2 vP; void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+            const RFS = `uniform float uRs; uniform float uStable; uniform float uTime; uniform vec3 uColor; uniform float uOpacity; uniform float uTight;
+                varying vec2 vP;
+                float h(float x) { return fract(sin(x * 127.1) * 43758.5453); }
+                float n1(float x) { float i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f); return mix(h(i), h(i + 1.0), f); }
+                void main() {
+                    float a = atan(vP.y, vP.x), r = length(vP) / uRs;
+                    float wob = (1.0 - uStable) * 0.07 * (n1(a * 3.0 + uTime * 0.6) - 0.5);
+                    float w = mix(0.16, 0.035, uStable);
+                    float c = 1.0 - 0.2 * uTight;
+                    float band = exp(-pow((r - c - wob) / w, 2.0));
+                    gl_FragColor = vec4(uColor * band * mix(0.55, 1.0, uStable), band * uOpacity);
+                }`;
+            // PORTAL: the far side's sky, looked up along the eye's ray.
+            const PVS = `varying vec3 vWorld; varying vec2 vP;
+                void main() { vP = position.xy; vec4 w = modelMatrix * vec4(position, 1.0); vWorld = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
+            const PFS = `uniform float uRs; uniform float uStable; uniform float uLocal; uniform float uWeb; uniform float uTime; uniform float uOpacity;
+                uniform vec3 uSky; uniform vec3 uWarm; uniform vec3 uNet; uniform mat3 uRot;
+                varying vec3 vWorld; varying vec2 vP;
+                float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+                // stars on a sphere of directions: one per cell, at a jittered point
+                vec3 starAt(vec3 cell) { return normalize(cell + vec3(hash(cell), hash(cell + 7.1), hash(cell + 3.3))); }
+                void main() {
+                    vec3 d = uRot * normalize(vWorld - cameraPosition);
+                    vec3 col = uSky * (0.12 + 0.1 * d.y);
+                    vec3 q = d * 90.0, cell = floor(q);
+                    float best = 1e9, second = 1e9; vec3 bp = vec3(0.0), sp = vec3(0.0);
+                    for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) for (int k = -1; k <= 1; k++) {
+                        vec3 c = cell + vec3(float(i), float(j), float(k));
+                        if (hash(c + 1.7) > 0.42) continue;
+                        vec3 s = c + vec3(hash(c), hash(c + 7.1), hash(c + 3.3));
+                        float e = length(q - s);
+                        if (e < best) { second = best; sp = bp; best = e; bp = s; } else if (e < second) { second = e; sp = s; }
+                    }
+                    col += vec3(0.95, 0.97, 1.0) * smoothstep(0.2, 0.0, best) * 0.95;
+                    // Her local work: a warm lattice, the cells of the far sky lit along their edges.
+                    vec3 g = abs(fract(d * 34.0) - 0.5);
+                    float lattice = smoothstep(0.06, 0.0, min(min(g.x, g.y), g.z));
+                    col += uWarm * lattice * 0.55 * uLocal;
+                    // A cloud send of hers: the stars joined to their neighbours, a web.
+                    vec3 ab = sp - bp; float t = clamp(dot(q - bp, ab) / dot(ab, ab), 0.0, 1.0);
+                    float link = smoothstep(0.1, 0.0, length(q - bp - ab * t)) * step(second, 1.8);
+                    col += uNet * (link * 1.2 + smoothstep(0.3, 0.0, best) * 0.9 + 0.08) * uWeb;
+                    // Its edge: soft while the throat is unsteady.
+                    float r = length(vP) / uRs, edge = 1.0 - smoothstep(mix(0.55, 0.9, uStable), 1.0, r);
+                    gl_FragColor = vec4(min(col, vec3(0.9)), edge * uOpacity);
+                }`;
+            const SVS = `attribute float aK; uniform float uT; uniform float uRs; uniform float uOn; varying float vA;
+                void main() {
+                    float f = fract(aK * 0.61803 + uT), z = mix(${flamm(R_MOUTH / RS * 0.7).toFixed(2)}, -2.0, f);
+                    float r = (0.35 + 0.25 * fract(aK * 0.377)) * (1.0 - 0.6 * exp(-z * z));
+                    float a = aK * 2.399 + f * 6.0;
+                    vec3 p = vec3(cos(a) * r, sin(a) * r, z) * uRs;
+                    vA = uOn * smoothstep(0.0, 0.15, f) * (1.0 - smoothstep(0.75, 1.0, f));
+                    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                    gl_PointSize = clamp(0.2 * (300.0 / max(1.0, -mv.z)), 1.0, 4.0); gl_Position = projectionMatrix * mv;
+                }`;
+            const SFS = `uniform vec3 uColor; uniform float uOpacity; varying float vA;
+                void main() { float d = length(gl_PointCoord - 0.5); gl_FragColor = vec4(uColor, (1.0 - smoothstep(0.15, 0.5, d)) * vA * uOpacity); }`;
+
+            function build(group, opts) {
+                opts = opts || {};
+                // The axis leans up toward the viewer: they look down into the mouth.
+                holder = new THREE.Group(); holder.rotation.x = -TILT; holder.rotation.y = 0.18; group.add(holder);
+                // The grid: rings (closed loops) and spokes, near funnel then far.
+                const rOuter = R_MOUTH / RS, verts = [];
+                const nR = Math.max(8, Math.round(+opts.rings || RINGS));          // the rings gene
+                const ringR = [], near = k => 1 + (rOuter - 1) * Math.pow(k / (nR - 1), 1.6);
+                for (let k = 0; k < nR; k++) ringR.push(near(k));
+                const clOf = (r, phi) => Math.min(3, Math.floor((r - 1) / (rOuter - 1) * 4)) * 6 + Math.floor(((phi % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (2 * Math.PI) * 6);
+                const push = (r, phi, side) => verts.push(r, phi, side, side > 0 ? clOf(r, phi) : Math.floor(((phi % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (2 * Math.PI) * 6));
+                for (const side of [1, -1]) {
+                    const rings = side > 0 ? ringR : ringR.filter(r => r < 1 + (rOuter - 1) * FAR);
+                    for (const r of rings) for (let s = 0; s < SEG; s++) { push(r, 2 * Math.PI * s / SEG, side); push(r, 2 * Math.PI * (s + 1) / SEG, side); }
+                    const rMax = rings[rings.length - 1];
+                    for (let j = 0; j < SPOKES; j++) {
+                        const phi = 2 * Math.PI * j / SPOKES;
+                        for (let s = 0; s < 40; s++) { const a = 1 + (rMax - 1) * Math.pow(s / 40, 1.6), b = 1 + (rMax - 1) * Math.pow((s + 1) / 40, 1.6); push(a, phi, side); push(b, phi, side); }
+                    }
+                }
+                const n = verts.length / 4, aR = new Float32Array(n), aPhi = new Float32Array(n), aSide = new Float32Array(n), aCl = new Float32Array(n), pos = new Float32Array(n * 3);
+                for (let i = 0; i < n; i++) {
+                    aR[i] = verts[i * 4]; aPhi[i] = verts[i * 4 + 1]; aSide[i] = verts[i * 4 + 2]; aCl[i] = verts[i * 4 + 3];
+                    pos[i * 3] = Math.cos(aPhi[i]) * aR[i] * RS; pos[i * 3 + 1] = Math.sin(aPhi[i]) * aR[i] * RS; pos[i * 3 + 2] = aSide[i] * flamm(aR[i]) * RS;
+                }
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                g.setAttribute('aR', new THREE.BufferAttribute(aR, 1)); g.setAttribute('aPhi', new THREE.BufferAttribute(aPhi, 1));
+                g.setAttribute('aSide', new THREE.BufferAttribute(aSide, 1)); g.setAttribute('aCl', new THREE.BufferAttribute(aCl, 1));
+                g.computeBoundingBox(); g.computeBoundingSphere();
+                const uD = [], uG = [];
+                for (let k = 0; k < CL; k++) { uD.push(new THREE.Vector4(0, 0, 0, 1)); uG.push(new THREE.Vector4(0, 0, 0, 1)); }
+                grid = new THREE.LineSegments(g, own(new THREE.ShaderMaterial({ vertexShader: GVS, fragmentShader: GFS, transparent: true, depthWrite: false,
+                    uniforms: { uRs: { value: RS }, uTight: { value: 0 }, uWiden: { value: 0 }, uRipple: { value: 0 }, uPhase: { value: 0 }, uWave: { value: 2.2 },
+                        uD: { value: uD }, uG: { value: uG }, uNear: { value: new THREE.Color() }, uDeep: { value: new THREE.Color() }, uOpacity: { value: 0.9 } } }), 0.9));
+                grid.frustumCulled = false;
+                holder.add(grid);
+                ring = new THREE.Mesh(new THREE.PlaneGeometry(RS * 3, RS * 3), own(new THREE.ShaderMaterial({ vertexShader: RVS, fragmentShader: RFS,
+                    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+                    uniforms: { uRs: { value: RS }, uStable: { value: 0 }, uTime: { value: 0 }, uColor: { value: new THREE.Color() }, uOpacity: { value: 1 }, uTight: { value: 0 } } }), 1));
+                ring.renderOrder = 3;                           // last: its glow adds over the grid, never under it
+                holder.add(ring);
+                portal = new THREE.Mesh(new THREE.CircleGeometry(RS * 1.02, 64), own(new THREE.ShaderMaterial({ vertexShader: PVS, fragmentShader: PFS,
+                    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+                    uniforms: { uRs: { value: RS }, uStable: { value: 0 }, uLocal: { value: 0 }, uWeb: { value: 0 }, uTime: { value: 0 }, uOpacity: { value: 1 },
+                        uSky: { value: new THREE.Color() }, uWarm: { value: SAND.clone() }, uNet: { value: new THREE.Color() }, uRot: { value: new THREE.Matrix3() } } }), 1));
+                portal.renderOrder = 2;                         // after the grid and the dots: the hole to elsewhere covers what is behind it
+                holder.add(portal);
+                const sg = new THREE.BufferGeometry(), K = 90, aK = new Float32Array(K);
+                for (let i = 0; i < K; i++) aK[i] = i;
+                sg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(K * 3), 3));
+                sg.setAttribute('aK', new THREE.BufferAttribute(aK, 1));
+                stream = new THREE.Points(sg, own(new THREE.ShaderMaterial({ vertexShader: SVS, fragmentShader: SFS, transparent: true, depthWrite: false,
+                    blending: THREE.AdditiveBlending, uniforms: { uT: { value: 0 }, uRs: { value: RS }, uOn: { value: 0 }, uColor: { value: new THREE.Color() }, uOpacity: { value: 1 } } }), 1));
+                stream.frustumCulled = false;
+                holder.add(stream);
+                clock = 0; ripple = 0; voice = 0; think = 0; listen = 0; local = 0; web = 0; flow = 0;
+                stable = Math.min(1, stepNo() / 8);
+                return holder;
+            }
+
+            // s: { voice, thinking, listening, base, accent, reduced, field (FridayField.state()) }
+            function animate(dt, s) {
+                if (!holder) return;
+                dt = Math.max(0, Math.min(0.1, dt));
+                clock += dt;
+                const reduced = !!s.reduced;
+                think += ((s.thinking && !reduced ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                listen += ((s.listening ? 1 : 0) - listen) * Math.min(1, dt / 0.9);
+                const v = reduced ? 0 : Math.max(0, Math.min(1, s.voice || 0));
+                voice += (v - voice) * Math.min(1, dt / 0.25);
+                ripple += (Math.min(1, voice * 1.6) - ripple) * Math.min(1, dt / 0.5);
+                stable += (Math.min(1, stepNo() / 8) - stable) * Math.min(1, dt / 5);
+                // The far side: her local work and her cloud sends, from the world
+                // field's state and nothing else.
+                const f = s.field || null;
+                local += ((f && f.glow > 0.05 ? Math.min(1, f.glow) : 0) - local) * Math.min(1, dt / 0.6);
+                web += ((f && f.web ? f.web.intensity : 0) - web) * Math.min(1, dt / 0.3);
+                if (!reduced) flow += dt * (0.18 + 0.25 * think);
+                const gu = grid.material.uniforms;
+                gu.uTight.value = think; gu.uWiden.value = listen * (reduced ? 0.5 : 1);
+                gu.uRipple.value = ripple; if (!reduced) gu.uPhase.value += dt * 2.6;
+                gu.uNear.value.copy(s.accent).lerp(WHITE, 0.15).multiplyScalar(0.75);
+                gu.uDeep.value.copy(s.base).lerp(s.accent, 0.3).multiplyScalar(0.55);
+                gu.uOpacity.value = grid.material.opacity;
+                for (let c = 0; c < CL; c++) { gu.uD.value[c].set(0, 0, 0, 1); gu.uG.value[c].set(0, 0, 0, 1); }
+                const ru = ring.material.uniforms;
+                ru.uStable.value = stable; ru.uTime.value = reduced ? ru.uTime.value : clock; ru.uTight.value = think;
+                ru.uColor.value.copy(s.accent).lerp(WHITE, 0.6).multiplyScalar(0.55 + 0.35 * stable);
+                ru.uOpacity.value = ring.material.opacity;
+                const pu = portal.material.uniforms;
+                pu.uStable.value = stable; pu.uLocal.value = local; pu.uWeb.value = web; pu.uTime.value = clock;
+                pu.uSky.value.copy(s.base).lerp(new THREE.Color(0xa78bfa), 0.5).multiplyScalar(0.5);
+                pu.uNet.value.setHex(0x00d4ff).multiplyScalar(0.8);
+                pu.uOpacity.value = portal.material.opacity;
+                portal.scale.setScalar(1 - 0.2 * think);
+                const su = stream.material.uniforms;
+                su.uT.value = flow; su.uOn.value = think; su.uColor.value.copy(s.accent).lerp(WHITE, 0.5); su.uOpacity.value = stream.material.opacity;
+                // The mouth bends the world's dots round it.
+                if (typeof FridayField !== 'undefined' && FridayField.setLens) {
+                    holder.updateMatrixWorld(true);
+                    FridayField.setLens(holder.getWorldPosition(_wp),
+                        1.1 * RS * (grid.material.opacity / grid.material.userData.baseOpacity) * holder.matrixWorld.getMaxScaleOnAxis());
+                }
+            }
+
+            // The gesture engine's view: 24 patches of the near funnel (4 bands of
+            // depth, 6 sectors), in the structure's own space.
+            const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _p = new THREE.Vector3();
+            function unitPoints() {
+                _q.setFromEuler(_e.set(-TILT, 0.18, 0));
+                const rOuter = R_MOUTH / RS, out = [];
+                for (let b = 0; b < 4; b++) for (let s = 0; s < 6; s++) {
+                    const r = 1 + (rOuter - 1) * (b + 0.5) / 4, phi = 2 * Math.PI * (s + 0.5) / 6;
+                    _p.set(Math.cos(phi) * r * RS, Math.sin(phi) * r * RS, flamm(r) * RS).applyQuaternion(_q);
+                    out.push([_p.x, _p.y, _p.z]);
+                }
+                return out;
+            }
+            function applyUnit(k, un, accent, amber) {
+                if (!grid || k < 0 || k >= CL) return;
+                const D = grid.material.uniforms.uD.value[k], G = grid.material.uniforms.uG.value[k];
+                _q.setFromEuler(_e.set(-TILT, 0.18, 0)).invert();
+                _p.set(un.d[0], un.d[1], un.d[2]).applyQuaternion(_q);
+                D.set(_p.x, _p.y, _p.z, un.s || 1);
+                const g = Number.isFinite(un.g) ? un.g : 0, b = (un.b !== 1 && Number.isFinite(un.b)) ? un.b : 1;
+                let m = 0, kk = b;
+                if (un.hue === 'approval') { m = g; _c.copy(amber); }
+                else if (g > 0) { m = 0.6 * g; _c.copy(accent); kk = b * (1 + 0.35 * g); }
+                G.set(_c.r * m * kk, _c.g * m * kk, _c.b * m * kk, (1 - m) * kk);
+            }
+            const layersL = [0, 1, 2, 3].map(b => Array.from({ length: 6 }, (_, s) => b * 6 + s));
+            const blocksL = []; for (let b = 0; b < 4; b++) for (let s = 0; s < 6; s += 2) blocksL.push([b * 6 + s, b * 6 + s + 1]);
+            return { build, animate, units: () => CL, points: unitPoints, layers: () => layersL,
+                     blocks: () => blocksL.map(u => ({ units: u, axis: [0, 0, 1], centre: [0, 0, 0] })), applyUnit, radius: R_MOUTH,
+                     _stable: () => stable, _local: () => local, _web: () => web, _parts: () => ({ holder, grid, ring, portal, stream }), RS, flamm };
+        })();
+        // </wormhole>
+        // <black-hole>
+        // Hawking Radiation (avatar-visual-genome.md §19): a black hole drawn
+        // from the physics. A back-faced sphere around it is the canvas; for
+        // each pixel the fragment shader follows the light back from the eye
+        // along a Schwarzschild null geodesic (x'' = -3/2 h^2 x / r^5, the
+        // horizon at r = 1) to the black shadow, the photon ring where light
+        // orbits near r = 1.5, and a thin disk from the innermost stable orbit
+        // (r = 3) out to r = 10 whose far side is bent over and under the
+        // shadow. The disk's light is Doppler-beamed (brighter and bluer where
+        // it comes toward the viewer, dimmer and redder where it goes away)
+        // and redshifted near the horizon, with a soft shoulder so it never
+        // glares. The world's dots bend round it (FridayField.setLens, the
+        // Einstein radius at the shadow's edge, so no dot shows inside it).
+        // Under head tracking the eye moves through the lens: leaning shows a
+        // new light path, because the rays start where the eye really is.
+        //
+        // Hawking radiation: just outside the horizon, pairs of particles pop
+        // into being, softly. One falls in and is gone; its partner escapes as
+        // a mote that drifts out and becomes one of the world's dots.
+        //   idle: slow, sparse pairs;
+        //   listening: the dust near the hole spirals in toward the horizon;
+        //   thinking: the pairs come faster, the photon ring shimmers, the disk
+        //     turns faster;
+        //   speaking: motes stream outward in rhythm with her voice.
+        // Over the weeks it radiates hotter: the emission moves from deep
+        // ember red through rose and white to blue-white, and the shadow
+        // shrinks a little (a smaller hole is a hotter one). Never amber, never
+        // the alert red: ember is dark, and the next step is the brand's pink.
+        const FridayBlackHole = (function () {
+            const RS0 = 0.62, RB = 13, DUST = 320, PAIRS = 48, MOTES = 72, CL = 24;
+            let holder = null, shell = null, mat = null, sparks = null, dust = null, rs = RS0, heatBase = 0.3, dustN = DUST;
+            let clock = 0, spin = 0, think = 0, listen = 0, voice = 0, emitAcc = 0;
+            const pairs = [], motes = [], grains = [];
+            let clusterOf = null, layersL = [], blocksL = [];
+            const _m = new THREE.Matrix4(), _s = new THREE.Matrix4(), _v = new THREE.Vector3(), _w = new THREE.Vector3(), _u = new THREE.Vector3();
+            const _c = new THREE.Color(), WHITE = new THREE.Color(1, 1, 1);
+            const own = (m, op) => { m.transparent = true; m.opacity = op; m.userData = { baseOpacity: op, ownColour: true }; return m; };
+            function stepNo() {
+                const v = (typeof FridayGenome !== 'undefined' && FridayGenome.current) ? FridayGenome.current() : null;
+                return v && v.step && isFinite(v.step.step) ? +v.step.step : 0;
+            }
+            const VS = `varying vec3 vWorld;
+                void main() { vec4 w = modelMatrix * vec4(position, 1.0); vWorld = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
+            const FS = (steps) => `uniform mat4 uToLocal; uniform float uRb; uniform float uSpin; uniform float uHeat; uniform float uShimmer;
+                uniform float uTime; uniform float uOpacity; uniform vec3 uRing;
+                varying vec3 vWorld;
+                float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+                float noise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+                    return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y); }
+                // ember -> rose (the brand's decoration pink) -> white -> blue-white
+                vec3 emission(float t) {
+                    t = clamp(t, 0.0, 3.0);
+                    vec3 ember = vec3(0.46, 0.08, 0.05), rose = vec3(0.957, 0.447, 0.714), white = vec3(1.0), blue = vec3(0.7, 0.83, 1.0);
+                    return t < 1.0 ? mix(ember, rose, t) : t < 2.0 ? mix(rose, white, t - 1.0) : mix(white, blue, t - 2.0);
+                }
+                void main() {
+                    vec3 ro = (uToLocal * vec4(cameraPosition, 1.0)).xyz;
+                    vec3 rd = normalize((uToLocal * vec4(vWorld, 1.0)).xyz - ro);
+                    // Light passing wider than the disk is barely bent: nothing to draw.
+                    vec3 lc = cross(ro, rd);
+                    if (dot(lc, lc) > 11.0 * 11.0) discard;
+                    float b = dot(ro, rd), c = dot(ro, ro) - uRb * uRb, disc = b * b - c;
+                    if (disc < 0.0) discard;
+                    vec3 x = ro + rd * max(0.0, -b - sqrt(disc)), v = rd;
+                    float h2 = dot(lc, lc);
+                    vec3 col = vec3(0.0); float alpha = 0.0; bool captured = false;
+                    for (int i = 0; i < ${steps}; i++) {
+                        float r = length(x);
+                        if (r < 1.0) { captured = true; break; }
+                        if (r > uRb + 0.05 && dot(x, v) > 0.0) break;
+                        float dt = clamp((r - 0.95) * 0.16, 0.025, 0.9);
+                        vec3 a = -1.5 * h2 * x / pow(r, 5.0);
+                        vec3 vh = v + a * (0.5 * dt);
+                        vec3 xn = x + vh * dt;
+                        float rn = length(xn);
+                        vec3 vn = vh - 1.5 * h2 * xn / pow(rn, 5.0) * (0.5 * dt);
+                        if (x.y * xn.y < 0.0) {
+                            vec3 hp = mix(x, xn, x.y / (x.y - xn.y));
+                            float rr = length(hp.xz);
+                            if (rr > 3.0 && rr < 10.0) {
+                                // Temperature of a thin disk, zero at its inner edge.
+                                float T = pow(3.0 / rr, 0.75) * pow(max(0.0, 1.0 - sqrt(3.0 / rr)), 0.25) / 0.488;
+                                // Orbital speed and the light's direction toward the eye.
+                                float beta = sqrt(0.5 / (rr - 1.0)), gam = 1.0 / sqrt(1.0 - beta * beta);
+                                vec3 vel = normalize(vec3(-hp.z, 0.0, hp.x));
+                                float dop = 1.0 / (gam * (1.0 - beta * dot(vel, -normalize(vh))));
+                                float g = sqrt(1.0 - 1.0 / rr);
+                                float shift = dop * g;
+                                float phi = atan(hp.z, hp.x) - uSpin * pow(rr, -1.5);
+                                float streak = 0.72 + 0.4 * noise(vec2(rr * 2.6, phi * 5.0)) * noise(vec2(rr * 0.7 + 3.0, phi * 2.0));
+                                float I = T * T * T * shift * shift * shift * streak;
+                                vec3 e = emission(uHeat + 1.1 * (T * shift - 1.0)) * (1.0 - exp(-2.2 * I));
+                                float edge = smoothstep(3.0, 3.4, rr) * (1.0 - smoothstep(8.5, 10.0, rr));
+                                float a_d = 0.92 * edge * (1.0 - alpha);
+                                col += e * a_d; alpha += a_d;
+                            }
+                        }
+                        x = xn; v = vn;
+                        if (alpha > 0.97) break;
+                    }
+                    if (captured) alpha = 1.0;
+                    // The photon ring: light whose impact parameter is the critical
+                    // one, 3 sqrt(3) / 2, skims the photon sphere and orbits it.
+                    float sh = 1.0 + uShimmer * 0.18 * (noise(vec2(atan(lc.y, lc.x) * 6.0, uTime * 1.2)) - 0.5);
+                    float ring = exp(-pow((sqrt(h2) - 2.598) / 0.045, 2.0)) * 0.75 * sh;
+                    col += uRing * ring * (1.0 - 0.6 * alpha);
+                    alpha = max(alpha, min(1.0, ring));
+                    gl_FragColor = vec4(min(col, vec3(0.92)), alpha * uOpacity);
+                }`;
+            // Pairs and motes and dust: soft points, like the world's own dots.
+            // Its points are bent round the shadow like the world's dots: dust
+            // behind the hole shows around it, never through it.
+            const PVS = `attribute float aA; attribute float aS; attribute vec3 aC; uniform vec3 uLens; uniform float uLensR;
+                varying float vA; varying vec3 vC;
+                void main() { vA = aA; vC = aC; vec4 mv = modelViewMatrix * vec4(position, 1.0);
+                    if (uLensR > 0.0 && mv.z < uLens.z - 0.5) {
+                        float ds = -mv.z, dl = -uLens.z;
+                        vec2 c = uLens.xy / dl, th = mv.xy / ds - c;
+                        float t = length(th), te = uLensR * sqrt(max(0.0, (ds - dl) / ds));
+                        vec2 dir = t > 1e-5 ? th / t : vec2(1.0, 0.0);
+                        mv.xy = (c + dir * max(0.5 * t + sqrt(0.25 * t * t + te * te), uLensR * 1.03)) * ds;
+                    }
+                    gl_PointSize = clamp(aS * (300.0 / max(1.0, -mv.z)), 1.0, 5.0); gl_Position = projectionMatrix * mv; }`;
+            const PFS = `uniform float uOpacity; varying float vA; varying vec3 vC;
+                void main() { float d = length(gl_PointCoord - 0.5); float a = 1.0 - smoothstep(0.15, 0.5, d);
+                    gl_FragColor = vec4(vC, a * vA * uOpacity); }`;
+            function points(n) {
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+                g.setAttribute('aA', new THREE.BufferAttribute(new Float32Array(n), 1));
+                g.setAttribute('aS', new THREE.BufferAttribute(new Float32Array(n), 1));
+                g.setAttribute('aC', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+                const p = new THREE.Points(g, own(new THREE.ShaderMaterial({ vertexShader: PVS, fragmentShader: PFS, transparent: true,
+                    depthWrite: false, blending: THREE.AdditiveBlending,
+                    uniforms: { uOpacity: { value: 1 }, uLens: { value: new THREE.Vector3() }, uLensR: { value: 0 } } }), 1));
+                p.frustumCulled = false;
+                return p;
+            }
+
+            function build(group, opts) {
+                opts = opts || {};
+                const rnd = opts.rand || Math.random;
+                const n = stepNo();
+                rs = RS0 * (1 - 0.015 * Math.min(12, n));
+                heatBase = Math.min(2.7, 0.3 + 0.2 * n);
+                holder = new THREE.Group(); group.add(holder);
+                mat = own(new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS(opts.lowCost ? 40 : 84), transparent: true,
+                    depthWrite: false, side: THREE.BackSide,
+                    uniforms: { uToLocal: { value: new THREE.Matrix4() }, uRb: { value: RB }, uSpin: { value: 0 }, uHeat: { value: heatBase },
+                        uShimmer: { value: 0 }, uTime: { value: 0 }, uOpacity: { value: 1 }, uRing: { value: new THREE.Color() } } }), 1);
+                shell = new THREE.Mesh(new THREE.SphereGeometry(RB * rs, 48, 32), mat);
+                shell.renderOrder = -1;                        // first, so dots in front draw over the shadow
+                holder.add(shell);
+                dustN = Math.max(60, Math.round(+opts.dust || DUST));              // the dust gene
+                sparks = points(PAIRS * 2 + MOTES); holder.add(sparks);
+                dust = points(dustN); holder.add(dust);
+                pairs.length = 0; motes.length = 0; grains.length = 0;
+                for (let i = 0; i < PAIRS; i++) pairs.push({ live: false, t: 0, life: 1, ang: 0, r0: 0 });
+                for (let i = 0; i < MOTES; i++) motes.push({ live: false, t: 0, p: new THREE.Vector3(), v: new THREE.Vector3() });
+                clusterOf = new Int16Array(dustN);
+                for (let i = 0; i < dustN; i++) {
+                    const r = 11 + 7 * Math.sqrt(rnd()), a = 2 * Math.PI * rnd();
+                    grains.push({ r, r0: r, a, y: (rnd() - 0.5) * 1.6, seed: rnd(), fade: 1 });
+                    clusterOf[i] = Math.min(7, Math.floor(a / (2 * Math.PI) * 8)) * 3 + Math.min(2, Math.floor((r - 11) / 7 * 3));
+                }
+                layersL = [0, 1, 2].map(b => Array.from({ length: 8 }, (_, s) => s * 3 + b));
+                blocksL = [];
+                for (let s = 0; s < 8; s += 2) for (let b = 0; b < 3; b++) blocksL.push([s * 3 + b, (s + 1) * 3 + b]);
+                clock = 0; spin = 0; think = 0; listen = 0; voice = 0; emitAcc = 0;
+                return holder;
+            }
+
+            const offsets = new Float32Array(CL * 4), tints = new Float32Array(CL * 4);
+            // s: { voice, thinking, listening, base, accent, reduced, toward (eye direction, own space), camera }
+            function animate(dt, s) {
+                if (!holder) return;
+                dt = Math.max(0, Math.min(0.1, dt));
+                clock += dt;
+                const reduced = !!s.reduced;
+                think += ((s.thinking && !reduced ? 1 : 0) - think) * Math.min(1, dt / 0.8);
+                listen += ((s.listening && !reduced ? 1 : 0) - listen) * Math.min(1, dt / 0.9);
+                const v = reduced ? 0 : Math.max(0, Math.min(1, s.voice || 0));
+                voice += (v - voice) * Math.min(1, dt / 0.25);
+                if (!reduced) spin += dt * (0.5 + 0.9 * think);
+                holder.updateMatrixWorld(true);
+                const u = mat.uniforms;
+                u.uToLocal.value.copy(holder.matrixWorld).invert().premultiply(_s.makeScale(1 / rs, 1 / rs, 1 / rs));
+                u.uSpin.value = spin; u.uTime.value = clock; u.uShimmer.value = think;
+                u.uHeat.value = heatBase;
+                u.uRing.value.copy(s.accent).lerp(WHITE, 0.65).multiplyScalar(0.8);
+                u.uOpacity.value = mat.opacity;
+                // The world's dots bend round the shadow (its edge sits at b = 2.6 rs).
+                const shadowR = 2.6 * rs * (mat.opacity / mat.userData.baseOpacity) * holder.matrixWorld.getMaxScaleOnAxis();
+                if (typeof FridayField !== 'undefined' && FridayField.setLens) FridayField.setLens(holder.getWorldPosition(_w), shadowR);
+                if (s.camera) {
+                    _u.copy(holder.getWorldPosition(_w)).applyMatrix4(s.camera.matrixWorldInverse);
+                    for (const pts of [sparks, dust]) { pts.material.uniforms.uLens.value.copy(_u);
+                        pts.material.uniforms.uLensR.value = _u.z < -0.5 ? shadowR / -_u.z : 0; }
+                }
+                // The plane facing the eye, for the pairs just outside the shadow's edge.
+                _v.set(...(s.toward || [0, 0, 1])).normalize();
+                _u.set(0, 1, 0).cross(_v); if (_u.lengthSq() < 1e-6) _u.set(1, 0, 0); _u.normalize();
+                const up2 = new THREE.Vector3().crossVectors(_v, _u);
+                const emit = (c, a) => [c.r * a, c.g * a, c.b * a];
+                const hot = new THREE.Color().copy(s.accent).lerp(WHITE, 0.7);
+                // Pairs: new ones at a rate set by her state.
+                const rate = reduced ? 0 : 1.2 + 3.2 * think + 4.5 * voice;
+                emitAcc += rate * dt;
+                const P = sparks.geometry.attributes, pos = P.position.array, al = P.aA.array, sz = P.aS.array, col = P.aC.array;
+                while (emitAcc >= 1) {
+                    emitAcc -= 1;
+                    const p = pairs.find(q => !q.live);
+                    if (!p) break;
+                    p.live = true; p.t = 0; p.life = 1.6 - 0.6 * think; p.ang = Math.random() * 2 * Math.PI; p.r0 = (2.75 + 0.5 * Math.random()) * rs;
+                }
+                pairs.forEach((p, i) => {
+                    let a1 = 0, a2 = 0;
+                    if (p.live) {
+                        p.t += dt;
+                        const f = p.t / p.life, ca = Math.cos(p.ang), sa = Math.sin(p.ang);
+                        // pop in softly (a quarter second), then part
+                        const pop = Math.min(1, p.t / 0.25);
+                        const rin = p.r0 * (1 - 0.55 * f * f), rout = p.r0 * (1 + 0.25 * f);
+                        for (const [k, r] of [[0, rin], [1, rout]]) {
+                            const j = (i * 2 + k) * 3;
+                            pos[j] = (_u.x * ca + up2.x * sa) * r; pos[j + 1] = (_u.y * ca + up2.y * sa) * r; pos[j + 2] = (_u.z * ca + up2.z * sa) * r;
+                        }
+                        a1 = pop * (1 - Math.min(1, f * 1.6));           // the one that falls in is gone before the shadow
+                        a2 = pop;
+                        if (f >= 1) {                                    // its partner escapes as a mote, which carries its light on
+                            p.live = false; a1 = 0; a2 = 0;
+                            const m = motes.find(q => !q.live);
+                            if (m) { m.live = true; m.t = 0; m.p.set(pos[(i * 2 + 1) * 3], pos[(i * 2 + 1) * 3 + 1], pos[(i * 2 + 1) * 3 + 2]);
+                                m.v.copy(m.p).normalize().multiplyScalar((0.7 + 1.6 * voice) * rs * 3); }
+                        }
+                    }
+                    al[i * 2] = a1; al[i * 2 + 1] = a2; sz[i * 2] = sz[i * 2 + 1] = 0.24;
+                    col.set(emit(hot, 1), i * 6); col.set(emit(hot, 1), i * 6 + 3);
+                });
+                // Motes drift out, slow down and become dots of the world.
+                const dotCol = new THREE.Color().copy(s.accent).multiplyScalar(0.8);
+                motes.forEach((m, k) => {
+                    const j = PAIRS * 2 + k;
+                    if (!m.live) { al[j] = 0; return; }
+                    m.t += dt;
+                    m.p.addScaledVector(m.v, dt); m.v.multiplyScalar(Math.exp(-dt * 0.35));
+                    const f = Math.min(1, m.t / 7);
+                    pos[j * 3] = m.p.x; pos[j * 3 + 1] = m.p.y; pos[j * 3 + 2] = m.p.z;
+                    _c.copy(hot).lerp(dotCol, f);
+                    col.set(emit(_c, 1), j * 3);
+                    al[j] = 0.9 * (1 - 0.35 * f) * (m.t > 9 ? Math.max(0, 1 - (m.t - 9) / 3) : 1);
+                    sz[j] = 0.24 + 0.16 * f;
+                    if (m.t > 12) m.live = false;
+                });
+                P.position.needsUpdate = P.aA.needsUpdate = P.aS.needsUpdate = P.aC.needsUpdate = true;
+                sparks.material.uniforms.uOpacity.value = sparks.material.opacity;
+                // Dust: a slow orbit; while she listens it spirals in to the horizon.
+                const D = dust.geometry.attributes, dp = D.position.array, da = D.aA.array, ds = D.aS.array, dc = D.aC.array;
+                for (let i = 0; i < dustN; i++) {
+                    const g = grains[i];
+                    if (!reduced) {
+                        g.a += dt * 0.6 * Math.pow(g.r, -1.5) * (1 + 2 * listen) * 4;
+                        if (listen > 0.05) g.r -= dt * listen * (0.6 + 0.4 * g.seed) * 1.6;
+                        else g.r += (g.r0 - g.r) * Math.min(1, dt / 4);
+                        if (g.r < 2.7) { g.r = 18; g.fade = 0; }
+                    }
+                    g.fade = Math.min(1, g.fade + dt / 1.5);
+                    const rr = g.r * rs;
+                    dp[i * 3] = Math.cos(g.a) * rr; dp[i * 3 + 1] = g.y * rs * (g.r / 14); dp[i * 3 + 2] = Math.sin(g.a) * rr;
+                    da[i] = 0.55 * g.fade * Math.min(1, (g.r - 2.7) / 2); ds[i] = 0.18 + 0.12 * g.seed;
+                    dc.set(emit(dotCol, 1), i * 3);
+                }
+                D.position.needsUpdate = D.aA.needsUpdate = D.aS.needsUpdate = D.aC.needsUpdate = true;
+                dust.material.uniforms.uOpacity.value = dust.material.opacity;
+            }
+
+            // The gesture engine's view: 24 patches of the dust (8 sectors, 3 bands).
+            function unitPoints() {
+                const c = Array.from({ length: CL }, () => [0, 0, 0, 0]), dp = dust.geometry.attributes.position.array;
+                for (let i = 0; i < dustN; i++) { const k = clusterOf[i]; c[k][0] += dp[i * 3]; c[k][1] += dp[i * 3 + 1]; c[k][2] += dp[i * 3 + 2]; c[k][3]++; }
+                return c.map(v => v[3] ? [v[0] / v[3], v[1] / v[3], v[2] / v[3]] : [0, 0, 0]);
+            }
+            function applyUnit(k, un, accent, amber) {
+                if (!dust || k < 0 || k >= CL) return;
+                const D = dust.geometry.attributes, dp = D.position.array, dc = D.aC.array, da = D.aA.array;
+                const g = Number.isFinite(un.g) ? un.g : 0, b = (un.b !== 1 && Number.isFinite(un.b)) ? un.b : 1;
+                for (let i = 0; i < dustN; i++) {
+                    if (clusterOf[i] !== k) continue;
+                    dp[i * 3] += un.d[0]; dp[i * 3 + 1] += un.d[1]; dp[i * 3 + 2] += un.d[2];
+                    _c.setRGB(dc[i * 3], dc[i * 3 + 1], dc[i * 3 + 2]);
+                    if (un.hue === 'approval') _c.lerp(amber, g); else if (g > 0) _c.lerp(accent, 0.6 * g).multiplyScalar(1 + 0.35 * g);
+                    _c.multiplyScalar(b);
+                    dc[i * 3] = _c.r; dc[i * 3 + 1] = _c.g; dc[i * 3 + 2] = _c.b;
+                    da[i] = Math.min(1, da[i] * (un.s || 1) + 0.3 * g);
+                }
+                D.position.needsUpdate = D.aC.needsUpdate = D.aA.needsUpdate = true;
+            }
+            return { build, animate, units: () => CL, points: unitPoints, layers: () => layersL,
+                     blocks: () => blocksL.map(u => ({ units: u, axis: [0, 0, 1], centre: [0, 0, 0] })), applyUnit,
+                     get radius() { return 14 * rs; },
+                     _rs: () => rs, _heat: () => heatBase, _mat: () => mat, _pairs: () => pairs.filter(p => p.live).length,
+                     _motes: () => motes.filter(m => m.live).length, _grains: () => grains, _sparks: () => sparks, RB };
+        })();
+        // </black-hole>
         // <rez-boss>
         // Giga Earth: the Area 1 boss from Rez, in Friday's own palette
         // (docs/design/active/avatar-visual-genome.md §15). A ball of 200 tiles
@@ -9658,6 +10247,17 @@ window.addEventListener('DOMContentLoaded',function(){
                 gEden.add(mesh); edenDebris.push(mesh);
             }
             structures['EDEN'] = gEden;
+
+            // 14. WORMHOLE: the Einstein-Rosen Bridge (FridayWormhole).
+            const gWorm = new THREE.Group();
+            FridayWormhole.build(gWorm, { rings: FridayGenome.EX('WORMHOLE', 'rings', 20) });
+            structures['WORMHOLE'] = gWorm;
+
+            // 15. BLACKHOLE: Hawking Radiation (FridayBlackHole).
+            const gHole = new THREE.Group();
+            FridayBlackHole.build(gHole, { dust: FridayGenome.EX('BLACKHOLE', 'dust', 320), lowCost: !!window.__fridayLowCost,
+                rand: () => FridayGenome.rand('BLACKHOLE') });
+            structures['BLACKHOLE'] = gHole;
         }
 
         function setGroupOpacity(group, opacityMultiplier) {
@@ -9958,6 +10558,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 else if (targetStructure === 'MANDELBROT') { targetCamPos.set(Math.sin(ct*0.2)*14, 8 + Math.sin(ct*0.3)*3, Math.cos(ct*0.2)*14); targetCamLook.set(0, 0, 0); }
                 else if (targetStructure === 'NETWORK') { targetCamPos.set(Math.sin(ct*0.2)*10, Math.sin(ct*0.3)*6, Math.cos(ct*0.2)*10); targetCamLook.set(0, 0, 0); }
                 else if (targetStructure === 'EDEN') { targetCamPos.set(Math.sin(ct*0.5)*2, Math.cos(ct*0.3)*1.5, 28); targetCamLook.set(0, 0, 0); }
+                else if (targetStructure === 'WORMHOLE') { targetCamPos.set(Math.sin(ct*0.12)*1.2, 6 + Math.sin(ct*0.09)*0.5, 18); targetCamLook.set(0, 0, 0); }
+                else if (targetStructure === 'BLACKHOLE') { targetCamPos.set(Math.sin(ct*0.07)*1.5, 2.3 + Math.sin(ct*0.11)*0.3, 21); targetCamLook.set(0, 0, 0); }
                 else { targetCamPos.set(Math.sin(ct*0.15)*6, 5 + Math.cos(ct*0.2)*2, 18 + Math.sin(ct*0.1)*3); targetCamLook.set(0, 0, 0); }
 
                 baseCamPos.lerp(targetCamPos, Math.min(1, delta * 0.8));
@@ -10017,7 +10619,7 @@ window.addEventListener('DOMContentLoaded',function(){
             const voiceBreath = isExecutingMood ? voiceBreathRaw * 1.8 : voiceBreathRaw;
             const idlePulse = Math.sin(elapsed * 0.5) * 0.08;
 
-            if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN','ICOSAHEDRON','NONE'].includes(targetStructure)) {
+            if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN','ICOSAHEDRON','NONE','WORMHOLE','BLACKHOLE'].includes(targetStructure)) {
                 activeGroup.rotation.y += moodLerpValues.rotationSpeed * idleFactor;
                 if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * idleFactor;
                 // Voice-reactive scale breathing for all structures without custom vertex displacement
@@ -10191,6 +10793,13 @@ window.addEventListener('DOMContentLoaded',function(){
                     reduced: SceneMotion.reduced(), toward: [tw.x, tw.y, tw.z] });
             }
 
+            if (structures['WORMHOLE'] && structures['WORMHOLE'].visible)
+                FridayWormhole.animate(delta, Object.assign({ field: FridayField.state ? FridayField.state() : null }, herState));
+            if (structures['BLACKHOLE'] && structures['BLACKHOLE'].visible) {
+                const g = structures['BLACKHOLE'], tw = g.worldToLocal(camera.position.clone());
+                FridayBlackHole.animate(delta, Object.assign({ toward: [tw.x, tw.y, tw.z], camera }, herState));
+            }
+
             if (structures['EDEN'] && structures['EDEN'].visible) {
                 if (edenLady) {
                     FridayRez.animate(delta, moodLerpValues.rotationSpeed * 5.0 * idleFactor, holoAmplitude,
@@ -10256,7 +10865,7 @@ window.addEventListener('DOMContentLoaded',function(){
             }
 
             // --- THE WORLD'S DOTS (FridayField: her state, never her form) ---
-            FridayField.update(delta, { color: moodLerpValues.accentColor, reduced: SceneMotion.reduced() });
+            FridayField.update(delta, { color: moodLerpValues.accentColor, reduced: SceneMotion.reduced(), camera });
 
             // --- ENERGY LINES ---
             energyLines.forEach((line) => {
@@ -45725,6 +46334,16 @@ const WIZARD_STRUCTURES = [{
   id: 'EDEN',
   name: 'Giga Earth (Rez)',
   desc: 'Tribute to Rez'
+}, {
+  idx: 13,
+  id: 'WORMHOLE',
+  name: 'Einstein-Rosen Bridge',
+  desc: 'A throat through spacetime to somewhere else'
+}, {
+  idx: 14,
+  id: 'BLACKHOLE',
+  name: 'Hawking Radiation',
+  desc: 'A black hole that glows at its edge'
 }];
 // ── Vault-first consent flow ────────────────────────────────────────────────
 //

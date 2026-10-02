@@ -15,7 +15,7 @@ the lean behave like a window, a head movement in centimetres is the same
 movement behind the glass, the clamps hold, reduced motion keeps only a gentle
 lean, and a lost face eases back in about 300 ms. A static check holds every
 reader of the head state to the camera, the HUD and the dock. Then a real
-browser loads the served page and, for each of the thirteen structures,
+browser loads the served page and, for each of the fifteen structures,
 measures how close its centre is to the eye at rest and leaned in, before and
 again after a genome step has rebuilt every structure, and that the structure
 stays where it is.
@@ -43,7 +43,7 @@ BLOCK = re.compile(r"// <tracking-engine>\n(.*?)// </tracking-engine>", re.S)
 # one octave nearer, so at depth 1 the eye would come twice as near the glass,
 # capped by zoom_in_max.
 NEUTRAL_W = 0.18
-STRUCTURE_COUNT = 13
+STRUCTURE_COUNT = 15
 GLASS_AT = 0.62          # the page's share of the way from the eye to the look target
 
 
