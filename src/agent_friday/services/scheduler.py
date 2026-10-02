@@ -166,6 +166,13 @@ def _resolve_local_seat():
         from agent_friday.services.local_call import describe_dispatch
     except Exception:
         return None
+    # A seat started outside the Arbiter is adopted and published before the
+    # question is asked, so a local-only job never waits for a seat that answers.
+    try:
+        from agent_friday.services import residency_arbiter as _ra
+        _ra.adopt_live_seats()
+    except Exception:
+        pass
     try:
         # Prefer the configured reasoning seat when it is genuinely up, so a
         # scheduled run uses the same brain the user does.
