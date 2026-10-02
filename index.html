@@ -53020,6 +53020,30 @@ function SettingsTabSigning() {
 // window on her own profile (services/browser_session.py), never the owner's
 // normal browser. Sign-ins made in that window stay in that profile until they
 // are cleared here. Every route behind this is refused off this computer.
+/* Muted notification kinds (the tray's "Mute this kind"), reversible here.
+   Approvals can never be muted; muted kinds go to the activity log. */
+function SettingsNotificationMutes() {
+  const [mutes, setMutes] = React.useState(null);
+  const load = () => apiFetch('/api/settings').then(r => r.json())
+    .then(d => setMutes(((d || {}).settings || {}).notification_mutes || [])).catch(() => setMutes([]));
+  React.useEffect(() => { load(); }, []);
+  const unmute = m => {
+    const [kind, source] = String(m).split('|');
+    apiFetch('/api/notifications/mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: kind, source: source || '', unmute: true }) })
+      .then(r => r.json()).then(d => setMutes((d && d.mutes) || [])).catch(() => {});
+  };
+  return React.createElement(StSection, { title: 'Muted notifications' },
+    React.createElement('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginBottom: 8, lineHeight: 1.5 } },
+      'Kinds you muted from the tray go to the activity log instead. Approvals always reach you and cannot be muted.'),
+    mutes === null ? null : mutes.length === 0
+      ? React.createElement('div', { className: 'fridayui-muted', style: { fontSize: 11 } }, 'Nothing is muted.')
+      : mutes.map(m => React.createElement('div', { key: m, className: 'notif-mute-row',
+          style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, padding: '3px 0' } },
+          React.createElement('span', null, String(m).replace('|', ' \u00b7 ')),
+          React.createElement('button', { className: 'settings-btn', onClick: () => unmute(m) }, 'Unmute'))));
+}
+
 function SettingsTabBrowser() {
   const [st, setSt] = useState(null);
   const [msg, setMsg] = useState('');
@@ -54994,7 +55018,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
@@ -59046,14 +59070,20 @@ function App() {
     }
     setNotifs(prev => prev.filter(n => (n.id || '') !== id));
   };
+  // Clear all keeps pending approvals: they are decisions, not news.
   const clearAllNotifs = () => {
     notifs.forEach(n => {
-      if (n.id) {
-        dismissedNotifIds.current.add(n.id);
-        _notifPost('/api/notifications/dismiss', n.id);
-      }
+      if (n.id && n.kind !== 'approval_pending') dismissedNotifIds.current.add(n.id);
     });
-    setNotifs([]);
+    apiFetch('/api/notifications/clear-all', { method: 'POST' }).catch(() => {});
+    setNotifs(prev => prev.filter(n => n.kind === 'approval_pending'));
+  };
+  // "Mute this kind": that kind goes to the activity log (Settings > General
+  // lists it to unmute). Approvals cannot be muted.
+  const muteNotifKind = n => {
+    apiFetch('/api/notifications/mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: n.kind || '', source: n.source || '' }) }).catch(() => {});
+    setNotifs(prev => prev.filter(x => !(x.kind === n.kind && x.source === n.source)));
   };
   const markNotifRead = id => {
     setNotifs(prev => prev.map(n => (n.id || '') === id ? {
@@ -60248,7 +60278,8 @@ function App() {
     a[w.id] = w;
     return a;
   }, {});
-  const unread = notifs.filter(n => !n.read).length;
+  // The badge counts what needs the owner; FYI cards roll into the digest.
+  const unread = notifs.filter(n => !n.read && n.tier !== 'fyi').length;
   const runningTaskCount = bgTasks.filter(t => (t.status || 'running') === 'running').length;
   const bellBadgeCount = runningTaskCount > 0 ? runningTaskCount : unread;
   const sortedBgTasks = [...bgTasks].sort((a, b) => (b.created || 0) - (a.created || 0));
@@ -61843,8 +61874,15 @@ function App() {
     }));
   })), notifs.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "notif-empty"
-  }, "No new notifications") : notifs.slice(0, 50).map((n, i) => {
+  }, "No new notifications") : [...notifs].sort((a, b) => (a.tier === 'fyi') - (b.tier === 'fyi')).slice(0, 50).map((n, i, arr) => {
     const key = n.id || `n_${i}`;
+    // The digest: FYI cards follow everything that needs the owner, under
+    // one header.
+    const digestHeader = n.tier === 'fyi' && (i === 0 || arr[i - 1].tier !== 'fyi')
+      && /*#__PURE__*/React.createElement("div", { key: 'digest-head', className: "notif-digest-header",
+        style: { padding: '6px 14px 2px', fontFamily: 'JetBrains Mono', fontSize: 9,
+                 letterSpacing: '0.08em', color: 'rgba(255,255,255,0.45)' } },
+        "DIGEST \u00b7 " + arr.filter(x => x.tier === 'fyi').length + " FOR YOUR INFORMATION");
     const isExpanded = !!notifCardExpanded[`notif_${key}`];
     const hasDetail = !!(n.detail || n.body || n.message && n.title && n.message !== n.title);
     // Resolve a deep-link target from the notification's `target` field,
@@ -61931,7 +61969,7 @@ function App() {
       }
     };
     const clickable = hasDetail || !!tgt;
-    return /*#__PURE__*/React.createElement("div", {
+    const row = /*#__PURE__*/React.createElement("div", {
       key: key,
       role: clickable ? 'button' : undefined,
       tabIndex: clickable ? 0 : undefined,
@@ -61969,7 +62007,10 @@ function App() {
         lineHeight: 1.4,
         fontWeight: n.read ? 400 : 500
       }
-    }, fridayTM(n.title || n.message || n.text || 'Notification')), n.time && /*#__PURE__*/React.createElement("div", {
+    }, fridayTM(n.title || n.message || n.text || 'Notification'), n.count > 1 && /*#__PURE__*/React.createElement("span", {
+      className: "notif-count",
+      style: { fontFamily: 'JetBrains Mono', fontSize: 10, color: 'rgba(255,255,255,0.55)', marginLeft: 6 }
+    }, "\u00d7" + n.count)), n.time && /*#__PURE__*/React.createElement("div", {
       style: {
         fontFamily: 'JetBrains Mono',
         fontSize: 10,
@@ -61992,7 +62033,17 @@ function App() {
         color: '#00d4ff',
         marginTop: 1
       }
-    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && /*#__PURE__*/React.createElement("button", { "aria-label": "Dismiss", 
+    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && n.kind && n.kind !== 'approval_pending' && /*#__PURE__*/React.createElement("button", {
+      "aria-label": "Mute this kind",
+      className: "notif-mute",
+      onClick: e => {
+        e.stopPropagation();
+        muteNotifKind(n);
+      },
+      style: { background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer',
+               fontSize: 10, padding: '0 2px', lineHeight: 1 },
+      title: "Mute this kind (unmute in Settings > General)"
+    }, "\uD83D\uDD15"), n.id && /*#__PURE__*/React.createElement("button", { "aria-label": "Dismiss", 
       onClick: e => {
         e.stopPropagation();
         clearNotif(n.id);
@@ -62049,6 +62100,7 @@ function App() {
         openCreationFolder();
       }
     }, "\uD83D\uDCC1 Open Folder")));
+    return digestHeader ? [digestHeader, row] : row;
   }));
   const shellSettings = /*#__PURE__*/React.createElement("div", {
     className: `settings-panel ${settingsOpen ? 'open' : ''}`
