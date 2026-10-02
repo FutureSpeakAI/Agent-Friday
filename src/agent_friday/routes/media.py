@@ -16,6 +16,11 @@
 | /api/media/<id>/turn-into              | POST   | a new card made from this one                     |
 | /api/media/<id>/file                   | GET    | the file behind a file-backed card                |
 | /api/media/<id>/render/<n>             | GET    | a document's rendered page                        |
+| /api/media/<id>/preview                | GET    | the card's preview image (made locally, cached)   |
+| /api/media/<id>/strip                  | GET    | a video's hover-scrub frame strip                 |
+| /api/media/<id>/open                   | POST   | open the file in its app on this PC               |
+| /api/media/<id>/reveal                 | POST   | show the file in its folder on this PC            |
+| /api/media/previews/status             | GET    | the preview pass: pending, done, building         |
 
 Local user only, like podcasts. Every write wants a JSON body from this origin.
 """
@@ -68,6 +73,11 @@ def media_list():
     )
     res["status"] = "ok"
     res["indexing"] = indexing
+    try:
+        from agent_friday.services import media_previews as mp
+        res["previews"] = mp.status()
+    except Exception:
+        res["previews"] = {"pending": 0, "done": 0}
     return jsonify(res)
 
 
@@ -94,6 +104,12 @@ def media_reindex():
 @media_bp.route('/api/media/status', methods=['GET'])
 def media_status():
     return jsonify({"status": "ok", "indexing": mi.status()})
+
+
+@media_bp.route('/api/media/previews/status', methods=['GET'])
+def media_previews_status():
+    from agent_friday.services import media_previews as mp
+    return jsonify({"status": "ok", "previews": mp.status()})
 
 
 @media_bp.route('/api/media/<card_id>', methods=['GET'])
@@ -157,6 +173,75 @@ def media_file(card_id):
     if c is None or not c.get("path") or not Path(c["path"]).is_file():
         return jsonify({"status": "not_found"}), 404
     return send_file(c["path"], conditional=True)
+
+
+@media_bp.route('/api/media/<card_id>/preview', methods=['GET'])
+def media_preview(card_id):
+    from agent_friday.services import media_previews as mp
+    c = mi.get(card_id)
+    p = mp.image_path(c) if c else None
+    if p is None:
+        if c is not None and not mp.ready(c):
+            mp.enqueue([c], front=True)
+        return jsonify({"status": "not_ready" if c else "not_found"}), 404
+    return send_file(str(p), mimetype="image/webp", conditional=True, max_age=86400)
+
+
+@media_bp.route('/api/media/<card_id>/strip', methods=['GET'])
+def media_strip(card_id):
+    from agent_friday.services import media_previews as mp
+    c = mi.get(card_id)
+    p = mp.strip_path(c) if c else None
+    if p is None:
+        return jsonify({"status": "not_found"}), 404
+    return send_file(str(p), mimetype="image/webp", conditional=True, max_age=86400)
+
+
+def _local_file(card_id):
+    c = mi.get(card_id)
+    if c is None:
+        return None
+    from agent_friday.services import media_previews as mp
+    p = mp.media_path(c)
+    return p if p is not None and p.exists() else None
+
+
+@media_bp.route('/api/media/<card_id>/open', methods=['POST'])
+def media_open(card_id):
+    """Open the file in whatever this PC opens it with. Local user only (the gate above)."""
+    p = _local_file(card_id)
+    if p is None:
+        return jsonify({"status": "not_found"}), 404
+    try:
+        import os as _os, subprocess as _sp, sys as _sys
+        if _sys.platform == "win32":
+            _os.startfile(str(p))  # type: ignore[attr-defined]
+        elif _sys.platform == "darwin":
+            _sp.Popen(["open", str(p)])
+        else:
+            _sp.Popen(["xdg-open", str(p)])
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)[:200]}), 500
+    return jsonify({"status": "ok", "path": str(p)})
+
+
+@media_bp.route('/api/media/<card_id>/reveal', methods=['POST'])
+def media_reveal(card_id):
+    """Show the file in its folder on this PC."""
+    p = _local_file(card_id)
+    if p is None:
+        return jsonify({"status": "not_found"}), 404
+    try:
+        import subprocess as _sp, sys as _sys
+        if _sys.platform == "win32":
+            _sp.Popen(["explorer", "/select,", str(p)])
+        elif _sys.platform == "darwin":
+            _sp.Popen(["open", "-R", str(p)])
+        else:
+            _sp.Popen(["xdg-open", str(p.parent)])
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)[:200]}), 500
+    return jsonify({"status": "ok", "path": str(p)})
 
 
 @media_bp.route('/api/media/<card_id>/render/<int:n>', methods=['GET'])

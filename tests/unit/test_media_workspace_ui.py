@@ -96,6 +96,33 @@ def test_kept_is_the_sixth_word_and_not_a_lane():
     assert "kept: 'md-pill-neutral'" in JS
 
 
+def test_every_card_shows_a_preview_and_its_details_and_the_provenance_renders():
+    """A thumbnail for every kind (video scrubs on hover, audio plays in place,
+    a type with no picture shows its icon and size), one line of facts on the
+    card, and the side panel's provenance block: made with, prompt, sources."""
+    assert "function Thumb({ c, onQuick })" in JS
+    assert "backgroundImage: 'url(' + c.strip + ')'" in JS, "the hover scrub reads the frame strip"
+    assert "togglePlay(c)" in JS and "new Audio()" in JS, "audio plays in place, one player for the workspace"
+    assert "className: 'ico' }, glyph(c.kind, '')" in JS and "fmtBytes(d.bytes)" in JS
+    assert "className: 'md-facts'" in JS
+    assert "'data-provenance': 'true'" in JS
+    for word in ("'Made with'", "'Prompt'", "'From'", "'Created'", "'Modified'", "'Dimensions'", "'Duration'", "'Pages'", "'Size'"):
+        assert word in JS, word + " is a row in the details"
+    assert "d.prompt ? [h('dt', { key: 'pt' }, 'Prompt')" in JS
+
+
+def test_the_quick_look_opens_on_space_and_walks_with_the_arrows():
+    assert "function QuickLook({ c, cards, setSel, onClose, onOpen })" in JS
+    assert "if (e.key === ' ' && selCard) { e.preventDefault(); setQl(true); return; }" in JS
+    assert "e.key === 'ArrowRight' && i < ids.length - 1" in JS and "e.key === 'ArrowLeft' && i > 0" in JS
+    assert "sandbox: ''" in JS, "a page opens in a sandboxed frame"
+    assert "act('open')" in JS and "act('reveal')" in JS and "'Open in app'" in JS and "'Show in folder'" in JS
+    routes = (ROOT / "src" / "agent_friday" / "routes" / "media.py").read_text(encoding="utf-8")
+    for r in ("/api/media/<card_id>/preview", "/api/media/<card_id>/strip", "/api/media/<card_id>/open", "/api/media/<card_id>/reveal", "/api/media/previews/status"):
+        assert r in routes
+    assert "setTimeout(reload, 3000)" in JS, "the list asks again while previews are still being made"
+
+
 def test_a_routine_episode_card_opens_in_news():
     """The routine shows' episodes are listed so nothing is missing; opening one
     goes to its show's tab in News, never into Media's editor (spec §4.8)."""

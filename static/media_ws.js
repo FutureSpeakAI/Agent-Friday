@@ -78,6 +78,47 @@
       word == null ? (KIND_WORD[kind] || kind) : word);
   }
   function pill(cls, word) { return h('span', { className: 'md-pill ' + cls }, word); }
+  function fmtBytes(n) {
+    if (n == null) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+  // One line of facts: the type, the size, and what measures it (dimensions, duration, pages, words).
+  function facts(c) {
+    const d = c.details || {};
+    const out = [KIND_WORD[c.kind] || c.kind];
+    if (d.bytes != null) out.push(fmtBytes(d.bytes));
+    if (d.width && d.height) out.push(d.width + '×' + d.height);
+    if (c.duration) out.push(c.duration);
+    if (c.pages) out.push(c.pages + (c.pages === 1 ? ' page' : ' pages'));
+    if (c.words && !c.pages) out.push(c.words + ' words');
+    if (d.count > 1) out.push(d.count + ' images');
+    return out.join(' · ');
+  }
+  const AV_KINDS = { audio: 1, music: 1, episode: 1, video: 1 };
+  // Play in place: one <audio> for the whole workspace, so two cards never talk over each other.
+  const player = { el: null, id: null, listeners: new Set() };
+  function playing(id) { return player.id === id && player.el && !player.el.paused; }
+  function togglePlay(c) {
+    if (!player.el) { player.el = new Audio(); player.el.addEventListener('ended', () => { player.id = null; player.listeners.forEach(f => f()); }); }
+    if (player.id === c.id) {
+      if (player.el.paused) player.el.play().catch(() => {}); else player.el.pause();
+    } else {
+      player.el.pause(); player.el.src = c.file_url; player.id = c.id; player.el.play().catch(() => toast('Could not play that file.'));
+    }
+    player.listeners.forEach(f => f());
+  }
+  function usePlayerTick() {
+    const [, set] = useState(0);
+    useEffect(() => { const f = () => set(x => x + 1); player.listeners.add(f); return () => player.listeners.delete(f); }, []);
+  }
+  function Wave({ peaks, height }) {
+    if (!peaks || !peaks.length) return null;
+    return h('div', { className: 'md-wave', style: height ? { height } : null, 'aria-hidden': 'true' },
+      peaks.map((v, i) => h('i', { key: i, style: { height: Math.max(2, Math.round(v * 100)) + '%' } })));
+  }
   function statusPill(c) {
     if (c.held) return pill('md-pill-needs-you', 'Held for you');
     const w = STATUS_WORD[c.status] || c.status;
@@ -146,6 +187,30 @@
 .md-thumb{aspect-ratio:16/10;background:linear-gradient(135deg,rgba(0,212,255,.10),rgba(123,97,255,.10) 50%,rgba(255,0,255,.08));display:grid;place-items:center;color:var(--fr-dim);font-family:var(--fr-font-mono);font-size:var(--fr-text-xs);position:relative;overflow:hidden}
 .md-thumb img{width:100%;height:100%;object-fit:cover}
 .md-thumb .dur{position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.6);padding:1px 5px;border-radius:4px;color:var(--fr-label)}
+.md-thumb .scrub{position:absolute;inset:0;background-repeat:no-repeat;background-size:800% 100%;opacity:0;transition:opacity .12s}
+.md-thumb:hover .scrub{opacity:1}
+.md-thumb .scrubbar{position:absolute;left:0;bottom:0;height:2px;background:var(--fr-cyan);width:0}
+.md-thumb .play{position:absolute;left:8px;bottom:6px;width:28px;height:28px;border-radius:50%;border:1px solid var(--fr-glass-edge);background:rgba(0,0,0,.6);color:var(--fr-text);display:grid;place-items:center;cursor:pointer;font-size:12px}
+.md-thumb .play:hover{border-color:var(--fr-cyan)}
+.md-thumb .ico{display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--fr-dim)}
+.md-thumb .ico svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:1.6;opacity:.8}
+.md-thumb .ico b{font-weight:600;color:var(--fr-label);font-size:var(--fr-text-xs)}
+.md-facts{color:var(--fr-dim);font-size:var(--fr-text-xs);font-family:var(--fr-font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.md-dthumb{width:100%;aspect-ratio:16/10;object-fit:cover;border-radius:8px;border:1px solid var(--fr-glass-edge);background:#000}
+.md-detail audio,.md-detail video{width:100%;margin-top:6px}
+.md-prompt{font-size:var(--fr-text-sm);color:var(--fr-text);background:rgba(0,0,0,.25);border:1px solid var(--fr-glass-edge);border-radius:8px;padding:6px 8px;max-height:120px;overflow:auto;white-space:pre-wrap}
+.md-ql{position:fixed;inset:0;z-index:60;background:rgba(4,6,12,.86);backdrop-filter:blur(6px);display:grid;grid-template-rows:auto 1fr auto;gap:10px;padding:16px}
+.md-ql-head{display:flex;align-items:center;gap:10px;color:var(--fr-label)}
+.md-ql-head strong{font-size:var(--fr-text-lg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.md-ql-stage{display:grid;place-items:center;min-height:0;overflow:hidden}
+.md-ql-stage img,.md-ql-stage video{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;background:#000}
+.md-ql-stage iframe{width:min(1280px,100%);height:100%;border:1px solid var(--fr-glass-edge);border-radius:8px;background:#fff}
+.md-ql-stage .text{width:min(72ch,100%);max-height:100%;overflow:auto;white-space:pre-wrap;font-size:var(--fr-text-md);line-height:1.5;color:var(--fr-text);background:rgba(255,255,255,.035);border:1px solid var(--fr-glass-edge);border-radius:10px;padding:18px 22px}
+.md-ql-stage .audio{width:min(720px,100%);display:flex;flex-direction:column;gap:10px;align-items:stretch}
+.md-ql-foot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--fr-dim);font-size:var(--fr-text-sm)}
+.md-ql-nav{position:fixed;top:50%;transform:translateY(-50%);width:40px;height:40px;border-radius:50%;border:1px solid var(--fr-glass-edge);background:rgba(0,0,0,.5);color:var(--fr-text);font-size:18px;cursor:pointer}
+.md-wave{display:flex;align-items:center;gap:1px;height:56px;width:100%}
+.md-wave i{flex:1 1 0;background:var(--fr-cyan);opacity:.75;border-radius:1px;min-height:2px}
 .md-body{padding:8px 10px 10px;display:flex;flex-direction:column;gap:4px;min-width:0}
 .md-title{font-weight:600;font-size:var(--fr-text-md);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .md-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:var(--fr-dim);font-size:var(--fr-text-sm)}
@@ -191,13 +256,13 @@
     return p.toString();
   }
   function useCards(filters) {
-    const [state, setState] = useState({ cards: [], counts: {}, projects: [], loading: true, error: null, indexing: null });
+    const [state, setState] = useState({ cards: [], counts: {}, projects: [], loading: true, error: null, indexing: null, previews: null });
     const key = buildQuery(filters);
     const reload = useCallback(() => {
       setState(s => Object.assign({}, s, { loading: true }));
       json('/api/media?' + key).then(d => {
         if (d.status !== 'ok') { setState({ cards: [], counts: {}, projects: [], loading: false, error: d.message || 'Media could not load.', indexing: null }); return; }
-        setState({ cards: d.cards || [], counts: d.counts || {}, projects: d.projects || [], loading: false, error: null, indexing: d.indexing || null });
+        setState({ cards: d.cards || [], counts: d.counts || {}, projects: d.projects || [], loading: false, error: null, indexing: d.indexing || null, previews: d.previews || null });
       }).catch(() => setState({ cards: [], counts: {}, projects: [], loading: false, error: 'Media could not load.', indexing: null }));
     }, [key]);
     useEffect(() => { reload(); }, [reload]);
@@ -210,6 +275,14 @@
       const t = setTimeout(reload, 1500);
       return () => clearTimeout(t);
     }, [building, soFar, reload]);
+    // and while the preview pass is still making thumbnails, every few seconds, so they appear as they land
+    const pending = state.previews ? state.previews.pending : 0;
+    const done = state.previews ? state.previews.done : 0;
+    useEffect(() => {
+      if (!pending) return undefined;
+      const t = setTimeout(reload, 3000);
+      return () => clearTimeout(t);
+    }, [pending, done, reload]);
     useEffect(() => {
       const on = () => reload();
       window.addEventListener('friday:media-changed', on);
@@ -220,41 +293,81 @@
   function changed() { window.dispatchEvent(new Event('friday:media-changed')); }
 
   // ── one card ─────────────────────────────────────────────────────────────
-  function Card({ c, selected, onOpen, onSelect, noThumb }) {
-    const extra = c.duration ? c.duration : c.count ? c.count + ' takes' : c.pages ? c.pages + ' pages' : c.words ? c.words + ' words' : null;
+  // The thumbnail: the preview when the pass has made one; a video scrubs on
+  // hover through its frame strip; audio plays in place; a type the pass has no
+  // image for shows its icon and size. Clicking the picture opens the quick look.
+  function Thumb({ c, onQuick }) {
+    usePlayerTick();
+    const [frac, setFrac] = useState(-1);
+    const d = c.details || {};
+    const extra = c.duration ? c.duration : c.pages ? c.pages + ' pages' : c.words ? c.words + ' words' : null;
+    const frames = d.strip || 8;
+    const onMove = c.strip ? e => { const r = e.currentTarget.getBoundingClientRect(); setFrac(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width))); } : null;
+    const scrub = c.strip && frac >= 0 ? h('div', { className: 'scrub', style: { backgroundImage: 'url(' + c.strip + ')', backgroundSize: (frames * 100) + '% 100%', backgroundPosition: (Math.min(frames - 1, Math.floor(frac * frames)) * 100 / (frames - 1)) + '% 0' } }) : null;
+    const bar = c.strip && frac >= 0 ? h('div', { className: 'scrubbar', style: { width: (frac * 100) + '%' } }) : null;
+    const play = AV_KINDS[c.kind] && c.file_url && c.kind !== 'video' ? h('span', { role: 'button', tabIndex: 0, className: 'play', 'aria-label': playing(c.id) ? 'Pause' : 'Play', title: playing(c.id) ? 'Pause' : 'Play here',
+      onClick: e => { e.stopPropagation(); togglePlay(c); }, onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); togglePlay(c); } } }, playing(c.id) ? '❚❚' : '▶') : null;
+    return h('div', { className: 'md-thumb', onMouseMove: onMove, onMouseLeave: () => setFrac(-1), onClick: e => { if (onQuick) { e.stopPropagation(); onQuick(c); } }, title: onQuick ? 'Quick look (Space)' : undefined },
+      c.thumb ? h('img', { src: c.thumb, alt: '', loading: 'lazy' }) : h('span', { className: 'ico' }, glyph(c.kind, ''), h('b', null, (d.suffix ? d.suffix.replace('.', '').toUpperCase() + ' ' : '') + (d.bytes != null ? fmtBytes(d.bytes) : (KIND_WORD[c.kind] || c.kind)))),
+      scrub, bar, play,
+      extra ? h('span', { className: 'dur' }, extra) : null);
+  }
+  function Card({ c, selected, onOpen, onSelect, noThumb, onQuick }) {
     const where = c.published_at ? h('div', { className: 'md-meta' }, h('span', null, 'at'), h('span', null, c.published_at))
       : (c.targets && c.targets.length ? h('div', { className: 'md-meta' }, h('span', null, 'to'), h('span', null, c.targets.join(', '))) : null);
+    const d = c.details || {};
+    const made = d.model ? d.model : (c.maker || '').replace(' · this PC', '');
     return h('button', {
       className: 'md-card', role: 'option', 'aria-selected': selected ? 'true' : 'false', 'data-id': c.id,
       onClick: () => onSelect && onSelect(c), onDoubleClick: () => onOpen && onOpen(c),
       onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); onOpen && onOpen(c); } }
     },
-      noThumb ? null : h('div', { className: 'md-thumb' },
-        c.thumb ? h('img', { src: c.thumb, alt: '' }) : (KIND_WORD[c.kind] || c.kind),
-        extra ? h('span', { className: 'dur' }, extra) : null),
+      noThumb ? null : h(Thumb, { c, onQuick }),
       h('div', { className: 'md-body' },
         h('div', { className: 'md-title', title: c.title }, c.title),
+        h('div', { className: 'md-facts', title: facts(c) + (made ? ' · ' + made : '') }, facts(c) + (made ? ' · ' + made : '')),
         h('div', { className: 'md-meta' }, glyph(c.kind), h('span', null, '·'), h('span', null, fmtWhen(c.when))),
         h('div', { className: 'md-meta' }, statusPill(c), privacyPill(c), c.signed ? null : pill('md-pill-neutral', 'Unsigned')),
         where));
   }
 
   // ── the details panel (Library) ──────────────────────────────────────────
-  function Details({ c, onClose, onOpen, onAction }) {
+  function fmtStamp(iso) { if (!iso) return '—'; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); }
+  function Details({ c, onClose, onOpen, onAction, onQuick }) {
     if (!c) return null;
+    const d = c.details || {};
+    const measure = d.width && d.height ? [['Dimensions', d.width + ' × ' + d.height]] : [];
+    if (c.duration) measure.push(['Duration', c.duration]);
+    if (c.pages) measure.push(['Pages', String(c.pages)]);
+    if (c.words && !c.pages) measure.push(['Words', String(c.words)]);
+    if (d.count > 1) measure.push(['Images', String(d.count)]);
+    const made = d.model || (c.maker || 'You');
     return h('aside', { className: 'md-detail', 'aria-label': 'Card details' },
       h('div', { className: 'md-head-row' }, h('strong', null, c.title), h('button', { className: 'btn', onClick: onClose, 'aria-label': 'Close details' }, 'Esc')),
+      c.thumb ? h('img', { className: 'md-dthumb', src: c.thumb, alt: '', onClick: () => onQuick && onQuick(c), style: { cursor: onQuick ? 'zoom-in' : 'default' } }) : null,
+      c.kind === 'video' && c.file_url ? h('video', { src: c.file_url, controls: true, preload: 'metadata', poster: c.thumb || undefined }) : null,
+      AV_KINDS[c.kind] && c.kind !== 'video' && c.file_url ? h('audio', { src: c.file_url, controls: true, preload: 'metadata' }) : null,
       h('div', { className: 'md-meta' }, glyph(c.kind), h('span', null, '·'), h('span', null, fmtWhen(c.when))),
-      h('dl', { className: 'md-kv' },
-        h('dt', null, 'Status'), h('dd', null, statusPill(c), c.targets && c.targets.length ? ' → ' + c.targets.join(', ') : null),
-        h('dt', null, 'Made by'), h('dd', null, c.maker || 'You'),
-        h('dt', null, 'From'), h('dd', null, (c.sources || []).length ? c.sources.join(', ') : 'Nothing yet'),
+      h('dl', { className: 'md-kv', 'data-facts': 'true' },
+        h('dt', null, 'Type'), h('dd', null, (KIND_WORD[c.kind] || c.kind) + (d.suffix ? ' · ' + d.suffix.replace('.', '').toUpperCase() : ''), c.filename ? h('div', { className: 'md-facts', title: c.filename }, c.filename) : null),
+        h('dt', null, 'Size'), h('dd', null, d.bytes != null ? fmtBytes(d.bytes) : '—'),
+        measure.map(m => [h('dt', { key: m[0] + 't' }, m[0]), h('dd', { key: m[0] + 'd' }, m[1])]),
+        h('dt', null, 'Created'), h('dd', null, fmtStamp(c.created)),
+        h('dt', null, 'Modified'), h('dd', null, fmtStamp(c.modified)),
+        h('dt', null, 'Status'), h('dd', null, statusPill(c), c.targets && c.targets.length ? ' → ' + c.targets.join(', ') : null)),
+      h('div', { className: 'md-label' }, 'Provenance'),
+      h('dl', { className: 'md-kv', 'data-provenance': 'true' },
+        h('dt', null, 'Made with'), h('dd', null, made),
+        d.prompt ? [h('dt', { key: 'pt' }, 'Prompt'), h('dd', { key: 'pd' }, h('div', { className: 'md-prompt' }, d.prompt))] : null,
+        h('dt', null, 'From'), h('dd', null, (d.sources && d.sources.length ? d.sources : (c.sources || [])).length ? (d.sources && d.sources.length ? d.sources : c.sources).join(', ') : 'Nothing recorded'),
         h('dt', null, 'Credentials'), h('dd', null, c.signed ? [pill('md-pill-ok', 'Signed'), ' content credentials'] : [pill('md-pill-neutral', 'Unsigned'), ' signed when it leaves']),
-        h('dt', null, 'Privacy'), h('dd', null, privacyPill(c), ' ', c.published_at ? c.published_at : 'never left this computer'),
+        h('dt', null, 'Privacy'), h('dd', null, privacyPill(c), ' ', c.published_at ? 'published at ' + c.published_at : 'never left this computer'),
         h('dt', null, 'Project'), h('dd', null, c.project || '—')),
+      d.snippet ? h('div', { className: 'md-prompt', title: 'The first lines' }, d.snippet) : null,
       h('div', { className: 'md-label' }, 'Actions'),
       h('div', { className: 'md-actions' },
         h('button', { className: 'btn active', onClick: () => onOpen(c) }, 'Open'),
+        onQuick ? h('button', { className: 'btn', onClick: () => onQuick(c) }, 'Quick look') : null,
         h('button', { className: 'btn', onClick: () => onAction('tab', c) }, 'Own tab'),
         h('button', { className: 'btn', onClick: () => onAction('turn', c) }, 'Turn this into…'),
         h('button', { className: 'btn', onClick: () => onAction('send', c) }, 'Send to…'),
@@ -262,9 +375,60 @@
         h('button', { className: 'btn btn-magenta', onClick: () => onAction('delete', c) }, 'Delete')));
   }
 
+  // ── the quick look ───────────────────────────────────────────────────────
+  // Space or a click on the picture: the whole thing, full size, with inline
+  // playback, a page in a sandboxed frame, a document's rendered pages, and
+  // the ways out of it: the editor, the app that opens it, its folder.
+  function QuickLook({ c, cards, setSel, onClose, onOpen }) {
+    const [full, setFull] = useState(null);
+    const [page, setPage] = useState(0);
+    useEffect(() => { setFull(null); setPage(0); if (c && (c.kind === 'draft' || c.kind === 'article' || c.kind === 'doc' || AV_KINDS[c.kind])) json('/api/media/' + encodeURIComponent(c.id)).then(d => { if (d.status === 'ok') setFull(d); }).catch(() => {}); }, [c && c.id]);
+    useEffect(() => {
+      const onKey = e => {
+        if (!c) return;
+        const ids = cards.map(x => x.id); const i = ids.indexOf(c.id);
+        if (e.key === 'Escape' || e.key === ' ') { e.preventDefault(); onClose(); }
+        if (e.key === 'ArrowRight' && i < ids.length - 1) { e.preventDefault(); setSel(ids[i + 1]); }
+        if (e.key === 'ArrowLeft' && i > 0) { e.preventDefault(); setSel(ids[i - 1]); }
+        if (e.key === 'Enter') { e.preventDefault(); onOpen(c); }
+      };
+      window.addEventListener('keydown', onKey, true);
+      return () => window.removeEventListener('keydown', onKey, true);
+    }, [c, cards, setSel, onClose, onOpen]);
+    if (!c) return null;
+    const ids = cards.map(x => x.id); const i = ids.indexOf(c.id);
+    const d = c.details || {};
+    let stage;
+    if (c.kind === 'video' && c.file_url) stage = h('video', { key: c.id, src: c.file_url, controls: true, autoPlay: true, poster: c.thumb || undefined });
+    else if (AV_KINDS[c.kind] && c.file_url) stage = h('div', { className: 'audio' }, c.thumb ? h('img', { src: c.thumb, alt: '', style: { maxHeight: 160 } }) : null, h(Wave, { peaks: full && full.peaks, height: 72 }), h('audio', { key: c.id, src: c.file_url, controls: true, autoPlay: true }));
+    else if (c.kind === 'page' && c.file_url) stage = h('iframe', { key: c.id, src: c.file_url, sandbox: '', title: c.title });
+    else if (c.renders && c.renders.length) stage = h('img', { key: c.id + page, src: c.renders[Math.min(page, c.renders.length - 1)], alt: '' });
+    else if ((c.kind === 'image' || c.kind === 'imageset' || c.kind === 'chart') && c.file_url) stage = h('img', { key: c.id, src: c.file_url, alt: c.title });
+    else if (full && full.body) stage = h('div', { className: 'text' }, full.body);
+    else if (c.thumb) stage = h('img', { key: c.id, src: c.thumb, alt: c.title });
+    else stage = h('div', { className: 'text' }, h('b', null, c.title), '\n\n', facts(c), d.snippet ? '\n\n' + d.snippet : '', '\n\nNo preview for this type; open it in its app.');
+    const act = what => post('/api/media/' + encodeURIComponent(c.id) + '/' + what, {}).then(r => { if (r.status !== 'ok') toast(r.message || 'That did not work.'); });
+    return h('div', { className: 'md-ql', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Quick look: ' + c.title, onClick: e => { if (e.target === e.currentTarget) onClose(); } },
+      h('div', { className: 'md-ql-head' }, glyph(c.kind), h('strong', null, c.title), h('span', { className: 'md-count' }, (i + 1) + ' of ' + ids.length), h('span', { className: 'md-spacer' }),
+        c.renders && c.renders.length > 1 ? h('span', { className: 'md-seg' }, h('button', { className: 'btn', onClick: () => setPage(p => Math.max(0, p - 1)) }, '‹'), h('span', { className: 'md-count' }, 'page ' + (page + 1) + ' / ' + c.renders.length), h('button', { className: 'btn', onClick: () => setPage(p => Math.min(c.renders.length - 1, p + 1)) }, '›')) : null,
+        h('button', { className: 'btn', onClick: onClose, 'aria-label': 'Close quick look' }, 'Esc')),
+      h('div', { className: 'md-ql-stage' }, stage),
+      h('div', { className: 'md-ql-foot' },
+        h('span', null, facts(c)), h('span', null, '·'), h('span', null, d.model || c.maker || ''), d.prompt ? h('span', { title: d.prompt }, '· “' + d.prompt.slice(0, 80) + (d.prompt.length > 80 ? '…' : '') + '”') : null,
+        h('span', { className: 'md-spacer' }),
+        h('button', { className: 'btn active', onClick: () => onOpen(c) }, 'Open card'),
+        c.file_url ? h('button', { className: 'btn', onClick: () => act('open') }, 'Open in app') : null,
+        c.file_url ? h('button', { className: 'btn', onClick: () => act('reveal') }, 'Show in folder') : null,
+        h('span', { className: 'md-count' }, '← → move · Space or Esc close · Enter open')),
+      i > 0 ? h('button', { className: 'md-ql-nav', style: { left: 12 }, 'aria-label': 'Previous', onClick: () => setSel(ids[i - 1]) }, '←') : null,
+      i < ids.length - 1 ? h('button', { className: 'md-ql-nav', style: { right: 12 }, 'aria-label': 'Next', onClick: () => setSel(ids[i + 1]) }, '→') : null);
+  }
+
   // ── the Library ──────────────────────────────────────────────────────────
   function Library({ filters, setFilters, sel, setSel, onOpen, onAction }) {
     const [state] = useCards(filters);
+    const [ql, setQl] = useState(false);
+    const onQuick = useCallback(c => { setSel(c.id); setQl(true); }, [setSel]);
     const [layout, setLayout] = useState('grid');
     const searchRef = useRef(null);
     const cards = state.cards;
@@ -275,8 +439,9 @@
       const onKey = e => {
         const typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName) || (document.activeElement && document.activeElement.isContentEditable);
         if (e.key === '/' && !typing) { e.preventDefault(); searchRef.current && searchRef.current.focus(); return; }
-        if (e.key === 'Escape') { setSel(null); return; }
-        if (typing) return;
+        if (e.key === 'Escape') { if (ql) setQl(false); else setSel(null); return; }
+        if (typing || ql) return;
+        if (e.key === ' ' && selCard) { e.preventDefault(); setQl(true); return; }
         const ids = cards.map(c => c.id); const i = ids.indexOf(sel);
         if (e.key === 'ArrowRight' && ids.length) { e.preventDefault(); setSel(ids[Math.min(ids.length - 1, i + 1)]); }
         if (e.key === 'ArrowLeft' && ids.length) { e.preventDefault(); setSel(ids[Math.max(0, i - 1)]); }
@@ -288,7 +453,7 @@
       };
       window.addEventListener('keydown', onKey);
       return () => window.removeEventListener('keydown', onKey);
-    }, [cards, sel, selCard, onOpen, onAction, setSel]);
+    }, [cards, sel, selCard, onOpen, onAction, setSel, ql]);
     const counts = state.counts || {};
     const railBtn = (key, label, n, patch) => h('button', { key, 'aria-current': current === key ? 'true' : undefined, onClick: () => pick(patch) }, label, n != null ? h('span', { className: 'n' }, n) : null);
     return h('div', { className: 'md-lib' },
@@ -324,8 +489,9 @@
           cards.length === 0 && state.indexing && state.indexing.state === 'indexing' ? h('div', { className: 'md-empty', role: 'status', 'aria-live': 'polite' }, h('b', null, 'Indexing your library…'), h('br'), (state.indexing.indexed || 0) + ' so far. Everything Friday has made on this PC is being listed; this only takes a moment.') :
           !state.loading && cards.length === 0 ? h('div', { className: 'md-empty' }, h('b', null, 'Nothing here.'), h('br'), 'Pick another view on the left, or press ', h('kbd', null, 'N'), ' for a new card.') :
           h('div', { className: 'md-grid' + (layout === 'list' ? ' list' : ''), role: 'listbox', 'aria-label': 'Cards', 'aria-busy': state.loading ? 'true' : 'false' },
-            cards.map(c => h(Card, { key: c.id, c, selected: c.id === sel, onSelect: x => setSel(x.id), onOpen }))),
-          h(Details, { c: selCard, onClose: () => setSel(null), onOpen, onAction })),
+            cards.map(c => h(Card, { key: c.id, c, selected: c.id === sel, onSelect: x => setSel(x.id), onOpen, onQuick }))),
+          h(Details, { c: selCard, onClose: () => setSel(null), onOpen, onAction, onQuick }),
+          ql && selCard ? h(QuickLook, { c: selCard, cards, setSel, onClose: () => setQl(false), onOpen }) : null),
         h('p', { className: 'md-keys' }, 'Keys: ', h('kbd', null, '/'), ' search · ', h('kbd', null, 'N'), ' new · ', h('kbd', null, '←'), ' ', h('kbd', null, '→'), ' move · ', h('kbd', null, 'Enter'), ' open · ', h('kbd', null, 'T'), ' turn this into… · ', h('kbd', null, 'S'), ' send to · ', h('kbd', null, 'O'), ' own tab · ', h('kbd', null, 'Esc'), ' close.')));
   }
 
@@ -841,7 +1007,7 @@
 
   // Shared helpers for the other views (board, calendar, card), defined in this file's siblings.
   window.MediaWS = MediaWS;
-  window.__media = { h, api, json, post, toast, STATUSES, KEPT, STATUS_WORD, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
+  window.__media = { h, api, json, post, toast, STATUSES, KEPT, STATUS_WORD, QuickLook, Thumb, fmtBytes, facts, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
 
   // Navigation: the views the dock, the palette and navigate_to may name.
   (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['media', {

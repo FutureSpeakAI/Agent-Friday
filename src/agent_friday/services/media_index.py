@@ -692,7 +692,13 @@ def reindex(reason: str = "") -> Dict[str, int]:
         # The signature is taken after the pass: the pass itself creates the
         # podcast root and the media folder, which must not read as a change.
         _STATE.update({"state": "ready", "finished": time.time(), "counts": counts, "signature": _signature(), "checked": time.time()})
-        return counts
+    if not os.environ.get("FRIDAY_TESTING"):
+        try:
+            from agent_friday.services import media_previews as mp
+            mp.enqueue(query(view="all", sort="newest", limit=100000)["cards"])
+        except Exception:
+            pass
+    return counts
 
 
 # ── freshness: the index builds itself and notices change ─────────────────────
@@ -831,12 +837,54 @@ def _row_to_card(r: sqlite3.Row, ov: Optional[sqlite3.Row]) -> Dict[str, Any]:
         c["words"] = len(r["text"].split())
     if ex.get("renders"):
         c["renders"] = ["/api/media/" + c["id"] + "/render/" + str(i) for i in range(len(ex["renders"]))]
-    if c["path"] and c["source_kind"] in ("creation", "document", "media"):
+    if c["path"] and c["source_kind"] in ("creation", "document", "media", "daily_file", "comfy"):
         c["file_url"] = "/api/media/" + c["id"] + "/file"
         if c["kind"] in ("image", "imageset", "chart") and c["source_kind"] == "creation":
-            c["thumb"] = c["file_url"]
+            c["thumb"] = c["file_url"]          # the original, until the preview pass has been
+    if c["path"]:
+        c["filename"] = Path(c["path"]).name
+    _merge_preview(c, ov)
     c["editable_text"] = c["kind"] in TEXT_KINDS or (c["source_kind"] in ("draft_html", "legacy_item"))
     return c
+
+
+#: What the preview pass learned that the card shows: the keys copied onto ``details``.
+DETAIL_KEYS = ("bytes", "width", "height", "duration_s", "pages", "model", "prompt", "sources", "snippet",
+               "words", "count", "filename", "strip", "browser", "error", "format")
+#: A title that came from the filename gives way to the one the file itself carries.
+FILENAME_TITLED = ("creation", "document", "daily_file", "comfy", "timeline")
+
+
+def _merge_preview(c: Dict[str, Any], ov: Any) -> None:
+    """Thumbnail, strip, dimensions, duration, pages, provenance and a real
+    title from the preview cache (services/media_previews.py); nothing when
+    the pass has not been yet."""
+    try:
+        from agent_friday.services import media_previews as mp
+        d = mp.details(c)
+    except Exception:
+        return
+    if not d:
+        return
+    det = {k: d.get(k) for k in DETAIL_KEYS if d.get(k) not in (None, "", [])}
+    c["details"] = det
+    try:
+        if mp.image_path(c):
+            c["thumb"] = "/api/media/" + c["id"] + "/preview"
+        if d.get("strip") and mp.strip_path(c):
+            c["strip"] = "/api/media/" + c["id"] + "/strip"
+    except Exception:
+        pass
+    if d.get("duration_s") and not c.get("duration"):
+        s_ = int(float(d["duration_s"])); c["duration"] = f"{s_ // 60}:{s_ % 60:02d}"
+        c.setdefault("extra", {})["duration_s"] = d["duration_s"]
+    if d.get("pages") and not c.get("pages"):
+        c["pages"] = d["pages"]
+    if d.get("words") and not c.get("words"):
+        c["words"] = d["words"]
+    overridden = ov is not None and ov["title"] not in (None, "")
+    if d.get("title_guess") and not overridden and c["source_kind"] in FILENAME_TITLED:
+        c["title"] = str(d["title_guess"])
 
 
 def _today_bounds() -> Tuple[float, float]:
@@ -989,6 +1037,11 @@ def get(card_id: str) -> Optional[Dict[str, Any]]:
                 rels.append({"id": other, "how": how, "title": t["title"] if t else other})
             c["relations"] = rels
             c["body"] = _read_body(c, r["text"] or "")
+            try:
+                from agent_friday.services import media_previews as mp
+                c["peaks"] = (mp.details(c) or {}).get("peaks") or []
+            except Exception:
+                c["peaks"] = []
             return c
         finally:
             con.close()
