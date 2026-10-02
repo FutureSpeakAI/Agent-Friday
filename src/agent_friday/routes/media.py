@@ -5,13 +5,14 @@
 | /api/media                             | GET    | cards for a view, with filters, counts, projects  |
 | /api/media                             | POST   | a new card Media owns (idea or draft)             |
 | /api/media/calendar                    | GET    | timed cards between ?from and ?to                 |
-| /api/media/reindex                     | POST   | walk the roots again                              |
+| /api/media/reindex                     | POST   | walk the roots again, now, and wait               |
+| /api/media/status                      | GET    | built, building, or fresh; the progress count     |
 | /api/media/<id>                        | GET    | one card, its relations and its text              |
 | /api/media/<id>                        | PATCH  | status (never published), project, title, when   |
 | /api/media/<id>                        | DELETE | the card (a file stays; Files 3D deletes files)   |
 | /api/media/<id>/body                   | PUT    | the text                                          |
 | /api/media/<id>/publish                | POST   | raises the one approval card                      |
-| /api/media/<id>/unpublish              | POST   | back to a draft on this PC                        |
+| /api/media/<id>/unpublish              | POST   | back to draft, or to kept for a thing made here   |
 | /api/media/<id>/turn-into              | POST   | a new card made from this one                     |
 | /api/media/<id>/file                   | GET    | the file behind a file-backed card                |
 | /api/media/<id>/render/<n>             | GET    | a document's rendered page                        |
@@ -50,7 +51,11 @@ def _json() -> dict:
 
 @media_bp.route('/api/media', methods=['GET'])
 def media_list():
+    """Every list checks the index is fresh: built now if it never was (in the
+    background, so the page shows progress rather than waiting), refreshed when
+    a source folder changed since the last pass. ``indexing`` carries that state."""
     a = request.args
+    indexing = mi.ensure_fresh("open")
     try:
         limit = int(a.get('limit', 200))
     except ValueError:
@@ -62,6 +67,7 @@ def media_list():
         sort=a.get('sort', 'next') or 'next', limit=limit, offset=int(a.get('offset', 0) or 0),
     )
     res["status"] = "ok"
+    res["indexing"] = indexing
     return jsonify(res)
 
 
@@ -82,7 +88,12 @@ def media_calendar():
 
 @media_bp.route('/api/media/reindex', methods=['POST'])
 def media_reindex():
-    return jsonify({"status": "ok", "counts": mi.reindex()})
+    return jsonify({"status": "ok", "counts": mi.reindex("asked")})
+
+
+@media_bp.route('/api/media/status', methods=['GET'])
+def media_status():
+    return jsonify({"status": "ok", "indexing": mi.status()})
 
 
 @media_bp.route('/api/media/<card_id>', methods=['GET'])

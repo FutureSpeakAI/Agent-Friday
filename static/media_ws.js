@@ -45,8 +45,11 @@
   const STATUSES = [
     ['idea', 'Idea'], ['draft', 'Draft'], ['review', 'In review'], ['scheduled', 'Scheduled'], ['published', 'Published']
   ];
-  const STATUS_WORD = Object.fromEntries(STATUSES);
-  const STATUS_PILL = { idea: 'md-pill-dim', draft: 'md-pill-working', review: 'md-pill-needs-you', scheduled: 'md-pill-neutral', published: 'md-pill-ok' };
+  // The sixth word is not a lane: "kept" is a thing that was made and stays on
+  // this PC, finished and never shown as published unless it actually went somewhere.
+  const KEPT = ['kept', 'Kept'];
+  const STATUS_WORD = Object.fromEntries(STATUSES.concat([KEPT]));
+  const STATUS_PILL = { idea: 'md-pill-dim', draft: 'md-pill-working', review: 'md-pill-needs-you', scheduled: 'md-pill-neutral', published: 'md-pill-ok', kept: 'md-pill-neutral' };
   const KIND_WORD = {
     draft: 'Draft', article: 'Article', episode: 'Episode', imageset: 'Image set', image: 'Image', video: 'Video',
     page: 'Page', chart: 'Chart', doc: 'Document', deck: 'Deck', sheet: 'Sheet', post: 'Post', code: 'Codebase',
@@ -169,7 +172,7 @@
   }
 
   // ── data ─────────────────────────────────────────────────────────────────
-  const DEFAULT_VIEWS = [['today', 'Today'], ['progress', 'In progress'], ['review', 'Needs you'], ['published', 'Published'], ['all', 'Everything']];
+  const DEFAULT_VIEWS = [['today', 'Today'], ['progress', 'In progress'], ['review', 'Needs you'], ['published', 'Published'], ['kept', 'Kept here'], ['all', 'Everything']];
   const TYPE_GROUPS = [
     ['draft', 'Drafts'], ['article', 'Articles'], ['post', 'Posts'], ['episode', 'Episodes'], ['imageset', 'Images'],
     ['video', 'Video'], ['audio', 'Audio and music'], ['deck', 'Decks and documents'], ['chart', 'Charts and data'],
@@ -188,16 +191,25 @@
     return p.toString();
   }
   function useCards(filters) {
-    const [state, setState] = useState({ cards: [], counts: {}, projects: [], loading: true, error: null });
+    const [state, setState] = useState({ cards: [], counts: {}, projects: [], loading: true, error: null, indexing: null });
     const key = buildQuery(filters);
     const reload = useCallback(() => {
       setState(s => Object.assign({}, s, { loading: true }));
       json('/api/media?' + key).then(d => {
-        if (d.status !== 'ok') { setState({ cards: [], counts: {}, projects: [], loading: false, error: d.message || 'Media could not load.' }); return; }
-        setState({ cards: d.cards || [], counts: d.counts || {}, projects: d.projects || [], loading: false, error: null });
-      }).catch(() => setState({ cards: [], counts: {}, projects: [], loading: false, error: 'Media could not load.' }));
+        if (d.status !== 'ok') { setState({ cards: [], counts: {}, projects: [], loading: false, error: d.message || 'Media could not load.', indexing: null }); return; }
+        setState({ cards: d.cards || [], counts: d.counts || {}, projects: d.projects || [], loading: false, error: null, indexing: d.indexing || null });
+      }).catch(() => setState({ cards: [], counts: {}, projects: [], loading: false, error: 'Media could not load.', indexing: null }));
     }, [key]);
     useEffect(() => { reload(); }, [reload]);
+    // While the library is being indexed the list is asked again every little
+    // while, so the count grows on screen and the grid fills when it is done.
+    const building = !!(state.indexing && state.indexing.state === 'indexing');
+    const soFar = state.indexing ? state.indexing.indexed : 0;
+    useEffect(() => {
+      if (!building) return undefined;
+      const t = setTimeout(reload, 1500);
+      return () => clearTimeout(t);
+    }, [building, soFar, reload]);
     useEffect(() => {
       const on = () => reload();
       window.addEventListener('friday:media-changed', on);
@@ -309,6 +321,7 @@
         layout === '3d' ? h(window.MediaFiles3D || Placeholder, null) :
         h('div', { className: 'md-stage-wrap' },
           state.error ? h('div', { className: 'md-empty', role: 'alert' }, h('b', null, state.error), h('br'), 'Try again in a moment.') :
+          cards.length === 0 && state.indexing && state.indexing.state === 'indexing' ? h('div', { className: 'md-empty', role: 'status', 'aria-live': 'polite' }, h('b', null, 'Indexing your library…'), h('br'), (state.indexing.indexed || 0) + ' so far. Everything Friday has made on this PC is being listed; this only takes a moment.') :
           !state.loading && cards.length === 0 ? h('div', { className: 'md-empty' }, h('b', null, 'Nothing here.'), h('br'), 'Pick another view on the left, or press ', h('kbd', null, 'N'), ' for a new card.') :
           h('div', { className: 'md-grid' + (layout === 'list' ? ' list' : ''), role: 'listbox', 'aria-label': 'Cards', 'aria-busy': state.loading ? 'true' : 'false' },
             cards.map(c => h(Card, { key: c.id, c, selected: c.id === sel, onSelect: x => setSel(x.id), onOpen }))),
@@ -352,7 +365,14 @@
     const tabState = window.useTabState || window.fridayUseTabState;
     if (tabState) tabState('media', () => (card ? { view: 'card', card } : { view, q: filters.q || undefined, kind: filters.kind || undefined, default_view: filters.view }));
 
-    const openCard = useCallback(c => { setCard(c.id); }, []);
+    // A routine show's episode is listed so nothing is missing, but it is News's:
+    // opening it goes to the show's tab in News, never into Media's editor.
+    const NEWS_TAB = { front_page: 'frontpage', briefing: 'briefings', weekly: 'weekly', editorial: 'editorial' };
+    const openCard = useCallback(c => {
+      const routine = c.origin === 'routine' && c.extra && c.extra.routine;
+      if (routine && window.fridayNavigate) { window.fridayNavigate({ workspace: 'news', tab: NEWS_TAB[routine] || 'frontpage' }); return; }
+      setCard(c.id);
+    }, []);
     // A card opened from anywhere (a relation link, a "turn this into…" result, a notification).
     useEffect(() => { window.fridayMediaOpen = id => { setCard(id); setView('library'); }; return () => { if (window.fridayMediaOpen) delete window.fridayMediaOpen; }; }, []);
     const onAction = useCallback((what, c) => {
@@ -379,7 +399,7 @@
       h('h2', null, 'Media'),
       h('div', { className: 'md-seg', role: 'tablist', 'aria-label': 'Views' },
         VIEWS.map(v => h('button', { key: v[0], role: 'tab', className: 'btn' + (view === v[0] && !card ? ' active' : ''), 'aria-selected': view === v[0] && !card, 'aria-pressed': view === v[0] && !card, onClick: () => { setCard(null); setView(v[0]); } }, v[1]))),
-      h('span', { className: 'md-count' }, (counts.all != null ? counts.all + ' pieces of work' : '') + (counts.progress != null ? ' · ' + counts.progress + ' in progress' : '') + (counts.published != null ? ' · ' + counts.published + ' published' : '')),
+      h('span', { className: 'md-count' }, (counts.all != null ? counts.all + ' pieces of work' : '') + (counts.progress != null ? ' · ' + counts.progress + ' in progress' : '') + (counts.published != null ? ' · ' + counts.published + ' published' : '') + (counts.kept ? ' · ' + counts.kept + ' kept here' : '')),
       h('span', { className: 'md-spacer' }),
       h('button', { className: 'btn' + (view === 'insights' && !card ? ' active' : ''), 'aria-pressed': view === 'insights' && !card, title: 'How published cards did, and the best times to post', onClick: () => { setCard(null); setView('insights'); } }, 'Insights'),
       h('button', { className: 'btn', title: 'Open Media in its own tab', onClick: () => window.fridayOpenWorkspaceTab && window.fridayOpenWorkspaceTab('media', card ? { view: 'card', card } : { view }) }, '⧉ Own tab'),
@@ -471,7 +491,7 @@
           h('option', { value: '' }, 'All projects'), (state.projects || []).map(p => h('option', { key: p.name, value: p.name }, p.name))),
         h('select', { 'aria-label': 'Type', value: kind, onChange: e => setKind(e.target.value) },
           h('option', { value: '' }, 'All types'), TYPE_GROUPS.map(t => h('option', { key: t[0], value: t[0] }, t[1]))),
-        h('span', { className: 'md-count' }, 'Drag a card to the next stage. Into Scheduled asks when; into Published always asks you first, because it leaves this computer.')),
+        h('span', { className: 'md-count' }, 'Drag a card to the next stage. Into Scheduled asks when; into Published always asks you first, because it leaves this computer.' + (state.counts && state.counts.kept ? ' ' + state.counts.kept + ' finished pieces are kept in the Library, outside the pipeline.' : ''))),
       h('div', { className: 'md-board', 'aria-label': 'Pipeline by status', 'aria-busy': state.loading ? 'true' : 'false' },
         STATUSES.map(s => {
           const col = cards.filter(c => c.status === s[0]);
@@ -706,6 +726,7 @@
         h('div', { className: 'md-strip', role: 'group', 'aria-label': 'Status' },
           h('span', { className: 'md-label', style: { marginRight: 4 } }, 'Status'),
           STATUSES.map(s => h('button', { key: s[0], className: 'btn' + (c.status === s[0] ? ' active' : ''), 'aria-pressed': c.status === s[0], onClick: () => setStatus(s[0]) }, s[1])),
+          c.status === 'kept' ? pill('md-pill-neutral', 'Kept on this PC') : null,
           c.held ? pill('md-pill-needs-you', 'Held for you') : null,
           c.targets && c.targets.length ? h('span', { className: 'md-count' }, '→ ' + c.targets.join(', ')) : null),
         h('div', { className: 'md-stage' }, h(Stage, { c, body, setBody, saved })),
@@ -785,12 +806,13 @@
       sorts: {
         newest: { label: 'Newest', cmp: (a, b) => (b.when_ts || 0) - (a.when_ts || 0) },
         title: { label: 'Title', cmp: by(c => String(c.title || '').toLowerCase()) },
-        status: { label: 'Status', cmp: by(c => ['review', 'draft', 'idea', 'scheduled', 'published'].indexOf(c.status)) }
+        status: { label: 'Status', cmp: by(c => ['review', 'draft', 'idea', 'scheduled', 'published', 'kept'].indexOf(c.status)) }
       },
       filters: [
         { id: 'progress', label: 'In progress', test: c => c.status === 'draft' || c.status === 'review' },
         { id: 'needs', label: 'Needs you', test: c => c.status === 'review' || !!c.held },
         { id: 'published', label: 'Published', test: c => c.status === 'published' },
+        { id: 'kept', label: 'Kept here', test: c => c.status === 'kept' },
         { id: 'unsigned', label: 'Unsigned', test: c => !c.signed }
       ],
       groupings: {
@@ -819,14 +841,14 @@
 
   // Shared helpers for the other views (board, calendar, card), defined in this file's siblings.
   window.MediaWS = MediaWS;
-  window.__media = { h, api, json, post, toast, STATUSES, STATUS_WORD, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
+  window.__media = { h, api, json, post, toast, STATUSES, KEPT, STATUS_WORD, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
 
   // Navigation: the views the dock, the palette and navigate_to may name.
   (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['media', {
     key: 'view',
     keys: ['view', 'card', 'q', 'kind', 'project', 'default_view', 'status'],
     sections: [
-      { id: 'library', label: 'Library', aliases: ['cards', 'everything', 'gallery', 'creations'] },
+      { id: 'library', label: 'Library', aliases: ['cards', 'everything', 'gallery', 'creations', 'kept', 'library'] },
       { id: 'board', label: 'Pipeline', aliases: ['pipeline', 'board', 'kanban', 'stages', 'drafts', 'queue'] },
       { id: 'calendar', label: 'Calendar', aliases: ['schedule', 'scheduled', 'published'] },
       { id: 'card', label: 'Card', aliases: ['editor', 'open'] }

@@ -1,6 +1,7 @@
 # Media: one home for everything Friday makes or helps make
 
-> **Status:** built on branch `feat/media-workspace` over `feat/unified-shell`, not yet on main:
+> **Status:** on main since `b0e5a7ed`; the self-building index, the "kept" status and the
+> complete source walk (§4.3) are on branch `fix/media-index-fresh` over main `62243240`:
 > the Studio tab-width fix (§1.6), the card index and routes (§4.2), the Library with its
 > grid, list and 3D layouts, the Pipeline board with the publish gate, the Calendar view and
 > the Calendar workspace's Media layer (D6), the editor frame with "turn this into…" for
@@ -285,8 +286,10 @@ is retired.
 ### 3.6 The podcast session
 
 "The routine shows stay in News on their runs; the player is mine." The questioning kept
-that line exactly: a routine episode is never a card; a user episode is a card of kind
-`episode`; search may find a routine episode and links into News.
+that line: a user episode is a card of kind `episode`; a routine episode is listed as a
+card too, so the library is complete and nothing is silently missing, but it is marked
+`origin: routine`, its source names the News run that made it, and opening it goes to the
+show's tab in News, never into Media's editor. The player stays News's.
 
 ### 3.7 The UI session, building the shell
 
@@ -357,8 +360,24 @@ event and on a timer. `GET /api/media?q=&kind=&status=&project=&privacy=&since=&
 | In review (badge: held for you) | review | HELD, and a card awaiting approval | — |
 | Scheduled | scheduled | SCHEDULED, PUBLISHING | — |
 | Published (badges: partial, failed) | published | PUBLISHED, PARTIAL, FAILED | — |
+| Kept (made and kept on this PC; not a lane) | — | — | every creation, document, ready episode, render or daily file without a publication record |
 
 CANCELLED cards return to Draft with a note. The mapping is a table in code with a test.
+"Kept" is the sixth word: a finished thing that stays on this PC. It is never shown as
+published; only a provenance manifest that records where it went (or the content store's
+receipt) moves a card into Published, so the Published view is honest. The Library's rail
+has a "Kept here" view beside Published; the board's five lanes stay five.
+
+The index builds itself. It is built in the background at server start, checked for
+freshness on every list (a cheap signature: each source root's and its first-level
+folders' mtimes, no file read), rebuilt when a source changed, and re-checked on a slow
+periodic pass. While it builds, the Library says "Indexing your library… N so far" and asks
+again until it is done; it never shows a silent empty grid over a full creations folder.
+Every source is walked: the creations folder, the office documents, every podcast episode
+(user and routine), Draft copies, the legacy kanban, v2 posts, Media's own cards, the daily
+creations folder, timelines, pipeline runs, creative projects and ComfyUI's output folder.
+A file whose type the index has no word for is a generic file card, never a gap.
+`tests/api/test_media_index_fresh.py` is the proof.
 
 ### 4.4 Three views of the same cards
 
@@ -405,8 +424,9 @@ same tools as the buttons; publish is a card, read aloud; "yes, but" becomes "ch
 
 - **News** is reading. Editions and the four routine shows stay there, on their runs.
   "Share to draft" makes a card of kind `draft` with the story as a source; the seed file
-  becomes that card's source record. A Media search can find a routine episode or an
-  edition; the result says "In News" and opens it there.
+  becomes that card's source record. A routine episode is listed as a card (origin
+  `routine`, source "News · show · run") so the library is complete; opening it goes to
+  the show's tab in News, and its player stays there.
 - **The Salon** is the IDE. A repo the Salon makes is a card of kind `code` with its status
   and last run; Open goes to the Salon; publish receipts from the Salon write onto the card.
 - **Knowledge** keeps the wiki; a card can be sent there.

@@ -87,6 +87,36 @@ def test_the_five_statuses_are_the_one_vocabulary():
     assert ids == ["idea", "draft", "review", "scheduled", "published"]
 
 
+def test_kept_is_the_sixth_word_and_not_a_lane():
+    """A thing made and kept on this PC is "kept": it has a word, a pill and a
+    rail view, and the board's five lanes stay five."""
+    assert "const KEPT = ['kept', 'Kept']" in JS
+    assert "STATUS_WORD = Object.fromEntries(STATUSES.concat([KEPT]))" in JS
+    assert "['kept', 'Kept here']" in JS
+    assert "kept: 'md-pill-neutral'" in JS
+
+
+def test_a_routine_episode_card_opens_in_news():
+    """The routine shows' episodes are listed so nothing is missing; opening one
+    goes to its show's tab in News, never into Media's editor (spec §4.8)."""
+    assert "const NEWS_TAB = { front_page: 'frontpage', briefing: 'briefings', weekly: 'weekly', editorial: 'editorial' }" in JS
+    assert "window.fridayNavigate({ workspace: 'news', tab: NEWS_TAB[routine] || 'frontpage' })" in JS
+    assert re.search(r"id: 'frontpage'", INDEX) and re.search(r"id: 'briefings'", INDEX)
+
+
+def test_the_library_says_it_is_indexing_and_never_shows_a_silent_empty_grid():
+    """While the index builds the grid says so with a count, and asks again
+    until it is done; the server's list carries that state."""
+    assert "Indexing your library" in JS
+    assert "state.indexing.state === 'indexing'" in JS
+    assert "(state.indexing.indexed || 0) + ' so far." in JS
+    assert "setTimeout(reload, 1500)" in JS
+    routes = (ROOT / "src" / "agent_friday" / "routes" / "media.py").read_text(encoding="utf-8")
+    assert 'mi.ensure_fresh("open")' in routes and 'res["indexing"] = indexing' in routes
+    server = (ROOT / "src" / "agent_friday" / "server.py").read_text(encoding="utf-8")
+    assert "_media_index.start_background()" in server, "the index builds at boot, beside the other daemons"
+
+
 def test_the_root_fills_the_frame_and_sets_no_width_of_its_own():
     assert "className: 'md-root ws-fill'" in JS
     root_rule = re.search(r"\.md-root\{([^}]*)\}", JS).group(1)

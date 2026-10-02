@@ -41,8 +41,12 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import agent_friday.core as core
 
-STATUSES = ("idea", "draft", "review", "scheduled", "published")
-STATUS_WORD = {"idea": "Idea", "draft": "Draft", "review": "In review", "scheduled": "Scheduled", "published": "Published"}
+STATUSES = ("idea", "draft", "review", "scheduled", "published", "kept")
+STATUS_WORD = {"idea": "Idea", "draft": "Draft", "review": "In review", "scheduled": "Scheduled", "published": "Published", "kept": "Kept"}
+#: The five pipeline stages are the board's lanes. "kept" is the sixth word for a
+#: thing that was made and stays on this PC: finished, not in a pipeline, and
+#: never shown as published unless it actually went somewhere.
+STAGES = STATUSES[:5]
 
 #: The legacy Ideas kanban's stages, onto the five.
 LEGACY_STAGE = {"idea": "idea", "drafting": "draft", "review": "review", "scheduled": "scheduled", "published": "published"}
@@ -54,7 +58,7 @@ V2_STATUS: Dict[str, Tuple[str, Optional[str]]] = {
 }
 #: A podcast episode's status, onto the five plus a badge.
 EPISODE_STATUS: Dict[str, Tuple[str, Optional[str]]] = {
-    "ready": ("published", None), "failed": ("draft", "failed"), "cancelled": ("draft", "cancelled"),
+    "ready": ("kept", None), "failed": ("draft", "failed"), "cancelled": ("draft", "cancelled"),
 }
 
 KIND_BY_SUFFIX = {
@@ -68,10 +72,19 @@ KIND_BY_SUFFIX = {
 KIND_WORD = {
     "draft": "Draft", "article": "Article", "episode": "Episode", "image": "Image", "imageset": "Image set",
     "video": "Video", "page": "Page", "chart": "Chart", "doc": "Document", "deck": "Deck", "sheet": "Sheet",
-    "post": "Post", "code": "Codebase", "music": "Music", "audio": "Audio", "model3d": "3D", "file": "File",
+    "post": "Post", "code": "Codebase", "music": "Music", "audio": "Audio", "model3d": "3D", "file": "File", "timeline": "Cut",
 }
 TEXT_KINDS = ("draft", "article", "doc")
 _LOCK = threading.RLock()
+
+#: What the page reads while the library builds: never a silent empty grid.
+_STATE: Dict[str, Any] = {"state": "never", "started": None, "finished": None, "indexed": 0,
+                          "counts": {}, "signature": None, "checked": 0.0, "reason": ""}
+_FRESH_LOCK = threading.Lock()
+#: How often a request may recompute the cheap change signature.
+CHECK_EVERY_S = 5.0
+#: The background pass, when the server runs: a cheap signature check, a scan only on change.
+PERIODIC_S = 120.0
 
 
 # ── paths ───────────────────────────────────────────────────────────────────
@@ -185,6 +198,7 @@ def _card(**f: Any) -> Dict[str, Any]:
 
 
 def _upsert(con: sqlite3.Connection, c: Dict[str, Any]) -> None:
+    _STATE["indexed"] = int(_STATE.get("indexed") or 0) + 1
     con.execute(
         """INSERT INTO cards (id, kind, title, path, source_kind, source_ref, origin, created, modified, when_ts,
              status, badges, held, maker, on_this_pc, sources, signed, hash, privacy, published_at, targets, project,
@@ -270,9 +284,9 @@ def _scan_creations(con: sqlite3.Connection) -> int:
             id=_id_for("creation", rel), kind=kind, title=_title_from_name(name), path=str(p),
             source_kind="creation", source_ref=rel, origin="daily" if "daily" in name.lower() else "create",
             created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime,
-            status="published", badges=[], maker=(maker + " · this PC") if maker else "Friday · this PC",
+            status="published" if where else "kept", badges=[], maker=(maker + " · this PC") if maker else "Friday · this PC",
             sources=sources, signed=signed, hash=h,
-            privacy="published" if where else "private", published_at=where or "Kept on this PC",
+            privacy="published" if where else "private", published_at=where,
             text=(p.read_text(encoding="utf-8", errors="ignore")[:20000] if suffix in (".md", ".txt") else ""),
             extra={"suffix": suffix, "bytes": st.st_size, "meta": {k: v for k, v in meta.items() if k in ("kind", "model", "aspect_ratio", "duration_seconds")}},
         )
@@ -306,10 +320,10 @@ def _scan_documents(con: sqlite3.Connection) -> int:
         c = _card(
             id=_id_for("document", p.name), kind=KIND_BY_SUFFIX.get(p.suffix.lower(), "doc"), title=_title_from_name(p.name),
             path=str(p), source_kind="document", source_ref=p.name, origin="office",
-            created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status="published",
+            created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status="published" if where else "kept",
             maker="Office engine · this PC", sources=[str(made_by.get("from") or made_by.get("prompt") or "")[:120]] if made_by else [],
             signed=signed or bool(made_by), hash=h, privacy="published" if where else "private",
-            published_at=where or "Kept on this PC",
+            published_at=where,
             extra={"renders": renders, "pages": len(renders) or None},
         )
         _upsert(con, c)
@@ -325,10 +339,14 @@ def _scan_podcasts(con: sqlite3.Connection) -> int:
         return 0
     n = 0
     for ep in eps:
-        if (ep.get("origin") or "user") != "user":
-            continue  # the routine shows belong to News, on their runs
+        routine = (ep.get("origin") or "user") != "user"
         status, badge = EPISODE_STATUS.get(ep.get("status") or "", ("draft", "working"))
         srcs = [str(s.get("title") or s.get("kind") or "") for s in (ep.get("sources") or [])] or []
+        att = ep.get("attached") or {}
+        if routine:
+            # A News show's episode: it is listed here so nothing is missing, it
+            # opens on its News run, and its source is the run that made it.
+            srcs = ["News · " + str(ep.get("show") or att.get("routine") or "show") + (" · " + str(att.get("run_id")) if att.get("run_id") else "")] + srcs
         if not srcs and ep.get("source_count"):
             srcs = [f"{ep['source_count']} source(s)"]
         created = float(ep.get("created_at") or 0) or None
@@ -342,13 +360,14 @@ def _scan_podcasts(con: sqlite3.Connection) -> int:
         text = " ".join(str(l.get("text") or "") for l in (full.get("lines") or [])[:80])[:20000]
         c = _card(
             id=_id_for("episode", ep["id"]), kind="episode", title=ep.get("title") or ep.get("show") or "Episode",
-            path=str(pe.root() / ep["id"]), source_kind="episode", source_ref=ep["id"], origin="create",
+            path=str(pe.root() / ep["id"]), source_kind="episode", source_ref=ep["id"], origin="routine" if routine else "create",
             created=created, modified=float(ep.get("updated_at") or created or 0) or None, when_ts=created,
             status=status, badges=[badge] if badge else [], maker=("Local model · " + str(ep.get("voice_engine") or "local") + " · this PC"),
             sources=[s for s in srcs if s], signed=bool(prov.get("signed")), hash=str(prov.get("content_hash") or ""),
-            privacy="published" if ep.get("privacy") == "public" else "private",
-            published_at="Kept on this PC" if status == "published" else None, text=text,
-            extra={"duration_s": ep.get("duration_s"), "show": ep.get("show"), "stage": ep.get("stage_detail"), "chapters": ep.get("chapters") or []},
+            privacy="shared" if ep.get("privacy") == "public" else "private",
+            published_at=None, text=text,
+            extra={"duration_s": ep.get("duration_s"), "show": ep.get("show"), "stage": ep.get("stage_detail"), "chapters": ep.get("chapters") or [],
+                   "routine": att.get("routine") if routine else None, "run_id": att.get("run_id") if routine else None},
         )
         _upsert(con, c)
         n += 1
@@ -477,6 +496,147 @@ def _scan_posts(con: sqlite3.Connection) -> int:
     return n
 
 
+def _scan_folder(con: sqlite3.Connection, root: Path, source_kind: str, origin: str, maker: str,
+                 skip_suffixes=(".json", ".jsonl", ".tmp", ".part", ".pt", ".ckpt", ".safetensors")) -> int:
+    """Every file under a folder Friday writes into becomes a card; an unknown
+    type is a generic file card, never skipped. The first folder below the
+    root names the project."""
+    if not root.exists():
+        return 0
+    n = 0
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or p.name.startswith(".") or p.suffix.lower() in skip_suffixes:
+            continue
+        rel = p.relative_to(root).as_posix()
+        kind = KIND_BY_SUFFIX.get(p.suffix.lower(), "file")
+        st = p.stat()
+        signed, h, where = _provenance(p)
+        project = rel.split("/")[0] if "/" in rel else None
+        c = _card(
+            id=_id_for(source_kind, rel), kind=kind, title=_title_from_name(p.name), path=str(p),
+            source_kind=source_kind, source_ref=rel, origin=origin, created=st.st_ctime, modified=st.st_mtime,
+            when_ts=st.st_mtime, status="published" if where else "kept", maker=maker, sources=[],
+            signed=signed, hash=h, privacy="published" if where else "private", published_at=where,
+            project=project, text=(p.read_text(encoding="utf-8", errors="ignore")[:20000] if p.suffix.lower() in (".md", ".txt") else ""),
+            extra={"suffix": p.suffix.lower(), "bytes": st.st_size},
+        )
+        _upsert(con, c)
+        n += 1
+    return n
+
+
+def _scan_daily(con: sqlite3.Connection) -> int:
+    """~/.friday/creations: the daily-creation records are materialised into the
+    creations folder already; what is indexed here is every media or text file
+    a tool wrote beside them (read-aloud audio, saved outputs, project folders)."""
+    return _scan_folder(con, Path(core.DAILY_CREATIONS_DIR), "daily_file", "chat", "Friday · this PC")
+
+
+def _scan_comfy(con: sqlite3.Connection) -> int:
+    try:
+        from agent_friday.services.local_image import comfy_root
+        out = comfy_root() / "output"
+    except Exception:
+        return 0
+    return _scan_folder(con, out, "comfy", "create", "ComfyUI · this PC")
+
+
+def _json(p: Path) -> Dict[str, Any]:
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _scan_timelines(con: sqlite3.Connection) -> int:
+    """~/.friday/timelines: each cut is a card; its output video, when it is in
+    the creations folder, is related as turned_into."""
+    root = Path(core.FRIDAY_DIR) / "timelines"
+    if not root.exists():
+        return 0
+    n = 0
+    for p in sorted(root.glob("*.json")):
+        d = _json(p)
+        st = p.stat()
+        title = str(d.get("title") or d.get("name") or _title_from_name(p.name))
+        clips = d.get("clips") or d.get("items") or d.get("tracks") or []
+        names = []
+        for cl in clips if isinstance(clips, list) else []:
+            if isinstance(cl, dict):
+                nm = cl.get("file") or cl.get("path") or cl.get("name") or cl.get("src")
+                if nm:
+                    names.append(Path(str(nm)).name)
+        c = _card(
+            id=_id_for("timeline", p.name), kind="timeline", title=title, path=str(p), source_kind="timeline", source_ref=p.name,
+            origin="create", created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status="kept",
+            maker="Timeline (FFmpeg) · this PC", sources=names[:12], signed=False, privacy="private",
+            text=" ".join(names)[:20000], extra={"clips": len(names), "output": d.get("output") or d.get("output_file")},
+        )
+        _upsert(con, c)
+        out = d.get("output") or d.get("output_file")
+        if out:
+            _relate(con, c["id"], _id_for("creation", Path(str(out)).name), "turned_into")
+        for nm in names:
+            _relate(con, c["id"], _id_for("creation", nm), "made_from")
+        n += 1
+    return n
+
+
+def _scan_pipeline_runs(con: sqlite3.Connection) -> int:
+    """~/.friday/pipelines/runs: a production run is a card whose text is what
+    its stages wrote (script, storyboard, shot list)."""
+    root = Path(core.FRIDAY_DIR) / "pipelines" / "runs"
+    if not root.exists():
+        return 0
+    n = 0
+    for p in sorted(root.glob("*.json")):
+        d = _json(p)
+        st = p.stat()
+        name = str(d.get("template") or d.get("pipeline") or d.get("name") or "production run")
+        title = str(d.get("title") or d.get("brief") or name)[:120]
+        parts = []
+        for stage in (d.get("stages") or d.get("steps") or []):
+            if isinstance(stage, dict):
+                out = stage.get("output") or stage.get("result") or stage.get("text")
+                if isinstance(out, str):
+                    parts.append(out)
+        status = {"done": "kept", "complete": "kept", "completed": "kept", "failed": "draft", "running": "draft"}.get(str(d.get("status") or "").lower(), "kept")
+        c = _card(
+            id=_id_for("pipeline_run", p.name), kind="doc", title=title, path=str(p), source_kind="pipeline_run", source_ref=p.name,
+            origin="pipeline", created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status=status,
+            badges=["failed"] if str(d.get("status") or "").lower() == "failed" else [],
+            maker="Production pipeline · this PC", sources=[name], signed=False, privacy="private",
+            text="\n\n".join(parts)[:20000], extra={"template": name, "run_status": d.get("status")},
+        )
+        _upsert(con, c)
+        n += 1
+    return n
+
+
+def _scan_projects(con: sqlite3.Connection) -> int:
+    """~/.friday/projects: a creative project (a series bible) is a card and
+    names the project its cards belong to."""
+    root = Path(core.FRIDAY_DIR) / "projects"
+    if not root.exists():
+        return 0
+    n = 0
+    for p in sorted(root.glob("*/*.json")):
+        d = _json(p)
+        st = p.stat()
+        name = str(d.get("name") or d.get("title") or p.parent.name)
+        text = str(d.get("summary") or d.get("logline") or d.get("premise") or d.get("description") or "")
+        c = _card(
+            id=_id_for("project", p.parent.name + "/" + p.name), kind="doc", title=name, path=str(p), source_kind="project",
+            source_ref=p.parent.name + "/" + p.name, origin="create", created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime,
+            status="kept", maker="You", sources=[], signed=False, privacy="private", project=name,
+            text=(text + "\n" + json.dumps(d, ensure_ascii=False)[:6000])[:20000], extra={"bible": p.name == "bible.json"},
+        )
+        _upsert(con, c)
+        n += 1
+    return n
+
+
 def _scan_media_cards(con: sqlite3.Connection) -> int:
     root = cards_dir()
     if not root.exists():
@@ -502,7 +662,7 @@ def _scan_media_cards(con: sqlite3.Connection) -> int:
             status=status, badges=list((rec.get("extra") or {}).get("badges") or []),
             maker=rec.get("maker") or "You", sources=rec.get("sources") or [],
             signed=signed, hash=h, privacy="private",
-            published_at="Kept on this PC" if (file_p and status == "published") else None,
+            published_at=None,
             project=rec.get("project"), text=text[:20000], extra=rec.get("extra") or {},
         )
         _upsert(con, c)
@@ -512,21 +672,135 @@ def _scan_media_cards(con: sqlite3.Connection) -> int:
     return n
 
 
-def reindex() -> Dict[str, int]:
+def reindex(reason: str = "") -> Dict[str, int]:
     """Walk every root and refresh the cards. Overrides are reapplied; nothing is lost."""
     with _LOCK:
+        _STATE.update({"state": "indexing", "started": time.time(), "indexed": 0, "reason": reason})
         con = _connect()
         try:
             con.execute("UPDATE cards SET present=0")
             counts = {
                 "creations": _scan_creations(con), "documents": _scan_documents(con), "podcasts": _scan_podcasts(con),
                 "drafts": _scan_drafts(con), "legacy": _scan_legacy(con), "posts": _scan_posts(con), "media": _scan_media_cards(con),
+                "daily": _scan_daily(con), "timelines": _scan_timelines(con), "pipeline_runs": _scan_pipeline_runs(con),
+                "projects": _scan_projects(con), "comfy": _scan_comfy(con),
             }
             con.execute("DELETE FROM cards WHERE present=0")
             con.commit()
         finally:
             con.close()
+        # The signature is taken after the pass: the pass itself creates the
+        # podcast root and the media folder, which must not read as a change.
+        _STATE.update({"state": "ready", "finished": time.time(), "counts": counts, "signature": _signature(), "checked": time.time()})
         return counts
+
+
+# ── freshness: the index builds itself and notices change ─────────────────────
+
+def _roots() -> List[Path]:
+    out = [Path(core.CREATIONS_DIR), Path(core.DAILY_CREATIONS_DIR), Path(core.FRIDAY_DIR) / "podcasts",
+           Path(core.FRIDAY_DIR) / "wiki" / "content", Path(core.FRIDAY_DIR) / "content", Path(core.FRIDAY_DIR) / "timelines",
+           Path(core.FRIDAY_DIR) / "pipelines" / "runs", Path(core.FRIDAY_DIR) / "projects", cards_dir()]
+    try:
+        from agent_friday.services import office_engine
+        out.append(Path(office_engine.DOCUMENTS_DIR))
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import content_pipeline as cp
+        out.append(Path(cp.DB_PATH))
+    except Exception:
+        pass
+    return out
+
+
+def _signature() -> Tuple:
+    """A cheap fingerprint of every source: each root's own mtime, the mtime of
+    each folder one level down (a new file changes its folder's mtime), and the
+    size and mtime of the content store. No file is read."""
+    sig: List[Tuple] = []
+    for r in _roots():
+        try:
+            if not r.exists():
+                sig.append((str(r), None)); continue
+            st = r.stat()
+            if r.is_file():
+                sig.append((str(r), st.st_mtime_ns, st.st_size)); continue
+            sig.append((str(r), st.st_mtime_ns))
+            with os.scandir(r) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            sig.append((e.path, e.stat(follow_symlinks=False).st_mtime_ns))
+                    except OSError:
+                        continue
+        except OSError:
+            sig.append((str(r), "err"))
+    return tuple(sig)
+
+
+def status() -> Dict[str, Any]:
+    d = {k: v for k, v in _STATE.items() if k != "signature"}
+    return d
+
+
+def needs_refresh() -> bool:
+    if _STATE["state"] in ("never", "indexing"):
+        return _STATE["state"] == "never"
+    return _signature() != _STATE["signature"]
+
+
+def ensure_fresh(reason: str = "", sync: Optional[bool] = None) -> Dict[str, Any]:
+    """Build the index if it never was, or refresh it when a source changed.
+    Non-blocking by default (a background thread); synchronous under tests or
+    when asked. Throttled: the signature is recomputed at most every few seconds."""
+    if sync is None:
+        sync = bool(os.environ.get("FRIDAY_TESTING"))
+    now = time.time()
+    if _STATE["state"] == "indexing":
+        return status()
+    throttle = 0.0 if sync else CHECK_EVERY_S
+    if _STATE["state"] == "ready" and now - float(_STATE.get("checked") or 0) < throttle:
+        return status()
+    _STATE["checked"] = now
+    if not needs_refresh():
+        return status()
+    if not _FRESH_LOCK.acquire(blocking=False):
+        return status()
+
+    def run() -> None:
+        try:
+            reindex(reason)
+        except Exception as e:
+            _STATE.update({"state": "ready", "finished": time.time(), "error": str(e)[:200]})
+        finally:
+            _FRESH_LOCK.release()
+
+    if sync:
+        run()
+    else:
+        _STATE["state"] = "indexing"
+        threading.Thread(target=run, name="media-index", daemon=True).start()
+    return status()
+
+
+def start_background() -> None:
+    """At server start: build the index without blocking boot, then keep it
+    fresh with a cheap periodic check (a scan only when something changed).
+    Skipped under tests, like every other daemon."""
+    if os.environ.get("FRIDAY_TESTING"):
+        return
+
+    def loop() -> None:
+        time.sleep(3.0)
+        while True:
+            try:
+                ensure_fresh("periodic", sync=True)
+            except Exception:
+                pass
+            time.sleep(PERIODIC_S)
+
+    threading.Thread(target=loop, name="media-index-loop", daemon=True).start()
 
 
 # ── reading ──────────────────────────────────────────────────────────────────
@@ -581,6 +855,8 @@ def _view_sql(view: str) -> Tuple[str, List[Any]]:
         return "(c.status='review' OR c.held=1)", []
     if view == "published":
         return "(c.status='published')", []
+    if view == "kept":
+        return "(c.status='kept')", []
     return "1=1", []
 
 
@@ -610,6 +886,8 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
             return c["status"] == "review" or c["held"]
         if view == "published":
             return c["status"] == "published"
+        if view == "kept":
+            return c["status"] == "kept"
         return True
 
     def r_mod(c: Dict[str, Any]) -> Optional[float]:
@@ -618,17 +896,16 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
 
     # counts over everything, for the rail
     counts: Dict[str, Any] = {"all": len(cards), "kinds": {}, "private": 0, "shared": 0, "unsigned": 0, "no_project": 0}
-    for v in ("today", "progress", "review", "published"):
+    for v in ("today", "progress", "review", "published", "kept"):
         counts[v] = 0
     projects: Dict[str, int] = {}
     for c in cards:
-        for v in ("today", "progress", "review", "published"):
-            saved = view
-            view_local = v
-            if (view_local == "today" and (c["status"] == "review" or c["held"] or (c["when_ts"] and s <= c["when_ts"] < e) or (r_mod(c) and s <= r_mod(c) < e))) \
-               or (view_local == "progress" and c["status"] in ("draft", "review")) \
-               or (view_local == "review" and (c["status"] == "review" or c["held"])) \
-               or (view_local == "published" and c["status"] == "published"):
+        for v in ("today", "progress", "review", "published", "kept"):
+            if (v == "today" and (c["status"] == "review" or c["held"] or (c["when_ts"] and s <= c["when_ts"] < e) or (r_mod(c) and s <= r_mod(c) < e))) \
+               or (v == "progress" and c["status"] in ("draft", "review")) \
+               or (v == "review" and (c["status"] == "review" or c["held"])) \
+               or (v == "published" and c["status"] == "published") \
+               or (v == "kept" and c["status"] == "kept"):
                 counts[v] += 1
         kg = _kind_group(c["kind"])
         counts["kinds"][kg] = counts["kinds"].get(kg, 0) + 1
@@ -659,7 +936,7 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
     if q:
         ql = q.lower().strip()
         out = [c for c in out if ql in (c["title"] + " " + c["maker"] + " " + " ".join(c["sources"]) + " " + (c["project"] or "") + " " + c["_text"]).lower()]
-    order = {"review": 0, "draft": 1, "idea": 2, "scheduled": 3, "published": 4}
+    order = {"review": 0, "draft": 1, "idea": 2, "scheduled": 3, "published": 4, "kept": 5}
     if sort == "newest":
         out.sort(key=lambda c: -(c["when_ts"] or 0))
     elif sort == "title":
@@ -746,9 +1023,7 @@ def calendar(frm: str, to: str) -> List[Dict[str, Any]]:
     for r in rows:
         c = _row_to_card(r, _Ov({"status": r["o_status"], "project": r["o_project"], "title": r["o_title"], "when_ts": r["o_when"], "body_path": r["o_body"], "privacy": r["o_privacy"], "published_at": r["o_pub"]}))
         if c["status"] not in ("published", "scheduled", "review"):
-            continue
-        if c["status"] == "published" and c["source_kind"] in ("creation", "document", "episode") and not (c["published_at"] and c["published_at"] != "Kept on this PC"):
-            continue  # finished-and-kept things are the Library's, not the calendar's
+            continue  # what was made and kept is the Library's, not the calendar's
         if c["when_ts"] and a <= c["when_ts"] < b:
             out.append(c)
     out.sort(key=lambda c: c["when_ts"])
@@ -956,7 +1231,7 @@ def publish(card_id: str, requested_by: str = "user") -> Dict[str, Any]:
     c = get(card_id)
     if c is None:
         return {"status": "not_found"}
-    if c["status"] == "published" and c["source_kind"] not in ("creation", "document", "episode"):
+    if c["status"] == "published":
         return {"status": "ok", "message": "Already published."}
     if c["source_kind"] == "post":
         return _publish_post(c)
@@ -1060,9 +1335,10 @@ def unpublish(card_id: str) -> Dict[str, Any]:
         return {"status": "not_found"}
     if c["source_kind"] == "post":
         return {"status": "denied", "message": "A post that went out is taken down on the platform, not here; the receipt stays on the card."}
-    _set_override(card_id, status="draft", privacy="private", published_at=None)
+    back = "kept" if c["source_kind"] in ("creation", "document", "episode", "daily_file", "comfy", "timeline") or (c["source_kind"] == "media" and c["kind"] not in TEXT_KINDS) else "draft"
+    _set_override(card_id, status=back, privacy="private", published_at=None)
     if c["source_kind"] == "media":
-        _rewrite_media_record(c, status="draft")
+        _rewrite_media_record(c, status=back)
     return {"status": "ok", "card": get(card_id)}
 
 
@@ -1376,7 +1652,7 @@ def read_aloud(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
             except Exception:
                 pass
             _sign(Path(rec["file"]), "audio", [{"kind": "card", "ref": c["id"], "title": c["title"]}], "media.read_aloud")
-            rec["status"] = "published"; rec["extra"] = {"duration_s": seconds, "voice": voice}
+            rec["status"] = "kept"; rec["extra"] = {"duration_s": seconds, "voice": voice}
         except Exception as e:
             rec["status"] = "draft"; rec["extra"] = {"badges": ["failed"], "error": str(e)[:200], "voice": voice}
         _write_media_record(cid, rec)
