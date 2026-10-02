@@ -948,6 +948,7 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         body.chrome-chat .chat-sidebar {
             display: flex; visibility: visible !important;
+            top: var(--fr-topbar-h, 36px);
         }
         /* The panel gives up the width rather than sitting under the column.
            Same reasoning as the dock: a composer you cannot reach is not a
@@ -962,6 +963,17 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .chat-sidebar-scroll {
             flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 6px 10px;
+        }
+        /* The chat tab wears the one top bar (unified-shell.md §4): the bar
+           is the one element of the hidden layer shown again, and the sidebar
+           and the panel start under it, by its own height. */
+        body.chrome-chat .top-bar { visibility: visible !important; }
+        body.chrome-chat .chat-panel,
+        body.chrome-chat .chat-panel.open { top: var(--fr-topbar-h, 36px) !important; height: calc(100vh - var(--fr-topbar-h, 36px)) !important; }
+        /* At phone width the chip keeps its glyph and drops the title, so the
+           model selector stays whole. */
+        @media (max-width: 720px) {
+            body.chrome-chat [data-testid="shell-chat-name"] > span + span { display: none; }
         }
         /* A 268px column on a phone leaves no chat. Below that width the
            sidebar steps aside entirely rather than splitting a screen that
@@ -56240,6 +56252,18 @@ function ApprovalPopups() {
 // The context slot of the top bar in a workspace tab: which workspace this is,
 // the way to it on the desktop (where the scene menu sits on the desktop), and
 // the workspace's own tools, as a desktop window's title bar has them.
+// The chat tab's context slot (unified-shell.md §4): the chat's own title in
+// the chip a workspace tab wears, never the product's name and never hers.
+function ShellChatName({
+  title
+}) {
+  return /*#__PURE__*/React.createElement("span", {
+    className: "ws-tab-name",
+    "data-testid": "shell-chat-name"
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, "\uD83D\uDCAC"), /*#__PURE__*/React.createElement("span", null, title || 'Chat'));
+}
 function ShellTabName({
   ws,
   histOpen,
@@ -60893,19 +60917,31 @@ function App() {
   // and the modals they open (docs/design/active/unified-shell.md). Defined
   // once; the desktop and the tab each draw these same elements.
   const shellTab = STANDALONE_WS && STANDALONE_WS !== 'settings' ? wsInfo[STANDALONE_WS] || null : null;
+  // A chat in its own tab (?chrome=chat) wears the same bar (unified-shell.md
+  // §4): the lockup leads back to the desktop with this chat open, the context
+  // slot names the chat, and the controls whose panels live in the hidden layer
+  // (notifications, Quick Draft, the chat tray, fullscreen, settings) are not
+  // offered; the model selector, the clock and the lights stay.
+  const shellChat = window.__FRIDAY_CHROME__ === 'chat';
+  const shellConv = shellChat ? convList.find(c => c.id === convId) || null : null;
   // A tab's version history: opened by the tools in the bar, shown in the tab.
   const [tabHistOpen, setTabHistOpen] = useState(false);
   const shellMeeting = /*#__PURE__*/React.createElement(MeetingRecIndicator, null);
   const shellTopBar = /*#__PURE__*/React.createElement("div", {
     className: `top-bar ${topBarHidden ? 'hidden' : ''}`,
-    "data-testid": "friday-top-bar"
+    "data-testid": "friday-top-bar",
+    "data-shell-kind": shellChat ? 'chat' : shellTab ? 'tab' : 'desktop'
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
       gap: 8
     }
-  }, /*#__PURE__*/React.createElement(FridayLockup, shellTab ? {
+  }, /*#__PURE__*/React.createElement(FridayLockup, shellChat ? {
+    size: 15,
+    href: '/?conversation=' + encodeURIComponent(convId || ''),
+    title: 'Back to the desktop, with this chat open'
+  } : shellTab ? {
     size: 15,
     href: '/?workspace=' + encodeURIComponent(shellTab.id),
     title: 'Back to the desktop, with this workspace open'
@@ -60925,7 +60961,9 @@ function App() {
   // top bar itself, not this half of it, whose sides clip on a narrow
   // window. With no top or left the menu sits where it would flow, right
   // under the button.
-  shellTab ? /*#__PURE__*/React.createElement(ShellTabName, {
+  shellChat ? /*#__PURE__*/React.createElement(ShellChatName, {
+    title: shellConv && shellConv.title
+  }) : shellTab ? /*#__PURE__*/React.createElement(ShellTabName, {
     ws: shellTab,
     histOpen: tabHistOpen,
     onHistory: () => setTabHistOpen(v => !v)
@@ -61159,7 +61197,7 @@ function App() {
       fontSize: 13,
       userSelect: 'none'
     }
-  }, "|"), !shellTab && orbiting.length > 0 && /*#__PURE__*/React.createElement("button", {
+  }, "|"), !shellTab && !shellChat && orbiting.length > 0 && /*#__PURE__*/React.createElement("button", {
     onClick: clearOrbs,
     disabled: clearingOrbs,
     title: orbiting.length + ' orb(s) in orbit. Clears everything that has '
@@ -61229,7 +61267,7 @@ function App() {
     }
   }, clock.toLocaleTimeString('en-US', {
     hour12: false
-  })), /*#__PURE__*/React.createElement("button", {
+  })), !shellChat && /*#__PURE__*/React.createElement("button", {
     ref: bellRef,
     onClick: toggleNotifs,
     style: {
@@ -61265,7 +61303,7 @@ function App() {
       fontWeight: 700,
       fontFamily: 'Orbitron, sans-serif'
     }
-  }, bellBadgeCount)), /*#__PURE__*/React.createElement("button", {
+  }, bellBadgeCount)), !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: toggleQuickDraft,
     style: {
       background: 'none',
@@ -61280,7 +61318,7 @@ function App() {
     style: {
       fontSize: 13
     }
-  }, "\u270D\uFE0F")), /*#__PURE__*/React.createElement("button", {
+  }, "\u270D\uFE0F")), !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: toggleChat,
     style: {
       background: 'none',
@@ -61295,7 +61333,7 @@ function App() {
     style: {
       fontSize: 13
     }
-  }, "\uD83D\uDCAC")), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCAC")), !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: () => layoutRef.current.toggleLayout(),
     style: {
       background: 'none',
@@ -61308,7 +61346,7 @@ function App() {
     "aria-label": fsOn ? 'Leave fullscreen with chat' : 'Fullscreen with chat',
     "aria-pressed": !!fsOn,
     "data-testid": "fs-chat-toggle"
-  }, '⤢'), !shellTab && /*#__PURE__*/React.createElement("button", {
+  }, '⤢'), !shellTab && !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       if (cameraOn) {
         setCameraControlsOpen(o => !o);
@@ -61347,7 +61385,7 @@ function App() {
     title: ("Computer control ACTIVE \u2014 " + fridayName() + " can move your mouse and type. Press Ctrl+Shift+Q or click STOP to terminate.")
   }, /*#__PURE__*/React.createElement("span", {
     className: "cc-dot"
-  }), /*#__PURE__*/React.createElement("span", null, "CC LIVE")), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("span", null, "CC LIVE")), !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setSettingsOpen(!settingsOpen);
       if (!settingsOpen) setChatOpen(false);

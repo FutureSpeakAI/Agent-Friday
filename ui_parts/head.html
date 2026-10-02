@@ -275,6 +275,18 @@ window.addEventListener('DOMContentLoaded',function(){
            element above. Nothing here sizes or colours a scrollbar. */
 
         /* Top bar — solid-anchored gradient backdrop so text reads against bright scene */
+        /* The undocked chat (?chrome=chat, body.chrome-chat; its block is in index.html) wears
+           the one top bar (unified-shell.md §4): the bar is shown again out of the hidden layer,
+           and the sidebar and the panel start under it, by its own height. */
+        body.chrome-chat .top-bar { visibility: visible !important; }
+        body.chrome-chat .chat-sidebar { top: var(--fr-topbar-h, 36px); }
+        body.chrome-chat .chat-panel,
+        body.chrome-chat .chat-panel.open { top: var(--fr-topbar-h, 36px) !important; height: calc(100vh - var(--fr-topbar-h, 36px)) !important; }
+        /* At phone width the chip keeps its glyph and drops the title, so the
+           model selector stays whole. */
+        @media (max-width: 720px) {
+            body.chrome-chat [data-testid="shell-chat-name"] > span + span { display: none; }
+        }
         .top-bar {
             position: fixed; top: 0; left: 0; right: 0; height: 36px; z-index: 70;
             display: flex; justify-content: space-between; align-items: center;
