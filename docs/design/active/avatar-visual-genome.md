@@ -1999,15 +1999,23 @@ useful?" He approved all eight ideas below.
 The orbs are the helper layer (Layer 2). Each orb is one of Friday's
 helpers, models or background jobs, never Friday herself.
 
-> **Status (2026-10-02):** built and tested: the rules (`FridayOrbLife`), the
-> forms (`FridayOrbForms`), hands-on control and voice actions
-> (`FridayOrbHands`), the day's stars (`FridayOrbSky`), and one helper in its
-> own tab (`TaskFocus`). Not built yet: drawing §16.2's colours and marks and
-> the rest of §16.3's life on the orbs themselves. That waits on the restored
-> orb layer.
+> **Status (2026-10-02):** built and tested:
+> - the rules (`FridayOrbLife`) and the forms (`FridayOrbForms`);
+> - hands-on control and voice actions (`FridayOrbHands`);
+> - what each orb shows, drawn over the orb layer (`FridayOrbScene`);
+> - the day's stars (`FridayOrbSky`);
+> - one helper in its own tab (`TaskFocus`).
+>
+> Not built:
+> - the data-left mark, because a helper's `egress` frames are routed to
+>   Friday's core only;
+> - local versus cloud from a helper's `route` frames, likewise. Until then
+>   the tint comes from the task record (`seat_is_local`, a cloud pin).
 
 **Fixed rules.**
-- An orb never drives Friday's core form.
+- An orb never drives Friday's core form, and neither does a helper's
+  work: her mood no longer turns to EXECUTING because a helper task is
+  running or an orb is on the scene.
 - The routing that feeds the layer is fixed: helper-labelled presence frames
   (P-TURN-ORIGIN) plus the rows of `/api/processes`. Above eight orbs, the
   rest fold into one swarm orb with a count.
@@ -2117,6 +2125,13 @@ to a speech service: a new path for data to leave the machine.
 
 ### 16.4 What the server gives today, and what it needs
 
+**Layout.**
+- New orbs take the next golden-angle slot on one of three tiers, all at
+  one speed, so they and their labels do not pile up.
+- Labels that would overlap move up a line.
+- An orb drifting over the prompt row or the dock, or below the screen
+  where its label would sit on the dock, is lifted clear.
+
 **Built on what exists:**
 - the process rows (`/api/processes`);
 - the task record and digest (result, model, cost, duration, the latest
@@ -2140,8 +2155,16 @@ to a speech service: a new path for data to leave the machine.
 - Sources per task (documents, not reasoning labels).
 - A cost estimate per task before paid work starts. `costs.db` has no task
   id.
-- A task id on egress log rows. The helper's presence frame is enough for
-  the orb's mark; the log is not.
+- The orb layer's routes (presence.py `STATE_ROUTES`):
+  - `egress` routes to Friday only, so the data-left mark has nothing to
+    show. Routing it to the helper layer too would let it.
+  - `route` likewise, for the local or cloud tint.
+- A task id on egress log rows. The helper's frame is enough for the mark;
+  the log is not.
+- The orb layer's poller passes `name`, `task_id`, the process id
+  (`pid`), `trace_id`, `step_n`, `step_total`, `research_commission_id` and
+  `pausable` with each orb. Kind, receipts, approvals, moons and the
+  failure's dismissal read them.
 - The voice and chat tools that send `{type: "orb"}` actions, and their
   action-gate classification. That is governance, so it is the lead's.
 
