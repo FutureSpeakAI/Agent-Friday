@@ -149,6 +149,27 @@ mgr.addOrb({ id: 'image-late', label: 'L', category: 'default', research_commiss
 out.late = { before: k0, after: S('image-late').kind, oneForm: mgr.orbs.get('image-late').group.children.filter(c => c.isGroup && c.userData.kind).length };
 mgr.updateOrb('image-late', { status: 'completed' }); mgr.removeOrb('image-late'); run(3);
 
+// Friday's outline follows the visible structure: a big one widens it, a small one narrows it
+global.structures = {};
+const big = new THREE.Group(); big.add(new THREE.Mesh(new THREE.SphereGeometry(7, 8, 6), new THREE.MeshBasicMaterial()));
+const small = new THREE.Group(); small.add(new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), new THREE.MeshBasicMaterial())); small.visible = false;
+structures.BIG = big; structures.SMALL = small;
+run(2.2); const rBig = FridayOrbScene._coreR();
+big.visible = false; small.visible = true; run(2.2); const rSmall = FridayOrbScene._coreR();
+out.core = { big: +rBig.toFixed(2), small: +rSmall.toFixed(2) };
+big.visible = true; small.visible = false; run(2.2);
+
+// behind Friday: the label fades and the hand cannot take it; in front, both come back
+mgr.addOrb({ id: 'back-1', label: 'Back', category: 'default' });
+const ob = mgr.orbs.get('back-1'); ob.oSpeed = 0; ob.oAngle = -Math.PI / 2; ob.oHeight = 0; ob.oRadius = 10;
+ob.group.position.set(0, 0, -10);
+run(0.2);
+const behindNow = { behind: FridayOrbScene._state('back-1').behind, faded: ob.labelEl.style.opacity === '0',
+                    target: FridayOrbHands.run({ op: 'list' }).helpers.some(h => h.name.includes(FridayOrbLife.hueWord(FridayOrbScene._state('back-1').hue)) && h.line.includes('Back')) };
+ob.oAngle = Math.PI / 2; ob.group.position.set(0, 0, 10); run(0.2);
+out.behind = { ...behindNow, frontBack: FridayOrbScene._state('back-1').behind, frontShown: ob.labelEl.style.opacity === '' };
+mgr.updateOrb('back-1', { status: 'completed' }); mgr.removeOrb('back-1'); run(3);
+
 // labels never sit on each other: two orbs at the same place on screen
 mgr.addOrb({ id: 'twin-1', label: 'Twin one', category: 'default' }); mgr.addOrb({ id: 'twin-2', label: 'Twin two', category: 'default' });
 run(0.5);
@@ -251,6 +272,15 @@ def test_a_kind_follows_what_is_known_now(o):
 def test_orbs_spread_out_and_keep_their_spacing(o):
     assert o["spread"]["oneSpeed"] is True
     assert o["spread"]["minGapDeg"] >= 30
+
+
+def test_fridays_outline_follows_the_visible_structure(o):
+    assert 6.9 <= o["core"]["big"] <= 7.1          # the sphere of radius 7
+    assert 2.5 <= o["core"]["small"] <= 2.7        # the cube's corner, 2.6 out
+
+
+def test_an_orb_behind_friday_fades_and_cannot_be_taken(o):
+    assert o["behind"] == {"behind": True, "faded": True, "target": False, "frontBack": False, "frontShown": True}
 
 
 def test_labels_never_sit_on_each_other(o):

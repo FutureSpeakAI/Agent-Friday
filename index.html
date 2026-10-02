@@ -5732,6 +5732,37 @@ window.addEventListener('DOMContentLoaded',function(){
         // what the hand is doing to it.
         const FridayOrbScene = (function () {
             const INNER = 6.5, SPIN = 0.35, MOON_R = 1.1, SPARK_S = 0.45, LIFT_RATE = 2.5;
+            // Friday's form, for what is behind her: the visible structure's
+            // reach from the centre, measured every two seconds (it differs a lot
+            // between structures), within sane bounds.
+            const CORE_MIN = 2.5, CORE_MAX = 9;
+            let coreR = 5, coreAt = -1;
+            function measureCore() {
+                if (typeof structures === 'undefined') return;
+                let r = 0;
+                const v = new THREE.Vector3(), m = new THREE.Matrix4();
+                for (const g of Object.values(structures)) {
+                    if (!g || !g.visible) continue;
+                    g.updateMatrixWorld(true);
+                    g.traverse(c => {
+                        if (!c.visible) return;
+                        if (c.isInstancedMesh) {
+                            for (let i = 0; i < c.count; i += Math.max(1, Math.floor(c.count / 64))) {
+                                c.getMatrixAt(i, m); v.setFromMatrixPosition(m).applyMatrix4(c.matrixWorld); r = Math.max(r, v.length());
+                            }
+                            return;
+                        }
+                        const geo = c.geometry;
+                        if (!geo || !(c.isMesh || c.isLine || c.isPoints)) return;
+                        if (!geo.boundingSphere) geo.computeBoundingSphere();
+                        const bs = geo.boundingSphere;
+                        if (!bs || !Number.isFinite(bs.radius)) return;
+                        v.copy(bs.center).applyMatrix4(c.matrixWorld);
+                        r = Math.max(r, v.length() + bs.radius * c.matrixWorld.getMaxScaleOnAxis());
+                    });
+                }
+                if (r > 0) coreR = Math.max(CORE_MIN, Math.min(CORE_MAX, r));
+            }
             const AMBER = 0xf59e0b, ERROR = 0xef4444;
             let mgr = null, cam = null;
             const sparkGate = FridayOrbLife.sparkGate();
@@ -5895,9 +5926,18 @@ window.addEventListener('DOMContentLoaded',function(){
                 each((o, xs) => { const pt = xs.row.task_id && tasks.get(xs.row.task_id); if (pt && pt.trace_id === t.parent_trace_id) parent = o; });
                 return parent;
             }
+            // Friday's outline on screen: her centre, and her radius in pixels.
+            function coreOnScreen() {
+                const W = window.innerWidth, H = window.innerHeight;
+                const c = new THREE.Vector3(0, 0, 0).project(cam);
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion).multiplyScalar(coreR).project(cam);
+                return { x: (c.x * 0.5 + 0.5) * W, y: (-c.y * 0.5 + 0.5) * H, r: Math.abs(right.x - c.x) * 0.5 * W };
+            }
             function step(dt) {
                 clock += dt;
+                if (clock - coreAt > 2) { coreAt = clock; try { measureCore(); } catch (_) {} }
                 const W = window.innerWidth, H = window.innerHeight, v = new THREE.Vector3();
+                const core = coreOnScreen(), coreDist = cam.position.length();
                 const reduced = SceneMotion.reduced();
                 each((o, s) => {
                     if (o.dying) return;
@@ -5933,6 +5973,11 @@ window.addEventListener('DOMContentLoaded',function(){
                     // where it is on screen; out of the centre UI
                     const q = o.group.position.clone().project(cam);
                     s.sx = (q.x * 0.5 + 0.5) * W; s.sy = (-q.y * 0.5 + 0.5) * H;
+                    // Behind Friday: farther than her centre and inside her outline.
+                    // Its label fades and the hand cannot take it until it comes round.
+                    s.behind = !s.drag && !s.spiral && o.group.position.distanceTo(cam.position) > coreDist
+                        && Math.hypot(s.sx - core.x, s.sy - core.y) < core.r;
+                    o.labelEl.style.opacity = s.behind ? '0' : '';
                     if (!s.drag && !s.spiral && q.z < 1) {
                         if (FridayOrbLife.liftFor(s.sx, s.sy, W, H) > 0) o.oHeight += LIFT_RATE * dt;     // above the prompt row and dock
                         else if (s.sy < 48) o.oHeight -= LIFT_RATE * dt;                                // below the top bar
@@ -5960,7 +6005,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 const W = window.innerWidth, placed = [];
                 const shown = [];
                 each((o, s) => {
-                    if (o.dying || o.labelEl.style.display === 'none' || !Number.isFinite(s.sx)) return;
+                    if (o.dying || s.behind || o.labelEl.style.display === 'none' || !Number.isFinite(s.sx)) return;
                     if (!o.labelW) { o.labelW = o.labelEl.offsetWidth || 80; o.labelH = o.labelEl.offsetHeight || 18; }
                     shown.push({ o, w: o.labelW, x: s.sx, y: s.sy - 28 });
                 });
@@ -5979,7 +6024,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     orbs: () => {
                         const out = [];
                         each((o, s) => {
-                            if (o.dying || s.spiral) return;
+                            if (o.dying || s.spiral || s.behind) return;
                             out.push({ id: o.id, task_id: s.row.task_id || null, trace_id: s.row.trace_id || null, kind: s.kind, hue: s.hue,
                                        label: o.label, status: s.failed ? 'failed' : (s.row.status || o.status), step_n: s.row.step_n,
                                        step_total: s.row.step_total, approval_id: s.approval, started: o.createdAt, pausable: !!s.row.pausable,
@@ -5987,11 +6032,7 @@ window.addEventListener('DOMContentLoaded',function(){
                         });
                         return out;
                     },
-                    core: () => {
-                        const q = new THREE.Vector3(0, 0, 0).project(cam);
-                        return { x: (q.x * 0.5 + 0.5) * window.innerWidth, y: (-q.y * 0.5 + 0.5) * window.innerHeight,
-                                 r: Math.min(window.innerWidth, window.innerHeight) * 0.16 };
-                    },
+                    core: () => { const c = coreOnScreen(); return { x: c.x, y: c.y, r: Math.max(60, c.r * 0.8) }; },
                     drag: (id, x, y) => { const s = state(mgr.orbs.get(id)); if (s) s.drag = { x, y }; },
                     release: id => { const s = state(mgr.orbs.get(id)); if (s) s.drag = null; },
                     hover: () => {},
@@ -6032,7 +6073,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (!taskPoll) taskPoll = setInterval(pollTasks, 5000);
                 if (typeof FridayOrbSky !== 'undefined') FridayOrbSky.start();
             }
-            return { install, frame, _state: id => state(mgr && mgr.orbs.get(id)), _tasks: tasks, _labels: declutter };
+            return { install, frame, _state: id => state(mgr && mgr.orbs.get(id)), _tasks: tasks, _labels: declutter, _coreR: () => coreR };
         })();
         // </orb-scene>
 
