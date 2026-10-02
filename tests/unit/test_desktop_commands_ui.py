@@ -163,10 +163,11 @@ def test_a_settings_section_is_brought_into_view(desk):
     assert res["opened"] is True and res["matched"] is True, res
     assert page.evaluate("fridayCollectTabState('settings', null)") == {
         "tab": "accounts", "section": "SIGNING PDFS"}
-    page.wait_for_timeout(800)                     # the smooth scroll settles
+    # The smooth scroll settles; a loaded machine can take seconds, so wait for
+    # the condition itself rather than a fixed time.
     # Its heading is on screen: inside the pane, and below the pane's sticky
     # heading rather than under it.
-    inside = page.evaluate("""() => {
+    _in_view = """() => {
       const el = document.querySelector('.st-root section[data-st-section="SIGNING PDFS"]');
       if (!el) return 'missing';
       let sc = el.parentElement;
@@ -176,7 +177,13 @@ def test_a_settings_section_is_brought_into_view(desk):
       if (sc) sc.querySelectorAll('*').forEach(c => { const q = c.getBoundingClientRect();
         if (getComputedStyle(c).position === 'sticky' && Math.abs(q.top - b.top) < 2) cover = Math.max(cover, q.height); });
       return (r.top >= b.top + cover - 1 && r.top < b.bottom - 20) || {top: r.top, pane: b.top, cover};
-    }""")
+    }"""
+    try:
+        page.wait_for_function("(" + _in_view + ")() === true", timeout=8000)
+    except Exception:
+        pass
+    page.wait_for_timeout(800)                     # and comes to rest there
+    inside = page.evaluate(_in_view)
     assert inside is True, inside
 
 
