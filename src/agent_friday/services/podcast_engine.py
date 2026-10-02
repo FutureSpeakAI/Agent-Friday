@@ -1144,8 +1144,12 @@ def _cloud_speak():
     return speak
 
 
-def produce(eid: str, *, should_stop=None) -> dict:
-    """Write, speak and check one episode. Resumes after the last stage done."""
+def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
+    """Write, speak and check one episode. Resumes after the last stage done.
+
+    `script_only` stops once the script is written and through the gate: the
+    episode is "scripted", with its transcript, and no voice is loaded. A
+    later produce() resumes at speaking."""
     ep = load(eid)
     if ep is None or ep.get("status") in FINISHED:
         return ep or {}
@@ -1192,6 +1196,10 @@ def produce(eid: str, *, should_stop=None) -> dict:
             ep = _update(eid, **_about(ep))
         if stop():
             return load(eid)
+        if script_only:
+            ep = _update(eid, status="scripted", stage_detail="written and checked; not yet spoken")
+            (_dir(eid) / "transcript.txt").write_bytes(transcript_bytes(ep))
+            return ep
 
         ep = _update(eid, status="speaking", stage_detail="speaking on this computer")
         speak = None

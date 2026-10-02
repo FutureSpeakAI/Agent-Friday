@@ -406,3 +406,28 @@ def test_a_host_name_the_owner_set_for_the_show_wins(monkeypatch):
     monkeypatch.setattr(core, "_load_settings", lambda: {"agent_name": "NOVA",
                                                          "podcasts": {"hosts": {"a": {"name": "Ada"}}}})
     assert pe.settings()["hosts"]["a"]["name"] == "Ada"
+
+
+# 7 ── a script for review, before any audio ────────────────────────────────
+
+def test_a_script_only_run_writes_and_checks_the_script_and_speaks_nothing(ds, monkeypatch):
+    """The same sources and gates; no voice is loaded. The audio is made by a
+    later produce() that resumes at speaking."""
+    from agent_friday.services import podcast_render as render
+    g, h = sid(ds, "US trade"), sid(ds, "Democrats block")
+    _fake_writer(monkeypatch, {
+        0: [(ftc_lede(ds)["text"], [g, sid(ds, "FTC opens")])],
+        1: [("The Hill reports that on Tuesday Senate Democrats blocked a bill on data center "
+             "electricity costs, calling it toothless.", [h])],
+        2: [("Regulators are moving faster than lawmakers this week.", [g, h])]}, [])
+    monkeypatch.setattr(pe, "_gather", lambda ep: [dict(d) for d in ds])
+    spoke = []
+    monkeypatch.setattr(render, "render_lines", lambda *a, **k: spoke.append(1) or (b"", []))
+    monkeypatch.setattr(render, "speaker", lambda: spoke.append("voice"))
+    ep = pe.create([{"kind": "text", "text": "x", "title": "t"}], origin="routine",
+                   attached={"routine": "front_page", "run_id": "2031-03-12-evening"})
+    done = pe.produce(ep["id"], script_only=True)
+    assert done["status"] == "scripted" and done["lines"] and not spoke
+    assert done["script_check"]["ok"] in (True, False)
+    text = (pe._dir(ep["id"]) / "transcript.txt").read_bytes().decode("utf-8-sig")
+    assert "The Hill reports" in text and "SOURCES" in text
