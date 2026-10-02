@@ -361,6 +361,11 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
     if voice_engine == "cloud":
         _refuse_cloud_voice(private)
     hosts = cfg["hosts"]
+    # The show is the routine's whose material this is (the Briefing made into
+    # an episode on request is still the Briefing): its host setting decides,
+    # whatever mode the model asked for. Past episodes never steer it.
+    routine = (attached or {}).get("routine") or next(
+        (str(r.get("routine")) for r in refs if r.get("kind") == "news_run" and r.get("routine")), "")
     ep = {
         "id": _new_id(),
         "title": (title or "").strip()[:160],
@@ -377,7 +382,7 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         "instructions": (instructions or "").strip()[:1000],
         "voice_engine": voice_engine,
         "hosts": hosts,
-        "format": format_for((attached or {}).get("routine") or ""),
+        "format": format_for(routine),
         "home": home_city(),
         "created_at": time.time(),
     }

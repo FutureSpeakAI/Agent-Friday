@@ -119,10 +119,16 @@ def line_at(ep: dict, t: float) -> tuple[int, dict | None]:
 # ── tools ───────────────────────────────────────────────────────────────────
 
 def _latest_ready(routine: str = "") -> dict | None:
-    for ep in pe.list_episodes(routine=routine, limit=50):
-        if ep.get("status") == "ready":
-            return ep
-    return None
+    """The newest READY episode, by when it was finished, across every show;
+    "news" is any News routine's; a named show narrows it to that show."""
+    eps = [e for e in pe.list_episodes(limit=500) if e.get("status") == "ready"]
+    routine = (routine or "").strip()
+    if routine == "news":
+        eps = [e for e in eps if (e.get("attached") or {}).get("routine")]
+    elif routine and routine != "any":
+        eps = [e for e in eps if (e.get("attached") or {}).get("routine") == routine]
+    eps.sort(key=lambda e: e.get("finished_at") or e.get("updated_at") or e.get("created_at") or 0, reverse=True)
+    return eps[0] if eps else None
 
 
 def _tool_make_podcast(inp):
@@ -321,13 +327,15 @@ TOOLS = [
          "limit": {"type": "integer"}}}},
     {"name": "podcast_play",
      "description": (
-         "Control a podcast on the owner's screen: play (an episode id, or a routine's "
-         "latest), pause, resume, stop, next_chapter, previous_chapter, seek. On "
-         "no_desktop, ask them to open Friday's window."),
+         "Control a podcast on the owner's screen: play (an episode id, or the latest: the "
+         "newest finished episode of any show), pause, resume, stop, next_chapter, "
+         "previous_chapter, seek. On no_desktop, ask them to open Friday's window."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(PLAY_OPS)},
          "episode_id": {"type": "string"},
-         "routine": {"type": "string", "enum": ["front_page", "briefing", "weekly", "editorial"]},
+         "routine": {"type": "string", "enum": ["front_page", "briefing", "weekly", "editorial", "news"],
+                     "description": ("Set only when the user names a show (\"the Briefing\"); "
+                                     "\"news\" for any News show; leave out for the latest of all.")},
          "seconds": {"type": "number"}}, "required": ["action"]}},
     {"name": "podcast_source",
      "description": (
