@@ -266,7 +266,7 @@ test('the meter itself: a fast full-screen flash fails, slow and small changes p
 
 for (const [label, key] of [['v1', 'v1'], ['an evolved genome', 'evolved']] as const) {
   test(`no structure flashes, at ${label}`, async ({ page }) => {
-    test.setTimeout(45 * 60_000);
+    test.setTimeout(55 * 60_000);                    // fifteen structures, about three and a half minutes each
     const watcher = await openScene(page, GENOMES[key]);
     const n = await page.evaluate(() => EVOLUTION_PATH.length);
     const floods: Flood[] = [];
