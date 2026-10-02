@@ -614,3 +614,20 @@ def test_a_cut_off_snippet_always_sends_for_the_article(monkeypatch):
             "invented by her rivals no longer apply.")
     pe.edit_script([L(0, said, [docs_[0]["sid"]])], docs_, n_chapters=1)
     assert fetched == ["https://examplepost.com/ruiz"]
+
+
+
+def test_a_relayed_story_is_listed_via_the_aggregator_never_as_the_publishers_link():
+    docs_ = [{"sid": "S1", "title": "Sources: executives asked a lab chief why he was so outspoken",
+              "kind": "news", "outlet": "techmeme.com", "url": "https://www.techmeme.com/310311/p48",
+              "text": "Wall Street Journal : Sources: executives asked a lab chief why he was so outspoken"}]
+    src = pe._public_sources(docs_)
+    assert src[0]["outlet"] == "Wall Street Journal" and src[0]["via"] == "Techmeme"
+    ep = {"title": "T", "show": "S", "format": "solo", "hosts": {"a": {"name": "Friday"}}, "chapters": [],
+          "sources": src, "lines": [{"speaker": "a", "chapter": 0, "text": "x", "cites": ["S1"], "start": 0}]}
+    text = pe.transcript_bytes(ep).decode("utf-8-sig")
+    assert "Wall Street Journal (via Techmeme): Sources: executives" in text
+
+
+def test_reported_events_stay_in_the_past_tense():
+    assert "past tense" in pe.NEWS_RULES

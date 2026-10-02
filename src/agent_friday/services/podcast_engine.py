@@ -528,6 +528,8 @@ NEWS_RULES = (
     "figure\"). If a story has a real tie to the listener (their work, today's "
     "calendar, their neighbourhood), say it in one line; if not, no tie is "
     "needed: never invent one.\n"
+    "- Reported events stay in the past tense after \"reports that\" (\"alleged\", "
+    "\"said\", \"opened\"), never switching to the present mid-sentence.\n"
     "- Every fact in a sentence comes from the story that sentence is about; "
     "never carry a day, a name or a number over from another story.\n"
     "- Tell each story once, in one place: its lede, its facts and your read "
@@ -1249,6 +1251,9 @@ def _public_sources(docs: list[dict]) -> list[dict]:
             rec["story_id"] = d["story_id"]
         if d.get("outlet"):
             rec["outlet"] = quality.spoken_outlet(d) or d["outlet"]
+            if quality.relayed_outlet(d):
+                # The link is the aggregator's page, never the publisher's article.
+                rec["via"] = quality._site_name(d["outlet"].lower().removeprefix("www.")).capitalize()
         if d.get("kind") == "event":
             rec["when"] = quality.clock_text(d.get("start") or "")
         out.append(rec)
@@ -1478,7 +1483,9 @@ def transcript_bytes(ep: dict) -> bytes:
     cited = {c for ln in ep.get("lines") or [] for c in ln.get("cites") or []}
     heard = [s for s in ep.get("sources") or []
              if s["id"] in cited and str(s.get("url") or "").startswith("http")]
-    out += ["", "SOURCES"] + (["  %s: %s — %s" % (s.get("outlet") or "", s["title"], s["url"])
+    out += ["", "SOURCES"] + (["  %s%s: %s — %s" % (s.get("outlet") or "",
+                                                     (" (via %s)" % s["via"]) if s.get("via") else "",
+                                                     s["title"], s["url"])
                                for s in heard] or ["  (no linked source)"])
     return ("\n".join(out) + "\n").encode("utf-8-sig")
 
