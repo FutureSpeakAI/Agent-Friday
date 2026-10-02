@@ -206,11 +206,23 @@ def _worker() -> None:
             c = _QUEUE.popleft() if _QUEUE else None
         if c is None:
             _close_browser()
+            _after_pass()
             return
         while not _room(RAM_FLOOR_MIB):
             time.sleep(RAM_WAIT_S)
         _run_one(c)
         time.sleep(PAUSE_S)
+
+
+def _after_pass() -> None:
+    """When the previews are done, the audio and video go on to the local
+    transcriber (services/media_transcripts.py), the same one-at-a-time way."""
+    try:
+        from agent_friday.services import media_index as mi, media_transcripts as mt
+        if mt.available():
+            mt.enqueue([c for c in mi.query(view="all", sort="newest", limit=100000)["cards"] if c.get("kind") in mt.AV_KINDS])
+    except Exception:
+        pass
 
 
 def _run_one(c: Dict[str, Any]) -> None:
@@ -298,6 +310,12 @@ def build(card: Dict[str, Any]) -> Dict[str, Any]:
     tmp.write_text(json.dumps(det, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, pp["json"])
     _DETAILS_CACHE.pop(pp["key"], None)
+    if det.get("text"):
+        try:
+            from agent_friday.services import media_index as mi
+            mi.enrich_text(card["id"], text=det["text"])
+        except Exception:
+            pass
     return det
 
 

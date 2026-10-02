@@ -121,11 +121,33 @@ def _connect() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS relations (
             from_id TEXT, to_id TEXT, how TEXT, PRIMARY KEY (from_id, to_id, how)
         );
+        CREATE TABLE IF NOT EXISTS enrich (
+            id TEXT PRIMARY KEY, text TEXT, transcript TEXT, updated REAL
+        );
         CREATE INDEX IF NOT EXISTS cards_status ON cards(status);
         CREATE INDEX IF NOT EXISTS cards_when ON cards(when_ts);
         """
     )
+    _ensure_fts(con)
     return con
+
+
+_FTS: Optional[bool] = None
+
+
+def _ensure_fts(con: sqlite3.Connection) -> bool:
+    """The full-text index over everything a card says: title, its own text,
+    what the preview pass read out of it (slides, pages, documents), its
+    transcript, prompt, sources, maker and project. Local to this PC."""
+    global _FTS
+    if _FTS is False:
+        return False
+    try:
+        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(id UNINDEXED, title, text, extracted, transcript, prompt, sources, maker, project, tokenize='unicode61')")
+        _FTS = True
+    except sqlite3.OperationalError:
+        _FTS = False
+    return _FTS
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -216,6 +238,75 @@ def _upsert(con: sqlite3.Connection, c: Dict[str, Any]) -> None:
          1 if c["on_this_pc"] else 0, _j(c["sources"]), 1 if c["signed"] else 0, c["hash"], c["privacy"],
          c["published_at"], _j(c["targets"]), c["project"], c["text"] or "", _j(c["extra"]), time.time()),
     )
+    _fts_row(con, c["id"])
+
+
+def _fts_row(con: sqlite3.Connection, card_id: str) -> None:
+    """Rebuild one card's full-text row from the card and its enrichment."""
+    if not _FTS:
+        return
+    r = con.execute("SELECT c.title, c.text, c.sources, c.maker, c.project, c.extra, e.text AS ex, e.transcript AS tr FROM cards c LEFT JOIN enrich e ON e.id=c.id WHERE c.id=?", (card_id,)).fetchone()
+    if r is None:
+        con.execute("DELETE FROM cards_fts WHERE id=?", (card_id,))
+        return
+    sources = _dj(r["sources"], [])
+    prompt = " ".join(str(x)[8:] for x in sources if str(x).startswith("prompt: "))
+    con.execute("DELETE FROM cards_fts WHERE id=?", (card_id,))
+    con.execute("INSERT INTO cards_fts (id, title, text, extracted, transcript, prompt, sources, maker, project) VALUES (?,?,?,?,?,?,?,?,?)",
+                (card_id, r["title"] or "", (r["text"] or "")[:200000], (r["ex"] or "")[:200000], (r["tr"] or "")[:400000], prompt,
+                 " ".join(str(x) for x in sources), r["maker"] or "", r["project"] or ""))
+
+
+def enrich_text(card_id: str, *, text: Optional[str] = None, transcript: Optional[str] = None) -> None:
+    """What the preview pass read out of a file, or its transcript, joins the
+    card's searchable text. Either part may be given alone; the other is kept."""
+    with _LOCK:
+        con = _connect()
+        try:
+            cur = con.execute("SELECT text, transcript FROM enrich WHERE id=?", (card_id,)).fetchone()
+            t = text if text is not None else (cur["text"] if cur else "")
+            tr = transcript if transcript is not None else (cur["transcript"] if cur else "")
+            con.execute("INSERT INTO enrich (id, text, transcript, updated) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET text=excluded.text, transcript=excluded.transcript, updated=excluded.updated",
+                        (card_id, t or "", tr or "", time.time()))
+            _fts_row(con, card_id)
+            con.commit()
+        finally:
+            con.close()
+
+
+def _fts_match(q: str) -> str:
+    """A search box line as an FTS5 expression: every word a prefix term, a
+    quoted phrase kept whole; operators the user did not mean are neutralised."""
+    terms: List[str] = []
+    for m in re.finditer(r'"([^"]+)"|(\S+)', q):
+        if m.group(1):
+            terms.append('"' + m.group(1).replace('"', '') + '"')
+        else:
+            w = re.sub(r'[^\w\-\u00c0-\uffff]+', ' ', m.group(2)).strip()
+            if w:
+                terms.extend('"' + part + '"*' for part in w.split())
+    return " ".join(terms)
+
+
+def search_ids(q: str, limit: int = 2000) -> Dict[str, Dict[str, Any]]:
+    """{card id: {"rank", "hit"}} for a query over the full-text index; {} when
+    the index is not there or the expression does not parse (the caller falls
+    back to a plain substring match)."""
+    expr = _fts_match(q)
+    if not expr or not _FTS:
+        return {}
+    with _LOCK:
+        con = _connect()
+        try:
+            rows = con.execute(
+                "SELECT id, bm25(cards_fts, 10.0, 1.0, 1.0, 1.0, 2.0, 1.0, 0.5, 0.5) AS rank, "
+                "snippet(cards_fts, -1, '[', ']', '\u2026', 14) AS hit FROM cards_fts WHERE cards_fts MATCH ? ORDER BY rank LIMIT ?",
+                (expr, limit)).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        finally:
+            con.close()
+    return {r["id"]: {"rank": float(r["rank"]), "hit": r["hit"] or ""} for r in rows}
 
 
 def _relate(con: sqlite3.Connection, a: str, b: str, how: str) -> None:
@@ -686,6 +777,9 @@ def reindex(reason: str = "") -> Dict[str, int]:
                 "projects": _scan_projects(con), "comfy": _scan_comfy(con),
             }
             con.execute("DELETE FROM cards WHERE present=0")
+            if _FTS:
+                con.execute("DELETE FROM cards_fts WHERE id NOT IN (SELECT id FROM cards)")
+            con.execute("DELETE FROM enrich WHERE id NOT IN (SELECT id FROM cards)")
             con.commit()
         finally:
             con.close()
@@ -981,9 +1075,16 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
         out = [c for c in out if not c["signed"]]
     if status:
         out = [c for c in out if c["status"] == status]
+    hits: Dict[str, Dict[str, Any]] = {}
     if q:
         ql = q.lower().strip()
-        out = [c for c in out if ql in (c["title"] + " " + c["maker"] + " " + " ".join(c["sources"]) + " " + (c["project"] or "") + " " + c["_text"]).lower()]
+        hits = search_ids(q)
+        if hits:
+            out = [c for c in out if c["id"] in hits]
+            for c in out:
+                c["hit"] = hits[c["id"]]["hit"]
+        else:
+            out = [c for c in out if ql in (c["title"] + " " + c["maker"] + " " + " ".join(c["sources"]) + " " + (c["project"] or "") + " " + c["_text"]).lower()]
     order = {"review": 0, "draft": 1, "idea": 2, "scheduled": 3, "published": 4, "kept": 5}
     if sort == "newest":
         out.sort(key=lambda c: -(c["when_ts"] or 0))
@@ -991,6 +1092,8 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
         out.sort(key=lambda c: c["title"].lower())
     elif sort == "status":
         out.sort(key=lambda c: (order.get(c["status"], 9), -(c["when_ts"] or 0)))
+    elif hits:  # a search: the best match first
+        out.sort(key=lambda c: hits[c["id"]]["rank"])
     else:  # next: what needs the owner first, then what is soonest
         out.sort(key=lambda c: (0 if c["held"] else order.get(c["status"], 9), -(c["when_ts"] or 0)))
     total = len(out)
@@ -1042,6 +1145,13 @@ def get(card_id: str) -> Optional[Dict[str, Any]]:
                 c["peaks"] = (mp.details(c) or {}).get("peaks") or []
             except Exception:
                 c["peaks"] = []
+            try:
+                from agent_friday.services import media_transcripts as mt
+                tr = mt.get(c)
+                if tr:
+                    c["transcript"] = {"text": tr.get("text") or "", "segments": tr.get("segments") or [], "engine": tr.get("engine")}
+            except Exception:
+                pass
             return c
         finally:
             con.close()

@@ -119,7 +119,13 @@ def media_get(card_id):
         return jsonify({"status": "not_found"}), 404
     body = c.pop("body", None)
     rels = c.pop("relations", [])
-    return jsonify({"status": "ok", "card": c, "relations": rels, "body": body})
+    out = {"status": "ok", "card": c, "relations": rels, "body": body}
+    q = (request.args.get('q') or '').strip()
+    if q and c.get("transcript"):
+        # ?q= names the words searched for: when they were said, so the player can start there
+        from agent_friday.services import media_transcripts as mt
+        out["hit_t"] = mt.hit_time(c, q)
+    return jsonify(out)
 
 
 @media_bp.route('/api/media/<card_id>', methods=['PATCH'])

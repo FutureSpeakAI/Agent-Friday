@@ -379,6 +379,30 @@ creations folder, timelines, pipeline runs, creative projects and ComfyUI's outp
 A file whose type the index has no word for is a generic file card, never a gap.
 `tests/api/test_media_index_fresh.py` is the proof.
 
+**Previews and details** (`services/media_previews.py`). Every card gets a real preview,
+made locally and lazily by one low-priority worker (one job at a time, a pause between
+jobs, waiting while the machine is short of memory), cached under the home, never a
+placeholder: a thumbnail, a 2×2 mosaic for a set, a deck's first slide (the office tool,
+else a rendered text card of its words), a page's first viewport from a headless browser
+that is offline, refuses every request but the file and is closed after the batch, a
+video's poster plus an eight-frame strip for hover scrub, an audio file's waveform; a type
+with no picture shows its icon and size. The details ride on the card and in the side
+panel: a real title, type, size, dimensions or duration or pages, created and modified,
+the model or tool, the prompt, the sources, privacy and where it went, the project. A
+quick look (Space, or a click on the picture) walks the list with the arrows, plays video
+and audio inline, frames a page in a sandbox, and opens the file in its app or its folder.
+`tests/unit/test_media_previews.py` is the proof.
+
+**Search inside things** (`cards_fts`, `services/media_transcripts.py`). One local FTS5
+index over the title, the card's text, what the preview pass read out of slides, pages
+and documents, the transcript, the prompt, the sources, the maker and the project. Every
+word is a prefix term; a quoted phrase is kept whole; the hit shows the line with the
+words marked. Audio and video get a local transcript (faster-whisper base.en on the CPU,
+int8, from the local cache only, one file at a time after the preview pass, memory-aware,
+cached), so "find the video where I said X" lands on the card and the quick look starts
+the player where the words were said. Nothing is sent anywhere.
+`tests/unit/test_media_search.py` is the proof.
+
 ### 4.4 Three views of the same cards
 
 **Library** (`library.html`): a rail of default views (Today, In progress, Needs you,

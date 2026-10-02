@@ -209,6 +209,12 @@
 .md-ql-stage .audio{width:min(720px,100%);display:flex;flex-direction:column;gap:10px;align-items:stretch}
 .md-ql-foot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--fr-dim);font-size:var(--fr-text-sm)}
 .md-ql-nav{position:fixed;top:50%;transform:translateY(-50%);width:40px;height:40px;border-radius:50%;border:1px solid var(--fr-glass-edge);background:rgba(0,0,0,.5);color:var(--fr-text);font-size:18px;cursor:pointer}
+.md-hit{font-size:var(--fr-text-xs);color:var(--fr-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.md-hit mark{background:rgba(0,229,255,.18);color:var(--fr-text);border-radius:3px;padding:0 2px}
+.md-tx{width:min(72ch,100%);max-height:38vh;overflow:auto;display:flex;flex-direction:column;gap:2px;font-size:var(--fr-text-sm);line-height:1.45}
+.md-tx button{text-align:left;background:none;border:0;color:var(--fr-text);padding:2px 6px;border-radius:6px;cursor:pointer;font:inherit}
+.md-tx button:hover{background:rgba(255,255,255,.06)}
+.md-tx button b{color:var(--fr-cyan);font-weight:500;font-family:var(--fr-font-mono);font-size:var(--fr-text-2xs);margin-right:6px}
 .md-wave{display:flex;align-items:center;gap:1px;height:56px;width:100%}
 .md-wave i{flex:1 1 0;background:var(--fr-cyan);opacity:.75;border-radius:1px;min-height:2px}
 .md-body{padding:8px 10px 10px;display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -312,6 +318,20 @@
       scrub, bar, play,
       extra ? h('span', { className: 'dur' }, extra) : null);
   }
+  // A search hit: the line where the words were found, the words marked.
+  function Hit({ text }) {
+    if (!text) return null;
+    const parts = String(text).replace(/\s+/g, ' ').split(/(\[[^\]]*\])/g).filter(Boolean);
+    return h('div', { className: 'md-hit', title: String(text).replace(/[\[\]]/g, '') },
+      parts.map((x, i) => x[0] === '[' && x[x.length - 1] === ']' ? h('mark', { key: i }, x.slice(1, -1)) : x));
+  }
+  function fmtT(t) { t = Math.max(0, Math.round(t || 0)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); }
+  // The transcript, each line a button that seeks the player to when it was said.
+  function Transcript({ tx, mediaRef }) {
+    if (!tx || !(tx.segments || []).length) return null;
+    return h('div', { className: 'md-tx', 'aria-label': 'Transcript' },
+      tx.segments.map((sg, i) => h('button', { key: i, onClick: () => { const m = mediaRef.current; if (m) { m.currentTime = sg.start || 0; m.play && m.play().catch(() => {}); } } }, h('b', null, fmtT(sg.start)), sg.text)));
+  }
   function Card({ c, selected, onOpen, onSelect, noThumb, onQuick }) {
     const where = c.published_at ? h('div', { className: 'md-meta' }, h('span', null, 'at'), h('span', null, c.published_at))
       : (c.targets && c.targets.length ? h('div', { className: 'md-meta' }, h('span', null, 'to'), h('span', null, c.targets.join(', '))) : null);
@@ -325,6 +345,7 @@
       noThumb ? null : h(Thumb, { c, onQuick }),
       h('div', { className: 'md-body' },
         h('div', { className: 'md-title', title: c.title }, c.title),
+        c.hit ? h(Hit, { text: c.hit }) : null,
         h('div', { className: 'md-facts', title: facts(c) + (made ? ' · ' + made : '') }, facts(c) + (made ? ' · ' + made : '')),
         h('div', { className: 'md-meta' }, glyph(c.kind), h('span', null, '·'), h('span', null, fmtWhen(c.when))),
         h('div', { className: 'md-meta' }, statusPill(c), privacyPill(c), c.signed ? null : pill('md-pill-neutral', 'Unsigned')),
@@ -379,10 +400,11 @@
   // Space or a click on the picture: the whole thing, full size, with inline
   // playback, a page in a sandboxed frame, a document's rendered pages, and
   // the ways out of it: the editor, the app that opens it, its folder.
-  function QuickLook({ c, cards, setSel, onClose, onOpen }) {
+  function QuickLook({ c, cards, setSel, onClose, onOpen, q }) {
     const [full, setFull] = useState(null);
     const [page, setPage] = useState(0);
-    useEffect(() => { setFull(null); setPage(0); if (c && (c.kind === 'draft' || c.kind === 'article' || c.kind === 'doc' || AV_KINDS[c.kind])) json('/api/media/' + encodeURIComponent(c.id)).then(d => { if (d.status === 'ok') setFull(d); }).catch(() => {}); }, [c && c.id]);
+    const mediaRef = useRef(null);
+    useEffect(() => { setFull(null); setPage(0); if (c && (c.kind === 'draft' || c.kind === 'article' || c.kind === 'doc' || AV_KINDS[c.kind])) json('/api/media/' + encodeURIComponent(c.id) + (q ? '?q=' + encodeURIComponent(q) : '')).then(d => { if (d.status === 'ok') { setFull(d); if (d.hit_t != null && mediaRef.current) mediaRef.current.currentTime = d.hit_t; } }).catch(() => {}); }, [c && c.id, q]);
     useEffect(() => {
       const onKey = e => {
         if (!c) return;
@@ -399,8 +421,9 @@
     const ids = cards.map(x => x.id); const i = ids.indexOf(c.id);
     const d = c.details || {};
     let stage;
-    if (c.kind === 'video' && c.file_url) stage = h('video', { key: c.id, src: c.file_url, controls: true, autoPlay: true, poster: c.thumb || undefined });
-    else if (AV_KINDS[c.kind] && c.file_url) stage = h('div', { className: 'audio' }, c.thumb ? h('img', { src: c.thumb, alt: '', style: { maxHeight: 160 } }) : null, h(Wave, { peaks: full && full.peaks, height: 72 }), h('audio', { key: c.id, src: c.file_url, controls: true, autoPlay: true }));
+    const tx = full && full.transcript;
+    if (c.kind === 'video' && c.file_url) stage = h('div', { className: 'audio', style: { width: 'min(1100px,100%)', height: '100%' } }, h('video', { key: c.id, ref: mediaRef, src: c.file_url, controls: true, autoPlay: true, poster: c.thumb || undefined, style: { maxHeight: tx ? '55vh' : '100%' } }), h(Transcript, { tx, mediaRef }));
+    else if (AV_KINDS[c.kind] && c.file_url) stage = h('div', { className: 'audio' }, c.thumb ? h('img', { src: c.thumb, alt: '', style: { maxHeight: 160 } }) : null, h(Wave, { peaks: full && full.peaks, height: 72 }), h('audio', { key: c.id, ref: mediaRef, src: c.file_url, controls: true, autoPlay: true }), h(Transcript, { tx, mediaRef }));
     else if (c.kind === 'page' && c.file_url) stage = h('iframe', { key: c.id, src: c.file_url, sandbox: '', title: c.title });
     else if (c.renders && c.renders.length) stage = h('img', { key: c.id + page, src: c.renders[Math.min(page, c.renders.length - 1)], alt: '' });
     else if ((c.kind === 'image' || c.kind === 'imageset' || c.kind === 'chart') && c.file_url) stage = h('img', { key: c.id, src: c.file_url, alt: c.title });
@@ -491,7 +514,7 @@
           h('div', { className: 'md-grid' + (layout === 'list' ? ' list' : ''), role: 'listbox', 'aria-label': 'Cards', 'aria-busy': state.loading ? 'true' : 'false' },
             cards.map(c => h(Card, { key: c.id, c, selected: c.id === sel, onSelect: x => setSel(x.id), onOpen, onQuick }))),
           h(Details, { c: selCard, onClose: () => setSel(null), onOpen, onAction, onQuick }),
-          ql && selCard ? h(QuickLook, { c: selCard, cards, setSel, onClose: () => setQl(false), onOpen }) : null),
+          ql && selCard ? h(QuickLook, { c: selCard, cards, setSel, onClose: () => setQl(false), onOpen, q: filters.q }) : null),
         h('p', { className: 'md-keys' }, 'Keys: ', h('kbd', null, '/'), ' search · ', h('kbd', null, 'N'), ' new · ', h('kbd', null, '←'), ' ', h('kbd', null, '→'), ' move · ', h('kbd', null, 'Enter'), ' open · ', h('kbd', null, 'T'), ' turn this into… · ', h('kbd', null, 'S'), ' send to · ', h('kbd', null, 'O'), ' own tab · ', h('kbd', null, 'Esc'), ' close.')));
   }
 
@@ -1007,7 +1030,7 @@
 
   // Shared helpers for the other views (board, calendar, card), defined in this file's siblings.
   window.MediaWS = MediaWS;
-  window.__media = { h, api, json, post, toast, STATUSES, KEPT, STATUS_WORD, QuickLook, Thumb, fmtBytes, facts, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
+  window.__media = { h, api, json, post, toast, STATUSES, KEPT, STATUS_WORD, QuickLook, Thumb, Hit, Transcript, fmtBytes, facts, KIND_WORD, glyph, pill, statusPill, privacyPill, fmtWhen, Card, changed, useCards, ensureStyles };
 
   // Navigation: the views the dock, the palette and navigate_to may name.
   (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['media', {
