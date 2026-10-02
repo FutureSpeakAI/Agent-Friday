@@ -4928,6 +4928,684 @@ window.addEventListener('DOMContentLoaded',function(){
         })();
         // </brightness-governor>
 
+        // <orb-life>
+        // The process orbs' own rules (docs/design/active/avatar-visual-
+        // genome.md §16): plain arithmetic over the rows the server sends, no
+        // Three.js and no page, so tests run it under node from this file.
+        // An orb is one of Friday's helpers or processes, never Friday: none
+        // of this ever moves her core form.
+        const FridayOrbLife = (function () {
+            // Identity colours: the brand's five decoration hues, never a
+            // status hue (BRAND.md). The word is what the user says.
+            const HUES = [
+                { word: 'teal', hex: 0x2dd4bf, also: ['green', 'turquoise', 'aqua', 'cyan'] },
+                { word: 'pink', hex: 0xf472b6, also: ['rose', 'magenta'] },
+                { word: 'blue', hex: 0x60a5fa, also: ['azure', 'navy'] },
+                { word: 'sand', hex: 0xd6c7a1, also: ['beige', 'gold', 'golden', 'tan', 'yellow', 'cream'] },
+                { word: 'violet', hex: 0xa78bfa, also: ['purple', 'lilac', 'lavender'] },
+            ];
+            // Kinds, each with its own abstract form (§16.2).
+            const KINDS = {
+                research: { word: 'research', also: ['researcher', 'researching', 'search', 'study', 'reading'] },
+                code:     { word: 'code', also: ['coding', 'coder', 'program', 'programming', 'build'] },
+                media:    { word: 'media', also: ['image', 'picture', 'video', 'podcast', 'audio', 'creative', 'art'] },
+                mail:     { word: 'mail', also: ['email', 'e-mail', 'message', 'messages', 'inbox'] },
+                schedule: { word: 'scheduled', also: ['schedule', 'timer', 'routine', 'background'] },
+                system:   { word: 'system', also: ['download', 'setup'] },
+                general:  { word: 'helper', also: [] },
+            };
+            const KIND_IDS = Object.keys(KINDS);
+            const SPIRAL_S = 1.6;
+            const clamp01 = v => Math.max(0, Math.min(1, v));
+            const smooth = t => { t = clamp01(t); return t * t * (3 - 2 * t); };
+            const num = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+            function fnv(s) {
+                let h = 0x811c9dc5;
+                for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+                return h >>> 0;
+            }
+            function rng(seed) {                   // small deterministic stream
+                let s = fnv(String(seed)) || 1;
+                return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+            }
+
+            // A kind from fields the server sets in code (ids, categories,
+            // process names, links), never from a task's own words. The
+            // server's `kind`, when it sends one, wins.
+            function kindOf(r) {
+                if (!r) return 'general';
+                if (KINDS[r.kind]) return r.kind;
+                const id = String(r.id || r.task_id || ''), name = String(r.name || ''), cat = String(r.category || '');
+                if (r.research_commission_id) return 'research';
+                if (r.schedule_id || /^sched-/.test(id) || name === 'Scheduler') return 'schedule';
+                if (/^(image|video)-/.test(id) || cat === 'creative' || /^(Image|Video|Podcast|Pipeline)$/.test(name)
+                    || /^Creating /.test(name)) return 'media';
+                if (cat === 'communication') return 'mail';
+                if (/^(Pulling Model|Seat Gate|Vault Access)$/.test(name)) return 'system';
+                if (name === 'Self-Improvement' || /^code-/.test(id)) return 'code';
+                return 'general';
+            }
+
+            // The least used hue among the orbs already shown, first in order on a tie.
+            function pickHue(orbs) {
+                const used = HUES.map(() => 0);
+                for (const o of orbs || []) if (o && Number.isInteger(o.hue) && used[o.hue] !== undefined) used[o.hue]++;
+                let best = 0;
+                for (let i = 1; i < used.length; i++) if (used[i] < used[best]) best = i;
+                return best;
+            }
+            const hueWord = i => (HUES[i] || HUES[0]).word;
+            function speakable(o) {
+                const k = KINDS[o.kind] || KINDS.general;
+                return 'the ' + hueWord(o.hue) + ' ' + (k.word === 'helper' ? 'helper' : k.word + ' helper');
+            }
+
+            // Which orbs a phrase means: colour words, kind words, order
+            // words, "it" (the orb last touched or named) and "all". Several
+            // matches come back marked ambiguous, for the caller to ask.
+            const ORDER = { first: 0, oldest: 0, earliest: 0, second: 1, third: 2, fourth: 3,
+                            newest: -1, latest: -1, last: -1, youngest: -1 };
+            function resolve(text, orbs, focusId) {
+                const words = String(text || '').toLowerCase().match(/[a-z-]+/g) || [];
+                const has = w => words.includes(w);
+                const list = (orbs || []).slice().sort((a, b) => (a.started || 0) - (b.started || 0));
+                if (has('all') || has('every') || has('everything') || has('everyone'))
+                    return { ids: list.map(o => o.id), ambiguous: false };
+                let picked = null, named = false;
+                const hue = HUES.findIndex(h => has(h.word) || h.also.some(has));
+                if (hue >= 0) { named = true; picked = list.filter(o => o.hue === hue); }
+                const kind = KIND_IDS.find(k => has(k) || has(KINDS[k].word) || KINDS[k].also.some(has));
+                if (kind) { named = true; picked = (picked || list).filter(o => o.kind === kind); }
+                const ord = Object.keys(ORDER).find(has);
+                if (ord) {
+                    named = true;
+                    const pool = picked || list, i = ORDER[ord];
+                    const one = i < 0 ? pool[pool.length + i] : pool[i];
+                    picked = one ? [one] : [];
+                }
+                if (!named) {
+                    if (focusId && (has('it') || has('that') || has('this')) && list.some(o => o.id === focusId))
+                        return { ids: [focusId], ambiguous: false };
+                    return { ids: [], ambiguous: false };
+                }
+                const ids = picked.map(o => o.id);
+                return { ids, ambiguous: ids.length > 1 };
+            }
+
+            // Hands-on control, as a state machine over pointer samples:
+            // a tap opens, a still hold pauses, a fast throw away from Friday
+            // cancels, a drop on Friday asks for its status, a drop at the
+            // screen's edge pops it out, anything else lets it drift back.
+            const HOLD_MS = 600, SLOP = 10, FLING = 1200, EDGE = 48, VEL_MS = 100;
+            function gestures() {
+                let p = null;
+                const sample = (x, y, t) => {
+                    p.samples.push([x, y, t]);
+                    while (p.samples.length > 2 && t - p.samples[0][2] > VEL_MS) p.samples.shift();
+                };
+                return {
+                    down(id, x, y, t) { p = { id, x0: x, y0: y, t0: t, samples: [[x, y, t]], held: false, dragging: false }; return null; },
+                    move(x, y, t) {
+                        if (!p || p.held) return null;
+                        sample(x, y, t);
+                        if (!p.dragging && Math.hypot(x - p.x0, y - p.y0) > SLOP) p.dragging = true;
+                        return p.dragging ? { op: 'drag', id: p.id, x, y } : null;
+                    },
+                    tick(t) {
+                        if (p && !p.dragging && !p.held && t - p.t0 >= HOLD_MS) { p.held = true; return { op: 'pause', id: p.id }; }
+                        return null;
+                    },
+                    up(x, y, t, ctx) {
+                        if (!p) return null;
+                        const q = p; p = null;
+                        if (q.held) return null;
+                        if (!q.dragging) return { op: 'open', id: q.id };
+                        q.samples.push([x, y, t]);
+                        while (q.samples.length > 2 && t - q.samples[0][2] > VEL_MS) q.samples.shift();
+                        const s0 = q.samples[0], dt = Math.max(1e-3, (t - s0[2]) / 1000);
+                        const vx = (x - s0[0]) / dt, vy = (y - s0[1]) / dt;
+                        const away = vx * (x - ctx.coreX) + vy * (y - ctx.coreY) > 0;
+                        if (Math.hypot(vx, vy) >= FLING && away) return { op: 'cancel', id: q.id };
+                        if (Math.hypot(x - ctx.coreX, y - ctx.coreY) <= ctx.coreR) return { op: 'status', id: q.id };
+                        if (x < EDGE || y < EDGE || x > ctx.width - EDGE || y > ctx.height - EDGE) return { op: 'popout', id: q.id };
+                        return { op: 'drop', id: q.id };
+                    },
+                    cancel() { p = null; },
+                    active: () => (p ? p.id : null),
+                };
+            }
+
+            // A cancel is sent only when its undo window has passed.
+            function undoQueue(ms) {
+                const pending = new Map();
+                return {
+                    schedule(key, commit, now) { pending.set(key, { commit, due: now + ms }); },
+                    undo(key) { return pending.delete(key); },
+                    tick(now) {
+                        const fired = [];
+                        for (const [k, v] of pending) if (now >= v.due) {
+                            pending.delete(k); fired.push(k);
+                            try { v.commit(); } catch (_) {}
+                        }
+                        return fired;
+                    },
+                    has: k => pending.has(k),
+                    left: (k, now) => (pending.has(k) ? Math.max(0, pending.get(k).due - now) : 0),
+                    keys: () => [...pending.keys()],
+                };
+            }
+
+            // Real progress only: a fraction the server computed, or steps
+            // done of steps planned. Anything else is unknown.
+            function progressOf(r) {
+                const p = num(r && r.progress);
+                if (p !== null) return clamp01(p > 1 ? p / 100 : p);
+                const n = num(r && r.step_n), of = num(r && r.step_total);
+                if (n !== null && of !== null && of > 0) return clamp01(n / of);
+                return null;
+            }
+            const orbitRadius = (p, outer, inner) => (p === null || p === undefined) ? outer : outer - (outer - inner) * clamp01(p);
+            // A finished orb spirals into the core: radius to zero, a turn and a quarter.
+            function spiralAt(t, r0, a0) {
+                const e = smooth(t / SPIRAL_S);
+                return { r: r0 * (1 - e), a: a0 + Math.PI * 2.5 * e, s: 1 - 0.7 * e, done: t >= SPIRAL_S };
+            }
+
+            // What the server knows about a finished helper, and for a failed
+            // one, the fix it can actually offer.
+            const short = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+            function fixFor(t) {
+                if (t.resumable) return { label: 'Resume from where it stopped', action: 'resume' };
+                if (t.user_notice) return { label: short(t.user_notice, 90), action: null };
+                return { label: 'Run it again', action: 'rerun' };
+            }
+            function receipt(task, digest) {
+                const t = task || {}, d = digest || {};
+                const status = String(t.status || d.status || '');
+                const failed = /^(failed|error|timeout|interrupted)$/.test(status) || !!t.orb_failed;
+                const st = num(t.started) !== null ? t.started : num(d.started), en = num(t.ended) !== null ? t.ended : num(d.ended);
+                return {
+                    id: t.task_id || t.id || d.task_id || null,
+                    title: short(t.name || t.label || d.name || 'Helper', 60),
+                    did: short(t.result || d.result || d.now || '', 140) || null,
+                    model: d.model || t.model || null,
+                    duration_s: (st !== null && en !== null && en >= st) ? Math.round(en - st) : null,
+                    cost_usd: num(d.cost_usd) !== null ? d.cost_usd : num(t.cost_usd),
+                    sources: Array.isArray(d.sources) ? d.sources : (Array.isArray(t.sources) ? t.sources : null),
+                    failed, status,
+                    fix: failed ? fixFor(t) : null,
+                };
+            }
+
+            // The day's finished work as stars: one fixed place per task, in
+            // the band above the scene's centre.
+            function starAt(id, w, h) {
+                const r = rng('star:' + id);
+                return { x: Math.round(w * (0.06 + 0.88 * r())), y: Math.round(44 + (h * 0.32 - 44) * r()) };
+            }
+
+            // The centre UI the orbs keep out of: the top bar, the prompt row
+            // and greeting above the dock, and the dock.
+            function keepOut(w, h) {
+                return [
+                    { x0: 0, x1: w, y0: 0, y1: 40 },
+                    { x0: w / 2 - 380, x1: w / 2 + 380, y0: h - 116 - 300, y1: h },
+                    { x0: 0, x1: w, y0: h - 116, y1: h },
+                ];
+            }
+            const inKeepOut = (x, y, w, h) => keepOut(w, h).some(b => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1);
+            function liftFor(x, y, w, h) {             // pixels up that clear the bottom bands
+                let lift = 0;
+                for (const b of keepOut(w, h).slice(1)) if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) lift = Math.max(lift, y - b.y0 + 24);
+                return lift;
+            }
+
+            // Sparks for tool calls: one per orb per 0.4 s and three a second
+            // in all, so they never approach the flash limit.
+            function sparkGate() {
+                const lastBy = new Map(); let recent = [];
+                return {
+                    allow(id, t) {
+                        recent = recent.filter(x => t - x < 1.0);
+                        if (recent.length >= 3) return false;
+                        const last = lastBy.get(id);
+                        if (last !== undefined && t - last < 0.4) return false;
+                        lastBy.set(id, t); recent.push(t);
+                        return true;
+                    },
+                };
+            }
+
+            // Local work shows its hue; cloud work a paler tint of it.
+            function tint(hex, cloud) {
+                if (!cloud) return hex;
+                const mix = c => Math.round(c + (255 - c) * 0.45);
+                return (mix((hex >> 16) & 255) << 16) | (mix((hex >> 8) & 255) << 8) | mix(hex & 255);
+            }
+
+            // The task an approval card belongs to, only from a real link.
+            function approvalTask(a) {
+                if (!a) return null;
+                if (a.task_id) return String(a.task_id);
+                if (a.subject_type === 'task' && a.subject_id) return String(a.subject_id);
+                if (a.payload && a.payload.task_id) return String(a.payload.task_id);
+                return null;
+            }
+            // A helper's frame carries its trace as `turn`; so does its orb's row.
+            function orbForFrame(f, orbs) {
+                if (!f || !f.turn) return null;
+                const o = (orbs || []).find(x => x && x.trace_id && x.trace_id === f.turn);
+                return o ? o.id : null;
+            }
+
+            // A kind's form follows the genome's step: the same step draws the
+            // same form, the next step a new variation of it (§16.2).
+            function formParams(kind, seed) {
+                const r = rng('form:' + kind + ':' + (seed || 'v1'));
+                const pick = (a, b) => a + Math.floor(r() * (b - a + 1));
+                switch (kind) {
+                    case 'research': return { points: pick(55, 110), turn: 0.2 + 0.6 * r() };
+                    case 'code':     return { n: pick(2, 3), gap: 0.12 + 0.12 * r(), twist: r() * 0.6 };
+                    case 'media':    { const a = pick(1, 4); return { a, b: a + pick(1, 3), delta: Math.PI * r() }; }
+                    case 'mail':     return { p: pick(2, 3), q: pick(3, 5), tube: 0.05 + 0.04 * r() };
+                    case 'schedule': return { arms: pick(2, 4), ratio: pick(3, 7), lean: r() * 0.5 };
+                    case 'system':   return { faces: [4, 8, 20][pick(0, 2)], spin: 0.3 + 0.5 * r() };
+                    default:         return { detail: pick(0, 1), spin: 0.2 + 0.5 * r() };
+                }
+            }
+
+            return { HUES, KINDS, KIND_IDS, SPIRAL_S, kindOf, pickHue, hueWord, speakable, resolve, gestures, undoQueue,
+                     progressOf, orbitRadius, spiralAt, receipt, starAt, keepOut, inKeepOut, liftFor, sparkGate, tint,
+                     approvalTask, orbForFrame, formParams };
+        })();
+        // </orb-life>
+        // <orb-forms>
+        // Each kind of helper has its own abstract form, from mathematics and
+        // science, so a glance tells them apart (avatar-visual-genome.md
+        // §16.2): a research helper is a golden-angle point sphere, a coding
+        // helper a small cube lattice, a media helper a Lissajous figure, a
+        // mail helper a torus knot, a scheduled one an epicycloid, a system
+        // job a Platonic solid, any other helper an icosahedron. The shape's
+        // numbers come from FridayOrbLife.formParams, seeded by the genome's
+        // step, so the forms evolve with Friday. Lines and points only, drawn
+        // additively and dim: an orb is never brighter than the core.
+        const FridayOrbForms = (function () {
+            const R = 0.42;                          // every form fits this sphere
+            const lineMat = (color, opacity) => new THREE.LineBasicMaterial({ color, transparent: true, opacity,
+                blending: THREE.AdditiveBlending, depthWrite: false });
+            const pointMat = color => new THREE.PointsMaterial({ color, size: 0.055, transparent: true, opacity: 0.85,
+                blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true });
+            const geo = pts => {
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+                return g;
+            };
+            function curve(n, f) {                  // a closed curve from f(t), t in [0, 2pi)
+                const pts = [];
+                for (let i = 0; i <= n; i++) { const v = f((i / n) * Math.PI * 2); pts.push(v[0], v[1], v[2]); }
+                return pts;
+            }
+            function fit(obj) {                      // scale into the sphere of radius R
+                obj.updateMatrixWorld(true);
+                let r = 0; const v = new THREE.Vector3();
+                obj.traverse(c => {
+                    const pos = c.geometry && c.geometry.attributes && c.geometry.attributes.position;
+                    if (!pos) return;
+                    for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(c.matrixWorld); r = Math.max(r, v.length()); }
+                });
+                if (r > 0) obj.scale.multiplyScalar(R / r);
+                return obj;
+            }
+            const BUILD = {
+                research(p, color) {
+                    const n = p.points, ga = Math.PI * (3 - Math.sqrt(5)), pts = [];
+                    for (let i = 0; i < n; i++) {
+                        const y = 1 - 2 * (i + 0.5) / n, r = Math.sqrt(1 - y * y), th = ga * i + p.turn * y;
+                        pts.push(Math.cos(th) * r, y, Math.sin(th) * r);
+                    }
+                    return new THREE.Points(geo(pts), pointMat(color));
+                },
+                code(p, color) {
+                    const g = new THREE.Group(), n = p.n, s = 1 / n, edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(s - p.gap * s, s - p.gap * s, s - p.gap * s));
+                    for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) for (let z = 0; z < n; z++) {
+                        const c = new THREE.LineSegments(edges, lineMat(color, 0.75));
+                        c.position.set((x - (n - 1) / 2) * s, (y - (n - 1) / 2) * s, (z - (n - 1) / 2) * s);
+                        c.rotation.y = p.twist * (y - (n - 1) / 2);
+                        g.add(c);
+                    }
+                    return g;
+                },
+                media(p, color) {
+                    return new THREE.Line(geo(curve(240, t => [Math.sin(p.a * t + p.delta), Math.sin(p.b * t), 0.35 * Math.cos((p.a + p.b) * t)])),
+                        lineMat(color, 0.85));
+                },
+                mail(p, color) {
+                    return new THREE.Line(geo(curve(300, t => {
+                        const r = 2 + Math.cos(p.q * t);
+                        return [r * Math.cos(p.p * t), r * Math.sin(p.p * t), -Math.sin(p.q * t) * (1 + p.tube * 4)];
+                    })), lineMat(color, 0.85));
+                },
+                schedule(p, color) {
+                    const k = p.ratio, d = 1 / k;
+                    const ln = new THREE.Line(geo(curve(360, t => [Math.cos(t) + d * Math.cos(k * t), Math.sin(t) + d * Math.sin(k * t),
+                        0.25 * Math.sin(p.arms * t)])), lineMat(color, 0.85));
+                    ln.rotation.x = p.lean;
+                    return ln;
+                },
+                system(p, color) {
+                    const solid = p.faces === 4 ? new THREE.TetrahedronGeometry(1) : p.faces === 8 ? new THREE.OctahedronGeometry(1) : new THREE.IcosahedronGeometry(1);
+                    return new THREE.LineSegments(new THREE.EdgesGeometry(solid), lineMat(color, 0.8));
+                },
+                general(p, color) {
+                    return new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1, p.detail)), lineMat(color, 0.75));
+                },
+            };
+            // The form for a kind, in the given colour, fitted to the sphere.
+            function build(kind, params, color) {
+                const make = BUILD[kind] || BUILD.general;
+                const g = new THREE.Group();
+                g.add(make(params || FridayOrbLife.formParams(kind, 'v1'), color));
+                fit(g.children[0]);
+                g.userData.kind = BUILD[kind] ? kind : 'general';
+                g.userData.spin = (params && params.spin) || 0.35;
+                return g;
+            }
+            function setColor(g, color) {
+                g.traverse(c => { if (c.material && c.material.color) c.material.color.set(color); });
+            }
+            function setOpacity(g, k) {
+                g.traverse(c => {
+                    if (!c.material) return;
+                    if (c.material.userData.base === undefined) c.material.userData.base = c.material.opacity;
+                    c.material.opacity = c.material.userData.base * k;
+                });
+            }
+            function dispose(g) {
+                const seen = new Set();
+                g.traverse(c => {
+                    if (c.geometry && !seen.has(c.geometry)) { seen.add(c.geometry); c.geometry.dispose(); }
+                    if (c.material && !seen.has(c.material)) { seen.add(c.material); c.material.dispose(); }
+                });
+            }
+            return { R, KINDS: Object.keys(BUILD), build, setColor, setOpacity, dispose };
+        })();
+        // </orb-forms>
+        // <orb-hands>
+        // Hands-on control of the process orbs (avatar-visual-genome.md §16.1),
+        // one path for the pointer and for voice. The scene's canvas takes no
+        // pointer events (the UI sits over it), so the pointer is read at the
+        // window, and only over the bare scene: a clear element covering most
+        // of the screen that is not a control, a window or a panel. An orb is
+        // a helper, never Friday; nothing here touches her core form.
+        //   tap: open it (its approval card when it needs your OK, else its
+        //        thread); hold: pause or resume; throw it away from Friday:
+        //        cancel, sent only after a few seconds' undo; drop it on
+        //        Friday: its status in one line; drop it at the screen's edge:
+        //        its own tab.
+        // The orb layer attaches a source: orbs() lists {id, task_id,
+        // trace_id, kind, hue, label, status, step_n, step_total, approval_id,
+        // started, pausable, sx, sy, sr} in screen pixels, core() gives Friday's centre
+        // and radius on screen, and drag(id, x, y), release(id), hover(id) and
+        // mark(id, state) let it draw what the hand is doing.
+        const FridayOrbHands = (function () {
+            const UNDO_MS = 5000, HIT_PX = 30, CAPTION_MS = 7000;
+            const G = FridayOrbLife.gestures(), U = FridayOrbLife.undoQueue(UNDO_MS);
+            let src = null, pressed = null, focusId = null, hoverId = null, raf = 0, swallowUntil = 0, undoTimer = 0;
+            let layer = null;
+
+            function attach(s) { src = s; }
+            const list = () => { try { return (src && src.orbs()) || []; } catch (_) { return []; } };
+            const find = id => list().find(o => o.id === id) || null;
+            const call = (fn, ...a) => { try { if (src && src[fn]) return src[fn](...a); } catch (_) {} return null; };
+            const her = () => (typeof fridayName === 'function' ? fridayName() : 'Friday');
+            const name = o => FridayOrbLife.speakable(o);
+            const Name = o => { const s = name(o); return s.charAt(0).toUpperCase() + s.slice(1); };
+
+            // ---- the bare scene, and the orb under the pointer ----
+            const cache = new WeakMap();
+            function onScene(el) {
+                if (!el || el === document.documentElement || el === document.body) return true;
+                if (el.closest && el.closest('button,a,input,textarea,select,label,[role],[contenteditable="true"]')) return false;
+                const now = performance.now(), c = cache.get(el);
+                if (c && now - c.t < 1000) return c.ok;
+                let ok = false;
+                try {
+                    const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+                    const clear = /^(transparent|rgba\(0, 0, 0, 0\))$/.test(cs.backgroundColor) && cs.backgroundImage === 'none';
+                    ok = clear && r.width * r.height >= 0.5 * innerWidth * innerHeight;
+                } catch (_) {}
+                cache.set(el, { ok, t: now });
+                return ok;
+            }
+            function hit(x, y) {
+                let best = null, bd = Infinity;
+                for (const o of list()) {
+                    if (!Number.isFinite(o.sx) || !Number.isFinite(o.sy)) continue;
+                    const d = Math.hypot(o.sx - x, o.sy - y);
+                    if (d <= Math.max(HIT_PX, o.sr || 0) && d < bd) { bd = d; best = o; }
+                }
+                return best;
+            }
+            function ctx() {
+                const c = call('core') || { x: innerWidth / 2, y: innerHeight * 0.42, r: 110 };
+                return { coreX: c.x, coreY: c.y, coreR: c.r, width: innerWidth, height: innerHeight };
+            }
+            const holdLoop = () => {
+                raf = 0;
+                if (!pressed) return;
+                const r = G.tick(performance.now());
+                if (r) { act(r.op, [r.id], 'hand'); return; }
+                raf = requestAnimationFrame(holdLoop);
+            };
+            window.addEventListener('pointerdown', e => {
+                if (e.button !== 0 || !src || !onScene(e.target)) return;
+                const o = hit(e.clientX, e.clientY);
+                if (!o) return;
+                e.preventDefault(); e.stopPropagation();
+                pressed = o.id; focusId = o.id;
+                G.down(o.id, e.clientX, e.clientY, performance.now());
+                if (!raf) raf = requestAnimationFrame(holdLoop);
+            }, true);
+            window.addEventListener('pointermove', e => {
+                if (pressed) {
+                    const r = G.move(e.clientX, e.clientY, performance.now());
+                    if (r) call('drag', r.id, r.x, r.y);
+                    return;
+                }
+                const o = src && onScene(e.target) ? hit(e.clientX, e.clientY) : null, id = o ? o.id : null;
+                if (id !== hoverId) {
+                    hoverId = id;
+                    document.body.style.cursor = id ? 'pointer' : '';      // the bare scene inherits body's cursor
+                    call('hover', id);
+                }
+            }, true);
+            window.addEventListener('pointerup', e => {
+                if (!pressed) return;
+                const id = pressed; pressed = null;
+                const r = G.up(e.clientX, e.clientY, performance.now(), ctx());
+                call('release', id);
+                swallowUntil = performance.now() + 350;
+                e.stopPropagation();
+                if (r && r.op !== 'drop') act(r.op, [r.id], 'hand');
+            }, true);
+            const abort = () => { if (!pressed) return; const id = pressed; pressed = null; G.cancel(); call('release', id); };
+            window.addEventListener('pointercancel', abort, true);
+            window.addEventListener('blur', abort);
+            window.addEventListener('keydown', e => { if (e.key === 'Escape') abort(); }, true);
+            window.addEventListener('click', e => {
+                // The click that ends a press on an orb is the orb's, not the page's.
+                if (performance.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); return; }
+                // A synthetic click (hand-tracking dwell) on the bare scene opens the orb under it.
+                if (e.detail !== 0 || !src || !onScene(e.target)) return;
+                const o = hit(e.clientX, e.clientY);
+                if (o) { e.stopPropagation(); act('open', [o.id], 'hand'); }
+            }, true);
+
+            // ---- the notices: an undo pill, a status line (top centre, clear of the centre UI) ----
+            function ensureLayer() {
+                if (layer && layer.isConnected) return layer;
+                layer = document.createElement('div');
+                layer.className = 'friday-orb-notes';
+                layer.style.cssText = 'position:fixed;top:44px;left:50%;transform:translateX(-50%);z-index:9700;display:flex;'
+                    + 'flex-direction:column;align-items:center;gap:6px;pointer-events:none;max-width:min(560px,calc(100vw - 32px));';
+                document.body.appendChild(layer);
+                return layer;
+            }
+            function note(key, text, opts) {
+                const L = ensureLayer();
+                let el = L.querySelector('[data-note="' + key + '"]');
+                if (!el) {
+                    el = document.createElement('div');
+                    el.dataset.note = key;
+                    el.style.cssText = 'pointer-events:auto;display:flex;gap:10px;align-items:center;padding:6px 12px;border-radius:14px;'
+                        + 'background:rgba(10,14,26,0.88);border:1px solid rgba(0,212,255,0.28);color:#dfe8f5;'
+                        + 'font:12px/1.4 var(--fr-font-body, sans-serif);box-shadow:0 2px 12px rgba(0,0,0,0.4);';
+                    L.appendChild(el);
+                }
+                el.textContent = '';
+                const span = document.createElement('span'); span.textContent = text; el.appendChild(span);
+                if (opts && opts.undo) {
+                    const b = document.createElement('button');
+                    b.type = 'button'; b.textContent = 'Undo';
+                    b.style.cssText = 'background:none;border:1px solid rgba(0,212,255,0.5);color:#00d4ff;border-radius:10px;padding:1px 10px;cursor:pointer;font:inherit;';
+                    b.addEventListener('click', ev => { ev.stopPropagation(); opts.undo(); });
+                    el.appendChild(b);
+                }
+                clearTimeout(el._t);
+                if (opts && opts.ms) el._t = setTimeout(() => el.remove(), opts.ms);
+                return el;
+            }
+            const dropNote = key => { const el = layer && layer.querySelector('[data-note="' + key + '"]'); if (el) el.remove(); };
+
+            // ---- one line on where a helper is, from what the server says ----
+            function statusLine(o, now) {
+                const s = String(o.status || 'running');
+                const who = Name(o), what = String(now || o.label || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+                if (o.approval_id) return who + ' needs your OK.';
+                if (/^(failed|error|timeout)$/.test(s)) return who + ' failed' + (what ? ': ' + what : '.');
+                if (/^(completed|done|finished)$/.test(s)) return who + ' is done' + (what ? ': ' + what : '.');
+                if (s === 'cancelled') return who + ' was cancelled.';
+                if (s === 'queued') return who + ' is waiting its turn.';
+                if (s === 'paused') return who + ' is paused.';
+                const steps = (o.step_total > 0 && o.step_n >= 0) ? ' on step ' + o.step_n + ' of ' + o.step_total : '';
+                return who + ' is working' + steps + (what ? ': ' + what : '.');
+            }
+
+            // ---- what an op does; the pointer and voice share it ----
+            const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+            function commitCancel(o) {
+                // A helper's task stops at its next step (the cooperative stop); a
+                // task not running yet is cancelled outright; a process without a
+                // task (an image or a video render) is cancelled as a process.
+                if (o.task_id) {
+                    return post('/api/tasks/' + encodeURIComponent(o.task_id) + '/stop-after-step').then(r => {
+                        if (r.status === 409) return fetch('/api/tasks/' + encodeURIComponent(o.task_id), { method: 'DELETE' });
+                        return r;
+                    }).catch(() => {});
+                }
+                return post('/api/processes/' + encodeURIComponent(o.id) + '/cancel').catch(() => {});
+            }
+            function undoTick() {
+                U.tick(performance.now());
+                if (!U.keys().length) { clearInterval(undoTimer); undoTimer = 0; }
+            }
+            function cancel(o) {
+                if (U.has(o.id)) return { ok: true, pending: true };
+                call('mark', o.id, 'cancelling');
+                U.schedule(o.id, () => { dropNote('undo:' + o.id); call('mark', o.id, 'cancelled'); commitCancel(o); }, performance.now());
+                note('undo:' + o.id, Name(o) + ' will stop.', { undo: () => undo(o), ms: UNDO_MS });
+                if (!undoTimer) undoTimer = setInterval(undoTick, 200);
+                return { ok: true, pending: true, undo_s: UNDO_MS / 1000 };
+            }
+            function undo(o) {
+                if (!U.undo(o.id)) return { ok: false, reason: 'nothing to undo' };
+                dropNote('undo:' + o.id);
+                call('mark', o.id, null);
+                note('undone:' + o.id, Name(o) + ' carries on.', { ms: 2500 });
+                return { ok: true };
+            }
+            function pause(o, resume) {
+                // Only a row the server marks pausable can pause (the server's
+                // POST /api/tasks/<id>/pause and /continue). Anything else says
+                // so at once rather than pretend.
+                if (!o.task_id || !o.pausable) {
+                    note('pause:' + o.id, 'Pausing ' + name(o) + ' is not possible yet.', { ms: 3500 });
+                    return { ok: false, reason: 'pausing this helper is not possible yet' };
+                }
+                post('/api/tasks/' + encodeURIComponent(o.task_id) + '/' + (resume ? 'continue' : 'pause')).then(r => {
+                    if (r.ok) call('mark', o.id, resume ? null : 'paused');
+                    else note('pause:' + o.id, 'The server did not ' + (resume ? 'continue ' : 'pause ') + name(o) + '.', { ms: 3500 });
+                }).catch(() => {});
+                return { ok: true, pending: true };
+            }
+            function popout(o, inGesture) {
+                const id = o.task_id || o.id;
+                let w = null;
+                if (inGesture && typeof fridayWorkspaceTabUrl === 'function') {
+                    try { w = window.open(fridayWorkspaceTabUrl('system', { tab: 'task', task: id }), 'friday-task-' + id); } catch (_) { w = null; }
+                }
+                if (w) { try { w.focus(); } catch (_) {} return { ok: true, where: 'tab' }; }
+                // Outside a click the browser blocks a new tab: the same view opens as a window.
+                if (typeof fridayNavigate === 'function') fridayNavigate({ workspace: 'system', tab: 'task', task: id });
+                return { ok: true, where: 'window' };
+            }
+            function open(o) {
+                if (o.approval_id) {
+                    window.dispatchEvent(new CustomEvent('friday:approval-focus', { detail: { approval_id: o.approval_id } }));
+                    return { ok: true, opened: 'approval' };
+                }
+                window.dispatchEvent(new CustomEvent('fridayOrbClicked', { detail: { id: o.id, label: o.label, category: o.category,
+                    icon: o.icon, progress: o.progress, status: o.status, steps: o.steps, sx: o.sx, sy: o.sy } }));
+                return { ok: true, opened: 'thread' };
+            }
+            function status(o, via) {
+                const line = statusLine(o);
+                if (via === 'hand') {
+                    note('status', her() + ': ' + line, { ms: CAPTION_MS });
+                    // The line again, with the task's own latest checkpoint once the server answers.
+                    if (o.task_id) fetch('/api/tasks/' + encodeURIComponent(o.task_id)).then(r => r.ok ? r.json() : null).then(t => {
+                        if (t && t.now) note('status', her() + ': ' + statusLine(Object.assign({}, o, { status: t.status || o.status }), t.now), { ms: CAPTION_MS });
+                    }).catch(() => {});
+                }
+                return { ok: true, line };
+            }
+            function act(op, ids, via) {
+                const out = [];
+                for (const id of ids) {
+                    const o = find(id);
+                    if (!o) { out.push({ id, ok: false, reason: 'gone' }); continue; }
+                    focusId = id;
+                    let r;
+                    if (op === 'open') r = open(o);
+                    else if (op === 'status') r = status(o, via);
+                    else if (op === 'cancel') r = cancel(o);
+                    else if (op === 'undo') r = undo(o);
+                    else if (op === 'pause') r = pause(o, o.status === 'paused');
+                    else if (op === 'resume') r = pause(o, true);
+                    else if (op === 'popout') r = popout(o, via === 'hand');
+                    else r = { ok: false, reason: 'unknown op ' + op };
+                    out.push(Object.assign({ id, name: name(o) }, r));
+                }
+                return out;
+            }
+
+            // ---- voice and chat: a desktop action {type:'orb', op, target} ----
+            // The phrase is resolved here, where the orbs are; the result rides
+            // back in the action's ack, so Friday can say what happened.
+            function run(a) {
+                const orbs = list();
+                if (a.op === 'list') return { ok: true, helpers: orbs.map(o => ({ name: name(o), kind: o.kind, line: statusLine(o) })) };
+                const res = FridayOrbLife.resolve(a.target || '', orbs, focusId);
+                if (!res.ids.length) return { ok: false, reason: 'no helper matches', helpers: orbs.map(name) };
+                if (res.ambiguous && a.op !== 'status') return { ok: false, ambiguous: true, candidates: res.ids.map(id => name(find(id))) };
+                const results = act(a.op, res.ids, 'voice');
+                return { ok: results.every(r => r.ok !== false), results };
+            }
+
+            return { attach, run, act, onScene, statusLine, _undo: U };
+        })();
+        // </orb-hands>
+
         // --- THREE.JS ENGINE ---
         let scene, camera, renderer, composer, bloomPass, holoPass;
         // True while the GPU has taken this canvas's context away. animate() must
@@ -8989,6 +9667,10 @@ function fridayRunActions(actions) {
             window.open(u, '_blank', 'noopener');
           } catch (_) {}
         }
+      } else if (a.type === 'orb') {
+        // Voice or chat acting on a helper's orb (FridayOrbHands): the phrase is
+        // resolved where the orbs are, and what happened rides back in the ack.
+        a.result = typeof FridayOrbHands !== 'undefined' ? FridayOrbHands.run(a) : { ok: false, reason: 'no orb layer on this page' };
       } else if (a.type === 'podcast') {
         // Voice or chat steering the podcast player (podcast_tools.podcast_play).
         fridayPodcast(a.op || 'play', a.episode_id, { t: a.t });
@@ -27549,6 +28231,9 @@ fridayDeclareNav('system', {
 function SystemWS() {
   const [sys, setSys] = useState(null);
   const [loading, setLoading] = useState(true);
+  // One helper, popped out of its orb (TaskFocus): {tab:'task', task:<id>}.
+  const [focusTask, setFocusTask] = useState(null);
+  const ftRef = useRef(null);
   // Context log state
   const [ctxStats, setCtxStats] = useState(null);
   const [ctxQuery, setCtxQuery] = useState('');
@@ -27625,6 +28310,15 @@ function SystemWS() {
   };
   // Deep-link: notifications target {workspace:'system',tab:'self-improvement'|'approvals'} → scroll the card into view.
   useNavTarget('system', t => {
+    if (t.tab === 'task' && t.task) {
+      setFocusTask(String(t.task));
+      setTimeout(() => {
+        if (ftRef.current) ftRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+      }, 120);
+    }
     if (t.tab === 'self-improvement' && siRef.current) setTimeout(() => siRef.current.scrollIntoView({
       behavior: 'smooth',
       block: 'start'
@@ -27748,7 +28442,14 @@ function SystemWS() {
     file_read: '#a8a8b4',
     task_spawn: '#ff6dd9'
   })[t] || '#888';
-  if (loading) return /*#__PURE__*/React.createElement("div", {
+  const focus = focusTask && /*#__PURE__*/React.createElement("div", {
+    ref: ftRef
+  }, /*#__PURE__*/React.createElement(TaskFocus, {
+    key: focusTask,
+    taskId: focusTask,
+    onClose: () => setFocusTask(null)
+  }));
+  if (loading) return /*#__PURE__*/React.createElement("div", null, focus, /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#bbb',
       textAlign: 'center',
@@ -27756,10 +28457,10 @@ function SystemWS() {
       fontFamily: 'JetBrains Mono',
       fontSize: 12
     }
-  }, "Scanning system...");
+  }, "Scanning system..."));
   const disks = sys?.disk || sys?.disks || [];
   const procs = sys?.processes || [];
-  return /*#__PURE__*/React.createElement("div", null, compStats && /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("div", null, focus, compStats && /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginBottom: 10,
@@ -43288,6 +43989,143 @@ function TaskCard({
     task: task
   }));
 }
+/* ONE HELPER IN ITS OWN TAB: what a process orb pops out into
+   (avatar-visual-genome.md §16). The task's own card, live, and once it is
+   finished its receipt: what it did, the model, how long it took, what it
+   cost, its sources when the server has them, and for a failed one the fix
+   the card's own controls carry out. */
+function fridayDuration(s) {
+  if (s == null) return '';
+  s = Math.round(s);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + s % 60 + 's';
+  return Math.floor(m / 60) + 'h ' + m % 60 + 'm';
+}
+function TaskFocus({
+  taskId,
+  onClose
+}) {
+  const [task, setTask] = useState(null);
+  const [digest, setDigest] = useState(null);
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    let alive = true,
+      timer = null;
+    const url = '/api/tasks/' + encodeURIComponent(taskId);
+    const load = async () => {
+      try {
+        const r = await fetch(url);
+        if (!alive) return;
+        if (r.status === 404) {
+          setGone(true);
+          return;
+        }
+        const t = await r.json();
+        if (!alive) return;
+        setTask(t);
+        if (!/^(running|queued)$/.test(t.status || '')) {
+          const d = await fetch(url + '/digest').then(x => x.ok ? x.json() : null).catch(() => null);
+          if (alive) setDigest(d);
+          return;
+        }
+      } catch (_) {}
+      if (alive) timer = setTimeout(load, 2000);
+    };
+    load();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [taskId]);
+  const done = !!task && !/^(running|queued)$/.test(task.status || '');
+  const rc = done && typeof FridayOrbLife !== 'undefined' ? FridayOrbLife.receipt(task, digest) : null;
+  const mono = {
+    fontFamily: 'JetBrains Mono',
+    fontSize: 10,
+    color: '#9fb2c9'
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card task-focus",
+    style: {
+      marginBottom: 10,
+      padding: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      ...mono,
+      fontSize: 11,
+      letterSpacing: 1,
+      color: 'var(--fr-cyan)'
+    }
+  }, "HELPER"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1
+    }
+  }), onClose && /*#__PURE__*/React.createElement("button", {
+    className: "btn-sm",
+    onClick: onClose
+  }, "Close")), gone ? /*#__PURE__*/React.createElement("div", {
+    style: mono
+  }, "This helper is no longer on record.") : !task ? /*#__PURE__*/React.createElement("div", {
+    style: mono
+  }, "Loading…") : /*#__PURE__*/React.createElement(TaskCard, {
+    task: task,
+    expanded: true,
+    onToggle: () => {},
+    onCancel: () => fetch('/api/tasks/' + encodeURIComponent(taskId), {
+      method: 'DELETE'
+    }).catch(() => {}),
+    onChanged: () => {},
+    onView: () => {}
+  }), rc && /*#__PURE__*/React.createElement("div", {
+    className: "task-receipt",
+    style: {
+      marginTop: 8,
+      padding: 8,
+      borderRadius: 8,
+      border: '1px solid ' + (rc.failed ? 'rgba(239,68,68,0.5)' : 'rgba(0,212,255,0.25)')
+    }
+  }, rc.did && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#dfe8f5',
+      marginBottom: 4
+    }
+  }, rc.did), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...mono,
+      display: 'flex',
+      gap: 10,
+      flexWrap: 'wrap'
+    }
+  }, rc.failed && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#ef4444'
+    }
+  }, "Failed"), rc.model && /*#__PURE__*/React.createElement("span", null, rc.model), rc.duration_s != null && /*#__PURE__*/React.createElement("span", null, fridayDuration(rc.duration_s)), rc.cost_usd != null && /*#__PURE__*/React.createElement("span", null, '$' + rc.cost_usd.toFixed(rc.cost_usd < 0.01 ? 4 : 2))), rc.sources && rc.sources.length > 0 && /*#__PURE__*/React.createElement("ul", {
+    style: {
+      ...mono,
+      margin: '6px 0 0',
+      paddingLeft: 16
+    }
+  }, rc.sources.slice(0, 8).map((s, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, s && (s.title || s.url) || String(s)))), rc.fix && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...mono,
+      marginTop: 6,
+      color: '#dfe8f5'
+    }
+  }, 'Fix: ' + rc.fix.label)));
+}
 // ═══ SETUP WIZARD (first-run onboarding, Hermes-inspired) ═══
 const WIZARD_VOICES = [{
   id: 'Aoede',
@@ -56019,6 +56857,32 @@ function ApprovalPopups() {
     seen.current = new Set(items.map(a => a.approval_id));
     if (fresh) setLater(false);
   }, [items]);
+  // A helper's orb that needs the owner's OK, clicked (FridayOrbHands):
+  // unfold to the card it is waiting on, the same card, and outline it.
+  useEffect(() => {
+    const on = e => {
+      const id = e && e.detail && e.detail.approval_id;
+      setLater(false);
+      setTimeout(() => {
+        let el = null;
+        try {
+          el = id && document.querySelector('[data-testid="approval-popup"] [data-approval-id="' + CSS.escape(String(id)) + '"]');
+        } catch (_) {}
+        if (!el) return;
+        el.scrollIntoView({
+          block: 'nearest',
+          behavior: 'smooth'
+        });
+        const was = el.style.outline;
+        el.style.outline = '1px solid rgba(245,158,11,0.85)';
+        setTimeout(() => {
+          el.style.outline = was;
+        }, 2400);
+      }, 60);
+    };
+    window.addEventListener('friday:approval-focus', on);
+    return () => window.removeEventListener('friday:approval-focus', on);
+  }, []);
   if (!items.length) return null;
   const decide = (id, decision) => {
     if (busy) return;

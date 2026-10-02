@@ -1,15 +1,17 @@
 # Avatar visual genome: Friday's look evolves weekly, on every structure, reversibly
 
-> **Status:** proposed (spec only; nothing in this document is built). The
-> owner decided all three open questions on 2026-09-29 (§12): on by default;
-> a frontier model authors by default, and the user may choose any model; one
-> shared palette within ±30° of cyan. This is
-> the converged design. §13 adds the processing-state vocabulary (owner
+> **Status:** partly built: the genome, the processing-state gestures (§13),
+> Giga Earth's track (§15) and the process orbs' rules, forms and hands
+> (§16); the rest is spec. The owner decided all three open questions on
+> 2026-09-29 (§12): on by default; a frontier model authors by default, and
+> the user may choose any model; one shared palette within ±30° of cyan. This
+> is the converged design. §13 adds the processing-state vocabulary (owner
 > approved 2026-09-29), and §14 maps the spec onto the north star. §15 puts
 > Giga Earth on a set track of Rez forms that no model changes (owner request
-> 2026-09-30). It replaces the 2026-09-22 version of this file and the
-> uncommitted `docs/design/evolve-genome.md` (2026-09-28). That draft is
-> preserved verbatim in Appendix B so it is in git.
+> 2026-09-30). §16 makes the process orbs interactive (owner, 2026-10-02). It
+> replaces the 2026-09-22 version of this file and the uncommitted
+> `docs/design/evolve-genome.md` (2026-09-28). That draft is preserved
+> verbatim in Appendix B so it is in git.
 > **Last verified:** 2026-09-29 against main `41ef21fd`
 > **Implementation:** none yet. Builds on:
 > - `index.html`: `MOODS`, `EVOLUTION_PATH`, `buildAllStructures`,
@@ -1987,6 +1989,174 @@ brightness only (§13.7), and no tile is thrown.
   section. Errors are built (§13.3): its tiles knock like any structure's.
 
 ---
+
+## 16. Process orbs: Friday's helpers, hands-on (owner, 2026-10-02)
+
+The owner's direction: "I like the process orbs, bring them back. How can we
+make them more interactive? How can we make them more interesting and
+useful?" He approved all eight ideas below.
+
+The orbs are the helper layer (Layer 2). Each orb is one of Friday's
+helpers, models or background jobs, never Friday herself.
+
+> **Status (2026-10-02):** built and tested: the rules (`FridayOrbLife`), the
+> forms (`FridayOrbForms`), hands-on control and voice actions
+> (`FridayOrbHands`), and one helper in its own tab (`TaskFocus`). Not built
+> yet: drawing §16.2's colours and marks and §16.3's life on the orbs
+> themselves. That waits on the restored orb layer.
+
+**Fixed rules.**
+- An orb never drives Friday's core form.
+- The routing that feeds the layer is fixed: helper-labelled presence frames
+  (P-TURN-ORIGIN) plus the rows of `/api/processes`. Above eight orbs, the
+  rest fold into one swarm orb with a count.
+- No faces or mouths: every form is mathematics or science.
+- The photosensitivity limits of §6.3 hold.
+- Orbs keep out of the centre UI: the top bar, the greeting and prompt row
+  above the dock, and the dock itself.
+- Brand: decoration never borrows a status hue, and status is never carried
+  by colour alone (BRAND.md).
+
+The code:
+- `FridayOrbLife` (`<orb-life>`): the rules as plain arithmetic.
+- `FridayOrbForms` (`<orb-forms>`): the shapes.
+- `FridayOrbHands` (`<orb-hands>`): the pointer and voice.
+- `TaskFocus`: one helper in its own tab.
+
+### 16.1 Hands-on control
+
+The scene's canvas takes no pointer events, because the UI sits over it, so
+an orb has never received a click. The pointer is now read at the window,
+and only over the bare scene. "Bare scene" means a clear element covering at
+least half the screen that is not a control, a window or a panel.
+
+| Gesture | What happens |
+|---|---|
+| Tap | If the helper needs your OK, its approval card opens: the same card, unfolded from "Later" and outlined. Otherwise its thread opens. |
+| Hold still for 0.6 s | Pause, or continue a paused one. Only a row the server marks `pausable` can pause; any other says at once that pausing is not possible yet. |
+| Throw it away from Friday (release faster than 1,200 px/s, moving away from her) | Cancel, with a five-second Undo. Nothing is sent until the window passes. Then a running task stops at its next step (`stop-after-step`), a task not running yet is cancelled, and a process with no task (an image or a video render) is cancelled as a process. |
+| Drop it on Friday | Its status in one line, written under the top bar ("Friday: The teal research helper is working on step 2 of 5: …"). When the task answers, the line gains its latest checkpoint. |
+| Drop it at the screen's edge | Its own tab: `/w/system?tab=task&task=<id>`, one named tab per helper. |
+| Let go anywhere else | It drifts back to its orbit. |
+
+A throw toward Friday is never a cancel.
+
+**Voice parity.**
+- Every orb has a speakable name: its colour and its kind ("the teal
+  research helper").
+- The colour is one of the brand's five decoration hues (teal, pink, blue,
+  sand, violet), the least-used first. Common words map to them: "green" is
+  teal, "purple" is violet.
+- Order words ("the newest") and "it" (the orb last touched or named) work
+  too.
+- Voice and chat act through the desktop action `{type: "orb", op, target}`,
+  for op `list`, `status`, `open`, `cancel`, `undo`, `pause`, `resume` or
+  `popout`. The page resolves the phrase where the orbs are and runs the same
+  code as the hand, with the same undo. What happened rides back in the
+  action's acknowledgement for Friday to say.
+- An ambiguous phrase never acts. It names the candidates.
+- A pop-out asked for by voice opens as a window on the desktop, because a
+  browser blocks a new tab outside a click.
+
+**Status out loud.** Dropping an orb on Friday writes the line. Asking by
+voice returns the same line, and her voice model says it. The page does not
+synthesise speech for it, because that would send a helper's checkpoint text
+to a speech service: a new path for data to leave the machine.
+
+### 16.2 Forms, colours and what they mean
+
+| Kind (from fields the server sets in code) | Form |
+|---|---|
+| Research (a research commission) | A golden-angle (phyllotaxis) point sphere |
+| Code (the coding worker, self-improvement) | A small cube lattice |
+| Media (image, video, podcast, pipeline, a creation) | A Lissajous figure |
+| Mail (category communication) | A (p, q) torus knot |
+| Scheduled (a schedule, `sched-` processes) | An epicycloid |
+| System (pulling a model, the seat gate, vault access) | A Platonic solid |
+| Any other helper | An icosahedron |
+
+- **Kind.** A kind comes from ids, categories, process names and links set in
+  code, never from a task's own words. The server's own `kind` wins when it
+  sends one.
+- **Variation.** Each form's numbers (point count, frequency ratio, knot
+  winding, lattice twist) are drawn from the genome step's content hash. The
+  same step draws the same form; a new weekly step draws a new variation of
+  it.
+- **Drawing.** Forms are lines and points, drawn dim and additive, fitted
+  inside the orb's sphere.
+
+**Colour and marks.**
+
+| Meaning | How it shows |
+|---|---|
+| Which orb (its name) | Its decoration hue |
+| Local work | The full hue, a solid form |
+| Cloud work | A paler tint of the same hue, and an outer ring (a shape as well as a tint) |
+| Data left the machine (the helper's `egress` frame) | A thin thread rises once, and a small chevron marks the orb for its life |
+| Needs your OK | Amber, the one place amber appears. A gentle glow, and the orb drifts slightly forward. |
+| Failed | Error red with the word "Failed". It dims and stays until looked at. |
+
+### 16.3 The life of an orb
+
+- **Progress.** An orb's orbit closes in on Friday only with real progress:
+  a fraction the server computed, or steps done of steps planned. Unknown
+  progress never moves it.
+- **Sparks.** A tool call is one small spark. Sparks are rate-limited to one
+  per orb per 0.4 s and three a second in all, well inside the flash limit.
+- **Moons.** A helper's own helpers (`parent_trace_id`) are its moons.
+- **Finishing.** A finished orb spirals into Friday over 1.6 s. Her own beat
+  comes from her `subagent` end frame, never from the orb. It leaves a
+  receipt chip: what it did, the model, how long, the cost, and the sources
+  when the server has them. A failed one names the fix (resume from where it
+  stopped, or run it again).
+- **The sky.** The day's finished helpers are faint stars in the band above
+  the scene's centre, one fixed place per task, taken from the server's own
+  task list. Tapping a star opens its receipt.
+
+### 16.4 What the server gives today, and what it needs
+
+**Built on what exists:**
+- the process rows (`/api/processes`);
+- the task record and digest (result, model, cost, duration, the latest
+  checkpoint);
+- `stop-after-step`, cancel, resume and rerun;
+- the trace ids on helper frames (`turn` equals the row's `trace_id`);
+- the cloud-spill card's task link.
+
+**Needed from the server, and not built here:**
+- Pause and continue a live helper (`POST /api/tasks/<id>/pause`,
+  `/continue`), and `pausable` on the row.
+- A cancel that stops the worker:
+  - `DELETE /api/tasks/<id>` marks a running task cancelled but does not
+    signal the worker, which can later overwrite the status;
+  - runner tasks ignore `stop-after-step`;
+  - `/api/processes/<pid>/cancel` releases any GPU lease and has no login
+    check.
+- A task id on approval cards. Today only the cloud-spill card carries one,
+  so other cards cannot find their orb.
+- A `kind` field on task and process rows.
+- Sources per task (documents, not reasoning labels).
+- A cost estimate per task before paid work starts. `costs.db` has no task
+  id.
+- A task id on egress log rows. The helper's presence frame is enough for
+  the orb's mark; the log is not.
+- The voice and chat tools that send `{type: "orb"}` actions, and their
+  action-gate classification. That is governance, so it is the lead's.
+
+### 16.5 Tests
+
+- `tests/unit/test_orb_life.py` (node, both scene files): kinds, names and
+  the phrase resolver, the gesture state machine, the undo window, progress
+  and the spiral, receipts, stars, the keep-out, sparks, colours, approval
+  links, frame-to-orb mapping, and form seeding.
+- `tests/unit/test_orb_forms.py` (node with the vendored three.js): every form
+  is real, finite, fitted and distinct, and follows the step.
+- `tests/unit/test_orb_hands.py` (node, a stand-in page): voice and pointer
+  through one path, the undo window, the stop-after-step-then-delete order,
+  honest pausing, pop-out by voice, the approval card, and the pointer only
+  over the bare scene.
+- Every rule in these files was broken on purpose once, and each break failed
+  a test.
 
 ## Appendix A. The market side and ratings (carried from 2026-09-22 §7; not built; federation is deferred)
 

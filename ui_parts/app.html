@@ -655,6 +655,10 @@ function fridayRunActions(actions){
       }else if(a.type==='open_url'&&a.url){
         const u=fridayHttpUrl(a.url);
         if(u){try{window.open(u,'_blank','noopener');}catch(_){}}
+      }else if(a.type==='orb'){
+        // Voice or chat acting on a helper's orb (FridayOrbHands): the phrase is
+        // resolved where the orbs are, and what happened rides back in the ack.
+        a.result=typeof FridayOrbHands!=='undefined'?FridayOrbHands.run(a):{ok:false,reason:'no orb layer on this page'};
       }else if(a.type==='podcast'){
         // Voice or chat steering the podcast player (podcast_tools.podcast_play).
         fridayPodcast(a.op||'play',a.episode_id,{t:a.t});
@@ -8308,6 +8312,8 @@ function TaskRecordsCard(){
 fridayDeclareNav('system',{key:'tab',keys:['tab'],sections:[{id:'self-improvement',label:'Self-improvement'},{id:'approvals',label:'Approvals'}]});
 function SystemWS(){
   const[sys,setSys]=useState(null);const[loading,setLoading]=useState(true);
+  // One helper, popped out of its orb (TaskFocus): {tab:'task', task:<id>}.
+  const[focusTask,setFocusTask]=useState(null);const ftRef=useRef(null);
   // Context log state
   const[ctxStats,setCtxStats]=useState(null);
   const[ctxQuery,setCtxQuery]=useState('');
@@ -8357,6 +8363,7 @@ function SystemWS(){
   };
   // Deep-link: notifications target {workspace:'system',tab:'self-improvement'|'approvals'} → scroll the card into view.
   useNavTarget('system',t=>{
+    if(t.tab==='task'&&t.task){setFocusTask(String(t.task));setTimeout(()=>{if(ftRef.current)ftRef.current.scrollIntoView({behavior:'smooth',block:'start'})},120);}
     if(t.tab==='self-improvement'&&siRef.current)setTimeout(()=>siRef.current.scrollIntoView({behavior:'smooth',block:'start'}),120);
     if(t.tab==='approvals'){refreshApprovals();if(apRef.current)setTimeout(()=>apRef.current.scrollIntoView({behavior:'smooth',block:'start'}),120);}
   });
@@ -8395,10 +8402,12 @@ function SystemWS(){
   const fmtTs=(s)=>{try{return new Date(s).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return s}};
   const typeColor=(t)=>({chat_user:'#7b61ff',chat_agent:'#00d4ff',tool_call:'#f59e0b',wiki_edit:'#00ff80',wiki_delete:'#ff0080',file_read:'#a8a8b4',task_spawn:'#ff6dd9'}[t]||'#888');
 
-  if(loading)return <div style={{color:'#bbb',textAlign:'center',padding:40,fontFamily:'JetBrains Mono',fontSize:12}}>Scanning system...</div>;
+  const focus=focusTask&&<div ref={ftRef}><TaskFocus key={focusTask} taskId={focusTask} onClose={()=>setFocusTask(null)}/></div>;
+  if(loading)return <div>{focus}<div style={{color:'#bbb',textAlign:'center',padding:40,fontFamily:'JetBrains Mono',fontSize:12}}>Scanning system...</div></div>;
   const disks=(sys?.disk||sys?.disks||[]);
   const procs=(sys?.processes||[]);
   return(<div>
+    {focus}
     {compStats&&<div className="card" style={{marginBottom:10,padding:10}}>
       <div className="card-title">Context Compression (Headroom)</div>
       {compStats.available
@@ -14208,6 +14217,62 @@ function TaskCard({task,expanded,onToggle,onCancel,onView,onChanged}){
       <div className="task-card-sub" style={{marginTop:4,fontSize:10,color:'#888'}}>Cannot resume — {task.resume_reason}</div>}
     {expanded&&<TaskTimeline taskId={task.linked_task_id||task.task_id} live={status==='running'||status==='queued'} fallback={{log:task.log,steps:task.steps}}/>}
     {expanded&&<TaskControls task={task}/>}
+  </div>);
+}
+/* ONE HELPER IN ITS OWN TAB: what a process orb pops out into
+   (avatar-visual-genome.md §16). The task's own card, live, and once it is
+   finished its receipt: what it did, the model, how long it took, what it
+   cost, its sources when the server has them, and for a failed one the fix
+   the card's own controls carry out. */
+function fridayDuration(s){if(s==null)return '';s=Math.round(s);if(s<60)return s+'s';const m=Math.floor(s/60);if(m<60)return m+'m '+(s%60)+'s';return Math.floor(m/60)+'h '+(m%60)+'m';}
+function TaskFocus({taskId,onClose}){
+  const[task,setTask]=useState(null);
+  const[digest,setDigest]=useState(null);
+  const[gone,setGone]=useState(false);
+  useEffect(()=>{
+    let alive=true,timer=null;
+    const url='/api/tasks/'+encodeURIComponent(taskId);
+    const load=async()=>{
+      try{
+        const r=await fetch(url);
+        if(!alive)return;
+        if(r.status===404){setGone(true);return;}
+        const t=await r.json();if(!alive)return;
+        setTask(t);
+        if(!/^(running|queued)$/.test(t.status||'')){
+          const d=await fetch(url+'/digest').then(x=>x.ok?x.json():null).catch(()=>null);
+          if(alive)setDigest(d);
+          return;
+        }
+      }catch(_){}
+      if(alive)timer=setTimeout(load,2000);
+    };
+    load();
+    return()=>{alive=false;clearTimeout(timer);};
+  },[taskId]);
+  const done=!!task&&!/^(running|queued)$/.test(task.status||'');
+  const rc=done&&typeof FridayOrbLife!=='undefined'?FridayOrbLife.receipt(task,digest):null;
+  const mono={fontFamily:'JetBrains Mono',fontSize:10,color:'#9fb2c9'};
+  return(<div className="card task-focus" style={{marginBottom:10,padding:10}}>
+    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+      <span style={{...mono,fontSize:11,letterSpacing:1,color:'var(--fr-cyan)'}}>HELPER</span>
+      <span style={{flex:1}}/>
+      {onClose&&<button className="btn-sm" onClick={onClose}>Close</button>}
+    </div>
+    {gone?<div style={mono}>This helper is no longer on record.</div>
+      :!task?<div style={mono}>Loading…</div>
+      :<TaskCard task={task} expanded={true} onToggle={()=>{}} onCancel={()=>fetch('/api/tasks/'+encodeURIComponent(taskId),{method:'DELETE'}).catch(()=>{})} onChanged={()=>{}} onView={()=>{}}/>}
+    {rc&&<div className="task-receipt" style={{marginTop:8,padding:8,borderRadius:8,border:'1px solid '+(rc.failed?'rgba(239,68,68,0.5)':'rgba(0,212,255,0.25)')}}>
+      {rc.did&&<div style={{fontSize:12,color:'#dfe8f5',marginBottom:4}}>{rc.did}</div>}
+      <div style={{...mono,display:'flex',gap:10,flexWrap:'wrap'}}>
+        {rc.failed&&<span style={{color:'#ef4444'}}>Failed</span>}
+        {rc.model&&<span>{rc.model}</span>}
+        {rc.duration_s!=null&&<span>{fridayDuration(rc.duration_s)}</span>}
+        {rc.cost_usd!=null&&<span>{'$'+rc.cost_usd.toFixed(rc.cost_usd<0.01?4:2)}</span>}
+      </div>
+      {rc.sources&&rc.sources.length>0&&<ul style={{...mono,margin:'6px 0 0',paddingLeft:16}}>{rc.sources.slice(0,8).map((s,i)=><li key={i}>{(s&&(s.title||s.url))||String(s)}</li>)}</ul>}
+      {rc.fix&&<div style={{...mono,marginTop:6,color:'#dfe8f5'}}>{'Fix: '+rc.fix.label}</div>}
+    </div>}
   </div>);
 }
 // ═══ FIRST-RUN SETUP (the setup chat and the tables it shares) ═══
@@ -20081,6 +20146,32 @@ function ApprovalPopups() {
     seen.current = new Set(items.map(a => a.approval_id));
     if (fresh) setLater(false);
   }, [items]);
+  // A helper's orb that needs the owner's OK, clicked (FridayOrbHands):
+  // unfold to the card it is waiting on, the same card, and outline it.
+  useEffect(() => {
+    const on = e => {
+      const id = e && e.detail && e.detail.approval_id;
+      setLater(false);
+      setTimeout(() => {
+        let el = null;
+        try {
+          el = id && document.querySelector('[data-testid="approval-popup"] [data-approval-id="' + CSS.escape(String(id)) + '"]');
+        } catch (_) {}
+        if (!el) return;
+        el.scrollIntoView({
+          block: 'nearest',
+          behavior: 'smooth'
+        });
+        const was = el.style.outline;
+        el.style.outline = '1px solid rgba(245,158,11,0.85)';
+        setTimeout(() => {
+          el.style.outline = was;
+        }, 2400);
+      }, 60);
+    };
+    window.addEventListener('friday:approval-focus', on);
+    return () => window.removeEventListener('friday:approval-focus', on);
+  }, []);
   if (!items.length) return null;
   const decide = (id, decision) => {
     if (busy) return;
