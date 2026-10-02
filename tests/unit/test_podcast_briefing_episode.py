@@ -110,8 +110,11 @@ def test_the_briefing_that_went_out_would_fail_the_script_gate(home, monkeypatch
     assert sc["ok"] is False and sc["revisions"] == pe.MAX_REVISIONS
     codes = {p["code"] for p in sc["problems"]}
     assert {"no_lede", "time_order", "repeats_word", "safety_dismissed"} <= codes
-    # Lines that can simply be dropped are dropped, not spoken.
-    said = " ".join(ln["text"] for ln in done["lines"])
+    # A missing lede blocks: the script is kept for review, never spoken.
+    assert done["status"] == "failed" and done["error"]["code"] == "script_rejected"
+    assert not done.get("lines") and not speaker
+    # Lines that can simply be dropped are dropped from the draft too.
+    said = " ".join(ln["text"] for ln in done["draft_lines"])
     assert "Top News (relevant to you)" not in said
     assert said.count("comes first today") == 1          # the re-read close is dropped
 
@@ -284,7 +287,9 @@ def test_a_revision_that_makes_the_script_worse_is_not_kept(home, monkeypatch, s
     _write_run(home)
     ds = fx.docs()
     good = fx.good_lines(ds)
-    nearly = [dict(ln, text=ln["text"].replace("Example Wire reports that ", "")) for ln in good]
+    # One soft problem: the headline named late.
+    nearly = [dict(ln, text="The top story is this one. " + ln["text"]) if i == 6 else ln
+              for i, ln in enumerate(good)]
     worse = [dict(ln, text=ln["text"] + " That is the linchpin. It's context.")
              if i in (1, 4, 6) else ln for i, ln in enumerate(good)]
     llm = _writer(nearly, revised=worse)          # the draft has 1 problem; the revisions have more

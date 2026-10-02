@@ -490,10 +490,21 @@ NEWS_RULES = (
     "needed: never invent one.\n"
     "- Every fact in a sentence comes from the story that sentence is about; "
     "never carry a day, a name or a number over from another story.\n"
-    "- A story about violence, death or local safety is introduced plainly and "
-    "humanely, with only what is confirmed and who confirmed it. It is never "
-    "background or noise, and it gets no read or opinion. Add a practical line "
-    "only for a specific tie: a road closure, or today's event venue or street.\n"
+    "- Tell each story once, in one place: its lede, its facts and your read "
+    "together. Never come back to a story later in the episode.\n"
+    "- A story about violence, a threat, death or local safety is introduced "
+    "plainly and humanely, on its own, with only what is confirmed and who "
+    "confirmed it. It is never background or noise, never a thread in another "
+    "story, never part of a summary or \"the bigger picture\", and never in the "
+    "close. It gets no read or opinion. Add a practical line only for a "
+    "specific tie: a road closure, or today's event venue or street.\n"
+    "- A line's \"cites\" says that those sources report it. Your own analysis, "
+    "and Friday's own notes (\"Friday's own notes\" sources), are yours: say "
+    "them as your read, in a line whose \"cites\" is empty. If your notes "
+    "mention a story, give that story its own lede first.\n"
+    "- A word of your own that is not in the sources (\"local\", "
+    "\"infrastructure\", \"landscape\", \"scrutiny\") is said at most twice in "
+    "the whole episode.\n"
     "- \"My read\" is only for stories that are not about violence or crime, "
     "and rests on the facts you just reported.\n"
     "- If a fact is unknown, leave it out or say it once as a fact (\"police "
@@ -502,8 +513,9 @@ NEWS_RULES = (
     "\"after\" only when the calendar's order says so. Say a place the way a "
     "person would (the venue or the street), never a postal code or country.\n"
     "- Cover as many stories as fit, and spend the words on the news. Never "
-    "repeat a phrase or an image. The close adds the one thing to watch and "
-    "never re-reads earlier lines.\n"
+    "repeat a phrase or an image. The close is one sentence of synthesis: what "
+    "the news adds up to, or the one thing to watch. It never re-reads earlier "
+    "lines or recaps the stories.\n"
     "- \"Friday's written briefing\" sources are your own notes: use them for "
     "context and your read. Never read a heading aloud, and never mention the "
     "written briefing or your notes: say the thing itself.\n")
@@ -541,7 +553,11 @@ def _source_block(docs: list[dict], only: set | None = None) -> str:
         head = "[%s] %s" % (d["sid"], d["title"])
         if d.get("url"):
             head += " (%s)" % d["url"]
-        out.append(head + "\n" + d["text"])
+        body = d["text"]
+        if d.get("kind") in ("news", "story") and d.get("outlet") and not d.get("role"):
+            # What the story's spoken lede needs that the text may not say plainly.
+            body += "\nSay the outlet as \"%s\"." % (quality.spoken_outlet(d) or d["outlet"])
+        out.append(head + "\n" + body)
     return "\n\n".join(out)
 
 
@@ -572,6 +588,11 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
            "sentences per line." if solo else
            "Alternate between the two hosts, at most three sentences per line.")
     lines, rejected = [], []
+
+    def used_up(so_far):
+        words = quality.used_up_words(so_far, docs)
+        return (("\nWords of your own you have already said twice; do not say them "
+                 "again: %s." % ", ".join(words)) if words else "")
     for i, ch in enumerate(chapters):
         use = {s for s in (ch.get("sources") or []) if s in valid} or valid
         tail = "\n".join("%s: %s" % (ep["hosts"][ln["speaker"]]["name"], ln["text"])
@@ -581,8 +602,10 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
                  "before it: do not greet or introduce anyone. Start with the "
                  "single most important thing." % opening
                  if i == 0 else
-                 "This is the close: sum up in two lines. The show's fixed sign-off "
-                 "follows it: do not sign off." if i == len(chapters) - 1 else
+                 "This is the close: one sentence of synthesis, what today's news "
+                 "adds up to or the one thing to watch, never a recap of the stories. "
+                 "The show's fixed sign-off follows it: do not sign off."
+                 if i == len(chapters) - 1 else
                  "Carry on naturally from the script so far.")
         raw, _m = _llm_json(system, (
             "SOURCES FOR THIS CHAPTER:\n\n%s\n\n"
@@ -594,7 +617,8 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
             "\"text\": \"...\", \"cites\": [\"S1\"]}]}."
             % (_source_block(docs, use), i + 1, len(chapters), ch.get("title", ""),
                "; ".join(str(p) for p in (ch.get("points") or [])[:6]) or "(your call)",
-               tail or "(nothing yet)", where, per, who, "" if solo else " or \"b\"")),
+               tail or "(nothing yet)", where + used_up(lines), per, who,
+               "" if solo else " or \"b\"")),
             max_tokens=3000)
         got, bad = clean_lines(raw.get("lines") or [], valid, chapter=i,
                                facts=ep.get("_facts"), solo=solo)
@@ -604,6 +628,8 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
         if progress:
             progress(i + 1, len(chapters))
     lines = merge_turns(lines)
+    lines, cut = edit_script(lines, docs, len(chapters), ep.get("home") or "")
+    rejected += cut
 
     news = bool((ep.get("attached") or {}).get("routine"))
     gate = dict(n_chapters=len(chapters), news=news, personal=news, solo=solo,
@@ -618,20 +644,24 @@ def write_script(ep: dict, docs: list[dict], progress=None) -> dict:
     rejected += cut
     problems = problems_of(lines)
     # Each revision is a new draft, and a new draft can be worse: the episode
-    # keeps whichever draft has the fewest problems.
+    # keeps whichever draft has the fewest blocking problems, then the fewest.
+    def weight(ps):
+        return (sum(p["code"] in quality.HARD_CODES for p in ps), len(ps))
+
     best, best_problems = lines, problems
     revisions = 0
     while problems and revisions < MAX_REVISIONS:
         revisions += 1
         revised, bad = _revise(ep, system, docs, lines, problems, len(chapters), solo)
         if revised:
+            revised, edited = edit_script(revised, docs, len(chapters), ep.get("home") or "")
             revised, cut = _drop_dead_lines(revised, problems_of(revised), offset)
-            rejected += bad + cut
+            rejected += bad + edited + cut
             # A revision that loses a chapter lost part of the episode.
             if len(revised) >= 2 and {ln["chapter"] for ln in lines} <= {ln["chapter"] for ln in revised}:
                 lines = revised
         problems = problems_of(lines)
-        if len(problems) < len(best_problems):
+        if weight(problems) < weight(best_problems):
             best, best_problems = lines, problems
     lines, problems = best, best_problems
     lines = with_signature(lines, ep, len(chapters), docs)
@@ -717,6 +747,129 @@ def _drop_echoes(new: list[dict], before: list[dict]) -> tuple[list, list]:
         else:
             kept.append(ln)
     return kept, cut
+
+
+def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
+                home: str = "") -> tuple[list, list]:
+    """The script-quality rules a program applies itself, to every draft,
+    before the gate reads it. Returns (lines, cut).
+
+    * A sentence is credited only to the stories it is about, and only when
+      they report it. Friday's commentary becomes her own line, with no
+      outlet's name on it (`own`, with the stories it comments on in
+      `about`); a claim no cited story makes is cut.
+    * A story of violence or a threat is never folded into another story, a
+      summary or the close, and gets no read.
+    * The close is one sentence.
+    * Each story is told once: a later sentence that comes back to it is cut.
+    """
+    story_list = quality.stories(docs)
+    by = {s["sid"]: s for s in story_list}
+    hurt = quality.safety_clusters(story_list)
+    close = quality.close_chapter(n_chapters)
+    cut: list = []
+
+    def drop(text, chapter, why):
+        cut.append({"text": text, "chapter": chapter, "reason": "cut by the script check: " + why})
+
+    def clusters(ids):
+        return {by[c]["cluster"] for c in ids if c in by}
+
+    out = []
+    for ln in lines:
+        if ln.get("signature"):
+            out.append(ln)
+            continue
+        ch = ln.get("chapter", 0)
+        cited = [c for c in ln.get("cites") or [] if c in by]
+        other = [c for c in ln.get("cites") or [] if c not in by]
+        in_close = close is not None and ch == close
+        pieces = []
+        last: list = []
+        for sent in quality.sentences(ln["text"]):
+            if quality.threads_safety(sent, story_list, in_close=in_close):
+                drop(sent, ch, "a story of violence or a threat, folded into another")
+                continue
+            named = {s["cluster"] for s in story_list if quality.names_story(sent, s)}
+            mine = [c for c in cited if by[c]["cluster"] in named]
+            if not mine:
+                # A sentence that names no story carries on the one before
+                # it; the first belongs to the line's stories, never to a
+                # safety story beside a calmer one.
+                mine = last or [c for c in cited if by[c]["cluster"] not in hurt] or cited
+            last = mine
+            if quality.is_read(sent) and (clusters(mine + list(ln.get("about") or [])) | named) & hurt:
+                drop(sent, ch, "a read on a story of violence")
+                continue
+            verdict, why = quality.support(sent, mine, story_list, docs, home)
+            if verdict == "cut":
+                drop(sent, ch, "credited to a source that does not report %s" % ", ".join(why[:4]))
+            elif verdict == "own" and clusters(mine) & hurt:
+                drop(sent, ch, "commentary on a story of violence")
+            elif verdict == "own":
+                pieces.append((sent, tuple(other), True, tuple(mine)))
+            else:
+                pieces.append((sent, tuple(mine + other), bool(ln.get("own")),
+                               tuple(ln.get("about") or ())))
+        for sent, cites, own, about in pieces:
+            prev = out[-1] if out else None
+            if (prev and not prev.get("signature") and prev.get("_from") is ln
+                    and (tuple(prev["cites"]), bool(prev.get("own")), tuple(prev.get("about") or ()))
+                    == (cites, own, about)):
+                prev["text"] += " " + sent
+                continue
+            new = {k: v for k, v in ln.items() if k not in ("text", "cites", "own", "about")}
+            new.update(text=sent, cites=list(cites), _from=ln)
+            if own:
+                new.update(own=True, about=list(about))
+            out.append(new)
+    for ln in out:
+        ln.pop("_from", None)
+
+    if close is not None:
+        said = 0
+        kept = []
+        for ln in out:
+            if ln.get("signature") or ln.get("chapter", 0) != close:
+                kept.append(ln)
+            elif said:
+                drop(ln["text"], close, "the close is one sentence")
+            else:
+                first = quality.sentences(ln["text"])[:1]
+                for rest in quality.sentences(ln["text"])[1:]:
+                    drop(rest, close, "the close is one sentence")
+                if first:
+                    kept.append(dict(ln, text=first[0]))
+                    said = 1
+        out = kept
+
+    for _ in range(3):
+        again = quality.retold(out, story_list, n_chapters)
+        if not again:
+            break
+        kept = []
+        for i, ln in enumerate(out):
+            gone = again.get(i)
+            if not gone:
+                kept.append(ln)
+                continue
+            touched = {s["cluster"] for s in story_list if quality.names_story(ln["text"], s)}
+            stay = []
+            for sent in quality.sentences(ln["text"]):
+                named = {s["cluster"] for s in story_list if quality.names_story(sent, s)}
+                if named & gone or (not named and not (touched - gone)):
+                    drop(sent, ln.get("chapter", 0), "the story was already told")
+                else:
+                    stay.append(sent)
+            if stay:
+                kept.append(dict(ln, text=" ".join(stay),
+                                 cites=[c for c in ln.get("cites") or []
+                                        if not (c in by and by[c]["cluster"] in gone)],
+                                 **({"about": [c for c in ln.get("about") or []
+                                               if not (c in by and by[c]["cluster"] in gone)]}
+                                    if ln.get("own") else {})))
+        out = kept
+    return merge_turns(out), cut
 
 
 def stamp_open(ep: dict) -> dict:
@@ -876,6 +1029,10 @@ def merge_turns(lines: list[dict]) -> list[dict]:
         prev = out[-1] if out else None
         if (prev and prev["speaker"] == ln["speaker"] and prev["chapter"] == ln["chapter"]
                 and set(ln["cites"]) <= set(prev["cites"])
+                # Friday's own line never takes on an outlet's citation.
+                and bool(prev.get("own")) == bool(ln.get("own"))
+                and (prev.get("about") or []) == (ln.get("about") or [])
+                and not prev.get("signature") and not ln.get("signature")
                 and len(prev["text"]) + len(ln["text"]) < MAX_LINE_CHARS):
             prev["text"] = prev["text"] + " " + ln["text"]
             prev["cites"] = sorted(set(prev["cites"]) | set(ln["cites"]))
@@ -1146,7 +1303,7 @@ def transcript_bytes(ep: dict) -> bytes:
         if c != chap and c is not None and c < len(chapters):
             chap = c
             out += ["", "== %s ==" % chapters[c]["title"]]
-        tags = []
+        tags = ["Friday's analysis"] if ln.get("own") else []
         for cid in ln.get("cites") or []:
             s = src.get(cid) or {}
             tags.append(s.get("outlet") or ("Calendar " + s["when"] if s.get("when") else "")

@@ -426,6 +426,34 @@ lets the model write a link (`services/news_links.py`):
   first; gadgets last), at most eight in a briefing episode.
 - `/api/podcasts/<id>/transcript.txt` is UTF-8 with a byte-order mark.
 
+### 3.14 Blocking rules, applied before the gate
+
+The codes in `podcast_quality.HARD_CODES` block an episode. The writer's
+draft is edited by code (`podcast_engine.edit_script`) on every draft and
+every revision, then revised by the model. A script that still has a
+blocking problem fails as `script_rejected` and is kept for review, never
+spoken.
+
+- **A citation is a claim.** A sentence in a cited line must be supported by
+  the cited story's text (`support`). Friday's commentary becomes her own
+  line, with no outlet on it (`own`, the stories it is about in `about`),
+  and the transcript marks it "Friday's analysis". A sentence is cut when it
+  names a fact from a story it does not cite, names a fact no source holds,
+  or names an outlet aloud for words that outlet never wrote.
+- **Each story is told once.** A later sentence that comes back to a story
+  after two lines on other stories is cut (`story_split`). The close is one
+  sentence of synthesis (`close_recap`).
+- **A story of violence or a threat stands alone**, with its own humane
+  introduction. It is never a thread in another story, a summary or the
+  close (`safety_threaded`), and it gets no read and no commentary.
+- **Every story opens with a spoken lede** (`no_lede`): the outlet aloud,
+  when, and what happened. Each story's source block gives the writer the
+  outlet's spoken name and the date it was published.
+- **The writer is told its used-up words.** Each chapter's prompt lists the
+  writer's own words (ones no source uses) that it has already said twice.
+- The Front Page's contrarian corner is an article and a note. The article
+  is a story with its own outlet; only the note is Friday's own.
+
 ---
 
 ## 4. Not built, deliberately

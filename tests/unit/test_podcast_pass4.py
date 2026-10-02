@@ -222,7 +222,7 @@ def test_the_writer_echoing_its_continuity_tail_is_cut_at_the_stitch(home, monke
 def test_a_story_split_across_the_episode_is_named(ds):
     lines = good_lines(ds)
     pledge = next(d["sid"] for d in ds if d["title"].startswith("Tech chiefs"))
-    lines.insert(10, {"speaker": "a", "chapter": 2, "cites": [pledge],
+    lines.insert(10, {"speaker": "a", "chapter": 1, "cites": [pledge],
                       "text": "Back to the voluntary pledge the six chief executives signed in Washington."})
     assert "story_split" in _codes(_check(lines, ds))
 
@@ -255,7 +255,8 @@ def test_friday_s_analysis_labelled_as_hers_is_fine(ds):
     dd = _with_insight(ds)
     lines = good_lines(dd)
     lines[3] = dict(lines[3], text="My read: a pledge is a promise; a signed, verified constraint like "
-                    "your Sentinel framework is a control.", cites=[lines[3]["cites"][0], "S99"])
+                    "your Sentinel framework is a control.")
+    assert lines[3]["own"] and lines[3]["cites"] == []
     assert "misattributed" not in _codes(_check(lines, dd))
 
 
@@ -267,9 +268,8 @@ def test_a_hard_problem_that_survives_revision_fails_the_episode(home, monkeypat
     (home / "briefing_runs" / (fx.DATE + ".json")).write_text(json.dumps(fx.sidecar()), encoding="utf-8")
     ds = fx.docs()
     bad = good_lines(ds)
-    # Friday's own analysis (her written insight) put in an outlet's mouth.
-    bad[2] = dict(bad[2], text=bad[2]["text"] + " Example Wire reports that the pledge leaves a "
-                  "governance opening your interviews can use.")
+    # A story with no spoken lede: no edit can supply one, so it blocks.
+    bad[2] = dict(bad[2], text="The pledge leaves a governance opening your interviews can use.")
 
     def llm(system, user, *, max_tokens=3000):
         if "Plan an episode" in user:
@@ -285,21 +285,22 @@ def test_a_hard_problem_that_survives_revision_fails_the_episode(home, monkeypat
     monkeypatch.setattr(render, "render_lines", lambda *a, **k: spoken.append(1) or (b"", []))
     done = pe.produce(podcast_news.queue_for_run("briefing", fx.DATE)["id"])
     assert done["status"] == "failed" and done["error"]["code"] == "script_rejected"
-    assert "misattributed" in done["error"]["message"] and not spoken
-    assert any(p["code"] == "misattributed" for p in done["script_check"]["problems"])
+    assert "no_lede" in done["error"]["message"] and not spoken
+    assert any(p["code"] == "no_lede" for p in done["script_check"]["problems"])
 
 
 def test_a_single_what_to_watch_line_in_the_close_is_not_a_split(ds):
     assert "story_split" not in _codes(_check(good_lines(ds), ds))
 
 
-def test_retelling_a_story_in_the_close_is_a_split(ds):
-    """The live case: the close covered the regulator's probe a second time."""
+def test_retelling_a_story_in_the_close_blocks(ds):
+    """The live case: the close covered the regulator's probe a second time.
+    The close is one sentence of synthesis, so a second one is a recap."""
     lines = good_lines(ds)
     pledge = next(d["sid"] for d in ds if d["title"].startswith("Tech chiefs"))
     lines.insert(11, {"speaker": "a", "chapter": 2, "cites": [pledge],
                       "text": "So the pledge is back: six chief executives signed it in Washington on Tuesday."})
-    assert "story_split" in _codes(_check(lines, ds))
+    assert "close_recap" in _codes(_check(lines, ds)) and "close_recap" in q.HARD_CODES
 
 
 # ── from the first real pass-four Front Page ────────────────────────────────
@@ -339,9 +340,8 @@ def test_a_rejected_script_is_kept_for_review(home, monkeypatch):
     (home / "briefing_runs" / (fx.DATE + ".json")).write_text(json.dumps(fx.sidecar()), encoding="utf-8")
     ds = fx.docs()
     bad = good_lines(ds)
-    # Friday's own analysis (her written insight) put in an outlet's mouth.
-    bad[2] = dict(bad[2], text=bad[2]["text"] + " Example Wire reports that the pledge leaves a "
-                  "governance opening your interviews can use.")
+    # A story with no spoken lede: no edit can supply one, so it blocks.
+    bad[2] = dict(bad[2], text="The pledge leaves a governance opening your interviews can use.")
 
     def llm(system, user, *, max_tokens=3000):
         if "Plan an episode" in user:
@@ -416,12 +416,17 @@ def test_a_fact_from_another_outlets_report_of_the_same_event_is_not_misattribut
     assert "misattributed" not in _codes(_check(lines, two))
 
 
-def test_a_fact_from_an_unrelated_story_is_crossed_not_hard(ds):
+def test_a_fact_from_an_unrelated_story_is_crossed_and_cut(ds):
+    """Named as crossed; and since the outlet credited never reported it, it
+    blocks until the edit pass cuts it."""
     lines = good_lines(ds)
-    lines[2] = dict(lines[2], text="Example Wire reports that Brightline Bank backed the voluntary "
-                    "pledge the six chief executives signed on Tuesday.")
+    crossed = ("Example Wire reports that Brightline Bank backed the voluntary pledge the six "
+               "chief executives signed on Tuesday.")
+    lines[2] = dict(lines[2], text=crossed)
     codes = _codes(_check(lines, ds))
-    assert "crossed_facts" in codes and "misattributed" not in codes
+    assert "crossed_facts" in codes and "misattributed" in codes
+    fixed, cut = pe.edit_script([ln for ln in lines if not ln.get("signature")], ds, 3)
+    assert crossed not in [ln["text"] for ln in fixed] and any(c["text"] == crossed for c in cut)
 
 
 def test_every_routine_s_transcript_links_the_publisher_for_the_stories_heard(monkeypatch):

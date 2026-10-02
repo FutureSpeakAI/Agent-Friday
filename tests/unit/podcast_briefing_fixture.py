@@ -100,36 +100,41 @@ def bad_lines(ds):
 
 def good_lines(ds):
     """The same day, done right: every story has a lede, times agree with the
-    calendar, the safety story is handled with care, and the close adds."""
+    calendar, the safety story is handled with care and on its own, Friday's
+    commentary is her own (no outlet cited for it), and the close is one
+    sentence that adds."""
     pledge, capex = _sid(ds, "Tech chiefs"), _sid(ds, "AI data-center")
     feud, shooting = _sid(ds, "Rowan Hale"), _sid(ds, "Two injured")
     ev = [d["sid"] for d in ds if d.get("kind") == "event"]
+    # (chapter, text, cites, signature, the stories Friday's own line is about)
     L = [
-        (0, "This is The Briefing. I'm Friday.", [], True),
+        (0, "This is The Briefing. I'm Friday.", [], True, None),
         (0, "Your day turns on the 9:00 AM interview with Northwind Labs, and the news gives "
-            "you a timely opening for it.", [ev[0]], False),
+            "you a timely opening for it.", [ev[0]], False, None),
         (0, "Example Wire reports that on Tuesday, in Washington, chief executives of six "
             "technology companies signed a voluntary pledge to police their own AI systems. "
-            "There is no enforcement in it.", [pledge], False),
+            "There is no enforcement in it.", [pledge], False, None),
         (0, "For you, that is the governance argument your interviews will want: a promise "
-            "is not a control you can check.", [pledge], False),
+            "is not a control you can check.", [], False, [pledge]),
         (1, "Example Ledger reports that Brightline Bank analysts estimate AI data-center "
-            "spending will reach $400B next year, up from $260B.", [capex], False),
+            "spending will reach $400B next year, up from $260B.", [capex], False, None),
         (1, "Money at that scale, governed by a pledge, is the gap your Juniper Robotics "
-            "interview at 1:00 PM can press on.", [capex, ev[1]], False),
+            "interview at 1:00 PM can press on.", [ev[1]], False, [capex]),
         (1, "And Example Post reports that on Tuesday two lab chiefs, Rowan Hale and Imani "
-            "Cole, traded public criticism over the timing of a model release.", [feud], False),
+            "Cole, traded public criticism over the timing of a model release.", [feud], False, None),
         (1, "If either interviewer raises it, you can say the industry is arguing in public "
-            "while asking to police itself.", [feud], False),
+            "while asking to police itself.", [], False, [feud]),
         (1, "One more, closer to home. The Springfield Courier reports that two people were "
             "injured in a shooting at a bar in Springfield late Tuesday. Police said they are "
-            "investigating the motive and have made no arrest.", [shooting], False),
+            "investigating the motive and have made no arrest.", [shooting], False, None),
         (1, "Your 5:30 PM meetup is in Springfield, so check the venue's notices before you "
-            "go and give yourself a little extra time.", [shooting, ev[2]], False),
-        (2, "Tonight's meetup comes after both interviews, so it is where you can hear how "
-            "people who build these systems react to the pledge.", [ev[2]], False),
-        (2, "One thing to watch: whether anyone asks the six companies who enforces the pledge.", [pledge], False),
-        (2, "That's The Briefing. Every story you heard is linked in the transcript. I'm Friday.", [], True),
+            "go and give yourself a little extra time.", [ev[2]], False, [shooting]),
+        (1, "Tonight's meetup comes after both interviews, so it is where you can hear how "
+            "people who build these systems react to the pledge.", [ev[2]], False, None),
+        (2, "One thing to watch: whether anyone asks the six companies who enforces the pledge.", [pledge], False, None),
+        (2, "That's The Briefing. Every story you heard is linked in the transcript. I'm Friday.", [], True, None),
     ]
-    return [{"speaker": "a", "chapter": c, "text": t, "cites": cites, **({"signature": True} if sig else {})}
-            for c, t, cites, sig in L]
+    return [{"speaker": "a", "chapter": c, "text": t, "cites": cites,
+             **({"signature": True} if sig else {}),
+             **({"own": True, "about": about} if about else {})}
+            for c, t, cites, sig, about in L]

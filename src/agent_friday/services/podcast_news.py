@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -80,12 +81,25 @@ def _doc(title, text, *, url="", origin="", private=False, source=""):
             "outlet": source or ""}
 
 
+def _published(ts) -> str:
+    """"Tuesday, March 11" for an article's timestamp, or ""."""
+    try:
+        t = time.localtime(float(ts))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+    return "%s, %s %d" % (time.strftime("%A", t), time.strftime("%B", t), t.tm_mday)
+
+
 def _story_doc(a: dict) -> dict | None:
     if not isinstance(a, dict) or not a.get("title"):
         return None
     bits = [a.get("title", "")]
     if a.get("source"):
         bits.append("Outlet: %s" % a["source"])
+    when = _published(a.get("ts"))
+    if when:
+        # A spoken lede says when; the story's own date is the only honest one.
+        bits.append("Published: %s." % when)
     for k in ("snippet", "editorial_note", "thread_update"):
         if a.get(k):
             bits.append(str(a[k]))
@@ -103,15 +117,24 @@ def _story_doc(a: dict) -> dict | None:
 def _front_page_docs(ed: dict) -> list[dict]:
     docs = []
     overview = [ed.get("headline") or ""]
+    corner = []
     for k in ("day_in_context", "contrarian_corner"):
         v = ed.get(k)
         if isinstance(v, dict):
-            v = " ".join(str(x) for x in v.values() if isinstance(x, str))
+            if v.get("title") and v.get("url"):
+                # An article with Friday's note on it: the article is a story
+                # with its own outlet, and only the note is hers.
+                corner.append({f: v[f] for f in ("title", "url", "source", "snippet", "ts", "id")
+                               if v.get(f)})
+                v = v.get("note") or ""
+            else:
+                v = " ".join(str(x) for x in v.values() if isinstance(x, str))
         if v:
             overview.append(str(v))
     if any(overview):
         d = _doc("Today's front page: %s" % (ed.get("headline") or ed.get("id")),
-                 "\n".join(overview), origin="front_page:" + str(ed.get("id")))
+                 "Friday's own notes, her analysis and not any outlet's reporting:\n"
+                 + "\n".join(overview), origin="front_page:" + str(ed.get("id")))
         d["role"] = "overview"           # the edition's framing, not a news story
         docs.append(d)
     stories = []
@@ -119,6 +142,7 @@ def _front_page_docs(ed: dict) -> list[dict]:
         stories.append(ed["lead"])
     for sec in ed.get("sections") or []:
         stories += list((sec or {}).get("articles") or [])
+    stories += corner
     seen = set()
     for a in stories:
         d = _story_doc(a)

@@ -22,6 +22,15 @@ against the episode's own story list and calendar:
 * **fragments** — at most one flat verbless fragment ("It's context.").
 * **link claim** — "linked in the transcript" is said only when every story
   heard has a link.
+* **support** — a sentence in a line that cites a story is supported by that
+  story's text. Friday's commentary carries no outlet's name: it is her own
+  line (`own`), and a claim no cited source makes is cut.
+* **one place** — each story is told once; the close is one sentence of
+  synthesis; a story of violence or a threat stands alone, never a thread
+  in another.
+
+The codes in `HARD_CODES` block an episode: the engine edits or rewrites
+the script until none is left, and never speaks one that has any.
 
 `script_problems` returns problems as dicts with a `code`, the line index
 (if any) and a plain `message` the writer is shown on a revision pass.
@@ -77,7 +86,9 @@ _DISMISS_RE = re.compile(r"\b(background|noise|distraction|side note|sideshow|fo
                          r"not (?:a|your) (?:priority|concern))\b", re.I)
 _SAFETY_RE = re.compile(r"\b(shoot\w*|shot|gunman|gunfire|killed|kills|dead|death|dies|died|"
                         r"murder\w*|stabb\w*|homicide|bomb\w*|explosion|terror\w*|hostage|"
-                        r"fatal\w*|assault\w*|injured|wounded|victims?)\b", re.I)
+                        r"fatal\w*|assault\w*|injured|wounded|victims?|attack(?:s|ed|er|ers)?|"
+                        r"plot(?:s|ted)? to|credible threats?|threat(?:s|ened)? (?:against|to kill|toward)|"
+                        r"arrest(?:s|ed)?|armed|weapons?|firearms?|kidnap\w*|abduct\w*)\b", re.I)
 _RELATION_RE = re.compile(r"\b(before|ahead of|prior to|after|following)\b\s+((?:[\w'’:.-]+\s*){1,6})",
                           re.I)
 _FRAGMENT_RE = re.compile(r"^(it'?s|it is|that'?s|that is|this is)\s+(\w+(?:\s+\w+)?)\s*[.!]$", re.I)
@@ -124,7 +135,8 @@ def _site_name(dom: str) -> str:
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 def _words(text: str) -> list[str]:
-    return [w.lower().strip("'’-") for w in _WORD_RE.findall(text or "")]
+    """Lower-case words, possessives bare ("Trump's" is "trump")."""
+    return [re.sub(r"['’]s$", "", w.lower().strip("'’-")) for w in _WORD_RE.findall(text or "")]
 
 
 def _stem(w: str) -> str:
@@ -190,6 +202,8 @@ def spoken_outlet(story: dict) -> str:
     name = _site_name(dom) if "." in dom else dom
     if not name:
         return ""
+    if len(name) > 6 and name.startswith("the") and name.isalpha():
+        return "The " + name[3:].capitalize()       # "thetribune" is "The Tribune"
     return name.upper() if len(name) <= 5 else name.capitalize()
 
 
@@ -269,8 +283,13 @@ def stories(docs: list[dict]) -> list[dict]:
                     "entities": ents, "places": _places(body),
                     "keys": {_stem(w) for w in _content(d["title"])},
                     "safety": is_safety_story(d)})
+    # A word the sources also write in lower case ("story", "officials", "big")
+    # is not a name, wherever it was capitalised.
+    lowered = {w.lower() for d in docs for w in re.findall(r"\b[a-z][a-z'’-]+", d.get("text") or "")}
+    for s in out:
+        s["proper"] = {u for u in s["entities"] if u not in lowered or re.search(r"\d", u)}
     # One event reported by several outlets is one story: items that share two
-    # names, or three headline words, form a cluster.
+    # names and a headline word, or three headline words, form a cluster.
     parent = {s["sid"]: s["sid"] for s in out}
 
     def root(x):
@@ -279,7 +298,8 @@ def stories(docs: list[dict]) -> list[dict]:
         return x
     for i, a in enumerate(out):
         for b in out[i + 1:]:
-            if len(a["entities"] & b["entities"]) >= 2 or len(a["keys"] & b["keys"]) >= 3:
+            shared = len(a["keys"] & b["keys"])
+            if (len(a["proper"] & b["proper"]) >= 2 and shared) or shared >= 3:
                 parent[root(a["sid"])] = root(b["sid"])
     groups: dict = {}
     for s in out:
@@ -290,6 +310,7 @@ def stories(docs: list[dict]) -> list[dict]:
         others = set().union(*[o["entities"] for o in out if o["sid"] not in s["cluster"]]) \
             if len(out) > 1 else set()
         s["unique"] = s["entities"] - others
+        s["names"] = s["unique"] & s["proper"]
     return out
 
 
@@ -317,11 +338,21 @@ def events(docs: list[dict]) -> list[dict]:
     return out
 
 
+def refs(line: dict) -> list[str]:
+    """The sources a line is about: its citations, and for Friday's own line
+    (no outlet's name on it) the stories it comments on."""
+    return list(line.get("cites") or []) + list(line.get("about") or [])
+
+
 def _mentions(line: dict, story: dict) -> bool:
-    if story["sid"] in (line.get("cites") or []):
+    if story["sid"] in refs(line):
         return True
     ws = set(_words(line["text"])) | {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?", line["text"])}
-    if story["unique"] & ws:
+    # One of the story's own names, written as a name, or a figure of its own;
+    # or two of its other words.
+    written = {re.sub(r"['’]s$", "", w).lower() for w in re.findall(r"\b[A-Z][\w'’-]*", line["text"])}
+    written |= {w for w in ws if re.search(r"\d", w)}
+    if story.get("names", story["unique"]) & ws & written or len(story["unique"] & ws) >= 2:
         return True
     return len({_stem(w) for w in _content(line["text"])} & story["keys"]) >= 3
 
@@ -385,7 +416,8 @@ def _hard_facts(text: str) -> set:
     """The checkable facts in a sentence: names mid-sentence, figures, days and months."""
     facts = set(_caps(text, initial=False))
     facts |= {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?\b", text) if len(w) > 1}
-    facts |= {w for w in _words(text) if w in _DAYS or w in _MONTHS}
+    # A day or month only when written as one: "may" is a verb.
+    facts |= {w.lower() for w in re.findall(r"\b[A-Z][a-z]+\b", text) if w.lower() in _DAYS + _MONTHS}
     return facts
 
 
@@ -432,6 +464,20 @@ _OPINION_RE = re.compile(r"\b(my read|my take|in my view|i think|i'd argue|i wou
                          r"my sense|the way i see it)\b", re.I)
 
 
+def is_read(sent: str) -> bool:
+    """Friday's labelled opinion ("my read")."""
+    return bool(_OPINION_RE.search(sent or ""))
+
+
+def sentences(text: str) -> list[str]:
+    return [s for s in _SENT_RE.split(text or "") if s.strip()]
+
+
+def names_story(text: str, story: dict) -> bool:
+    """Whether the words themselves are about the story (not its citation)."""
+    return _mentions({"text": text, "cites": []}, story)
+
+
 def opinion_problems(lines: list[dict], story_list: list[dict], docs: list[dict]) -> list[dict]:
     """No editorial read on a story of violence or crime; elsewhere a read rests
     on the facts of the stories its line cites."""
@@ -443,12 +489,12 @@ def opinion_problems(lines: list[dict], story_list: list[dict], docs: list[dict]
             if not _OPINION_RE.search(sent):
                 continue
             about = {s["sid"] for s in story_list if _mentions({"text": sent, "cites": []}, s)}
-            if (set(ln.get("cites") or []) | about) & safety:
+            if (set(refs(ln)) | about) & safety:
                 out.append(_p("opinion_on_violence", "No read or opinion on a story of violence "
                               "or crime; report what is confirmed: \"%s\"" % sent[:90], i))
                 continue
             basis = " ".join("%s %s" % (by_sid[c].get("title") or "", by_sid[c].get("text") or "")
-                             for c in ln.get("cites") or [] if c in by_sid)
+                             for c in refs(ln) if c in by_sid)
             grounded = len({_stem(w) for w in _content(sent)} & {_stem(w) for w in _content(basis)})
             if grounded < 2 and not (_hard_facts(sent) & _hard_facts(basis)):
                 out.append(_p("ungrounded_read", "A read must rest on the facts of the stories "
@@ -625,19 +671,37 @@ def _fmt(m: int) -> str:
     return "%d:%02d %s" % ((h % 12) or 12, mm, "AM" if h < 12 else "PM")
 
 
-def repetition_problems(lines: list[dict], docs: list[dict], n_chapters: int) -> list[dict]:
-    out = []
+def is_own_doc(d: dict) -> bool:
+    """Friday's own writing (the written digest, the front page's framing):
+    her analysis, never a publisher's reporting."""
+    return d.get("role") in ("digest", "overview") or d.get("kind") == "digest"
+
+
+def own_word_counts(lines: list[dict], docs: list[dict]) -> dict:
+    """{stem: [(line, word), ...]} for the script's own words: ones no source
+    uses (Friday's own notes are hers, so they do not count as a source)."""
     vocab = set()
     for d in docs:
-        if d.get("role") == "digest":
-            continue            # Friday's own notes: their phrases are hers, not a source's
-        vocab |= {_stem(w) for w in _words("%s %s" % (d.get("title") or "", d.get("text") or ""))}
-    spoken = _spoken(lines)
+        if not is_own_doc(d):
+            vocab |= {_stem(w) for w in _words("%s %s" % (d.get("title") or "", d.get("text") or ""))}
     counts: dict[str, list] = {}
-    for i, ln in spoken:
+    for i, ln in _spoken(lines):
         for w in _content(ln["text"]):
             if _stem(w) not in vocab and _stem(w) not in _PLAIN_NEWS:
                 counts.setdefault(_stem(w), []).append((i, w))
+    return counts
+
+
+def used_up_words(lines: list[dict], docs: list[dict]) -> list[str]:
+    """The script's own words already said as often as the limit allows."""
+    return sorted(hits[0][1] for hits in own_word_counts(lines, docs).values()
+                  if len(hits) >= MAX_OWN_WORD_REPEATS)
+
+
+def repetition_problems(lines: list[dict], docs: list[dict], n_chapters: int) -> list[dict]:
+    out = []
+    spoken = _spoken(lines)
+    counts = own_word_counts(lines, docs)
     for _st, hits in counts.items():
         if len(hits) > MAX_OWN_WORD_REPEATS:
             out.append(_p("repeats_word", "\"%s\" is said %d times; it is not in any source, so it "
@@ -771,7 +835,8 @@ REASONING_RE = re.compile(
     r"|I only have (?:the )?\w+"
     r")\b[^.!?]*[.!?]", re.I)
 
-HARD_CODES = frozenset({"reasoning_leak", "duplicate_line", "misattributed"})
+HARD_CODES = frozenset({"reasoning_leak", "duplicate_line", "misattributed", "story_split",
+                        "close_recap", "safety_threaded", "no_lede"})
 
 
 def reasoning_problems(lines: list[dict]) -> list[dict]:
@@ -824,35 +889,200 @@ _HEADLINE_RE = re.compile(r"\b(the headline|the (?:single )?(?:most important|bi
                           r"(?:the )?top story|(?:the )?lead story|the big story)\b", re.I)
 
 
-def placement_problems(lines: list[dict], story_list: list[dict]) -> list[dict]:
+def _clusters_in(line: dict, story_list: list[dict]) -> set:
+    return {s["cluster"] for s in story_list if _mentions(line, s)}
+
+
+def close_chapter(n_chapters: int) -> int | None:
+    """The close's chapter: an episode of three or more chapters ends on one."""
+    return n_chapters - 1 if n_chapters >= 3 else None
+
+
+def retold(lines: list[dict], story_list: list[dict], n_chapters: int) -> dict:
+    """{line index: clusters that line comes back to}. A story is told in one
+    place: once two lines about other stories have followed it, a later line
+    about it re-tells it. The close is not counted here; it is one sentence
+    of synthesis (`close_problems`)."""
+    close = close_chapter(n_chapters)
+    since: dict = {}
+    out: dict = {}
+    for i, ln in _spoken(lines):
+        if close is not None and ln.get("chapter", 0) == close:
+            continue
+        touched = _clusters_in(ln, story_list)
+        if not touched:
+            continue
+        again = {c for c in touched if since.get(c, 0) >= 2}
+        if again:
+            out[i] = again
+        for c in since:
+            if c not in touched:
+                since[c] += 1
+        for c in touched - again:
+            since[c] = 0
+    return out
+
+
+def retellings(lines: list[dict], story_list: list[dict], n_chapters: int) -> list[tuple]:
+    """(line index, story) for the first re-telling of each story."""
+    seen, out = set(), []
+    for i, clusters in sorted(retold(lines, story_list, n_chapters).items()):
+        for c in clusters:
+            if c not in seen:
+                seen.add(c)
+                out.append((i, next(s for s in story_list if s["sid"] in c)))
+    return out
+
+
+def close_problems(lines: list[dict], n_chapters: int) -> list[dict]:
+    close = close_chapter(n_chapters)
+    if close is None:
+        return []
+    said = [(i, sent) for i, ln in _spoken(lines) if ln.get("chapter", 0) == close
+            for sent in _SENT_RE.split(ln["text"]) if sent.strip()]
+    if len(said) > 1:
+        return [_p("close_recap", "The close is %d sentences; it is one sentence of synthesis "
+                   "(what the news adds up to, or the one thing to watch), never a recap."
+                   % len(said), said[1][0])]
+    return []
+
+
+def safety_clusters(story_list: list[dict]) -> set:
+    return {s["cluster"] for s in story_list if s["safety"]}
+
+
+def threads_safety(sent: str, story_list: list[dict], *, in_close: bool = False) -> bool:
+    """A sentence that folds a story of violence or a threat into another
+    story, or into the close's synthesis."""
+    hurt = safety_clusters(story_list)
+    named = {s["cluster"] for s in story_list if _mentions({"text": sent, "cites": []}, s)}
+    return bool(named & hurt) and (in_close or bool(named - hurt))
+
+
+def safety_thread_problems(lines: list[dict], story_list: list[dict], n_chapters: int) -> list[dict]:
+    """A story of violence or a threat to safety stands alone, with its own
+    humane introduction: never a thread in another story, never part of a
+    summary or the close."""
+    hurt = safety_clusters(story_list)
+    if not hurt:
+        return []
+    close = close_chapter(n_chapters)
+    out = []
+    for i, ln in _spoken(lines):
+        in_close = close is not None and ln.get("chapter", 0) == close
+        found = next((s for s in _SENT_RE.split(ln["text"])
+                      if threads_safety(s, story_list, in_close=in_close)), None)
+        cited = {s["cluster"] for s in story_list if s["sid"] in refs(ln)}
+        if found is None and cited & hurt and cited - hurt:
+            found = ln["text"]
+        if found is not None:
+            out.append(_p("safety_threaded", "A story of violence or a threat to safety stands "
+                          "alone, with its own introduction; it is never a thread in another "
+                          "story, a summary or the close: \"%s\"" % found[:90], i))
+    return out
+
+
+#: Below this share of a sentence's content words found in its cited source,
+#: the sentence is not the source's reporting.
+SUPPORT_MIN = 0.34
+
+
+def _odd_case(text: str) -> set:
+    """Names written in mixed case ("cLaws", "iPhone"): names wherever they stand."""
+    return {w.lower() for w in re.findall(r"\b[a-z]+[A-Z][A-Za-z]*\b", text or "")}
+
+
+def support(sent: str, cited: list[str], story_list: list[dict], docs: list[dict],
+            home: str = "") -> tuple[str, list]:
+    """Whether a sentence is what the stories it cites report.
+
+    Returns ("ok", []), ("own", words) when it is Friday's commentary (a read,
+    or words her own notes hold), or ("cut", facts) when it states a fact
+    that a story it does not cite holds, or that no source holds at all.
+    """
+    by = {s["sid"]: s for s in story_list}
+    mine = [by[c] for c in cited if c in by]
+    if not mine:
+        return "ok", []
+    cluster = set().union(*[s["cluster"] for s in mine])
+    words = _cluster_words(story_list)
+    pool = set().union(*[words[c] for c in cluster])
+    pool |= {w for s in story_list if s["sid"] in cluster for a in outlet_aliases(s) for w in a.split()}
+    pool |= set(_words(home or ""))
+    for d in docs:
+        if d.get("kind") == "event":
+            pool |= set(_words("%s %s %s" % (d.get("title") or "", d.get("text") or "",
+                                              d.get("location") or "")))
+    stems = {_stem(w) for w in pool}
+    content = {_stem(w) for w in _content(sent)} - _PLAIN_NEWS
+    overlap = len(content & stems) / len(content) if content else 1.0
+    # Clock times are the calendar's, checked by `time_problems`.
+    bare = _CLOCK_RE.sub(" ", sent)
+    missing = sorted(f for f in _hard_facts(bare) | _odd_case(bare) if f not in pool)
+    # Commentary that names an outlet aloud ("Example Wire reports that ...")
+    # puts it in the outlet's mouth however it is cited: it cannot be hers.
+    credits = bool(re.search(_ATTRIB_VERB, sent, re.I)) and any(
+        said_outlet(sent, outlet_aliases(s)) for s in story_list if outlet_aliases(s))
+    verdict, why = _support_verdict(sent, cluster, words, docs, story_list, missing, content,
+                                    stems, overlap)
+    if verdict == "own" and credits:
+        return "cut", why or ["an outlet named for Friday's own words"]
+    return verdict, why
+
+
+def _support_verdict(sent, cluster, words, docs, story_list, missing, content, stems, overlap):
+    if _OPINION_RE.search(sent):
+        return "own", []
+    if missing:
+        elsewhere = [f for f in missing if any(f in o["proper"] for o in story_list
+                                                if o["sid"] not in cluster)]
+        if elsewhere:
+            return "cut", elsewhere
+        own = set()
+        for d in docs:
+            if is_own_doc(d):
+                own |= set(_words(d.get("text") or "")) | _odd_case(d.get("text") or "")
+        if all(f in own for f in missing):
+            return "own", missing
+        if overlap >= 0.5:
+            return "ok", []          # a name the source abbreviates, spelled out
+        return "cut", missing
+    if len(content) >= 5 and overlap < SUPPORT_MIN:
+        return "own", sorted(content - stems)[:4]
+    return "ok", []
+
+
+def support_problems(lines: list[dict], story_list: list[dict], docs: list[dict],
+                     home: str = "") -> list[dict]:
+    """A line's citations are a claim that its sources report what it says."""
+    sids = {s["sid"] for s in story_list}
+    by = {s["sid"]: s for s in story_list}
+    out = []
+    for i, ln in _spoken(lines):
+        cited = [c for c in ln.get("cites") or [] if c in sids]
+        if not cited:
+            continue
+        names = "; ".join(dict.fromkeys(spoken_outlet(by[c]) or by[c]["outlet"] for c in cited))
+        for sent in _SENT_RE.split(ln["text"]):
+            verdict, why = support(sent, cited, story_list, docs, home)
+            if verdict == "own":
+                out.append(_p("misattributed", "\"%s\" is Friday's own analysis, credited to %s; "
+                              "say it as hers, in a line that cites no outlet." % (sent[:90], names), i))
+                break
+            if verdict == "cut":
+                out.append(_p("misattributed", "\"%s\" is credited to %s, but %s is not in that "
+                              "report." % (sent[:90], names, ", ".join(w.title() for w in why[:4])), i))
+                break
+    return out
+
+
+def placement_problems(lines: list[dict], story_list: list[dict], n_chapters: int = 1) -> list[dict]:
     """Each story in one place; the headline named once, at the top."""
     out = []
     spoken = _spoken(lines)
-    at = {}
-    for pos, (i, ln) in enumerate(spoken):
-        for s in story_list:
-            if s["sid"] in (ln.get("cites") or []) or _mentions(ln, s):
-                at.setdefault(s["sid"], []).append((pos, i))
-    last = max([ln.get("chapter", 0) for _i, ln in spoken] or [0])
-    seen_clusters = set()
-    for s in story_list:
-        if s["cluster"] in seen_clusters:
-            continue
-        seen_clusters.add(s["cluster"])
-        hits = sorted({h for m in s["cluster"] for h in at.get(m) or []})
-        # The close may point back at one story in a single "what to watch"
-        # line; re-telling it there is a split like any other.
-        close = [h for h in hits if spoken[h[0]][1].get("chapter", 0) == last and last > 0]
-        if len(close) == 1 and re.search(r"\bwatch\b", spoken[close[0][0]][1]["text"], re.I):
-            hits = [h for h in hits if h not in close]
-        for (p1, _i1), (p2, i2) in zip(hits, hits[1:]):
-            between = [spoken[x][1] for x in range(p1 + 1, p2)]
-            others = [b for b in between if any(o["sid"] in (b.get("cites") or []) or _mentions(b, o)
-                                                for o in story_list if o["sid"] not in s["cluster"])]
-            if len(others) >= 2:
-                out.append(_p("story_split", "\"%s\" is covered in two places; tell each story once, "
-                              "in one place." % s["title"][:80], i2, s["sid"]))
-                break
+    for i, s in retellings(lines, story_list, n_chapters):
+        out.append(_p("story_split", "\"%s\" is covered in two places; tell each story once, "
+                      "in one place." % s["title"][:80], i, s["sid"]))
     heads = [(pos, i) for pos, (i, ln) in enumerate(spoken) if _HEADLINE_RE.search(ln["text"])]
     if len(heads) > 1:
         out.append(_p("two_headlines", "The headline is named %d times; name it once, at the top."
@@ -870,7 +1100,7 @@ def read_cap_problems(lines: list[dict], story_list: list[dict]) -> list[dict]:
     sids = {s["sid"] for s in story_list}
     for i, ln in _spoken(lines):
         n = sum(1 for sent in _SENT_RE.split(ln["text"]) if _OPINION_RE.search(sent))
-        for sid in set(ln.get("cites") or []) & sids:
+        for sid in set(refs(ln)) & sids:
             count[sid] = count.get(sid, 0) + n
             if count[sid] > 1 and n:
                 out.append(_p("read_cap", "More than one read on the same story; one is enough.", i, sid))
@@ -886,7 +1116,7 @@ def misattribution_problems(lines: list[dict], story_list: list[dict], docs: lis
     own analysis (her written notes) is hers, never a publisher's."""
     own_words = set()
     for d in docs:
-        if d.get("role") == "digest" or d.get("kind") == "digest":
+        if is_own_doc(d):
             own_words |= {w for w in _words(d.get("text") or "") if len(w) >= 6 and w not in _STOP}
     out = []
     for i, ln in _spoken(lines):
@@ -928,6 +1158,8 @@ def misattribution_problems(lines: list[dict], story_list: list[dict], docs: lis
 
 CHECKS = ("no reasoning read aloud", "no repeated lines", "one story in one place",
           "one headline", "one read per story", "outlet attribution",
+          "citations supported by their source", "safety stories stand alone",
+          "a one-sentence close",
           "ledes", "safety stories", "home city", "facts stay with their story",
           "no opinion on violence", "grounded reads", "no process narration",
           "calendar times", "repetition", "restated close", "headings",
@@ -952,9 +1184,12 @@ def script_problems(lines: list[dict], docs: list[dict], *, n_chapters: int = 1,
     probs += reasoning_problems(lines)
     probs += duplicate_problems(lines)
     if news:
-        probs += placement_problems(lines, story_list)
+        probs += placement_problems(lines, story_list, n_chapters)
         probs += read_cap_problems(lines, story_list)
         probs += misattribution_problems(lines, story_list, docs)
+        probs += support_problems(lines, story_list, docs, home)
+        probs += safety_thread_problems(lines, story_list, n_chapters)
+        probs += close_problems(lines, n_chapters)
     probs += time_problems(lines, event_list, docs)
     probs += repetition_problems(lines, docs, n_chapters)
     probs += heading_problems(lines, docs)
