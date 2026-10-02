@@ -181,7 +181,8 @@ _EVENT_RE = re.compile(r"\b(?:summit|disrupt|conference|festival|expo|awards|tic
 _HARD_RE = re.compile(
     r"\b(?:council|legislat\w*|senate|congress|court|judge|ruling|lawsuit|indict\w*|charged|police|"
     r"sheriff|fbi|governor|mayor|budget|votes?|voted|election|ballot|bill|law|ordinance|tax(?:es)?|"
-    r"jobs report|unemployment|inflation|tariffs?|strike|evacuat\w*|wildfire|flood\w*|outage|recall)\b", re.I)
+    r"jobs report|unemployment|inflation|tariffs?|strike|evacuat\w*|wildfire|flood\w*|outage|recall|"
+    r"crime|justices?|recus\w*|supreme court|gdp|recession|interest rates?|job market|[\d,]+ jobs)\b", re.I)
 _SERVICE_RE = re.compile(
     r"\b(?:things to do|guide to|how to|tips|list of|events (?:across|this|in|around)|weekend (?:check|guide)|"
     r"where to|recipes?|deals?|gear up)\b", re.I)

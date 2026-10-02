@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
 from agent_friday.services import news_seen as ns
 
 H = 3600.0
@@ -106,3 +108,13 @@ def test_the_edition_puts_hard_news_first_and_labels_opinion(tmp_path, monkeypat
     business = next(s for s in ed["sections"] if s["title"] == "Business")
     assert bonds["title"] in [a["title"] for a in business["articles"]]
     assert next(a for a in shown if a["title"] == col["title"])["opinion"] is True
+
+
+
+@pytest.mark.parametrize("title", [
+    "The nation added only 29,000 jobs in September as the job market lacks spark",
+    "A justice's recusal from a key climate case may come too late",
+    "Riverton's car crime has plunged. How much credit do the cameras deserve?",
+    "The economy slides toward recession as interest rates hold"])
+def test_the_economy_courts_and_crime_are_hard_news(title):
+    assert ns.news_value(item(title, "examplewire.com")) == "hard"
