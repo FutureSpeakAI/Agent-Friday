@@ -190,6 +190,22 @@
     };
   }
 
+  // ── Guarded actions: what needs a held pinch or a spoken yes in big mode ──────
+  // Judged by the control's own words. Verbs that leave the machine, destroy, spend or
+  // approve are guarded; words that stop, close, step back or only prepare are not, even
+  // beside a guarded verb ("Cancel send", "Draft a reply"). A container can force either
+  // way with data-fr-guarded (see the DOM layer); this is the default.
+  const GUARD_WORDS = /(send(?: it| now| all)?|post(?: now)?|publish|delete|erase|remove|pay|buy|purchase|spend|transfer|approve(?: & continue| and continue)?|release|submit|share)/i;
+  const SAFE_WORDS = /(cancel|deny|stop|close|later|change|reply|draft|preview|undo|back|dismiss|edit)/i;
+  function classifyGuard(text, opts) {
+    const t = String(text || '').trim().slice(0, 80);
+    if (opts && opts.force === 'on') return true;
+    if (opts && opts.force === 'off') return false;
+    if (opts && opts.danger) return true;
+    if (!t) return false;
+    return GUARD_WORDS.test(t) && !SAFE_WORDS.test(t);
+  }
+
   // ── Rate limiter for visual state changes (photosensitivity: <= 3 per second) ──
   function changeLimiter(minIntervalMs) {
     let lastT = -Infinity, lastV;
@@ -200,5 +216,5 @@
     };
   }
 
-  return { oneEuro, pointFilter, edgeDistance, center, snapController, pinchMachine, dwellMachine, zoomTracker, changeLimiter };
+  return { oneEuro, pointFilter, edgeDistance, center, snapController, pinchMachine, dwellMachine, zoomTracker, changeLimiter, classifyGuard };
 });
