@@ -229,6 +229,15 @@ def codebase_costs(cid):
     return jsonify({"status": "ok", **_cm.codebase_costs(cid, request.args.get("range") or "all")})
 
 
+@codebases_bp.route("/api/codebases/<cid>/runs", methods=["GET"])
+def codebase_runs(cid):
+    """The codebase's command runs, newest first (the Terminal). Read only:
+    a command runs through the chat's tool and its one card per task."""
+    if cb.load(cid) is None:
+        return jsonify({"status": "error", "error": "no such codebase"}), 404
+    return jsonify({"status": "ok", "runs": cb.runs(cid, limit=int(request.args.get("limit") or 30))})
+
+
 @codebases_bp.route("/api/codebases/<cid>/export", methods=["GET"])
 @login_required
 def codebase_export(cid):

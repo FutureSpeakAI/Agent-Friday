@@ -8609,6 +8609,49 @@ def _tool_codebase_engine(inp):
     return {"status": "ok", "engine": eng, "say": say}
 
 
+def _codebase_task_gate(rec, tool, args):
+    """The one card per task (services/codebase_tasks): None when the task's
+    grant covers this call (one use spent), else the waiting result to return."""
+    from agent_friday.governance import action_gate as _gate
+    from agent_friday.services import codebase_tasks as _ct
+    if _gate.consume_grant(tool, _ct.scope(rec["id"])) is not None:
+        return None
+    conv = _CURRENT_CONVERSATION.get() or rec.get("conversation_id") or ""
+    card = _ct.request(rec, tool, args, conversation_id=conv)
+    return {"status": "waiting", "approval_id": card.get("approval_id"),
+            "say": ("I raised one card to run commands in %s for this task. Approve it and I run %s and the rest "
+                    "of the task without asking again; nothing runs until then."
+                    % (rec.get("title") or "the codebase", _ct._describe(tool, args)))}
+
+
+CLAUDE_TOOLS.append({
+    "name": "codebase_run",
+    "description": (
+        "Run ONE shell command in this chat's codebase folder (tests, a build, a script): the Terminal of the "
+        "Build panel. The first command of a task raises one approval card; once approved, the rest of the task "
+        "runs without asking. The result carries exit code and output; report both plainly. Never run commands "
+        "that read key material, reach Friday's own API, or touch Friday's own source."),
+    "input_schema": {"type": "object", "properties": {
+        "command": {"type": "string", "description": "The command, as it would be typed in PowerShell."},
+        "codebase_id": {"type": "string"}}, "required": ["command"]},
+})
+
+
+def _tool_codebase_run(inp):
+    from agent_friday.services import codebases as _cb
+    inp = inp or {}
+    rec = _codebase_in_scope(inp)
+    if rec is None:
+        return {"status": "refused", "say": "This chat has no codebase."}
+    cmd = str(inp.get("command") or "").strip()
+    if not cmd:
+        return {"status": "refused", "say": "There is no command to run."}
+    waiting = _codebase_task_gate(rec, "codebase_run", {"command": cmd})
+    if waiting is not None:
+        return waiting
+    return _cb.run(rec["id"], cmd)
+
+
 def _tool_codebase_agent(inp):
     from agent_friday.services import claude_engine as _ce, codebases as _cb
     inp = inp or {}
@@ -8618,12 +8661,16 @@ def _tool_codebase_agent(inp):
     if (rec.get("seats") or {}).get("engine") != "claude_agent":
         return {"status": "refused", "blocker": "needs_user_input",
                 "say": "This codebase's engine is Friday. Say \"use Claude's agent for this codebase\" first; it runs as a process on this PC."}
+    waiting = _codebase_task_gate(rec, "codebase_agent", {"task": str(inp.get("task") or "")})
+    if waiting is not None:
+        return waiting
     out = _ce.run_task(rec["id"], str(inp.get("task") or ""), key_profile=rec.get("key_profile") or "mine")
     return out
 
 
-CLAUDE_TOOL_HANDLERS.update({"codebase_engine": _tool_codebase_engine, "codebase_agent": _tool_codebase_agent})
-TOOL_RINGS.update({"codebase_engine": 1, "codebase_agent": 1})
+CLAUDE_TOOL_HANDLERS.update({"codebase_engine": _tool_codebase_engine, "codebase_agent": _tool_codebase_agent,
+                             "codebase_run": _tool_codebase_run})
+TOOL_RINGS.update({"codebase_engine": 1, "codebase_agent": 1, "codebase_run": 1})
 
 
 # ── Plan-first for big asks (services/plans; spec §4.11 item 4) ──────────────

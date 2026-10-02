@@ -122,6 +122,28 @@ def repo_path(cid: str) -> Path:
     return Path(rec["repo"])
 
 
+#: A command's output kept per run, and how many runs a codebase keeps.
+RUN_OUTPUT_MAX_CHARS = 20_000
+RUNS_KEPT = 200
+RUN_TIMEOUT_S = 300
+_NOT_HERSELF = ("That folder is Friday's own source. Friday edits a copy of herself, never a live checkout "
+                "(salon spec §4.9, Phase 7); pick another folder.")
+
+
+def is_friday_checkout(path) -> bool:
+    """True when `path` is, or lies inside, a checkout of Friday's own source
+    (any clone or worktree: the package root beside a .git entry). The salon
+    never works on one in place: Friday edits a copy of herself."""
+    try:
+        p = Path(path).resolve()
+    except (OSError, RuntimeError):
+        return False
+    for d in (p, *p.parents):
+        if (d / "src" / "agent_friday" / "core" / "__init__.py").exists() and (d / ".git").exists():
+            return True
+    return False
+
+
 def is_managed(cid: str) -> bool:
     """True when the repo is Friday's own, under the codebases folder."""
     rec = load(cid)
@@ -238,6 +260,8 @@ def template_files(template: str, title: str) -> dict:
 
 def create(title: str, template: str = "static", *, conversation_id: Optional[str] = None,
            existing_path: Optional[str] = None, files: Optional[dict] = None) -> dict:
+    if existing_path and is_friday_checkout(existing_path):
+        raise ValueError(_NOT_HERSELF)
     """A new codebase from a template, or an existing folder on a salon branch.
     ``files`` seeds the tree in place of the template's files (an installed
     bundle's version, say) while the record keeps the template's name."""
@@ -437,6 +461,93 @@ def _read_receipt(repo: Path, sha: str) -> Optional[dict]:
         return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def _runs_file(cid: str) -> Path:
+    return _dir(cid) / "runs.json"
+
+
+def runs(cid: str, limit: int = 30) -> list:
+    """The codebase's command runs, newest first (chat-hub.md M3b)."""
+    try:
+        p = _runs_file(cid)
+        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+    except Exception:
+        data = []
+    data = [r for r in data if isinstance(r, dict)]
+    data.reverse()
+    return data[:max(1, int(limit or 30))]
+
+
+def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S) -> dict:
+    """One command in the codebase's own folder (the Terminal, chat-hub.md M3b).
+
+    The same refusals as the chat's run_command apply before anything runs: a
+    read aimed at key material, the blocklist, Friday's own API. A checkout of
+    Friday's own source is refused: the salon edits a copy of her, never the
+    live one. The output is redacted and bounded, and the run is kept on the
+    codebase (newest first) and announced on the bus. Nothing here decides
+    whether the command MAY run: that is the gate's (services/codebase_tasks).
+    """
+    rec = load(cid)
+    if rec is None:
+        raise KeyError(cid)
+    command = str(command or "").strip()
+    if not command:
+        return {"status": "refused", "say": "There is no command to run."}
+    repo = repo_path(cid)
+    if is_friday_checkout(repo):
+        return {"status": "refused", "say": _NOT_HERSELF}
+    from agent_friday.services import credential_paths as _cred
+    why = _cred.scan_command(command)
+    if why:
+        return {"status": "refused", "say": _cred.refusal_command(why)}
+    from agent_friday.core import blocked_command_token
+    bad = blocked_command_token(command)
+    if bad is not None:
+        return {"status": "refused", "say": "Blocked by cLaws safety: the command matches the blocklist token %r." % bad}
+    from agent_friday.governance.action_gate import classify_command
+    if classify_command(command)[0] == "forbidden":
+        return {"status": "refused", "say": "Blocked: that command addresses Friday's own local API, which trusts this machine as the owner. It was not run."}
+    t0 = time.time()
+    try:
+        proc = subprocess.run(["powershell", "-NoProfile", "-Command", command], cwd=str(repo),
+                              capture_output=True, text=True, timeout=timeout_s, creationflags=_POPEN_FLAGS)
+        out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
+        code = proc.returncode
+        status = "ok"
+    except subprocess.TimeoutExpired:
+        out, code, status = "(timed out after %ds)" % timeout_s, -1, "timeout"
+    except Exception as e:
+        out, code, status = "(could not run: %s)" % e, -1, "error"
+    try:
+        out = _cred.redact_secrets(out)
+    except Exception:
+        pass
+    if len(out) > RUN_OUTPUT_MAX_CHARS:
+        out = out[:RUN_OUTPUT_MAX_CHARS] + "\n[truncated: %d chars in all]" % len(out)
+    entry = {"id": "run-" + secrets.token_hex(4), "command": command[:2000], "exit": code, "status": status,
+             "output": out, "duration_s": round(time.time() - t0, 2), "ts": time.time(),
+             "at": datetime.now().isoformat(timespec="seconds")}
+    with _LOCK:
+        try:
+            p = _runs_file(cid)
+            data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+        except Exception:
+            data = []
+        data = [r for r in data if isinstance(r, dict)]
+        data.append(entry)
+        data = data[-RUNS_KEPT:]
+        tmp = _runs_file(cid).with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=1, default=str), encoding="utf-8")
+        tmp.replace(_runs_file(cid))
+    try:
+        from agent_friday.services import desktop_bus as _bus
+        _bus.broadcast({"type": "codebase_run", "codebase_id": cid, "conversation_id": rec.get("conversation_id") or "",
+                        "run_id": entry["id"], "exit": code}, kind="chat")
+    except Exception:
+        pass
+    return dict(entry, status=status)
 
 
 def step(cid: str, changes: dict, summary: str, *, author: str = "friday", model: str = "",

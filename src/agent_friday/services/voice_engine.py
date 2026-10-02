@@ -348,6 +348,10 @@ _VOICE_LIVE_TOOLS = [
      "Run one task with Claude's agent in the current codebase when its engine is claude_agent ('have the "
      "agent add a search box'). Say the agent is working while it runs; then speak the result's say line as is.",
      {"task": ("string", "What the agent should do.")}, ["task"]),
+    ("codebase_run",
+     "Run one shell command in the current codebase's folder ('run the tests', 'build it'). The first command "
+     "of a task raises one card; speak the result's say line as is, then the exit code and the gist of the output.",
+     {"command": ("string", "The command, as it would be typed.")}, ["command"]),
     ("delegate_to_friday",
      "Hand ANY request to the full Friday agent, with every tool it has in chat "
      "(email drafting, files, the wiki, browsing, research, workflows, anything the "
@@ -1378,11 +1382,11 @@ def _voice_tool_run(name, args, send_client, session=None):
                 return _governed(name, _fn, args)
             finally:
                 _ag._CURRENT_CONVERSATION.reset(_tok)
-        if name in ("codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent"):
+        if name in ("codebase_seat", "codebase_key", "codebase_costs", "codebase_engine", "codebase_agent", "codebase_run"):
             from agent_friday.services import agent as _ag
             _fn = {"codebase_seat": _ag._tool_codebase_seat, "codebase_key": _ag._tool_codebase_key,
                    "codebase_costs": _ag._tool_codebase_costs, "codebase_engine": _ag._tool_codebase_engine,
-                   "codebase_agent": _ag._tool_codebase_agent}[name]
+                   "codebase_agent": _ag._tool_codebase_agent, "codebase_run": _ag._tool_codebase_run}[name]
             _cid = session.get("conversation_id") if isinstance(session, dict) else None
             _tok = _ag._CURRENT_CONVERSATION.set(_cid)
             try:

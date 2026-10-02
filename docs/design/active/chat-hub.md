@@ -65,13 +65,38 @@ plus the existing project, creative and codebase suites.
 **Known gap.** `ui_parts/app.html` never carried the chat sidebar or the project editor; the
 editor's Files and Codebases sections live in `index.html` with the rest of it.
 
-## M3. The hub layout (in design)
+## M3. The hub layout (M3a and M3b built; voice to come)
 
-Left rail: projects with their conversations inside. Centre: the chat. Right: a canvas that
-opens when there is something to work on (a document, a page preview, media), or the Build
-panel by a "Build" switch: the salon's editor, live preview and terminal beside the chat,
-talking to the same Friday, working on the project's codebases. The salon's safety rules
-hold: Friday edits a copy of herself, never the live checkout; execution and writes go through
-the existing gates, batched per task, with no new bypass. Media's retirement of Draft, Content
-and Studio stays. Voice: "open my Friday project", "show me the preview", "build mode". The
-hub's targets register with the hand-cursor target registry when it lands.
+Left rail: projects with their conversations inside (the sidebar, with what each project holds).
+Centre: the chat. Right: the canvas, which is the artifact panel (a document, a page preview, a
+diff, an image) or, by the **Build** switch, the Build panel.
+
+**M3a, the Build switch.** A chat filed in a project whose project connects codebases is offered
+Build above the chat: one codebase binds on the click, several open a short list.
+`POST /api/conversations/<cid>/codebase` binds the chat (both sides written together) or
+unbinds it with `{codebase: null}`; "Chat" returns the canvas. The Build panel is the codebase
+panel: Preview, Files (the editor), Changes (steps, receipts, undo), Terminal.
+
+**M3b, the Terminal and the gate.** `codebases.run` runs one command in the codebase's own
+folder (PowerShell, bounded, output redacted and kept as a run, newest first, announced on the
+bus); the Terminal tab lists the runs and asks Friday in the chat to run a typed command, so
+every command goes through the one gate. There is no route that runs a command from the page.
+
+| Rule | Where |
+|---|---|
+| A command or Claude's agent in a codebase is outward and self-gated | `governance/action_gate.py`: `codebase_run`, `codebase_agent` in `SELF_GATED`, not `INTERNAL` |
+| One card per task, not per command | `services/codebase_tasks.py`: the first `codebase_run` or `codebase_agent` of a task raises one card; approval mints a grant `codebase:<id>` (30 minutes, 40 uses), runs the first action, posts the result; later actions spend the grant (`action_gate.consume_grant`) |
+| Denied means nothing | a denied or expired card runs nothing and mints nothing; a later ask raises a new card |
+| The same refusals as run_command | key material, the blocklist, Friday's own API, before anything runs |
+| Friday edits a copy of herself | `codebases.is_friday_checkout`: a codebase is never a checkout of Friday's source, in `create(existing_path)` or in `run`; the copy is Phase 7 |
+
+Tests: `tests/unit/test_codebase_run.py`, `tests/unit/test_codebase_run_gate.py`,
+`tests/unit/test_chat_hub_build_switch.py`, `tests/unit/test_chat_hub_terminal_ui_files.py`,
+`tests/api/test_conversation_codebase_bind.py`.
+
+**M3c, voice (next).** "open my Friday project", "show me the preview", "build mode": tools
+through the governed path, with the layout tool's page round trip (a chat-kind event the page
+acks). **M3d.** The hub's targets register with the hand-cursor target registry when it lands.
+
+**Known, pre-existing, out of scope here:** `/api/vibe-code/launch` opens Claude Code with
+permissions skipped and no card (the salon spec records it); the mirror has no chat sidebar.

@@ -12849,7 +12849,7 @@ function ConversationWindow({
       if (stopped) return;
       let m = null;
       try { m = JSON.parse(e.data); } catch (_) { return; }
-      if (!m || m.type !== 'approval_result') return;
+      if (!m || (m.type !== 'approval_result' && m.type !== 'codebase_run')) return;
       if (m.conversation_id && m.conversation_id !== cid) return;
       openConvQuiet(cid);
     };

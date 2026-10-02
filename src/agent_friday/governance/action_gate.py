@@ -165,7 +165,12 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
                         # reaches past this PC, raises ONE card and runs on
                         # approval; one local change runs with an undo.
                         "organize_email", "organize_files", "organize_wiki",
-                        "undo_action"})
+                        "undo_action",
+                        # A command or Claude's agent in a codebase's own folder
+                        # (services/codebase_tasks): the first of a task raises
+                        # ONE card; its approval mints a grant scoped to that
+                        # codebase, which the handlers spend with consume_grant.
+                        "codebase_run", "codebase_agent"})
 
 #: Friday's own tools that stay inside: reading, searching, drafting, local
 #: files the confirmation gate already asks about, memory writes the taint
@@ -218,9 +223,10 @@ INTERNAL_TOOLS = frozenset({
     # A codebase's own seats, key profile and cost total: the user's choice,
     # disclosed in the header line (services/codebases, spec §4.7).
     "codebase_seat", "codebase_key", "codebase_costs",
-    # Which engine edits a codebase, and one run of Claude's agent inside its
-    # own folder through the key-injecting proxy (services/claude_engine).
-    "codebase_engine", "codebase_agent",
+    # Which engine edits a codebase: the user's choice, disclosed. (Running
+    # that engine, codebase_agent, and a command, codebase_run, are outward
+    # and self-gated: one card per task, services/codebase_tasks.)
+    "codebase_engine",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it
@@ -858,6 +864,15 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
                 _grants_file().write_text(json.dumps(gs, indent=1), encoding="utf-8")
                 return dict(g)
     return None
+
+
+def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
+    """One use of a grant for `scope`, spent by a self-gated tool that checks
+    its own grant (a codebase task: scope "codebase:<id>"). None when no grant
+    covers the tool, has uses left, or is still in time."""
+    if not tool_name or not scope:
+        return None
+    return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
 # ── 4. Receipts ─────────────────────────────────────────────────────────────

@@ -126,7 +126,7 @@
       if (bus.es) {
         bus.es.onmessage = e => {
           let m = null; try { m = JSON.parse(e.data); } catch (_) { return; }
-          if (m && (m.type === 'artifact_put' || m.type === 'codebase_step' || m.type === 'workspace_bundle_changed' || m.type === 'open_conversation' || m.type === 'codebase_header')) bus.subs.forEach(f => { try { f(m); } catch (_) {} });
+          if (m && (m.type === 'artifact_put' || m.type === 'codebase_step', 'codebase_run' || m.type === 'workspace_bundle_changed' || m.type === 'open_conversation' || m.type === 'codebase_header')) bus.subs.forEach(f => { try { f(m); } catch (_) {} });
         };
         // The stream reconnects by itself; while it is down, a slow poll keeps
         // the panel honest.
@@ -569,6 +569,19 @@
     };
     const frameRef = useRef(null);
     const base = '/api/codebases/' + encodeURIComponent(codebase.id);
+    // The Terminal (chat-hub.md M3b): the codebase's runs, newest first, and a
+    // box that asks Friday in the chat to run a command, so every command goes
+    // through the one gate (one card per task); no route runs one from here.
+    const [runs, setRuns] = useState([]);
+    const [cmd, setCmd] = useState('');
+    const [asking, setAsking] = useState('');
+    useEffect(() => { getJ(base + '/runs').then(d => setRuns(d.runs || [])).catch(() => {}); }, [base, refreshKey]);
+    const askRun = () => {
+      const c = cmd.trim(); if (!c) return;
+      setAsking('Asking ' + 'Friday' + ' to run it\u2026');
+      postJ('/api/chat/send', { message: 'Run this in the codebase and tell me the result: `' + c + '`', conversation_id: convId })
+        .then(() => { setCmd(''); setAsking(''); }).catch(() => setAsking('Could not ask; say it in the chat.'));
+    };
     // The header line (spec §4.7): seats · key · this codebase's cost. It is
     // computed on the server and re-read after every step and every change.
     const [hdr, setHdr] = useState(null);
@@ -650,7 +663,7 @@
           style: { fontFamily: MONO, fontSize: 10, lineHeight: 1.5, color: hdr.red ? '#ff6b9d' : 'rgba(255,255,255,0.72)', margin: '4px 0 0', wordBreak: 'break-word' } },
           hdr.text.replace(/^[^·]*·\s*/, ''), hdr.red && hdr.note ? h('span', { style: { display: 'block', color: '#ff6b9d' } }, hdr.note) : null) : null,
         h('div', { className: 'fa-tools', role: 'tablist' },
-          tabBtn('preview', 'Preview'), tabBtn('files', 'Files'), tabBtn('changes', 'Changes' + (steps.length > 1 ? ' · ' + (steps.length - 1) : '')),
+          tabBtn('preview', 'Preview'), tabBtn('files', 'Files'), tabBtn('changes', 'Changes' + (steps.length > 1 ? ' · ' + (steps.length - 1) : '')), tabBtn('terminal', 'Terminal' + (runs.length ? ' · ' + runs.length : '')),
           artifactsTab ? tabBtn('artifacts', 'Artifacts') : null,
           view === 'preview' ? h('button', { className: 'fa-btn' + (pointing ? ' fa-primary' : ' fa-quiet'), 'data-point-mode': pointing ? 'on' : 'off', onClick: () => setPointing(v => !v), title: 'Point at something in the preview, then say what to change' }, '\u2316 Point') : null,
           view === 'preview' && wsId ? h('button', { className: 'fa-btn' + (compare ? ' fa-primary' : ' fa-quiet'), 'data-compare': compare ? 'on' : 'off', onClick: () => setCompare(v => !v), title: 'The version in your dock beside the improved one' }, 'Compare') : null,
@@ -701,6 +714,17 @@
             h('span', { style: { fontFamily: MONO, fontSize: 9.5, color: 'rgba(255,255,255,0.45)', whiteSpace: 'nowrap' } }, (st.who === 'you' ? 'you' : st.who) + ' · ' + fmtTime(st.at))),
           st.receipt && st.receipt.files && st.receipt.files.length ? h('div', { style: { fontFamily: MONO, fontSize: 10, color: 'rgba(255,255,255,0.45)', marginTop: 2 } }, st.receipt.files.map(f => f.path).concat((st.receipt.deleted || []).map(d => '− ' + d)).join(' · ')) : null,
           diff && diff.sha === st.sha ? h('div', { style: { marginTop: 6 } }, h(Diff, { diff: diff.text })) : null))) : null,
+      view === 'terminal' ? h('div', { className: 'fa-body', 'data-codebase-runs': codebase.id, style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+        h('div', { style: { display: 'flex', gap: 6 } },
+          h('input', { className: 'fa-editor', value: cmd, onChange: e => setCmd(e.target.value), onKeyDown: e => { if (e.key === 'Enter') askRun(); }, placeholder: 'A command for ' + codebase.title + ', e.g. npm test (' + 'Friday' + ' runs it; the first one asks you once per task)', 'aria-label': 'Command to run', style: { flex: 1, fontFamily: MONO, fontSize: 11.5, padding: '6px 8px' } }),
+          h('button', { className: 'fa-btn fa-primary', 'data-ask-run': '1', onClick: askRun, disabled: !cmd.trim() }, 'Run')),
+        asking ? h('div', { role: 'status', style: { fontSize: 11, color: '#ffd28a' } }, asking) : null,
+        !runs.length ? h('div', { style: { color: 'rgba(255,255,255,0.5)', fontSize: 12 } }, 'Nothing has run yet. Ask for the tests, a build or a script; the first command of a task raises one card.')
+          : runs.map(r => h('div', { key: r.id, 'data-codebase-run': r.id, style: { border: '1px solid rgba(0,212,255,0.12)', borderRadius: 6, overflow: 'hidden' } },
+              h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', padding: '4px 8px', background: 'rgba(10,14,26,0.6)', fontFamily: MONO, fontSize: 11 } },
+                h('span', { style: { color: ACCENT } }, '$'), h('span', { style: { flex: 1, color: '#eafcff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: r.command }, r.command),
+                h('span', { style: { color: r.exit === 0 ? '#8ff5c0' : '#ff6b9d' } }, 'exit ' + r.exit), h('span', { style: { color: 'rgba(255,255,255,0.4)' } }, (r.at || '').replace('T', ' ').slice(0, 16))),
+              h('pre', { style: { margin: 0, padding: '6px 8px', maxHeight: 220, overflow: 'auto', fontFamily: MONO, fontSize: 11, lineHeight: 1.45, color: '#dfe7f2', whiteSpace: 'pre-wrap' } }, r.output || '(no output)')))) : null,
       view === 'artifacts' && artifactsTab ? artifactsTab : null,
       h('div', { className: 'fa-foot' },
         h('span', null, codebase.existing ? 'your folder · branch ' + codebase.branch : 'Friday\'s codebase · ' + (codebase.template || '')),
@@ -801,7 +825,7 @@
       const unsub = busSubscribe(m => {
         if (m === null) { refresh(); return; }   // the stream is down: a poll
         if (m.conversation_id && m.conversation_id !== convId) return;
-        if (m.type === 'codebase_step') { setStepKey(k => k + 1); setOpen(true); return; }
+        if (m.type === 'codebase_step' || m.type === 'codebase_run') { setStepKey(k => k + 1); setOpen(true); return; }
         refresh(m.artifact_id).then(() => { if (m.author !== 'you') setOpen(true); });
       });
       const onOpen = e => { const d = e.detail || {}; if (d.convId && d.convId !== convId) return; refresh(d.artifactId).then(() => setOpen(true)); };
