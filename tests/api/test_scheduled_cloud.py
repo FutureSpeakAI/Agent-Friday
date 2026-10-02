@@ -116,9 +116,23 @@ def test_no_local_seat_and_allowed_runs_a_job_on_the_job_model(monkeypatch):
              heartbeat_model=HAIKU)
     _no_local_seat(monkeypatch)
     seen = _probe(monkeypatch)
-    s._run_task(_builtin())
+    s._run_task(_builtin(sid="sch_daily_creation"))
     # Pinned to the job model, and NOT inside the local-only guard.
     assert seen == {"local_only": False, "pin": "claude-sonnet-5"}
+
+
+@pytest.mark.parametrize("sid", ["sch_news_morning", "sch_front_page_evening",
+                                 "sch_afternoon_briefing"])
+def test_a_news_routine_never_takes_the_cloud_pin(monkeypatch, sid):
+    """News is local-only with no cloud consent: it runs inside the guard and
+    waits for the seat, whatever the owner allowed for the other jobs."""
+    _consent(monkeypatch, allow=True, job_model="claude-sonnet-5",
+             heartbeat_model=HAIKU)
+    _no_local_seat(monkeypatch)
+    seen = _probe(monkeypatch)
+    s._run_task(_builtin(sid=sid))
+    assert seen == {"local_only": True, "pin": ""}
+    assert sid not in {j for j, _ in sc.JOBS}
 
 
 def test_no_local_seat_and_allowed_runs_the_heartbeat_on_the_heartbeat_model(monkeypatch):
@@ -327,12 +341,11 @@ def test_the_estimate_prices_each_job_from_its_cadence_and_model():
     est = sc.estimate(cfg, records=[])
     jobs = {j["id"]: j for j in est["jobs"]}
     assert set(jobs) == {sid for sid, _ in sc.JOBS}
-    p = cost_meter.PRICING[HAIKU]
-    fp = jobs["sch_news_morning"]
-    assert fp["input_tokens_per_run"] == sc.FRONT_PAGE_PROMPT_TOKENS
-    assert fp["usd_per_run"] == pytest.approx(
-        sc.FRONT_PAGE_PROMPT_TOKENS / 1000 * p["in"] + 2000 / 1000 * p["out"], abs=1e-4)
-    assert fp["runs_per_month"] == pytest.approx(sc.DAYS_PER_MONTH)
+    # News is local-only and never priced as a cloud job.
+    assert not {"sch_news_morning", "sch_front_page_evening",
+                "sch_afternoon_briefing"} & set(jobs)
+    dc = jobs["sch_daily_creation"]
+    assert dc["runs_per_month"] == pytest.approx(sc.DAYS_PER_MONTH)
     hb = jobs["sch_heartbeat"]
     # 08:00-20:00 every 4 hours: 3 runs a day, not 24.
     assert est["heartbeat_runs_per_day"] == 3
@@ -373,7 +386,7 @@ def test_the_spending_route_shows_the_answer_models_and_estimate(client):
     d = resp.get_json()
     assert d["status"] == "ok"
     assert d["settings"]["answered"] is False and d["settings"]["allow"] is False
-    assert len(d["estimate"]["jobs"]) == 5
+    assert len(d["estimate"]["jobs"]) == len(sc.JOBS) == 2
     assert "total_usd_per_month" in d["estimate"]
     assert 240 in d["cadences"]
 
