@@ -199,20 +199,137 @@ class CpuKokoro:
             self._pipes = {}
 
 
+class ProcessKokoro:
+    """`CpuKokoro` in a child process (`podcast_speaker_process`), same `speak`.
+
+    Kokoro on the processor brings torch, its thread pools and its native
+    buffers with it; loaded in the server they outlived the episode by gigabytes
+    and hundreds of threads. Here they live in the child, which `unload()`
+    ends, so everything a render loaded goes with it. The child inherits the
+    server's environment (home, Hugging Face cache, offline flags) and so reads
+    the same local files.
+    """
+
+    #: Allowance for the child's first line, which also loads the model.
+    LOAD_ALLOWANCE_S = 180.0
+
+    def __init__(self):
+        self.process = None
+        self._lock = threading.Lock()
+
+    def loaded(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    def _start(self):
+        import sys
+        env = dict(os.environ)
+        src = str(Path(__file__).resolve().parents[2])
+        env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        self.process = subprocess.Popen(
+            [sys.executable, "-m", "agent_friday.services.podcast_speaker_process"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+    def _exchange(self, request: dict, budget_s: float):
+        """Send one request; (reply, payload bytes or None), within budget_s."""
+        import json
+        from agent_friday.services.podcast_speaker_process import read_msg, write_msg
+        proc = self.process
+        got: list = []
+
+        def run():
+            try:
+                write_msg(proc.stdin, json.dumps(request).encode("utf-8"))
+                head = read_msg(proc.stdout)
+                if head is None:
+                    got.append(None)
+                    return
+                reply = json.loads(head.decode("utf-8"))
+                data = read_msg(proc.stdout) if reply.get("ok") else None
+                got.append((reply, data))
+            except BaseException as e:  # noqa: BLE001
+                got.append(e)
+
+        t = threading.Thread(target=run, name="podcast-speaker-io", daemon=True)
+        t.start()
+        t.join(timeout=budget_s)
+        if t.is_alive():
+            self._kill()
+            raise RenderError("voice_timeout",
+                              "One line took longer than %.0f s to speak." % budget_s)
+        result = got[0] if got else None
+        if result is None or isinstance(result, BaseException):
+            self._kill()
+            raise RenderError("voice_failed",
+                              "The speaking process stopped unexpectedly%s."
+                              % ("" if result is None else " (%s)" % type(result).__name__))
+        return result
+
+    def speak(self, text: str, voice: str):
+        """`text` in `voice` → float32 numpy samples at 24 kHz, spoken in the child."""
+        import numpy as np
+        text = (text or "").strip()
+        if not text:
+            return np.zeros(0, dtype="float32")
+        from agent_friday.services.kokoro_voice import synthesis_budget_s
+        with self._lock:
+            first = not self.loaded()
+            if first:
+                self._start()
+            budget = synthesis_budget_s(text) * CPU_BUDGET_FACTOR + (self.LOAD_ALLOWANCE_S if first else 0.0)
+            reply, data = self._exchange({"op": "speak", "text": text, "voice": voice}, budget)
+        if not reply.get("ok"):
+            raise RenderError(reply.get("code") or "voice_failed",
+                              reply.get("message") or "Kokoro failed on a line.")
+        return np.frombuffer(data or b"", dtype="<f4").astype("float32")
+
+    def _kill(self):
+        proc, self.process = self.process, None
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(timeout=10)
+            except Exception:
+                pass
+
+    def unload(self):
+        """End the child: everything the render loaded is released with it."""
+        with self._lock:
+            proc, self.process = self.process, None
+        if proc is None:
+            return
+        try:
+            if proc.poll() is None:
+                import json
+                from agent_friday.services.podcast_speaker_process import write_msg
+                write_msg(proc.stdin, json.dumps({"op": "quit"}).encode("utf-8"))
+                proc.wait(timeout=10)
+        except Exception:
+            pass
+        if proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(timeout=10)
+            except Exception:
+                pass
+
+
 _SPEAKER = None
 _SPEAKER_LOCK = threading.Lock()
 
 
-def speaker() -> CpuKokoro:
+def speaker() -> ProcessKokoro:
+    """The render queue's speaker: Kokoro in its own process, never the server's."""
     global _SPEAKER
     with _SPEAKER_LOCK:
         if _SPEAKER is None:
-            _SPEAKER = CpuKokoro()
+            _SPEAKER = ProcessKokoro()
         return _SPEAKER
 
 
 def release_speaker():
-    """Free the CPU model's memory once the render queue is empty."""
+    """End the speaking process once the render queue is empty; everything it
+    loaded is released with it."""
     global _SPEAKER
     with _SPEAKER_LOCK:
         if _SPEAKER is not None:
