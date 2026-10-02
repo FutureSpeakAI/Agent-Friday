@@ -18,7 +18,8 @@ from urllib.parse import urlsplit, urlunsplit
 SAME_HEADLINE = 0.7
 
 _STOP = set("""a an and are as at be by for from has have how in into is it its of on or that the
-this to was were what when where which who why will with after over new says said""".split())
+this to was were what when where which who why will with after over new says said but not now
+then there they their these those she her his him our its while also more most than""".split())
 _WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9$%.,'’-]*")
 _FIGURE_RE = re.compile(r"\$?\d[\d,.]*[%BbMmKk]?")
 
@@ -43,9 +44,11 @@ def _facts(text: str) -> set:
     """Figures, and names written mid-sentence: what a development adds."""
     facts = {f.rstrip(".,").lower() for f in _FIGURE_RE.findall(text or "") if len(f.rstrip(".,")) > 1}
     for sent in re.split(r"(?<=[.!?])\s+", text or ""):
-        for i, tok in enumerate(sent.split()):
+        for tok in sent.split():
             w = re.sub(r"['’]s$", "", tok.strip(".,;:!?()\"'“”‘’"))
-            if i > 0 and len(w) >= 3 and w[0].isupper():
+            # A capitalised word is a name, wherever it stands, unless it is
+            # a common word that opens sentences ("The", "On").
+            if len(w) >= 3 and w[0].isupper() and w.lower() not in _STOP:
                 facts.add(w.lower())
     return facts
 
@@ -98,8 +101,10 @@ def filter_pool(pool: list[dict], seen: list[dict]) -> tuple[list[dict], list[di
         if rec is None:
             kept.append(story)
             continue
-        new_facts = sorted(_facts("%s. %s" % (story.get("title") or "", story.get("snippet") or ""))
-                           - rec["facts"])
+        text = "%s. %s" % (story.get("title") or "", story.get("snippet") or "")
+        # Compared in lower case; said as written ("Ledgerline", not "ledgerline").
+        written = {w.strip(".,;:!?()\"'“”‘’").lower(): w.strip(".,;:!?()\"'“”‘’") for w in text.split()}
+        new_facts = [written.get(f, f) for f in sorted(_facts(text) - rec["facts"])]
         source = (story.get("source") or "").lower()
         new_source = source and source not in rec["sources"]
         if not new_facts and not new_source:

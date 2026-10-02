@@ -2310,6 +2310,110 @@ function ShortcutsSheet({onClose,settings}){
 }
 
 // ═══ SEND-TO DROPDOWN (Data Flow) ═══
+// The owner's media diet rules: what is in force, what Friday proposed from
+// conversation (approve or reject: nothing applies until approved), and what
+// the rules removed, as receipts.
+function MediaDietRules() {
+  const h = React.createElement;
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState('');
+  const load = () => fetch('/api/news/media-diet').then(r => r.json()).then(setD).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const decide = (id, decision) => {
+    setBusy(id);
+    fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) })
+      .then(() => { setBusy(''); load(); }).catch(() => setBusy(''));
+  };
+  const drop = outlet => fetch('/api/news/media-diet/rule', { method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outlet }) }).then(load);
+  if (!d) return null;
+  const muted = { fontSize: 11, color: '#777' };
+  return h('div', { style: { marginBottom: 12 } },
+    h('div', { className: 'card-title', style: { marginTop: 8 } }, 'Your rules'),
+    (d.rules || []).length === 0
+      ? h('div', { style: muted }, 'No rules yet. Tell ' + fridayName() + ' which outlets to avoid or prefer; she proposes a rule here, and nothing applies until you approve it.')
+      : d.rules.map(r => h('div', { key: r.outlet, className: 'manage-row' },
+          h('span', null, (r.kind === 'block' ? 'Never cite ' : 'Prefer ') + (r.name || r.outlet)),
+          h('button', { className: 'btn', style: { fontSize: 10 }, onClick: () => drop(r.outlet),
+            'aria-label': 'Remove the rule for ' + (r.name || r.outlet) }, 'Remove'))),
+    (d.pending || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'Waiting for you') : null,
+    (d.pending || []).map(p => h('div', { key: p.approval_id, className: 'manage-row', style: { display: 'block' } },
+      h('pre', { style: { whiteSpace: 'pre-wrap', fontSize: 11, margin: '4px 0', fontFamily: 'inherit' } }, p.diff),
+      h('button', { className: 'btn active', style: { fontSize: 10 }, disabled: busy === p.approval_id,
+        onClick: () => decide(p.approval_id, 'approve') }, 'Approve'), ' ',
+      h('button', { className: 'btn', style: { fontSize: 10 }, disabled: busy === p.approval_id,
+        onClick: () => decide(p.approval_id, 'deny') }, 'Reject'))),
+    (d.receipts || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'What your rules removed') : null,
+    (d.receipts || []).slice(0, 8).map((x, i) => h('div', { key: i, style: muted },
+      String(x.at || '').replace('T', ' ').slice(0, 16) + ' \u00b7 ' + String(x.where || '').replace('_', ' ') + ' \u00b7 '
+      + x.rule + ': ' + (x.removed || []).length + ' removed')));
+}
+// Discuss with Friday (docs/design/active/news-discuss.md): one story,
+// evidence first. What the sources say, each linked from the fetched URL;
+// then her read, labelled as hers. The local model only.
+const DISCUSS_MODES = [['compare', 'Compare coverage'], ['primary', 'Primary source'], ['background', 'Background'],
+  ['claims', 'Claim check'], ['local', 'Local angle'], ['follow', 'Follow'], ['make', 'Make something']];
+function DiscussPanel({ story, onClose }) {
+  const h = React.createElement;
+  const [mode, setMode] = useState('compare');
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const ask = (m, extra) => {
+    setMode(m); setBusy(true); setRes(null);
+    fetch('/api/news/discuss', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ url: story.url, title: story.title, mode: m }, extra || {})) })
+      .then(r => r.json()).then(d => { setRes(d); setBusy(false); })
+      .catch(() => { setRes({ status: 'error', message: 'Could not reach ' + fridayName() }); setBusy(false); });
+  };
+  useEffect(() => { if (story && story.url) ask('compare'); }, [story && story.url]);
+  const draft = () => {
+    const lines = ((res && res.findings) || []).map(f => '- ' + f.text + (f.links && f.links.length ? ' (' + f.links.join(', ') + ')' : ''));
+    fetch('/api/media', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'draft', title: 'On: ' + story.title, body: '# ' + story.title + '\n\n' + story.url + '\n\n' + lines.join('\n') }) })
+      .then(r => r.json()).then(d => { if (d.status === 'ok' && window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'media', card: d.card.id }); });
+  };
+  const link = (u, i) => h('a', { key: i, href: u, target: '_blank', rel: 'noopener noreferrer', style: { marginLeft: 6, fontSize: 11 } }, '[' + (i + 1) + ']');
+  const muted = { fontSize: 11, color: '#777' };
+  const body = busy ? h('div', { style: muted }, 'Reading the sources on this computer…')
+    : !res ? null
+    : res.status !== 'ok' ? h('div', { style: { fontSize: 12 } }, res.message || 'That didn’t work.')
+    : h('div', null,
+      res.note ? h('div', { style: Object.assign({}, muted, { marginBottom: 8 }) }, res.note) : null,
+      res.diet_removed ? h('div', { style: muted }, res.diet_removed + ' source' + (res.diet_removed === 1 ? '' : 's') + ' left out: your media diet') : null,
+      (res.findings || []).length ? h('div', { className: 'card-title', style: { marginTop: 8 } }, 'What the sources say') : null,
+      (res.findings || []).map((f, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } }, f.text, (f.links || []).map(link))),
+      (res.outlets || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'How each outlet framed it') : null,
+      (res.outlets || []).map((o, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } },
+        h('a', { href: o.url, target: '_blank', rel: 'noopener noreferrer' }, o.outlet), ': ', o.framing,
+        o.left_out ? h('div', { style: muted }, 'Left out: ' + o.left_out) : null)),
+      (res.primary || []).map((p, i) => h('div', { key: i, style: { fontSize: 12 } }, 'Primary source: ', h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, p.url))),
+      (res.timeline || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Timeline') : null,
+      (res.timeline || []).map((t, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, t.when), ' ', t.what, (t.links || []).map(link))),
+      (res.who || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Who’s who') : null,
+      (res.who || []).map((w, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, w.name), ': ', w.role, (w.links || []).map(link))),
+      (res.claims || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Claims') : null,
+      (res.claims || []).map((c, i) => h('div', { key: i, style: { fontSize: 12 } }, h('span', { className: 'fp-badge ' + (c.status === 'confirmed' ? 'new' : 'update') }, c.status), ' ', c.claim, (c.links || []).map(link))),
+      (res.read || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, fridayName() + '’s read') : null,
+      (res.read || []).map((r, i) => h('div', { key: i, style: { fontSize: 12, fontStyle: 'italic' } }, r)),
+      (res.sources || []).length ? h('div', { style: Object.assign({}, muted, { marginTop: 10 }) }, 'Sources: ',
+        res.sources.map((s, i) => h('a', { key: i, href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { marginRight: 8 } }, s.outlet || s.title))) : null,
+      res.episode ? h('div', { style: { fontSize: 12 } }, 'A two-host deep dive is being made on this computer; it will be in Media.') : null,
+      res.path ? h('div', { style: { fontSize: 12 } }, 'Notes saved: ' + res.path) : null);
+  return h('div', { className: 'news-side' },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      h('h3', null, '💬 DISCUSS WITH ' + fridayName().toUpperCase()),
+      h('button', { className: 'icon-btn', 'aria-label': 'Close this panel', title: 'Close this panel', onClick: onClose }, '✕')),
+    h('div', { style: { fontSize: 12, marginBottom: 8 } }, story.title),
+    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 } },
+      DISCUSS_MODES.map(([m, label]) => h('button', { key: m, className: 'btn' + (mode === m ? ' active' : ''), style: { fontSize: 10 },
+        onClick: () => m === 'make' ? (setMode('make'), setRes(null)) : ask(m) }, label))),
+    mode === 'make' && !busy ? h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'podcast' }) }, '🎧 A two-host podcast'),
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'notes' }) }, '📝 Notes'),
+      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: draft }, '✍️ A draft in Media')) : null,
+    body);
+}
 // ═══ PODCASTS — player, Studio view, News chip (services/podcast_engine.py) ═══
 // Plain React.createElement so the same block runs in index.html and reads the
 // same in ui_parts/app.html. Episodes never play on their own: the player
@@ -2834,110 +2938,6 @@ function PodcastsView() {
         ['queued', 'waiting', 'writing', 'speaking', 'checking'].includes(ep.status) ? h('button', { className: 'btn', onClick: () => act(ep, 'cancel') }, 'Stop') : null,
         ['failed', 'cancelled'].includes(ep.status) ? h('button', { className: 'btn', onClick: () => act(ep, 'retry') }, 'Retry') : null,
         h('button', { className: 'btn', 'aria-label': 'Delete ' + (ep.title || 'episode'), onClick: () => act(ep, 'delete') }, '🗑')))));
-}
-// The owner's media diet rules: what is in force, what Friday proposed from
-// conversation (approve or reject: nothing applies until approved), and what
-// the rules removed, as receipts.
-function MediaDietRules() {
-  const h = React.createElement;
-  const [d, setD] = useState(null);
-  const [busy, setBusy] = useState('');
-  const load = () => fetch('/api/news/media-diet').then(r => r.json()).then(setD).catch(() => {});
-  useEffect(() => { load(); }, []);
-  const decide = (id, decision) => {
-    setBusy(id);
-    fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) })
-      .then(() => { setBusy(''); load(); }).catch(() => setBusy(''));
-  };
-  const drop = outlet => fetch('/api/news/media-diet/rule', { method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outlet }) }).then(load);
-  if (!d) return null;
-  const muted = { fontSize: 11, color: '#777' };
-  return h('div', { style: { marginBottom: 12 } },
-    h('div', { className: 'card-title', style: { marginTop: 8 } }, 'Your rules'),
-    (d.rules || []).length === 0
-      ? h('div', { style: muted }, 'No rules yet. Tell ' + fridayName() + ' which outlets to avoid or prefer; she proposes a rule here, and nothing applies until you approve it.')
-      : d.rules.map(r => h('div', { key: r.outlet, className: 'manage-row' },
-          h('span', null, (r.kind === 'block' ? 'Never cite ' : 'Prefer ') + (r.name || r.outlet)),
-          h('button', { className: 'btn', style: { fontSize: 10 }, onClick: () => drop(r.outlet),
-            'aria-label': 'Remove the rule for ' + (r.name || r.outlet) }, 'Remove'))),
-    (d.pending || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'Waiting for you') : null,
-    (d.pending || []).map(p => h('div', { key: p.approval_id, className: 'manage-row', style: { display: 'block' } },
-      h('pre', { style: { whiteSpace: 'pre-wrap', fontSize: 11, margin: '4px 0', fontFamily: 'inherit' } }, p.diff),
-      h('button', { className: 'btn active', style: { fontSize: 10 }, disabled: busy === p.approval_id,
-        onClick: () => decide(p.approval_id, 'approve') }, 'Approve'), ' ',
-      h('button', { className: 'btn', style: { fontSize: 10 }, disabled: busy === p.approval_id,
-        onClick: () => decide(p.approval_id, 'deny') }, 'Reject'))),
-    (d.receipts || []).length ? h('div', { className: 'card-title', style: { marginTop: 12 } }, 'What your rules removed') : null,
-    (d.receipts || []).slice(0, 8).map((x, i) => h('div', { key: i, style: muted },
-      String(x.at || '').replace('T', ' ').slice(0, 16) + ' \u00b7 ' + String(x.where || '').replace('_', ' ') + ' \u00b7 '
-      + x.rule + ': ' + (x.removed || []).length + ' removed')));
-}
-// Discuss with Friday (docs/design/active/news-discuss.md): one story,
-// evidence first. What the sources say, each linked from the fetched URL;
-// then her read, labelled as hers. The local model only.
-const DISCUSS_MODES = [['compare', 'Compare coverage'], ['primary', 'Primary source'], ['background', 'Background'],
-  ['claims', 'Claim check'], ['local', 'Local angle'], ['follow', 'Follow'], ['make', 'Make something']];
-function DiscussPanel({ story, onClose }) {
-  const h = React.createElement;
-  const [mode, setMode] = useState('compare');
-  const [res, setRes] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const ask = (m, extra) => {
-    setMode(m); setBusy(true); setRes(null);
-    fetch('/api/news/discuss', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ url: story.url, title: story.title, mode: m }, extra || {})) })
-      .then(r => r.json()).then(d => { setRes(d); setBusy(false); })
-      .catch(() => { setRes({ status: 'error', message: 'Could not reach Friday' }); setBusy(false); });
-  };
-  useEffect(() => { if (story && story.url) ask('compare'); }, [story && story.url]);
-  const draft = () => {
-    const lines = ((res && res.findings) || []).map(f => '- ' + f.text + (f.links && f.links.length ? ' (' + f.links.join(', ') + ')' : ''));
-    fetch('/api/media', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'draft', title: 'On: ' + story.title, body: '# ' + story.title + '\n\n' + story.url + '\n\n' + lines.join('\n') }) })
-      .then(r => r.json()).then(d => { if (d.status === 'ok' && window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'media', card: d.card.id }); });
-  };
-  const link = (u, i) => h('a', { key: i, href: u, target: '_blank', rel: 'noopener noreferrer', style: { marginLeft: 6, fontSize: 11 } }, '[' + (i + 1) + ']');
-  const muted = { fontSize: 11, color: '#777' };
-  const body = busy ? h('div', { style: muted }, 'Reading the sources on this computer…')
-    : !res ? null
-    : res.status !== 'ok' ? h('div', { style: { fontSize: 12 } }, res.message || 'That didn’t work.')
-    : h('div', null,
-      res.note ? h('div', { style: Object.assign({}, muted, { marginBottom: 8 }) }, res.note) : null,
-      res.diet_removed ? h('div', { style: muted }, res.diet_removed + ' source' + (res.diet_removed === 1 ? '' : 's') + ' left out: your media diet') : null,
-      (res.findings || []).length ? h('div', { className: 'card-title', style: { marginTop: 8 } }, 'What the sources say') : null,
-      (res.findings || []).map((f, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } }, f.text, (f.links || []).map(link))),
-      (res.outlets || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'How each outlet framed it') : null,
-      (res.outlets || []).map((o, i) => h('div', { key: i, style: { fontSize: 12, margin: '4px 0' } },
-        h('a', { href: o.url, target: '_blank', rel: 'noopener noreferrer' }, o.outlet), ': ', o.framing,
-        o.left_out ? h('div', { style: muted }, 'Left out: ' + o.left_out) : null)),
-      (res.primary || []).map((p, i) => h('div', { key: i, style: { fontSize: 12 } }, 'Primary source: ', h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, p.url))),
-      (res.timeline || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Timeline') : null,
-      (res.timeline || []).map((t, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, t.when), ' ', t.what, (t.links || []).map(link))),
-      (res.who || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Who’s who') : null,
-      (res.who || []).map((w, i) => h('div', { key: i, style: { fontSize: 12 } }, h('b', null, w.name), ': ', w.role, (w.links || []).map(link))),
-      (res.claims || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, 'Claims') : null,
-      (res.claims || []).map((c, i) => h('div', { key: i, style: { fontSize: 12 } }, h('span', { className: 'fp-badge ' + (c.status === 'confirmed' ? 'new' : 'update') }, c.status), ' ', c.claim, (c.links || []).map(link))),
-      (res.read || []).length ? h('div', { className: 'card-title', style: { marginTop: 10 } }, fridayName() + '’s read') : null,
-      (res.read || []).map((r, i) => h('div', { key: i, style: { fontSize: 12, fontStyle: 'italic' } }, r)),
-      (res.sources || []).length ? h('div', { style: Object.assign({}, muted, { marginTop: 10 }) }, 'Sources: ',
-        res.sources.map((s, i) => h('a', { key: i, href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { marginRight: 8 } }, s.outlet || s.title))) : null,
-      res.episode ? h('div', { style: { fontSize: 12 } }, 'A two-host deep dive is being made on this computer; it will be in Media.') : null,
-      res.path ? h('div', { style: { fontSize: 12 } }, 'Notes saved: ' + res.path) : null);
-  return h('div', { className: 'news-side' },
-    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-      h('h3', null, '💬 DISCUSS WITH ' + fridayName().toUpperCase()),
-      h('button', { className: 'icon-btn', 'aria-label': 'Close this panel', title: 'Close this panel', onClick: onClose }, '✕')),
-    h('div', { style: { fontSize: 12, marginBottom: 8 } }, story.title),
-    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 } },
-      DISCUSS_MODES.map(([m, label]) => h('button', { key: m, className: 'btn' + (mode === m ? ' active' : ''), style: { fontSize: 10 },
-        onClick: () => m === 'make' ? (setMode('make'), setRes(null)) : ask(m) }, label))),
-    mode === 'make' && !busy ? h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
-      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'podcast' }) }, '🎧 A two-host podcast'),
-      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: () => ask('make', { make: 'notes' }) }, '📝 Notes'),
-      h('button', { className: 'btn', style: { fontSize: 11 }, onClick: draft }, '✍️ A draft in Media')) : null,
-    body);
 }
 const NEWS_PODCAST_ROUTINE = { frontpage: 'front_page', briefings: 'briefing', weekly: 'weekly', editorial: 'editorial' };
 function SendTo({content,personName,eventId,emailThreadId,dataType,options}){

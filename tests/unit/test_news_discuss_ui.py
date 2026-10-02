@@ -23,7 +23,8 @@ def test_every_story_card_can_be_discussed(page):
 @pytest.mark.parametrize("page", PAGES)
 def test_the_panel_asks_the_local_route_and_labels_her_read(page):
     s = (ROOT / page).read_text(encoding="utf-8")
-    panel = s[s.index("function DiscussPanel"):s.index("const NEWS_PODCAST_ROUTINE = {")]
+    panel = s[s.index("const DISCUSS_MODES"):s.index("function DiscussPanel")]
+    panel += s[s.index("function DiscussPanel"):s.index("// ═══ PODCASTS — player, Studio view, News chip")]
     assert "/api/news/discuss" in panel and "fridayName() + '\u2019s read'" in panel
     for mode in ("compare", "primary", "background", "claims", "local", "follow", "make"):
         assert "'%s'" % mode in panel, mode
@@ -32,6 +33,6 @@ def test_the_panel_asks_the_local_route_and_labels_her_read(page):
 @pytest.mark.parametrize("page", PAGES)
 def test_the_media_diet_shows_rules_proposals_and_receipts(page):
     s = (ROOT / page).read_text(encoding="utf-8")
-    comp = s[s.index("function MediaDietRules"):s.index("const DISCUSS_MODES")]
+    comp = s[s.index("function MediaDietRules"):s.index("// ═══ PODCASTS — player, Studio view, News chip")]
     assert "/api/news/media-diet" in comp and "/decide" in comp and "'approve'" in comp and "'deny'" in comp
     assert "MediaDietRules" in s[s.index("YOUR MEDIA DIET"):]

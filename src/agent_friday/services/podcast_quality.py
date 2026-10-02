@@ -262,7 +262,10 @@ def _entities(title: str, text: str) -> set[str]:
     first = re.sub(r"['’]s$", "", (title.split() or [""])[0].strip(".,;:!?\"'“”‘’"))
     lead = ({first.lower()} if len(first) >= 3 and first[0].isupper()
             and first.lower() not in _STOP and first.lower() not in _MONTHS + _DAYS else set())
-    return body | lead | ({w for w in _caps(title, initial=True) if w in body}) | figures
+    # A title word is a name when the text also writes it capitalised, even
+    # at the start of a sentence ("Senate Democrats blocked ...").
+    confirmed = body | _caps(text, initial=True)
+    return body | lead | ({w for w in _caps(title, initial=True) if w in confirmed}) | figures
 
 
 def _places(text: str) -> set[str]:

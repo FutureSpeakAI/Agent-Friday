@@ -109,7 +109,9 @@ def test_the_briefing_that_went_out_would_fail_the_script_gate(home, monkeypatch
     sc = done["script_check"]
     assert sc["ok"] is False and sc["revisions"] == pe.MAX_REVISIONS
     codes = {p["code"] for p in sc["problems"]}
-    assert {"no_lede", "time_order", "repeats_word", "safety_dismissed"} <= codes
+    # (Its fourth "landscape" was in the empty wrap-up, which the edit pass
+    # cuts, so the repetition is under the limit by the time the gate reads it.)
+    assert {"no_lede", "time_order", "safety_dismissed"} <= codes
     # A missing lede blocks: the script is kept for review, never spoken.
     assert done["status"] == "failed" and done["error"]["code"] == "script_rejected"
     assert not done.get("lines") and not speaker
