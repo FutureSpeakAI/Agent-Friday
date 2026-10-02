@@ -76,6 +76,12 @@
     },
     "EDEN": {
      "stage": 0
+    },
+    "WORMHOLE": {
+     "rings": 20
+    },
+    "BLACKHOLE": {
+     "dust": 320
     }
    }
   },
@@ -129,6 +135,12 @@
    },
    "EDEN": {
     "stage": 0
+   },
+   "WORMHOLE": {
+    "rings": 20
+   },
+   "BLACKHOLE": {
+    "dust": 320
    }
   },
   "palette": {
@@ -261,6 +273,12 @@
     },
     "EDEN": {
      "stage": 6
+    },
+    "WORMHOLE": {
+     "rings": 24
+    },
+    "BLACKHOLE": {
+     "dust": 360
     }
    }
   },
@@ -310,10 +328,16 @@
     "tubes": 88
    },
    "NONE": {
-    "lines": 121
+    "lines": 109
    },
    "EDEN": {
     "stage": 6
+   },
+   "WORMHOLE": {
+    "rings": 25
+   },
+   "BLACKHOLE": {
+    "dust": 396
    }
   },
   "palette": {
