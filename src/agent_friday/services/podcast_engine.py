@@ -821,9 +821,11 @@ def _fetch_for_speech(lines: list[dict], docs: list[dict]) -> None:
         if not cited or ln.get("signature"):
             continue
         cluster = set().union(*[sids[c]["cluster"] for c in cited])
+        # A snippet cut off mid-word hides what followed the words it has.
+        cut_off = any(re.search(r"[A-Za-z]$", (by.get(c) or {}).get("text", "").rstrip()) for c in cluster)
         for sent in quality.sentences(ln["text"]):
-            if quality.is_speech(sent) and not quality.states(sent, cluster, story_list,
-                                                              quality.SPEECH_STATES_MIN):
+            if quality.is_speech(sent) and (cut_off or not quality.states(sent, cluster, story_list,
+                                                                          quality.SPEECH_STATES_MIN)):
                 for c in cluster:
                     d = by.get(c)
                     if d is not None and "article" not in d:
@@ -916,6 +918,11 @@ def edit_script(lines: list[dict], docs: list[dict], n_chapters: int,
             out.append(new)
     for ln in out:
         ln.pop("_from", None)
+        # A line about the news that cites nothing is her own: tagged as hers.
+        if (not ln.get("signature") and not ln.get("cites") and not ln.get("own")
+                and any(quality.names_story(ln["text"], s) for s in story_list)):
+            ln["own"] = True
+            ln["about"] = [s["sid"] for s in story_list if quality.names_story(ln["text"], s)]
 
     if close is not None:
         said = 0

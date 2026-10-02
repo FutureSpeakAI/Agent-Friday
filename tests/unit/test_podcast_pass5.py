@@ -593,3 +593,24 @@ def test_a_cut_off_snippet_is_checked_against_the_fetched_article(monkeypatch):
             "that the transit bill has passed the legislature.")
     fixed, _cut = pe.edit_script([L(0, full, [s1])], docs_, n_chapters=1)
     assert [ln["text"] for ln in fixed] == [full] and fetched == ["https://examplepost.com/ruiz"]
+
+
+
+def test_an_uncited_line_about_the_news_is_tagged_as_hers(ds):
+    """Script #3's close named the stories but cited nothing: it is her synthesis."""
+    lines = [ftc_lede(ds), L(2, "The FTC investigation is the one thing to watch this week.", [])]
+    fixed, _cut = pe.edit_script(lines, ds, n_chapters=3)
+    close = [ln for ln in fixed if ln["chapter"] == 2]
+    assert close and close[0]["own"] is True
+
+
+def test_a_cut_off_snippet_always_sends_for_the_article(monkeypatch):
+    """Even when the snippet's words cover the sentence, a snippet cut off
+    mid-word ("... no longer apply now t") hides what followed."""
+    fetched = []
+    monkeypatch.setattr(pe, "article_text", lambda url: fetched.append(url) or ARTICLE)
+    docs_ = _speech_docs()
+    said = ("Example Post reports that Governor Ana Ruiz said her earlier claims that budget fears were a hoax "
+            "invented by her rivals no longer apply.")
+    pe.edit_script([L(0, said, [docs_[0]["sid"]])], docs_, n_chapters=1)
+    assert fetched == ["https://examplepost.com/ruiz"]
