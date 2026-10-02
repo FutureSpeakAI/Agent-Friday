@@ -57,6 +57,17 @@ Engineer-days are for one person with tests. Each milestone ends with a ledger l
 
 Total about 14.5 days. M1 first because it unblocks the first install; M2 to M4 are the screen; M5 to M7 complete the owner's six asks.
 
+## 3.1 What has landed (2026-10-02)
+
+- [x] M1 `resources/model_shortlist.json`, `services/model_shortlist.py`, `services/model_download.py`, `routes/models_screen.py` (shortlist, download, downloads, pause/resume/cancel), `model_store.register(engine, serve_args, serve_num_ctx)`, shortlist rows in `local_models_catalog`, the Get button. `tests/unit/test_model_download.py`.
+- [x] M2 `services/model_fit.py`. `tests/unit/test_model_fit.py`. Finding: by the planner's budgets (1 GiB beyond the display reserve) Bonsai 2 reads **tight** on a 12 GB card with the full context overhead; the engine tries the small compute buffer before saying so, and the screen says "tight", never "runs well", when that is the arithmetic.
+- [x] M3 `services/model_catalog_rows.py`, `GET /api/models/catalog`, `POST /api/models/whatif`, `POST /api/models/check`, `ModelCatalogSection` (search, fit and licence filters, per-file rows, Why, Pretend I have, any model). `tests/unit/test_model_catalog_rows.py`.
+- [x] M4 `services/model_stack.py`, `POST /api/models/stack/preview`, `StackSection` (bars, legend, swap time, sentence; Add to stack on rows). `tests/unit/test_model_stack.py`.
+- [x] M5 `services/model_bench.py` (llama-bench beside the engine, through the arbiter's `bench_job` lease; measurement row; calibration; receipt), bench route, after-install hook, Measure button. `tests/unit/test_model_bench.py`.
+- [x] M6 `services/model_remove.py` (remove with the replacement question, previous-version slot kept by a replacing download, rollback, role undo snapshot), routes, Remove and Go back buttons. `tests/unit/test_model_remove.py`.
+- [x] M7 `services/local_models_tools.py` (`local_models_advise`, ring 0, in the governance internal list, declared in `_VOICE_LIVE_TOOLS`, routed through `_governed`). `tests/unit/test_local_models_tools.py`.
+- [x] M8 frames captured from the worktree page on a scratch static server with fixture payloads, desktop and phone, looked at. Not done here: the conformance gate as an automatic post-install step for tool-using roles (it needs the seat loaded; the existing seat-gate route runs it on demand), and the Settings window's own narrow phone layout, which squeezes every tab.
+
 ## 4. Decisions made here and owned by the build
 
 - **No new settings key.** Queue, previous-version slot and calibration live under `runtime/models/` and `runtime/residency/` as JSON; the settings checker is untouched. Role binding stays `POST /api/settings` with `capability_routing`.
