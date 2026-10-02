@@ -54,6 +54,15 @@ def test_a_missed_and_a_late_routine_are_notices():
     assert states == {"sch_news_morning": "missed", "sch_afternoon_briefing": "late"}
 
 
+def test_a_failed_routine_today_is_a_notice_with_its_reason():
+    today = s._now_central().strftime("%Y-%m-%d")
+    _news(last_status="failed", last_run_date=today, last_run_ts=time.time(),
+          last_summary="no editorial: the editorial call failed")
+    notes = s.news_routine_notices()
+    assert [n["state"] for n in notes] == ["failed"]
+    assert "editorial call failed" in notes[0]["reason"]
+
+
 def test_an_on_time_routine_is_not_a_notice():
     today = s._now_central().strftime("%Y-%m-%d")
     _news(last_status="complete", last_run_date=today, last_run_ts=time.time(),

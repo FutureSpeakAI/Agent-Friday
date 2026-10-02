@@ -807,6 +807,8 @@ def news_routine_notices(now=None) -> list:
         elif st == "complete" and r.get("last_run_date") == today \
                 and summary.startswith("Late:"):
             note = {"state": "late", "reason": summary.split(" {", 1)[0]}
+        elif st == "failed" and r.get("last_run_date") == today:
+            note = {"state": "failed", "reason": summary}
         if note:
             note.update(id=r["id"], name=r.get("name") or r["id"])
             out.append(note)
@@ -1247,13 +1249,17 @@ def dispatch(rec, *, manual=False):
                     " " + summary if summary else "")
             degraded = _editorial_degraded(result)
             if degraded:
-                # The routine produced its page but not the model's work:
-                # a visible DEGRADED run, never "complete".
-                status = "degraded"
-                summary = ("ran without its editorial: "
+                # A page without the model's work (fallback headline, ranked
+                # stories, often the same lead as last time) is a FAILED run
+                # with its reason, never "complete": recorded as complete, three
+                # such editions read as "it didn't run". The routine has
+                # already told the owner in its own notice, so no second one.
+                status = "failed"
+                summary = ("no editorial: "
                            + str(degraded.get("reason") or "the model call failed")
                            + (". " + summary if summary else ""))
-                _patch_record(sid, last_status="degraded", last_summary=summary,
+                err = summary
+                _patch_record(sid, last_status="failed", last_summary=summary,
                               retry_pending=False, retry_count=0, not_before=0,
                               catch_up=None)
                 return
@@ -1295,6 +1301,7 @@ def dispatch(rec, *, manual=False):
                 _notify_run(rec, "waiting", summary)
         except RetiredSchedule as e:
             status, summary = "retired", str(e)
+            _log.warning("schedule %s %s", sid, summary)
             _patch_record(sid, enabled=False, last_status="retired",
                           last_summary=summary, retry_pending=False,
                           retry_count=0, not_before=0, catch_up=None)

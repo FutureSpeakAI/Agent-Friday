@@ -488,10 +488,9 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
     if not chosen_is_cloud and actual_is_cloud and \
             str(routing_mode or "").strip().lower() == "cloud_only":
         return (
-            "You chose %s for the reasoning seat, but routing mode is 'Cloud "
-            "only', so this turn was sent to %s. To be answered by %s on this "
-            "machine, set routing mode to Smart, Local preferred or Local only "
-            "in Settings > Models." % (chosen, actual, chosen))
+            "Your routing mode is Cloud only, so this turn went to %s, not %s, "
+            "the model you chose. To be answered by %s on this machine, change "
+            "the routing mode in Settings > Models." % (actual, chosen, chosen))
 
     # Two cloud models: not an absent local install, so offer no install advice.
     if chosen_is_cloud and actual_is_cloud:
@@ -503,6 +502,29 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
         "You chose %s for the reasoning seat, but it is not installed on this "
         "machine; this turn was answered by %s instead. Install %s or pick an "
         "installed model in the seat picker." % (chosen, actual, chosen))
+
+
+def _explicit_local_pick(conv_seat, routed_model):
+    """The local model the owner bound this conversation to, when this turn
+    routed to it; otherwise None. A failure of that seat is reported, never
+    answered by a cloud model the owner did not pick."""
+    if not isinstance(conv_seat, dict):
+        return None
+    want = (conv_seat.get("model") or "").strip()
+    if not want or want != str(routed_model or "").strip():
+        return None
+    try:
+        from agent_friday.services.local_seats import _names_a_cloud_model
+        if _names_a_cloud_model(want):
+            return None
+    except Exception:
+        pass
+    return want
+
+
+#: The notice's one action: open Settings > Models (tab id `intelligence`).
+SEAT_NOTICE_ACTION = {"label": "Open Settings > Models", "workspace": "settings",
+                      "tab": "intelligence"}
 
 
 def _announce_seat_notice(conversation_id, text):
@@ -525,6 +547,7 @@ def _announce_seat_notice(conversation_id, text):
             "role": "system",
             "kind": "seat_notice",
             "text": "⚙ " + text,
+            "action": SEAT_NOTICE_ACTION,
             "pinned": False,
         }
         if conversation_id:
@@ -535,8 +558,11 @@ def _announce_seat_notice(conversation_id, text):
         pass
     try:
         from agent_friday.notifications_engine import push
+        # One tap to the setting that decides it: Settings > Models holds the
+        # routing mode and the seat picker. Nothing changes until the owner does.
         push(title="Answered by a different model than you chose", body=text,
              priority="high", source="routing", kind="seat_notice",
+             actions=[SEAT_NOTICE_ACTION],
              dedupe_key="seat_notice:" + text[:80])
     except Exception:
         pass
@@ -1771,21 +1797,32 @@ def chat():
                 # and a slow answer from the model they chose beats a fast
                 # one from a model they rejected.
                 _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
-                if _mode == 'local_only':
+                # An explicit per-chat pick refuses the cloud the same way: the
+                # owner chose this local model for this chat.
+                _explicit = _explicit_local_pick(_conv_seat, _route_info.get('model'))
+                if _mode == 'local_only' or _explicit:
                     _pilot_error = True
-                    print(f"  [ROUTER] local inference failed and mode is "
-                          f"local_only — refusing the cloud: {_ole}")
-                    _local_only_msg = (
-                        "I could not get an answer out of "
-                        + str(_route_info.get('model') or 'the local model')
-                        + " just now (error "
-                        + log_failure(_ole, "Local model failed in local-only mode")
-                        + ").\n\n"
+                    print(f"  [ROUTER] local inference failed and "
+                          f"{'mode is local_only' if _mode == 'local_only' else 'this chat is bound to ' + _explicit}"
+                          f" — refusing the cloud: {_ole}")
+                    _why_local = (
                         "You are in **local only** mode, so I did not send this "
                         "to a cloud model. Options: wait and try again once the "
                         "GPU is free, pick a smaller local model, or switch the "
                         "mode to Local preferred in Settings -> Models if "
                         "you want me to fall back when local is busy."
+                        if _mode == 'local_only' else
+                        "You chose " + _explicit + " for this chat, so I did not "
+                        "send this to a cloud model. Options: wait and try again "
+                        "once the local model is free, or pick a different model "
+                        "for this chat in the model picker."
+                    )
+                    _local_only_msg = (
+                        "I could not get an answer out of "
+                        + str(_route_info.get('model') or 'the local model')
+                        + " just now (error "
+                        + log_failure(_ole, "Local model failed in local-only mode")
+                        + ").\n\n" + _why_local
                     )
                     user_msg = {
                         'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),

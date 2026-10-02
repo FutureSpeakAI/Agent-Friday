@@ -147,15 +147,19 @@ def test_a_failed_provider_call_with_the_seat_down_waits(monkeypatch):
     assert hist[0]["status"] == "waiting", hist[0]
 
 
-def test_a_degraded_front_page_with_the_seat_up_is_not_complete(monkeypatch):
+def test_a_front_page_without_its_editorial_is_failed_not_complete(monkeypatch):
     _Seat(monkeypatch, serving=True, parked=False)
     _register(monkeypatch, "t_fp5", lambda: {
         "id": "2026-10-02-morning",
         "editorial_status": {"state": "degraded", "reason": "the editorial call failed"}})
     s.dispatch(_news_rec("t_fp5"), manual=True)
     hist = _wait_for_run("sch_news_morning", 1)
-    assert hist[0]["status"] == "degraded", hist[0]
+    assert hist[0]["status"] == "failed", hist[0]
+    assert "no editorial" in hist[0]["summary"]
     assert "editorial call failed" in hist[0]["summary"]
+    live = s.get_schedule("sch_news_morning")
+    assert live["last_status"] == "failed"
+    assert "editorial call failed" in live["last_summary"]
 
 
 def test_a_degraded_front_page_with_the_seat_down_waits(monkeypatch):
@@ -180,3 +184,7 @@ def test_a_schedule_whose_builtin_is_gone_is_retired_once(monkeypatch):
     live = s.get_schedule("sch_gone")
     assert live["enabled"] is False
     assert not s._is_due(live, datetime.now() + timedelta(days=1))
+    # Recorded once: later ticks never run it, so it never fails again.
+    s._tick()
+    time.sleep(0.3)
+    assert [h["status"] for h in s.run_history("sch_gone", limit=50)] == ["retired"]

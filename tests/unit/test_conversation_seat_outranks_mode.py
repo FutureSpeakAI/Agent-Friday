@@ -88,3 +88,30 @@ def test_with_no_local_seat_the_binding_is_moot_but_harmless(monkeypatch):
     r = _router(monkeypatch, local=())
     out = _route(r, {"model": "claude-sonnet-5"})
     assert out.get("provider") == "cloud", out
+
+
+# ── Cloud only: the explicit per-chat pick still wins ─────────────────────────
+#
+# The user picks, never the product. A conversation bound to a local model runs
+# on it under the global cloud_only mode; the mode governs only turns where no
+# explicit choice exists.
+
+def test_cloud_only_a_chat_bound_to_a_local_model_runs_on_it(monkeypatch):
+    r = _router(monkeypatch, mode="cloud_only")
+    out = _route(r, {"model": "bonsai2:27b", "provider": "bonsai2-local"})
+    assert out.get("provider") == "local", out
+    assert out.get("model") == "bonsai2:27b", out
+    assert out.get("is_local") is True, out
+    assert "bound" in (out.get("reason") or "").lower(), out
+
+
+def test_cloud_only_without_a_binding_stays_in_the_cloud(monkeypatch):
+    r = _router(monkeypatch, mode="cloud_only")
+    out = _route(r, None)
+    assert out.get("provider") == "cloud", out
+
+
+def test_cloud_only_a_chat_bound_to_a_cloud_model_uses_that_model(monkeypatch):
+    r = _router(monkeypatch, mode="cloud_only")
+    out = _route(r, {"model": "claude-opus-5-5"})
+    assert out.get("provider") == "cloud" and out.get("model") == "claude-opus-5-5", out

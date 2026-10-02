@@ -31869,6 +31869,7 @@ function NewsWS() {
     className: "fp-degraded-head"
   }, (n.state === 'waiting' ? '⏳ ' + n.name + ' is waiting for the local seat'
       : n.state === 'late' ? '🕒 ' + n.name + ' ran late'
+      : n.state === 'failed' ? '⚠️ ' + n.name + ' failed'
       : '⚠️ ' + n.name + ' did not run')), /*#__PURE__*/React.createElement("div", {
     className: "fp-degraded-body"
   }, n.reason || ''))),

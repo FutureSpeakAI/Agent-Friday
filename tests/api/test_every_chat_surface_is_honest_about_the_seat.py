@@ -81,6 +81,30 @@ def test_a_local_pick_sent_to_the_cloud_by_cloud_only_blames_the_mode():
     assert "cloud only" in low and "routing mode" in low, text
 
 
+def test_the_seat_notice_offers_one_tap_to_settings_models(monkeypatch):
+    import agent_friday.notifications_engine as ne
+    pushed = []
+    monkeypatch.setattr(ne, "push", lambda **k: pushed.append(k))
+    monkeypatch.setattr(chat_mod, "_save_chat_history", lambda *a, **k: None)
+    chat_mod._announce_seat_notice("conv-x", "Your routing mode is Cloud only, test")
+    assert pushed, "no notification was pushed"
+    act = (pushed[0].get("actions") or [None])[0]
+    assert act == {"label": "Open Settings > Models", "workspace": "settings",
+                   "tab": "intelligence"}, act
+
+
+def test_a_failed_explicit_local_pick_is_never_answered_by_the_cloud():
+    """The chat route refuses the cloud fallback for the local model the owner
+    bound this chat to, as it does in local_only mode."""
+    pick = chat_mod._explicit_local_pick
+    assert pick({"model": "bonsai2:27b"}, "bonsai2:27b") == "bonsai2:27b"
+    assert pick({"model": "claude-sonnet-5-5"}, "claude-sonnet-5-5") is None
+    assert pick({"model": "bonsai2:27b"}, "gemma4:12b") is None
+    assert pick(None, "bonsai2:27b") is None
+    src = (REPO / "src/agent_friday/routes/chat.py").read_text(encoding="utf-8")
+    assert "if _mode == 'local_only' or _explicit:" in src
+
+
 def test_the_computer_control_override_keeps_its_own_words():
     text = chat_mod._seat_divergence_text(
         "bonsai2:27b", "claude-sonnet-5", routing_mode="local_preferred",

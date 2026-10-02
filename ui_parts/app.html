@@ -9527,7 +9527,7 @@ function NewsWS(){
            </select>}
          </div>
          {fpRoutines.map(n=><div key={'fprn-'+n.id} className="fp-degraded fp-routine-notice">
-           <div className="fp-degraded-head">{n.state==='waiting'?'⏳ '+n.name+' is waiting for the local seat':n.state==='late'?'🕒 '+n.name+' ran late':'⚠️ '+n.name+' did not run'}</div>
+           <div className="fp-degraded-head">{n.state==='waiting'?'⏳ '+n.name+' is waiting for the local seat':n.state==='late'?'🕒 '+n.name+' ran late':n.state==='failed'?'⚠️ '+n.name+' failed':'⚠️ '+n.name+' did not run'}</div>
            <div className="fp-degraded-body">{n.reason||''}</div>
          </div>)}
          {anchorReading&&<div className="fp-anchor-bar">
