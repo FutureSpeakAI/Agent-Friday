@@ -2162,6 +2162,11 @@ def _generate_front_page(slot="morning"):
     calendar_events = _fetch_calendar_today() if slot == "morning" else None
 
     pool, stats = _gather_front_page_pool()
+    # A story that already ran comes back only with something new, as an
+    # update; the rest is held back, and the edition says what.
+    from agent_friday.services import news_seen
+    past = [_read_front_page(e["id"]) for e in _list_front_pages() if e.get("id") != edition_id][:14]
+    pool, held_back = news_seen.filter_pool(pool, news_seen.index([e for e in past if e]))
     editorial = _editorialize_front_page(
         pool, slot=slot, prev_stories=prev_titles,
         calendar_events=calendar_events)
@@ -2171,10 +2176,11 @@ def _generate_front_page(slot="morning"):
     def _tag(story):
         """Stamp new_since_last / continuing (+ any thread update) onto a story."""
         u = story.get("url", "")
-        cont = have_prev and u in prev_urls
+        # A story that ran before is back only as an update (news_seen).
+        cont = (have_prev and u in prev_urls) or bool(story.get("update"))
         story["new_since_last"] = bool(have_prev and not cont)
         story["continuing"] = bool(cont)
-        upd = thread_updates.get(u)
+        upd = thread_updates.get(u) or story.get("update_note")
         if cont and upd:
             story["thread_update"] = upd
         return story
@@ -2232,6 +2238,7 @@ def _generate_front_page(slot="morning"):
         "competitor_watch": editorial.get("competitor_watch") or [],
         "continuing_threads": continuing_threads,
         "prev_edition_id": (prev or {}).get("id") if prev else None,
+        "held_back": held_back,
         # "curated" when the editor answered, otherwise the reason it did not.
         # Stored ON the edition so the page can say what it is and a later
         # reader (or a re-run) can tell an un-curated edition from a curated
