@@ -49,7 +49,9 @@ def _now_iso() -> str:
 #: content-free stub of each (services/off_record); the words live in memory.
 _OFF_RECORD_ITEMS: Dict[str, Dict[str, Any]] = {}
 _STUB_KEYS = ("id", "priority", "source", "kind", "actions", "target", "read",
-              "dismissed", "created_at", "dedupe_key", "chat_injected", "off_record")
+              "dismissed", "created_at", "dedupe_key", "chat_injected", "off_record",
+              "tier", "count", "collapse_key", "held", "quiet", "resolve_key",
+              "resolved_at")
 
 
 def _disk_view(n: Dict[str, Any]) -> Dict[str, Any]:
@@ -122,8 +124,18 @@ def push(
     dedupe_key: Optional[str] = None,
     meta: Optional[Dict[str, Any]] = None,
     target: Optional[Dict[str, Any]] = None,
+    tier: Optional[str] = None,
+    resolve_key: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Add a notification to the queue.
+    """Add a notification to the tray (services/notification_policy).
+
+    tier:        NEEDS_YOU / FYI / LOG_ONLY; derived from kind, source and
+                 priority when omitted. An approval is always NEEDS_YOU.
+    resolve_key: a later resolve(resolve_key) closes this card (a failure
+                 that the next successful run of the same job resolves).
+    Repeats (same dedupe_key, else same kind + source + title with numbers
+    folded) collapse into one card: the count goes up and the card shows the
+    latest occurrence. Distinct approvals never collapse.
 
     dedupe_key: if provided, drop the new notification when an unread
                 notification with the same key is already queued.
@@ -138,12 +150,40 @@ def push(
     """
     if priority not in PRIORITY_ORDER:
         priority = "medium"
+    from agent_friday.services import notification_policy as _pol
+    approval = _pol.is_approval(kind)
+    t = _pol.tier_for(kind, source, priority, tier)
+    if not approval and (t == _pol.LOG_ONLY or _pol.is_muted(kind, source)):
+        logged = {"title": title, "kind": kind, "source": source, "priority": priority,
+                  "tier": _pol.LOG_ONLY, "logged": True,
+                  "muted": t != _pol.LOG_ONLY, "created_at": _now_iso()}
+        _log_only(logged)
+        return logged
+    quiet = _pol.owner_in_conversation()
+    key = dedupe_key if approval else _pol.collapse_key(kind, source, title, dedupe_key)
     with _LOCK:
         items = _load()
-        if dedupe_key:
+        if key:
             for n in items:
-                if n.get("dedupe_key") == dedupe_key and not n.get("dismissed"):
-                    return n
+                if n.get("dismissed"):
+                    continue
+                if (n.get("collapse_key") or n.get("dedupe_key")) != key:
+                    continue
+                if approval:
+                    return n                     # the same approval, already waiting
+                n["count"] = int(n.get("count") or 1) + 1
+                n["title"], n["body"] = title, body
+                n["created_at"] = _now_iso()
+                if PRIORITY_ORDER[priority] < PRIORITY_ORDER.get(n.get("priority"), 9):
+                    n["priority"] = priority
+                if t == _pol.NEEDS_YOU:
+                    n["read"] = False
+                if actions:
+                    n["actions"] = actions
+                if meta:
+                    n["meta"] = dict(n.get("meta") or {}, **meta)
+                _save(items)
+                return n
         entry = {
             "id": str(uuid.uuid4()),
             "title": title,
@@ -161,7 +201,17 @@ def push(
             "chat_injected": False,
             "dedupe_key": dedupe_key,
             "meta": meta or {},
+            "tier": t,
+            "count": 1,
+            "collapse_key": key,
+            # Mid-conversation: a card waits until the owner is done; an
+            # approval arrives anyway, marked quiet so nothing interrupts.
+            "held": bool(quiet and not approval),
+            "quiet": bool(quiet and approval),
+            "resolve_key": resolve_key,
         }
+        if t == _pol.FYI:
+            entry["read"] = True              # an FYI never bumps the badge
         try:
             from agent_friday.services import off_record as _off
             if _off.skip("notifications"):
@@ -171,6 +221,121 @@ def push(
         items.append(entry)
         _save(items)
         return entry
+
+
+def _log_only(entry: Dict[str, Any]) -> None:
+    """Housekeeping and muted kinds: the activity log, never the tray."""
+    try:
+        import logging
+        logging.getLogger("friday.notifications").info(
+            "log-only notification [%s/%s]: %s", entry.get("kind"), entry.get("source"),
+            entry.get("title"))
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import activity_ledger
+        activity_ledger.record("notification", kind=entry.get("kind"),
+                               source=entry.get("source"), tier=entry.get("tier"),
+                               muted=bool(entry.get("muted")))
+    except Exception:
+        pass
+
+
+def run_card(run_key: str, state: str, *, title: str, body: str = "",
+             source: str = "system", kind: str = "run",
+             actions: Optional[List[Dict[str, Any]]] = None,
+             target: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """One card per run, updated in place: started -> done / failed. A failed
+    run needs the owner; anything else is FYI."""
+    from agent_friday.services import notification_policy as _pol
+    t = _pol.NEEDS_YOU if state == "failed" else _pol.FYI
+    key = "run:" + str(run_key)
+    with _LOCK:
+        items = _load()
+        for n in items:
+            if n.get("collapse_key") == key and not n.get("dismissed"):
+                n.update(title=title, body=body, tier=t, created_at=_now_iso(),
+                         read=(t == _pol.FYI))
+                n["meta"] = dict(n.get("meta") or {}, state=state)
+                if actions is not None:
+                    n["actions"] = actions
+                _save(items)
+                return n
+    return push(title=title, body=body, source=source, kind=kind,
+                priority="high" if state == "failed" else "low", actions=actions,
+                target=target, dedupe_key=key, tier=t, meta={"state": state})
+
+
+def resolve(resolve_key: str) -> int:
+    """Close the cards a later success resolves. Returns how many closed."""
+    if not resolve_key:
+        return 0
+    closed = 0
+    with _LOCK:
+        items = _load()
+        for n in items:
+            if n.get("resolve_key") == resolve_key and not n.get("dismissed"):
+                n["dismissed"] = True
+                n["read"] = True
+                n["resolved_at"] = _now_iso()
+                closed += 1
+        if closed:
+            _save(items)
+    return closed
+
+
+def mute(kind: str, source: str) -> list:
+    """Mute a kind (reversible in Settings). Approvals cannot be muted."""
+    from agent_friday.services import notification_policy as _pol
+    from agent_friday.core import _save_settings
+    mutes = sorted(_pol.muted_kinds() | ({_pol.mute_key(kind, source)}
+                                         if not _pol.is_approval(kind) else set()))
+    _save_settings({"notification_mutes": mutes})
+    return mutes
+
+
+def unmute(kind: str, source: str) -> list:
+    from agent_friday.services import notification_policy as _pol
+    from agent_friday.core import _save_settings
+    mutes = sorted(_pol.muted_kinds() - {_pol.mute_key(kind, source)})
+    _save_settings({"notification_mutes": mutes})
+    return mutes
+
+
+def _is_pending_approval(n: Dict[str, Any]) -> bool:
+    from agent_friday.services import notification_policy as _pol
+    return _pol.is_approval(n.get("kind")) and not n.get("dismissed")
+
+
+def dismiss_all() -> int:
+    """Clear the tray. Pending approvals stay: they are decisions, not news."""
+    with _LOCK:
+        items = _load()
+        n = 0
+        for it in items:
+            if not it.get("dismissed") and not _is_pending_approval(it):
+                it["dismissed"] = True
+                it["read"] = True
+                n += 1
+        if n:
+            _save(items)
+    return n
+
+
+def _release_held_locked(items: List[Dict[str, Any]]) -> bool:
+    """Deliver cards held during a conversation once it is over."""
+    from agent_friday.services import notification_policy as _pol
+    if _pol.owner_in_conversation():
+        return False
+    changed = False
+    for n in items:
+        if n.get("held"):
+            n["held"] = False
+            changed = True
+        if n.get("quiet"):
+            n["quiet"] = False
+            changed = True
+    return changed
 
 
 def upsert_status(
@@ -247,6 +412,9 @@ def list_notifications(
     """Return notifications newest-first."""
     with _LOCK:
         items = _load()
+        if _release_held_locked(items):
+            _save(items)
+    items = [n for n in items if not n.get("held")]
     if not include_dismissed:
         items = [n for n in items if not n.get("dismissed")]
     # Priority, then newest first. created_at has one-second resolution, so
@@ -317,9 +485,14 @@ def clear_dismissed() -> int:
 
 
 def unread_count() -> int:
+    """The badge: unread cards that need the owner. FYI and held cards never
+    count."""
     with _LOCK:
         items = _load()
-    return sum(1 for n in items if not n.get("read") and not n.get("dismissed"))
+        if _release_held_locked(items):
+            _save(items)
+    return sum(1 for n in items if not n.get("read") and not n.get("dismissed")
+               and not n.get("held") and n.get("tier", "needs_you") != "fyi")
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -328,6 +501,9 @@ def unread_count() -> int:
 
 def pending_chat_injections() -> List[Dict[str, Any]]:
     """Notifications that should appear in the chat stream and haven't yet."""
+    from agent_friday.services import notification_policy as _pol
+    if _pol.owner_in_conversation():
+        return []                       # never mid-sentence; delivered after
     with _LOCK:
         items = _load()
     return [

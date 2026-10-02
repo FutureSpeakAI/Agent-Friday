@@ -18,7 +18,6 @@ def _clean(friday_dir, monkeypatch):
     if ne.NOTIF_FILE.exists():
         ne.NOTIF_FILE.unlink()
     monkeypatch.setattr(pol, "_LAST_TURN", [0.0])          # nobody mid-conversation
-    monkeypatch.setattr(pol, "muted_kinds", lambda: set())
     logged = []
     monkeypatch.setattr(ne, "_log_only", lambda entry: logged.append(entry))
     yield logged
@@ -93,10 +92,8 @@ def test_an_approval_is_never_muted_or_demoted(monkeypatch, _clean):
     assert len(_clean) == 1, "the muted kind should go to the activity log"
 
 
-def test_mute_is_reversible_through_settings(friday_dir, monkeypatch):
-    monkeypatch.undo()                                      # real settings-backed mutes
-    if ne.NOTIF_FILE.exists():
-        ne.NOTIF_FILE.unlink()
+def test_mute_is_reversible_through_settings():
+    """Through the settings file, as the Settings list and the voice tool do."""
     ne.mute("scheduled_task", "scheduler")
     assert pol.is_muted("scheduled_task", "scheduler")
     ne.unmute("scheduled_task", "scheduler")
