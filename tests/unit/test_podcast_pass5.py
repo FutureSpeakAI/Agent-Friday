@@ -431,3 +431,28 @@ def test_a_script_only_run_writes_and_checks_the_script_and_speaks_nothing(ds, m
     assert done["script_check"]["ok"] in (True, False)
     text = (pe._dir(ep["id"]) / "transcript.txt").read_bytes().decode("utf-8-sig")
     assert "The Hill reports" in text and "SOURCES" in text
+
+
+# 8 ── what the first script-only Front Page showed ──────────────────────────
+
+def test_one_event_from_several_outlets_needs_one_lede_with_its_outlet(ds):
+    """Two outlets, one event: the first mention introduces it, naming either."""
+    g, r = sid(ds, "US trade"), sid(ds, "FTC opens")
+    lines = [L(0, "The Guardian reports that on Tuesday the Federal Trade Commission opened an "
+                  "investigation into AI companies including Anthropic and OpenAI.", [g]),
+             L(0, "The commission called it its first enforcement action on rogue AI agents.", [g]),
+             L(0, "Reuters confirms the probe into Anthropic and OpenAI.", [r])]
+    assert "no_lede" not in codes(check(lines, ds))
+
+
+def test_a_month_is_not_a_place():
+    assert q._places("incidents first reported in July, and in Austin on Monday") == {"austin"}
+
+
+def test_fridays_own_notes_cited_show_as_her_analysis():
+    ep = {"title": "T", "show": "The Front Page", "format": "solo", "hosts": {"a": {"name": "Friday"}},
+          "chapters": [{"title": "Close"}],
+          "sources": [{"id": "S1", "title": "Today's front page: X", "kind": "news", "role": "overview", "url": ""}],
+          "lines": [{"speaker": "a", "chapter": 0, "text": "It adds up to a tense week.", "cites": ["S1"], "start": 1}]}
+    text = pe.transcript_bytes(ep).decode("utf-8-sig")
+    assert "It adds up to a tense week.   (Friday's analysis)" in text

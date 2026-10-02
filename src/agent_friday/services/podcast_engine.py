@@ -1328,9 +1328,15 @@ def transcript_bytes(ep: dict) -> bytes:
         if c != chap and c is not None and c < len(chapters):
             chap = c
             out += ["", "== %s ==" % chapters[c]["title"]]
-        tags = ["%s's analysis" % names.get("a", her_name())] if ln.get("own") else []
+        mine = "%s's analysis" % names.get("a", her_name())
+        tags = [mine] if ln.get("own") else []
         for cid in ln.get("cites") or []:
             s = src.get(cid) or {}
+            if s.get("role") in ("overview", "digest"):
+                # Her own notes: her analysis, never a source's name.
+                if mine not in tags:
+                    tags.append(mine)
+                continue
             tags.append(s.get("outlet") or ("Calendar " + s["when"] if s.get("when") else "")
                         or s.get("title") or cid)
         out.append("[%s] %s: %s%s" % (mmss(ln.get("start")), names.get(ln.get("speaker"), ""),

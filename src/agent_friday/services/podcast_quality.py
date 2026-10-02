@@ -258,8 +258,9 @@ def _entities(title: str, text: str) -> set[str]:
 
 
 def _places(text: str) -> set[str]:
+    """Places named after "in", "at" ...; "in July" and "on Monday" are times."""
     return {m.group(1).lower() for m in re.finditer(
-        r"\b(?:in|at|near|outside|across)\s+([A-Z][a-z]{2,})", text or "")}
+        r"\b(?:in|at|near|outside|across)\s+([A-Z][a-z]{2,})", text or "")} - set(_MONTHS) - set(_DAYS)
 
 
 # ── the story list ──────────────────────────────────────────────────────────
@@ -527,23 +528,34 @@ def meta_problems(lines: list[dict]) -> list[dict]:
 def lede_problems(lines: list[dict], story_list: list[dict], *, personal: bool = True) -> list[dict]:
     out = []
     fm = first_mentions(lines, story_list)
+    seen = set()
+    # One event reported by several outlets is one story: its first mention,
+    # wherever an item of it is first named, needs one lede, with any of its
+    # outlets named aloud.
     for s in story_list:
-        i = fm.get(s["sid"])
-        if i is None:
+        if s["cluster"] in seen:
             continue
+        seen.add(s["cluster"])
+        members = [m for m in story_list if m["sid"] in s["cluster"]]
+        found = [(fm[m["sid"]], m) for m in members if m["sid"] in fm]
+        if not found:
+            continue
+        i, s = min(found, key=lambda x: (x[0], x[1]["sid"]))
         window = " ".join(ln["text"] for ln in lines[i:i + 2] if not ln.get("signature"))
         wws = set(_words(window)) | {w.lower() for w in re.findall(r"\$?\d[\d,.]*[%BbMmKk]?", window)}
         missing = []
-        aliases = outlet_aliases(s)
+        aliases = [a for m in members for a in outlet_aliases(m)]
         if aliases and not said_outlet(window, aliases):
             missing.append("the outlet, named aloud (%s)" % (spoken_outlet(s) or s["outlet"]))
-        if not (s["entities"] & wws):
+        if not (set().union(*[m["entities"] for m in members]) & wws):
             missing.append("who or where")
-        if s["places"] and not (s["places"] & wws):
-            missing.append("where (%s)" % ", ".join(sorted(p.title() for p in s["places"])))
+        places = set().union(*[m["places"] for m in members])
+        if places and not (places & wws):
+            missing.append("where (%s)" % ", ".join(sorted(p.title() for p in places)))
         if not _WHEN_RE.search(window):
             missing.append("when")
-        if len({_stem(w) for w in _content(window)} & s["keys"]) < min(2, len(s["keys"])) \
+        keys = set().union(*[m["keys"] for m in members])
+        if len({_stem(w) for w in _content(window)} & keys) < min(2, len(keys)) \
                 or len(_words(window)) < MIN_LEDE_WORDS:
             missing.append("what happened")
         if missing:
