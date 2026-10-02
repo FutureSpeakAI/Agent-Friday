@@ -263,7 +263,11 @@ def test_building_and_serving_the_cache_writes_nothing(wiki, monkeypatch):
 
 def test_repeated_queries_allocate_almost_nothing(tmp_path, monkeypatch):
     # Flat memory: after the first parse, ten more queries over an unchanged
-    # wiki must not allocate anywhere near a parse's worth of memory.
+    # wiki parse nothing (counted directly) and allocate well under a parse's
+    # worth. tracemalloc sees every thread in the process, so in a full suite
+    # other tests' background threads add to the peak; the parse count is the
+    # exact check and the memory bound (half a parse) is the backstop a
+    # re-parse, which peaks near a whole parse, still fails.
     w = tmp_path / "wiki"
     (w / "notes").mkdir(parents=True)
     for i in range(150):
@@ -274,16 +278,25 @@ def test_repeated_queries_allocate_almost_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(wiki_graph, "WIKI_DIR", w)
     monkeypatch.setattr(wiki_graph, "SOUL_FILE", tmp_path / "SOUL.md")
     wiki_graph.clear_wiki_index_cache()
+    real_build = wiki_graph.build_wiki_index
+    parses = []
+
+    def counted(*a, **k):
+        parses.append(1)
+        return real_build(*a, **k)
+    monkeypatch.setattr(wiki_graph, "build_wiki_index", counted)
     tracemalloc.start()
     try:
         structural_query.query("tell me about topic 042")
         _, first_peak = tracemalloc.get_traced_memory()
         tracemalloc.reset_peak()
         base, _ = tracemalloc.get_traced_memory()
+        parsed_before = len(parses)
         for _ in range(10):
             structural_query.query("tell me about topic 042")
         _, later_peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
         wiki_graph.clear_wiki_index_cache()
-    assert later_peak - base < first_peak / 4, (first_peak, later_peak - base)
+    assert parsed_before == 1 and len(parses) == 1, f"repeated queries parsed the wiki {len(parses) - 1} more time(s)"
+    assert later_peak - base < first_peak / 2, (first_peak, later_peak - base)
