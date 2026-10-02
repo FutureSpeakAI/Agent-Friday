@@ -2,15 +2,17 @@
 
 > **Status:** partly built: the genome, the processing-state gestures (§13),
 > Giga Earth's track (§15), the process orbs' rules, forms and hands
-> (§16), the world's dots and a clear picture (§17) and the head-coupled
-> window (§18); the rest is spec. The owner decided all three open questions on
+> (§16), the world's dots and a clear picture (§17), the head-coupled
+> window (§18) and five avatars rebuilt or new (§19); the rest is spec. The owner decided all three open questions on
 > 2026-09-29 (§12): on by default; a frontier model authors by default, and
 > the user may choose any model; one shared palette within ±30° of cyan. This
 > is the converged design. §13 adds the processing-state vocabulary (owner
 > approved 2026-09-29), and §14 maps the spec onto the north star. §15 puts
 > Giga Earth on a set track of Rez forms that no model changes (owner request
 > 2026-09-30). §16 makes the process orbs interactive, §17 adds the world
-> layer and §18 makes head tracking a true window (owner, 2026-10-02). It
+> layer, §18 makes head tracking a true window, and §19 rebuilds the Dyson
+> Sphere, Dirac and Transcendence and adds the Einstein-Rosen Bridge and
+> Hawking Radiation (owner, 2026-10-02). It
 > replaces the 2026-09-22 version of this file and the uncommitted
 > `docs/design/evolve-genome.md` (2026-09-28). That draft is preserved
 > verbatim in Appendix B so it is in git.
@@ -181,7 +183,7 @@ Every frame, `updateGroupColors` (`:4966-4995`) repaints it from
 table (`:4054-4069`). Nothing else feeds the scene's palette: no theme tokens,
 no CSS variables. So a genome palette has **one** injection point. **VERIFIED**
 
-**The 13 structures** (`EVOLUTION_PATH`, `:4071-4077`; built in
+**The 13 structures, as checked** (two more since, and three rebuilt: §19) (`EVOLUTION_PATH`, `:4071-4077`; built in
 `buildAllStructures`, `:4733-4955`; animated in `animate`, `:5018-5556`):
 
 | # | id / name | v1 form (the literals a genome would parameterise) | Colour path |
@@ -192,13 +194,15 @@ no CSS variables. So a genome palette has **one** injection point. **VERIFIED**
 | 3 | DOME / Geodesic Cathedral | r35 hemisphere, 8 pillars, 6 octahedra, 2,000-point funnel (`:4762-4783`) | base, accent crystals |
 | 4 | ASTROLABE / Lovelace Astrolabe | 8 rings r=2i, random tilt (`:4826-4838`) | base, accent dashes |
 | 5 | TESSERACT / Von Neumann Tesseract | 16-vertex hypercube, scale 3 (`:4840-4852`) | base/accent |
-| 6 | QUANTUM / Dirac Probability | 64×64 point sphere, 30 loops of 300 points (`:4876-4888`) | **its own rainbow** via `setHSL`; `updateGroupColors` skips it (`:4987`, `:5430-5446`) |
+| 6 | QUANTUM / Dirac Probability | 64×64 point sphere, 30 loops of 300 points (`:4876-4888`); replaced by an orbital probability cloud, §19.2 | **its own rainbow** via `setHSL`; `updateGroupColors` skips it (`:4987`, `:5430-5446`); both gone, §19.2 |
 | 7 | MANDELBROT / Mandelbrot Set | escape-time point cloud, step .012, maxIter 40, **rewritten on the CPU every frame** (`:4805-4824`, `:5328-5340`) | base→accent by iteration |
 | 8 | MOBIUS / Turing Möbius | point strip R3 r1.5, scale 4 (`:4867-4874`) | base/accent |
 | 9 | GRID / Ocean of Light | 81×81 point ocean, 100×100 plane (`:4797-4803`) | base/accent |
 | 10 | CABLES / Fibonacci Nerve | 80 tubes from a r30 Fibonacci sphere (`:4785-4795`) | base/accent |
-| 11 | NONE / Transcendence | 100 rising 10-unit lines (`:4890-4899`) | base/accent |
+| 11 | NONE / Transcendence | 100 rising 10-unit lines (`:4890-4899`); replaced by the Hopf fibration, §19.3 | base/accent |
 | 12 | EDEN / Giga Earth (Rez) | tunnel, boss sphere, 15 spines, a white player figure, 60 debris lines (`:4901-4954`) | special flags; the player is always white (`:4979-4986`) |
+| 13 | WORMHOLE / Einstein-Rosen Bridge | added 2026-10-02, §19.4 | its own, from her colours |
+| 14 | BLACKHOLE / Hawking Radiation | added 2026-10-02, §19.5 | its own, from her colours and its weeks |
 
 **Present on every structure** (`buildBackgroundEnvironment`, `:4688-4720`):
 
@@ -494,18 +498,20 @@ exist today. A structure with no section draws exactly as v1.
 | Structure | Local genes (v1 value → bounds) |
 |---|---|
 | CUBES | `spacing` 1.6 → 1.4…1.9; `sparsity` 0.15 → 0.05…0.30 (seeded dropout). The grid stays 3×3×3: a 4×4×4 lattice is 64 cubes against today's 27, which no sparsity brings inside the +10% budget |
-| ICOSAHEDRON | `shells` 3 → 2…4; `detail` 3/2/1 → ±1 each, total ≤ v1 |
+| ICOSAHEDRON | `shells` 3 → 2…4 (the Dyson sphere's shells, panels shared by area); `detail_delta` 0 → −1 (fewer, bigger panels) (§19.1) |
 | NETWORK | `nodes` 120 → 100…132; `link_distance` 6 → 5…7 |
 | DOME | `pillars` 8 → `symmetry`-linked 6…10; `crystals` 6 → 4…7 |
 | ASTROLABE | `rings` 8 → 6…9; `tilt_spread` random → seeded, scaled by coherence |
 | TESSERACT | `w_ratio` 0.5/0.3 → 0.3…0.7 (speaking only) |
-| QUANTUM | `wave` 10 → 8…12 (colour comes from the shared palette, never its own band) |
+| QUANTUM | `wave` 10 → 8…12, the interference ripples' wavenumber (colour comes from the shared palette, never its own band) (§19.2) |
 | MANDELBROT | `max_iter` 40 → 32…40 (down only); `step` 0.012 → 0.012…0.015 |
 | MOBIUS | `twists` 1 → 1…3 (odd); `width` 1.5 → 1.35…1.65 (wider breaks the budget) |
 | GRID | `wave_scale` → 0.8…1.2 |
 | CABLES | `tubes` 80 → 64…88 |
-| NONE | `lines` 100 → 80…110 |
+| NONE | `lines` 100 → 80…110, two Hopf fibres a line (§19.3) |
 | EDEN | none by model: `stage` 0…6 moves only along its set track (§15); the player stays white (reserved as "you") |
+| WORMHOLE | `rings` 20 → 16…24 (count) (§19.4) |
+| BLACKHOLE | `dust` 320 → 240…360 (count) (§19.5) |
 
 ### 3.4 Expression
 
@@ -2363,6 +2369,158 @@ side) were each caught. `tests/unit/test_rez_boss.py` holds the sway.
   side of a wide screen would need the page's place on the screen.
 - `ui_parts/styles_and_scene.html` still carries the older head code (the
   mouse fallback and the orbit). Only its avatar-side head terms are gone.
+
+## 19. Five avatars rebuilt or new: Dyson, Dirac, Transcendence, the bridge, the hole (owner, 2026-10-02)
+
+The owner's direction, approved: Dirac Probability was "way too shiny";
+Transcendence "feels very empty"; the Sacred Sphere becomes a Dyson Sphere
+that looks like one, with solar prominences ("just a thought", approved);
+and two new structures, an Einstein-Rosen bridge and Hawking Radiation, the
+latter inspired by the physics behind a well-known film's black hole.
+
+Every one of them:
+- Reacts to her state only: her voice (`holoAmplitude`), her thinking
+  (`REASONING`) and listening (`LISTENING`) moods.
+- Keeps the photosensitivity limits on its own: voices are low-passed before
+  they touch light, waves run under once a second at any point, sparks fade in
+  over a quarter second. The backstop (§6.3) holds the rest.
+- Cannot glare. Point clouds use normal blending or capped colours, and light
+  has a soft shoulder.
+- Holds its place under the window (§18).
+- Hands its own units to the gesture engine (kind `module`, §13), and stills
+  under reduced motion.
+
+### 19.1 The Dyson Sphere (ICOSAHEDRON, `FridayDyson`)
+
+- **Form.**
+  - A star: her light, limb-darkened, capped below glare.
+  - Inside two to four shells of hexagonal collector panels (the `shells`
+    gene). The panels are shared by area, so the gene changes the layout and
+    never the cost; a detail step down gives fewer, bigger ones.
+  - Each shell has its own inclination and rate.
+- **Built by her looks.** Each shell is built ring by ring from its own
+  equator, inner shells first: about two fifths at first, whole after about
+  ten steps. Panels a step adds ease in.
+- **Starlight** leaks through the gaps.
+- **Prominences.** Eight loops of plasma along the star's field lines (one
+  point cloud, plasma running along each) rise between the panels. Now and
+  then one lifts toward the inner shell and stops short of it.
+- **States.**
+  - Speaking brightens the star through the gaps and arches the loops higher.
+  - Thinking turns the shells faster (capped under a panel a second past any
+    point) and twists the loops.
+  - Listening turns the panels toward the viewer.
+
+### 19.2 Dirac Probability (QUANTUM, `FridayDirac`)
+
+- **Form.** Six thousand translucent points (2,500 in the low-cost widget)
+  where an electron's |ψ|² is, for 1s, 2p_z, 3d_z² and 3d_xy, the nodal gaps
+  empty. Indigo at the core, her accent, then sand at the edges.
+- **Morph.** A point keeps one direction from the nucleus and its rank in
+  every orbital, so one orbital becomes another by short glides.
+- **No glare.** Normal blending and capped colours: it cannot pile up into
+  the old additive sphere's glare, however near the viewer leans. It now
+  crossfades like the rest.
+- **The colour guard is gone.** A global guard used to stop every group being
+  recoloured while Dirac was shown.
+- **States.**
+  - Thinking walks the orbitals, one into the next.
+  - Speaking runs interference ripples outward; the `wave` gene is their
+    wavenumber.
+  - Listening collapses the cloud and sharpens it.
+
+### 19.3 Transcendence (NONE, `FridayHopf`)
+
+- **Form.** Two hundred fibres of the Hopf fibration (two per `lines`) on
+  five nested tori. They are turned through the fourth dimension and projected
+  stereographically on the GPU, in one draw.
+- **Exact.** Every fibre is a circle, and any two link once (the Gauss
+  linking number is checked).
+- **Bounded.** The turn is bounded so no fibre reaches the projection's pole
+  (|w| ≤ 0.73).
+- **No glare.** Normal blending.
+- **States.**
+  - Speaking runs light along the fibres.
+  - Thinking turns it faster and wider.
+  - Listening pulls it taut: true circles on true tori.
+
+### 19.4 The Einstein-Rosen Bridge (WORMHOLE, index 13, `FridayWormhole`)
+
+- **Form.** A luminous grid on Flamm's paraboloid, z = 2√(r_s(r − r_s)), both
+  funnels, seen down into the mouth at a slight angle. The `rings` gene sets
+  its rings. A photon ring sits at the throat.
+- **A lens.** The mouth bends the world's dots round it (`FridayField.setLens`).
+- **The far side.** A disc at the throat whose shader looks out along each eye
+  ray at a different sky, so under the window leaning peeks inside.
+- **Where her mind is working**, and only that, read from the world field's
+  own state (the dots' honesty rule, §17.4):
+  - her warm lattice while she works locally;
+  - the network's web of linked stars only on a real cloud send of hers.
+- **States.**
+  - Speaking ripples the throat.
+  - Thinking tightens it and runs a stream of light through.
+  - Listening widens the mouth.
+- **Weeks.** The throat starts soft and wavering, and its ring sharpens,
+  steadies and brightens step by step.
+
+### 19.5 Hawking Radiation (BLACKHOLE, index 14, `FridayBlackHole`)
+
+- **Form.** A back-faced sphere is the canvas. For each pixel the fragment
+  shader follows the light back from the eye along a Schwarzschild null
+  geodesic (x″ = −3/2 h² x / r⁵, horizon at r = 1) to:
+  - the shadow;
+  - the photon ring at the critical impact parameter 3√3/2;
+  - a thin disk from the innermost stable orbit (r = 3) to r = 10, whose far
+    side bends over and under the shadow.
+- **The disk's light.** It is Doppler-beamed (brighter and bluer where it
+  comes toward the viewer) and gravitationally redshifted near the horizon,
+  with a soft shoulder.
+- **Rays start where the eye really is**, so under the window leaning shows a
+  new light path.
+- **A lens.** The world's dots and its own dust bend round the shadow and
+  never show inside it.
+- **Hawking pairs.** Pairs pop in softly at the shadow's edge. One falls in;
+  its partner leaves as a mote that becomes a dot of the world.
+- **States.**
+  - Idle: slow, sparse pairs.
+  - Listening spirals its dust (the `dust` gene) in toward the horizon.
+  - Thinking quickens the pairs, shimmers the ring and turns the disk faster.
+  - Speaking streams motes out with her voice.
+- **Weeks.** Its emission moves from dark ember through the brand's pink and
+  white to blue-white, and its shadow shrinks (a smaller hole is a hotter
+  one). Never amber, and its only red is dark.
+- **Inspiration only.** No film is named anywhere and no frame is copied.
+
+### 19.6 Names, voice and the server
+
+- **Names.** Both new structures are in every list: the page's
+  `EVOLUTION_PATH` and the picker, the setup wizard, the server's
+  `SCENE_NAMES` and the genome's ids, each with one count gene and a drawing
+  budget.
+- **Aliases.** "Wormhole", "black hole" and "sacred sphere" are aliases kept
+  identical on the page and the server.
+- **Voice.** `avatar_evolution` action `show` picks a structure by any of its
+  names ("switch to the wormhole", "Hawking Radiation"). It keeps the choice as
+  the picker does (`pin_scene`, which the picker's route now uses too) and
+  pushes it to the open page.
+- **The calendar.** It now cycles fifteen structures. An install without a
+  chosen structure may show a different one the day this ships; it changes
+  every four days anyway.
+
+### 19.7 Tests
+
+All run under node with the vendored three.js, lifted verbatim from both scene
+files:
+
+| Test file | What it holds |
+|---|---|
+| `test_dyson_sphere.py` | cost, building, easing, turn cap, the three states, eruptions, the gesture view |
+| `test_dirac_and_hopf.py` | nodal gaps and lobes, the walk, ripple rate, collapse, circles, linking numbers, the pole bound, the states |
+| `test_wormhole_and_black_hole.py` | the Flamm embedding, the far side's honesty, the states, the weeks, the lens, the shader's physics terms, the palette's colour rule, the pairs' soft pop-in, the dust |
+| `test_scene_names.py` | the four lists, the aliases, page and server resolving alike |
+| `test_avatar_voice.py` | `show` |
+
+Frames of every state were looked at on the scratch server.
 
 ## Appendix A. The market side and ratings (carried from 2026-09-22 §7; not built; federation is deferred)
 
