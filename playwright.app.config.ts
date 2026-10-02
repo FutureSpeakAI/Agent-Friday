@@ -33,7 +33,8 @@ function python(): string {
 }
 
 let webServer;
-if (target.scratch) {
+// Listing tests starts no server, so it needs no home.
+if (target.scratch && !process.argv.includes('--list')) {
   // One temporary home per run: workers re-read this file and reuse it.
   if (!process.env.FRIDAY_PW_HOME) {
     process.env.FRIDAY_PW_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'friday-pw-home-'));
@@ -45,6 +46,7 @@ process.env.FRIDAY_BASE = target.baseURL;
 
 export default defineConfig({
   webServer,
+  globalTeardown: target.scratch ? require.resolve("./tests/app/teardown.js") : undefined,
   testDir: './tests/app',
   timeout: 600_000,          // vision judging on a local model is slow
   expect: { timeout: 10_000 },
