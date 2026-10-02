@@ -1,14 +1,16 @@
 # Avatar visual genome: Friday's look evolves weekly, on every structure, reversibly
 
 > **Status:** partly built: the genome, the processing-state gestures (§13),
-> Giga Earth's track (§15) and the process orbs' rules, forms and hands
-> (§16); the rest is spec. The owner decided all three open questions on
+> Giga Earth's track (§15), the process orbs' rules, forms and hands
+> (§16), the world's dots and a clear picture (§17) and the head-coupled
+> window (§18); the rest is spec. The owner decided all three open questions on
 > 2026-09-29 (§12): on by default; a frontier model authors by default, and
 > the user may choose any model; one shared palette within ±30° of cyan. This
 > is the converged design. §13 adds the processing-state vocabulary (owner
 > approved 2026-09-29), and §14 maps the spec onto the north star. §15 puts
 > Giga Earth on a set track of Rez forms that no model changes (owner request
-> 2026-09-30). §16 makes the process orbs interactive (owner, 2026-10-02). It
+> 2026-09-30). §16 makes the process orbs interactive, §17 adds the world
+> layer and §18 makes head tracking a true window (owner, 2026-10-02). It
 > replaces the 2026-09-22 version of this file and the uncommitted
 > `docs/design/evolve-genome.md` (2026-09-28). That draft is preserved
 > verbatim in Appendix B so it is in git.
@@ -185,7 +187,7 @@ no CSS variables. So a genome palette has **one** injection point. **VERIFIED**
 | # | id / name | v1 form (the literals a genome would parameterise) | Colour path |
 |---|---|---|---|
 | 0 | CUBES / Genesis Lattice | 3×3×3 grid, 1.4 boxes, spacing 1.6, ~15% dropped with unseeded `Math.random()`, scale 1.5, `LATTICE_SPREAD` 0.65 (`:4734-4752`, `:5281-5305`) | faces base×0.15, edges accent |
-| 1 | ICOSAHEDRON / Dyson Sphere (was Sacred Sphere; answers to both) | 3 nested wire icosahedra, r 5/3.5/2, detail 3/2/1, opacity .15/.3/.6 (`:4754-4760`); the Dyson build replaces them, §18 | base, accent, white |
+| 1 | ICOSAHEDRON / Dyson Sphere (was Sacred Sphere; answers to both) | 3 nested wire icosahedra, r 5/3.5/2, detail 3/2/1, opacity .15/.3/.6 (`:4754-4760`); the Dyson build replaces them, §19 | base, accent, white |
 | 2 | NETWORK / Shannon Network | 120 nodes in 20³, link distance 6(+audio), ≤4 links (`:4854-4865`) | base/accent |
 | 3 | DOME / Geodesic Cathedral | r35 hemisphere, 8 pillars, 6 octahedra, 2,000-point funnel (`:4762-4783`) | base, accent crystals |
 | 4 | ASTROLABE / Lovelace Astrolabe | 8 rings r=2i, random tilt (`:4826-4838`) | base, accent dashes |
@@ -2215,8 +2217,8 @@ All four were approved.
   drawn 60 or more. The view now glides toward the newest head position at
   the render rate (a 45 ms time constant) instead of stepping at each
   detection.
-- **The zoom.** Lean depth ignores the detector's jitter in face width (a
-  0.035-octave backlash), so the zoom does not wobble while the head is
+- **The lean.** Lean depth ignores the detector's jitter in face width (a
+  0.035-octave backlash), so the view does not wobble while the head is
   still.
 - **Tests (rendered frames):**
   - A bright square that jumps across the view leaves nothing in the very
@@ -2248,8 +2250,7 @@ All four were approved.
   no dot is touched on the CPU.
 - **Depth.** A dot's size follows its depth (1 to 6 pixels). Dots fade at
   the box's ends, so wrapping never pops. Head-tracking parallax comes from
-  the off-axis frustum (§16.2's camera), because the dots really are at
-  depth.
+  the window (§18), because the dots really are at depth.
 - **Layer.** It is the world layer: it never drives Friday's form, and it
   is not the helpers' orb layer.
 
@@ -2281,6 +2282,87 @@ hers, never for decoration. It fades in. Tested in
   only. The field goes still on the network check alone.
 - Fat-line strokes: decided after looking at the multisampled frames of
   every structure.
+
+## 18. The window: head-coupled perspective (owner, 2026-10-02)
+
+The owner's direction: "We need all of our avatars to move in head tracking
+mode like they're in a fixed position in 3D space and the user's movement
+dictates the perspective," and Giga Earth's ball "needs to move around a bit
+more, mainly from side to side."
+
+### 18.1 What the user sees
+
+- **The avatar holds its place.** With head tracking on, the cinematic drift
+  stops at its resting pose (its pose at t = 0, glided to). Nothing in an
+  avatar reads the head; only the eye moves.
+- **The screen is the glass.** The glass is a fixed rectangle in front of the
+  avatar, 0.62 of the way from the resting eye to what it looks at
+  (`GLASS_AT`), the size the plain camera sees there. The frustum runs from
+  the eye through its four edges (`FridayTracking.placeWindow`), so a point on
+  the glass stays put on screen whatever the head does.
+- **Sideways.** The avatar, behind the glass, is seen from where the head is
+  and slides with it past the frame; what is past the far edge comes into
+  view; what is in front of the glass (the near dots) moves the other way.
+- **Leaning in.** The eye comes nearer the same glass: the avatar comes
+  closer (a centre at the look target about 1.38× nearer for one octave) and
+  the view through the glass widens. On a flat capture the avatar draws a
+  little smaller while more of the world shows around it; to the viewer,
+  whose screen now fills more of the view, it is nearer.
+- **Lost face.** A face counts as lost 250 ms after the last sighting (or
+  three of the detector's gaps, on a slow machine). The view eases back to
+  centre in about 300 ms, and a face found again is followed from there.
+- **Reduced motion.** No sideways movement and only a gentle lean (1.12×).
+- **Giga Earth.** The ball drifts slowly side to side across its place (3.2
+  units either way over 17 s, at most 1.2 units a second), a little up and
+  down out of step, and settles in the middle under reduced motion.
+
+### 18.2 True to the head
+
+- The head's offset in centimetres is its place in the camera frame times
+  the webcam's half-angle (about 62° across a 4:3 frame) times the real
+  distance (`viewing_distance_cm` at rest, divided by the lean).
+- The eye's offset is that many centimetres at the glass's own scale: the
+  glass's world width over the page's width in centimetres
+  (`screen_width_cm`; 0 reads the page's CSS width at 96 per inch, which the
+  system's display scaling keeps close to true). Ten centimetres to the
+  right puts the eye ten screen-centimetres to the right of the glass's
+  middle. `parallax_strength` scales it (1 is true) and it never goes past
+  1.5 glass widths.
+- The depth axis keeps the composed view at rest: the eye rests at the
+  glass's distance, and a lean divides that distance.
+
+### 18.3 Settings
+
+`viewing_distance_cm` (60, 30–120) and `screen_width_cm` (0 = from the
+display, up to 120) are new, in the engine, `DEFAULT_SETTINGS["tracking"]`,
+both panels and the `hologram_window` voice tool; a reset keeps them, like
+the calibration. `zoom_in_max` and `zoom_out_max` keep their names and now
+bound how many times nearer or farther the eye may go ("Lean in, at most").
+
+### 18.4 Tests
+
+`tests/unit/test_hologram_window.py`:
+- **Node, with the vendored three.js, through `placeWindow`.** Left, centre,
+  right, near and far: the avatar's world position is the same and the
+  projection changes; the glass is anchored; the sides and the lean behave
+  as above; the centimetre calibration is exact; the clamps hold; reduced
+  motion; the 300 ms ease; a found face.
+- **Static.** Only the camera, the HUD, the dock and the debug overlay read
+  the head.
+- **Browser.** Every structure, before and after a genome step, comes about
+  1.4× nearer leaned in and does not move.
+
+Twelve mutants of these rules (the old magnifier, no shear, an orbit, a
+player or lattice that follows the head, a slow ease, a stale filter, no
+lean in the centimetres, no screen width, no clamp, a moved glass, a flipped
+side) were each caught. `tests/unit/test_rez_boss.py` holds the sway.
+
+### 18.5 Not built
+
+- The window assumes the page sits under the webcam. A window off to one
+  side of a wide screen would need the page's place on the screen.
+- `ui_parts/styles_and_scene.html` still carries the older head code (the
+  mouse fallback and the orbit). Only its avatar-side head terms are gone.
 
 ## Appendix A. The market side and ratings (carried from 2026-09-22 §7; not built; federation is deferred)
 
