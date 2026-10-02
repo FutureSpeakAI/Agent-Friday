@@ -1723,6 +1723,234 @@
             return { install, frame, _state: id => state(mgr && mgr.orbs.get(id)), _tasks: tasks, _labels: declutter, _coreR: () => coreR };
         })();
         // </orb-scene>
+        // <world-field>
+        // The world around Friday: a 3D ocean of dots you float through, the
+        // scene's own layer, apart from her form and from the helpers' orbs
+        // (avatar-visual-genome.md §17). It telegraphs her state and only hers
+        // (presence frames labelled agent "friday"):
+        //   idle: a slow drift past the viewer;
+        //   thinking (her rounds): a faint current toward her;
+        //   local work (her private handoff; her local answers): the dots
+        //     nearest her glow;
+        //   a cloud call (her sealed egress, "sent": the only trigger): a pulse
+        //     leaves her and spools a web of links across the dots, pulled
+        //     back in when the answer comes (her next route, tool, round,
+        //     verify or error frame), or after a cap;
+        //   offline (the network check says so): the field goes still.
+        // The web is a privacy signal, so it never fires for decoration.
+        // Brightness changes are gentle and the web fades in; the scene's
+        // backstop holds anything else to the flash limits.
+        const FridayFieldState = (function () {
+            const THINK_S = 3.0, PULSE_S = 2.0, SPOOL_S = 2.2, RETRACT_S = 1.4, HOLD_MAX_S = 15, FADE_IN_S = 0.6;
+            const EASE = { current: 0.8, glow: 1.2, speed: 0.7 };      // per second
+            let thinkT = 0, local = false, localPulse = 0, offline = false, web = null;
+            let current = 0, glow = 0, speed = 1, fired = 0;
+            const toward = (v, t, r, dt) => v + Math.max(-r * dt, Math.min(r * dt, t - v));
+            const smooth = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+            function frame(f) {
+                if (!f || f.type !== 'presence' || f.agent !== 'friday') return;     // hers only
+                const st = f.state, ph = f.phase;
+                if (st === 'egress' && ph === 'sent' && f.route === 'cloud') {
+                    web = { t: 0, phase: 'spool' }; fired++;
+                    return;
+                }
+                if (web && web.phase !== 'retract'
+                    && (st === 'route' || st === 'round' || st === 'error' || st === 'verify' || (st === 'tool' && ph === 'start')))
+                    web = { t: 0, phase: 'retract', from: frontOf(web) };
+                if (st === 'round' && ph === 'step') thinkT = THINK_S;
+                else if (st === 'handoff' && ph === 'start') local = true;
+                else if (st === 'handoff' && (ph === 'end' || ph === 'sent')) local = false;
+                else if (st === 'route' && f.route === 'local') localPulse = PULSE_S;
+            }
+            function frontOf(w) {
+                if (!w) return 0;
+                if (w.phase === 'spool') return smooth(w.t / SPOOL_S);
+                if (w.phase === 'hold') return 1;
+                return w.from * (1 - smooth(w.t / RETRACT_S));
+            }
+            function step(dt) {
+                thinkT = Math.max(0, thinkT - dt); localPulse = Math.max(0, localPulse - dt);
+                current = toward(current, offline ? 0 : thinkT > 0 ? 1 : 0, EASE.current, dt);
+                glow = toward(glow, offline ? 0 : local ? 1 : localPulse > 0 ? 0.6 : 0, EASE.glow, dt);
+                speed = toward(speed, offline ? 0 : 1, EASE.speed, dt);
+                let w = null;
+                if (web) {
+                    web.t += dt;
+                    if (web.phase === 'spool' && web.t >= SPOOL_S) web = { t: 0, phase: 'hold' };
+                    else if (web.phase === 'hold' && web.t >= HOLD_MAX_S) web = { t: 0, phase: 'retract', from: 1 };
+                    else if (web.phase === 'retract' && web.t >= RETRACT_S) web = null;
+                    if (web) {
+                        const front = frontOf(web);
+                        const intensity = web.phase === 'spool' ? smooth(web.t / FADE_IN_S) : web.phase === 'hold' ? 1 : front;
+                        w = { phase: web.phase, front, intensity };
+                    }
+                }
+                return { speed, current, glow, web: w, still: offline && speed < 0.01 };
+            }
+            function setOffline(v) { offline = !!v; }
+            function reset() { thinkT = 0; local = false; localPulse = 0; offline = false; web = null; current = 0; glow = 0; speed = 1; fired = 0; }
+            return { frame, step, setOffline, reset, fired: () => fired };
+        })();
+
+        const FridayField = (function () {
+            // The box the dots live in, around the view; travel is toward +z.
+            const MIN = [-70, -42, -130], SIZE = [140, 84, 150], TRAVEL = 1.4;        // units per second at full speed
+            const WEB_DIR = [0.38, 0.78, -0.5], WEB_N = 240, WEB_K = 3, WEB_R = 46;
+            const VS = `attribute float phase; uniform float uDist; uniform float uCurrent; uniform float uGlow; uniform float uSize;
+                uniform vec3 uMin; uniform vec3 uSize3; varying float vBright;
+                void main() {
+                    vec3 p = position;
+                    p.z = uMin.z + mod(position.z - uMin.z + uDist, uSize3.z);
+                    p.x += sin(uDist * 0.05 + phase * 6.2832) * 0.6;
+                    p.y += cos(uDist * 0.04 + phase * 6.2832) * 0.4;
+                    p -= normalize(p + vec3(1e-4)) * uCurrent * 1.8 * (0.5 + 0.5 * sin(phase * 40.0 + uDist * 0.6));
+                    float near = 1.0 - smoothstep(4.0, 16.0, length(p));
+                    float zf = (p.z - uMin.z) / uSize3.z;
+                    vBright = (0.45 + uGlow * near * 1.2) * smoothstep(0.0, 0.12, zf) * (1.0 - smoothstep(0.86, 1.0, zf));
+                    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                    gl_PointSize = uSize * (300.0 / max(1.0, -mv.z));
+                    gl_Position = projectionMatrix * mv;
+                }`;
+            const FS = `uniform vec3 uColor; varying float vBright;
+                void main() {
+                    float d = length(gl_PointCoord - 0.5);
+                    float a = 1.0 - smoothstep(0.15, 0.5, d);
+                    gl_FragColor = vec4(uColor * vBright, a * vBright * 0.6);
+                }`;
+            let pts = null, mat = null, seeds = null, phases = null, n = 0, dist = 0, current = 0, scn = null;
+            let web = null, webGeo = null, webMat = null, webNodes = null, webEdges = null, pulse = null, offlineAt = -1, clock = 0;
+            const _c = new THREE.Color();
+            // How many dots the hardware gets.
+            function count() {
+                if (window.__fridayLowCost) return 1200;
+                const c = navigator.hardwareConcurrency || 4, m = navigator.deviceMemory || 4;
+                return c >= 8 && m >= 8 ? 7000 : c >= 4 && m >= 4 ? 4000 : 2000;
+            }
+            // Where dot i is now: the vertex shader's own arithmetic, for the web.
+            function posOf(i, out) {
+                const x = seeds[i * 3], y = seeds[i * 3 + 1], z = seeds[i * 3 + 2], ph = phases[i];
+                let pz = MIN[2] + (((z - MIN[2] + dist) % SIZE[2]) + SIZE[2]) % SIZE[2];
+                let px = x + Math.sin(dist * 0.05 + ph * 6.2832) * 0.6, py = y + Math.cos(dist * 0.04 + ph * 6.2832) * 0.4;
+                const l = Math.hypot(px, py, pz) || 1e-4, k = current * 1.8 * (0.5 + 0.5 * Math.sin(ph * 40 + dist * 0.6));
+                out[0] = px - (px / l) * k; out[1] = py - (py / l) * k; out[2] = pz - (pz / l) * k;
+                return out;
+            }
+            function build(scene) {
+                dispose();
+                scn = scene; n = count(); dist = 0;
+                seeds = new Float32Array(n * 3); phases = new Float32Array(n);
+                for (let i = 0; i < n; i++) {
+                    seeds[i * 3] = MIN[0] + Math.random() * SIZE[0];
+                    seeds[i * 3 + 1] = MIN[1] + Math.random() * SIZE[1];
+                    seeds[i * 3 + 2] = MIN[2] + Math.random() * SIZE[2];
+                    phases[i] = Math.random();
+                }
+                const g = new THREE.BufferGeometry();
+                g.setAttribute('position', new THREE.BufferAttribute(seeds, 3));
+                g.setAttribute('phase', new THREE.BufferAttribute(phases, 1));
+                g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 200);   // drawn wherever the shader puts them
+                mat = new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false,
+                    blending: THREE.AdditiveBlending, uniforms: { uDist: { value: 0 }, uCurrent: { value: 0 }, uGlow: { value: 0 },
+                    uSize: { value: 0.16 }, uMin: { value: new THREE.Vector3(...MIN) }, uSize3: { value: new THREE.Vector3(...SIZE) },
+                    uColor: { value: new THREE.Color(0x5fa8ff) } } });
+                pts = new THREE.Points(g, mat);
+                pts.userData.worldField = true;
+                scene.add(pts);
+                webGeo = new THREE.BufferGeometry();
+                webGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(WEB_N * WEB_K * 6), 3));
+                webGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(WEB_N * WEB_K * 6), 3));
+                webMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
+                web = new THREE.LineSegments(webGeo, webMat);
+                web.frustumCulled = false; web.visible = false;
+                scene.add(web);
+                const pg = new THREE.BufferGeometry();
+                pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+                pulse = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xbfefff, size: 0.5, transparent: true, opacity: 0,
+                    blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true }));
+                pulse.frustumCulled = false; pulse.visible = false;
+                scene.add(pulse);
+                return pts;
+            }
+            // The dots the web spans: those in a cone from her toward "the
+            // cloud", each linked to its nearest few.
+            function chooseWeb() {
+                const dir = WEB_DIR, dl = Math.hypot(...dir), p = [0, 0, 0], cand = [];
+                for (let i = 0; i < n; i++) {
+                    posOf(i, p);
+                    const r = Math.hypot(p[0], p[1], p[2]);
+                    if (r < 4 || r > WEB_R) continue;
+                    const cos = (p[0] * dir[0] + p[1] * dir[1] + p[2] * dir[2]) / (r * dl);
+                    if (cos > 0.55) cand.push([i, r]);
+                }
+                cand.sort((a, b) => a[1] - b[1]);
+                webNodes = cand.slice(0, WEB_N).map(c => c[0]);
+                const at = webNodes.map(i => posOf(i, [0, 0, 0]));
+                webEdges = [];
+                for (let a = 0; a < at.length; a++) {
+                    const near = [];
+                    for (let b = 0; b < at.length; b++) if (b !== a) near.push([b, Math.hypot(at[a][0] - at[b][0], at[a][1] - at[b][1], at[a][2] - at[b][2])]);
+                    near.sort((x, y) => x[1] - y[1]);
+                    for (const [b] of near.slice(0, WEB_K)) if (a < b || !webEdges.some(e => e[0] === b && e[1] === a)) webEdges.push([a, b]);
+                }
+                webEdges = webEdges.slice(0, WEB_N * WEB_K);
+            }
+            let subscribed = false;
+            function update(dt, opts) {
+                if (!pts) return null;
+                clock += dt;
+                // Her frames, once the feed exists (the page's script defines it after the scene's).
+                if (!subscribed && window.fridayApprovalFeed && window.fridayApprovalFeed.onPresence) {
+                    subscribed = true;
+                    window.fridayApprovalFeed.onPresence(f => FridayFieldState.frame(f));
+                }
+                // The network check (body.net-offline), read once a second.
+                if (clock - offlineAt > 1) { offlineAt = clock; FridayFieldState.setOffline(document.body && document.body.classList.contains('net-offline')); }
+                const reduced = !!(opts && opts.reduced);
+                const s = FridayFieldState.step(dt);
+                dist += s.speed * TRAVEL * (reduced ? 0.35 : 1) * dt;
+                current = reduced ? 0 : s.current;
+                mat.uniforms.uDist.value = dist;
+                mat.uniforms.uCurrent.value = current;
+                mat.uniforms.uGlow.value = s.glow;
+                if (opts && opts.color) mat.uniforms.uColor.value.copy(opts.color).multiplyScalar(0.8);
+                // The web.
+                if (s.web) {
+                    if (!webNodes) chooseWeb();
+                    const pos = webGeo.attributes.position.array, col = webGeo.attributes.color.array, p = [0, 0, 0], q = [0, 0, 0];
+                    const front = s.web.front * WEB_R, cy = new THREE.Color(0x00d4ff);
+                    let k = 0;
+                    for (const [a, b] of webEdges) {
+                        posOf(webNodes[a], p); posOf(webNodes[b], q);
+                        const reach = Math.max(Math.hypot(p[0], p[1], p[2]), Math.hypot(q[0], q[1], q[2]));
+                        const lit = s.web.intensity * (1 - Math.max(0, Math.min(1, (reach - front + 6) / 6))) * 0.35;
+                        for (const [v, j] of [[p, 0], [q, 1]]) {
+                            pos[(k * 2 + j) * 3] = v[0]; pos[(k * 2 + j) * 3 + 1] = v[1]; pos[(k * 2 + j) * 3 + 2] = v[2];
+                            col[(k * 2 + j) * 3] = cy.r * lit; col[(k * 2 + j) * 3 + 1] = cy.g * lit; col[(k * 2 + j) * 3 + 2] = cy.b * lit;
+                        }
+                        k++;
+                    }
+                    webGeo.setDrawRange(0, k * 2);
+                    webGeo.attributes.position.needsUpdate = true; webGeo.attributes.color.needsUpdate = true;
+                    web.visible = true;
+                    // the pulse rides the front, out along the cone
+                    const d = WEB_DIR, dl = Math.hypot(...d), r = Math.max(2, front - 3);
+                    const pp = pulse.geometry.attributes.position.array;
+                    pp[0] = d[0] / dl * r; pp[1] = d[1] / dl * r; pp[2] = d[2] / dl * r;
+                    pulse.geometry.attributes.position.needsUpdate = true;
+                    pulse.material.opacity = 0.7 * s.web.intensity * (s.web.phase === 'hold' ? 0 : 1);
+                    pulse.visible = pulse.material.opacity > 0.01;
+                } else if (web.visible) {
+                    web.visible = false; pulse.visible = false; webNodes = null;
+                }
+                return s;
+            }
+            function dispose() {
+                for (const o of [pts, web, pulse]) if (o) { if (scn) scn.remove(o); o.geometry.dispose(); o.material.dispose(); }
+                pts = web = pulse = null; webNodes = null;
+            }
+            return { build, update, dispose, count, _posOf: posOf, _n: () => n, _web: () => (web ? { visible: web.visible, edges: webEdges ? webEdges.length : 0 } : null) };
+        })();
+        // </world-field>
 
         // --- THREE.JS ENGINE ---
         let scene, camera, renderer, composer, bloomPass, holoPass;
@@ -3920,16 +4148,10 @@
         }
 
         function buildBackgroundEnvironment() {
-            const particleCount = 800; const positions = new Float32Array(particleCount * 3); const colors = new Float32Array(particleCount * 3);
-            const particleData = [];
-            for (let i = 0; i < particleCount; i++) {
-                const radius = 8 + Math.random() * 15; const theta = Math.random() * Math.PI * 2; const phi = Math.acos((Math.random() * 2) - 1);
-                positions[i*3] = radius * Math.sin(phi) * Math.cos(theta); positions[i*3+1] = radius * Math.sin(phi) * Math.sin(theta); positions[i*3+2] = radius * Math.cos(phi);
-                particleData.push({ radius, baseRadius: radius, theta, basePhi: phi, phi: phi, speed: 0.01 + Math.random() * 0.04 });
-            }
-            const pGeom = new THREE.BufferGeometry(); pGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3)); pGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-            particleSystem = new THREE.Points(pGeom, new THREE.PointsMaterial({ size: 0.4, map: glowTexture, vertexColors: true, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
-            particleSystem.userData.data = particleData; scene.add(particleSystem);
+            // The world's dots: a 3D ocean you float through (FridayField), in
+            // place of the old shell of dots, which a structure change flattened
+            // into a disc that never came back.
+            FridayField.build(scene);
 
             for (let i = 0; i < 20; i++) createEnergyFlare();
 
@@ -4698,6 +4920,9 @@
                     particleSystem.rotation.y += (0.001 + audioData.mid * 0.01) * idleFactor;
                 }
             }
+
+            // --- THE WORLD'S DOTS (FridayField: her state, never her form) ---
+            FridayField.update(delta, { color: moodLerpValues.accentColor, reduced: SceneMotion.reduced() });
 
             // --- ENERGY LINES ---
             energyLines.forEach((line) => {
