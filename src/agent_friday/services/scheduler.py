@@ -783,6 +783,36 @@ def _late_note(catch_up, started):
             f"{hm(catch_up.get('since'))} ({catch_up.get('reason') or 'the local seat was away'}).")
 
 
+def news_routine_notices(now=None) -> list:
+    """What News says about its own routines: each one waiting for the local
+    seat, run late today, or missed in the last day, with the reason. An
+    on-time run says nothing."""
+    now = now or _now_central()
+    today = now.strftime("%Y-%m-%d")
+    out = []
+    with _STORE_LOCK:
+        recs = [dict(r) for r in _read_store()]
+    for r in recs:
+        if r.get("id") not in NEWS_ROUTINES:
+            continue
+        st = r.get("last_status")
+        summary = str(r.get("last_summary") or "")
+        note = None
+        if st == "waiting" and (r.get("catch_up") or {}).get("date") == today:
+            cu = r["catch_up"]
+            note = {"state": "waiting", "reason": cu.get("reason") or summary,
+                    "since": cu.get("since")}
+        elif st == "missed" and (now.timestamp() - (r.get("last_run_ts") or 0)) < 86400:
+            note = {"state": "missed", "reason": summary}
+        elif st == "complete" and r.get("last_run_date") == today \
+                and summary.startswith("Late:"):
+            note = {"state": "late", "reason": summary.split(" {", 1)[0]}
+        if note:
+            note.update(id=r["id"], name=r.get("name") or r["id"])
+            out.append(note)
+    return out
+
+
 def _record_missed(rec):
     """A run that waited all day for the seat: recorded MISSED with the reason,
     the mark cleared, and the owner told."""

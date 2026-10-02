@@ -30151,6 +30151,7 @@ function NewsWS() {
   // Front Page (AI-curated editorial), Read Later store, and stream filters.
   const [fp, setFp] = useState(null);
   const [fpList, setFpList] = useState([]);
+  const [fpRoutines, setFpRoutines] = useState([]);
   const [fpLoading, setFpLoading] = useState(true);
   const [fpGen, setFpGen] = useState(false);
   const [weekly, setWeekly] = useState(null);
@@ -30291,6 +30292,7 @@ function NewsWS() {
     fetch('/api/news/front-page/latest').then(r => r.json()).then(d => {
       setFp(d.edition || null);
       setFpList(d.editions || []);
+      setFpRoutines(d.routines || []);
       setFpLoading(false);
     }).catch(() => setFpLoading(false));
   };
@@ -31858,6 +31860,18 @@ function NewsWS() {
     key: e.id,
     value: e.id
   }, e.date + ' · ' + (e.slot === 'evening' ? 'PM' : 'AM'))))),
+  // A routine waiting for the local seat, late or missed says so here, with
+  // its reason, so a gap in the morning read is never silent.
+  fpRoutines.map(n => /*#__PURE__*/React.createElement("div", {
+    key: 'fprn-' + n.id,
+    className: "fp-degraded fp-routine-notice"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded-head"
+  }, (n.state === 'waiting' ? '⏳ ' + n.name + ' is waiting for the local seat'
+      : n.state === 'late' ? '🕒 ' + n.name + ' ran late'
+      : '⚠️ ' + n.name + ' did not run')), /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded-body"
+  }, n.reason || ''))),
   // An edition whose editor never answered is still a real page of real
   // stories — it is just ranked, not curated. Saying so here is the whole
   // point: this is the screen the user refreshes, and without it a degraded

@@ -517,11 +517,20 @@ def front_page_generate():
 @news_bp.route('/api/news/front-page/latest')
 def front_page_latest():
     """The most recent edition (or null if none generated yet)."""
+    # Routines waiting for the local seat, late or missed, with the reason:
+    # shown above the edition so a gap is never silent.
+    try:
+        from agent_friday.services.scheduler import news_routine_notices
+        routines = news_routine_notices()
+    except Exception:
+        routines = []
     listing = _list_front_pages()
     if not listing:
-        return jsonify({"status": "ok", "edition": None, "editions": []})
+        return jsonify({"status": "ok", "edition": None, "editions": [],
+                        "routines": routines})
     latest = _read_front_page(listing[0]["id"])
-    return jsonify({"status": "ok", "edition": latest, "editions": listing})
+    return jsonify({"status": "ok", "edition": latest, "editions": listing,
+                    "routines": routines})
 
 
 @news_bp.route('/api/news/front-pages')
