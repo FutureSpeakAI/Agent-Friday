@@ -4317,6 +4317,10 @@ window.addEventListener('DOMContentLoaded',function(){
         let faceDetectionMP = null;
         let rawFaceX = 0, rawFaceY = 0, rawFaceZ = 0;
         let currFaceX = 0, currFaceY = 0, currFaceZ = 0;
+        // Head-to-view easing at the render rate, and the lean-depth backlash
+        // (in octaves of face width: 0.035 is about 2.5%).
+        const HEAD_TAU = 0.045, HEAD_Z_DEAD = 0.035;
+        let headZHeld = 0;
         let lastFaceBoxW = 0;   // for the calibrate button and the debug overlay
         let isFaceVisible = false;
         let faceLostTimeout = null;
@@ -4789,14 +4793,16 @@ window.addEventListener('DOMContentLoaded',function(){
         // alone. Each frame, both the newly drawn image and the frame shown
         // before are measured on a 32 x 20 grid of cells (lightness, CIE L*,
         // per pixel, averaged), and every field-sized window of the grid is
-        // averaged. A field that would change faster than MAX_L_PER_S keeps
-        // just enough of the frame shown before to change at that rate, and
-        // each pixel keeps as much as the most demanding field around it, so
-        // every field is held, wherever it lies. Such a field fades toward the
-        // new image instead of jumping. Below that rate nothing is kept and the
-        // pass changes nothing: it acts only on a flash (a structure arriving
-        // through the camera, bright geometry sweeping past close up, a glow
-        // that pumps). A fresh scene (the page loading, or the GPU giving the
+        // averaged. A field that would change faster than MAX_L_PER_S is held
+        // to that rate, and each cell as much as the most demanding field
+        // around it, so every field is held, wherever it lies. It is held by
+        // scaling the NEW frame's own light in that cell (dimming it, or
+        // lifting what is there), never by mixing an earlier frame back in: a
+        // moving edge leaves no afterimage (under head tracking that read as
+        // motion blur). The cell's average lands exactly where a mix with the
+        // frame shown before would have put it. Below the rate nothing changes:
+        // it acts only on a flash (a structure arriving through the camera,
+        // bright geometry sweeping past close up, a glow that pumps). A fresh scene (the page loading, or the GPU giving the
         // scene back) starts from black and fades in at the same rate. It runs
         // on the GPU with no read-back, so it never stalls a frame.
         const BrightnessGovernor = (function () {
@@ -4851,11 +4857,29 @@ window.addEventListener('DOMContentLoaded',function(){
                     }
                     gl_FragColor = vec4(m, 0.0, 0.0, 1.0);
                 }`;
-            const APPLY_FS = `uniform sampler2D tDrawn; uniform sampler2D tShown; uniform sampler2D tKeep; varying vec2 vUv;
+            // Per cell: the gain on the new frame's light that moves the cell's
+            // average L* to mix(drawn, shown, keep). Scaling linear light by g
+            // scales (L* + 16) by the cube root of g. Dimming is exact; lifting
+            // is capped (black has no light to lift).
+            const GAIN_FS = `uniform sampler2D tCells; uniform sampler2D tMost; varying vec2 vUv;
+                void main() {
+                    vec2 cell = floor(vUv * vec2(${GX}.0, ${GY}.0));
+                    float d = texture2D(tCells, vec2((cell.x + 0.5) / ${GX}.0, (cell.y + 0.5) / ${2 * GY}.0)).r;
+                    float s = texture2D(tCells, vec2((cell.x + 0.5) / ${GX}.0, (cell.y + ${GY}.0 + 0.5) / ${2 * GY}.0)).r;
+                    float k = texture2D(tMost, (cell + 0.5) / vec2(${GX}.0, ${GY}.0)).r;
+                    float g = pow((mix(d, s, k) + 16.0) / (d + 16.0), 3.0);
+                    gl_FragColor = vec4(clamp(g, 0.0, 16.0), 0.0, 0.0, 1.0);
+                }`;
+            // The new frame, its light scaled by the cell gain (smooth between
+            // cell centres). Nothing of an earlier frame is drawn.
+            const APPLY_FS = `uniform sampler2D tDrawn; uniform sampler2D tGain; varying vec2 vUv; ${COMMON}
+                float enc1(float x) { return x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0 / 2.4) - 0.055; }
                 void main() {
                     vec4 c = texture2D(tDrawn, vUv);
-                    float k = texture2D(tKeep, vUv).r;
-                    gl_FragColor = k > 1e-3 ? mix(c, texture2D(tShown, vUv), k) : c;
+                    float g = texture2D(tGain, vUv).r;
+                    if (abs(g - 1.0) < 1e-3) { gl_FragColor = c; return; }
+                    vec3 l = vec3(lin1(max(c.r, 0.0)), lin1(max(c.g, 0.0)), lin1(max(c.b, 0.0))) * g;
+                    gl_FragColor = vec4(enc1(l.r), enc1(l.g), enc1(l.b), c.a);
                 }`;
             const COPY_FS = 'uniform sampler2D tDiffuse; varying vec2 vUv; void main() { gl_FragColor = texture2D(tDiffuse, vUv); }';
 
@@ -4867,12 +4891,14 @@ window.addEventListener('DOMContentLoaded',function(){
                     this.cells = rt(GX, 2 * GY, THREE.NearestFilter);
                     this.keep = rt(GX, GY, THREE.NearestFilter);
                     this.most = rt(GX, GY, THREE.LinearFilter);
+                    this.gain = rt(GX, GY, THREE.LinearFilter);
                     this.shown = []; this.shownAt = 0; this.last = null;
                     const mat = (fs, uniforms) => new THREE.ShaderMaterial({ uniforms, vertexShader: VS, fragmentShader: fs, depthTest: false, depthWrite: false });
                     this.cellMat = mat(CELL_FS, { tDrawn: { value: null }, tShown: { value: null } });
                     this.keepMat = mat(KEEP_FS, { tCells: { value: null }, stepL: { value: 0 } });
                     this.mostMat = mat(MOST_FS, { tKeep: { value: null } });
-                    this.applyMat = mat(APPLY_FS, { tDrawn: { value: null }, tShown: { value: null }, tKeep: { value: null } });
+                    this.gainMat = mat(GAIN_FS, { tCells: { value: null }, tMost: { value: null } });
+                    this.applyMat = mat(APPLY_FS, { tDrawn: { value: null }, tGain: { value: null } });
                     this.copyMat = mat(COPY_FS, { tDiffuse: { value: null } });
                     this.quad = new THREE.FullScreenQuad(null);
                 }
@@ -4910,10 +4936,13 @@ window.addEventListener('DOMContentLoaded',function(){
                     this.quad.material = this.mostMat;
                     this.mostMat.uniforms.tKeep.value = this.keep.texture;
                     renderer.setRenderTarget(this.most); this.quad.render(renderer);
+                    this.quad.material = this.gainMat;
+                    this.gainMat.uniforms.tCells.value = this.cells.texture;
+                    this.gainMat.uniforms.tMost.value = this.most.texture;
+                    renderer.setRenderTarget(this.gain); this.quad.render(renderer);
                     this.quad.material = this.applyMat;
                     this.applyMat.uniforms.tDrawn.value = readBuffer.texture;
-                    this.applyMat.uniforms.tShown.value = before.texture;
-                    this.applyMat.uniforms.tKeep.value = this.most.texture;
+                    this.applyMat.uniforms.tGain.value = this.gain.texture;
                     renderer.setRenderTarget(out); this.quad.render(renderer);
                     this.shownAt = 1 - this.shownAt;
                     this.quad.material = this.copyMat;
@@ -4922,7 +4951,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     if (this.clear) renderer.clear();
                     this.quad.render(renderer);
                 }
-                dispose() { this.cells.dispose(); this.keep.dispose(); this.most.dispose(); this.shown.forEach(s => s.dispose()); }
+                dispose() { this.cells.dispose(); this.keep.dispose(); this.most.dispose(); this.gain.dispose(); this.shown.forEach(s => s.dispose()); }
             }
             return { create: () => new GovernorPass(), MAX_L_PER_S, GRID: [GX, GY], FIELD: [FW, FH] };
         })();
@@ -8810,9 +8839,20 @@ window.addEventListener('DOMContentLoaded',function(){
             } else if (!(isHologramMode && isFaceVisible)) {
                 window.FridayTracking.relaxToNeutral(performance.now() / 1000);
             }
-            currFaceX = window.FridayTracking.head.x;
-            currFaceY = window.FridayTracking.head.y;
-            currFaceZ = window.FridayTracking.head.z;
+            // The face is seen 15-30 times a second, the scene drawn 60 or more:
+            // the view glides toward the newest head at the render rate instead
+            // of jumping at each detection (a step every few frames read as
+            // judder and doubled edges). Lean depth also ignores the detector's
+            // jitter in face width (a backlash of HEAD_Z_DEAD), so the zoom does
+            // not wobble while the head is still.
+            {
+                const TKh = window.FridayTracking.head, hk = 1 - Math.exp(-delta / HEAD_TAU);
+                const dz = TKh.z - headZHeld;
+                if (Math.abs(dz) > HEAD_Z_DEAD) headZHeld += dz - Math.sign(dz) * HEAD_Z_DEAD;
+                currFaceX += (TKh.x - currFaceX) * hk;
+                currFaceY += (TKh.y - currFaceY) * hk;
+                currFaceZ += (headZHeld - currFaceZ) * hk;
+            }
 
             // Outside the camera block on purpose: the dock is DOM, and it
             // should keep its depth even on a frame where the scene does not

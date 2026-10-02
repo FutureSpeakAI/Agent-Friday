@@ -514,3 +514,49 @@ test('the drawn orbs cost no more than the plain orbs did', async ({ browser }) 
   expect(drawnFr, said).toBeLessThanOrEqual(plainFr * 1.10 + 1);
   console.log(said);
 });
+
+test('nothing that moves leaves a trail: the backstop never draws an earlier frame', async ({ page }) => {
+  // A bright square jumps across the view. In the very next frame nothing of
+  // it may remain where it was: the photosensitivity backstop may dim a
+  // sudden change, but it never mixes an earlier frame back in. That
+  // afterimage is what read as motion blur under head tracking.
+  test.setTimeout(5 * 60_000);
+  await openScene(page, GENOMES.v1, 0);
+  const sq = await page.evaluate(() => {
+    const w = window as any, T = w.THREE, cam = w.fridayDebugScene ? w.fridayDebugScene().camera : null;
+    const scn = (0, eval)('scene'), camera = cam || (0, eval)('camera');
+    scn.children.forEach((c: any) => { c.visible = false; });
+    const sq = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({ color: 0xffffff }));
+    scn.add(sq); w.__sq = sq; w.__cam = camera;
+    // Where a point a few units in front of the camera lands on screen.
+    w.__place = (sx: number) => {
+      const fwd = new T.Vector3(); camera.getWorldDirection(fwd);
+      const right = new T.Vector3().crossVectors(fwd, camera.up).normalize();
+      sq.position.copy(camera.position).addScaledVector(fwd, 8).addScaledVector(right, sx);
+      sq.quaternion.copy(camera.quaternion); sq.scale.setScalar(3);
+    };
+    w.__place(-3.2);
+    // Read each frame inside the scene's own render (flash_meter.js does the same).
+    const c = document.getElementById('friday-scene-canvas') as HTMLCanvasElement;
+    const cv = document.createElement('canvas'); cv.width = 160; cv.height = 100;
+    const g = cv.getContext('2d', { willReadFrequently: true })!;
+    const comp = (0, eval)('composer'), r0 = comp.render;
+    comp.render = function (...a: unknown[]) { const r = r0.apply(this, a); g.drawImage(c, 0, 0, 160, 100); w.__img = g.getImageData(0, 0, 160, 100).data; return r; };
+    w.__region = (x0: number, x1: number) => { const d = w.__img; let s = 0, n = 0;
+      for (let y = 30; y < 70; y++) for (let x = x0; x < x1; x++) { const i = (y * 160 + x) * 4; s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; n++; }
+      return s / n / 255; };
+    return true;
+  });
+  expect(sq).toBe(true);
+  await run(page, 2500);                                   // steady, so the backstop has settled
+  const before = await page.evaluate(() => ({ left: (window as any).__region(20, 60), right: (window as any).__region(100, 140) }));
+  await page.evaluate(() => (window as any).__place(3.2));
+  await run(page, FRAME);                                  // the very next frame
+  const after = await page.evaluate(() => ({ left: (window as any).__region(20, 60), right: (window as any).__region(100, 140) }));
+  const said = JSON.stringify({ before, after });
+  expect(before.left, `the square was there and bright: ${said}`).toBeGreaterThan(0.3);
+  expect(after.left, `nothing of it stays where it was: ${said}`).toBeLessThan(before.left * 0.1);
+  await run(page, 3000);
+  const settled = await page.evaluate(() => (window as any).__region(100, 140));
+  expect(settled, `it arrives in full where it went: ${said}`).toBeGreaterThan(before.left * 0.8);
+});
