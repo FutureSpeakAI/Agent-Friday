@@ -672,6 +672,20 @@ def scope(kind: str, label: str = "", **kw) -> Iterator[Optional[str]]:
             finish(tid, status, reason=why)
 
 
+def traced(kind: str, label: str = ""):
+    """Decorator: the wrapped run (a voice session, a runner task) is one
+    trace from entry to exit, so every way out leaves a record."""
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def run(*a, **k):
+            with scope(kind, label or fn.__name__):
+                return fn(*a, **k)
+        return run
+    return deco
+
+
 def _record_from(tr: Dict[str, Any]) -> Dict[str, Any]:
     rec = _header(tr)
     rec["events"] = [dict(e) for e in tr["events"]]

@@ -2304,6 +2304,8 @@ if sock is not None:
             _k = _refused[0]
             _st = _msnap["stages"][_k]
             _send({"type": "manifest", **_msnap})
+            from agent_friday.services import reasoning_trace as _rt_v
+            _rt_v.set_reason("local voice refused: " + str(_st.get("reason") or _k))
             _send({"type": "error",
                    "error": (_st.get("proof") or {}).get("code") or "voice_stage_unproven",
                    "detail": _st.get("reason") or
@@ -2319,11 +2321,16 @@ if sock is not None:
             ear = _vw.held("ear") or _vw.build_ear(_sel["ear"], progress=_prog)
             mouth = _vw.held("mouth") or _vw.build_mouth(_sel["mouth"], progress=_prog)
         except _vw.GpuRefused as _ge:
+            from agent_friday.services import reasoning_trace as _rt_v
+            _rt_v.set_reason("local voice refused by the GPU: " + str(_ge.message))
             _send({"type": "error", "error": _ge.code, "detail": _ge.message})
             return
         except Exception as _le:
             _vlog.error("session aborted: engine load failed: %s: %s",
                         type(_le).__name__, _le)
+            from agent_friday.services import reasoning_trace as _rt_v
+            _rt_v.set_reason("local voice engines failed to load: %s: %s"
+                             % (type(_le).__name__, str(_le)[:200]))
             _send({"type": "error", "error": "local_voice_load_failed",
                    "detail": f"Could not load the local voice engines "
                              f"({type(_le).__name__}: {str(_le)[:160]}). Check "
@@ -2473,10 +2480,14 @@ if sock is not None:
     # session-info hands the mic -- kept working. Register the undecorated
     # implementation under both paths, with distinct endpoint names so
     # Flask does not see one endpoint mapped to two view functions.
+    # One trace per voice session: every way out of it leaves a record.
+    from agent_friday.services import reasoning_trace as _rt_session
+    ws_voice_local = _rt_session.traced("voice", "Local voice session")(ws_voice_local)
     sock.route('/ws/voice-local', endpoint='ws_voice_local')(ws_voice_local)
     sock.route('/ws/voice', endpoint='ws_voice')(ws_voice_local)
 
     @sock.route('/ws/live')
+    @_rt_session.traced("voice", "Live voice session")
     def ws_live(ws):
         """Bridge a browser WebSocket to a Gemini Live API session.
 
