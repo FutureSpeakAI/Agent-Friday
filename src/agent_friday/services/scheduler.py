@@ -72,6 +72,18 @@ class PausedNoLocalModel(SkippedRun):
     """
 
 
+class SeatWaiting(PausedNoLocalModel):
+    """A local-only built-in routine could not reach the local seat (parked,
+    stopped or not answering). Recorded as WAITING with the reason, and run
+    again by the scheduler as soon as the seat is back the same day; a day that
+    ends still waiting is recorded as MISSED. Never a silent skip."""
+
+
+class RetiredSchedule(SkippedRun):
+    """A stored built-in schedule whose task no longer exists. Retired once,
+    visibly, rather than failing every day."""
+
+
 def _cloud_model_for(rec):
     """The cloud model this local-only run may use instead, or None.
 
@@ -94,16 +106,50 @@ def _cloud_model_for(rec):
         return None
 
 
-def _paused(rec, reason):
-    """Raise the right skip for a local-only run that found no local model."""
+def _paused(rec, reason, *, no_local_model=True):
+    """Raise the right skip for a local-only run that cannot reach a local seat.
+
+    A shipped local-only routine waits (SeatWaiting) and catches up; anything
+    else is skipped with the reason. `no_local_model` is False for a seat that
+    exists but is parked, which the "no local model" status entry would misstate.
+    """
     if (rec or {}).get("id") in LOCAL_ONLY_BY_DEFAULT:
-        try:
-            from agent_friday.services import scheduled_cloud as _sc
-            _sc.notify_paused()
-        except Exception:
-            pass
+        if no_local_model:
+            try:
+                from agent_friday.services import scheduled_cloud as _sc
+                _sc.notify_paused()
+            except Exception:
+                pass
+        if rec.get("id") in NEWS_ROUTINES:
+            raise SeatWaiting(reason)
         raise PausedNoLocalModel(reason)
     raise SkippedRun(reason)
+
+
+def _parked_reason():
+    """Why the local seat is parked right now, or None. Build hours park the
+    brain seat outside this process; a run started inside them cannot reach it."""
+    try:
+        from agent_friday.services import build_hours
+        if build_hours.is_active():
+            return "the local seat is parked: " + build_hours.describe()
+    except Exception:
+        pass
+    return None
+
+
+def _waiting_text(label, why):
+    return (f"{label} is local-only and is waiting for the local seat ({why}). "
+            f"It runs as soon as the seat is back.")
+
+
+def _editorial_degraded(result):
+    """The degraded editorial status a News routine returned, or None."""
+    if isinstance(result, dict):
+        st = result.get("editorial_status") or {}
+        if isinstance(st, dict) and st.get("state") == "degraded":
+            return st
+    return None
 
 
 def _resolve_local_seat():
@@ -264,7 +310,7 @@ def _normalize_record(rec, *, source="user"):
     }
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
-              "not_before", "retry_count", "retry_pending"):
+              "not_before", "retry_count", "retry_pending", "catch_up"):
         if k in rec:
             out[k] = rec[k]
     return out
@@ -331,6 +377,18 @@ LOCAL_ONLY_BY_DEFAULT = {
     "sch_weekly_digest",
     "sch_weekly_editorial",
     "sch_heartbeat",
+}
+
+
+#: The News routines. A run that cannot reach the local seat waits and catches
+#: up the same day (SeatWaiting) instead of being skipped: the owner reads them
+#: on a schedule, so a silent gap is a missing edition, not a quiet heartbeat.
+NEWS_ROUTINES = {
+    "sch_news_morning",
+    "sch_front_page_evening",
+    "sch_afternoon_briefing",
+    "sch_weekly_digest",
+    "sch_weekly_editorial",
 }
 
 
@@ -530,6 +588,16 @@ def _is_due(rec, now) -> bool:
     if rec.get("retry_pending"):
         return now.timestamp() >= (rec.get("not_before") or 0)
 
+    # A run that waited for the local seat is due again, the same day, as soon
+    # as the seat is back. Polled at most once a minute (`not_before`).
+    cu = rec.get("catch_up")
+    if cu:
+        if cu.get("date") != now.strftime("%Y-%m-%d"):
+            return False          # the tick records it missed
+        if (rec.get("not_before") or 0) > now.timestamp():
+            return False
+        return _parked_reason() is None and bool(_resolve_local_seat())
+
     if (rec.get("not_before") or 0) > now.timestamp():
         return False
 
@@ -700,6 +768,37 @@ def _changed(result) -> bool:
     return bool(result)
 
 
+#: How often a run waiting for the local seat checks whether it is back.
+CATCH_UP_POLL_SECONDS = 60
+
+
+def _late_note(catch_up, started):
+    """'Late: ran at 07:42 after waiting since 06:30 (reason).'"""
+    def hm(ts):
+        try:
+            return datetime.fromtimestamp(float(ts)).strftime("%H:%M")
+        except Exception:
+            return "?"
+    return (f"Late: ran at {hm(started)} after waiting since "
+            f"{hm(catch_up.get('since'))} ({catch_up.get('reason') or 'the local seat was away'}).")
+
+
+def _record_missed(rec):
+    """A run that waited all day for the seat: recorded MISSED with the reason,
+    the mark cleared, and the owner told."""
+    cu = rec.get("catch_up") or {}
+    reason = cu.get("reason") or "the local seat never came back"
+    summary = f"Missed {cu.get('date') or 'its day'}: {reason}"
+    now = _time.time()
+    _patch_record(rec["id"], catch_up=None, last_status="missed",
+                  last_summary=summary, not_before=0)
+    _append_run({"id": rec["id"], "run_id": f"run_{uuid.uuid4().hex[:10]}",
+                 "name": rec.get("name"), "started": now, "ended": now,
+                 "duration_ms": 0, "status": "missed", "summary": summary,
+                 "error": None, "manual": False})
+    _notify_run(rec, "missed", summary)
+
+
 def _notify_run(rec, status, summary):
     """Push a terminal-state notification. The dispatcher decides whether to
     call this (on_complete always; on_change only on a delta; silent never on
@@ -726,6 +825,20 @@ def _notify_run(rec, status, summary):
                      actions=[{"label": "View history", "workspace": "system",
                                "tab": "schedules"}],
                      dedupe_key=f"sched-fail:{rec.get('id')}:{_now_central().strftime('%Y%m%d%H')}")
+            return
+        if status in ("waiting", "missed", "retired"):
+            title = {"waiting": f"⏳ {rec.get('name')} is waiting for the local seat",
+                     "missed": f"⚠️ {rec.get('name')} did not run today",
+                     "retired": f"{rec.get('name')} was switched off"}[status]
+            _ne.push(title=title, body=(summary or "")[:900],
+                     priority="low" if status == "waiting" else "high",
+                     source="scheduler", kind="scheduled_task",
+                     actions=[{"label": "View Front Page", "workspace": "news",
+                               "tab": "frontpage"}]
+                     if (rec.get("id") in LOCAL_ONLY_BY_DEFAULT) else
+                     [{"label": "View history", "workspace": "system",
+                       "tab": "schedules"}],
+                     dedupe_key=f"sched-{status}:{rec.get('id')}:{_now_central().strftime('%Y%m%d')}")
             return
         _ne.push(title=f"✓ {rec.get('name')} ran",
                  body=(summary or "")[:300] or "Completed.", priority="low",
@@ -818,7 +931,10 @@ def _run_task(rec):
         ref = task.get("ref")
         meta = BUILTIN_TASKS.get(ref)
         if not meta:
-            raise RuntimeError(f"unknown builtin task ref {ref!r}")
+            raise RetiredSchedule(
+                f"retired: its built-in task {ref!r} no longer exists in this "
+                f"version of Friday, so it is switched off instead of failing "
+                f"every day")
         # One reasoning trace per run: every model call the job makes (the
         # Front Page editorial, the briefing, the daily creation) lands in it.
         # Unattended, for the same reason the stand-down gate sits here rather
@@ -845,13 +961,33 @@ def _run_task(rec):
                 if _cm and not _resolve_local_seat():
                     with _log_guard.cloud_pinned(_cm, meta.get("label") or ref):
                         return meta["fn"]()
-                with _log_guard.local_only(meta.get("label") or ref):
+                _label = meta.get("label") or ref
+                with _log_guard.local_only(_label):
+                    _why = _parked_reason()
+                    if _why:
+                        _paused(rec, _waiting_text(_label, _why),
+                                no_local_model=False)
                     try:
-                        return meta["fn"]()
+                        result = meta["fn"]()
                     except _log_guard.CloudRefused as exc:
                         if _resolve_local_seat():
                             raise SkippedRun(str(exc)) from exc
-                        _paused(rec, str(exc))
+                        _paused(rec, _waiting_text(
+                            _label, "no local seat is serving right now"))
+                    except SkippedRun:
+                        raise
+                    except Exception as exc:
+                        # A local-only run whose model call failed while no
+                        # seat serves did not fail on its own merits: it
+                        # waits for the seat like a parked run.
+                        if _resolve_local_seat():
+                            raise
+                        _paused(rec, _waiting_text(
+                            _label, f"the local seat did not answer: {exc}"))
+                    if _editorial_degraded(result) and not _resolve_local_seat():
+                        _paused(rec, _waiting_text(
+                            _label, "the local seat did not answer the editorial"))
+                    return result
             return meta["fn"]()
     if kind == "workflow":
         return _run_workflow(rec, task)
@@ -1070,9 +1206,25 @@ def dispatch(rec, *, manual=False):
                 process_log(orb_id, f"Starting: {rec.get('name')}")
             except Exception:
                 pass
+        catch_up = rec.get("catch_up") or None
         try:
             result = _run_task(rec_live)
             summary = _summarize(result)
+            if catch_up:
+                summary = _late_note(catch_up, started) + (
+                    " " + summary if summary else "")
+            degraded = _editorial_degraded(result)
+            if degraded:
+                # The routine produced its page but not the model's work:
+                # a visible DEGRADED run, never "complete".
+                status = "degraded"
+                summary = ("ran without its editorial: "
+                           + str(degraded.get("reason") or "the model call failed")
+                           + (". " + summary if summary else ""))
+                _patch_record(sid, last_status="degraded", last_summary=summary,
+                              retry_pending=False, retry_count=0, not_before=0,
+                              catch_up=None)
+                return
             if orb_id:
                 try:
                     process_log(orb_id, f"Completed: {summary[:200]}" if summary else "Completed.")
@@ -1086,7 +1238,8 @@ def dispatch(rec, *, manual=False):
             #   else      → always
             _mode = rec.get("notify", "on_complete")
             _patch_record(sid, last_status="complete", last_summary=summary,
-                          retry_pending=False, retry_count=0, not_before=0)
+                          retry_pending=False, retry_count=0, not_before=0,
+                          catch_up=None)
             if _mode == "silent":
                 pass
             elif _mode == "status":
@@ -1095,6 +1248,25 @@ def dispatch(rec, *, manual=False):
                 pass
             else:
                 _notify_run(rec, "complete", summary)
+        except SeatWaiting as e:
+            # Waits for the seat and runs again the moment it is back, the
+            # same day (`_is_due`); the tick records MISSED if the day ends
+            # first. The first wait of the day says so once.
+            status, summary = "waiting", str(e)
+            since = (catch_up or {}).get("since") or started
+            _patch_record(sid, last_status="waiting", last_summary=summary,
+                          retry_pending=False, retry_count=0,
+                          not_before=_time.time() + CATCH_UP_POLL_SECONDS,
+                          catch_up={"date": now.strftime("%Y-%m-%d"),
+                                    "reason": summary, "since": since})
+            if not catch_up:
+                _notify_run(rec, "waiting", summary)
+        except RetiredSchedule as e:
+            status, summary = "retired", str(e)
+            _patch_record(sid, enabled=False, last_status="retired",
+                          last_summary=summary, retry_pending=False,
+                          retry_count=0, not_before=0, catch_up=None)
+            _notify_run(rec, "retired", summary)
         except PausedNoLocalModel as e:
             # Recorded as a skip with its reason. No retry (the condition does
             # not clear in minutes) and no failure notice: the one status
@@ -1129,7 +1301,8 @@ def dispatch(rec, *, manual=False):
                 status = "failed"
                 summary = err
                 _patch_record(sid, last_status="failed", last_summary=err,
-                              retry_pending=False, retry_count=0, not_before=0)
+                              retry_pending=False, retry_count=0, not_before=0,
+                              catch_up=None)
                 _notify_run(rec, "failed", err)
         finally:
             ended = _time.time()
@@ -1143,7 +1316,8 @@ def dispatch(rec, *, manual=False):
             if orb_id:
                 try:
                     process_update(orb_id,
-                                   status="completed" if status != "failed" else "error",
+                                   status="error" if status in ("failed", "degraded")
+                                   else "completed",
                                    progress=1.0,
                                    label=f"{rec.get('name')} — {status}")
                 except Exception:
@@ -1649,8 +1823,13 @@ def _tick():
     except Exception:
         held = None
 
+    today = now.strftime("%Y-%m-%d")
     for rec in recs:
         try:
+            cu = rec.get("catch_up")
+            if cu and cu.get("date") != today:
+                _record_missed(rec)
+                rec = dict(rec, catch_up=None)
             if _is_due(rec, now):
                 if held and _uses_gpu(rec):
                     _log.info("holding %s: the %s job holds the GPU; it will "
