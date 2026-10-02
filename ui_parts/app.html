@@ -1844,7 +1844,7 @@ function ChatSurface({mode,traySide,trayFrac,onTrayPlace,agentSettings,audioDevi
              silently answering from the cloud — offer the explicit choice
              to switch instead of a dead end. */}
           {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
-            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
+            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({owner_action:'routing_mode',settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
             {m.role==='user'?'You':fridayName()} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
@@ -16314,7 +16314,7 @@ function SettingsTabPrivacy({s,save}){
         {armMsg&&<div style={{fontSize:10,color:armMsg[0]==='✓'?'#00ff80':'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
       </div>}
       {armed&&armMsg&&<div style={{fontSize:10,color:'#00ff80',marginBottom:12,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
-      <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{...(s.model_routing||{}),vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
+      <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
     </StSection>
     <StSection title="Cloud mode">
       <PrivacyCloudConsent/>
@@ -20595,6 +20595,7 @@ function App(){
     try{
       const body={settings:patch};
       if(opts.personality!==undefined)body.personality=opts.personality;
+      if(opts.ownerAction)body.owner_action=opts.ownerAction;
       const r=await apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
       // A5: a rejected save (e.g. the FR-1 seat gate 400ing a red model) must
@@ -20772,8 +20773,7 @@ function App(){
     }).catch(()=>{});
   };
   const setRoutingMode=(mode)=>{
-    const cur=agentSettings.model_routing||{};
-    saveAgentSettings({model_routing:{...cur,mode}});
+    saveAgentSettings({model_routing:{mode}},{ownerAction:'routing_mode'});
   };
   // ── A1: in-UI model pull with disk-space preflight; progress = pull orb.
   const[pullName,setPullName]=useState('');

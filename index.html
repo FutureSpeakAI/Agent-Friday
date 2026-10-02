@@ -11903,6 +11903,7 @@ function ChatSurface(props) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
+        owner_action: 'routing_mode',
         settings: {
           model_routing: {
             mode: 'cloud_only'
@@ -47334,7 +47335,9 @@ function QuickSwitch({ current, onPick, switching }) {
           note: serving && !serving.stale
             ? 'Answering you now: ' + prettyModel(serving.model) + ' · ' + (fmtAgo(serving.at) || 'recently') +
               '. Pick another and the pill changes once it has actually served a turn.'
-            : 'Pick the default model for future turns. Current running turns keep their model.',
+            : 'Pick the default model for every chat that has no model of its own. '
+              + 'Current running turns keep their model. Under Cloud only, a local pick '
+              + 'here is not used until the routing mode allows it (Settings > Models).',
         }))));
 }
 
@@ -48822,7 +48825,7 @@ function SettingsTabIntelligence({ s, save }) {
     setSavingMode(id);
     apiFetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: { model_routing: { mode: id } } }),
+      body: JSON.stringify({ owner_action: 'routing_mode', settings: { model_routing: { mode: id } } }),
     }).then(r => r.json()).then(() => apiFetch('/api/settings'))
       .then(r => r.json()).then(d => {
         const got = ((d || {}).settings || {}).model_routing || {};
@@ -50296,7 +50299,6 @@ function SettingsTabPrivacy({
     value: (s.model_routing || {}).vault_local_only !== false,
     onChange: () => save({
       model_routing: {
-        ...(s.model_routing || {}),
         vault_local_only: (s.model_routing || {}).vault_local_only === false
       }
     }),
@@ -52614,10 +52616,10 @@ function AutoRouterControls({ s, save, orReady, compact }) {
   const TIERS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Very high'], ['max', 'Max']];
   const mr = s.model_routing || {};
   const tier = mr.auto_router_cost_tier || 'low';
+  // Only the key being edited: the server deep-merges model_routing, and a
+  // block spread from this page's copy would carry a stale routing mode.
   const setKey = (k, v) => {
-    const next = Object.assign({}, mr);
-    next[k] = v;
-    save({ model_routing: next });
+    save({ model_routing: { [k]: v } });
   };
   const pill = (active, label, onClick, title) => React.createElement("button", {
     key: label,
@@ -56832,6 +56834,7 @@ function App() {
         settings: patch
       };
       if (opts.personality !== undefined) body.personality = opts.personality;
+      if (opts.ownerAction) body.owner_action = opts.ownerAction;
       const r = await apiFetch('/api/settings', {
         method: 'POST',
         headers: {

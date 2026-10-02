@@ -109,7 +109,8 @@ def complete_setup(data: dict) -> dict:
         except Exception:
             pass
 
-    _save_settings(delta)
+    # The routing mode chosen during setup is the owner's own answer.
+    _save_settings(delta, owner_routing_change=bool(data.get('routing_mode')))
 
     # 5) personality.json -- only now.
     if 'preferred_scene_index' in data:

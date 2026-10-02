@@ -1561,7 +1561,11 @@ def api_settings():
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting
         # the non-persistent offline routing overlay (mode=local_only).
-        merged = _save_settings(new_settings)
+        # Only the owner's own mode controls say so; anything else that
+        # carries a mode keeps the current one (core._save_settings).
+        merged = _save_settings(
+            new_settings,
+            owner_routing_change=(data.get('owner_action') == 'routing_mode'))
 
         # A seat change must reach the PLAN, not just dispatch.
         #
