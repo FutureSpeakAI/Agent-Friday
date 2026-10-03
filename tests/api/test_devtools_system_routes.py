@@ -1166,6 +1166,8 @@ class TestNotifications:
         if _ne is not None:
             monkeypatch.setattr(_ne, "NOTIF_FILE", tmp_path / "notifications.json")
             monkeypatch.setattr(_ne, "TRIGGER_STATE_FILE", tmp_path / "notif_trigger_state.json")
+            from agent_friday.services import notification_policy as _pol
+            monkeypatch.setattr(_pol, "owner_in_conversation", lambda now=None: False)
         push_resp = client.post("/api/notifications/push", json={
             "title": "pytest test notification",
             "body": "created by test_devtools_system_routes",

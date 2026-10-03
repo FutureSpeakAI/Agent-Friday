@@ -217,7 +217,7 @@ window.addEventListener('DOMContentLoaded',function(){
             border-radius: 50%; border: 1.5px solid rgba(0, 255, 255, 0.85);
             transform: translate(-50%, -50%); pointer-events: none; z-index: 9999;
             box-shadow: 0 0 10px rgba(0, 212, 255, 0.45), inset 0 0 6px rgba(0, 212, 255, 0.25);
-            display: none; opacity: 0; transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1), opacity 0.35s, width 0.35s, height 0.35s;
+            display: none; opacity: 0; transition: transform var(--fr-reveal), opacity var(--fr-reveal-time), width var(--fr-reveal-time), height var(--fr-reveal-time);
             justify-content: center; align-items: center;
         }
         #hand-cursor.active { display: flex; opacity: 0.7; }

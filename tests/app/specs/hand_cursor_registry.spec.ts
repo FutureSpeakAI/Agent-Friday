@@ -6,7 +6,7 @@
 // or with a click handler, and asks window.FridayHandCursor.has(el). Anything missed fails
 // with its tag, role and text. It also proves the frozen-point rule in the page: a pinch
 // that starts on a small button and drifts off it still clicks that button.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
