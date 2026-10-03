@@ -54,6 +54,12 @@ LOADER_NAME = "load_tools"
 ALWAYS_RESIDENT = ("search_web", "read_file", "search_files",
                    "search_wiki", "read_wiki", "knowledge_query")
 
+#: Resident when present in a turn's catalogue, which is only in a chat in the
+#: Chat Hub (agent.WORKSPACE_TOOLS["hub"]): the one tool a build turn reaches
+#: for every time, so it does not pay a search round trip on the local seat.
+#: Elsewhere it is not in the catalogue, so it costs nothing.
+HUB_RESIDENT = ("codebase_edit",)
+
 
 #: ON by default, because the risk is understood rather than assumed.
 #:
@@ -150,7 +156,7 @@ def loader_spec(tools: list) -> dict:
 
 def resident(tools: list) -> list:
     """The tools sent in full from the start."""
-    keep = set(ALWAYS_RESIDENT)
+    keep = set(ALWAYS_RESIDENT) | set(HUB_RESIDENT)
     return [t for t in (tools or []) if _name_of(t) in keep]
 
 

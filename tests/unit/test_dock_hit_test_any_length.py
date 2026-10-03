@@ -44,10 +44,23 @@ DOCKS = {
 
 
 def _registry_without(ids):
+    # An entry is removed whole, by its braces: it holds nested objects (the
+    # workspace's `boundary`), so "up to the first ]}" is not its end.
     text = REGISTRY.read_text(encoding="utf-8")
     for wid in ids:
-        text = re.sub(r'\n    \{"id": "%s",.*?\]\},?' % re.escape(wid), "", text, flags=re.S)
-    return text.replace("]},\n  ]", "]}\n  ]")
+        m = re.search(r'\n    \{"id": "%s",' % re.escape(wid), text)
+        if not m:
+            continue
+        i, depth = text.index("{", m.start()), 0
+        while True:
+            depth += {"{": 1, "}": -1}.get(text[i], 0)
+            i += 1
+            if depth == 0:
+                break
+        if text[i:i + 1] == ",":
+            i += 1
+        text = text[:m.start()] + text[i:]
+    return re.sub(r"\},\n  \]", "}\n  ]", text)
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):

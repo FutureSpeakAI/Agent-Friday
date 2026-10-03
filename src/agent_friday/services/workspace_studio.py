@@ -46,9 +46,21 @@ _ALLOWED_DENSITY = {"comfortable", "compact"}
 
 # ── persistence ────────────────────────────────────────────────────────────
 
+#: A workspace id is one plain lowercase name. Anything else is refused, not
+#: rewritten: stripping characters made `my.workspace` and `myworkspace`
+#: resolve to one file, so a request for one silently read the other.
+_WS_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
+
+
+def check_ws_id(ws_id) -> str:
+    s = str(ws_id or "")
+    if not _WS_ID.match(s):
+        raise ValueError("invalid workspace id")
+    return s
+
+
 def _ws_path(ws_id):
-    safe = re.sub(r"[^a-z0-9_-]", "", str(ws_id or "").lower())[:48] or "unknown"
-    return WS_STUDIO_DIR / f"{safe}.json"
+    return WS_STUDIO_DIR / f"{check_ws_id(ws_id)}.json"
 
 
 def _blank_doc(ws_id):
@@ -194,12 +206,17 @@ def _merge_customization(current, patch):
 
 # ── versioning + apply / revert ────────────────────────────────────────────
 
-def _snapshot(doc, label):
-    """Push the CURRENT customization onto the version stack."""
+def _snapshot(doc, label, kind="change"):
+    """Push the CURRENT customization onto the version stack.
+
+    `kind` is "change" for the state before a change, "undo_point" for the
+    state before an undo (kept so an undo is itself reversible, but skipped
+    when the next undo looks for where to go)."""
     ver = {
         "id": "v" + uuid.uuid4().hex[:8],
         "ts": datetime.now().isoformat(),
         "label": (label or "change")[:120],
+        "kind": kind,
         "customization": json.loads(json.dumps(doc.get("customization", {}))),
     }
     doc.setdefault("versions", []).append(ver)
@@ -215,6 +232,8 @@ def _apply_to_doc(doc, patch, label=None):
         return None
     ver = _snapshot(doc, label or clean.get("summary") or "change")
     doc["customization"] = _merge_customization(doc.get("customization", {}), clean)
+    # A new change restarts the undo walk: the next undo removes THIS change.
+    doc.pop("undo_cursor", None)
     return ver
 
 
@@ -255,8 +274,10 @@ def revert_customization(ws_id, version_id):
     target = next((v for v in doc.get("versions", []) if v["id"] == version_id), None)
     if not target:
         return None
-    _snapshot(doc, "before revert")
+    _snapshot(doc, "before revert", kind="undo_point")
     doc["customization"] = json.loads(json.dumps(target.get("customization", {})))
+    # The walk continues from here: the next undo goes before this version.
+    doc["undo_cursor"] = target["id"]
     save_ws_doc(ws_id, doc)
     return doc
 
@@ -270,14 +291,29 @@ def undo_last(ws_id):
     and it is what both the spoken undo and the UI control call.
     """
     doc = load_ws_doc(ws_id)
-    vers = doc.get("versions") or []
-    if not vers:
+    # Only the states before CHANGES are steps to walk back through. The
+    # snapshots an undo itself takes ("undo_point") are kept so an undo can be
+    # reversed by an explicit revert, but they are not steps: treating them as
+    # steps is what made two undos in a row go round in a circle.
+    steps = [v for v in (doc.get("versions") or []) if v.get("kind", "change") == "change"]
+    if not steps:
         return None, "there is nothing to undo for this workspace"
-    target = vers[-1]
-    out = revert_customization(ws_id, target["id"])
-    if out is None:
-        return None, "the snapshot for that change could not be found"
-    return out, None
+    cursor = doc.get("undo_cursor")
+    if cursor:
+        idx = next((i for i, v in enumerate(steps) if v["id"] == cursor), None)
+        if idx is None:
+            target = steps[-1]
+        elif idx == 0:
+            return None, "there is nothing further to undo for this workspace"
+        else:
+            target = steps[idx - 1]
+    else:
+        target = steps[-1]
+    _snapshot(doc, "before undo", kind="undo_point")
+    doc["customization"] = json.loads(json.dumps(target.get("customization", {})))
+    doc["undo_cursor"] = target["id"]
+    save_ws_doc(ws_id, doc)
+    return doc, None
 
 
 def restore_as_of(ws_id, when):
@@ -348,6 +384,7 @@ def history(ws_id):
             "version_id": v.get("id"),
             "when": v.get("ts"),
             "label": v.get("label") or "a change",
+            "kind": v.get("kind", "change"),
             "describes": ("state BEFORE: %s" % (v.get("label") or "a change")),
             "undo_hint": ("restoring this version undoes '%s' and everything "
                           "after it" % (v.get("label") or "that change")),
@@ -494,11 +531,30 @@ def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None):
     patch = _extract_patch(reply)
     visible_reply = _strip_patch_block(reply) or reply
     applied_version = None
+    refused = None
     if patch:
+        # BLAST RADIUS, on the live path. `apply_customization` had the gate and
+        # no caller; this turn applied the model's patch directly and skipped
+        # it. The same two checks, before anything is merged: safe mode from
+        # outside the app, and a patch that names model routing, the egress
+        # gate, the vault boundary or the safety rules.
+        try:
+            from agent_friday.services.boot_guard import check_blast_radius, safe_mode
+            if safe_mode():
+                refused = "Friday is in safe mode, so workspace changes are off until it is lifted"
+            else:
+                ok, why = check_blast_radius(patch)
+                if not ok:
+                    refused = why
+        except ImportError:
+            pass
+    if patch and not refused:
         label = (patch.get("summary") if isinstance(patch, dict) else None) or "change"
         # Mutate the in-memory doc (which already holds the pending user message)
         # so nothing is lost; we persist once at the end of the turn.
         applied_version = _apply_to_doc(doc, patch, label)
+    elif patch and refused:
+        visible_reply = (visible_reply.rstrip() + "\n\nI did not apply that change: %s." % refused).strip()
 
     entry = {
         "role": "friday", "text": visible_reply,
@@ -517,6 +573,7 @@ def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None):
         "status": "ok",
         "response": visible_reply,
         "applied": bool(applied_version),
+        "refused": refused,
         "revert_to": applied_version["id"] if applied_version else None,
         "change": applied_version["label"] if applied_version else None,
         "customization": doc.get("customization", {}),

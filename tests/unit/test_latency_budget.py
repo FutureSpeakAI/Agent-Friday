@@ -38,12 +38,17 @@ MAX_SYSTEM_PROMPT_TOKENS = 6_000
 #: it is the fallback's cost, and it still grows with every tool added. Raised
 #: from 20,000 for the organize tools (mail, files, wiki, undo, and answering
 #: their cards), about 1,100 tokens, which voice needs as real tools rather
-#: than a hand-over to chat.
+#: than a hand-over to chat. The Chat Hub's tools (artifacts, codebases,
+#: plans, publishing, build and run, projects by voice) are NOT in this
+#: catalogue: they are a workspace's own tools (agent.WORKSPACE_TOOLS), sent
+#: only to a chat that is in the hub and handed over by name anywhere else.
 MAX_TOOL_CATALOGUE_TOKENS = 23_000
 
 #: What a turn actually sends by default: the tool index (name and one line
 #: per tool, services/tool_catalogue.py) plus the few resident tools. ~3,425
 #: tokens for 107 tools. This is the number that decides prompt-eval time.
+#: The panel's artifact tool is not resident: it loads through the index like
+#: every other tool, which costs the opening nothing.
 MAX_TOOL_OPENING_TOKENS = 4_500
 
 #: What the seat reads before the conversation starts, with the tool index on

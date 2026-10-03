@@ -97,6 +97,10 @@ def _blank(cid: str, title: str = "New chat") -> dict:
         # The conversation owns this, not the project: see projects.py on why
         # membership has exactly one writer.
         "project": None,
+        # Which codebase this thread's panel is bound to (services/codebases),
+        # or None. "+ Codebase" sets it; the panel shows Preview, Files and
+        # Changes when it is set.
+        "codebase": None,
         # When this thread was pinned to the top of the sidebar, or None.
         #
         # A TIMESTAMP RATHER THAN A FLAG, and named apart from the `pinned`
@@ -201,7 +205,7 @@ def patch(cid: str, **fields) -> dict | None:
         if conv is None:
             return None
         for k in ("title", "status", "seat", "pinned", "pinned_at",
-                  "project", "totals"):
+                  "project", "codebase", "totals"):
             if k in fields:
                 conv[k] = fields[k]
         # Filing a chat is not working in it. Re-stamping last_active_at on a
