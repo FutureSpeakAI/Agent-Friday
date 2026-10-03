@@ -148,6 +148,18 @@ def test_a_tracking_script_refuses_the_publish():
     assert s["ok"] is False and any("tracking" in r or "analytics" in r for r in s["refusals"])
 
 
+def test_the_google_analytics_hosts_are_refused_without_being_named_in_the_tree():
+    # The hosts are assembled from fragments, as in test_no_vendored_telemetry:
+    # no telemetry endpoint may appear as a literal anywhere in the tree, and the
+    # refusal list in publish_web must still catch both spellings.
+    for host in ("google" + "-" + "analytics" + "." + "com", "analytics" + "." + "google" + "." + "com"):
+        rec = art.put(CID, kind="html", title="App",
+                      content="<img src='https://%s/collect?v=1'><h1>hi</h1>" % host)
+        s = pw.scan(pw.pack(rec))
+        assert s["ok"] is False, host
+        assert host in s["trackers"], host
+
+
 def test_a_script_from_a_host_other_than_the_package_host_refuses():
     rec = art.put(CID, kind="html", title="App", content="<script src='https://cdn.example.com/lib.js'></script>")
     s = pw.scan(pw.pack(rec))

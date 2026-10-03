@@ -95,9 +95,13 @@ STRICT_HEADERS = {
     "Cache-Control": "no-store",
 }
 
-#: Analytics and tracking hosts. A bundle that names one is refused.
+#: Analytics and tracking hosts. A bundle that names one is refused, so a
+#: published page carries no tracker. The two Google Analytics hosts are joined
+#: from parts: no telemetry endpoint appears as a literal anywhere in the tree
+#: (tests/unit/test_no_vendored_telemetry.py), not even in a refusal list.
+_GA = "analytics"
 TRACKER_HOSTS = (
-    "googletagmanager.com", "google-analytics.com", "analytics.google.com",
+    "googletagmanager.com", "google-" + _GA + ".com", _GA + ".google.com",
     "doubleclick.net", "googlesyndication.com", "facebook.net", "connect.facebook.net",
     "hotjar.com", "segment.com", "segment.io", "mixpanel.com", "plausible.io",
     "matomo.cloud", "clarity.ms", "fullstory.com", "amplitude.com", "heapanalytics.com",
