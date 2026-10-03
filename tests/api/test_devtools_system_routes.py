@@ -249,11 +249,12 @@ class TestVibeCodeStop:
         resp = client.post("/api/vibe-code/stop", json={"id": "nonexistent-id"})
         assert resp.status_code == 404
 
-    def test_stop_known_id_returns_ok(self, client):
-        # Launch first (no-op, safe)
-        launch = client.post("/api/vibe-code/launch",
-                             json={"tasks": ["Stopme task"]}).get_json()
-        tid = launch["launched"][0]
+    def test_stop_known_id_returns_ok(self, client, monkeypatch):
+        # A launch raises a card and starts nothing, so register a session directly.
+        import agent_friday.core as core
+        tid = "stopme-test"
+        monkeypatch.setitem(core.VIBE_TERMINALS, tid,
+                            {"id": tid, "task": "Stopme task", "status": "running", "pid": 99999})
         resp = client.post("/api/vibe-code/stop", json={"id": tid})
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "ok"
@@ -267,10 +268,12 @@ class TestVibeCodeClear:
         assert data["status"] == "ok"
         assert "removed" in data
 
-    def test_clear_removes_stopped_terminals(self, client):
-        # Launch then stop to make a 'stopped' terminal
-        tid = client.post("/api/vibe-code/launch",
-                          json={"tasks": ["Clear me"]}).get_json()["launched"][0]
+    def test_clear_removes_stopped_terminals(self, client, monkeypatch):
+        # A launch raises a card and starts nothing, so register a session, then stop it.
+        import agent_friday.core as core
+        tid = "clearme-test"
+        monkeypatch.setitem(core.VIBE_TERMINALS, tid,
+                            {"id": tid, "task": "Clear me", "status": "running", "pid": 99999})
         client.post("/api/vibe-code/stop", json={"id": tid})
         before = client.get("/api/vibe-code/status").get_json()["terminals"]
         before_ids = [t["id"] for t in before]

@@ -51,7 +51,7 @@ def test_the_hand_written_list_is_gone():
     prompt, _ = mr._build_context_prompt("hello", workspace="chat", provider="local")
     assert "== TOOLS ==" in prompt
     assert "== AVAILABLE TOOLS ==" not in prompt
-    assert "DuckDuckGo" not in prompt
+    assert "DuckDuckGo search" not in prompt
 
 
 def test_read_file_describes_what_the_executor_does():

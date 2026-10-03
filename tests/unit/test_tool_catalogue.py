@@ -95,7 +95,7 @@ def test_a_query_finds_the_tool_the_description_describes(tools):
     new, msg = TC.expand(tools, [], TC.opening_set(tools), query="send an email")
     assert [t["name"] for t in new][:1] == ["draft_email"]
     assert 'Loaded for "send an email"' in msg and "draft_email" in msg
-    new, msg = TC.expand(tools, [], [], query="qzxv nothing")
+    new, msg = TC.expand(tools, [], [], query="qzxv wqpjk")
     assert new == [] and "Nothing matched" in msg
 
 
@@ -200,7 +200,8 @@ def test_a_tool_with_no_description_still_lists(tools):
     t = {"name": "bare", "input_schema": {}}
     rows = TC.index([t])
     assert rows == [{"name": "bare", "summary": ""}]
-    assert "bare" in TC.loader_spec([t])["description"]
+    assert [x["name"] for x in TC.search([t], "bare")] == ["bare"]
+    assert TC.loader_spec([t])["description"] == TC.loader_spec([])["description"]
 
 
 # ── off until measured ──────────────────────────────────────────────────────
