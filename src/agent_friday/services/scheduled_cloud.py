@@ -1,11 +1,11 @@
 """Whether the built-in scheduled jobs may use a cloud model, and what it costs.
 
-The morning news, the evening front page, the afternoon briefing, daily
-creation and the heartbeat are local-only by default
+Daily creation and the heartbeat are local-only by default
 (`scheduler.LOCAL_ONLY_BY_DEFAULT`): on a PC with a local model serving they
 run there at no cost, and that does not change here. On a PC with no local
 model they are skipped, because running them in the cloud costs money and
-nobody chose that.
+nobody chose that. The News routines (front pages and briefings) are not
+covered by this answer: they always run locally and wait for a local model.
 
 This module holds the owner's explicit answer to "may they use a cloud model
 instead?" -- the `scheduled_cloud` settings block -- and the monthly cost
