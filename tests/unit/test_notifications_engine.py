@@ -56,6 +56,14 @@ def clean_queue():
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _owner_not_mid_conversation(monkeypatch):
+    """A card that arrives mid-conversation waits until it ends; an earlier
+    chat test in the same process leaves that state behind."""
+    from agent_friday.services import notification_policy as _pol
+    monkeypatch.setattr(_pol, "owner_in_conversation", lambda now=None: False)
+
+
 def _push(**kwargs):
     defaults = dict(title="Test notification", body="body text", priority="medium")
     defaults.update(kwargs)
@@ -96,7 +104,7 @@ class TestUpsertStatus:
         assert items[0]["body"] == "b"
 
     def test_coexists_with_unread_push(self):
-        push(title="Real alert", priority="high")
+        push(title="Real alert", priority="high", kind="warning")
         upsert_status(key="hb", title="Heartbeat — now", body="idle")
         # The unread badge reflects only the genuine push, not the status entry.
         assert unread_count() == 1
@@ -117,9 +125,14 @@ class TestPush:
         assert required.issubset(entry.keys())
 
     def test_new_entry_unread_undismissed(self):
-        entry = _push()
+        entry = _push(priority="high", kind="warning")
         assert entry["read"] is False
         assert entry["dismissed"] is False
+
+    def test_an_fyi_entry_is_read_and_never_bumps_the_badge(self):
+        entry = _push()
+        assert entry["tier"] == "fyi" and entry["read"] is True
+        assert unread_count() == 0
 
     def test_unknown_priority_defaults_to_medium(self):
         entry = _push(priority="urgent")
@@ -150,7 +163,8 @@ class TestPush:
         first = _push(title="Original", dedupe_key="dk-1")
         second = push(title="Duplicate", dedupe_key="dk-1")
         assert second["id"] == first["id"]
-        assert second["title"] == "Original"
+        # One card for the repeat: its count goes up and it shows the latest.
+        assert second["title"] == "Duplicate" and second["count"] == 2
 
     def test_dedupe_key_stays_dismissed_after_dismiss(self):
         """A dismissal sticks: the same thing at the same rank is not shown
@@ -233,8 +247,8 @@ class TestUnreadCount:
         assert unread_count() == 0
 
     def test_counts_unread(self):
-        _push()
-        _push()
+        _push(title="A", priority="high", kind="warning")
+        _push(title="B", priority="high", kind="warning")
         assert unread_count() == 2
 
     def test_excludes_read(self):
@@ -248,10 +262,10 @@ class TestUnreadCount:
         assert unread_count() == 0
 
     def test_mixed(self):
-        _push(title="A")
-        read_entry = _push(title="B")
+        _push(title="A", priority="high", kind="warning")
+        read_entry = _push(title="B", priority="high", kind="warning")
         mark_read(read_entry["id"])
-        dismissed_entry = _push(title="C")
+        dismissed_entry = _push(title="C", priority="high", kind="warning")
         dismiss(dismissed_entry["id"])
         # Only A is unread+undismissed
         assert unread_count() == 1
@@ -281,8 +295,8 @@ class TestMarkRead:
 
 class TestMarkAllRead:
     def test_returns_count_of_marked(self):
-        _push()
-        _push()
+        _push(title="A", priority="high", kind="warning")
+        _push(title="B", priority="high", kind="warning")
         n = mark_all_read()
         assert n == 2
 
