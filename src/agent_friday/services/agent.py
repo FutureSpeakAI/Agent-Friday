@@ -11066,7 +11066,37 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 pass
             _t0 = _time.time()
             _pilot_model_round(session_ctx, "cloud")
-            resp = client.messages.create(**kwargs)
+            # Stream the turn so the UI shows the text as it is written. The
+            # local and OpenAI transports already publish every text delta to
+            # model_router.DELTA_SINK and /api/chat/stream carries it to the
+            # browser; create() showed nothing until the whole answer was
+            # back. The final message is taken from the stream, so everything
+            # below sees the same object create() returned: usage, trace,
+            # signed thinking blocks echoed back verbatim, tool_use. Only
+            # text deltas reach the sink -- thinking is the scratchpad, never
+            # the answer -- and a sink that fails cannot cost the turn. A
+            # client without stream() (a wrapper, a fake) takes create().
+            _stream_fn = getattr(client.messages, "stream", None)
+            if callable(_stream_fn):
+                from agent_friday.services.model_router import DELTA_SINK as _DS
+                _sink = _DS.get()
+                with _stream_fn(**kwargs) as _stream:
+                    for _ev in _stream:
+                        if _sink is None or getattr(_ev, "type", None) != "content_block_delta":
+                            continue
+                        _delta = getattr(_ev, "delta", None)
+                        if getattr(_delta, "type", None) != "text_delta":
+                            continue
+                        _piece = getattr(_delta, "text", None)
+                        if not _piece:
+                            continue
+                        try:
+                            _sink(_piece)
+                        except Exception:
+                            pass
+                    resp = _stream.get_final_message()
+            else:
+                resp = client.messages.create(**kwargs)
             _rtrace.after_anthropic_response(resp, model=kwargs.get("model"), seat="cloud",
                                              thinking_requested=bool(_thinking_cfg))
             try:
