@@ -91,6 +91,7 @@ def media_list():
         since=since, until=until, favorite=a.get('favorite') in ('1', 'true'), tag=a.get('tag') or None,
     )
     res["collections"] = mi.collections()
+    res["turns"] = mi.turn_capabilities()
     res["status"] = "ok"
     res["indexing"] = indexing
     try:
@@ -124,6 +125,12 @@ def media_reindex():
 @media_bp.route('/api/media/status', methods=['GET'])
 def media_status():
     return jsonify({"status": "ok", "indexing": mi.status()})
+
+
+@media_bp.route('/api/media/turns', methods=['GET'])
+def media_turns():
+    """What this PC can turn a card into, and why not when it cannot."""
+    return jsonify({"status": "ok", "turns": mi.turn_capabilities()})
 
 
 @media_bp.route('/api/media/previews/status', methods=['GET'])

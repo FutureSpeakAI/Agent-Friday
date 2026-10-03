@@ -287,6 +287,7 @@
       setState(s => Object.assign({}, s, { loading: true }));
       json('/api/media?' + key).then(d => {
         if (d.status !== 'ok') { setState({ cards: [], counts: {}, projects: [], loading: false, error: d.message || 'Media could not load.', indexing: null }); return; }
+        if (d.turns) window.__mediaTurns = d.turns;
         setState({ cards: d.cards || [], counts: d.counts || {}, projects: d.projects || [], collections: d.collections || [], loading: false, error: null, indexing: d.indexing || null, previews: d.previews || null });
       }).catch(() => setState({ cards: [], counts: {}, projects: [], loading: false, error: 'Media could not load.', indexing: null }));
     }, [key]);
@@ -1025,6 +1026,7 @@
     return h('div', { className: 'md-center' }, 'Nothing to show yet.');
   }
   function MediaCard({ id, onBack, onAction }) {
+    useEffect(() => { if (!window.__mediaTurns) json('/api/media/turns').then(d => { if (d.status === 'ok') window.__mediaTurns = d.turns; }).catch(() => {}); }, []);
     useEffect(() => { if (!document.getElementById('media-card-styles')) { const s = document.createElement('style'); s.id = 'media-card-styles'; s.textContent = CARD_CSS; document.head.appendChild(s); } }, []);
     const [data, setData] = useState(null);
     const [body, setBody] = useState(null);
@@ -1061,7 +1063,11 @@
       else toast(d.message || 'Could not make that.');
     });
     const askFriday = () => { if (!ask.trim()) return; const q = ask; setAsk(''); if (window.fridaySendChat) window.fridaySendChat('About "' + c.title + '" (Media card ' + c.id + '): ' + q); else toast('Ask Friday in the chat tray: ' + q); };
-    const turns = TURN_INTO[turnGroup(c.kind)] || [];
+    // Only what this PC can make is offered; what it cannot is named with the reason, never a dead button.
+    const caps = window.__mediaTurns || {};
+    const allTurns = TURN_INTO[turnGroup(c.kind)] || [];
+    const turns = allTurns.filter(t => !caps[t[0]] || caps[t[0]].available);
+    const missing = allTurns.filter(t => caps[t[0]] && !caps[t[0]].available);
     return h('div', { className: 'md-editor' },
       h('section', { className: 'md-emain', 'aria-label': 'Editor' },
         h('div', { className: 'md-ehead' },
@@ -1082,7 +1088,8 @@
           h('button', { className: 'btn', onClick: askFriday }, 'Go'))),
       h('aside', { className: 'md-side', 'aria-label': 'Rails' },
         h('div', { className: 'card', id: 'md-turn' }, h('h3', null, 'Turn this into…'),
-          turns.length ? h('div', { className: 'md-turn' }, turns.map(t => h('button', { key: t[0], className: 'btn', onClick: () => turn(t[0]) }, h('span', null, t[1]), h('small', null, t[2])))) : h('div', { className: 'md-count' }, 'Not offered for this kind: an episode about an episode is noise. Edit it instead.')),
+          turns.length ? h('div', { className: 'md-turn' }, turns.map(t => h('button', { key: t[0], className: 'btn', onClick: () => turn(t[0]) }, h('span', null, t[1]), h('small', null, t[2])))) : (allTurns.length ? null : h('div', { className: 'md-count' }, 'Not offered for this kind: an episode about an episode is noise. Edit it instead.')),
+          missing.length ? h('div', { className: 'md-count', 'data-missing-turns': missing.map(t => t[0]).join(' ') }, missing.map(t => h('div', { key: t[0] }, 'Not ' + t[1] + ' here: ' + (caps[t[0]].reason || 'no backend on this PC.')))) : null),
         h('div', { className: 'card' }, h('h3', null, 'Provenance'),
           h('dl', { className: 'md-kv' },
             h('dt', null, 'Made by'), h('dd', null, c.maker || 'You'),

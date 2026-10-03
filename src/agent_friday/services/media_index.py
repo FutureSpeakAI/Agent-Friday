@@ -1760,7 +1760,123 @@ def turn_into(card_id: str, kind: str) -> Dict[str, Any]:
         return read_aloud(c, sync=bool(os.environ.get("FRIDAY_TESTING")))
     if kind == "deck":
         return make_deck(c)
+    if kind == "video":
+        return make_video(c, sync=bool(os.environ.get("FRIDAY_TESTING")))
     return {"status": "unavailable", "message": f"Making {TURNS[kind]} is not wired yet; ask Friday in chat and the result lands here."}
+
+
+# ── what a card can be turned into, honestly ────────────────────────────────
+#: The turn-into kinds whose backend may be absent on a given PC. The page
+#: hides what is not available and says why; the server refuses the same way.
+#: A kind not listed here is always available (it is made from text or a
+#: record this computer already has).
+def turn_capabilities() -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        from agent_friday.services import local_video as lv
+        cap = lv.i2v_available()
+        out["video"] = {"available": bool(cap.get("available")), "backend": cap.get("backend"), "reason": cap.get("reason") or ""}
+    except Exception as e:
+        out["video"] = {"available": False, "backend": None, "reason": "The local video backend could not be loaded (%s)." % str(e)[:120]}
+    try:
+        from agent_friday.services import podcast_render as pr
+        voices = pr.installed_voices()
+        out["audio"] = {"available": bool(voices), "backend": "local voice" if voices else None,
+                        "reason": "" if voices else "No local voice is installed on this computer."}
+    except Exception as e:
+        out["audio"] = {"available": False, "backend": None, "reason": "The local voice is not installed (%s)." % str(e)[:120]}
+    try:
+        from agent_friday.services import office_engine
+        ok = bool(office_engine.available())
+        out["deck"] = {"available": ok, "backend": "office tool" if ok else None, "reason": "" if ok else "The office tool is not installed on this computer."}
+    except Exception as e:
+        out["deck"] = {"available": False, "backend": None, "reason": "The office tool could not be loaded (%s)." % str(e)[:120]}
+    return out
+
+
+#: The function that makes the clip; tests swap it. Signature: (prompt, image_path) -> local_video.generate()'s envelope.
+_VIDEO_GENERATE = None
+
+
+def _video_generate(prompt: str, image_path: str) -> Dict[str, Any]:
+    if _VIDEO_GENERATE is not None:
+        return _VIDEO_GENERATE(prompt, image_path)
+    from agent_friday.services import local_video as lv
+    return lv.generate(prompt, image_path=image_path)
+
+
+def make_video(c: Dict[str, Any], sync: bool = False) -> Dict[str, Any]:
+    """Image → video, locally, through the arbiter's heavy-job swap inside
+    local_video.generate. Returns at once with a card in Draft and "working";
+    the clip, its credential and the kept status land when the GPU is done.
+    Never silent: no backend is a refusal with the reason; a failure is a
+    "failed" badge with the message on the card and a notice to the owner."""
+    cap = turn_capabilities().get("video") or {}
+    if not cap.get("available"):
+        return {"status": "unavailable", "message": cap.get("reason") or "Image-to-video is not available on this computer."}
+    src = Path(c["path"]) if c.get("path") else None
+    if c.get("kind") not in ("image", "imageset", "chart") or src is None or not src.is_file():
+        return {"status": "error", "message": "Only a picture on this PC can be turned into a video."}
+    prompt = ""
+    try:
+        from agent_friday.services.creative_engine import creation_metadata
+        prompt = str((creation_metadata(src.name) or {}).get("prompt") or "")
+    except Exception:
+        prompt = ""
+    prompt = (prompt or c["title"]) + ". A slow, steady push in; natural motion; nothing added to the scene."
+    cid = "media:" + uuid.uuid4().hex[:12]
+    rec = {"id": cid, "kind": "video", "title": "Video: " + c["title"], "project": c.get("project"), "sources": [c["title"]],
+           "maker": "%s · this PC" % (cap.get("backend") or "local video"), "status": "draft", "created": time.time(), "origin": "turn",
+           "relations": [{"to": c["id"], "how": "made_from"}], "file": "", "extra": {"badges": ["working"], "prompt": prompt, "from": str(src)}}
+    _write_media_record(cid, rec)
+    with _LOCK:
+        con = _connect()
+        try:
+            _scan_media_cards(con); con.commit()
+        finally:
+            con.close()
+
+    def work() -> None:
+        try:
+            res = _video_generate(prompt, str(src)) or {}
+            files = res.get("files") or []
+            if res.get("status") != "ok" or not files or not files[0].get("path"):
+                raise RuntimeError(res.get("reason") or res.get("error") or ("the video backend answered %s" % (res.get("status") or "nothing")))
+            out = Path(files[0]["path"])
+            if not out.is_file():
+                raise RuntimeError("the backend named a file that is not there: %s" % out)
+            _sign(out, "video", [{"kind": "card", "ref": c["id"], "title": c["title"]}], "media.image_to_video")
+            rec["file"] = str(out)
+            rec["status"] = "kept"
+            rec["extra"] = {"prompt": prompt, "from": str(src), "model": res.get("model"), "elapsed_s": res.get("elapsed_s")}
+            _notify("Your video of \u201c%s\u201d is ready in Media." % c["title"], cid)
+        except Exception as e:
+            msg = str(getattr(e, "user_message", None) or e)[:240]
+            rec["status"] = "draft"
+            rec["extra"] = {"badges": ["failed"], "error": msg, "prompt": prompt, "from": str(src)}
+            _notify("The video of \u201c%s\u201d could not be made: %s" % (c["title"], msg), cid)
+        _write_media_record(cid, rec)
+        with _LOCK:
+            con = _connect()
+            try:
+                _scan_media_cards(con); con.commit()
+            finally:
+                con.close()
+
+    if sync:
+        work()
+    else:
+        threading.Thread(target=work, name="media-image-to-video", daemon=True).start()
+    return {"status": "ok", "card": get(cid), "message": "Making the video on this PC; the card says when it is done."}
+
+
+def _notify(text: str, card_id: str) -> None:
+    """A line to the owner's screen; never raises, never silent when it can speak."""
+    try:
+        from agent_friday.services import desktop_bus
+        desktop_bus.send({"type": "notice", "workspace": "media", "card": card_id, "text": text})
+    except Exception:
+        pass
 
 
 # ── slides: a deck from a card's text, through the office tool ───────────────

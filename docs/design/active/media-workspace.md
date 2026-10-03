@@ -426,6 +426,16 @@ one is kept. What moves goes to `<home>/media/trash/<entry>/` with a manifest, t
 Delete goes the same way, Restore puts an entry back, and Friday never empties the trash:
 there is no hard delete anywhere in Media. `tests/api/test_media_tidy.py` is the proof.
 
+**Image → video (MEDIA-I2V).** "Turn this into a video" on a picture runs locally: Wan 2.2
+TI2V 5B through ComfyUI, under the arbiter's lease inside `local_video.generate`, with the
+picture staged into ComfyUI's input folder and wired to `WanImageToVideo.start_image`. The
+card is made at once in Draft with "working"; the clip, its credential and the kept status
+land when the GPU is done; a refusal or failure is a "failed" badge with the message on the
+card and a notice to the owner. `GET /api/media` carries `turns`, what this PC can turn a
+card into and why not, and the editor's menu offers only what works, naming what it cannot
+("Not a video here: …"), never a dead button. `tests/unit/test_media_i2v.py` would fail the
+moment the menu offered a conversion with no working backend.
+
 ### 4.4 Three views of the same cards
 
 **Library** (`library.html`): a rail of default views (Today, In progress, Needs you,
