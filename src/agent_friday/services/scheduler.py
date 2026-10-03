@@ -843,39 +843,44 @@ def _notify_run(rec, status, summary):
         _ne = None
     if not _ne:
         return
+    # The tray (services/notification_policy): ONE card per job for its
+    # failures, counting repeats ("Afternoon Briefing failed x3") and closed by
+    # the job's next successful run; one FYI card per job for its successes;
+    # a retirement is housekeeping and goes to the activity log only.
+    sid = rec.get("id")
+    name = rec.get("name") or sid
+    news = sid in LOCAL_ONLY_BY_DEFAULT
+    look = ([{"label": "View Front Page", "workspace": "news", "tab": "frontpage"}]
+            if news else [{"label": "View history", "workspace": "system", "tab": "schedules"}])
     try:
-        if status == "failed":
+        if status in ("failed", "missed"):
             # Failure bodies carry the WHOLE reason. A [:300] cut truncates a
             # multi-leg escalation error mid-word, right before the leg that
-            # names the actionable cause ("openai: No OpenAI-compatible API
-            # key set"), and the user reads the truncated blob as "no
-            # detail". 900 chars covers a three-leg escalation error;
+            # names the actionable cause, and the user reads the truncated
+            # blob as "no detail". 900 chars covers a three-leg error;
             # anything longer is a traceback that belongs in the log.
-            _ne.push(title=f"⚠️ Scheduled task failed: {rec.get('name')}",
+            _ne.push(title=(f"\u26a0\ufe0f {name} failed" if status == "failed"
+                            else f"\u26a0\ufe0f {name} did not run"),
                      body=(summary or "")[:900], priority="high", source="scheduler",
-                     kind="scheduled_task",
-                     actions=[{"label": "View history", "workspace": "system",
-                               "tab": "schedules"}],
-                     dedupe_key=f"sched-fail:{rec.get('id')}:{_now_central().strftime('%Y%m%d%H')}")
+                     kind="scheduled_failure", actions=look,
+                     dedupe_key=f"sched-fail:{sid}", resolve_key=f"sched-fail:{sid}")
             return
-        if status in ("waiting", "missed", "retired"):
-            title = {"waiting": f"⏳ {rec.get('name')} is waiting for the local seat",
-                     "missed": f"⚠️ {rec.get('name')} did not run today",
-                     "retired": f"{rec.get('name')} was switched off"}[status]
-            _ne.push(title=title, body=(summary or "")[:900],
-                     priority="low" if status == "waiting" else "high",
-                     source="scheduler", kind="scheduled_task",
-                     actions=[{"label": "View Front Page", "workspace": "news",
-                               "tab": "frontpage"}]
-                     if (rec.get("id") in LOCAL_ONLY_BY_DEFAULT) else
-                     [{"label": "View history", "workspace": "system",
-                       "tab": "schedules"}],
-                     dedupe_key=f"sched-{status}:{rec.get('id')}:{_now_central().strftime('%Y%m%d')}")
+        if status == "waiting":
+            _ne.push(title=f"\u23f3 {name} is waiting for the local seat",
+                     body=(summary or "")[:900], priority="low", source="scheduler",
+                     kind="scheduled_task", actions=look,
+                     dedupe_key=f"sched-wait:{sid}", resolve_key=f"sched-wait:{sid}")
             return
-        _ne.push(title=f"✓ {rec.get('name')} ran",
+        if status == "retired":
+            _ne.push(title=f"{name} was switched off", body=(summary or "")[:900],
+                     source="scheduler", kind="schedule_retired")
+            return
+        _ne.resolve(f"sched-fail:{sid}")
+        _ne.resolve(f"sched-wait:{sid}")
+        _ne.push(title=f"\u2713 {name} ran",
                  body=(summary or "")[:300] or "Completed.", priority="low",
                  source="scheduler", kind="scheduled_task",
-                 dedupe_key=f"sched-ok:{rec.get('id')}:{_now_central().strftime('%Y%m%d%H%M')}")
+                 dedupe_key=f"sched-ok:{sid}")
     except Exception as e:
         print(f"  [scheduler] notify failed: {e}")
 
@@ -1290,6 +1295,13 @@ def dispatch(rec, *, manual=False):
             _patch_record(sid, last_status="complete", last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0,
                           catch_up=None)
+            try:
+                from agent_friday.services.voice_engine import _notif_engine as _ne_ok
+                if _ne_ok:
+                    _ne_ok.resolve(f"sched-fail:{sid}")
+                    _ne_ok.resolve(f"sched-wait:{sid}")
+            except Exception:
+                pass
             if _mode == "silent":
                 pass
             elif _mode == "status":

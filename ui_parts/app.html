@@ -17698,6 +17698,30 @@ function SettingsTabSigning() {
 // window on her own profile (services/browser_session.py), never the owner's
 // normal browser. Sign-ins made in that window stay in that profile until they
 // are cleared here. Every route behind this is refused off this computer.
+/* Muted notification kinds (the tray's "Mute this kind"), reversible here.
+   Approvals can never be muted; muted kinds go to the activity log. */
+function SettingsNotificationMutes() {
+  const [mutes, setMutes] = React.useState(null);
+  const load = () => apiFetch('/api/settings').then(r => r.json())
+    .then(d => setMutes(((d || {}).settings || {}).notification_mutes || [])).catch(() => setMutes([]));
+  React.useEffect(() => { load(); }, []);
+  const unmute = m => {
+    const [kind, source] = String(m).split('|');
+    apiFetch('/api/notifications/mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: kind, source: source || '', unmute: true }) })
+      .then(r => r.json()).then(d => setMutes((d && d.mutes) || [])).catch(() => {});
+  };
+  return React.createElement(StSection, { title: 'Muted notifications' },
+    React.createElement('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginBottom: 8, lineHeight: 1.5 } },
+      'Kinds you muted from the tray go to the activity log instead. Approvals always reach you and cannot be muted.'),
+    mutes === null ? null : mutes.length === 0
+      ? React.createElement('div', { className: 'fridayui-muted', style: { fontSize: 11 } }, 'Nothing is muted.')
+      : mutes.map(m => React.createElement('div', { key: m, className: 'notif-mute-row',
+          style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, padding: '3px 0' } },
+          React.createElement('span', null, String(m).replace('|', ' \u00b7 ')),
+          React.createElement('button', { className: 'settings-btn', onClick: () => unmute(m) }, 'Unmute'))));
+}
+
 function SettingsTabBrowser() {
   const [st, setSt] = useState(null);
   const [msg, setMsg] = useState('');
@@ -19453,7 +19477,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
@@ -21819,7 +21843,69 @@ function App(){
     ids.forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}});
     apiFetch('/api/processes/dismiss-failed',{method:'POST'}).catch(()=>{})};
   const clearNotif=(id)=>{if(id){dismissedNotifIds.current.add(id);_notifPost('/api/notifications/dismiss',id)}setNotifs(prev=>prev.filter(n=>(n.id||'')!==id))};
-  const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id){dismissedNotifIds.current.add(n.id);_notifPost('/api/notifications/dismiss',n.id)}});setNotifs([])};
+  // Clear all keeps pending approvals; "Mute this kind" sends a kind to the activity log.
+  const muteNotifKind=n=>{apiFetch('/api/notifications/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:n.kind||'',source:n.source||''})}).catch(()=>{});setNotifs(prev=>prev.filter(x=>!(x.kind===n.kind&&x.source===n.source)))};
+  const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id&&n.kind!=='approval_pending')dismissedNotifIds.current.add(n.id)});apiFetch('/api/notifications/clear-all',{method:'POST'}).catch(()=>{});setNotifs(prev=>prev.filter(n=>n.kind==='approval_pending'))};
+  // Cards are grouped by job, then kind, then source (the server sets each
+  // card's `group`). A group of two or more cards, and every memory-proposal
+  // group, shows as one group card; a group of one shows as its own card.
+  const notifGroupsOf = list => {
+    const m = new Map();
+    list.forEach(n => {
+      const g = n.group || n.id;
+      if (!m.has(g)) m.set(g, { key: g, memory: g === 'memory_proposals', items: [] });
+      m.get(g).items.push(n);
+    });
+    return [...m.values()].filter(g => g.memory || g.items.length > 1);
+  };
+  const notifGroupedIds = list => new Set(notifGroupsOf(list).flatMap(g => g.items.map(n => n.id)));
+  // Clear group: every card in it except a pending approval, which stays.
+  const clearNotifGroup = g => {
+    g.items.forEach(n => {
+      if (n.id && n.kind !== 'approval_pending') dismissedNotifIds.current.add(n.id);
+    });
+    apiFetch('/api/notifications/clear-group', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: g.key }) }).catch(() => {});
+    setNotifs(prev => prev.filter(n => n.group !== g.key || n.kind === 'approval_pending'));
+  };
+  // Keep or skip one memory proposal: its own approval decides it.
+  const decideMemoryItem = (n, keep) => {
+    const aid = n.meta && n.meta.approval_id;
+    if (!aid) return;
+    dismissedNotifIds.current.add(n.id);
+    setNotifs(prev => prev.filter(x => x.id !== n.id));
+    Promise.resolve(fridayDecideApproval(aid, keep ? 'approve' : 'deny')).catch(() => {});
+  };
+  const notifGroupCards = list => notifGroupsOf(list).map(g => {
+    const k = g.items.length;
+    const title = g.memory ? k + ' memory proposal' + (k === 1 ? '' : 's') + ' to keep or skip'
+      : fridayTM(g.items[0].title || 'Notifications') + ' \u00b7 ' + k + ' cards';
+    const clearable = g.items.some(n => n.kind !== 'approval_pending');
+    return React.createElement("div", { key: 'grp_' + g.key, className: "notif-group",
+      style: { padding: '8px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: 12 } },
+      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+        React.createElement("div", { className: "notif-group-title",
+          style: { flex: 1, minWidth: 0, fontFamily: 'Inter', fontWeight: 500, color: '#fff' } }, title),
+        clearable && React.createElement("button", { className: "notif-open-btn notif-clear-group",
+          onClick: e => { e.stopPropagation(); clearNotifGroup(g); },
+          title: "Clear this group (approvals stay)" }, "Clear group")),
+      g.items.map(n => React.createElement("div", { key: 'gi_' + n.id, className: "notif-group-item",
+        style: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, color: 'rgba(255,255,255,0.78)' } },
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          fridayTM(g.memory ? (n.meta && n.meta.detail) || n.body || n.title : n.title || 'Notification'),
+          n.count > 1 && React.createElement("span", { className: "notif-count",
+            style: { fontFamily: 'JetBrains Mono', fontSize: 10, color: 'rgba(255,255,255,0.55)', marginLeft: 6 } },
+            '\u00d7' + n.count)),
+        g.memory ? [
+          React.createElement("button", { key: 'keep', className: "notif-open-btn notif-keep",
+            onClick: e => { e.stopPropagation(); decideMemoryItem(n, true); } }, "Keep"),
+          React.createElement("button", { key: 'skip', className: "notif-open-btn notif-skip",
+            onClick: e => { e.stopPropagation(); decideMemoryItem(n, false); } }, "Skip")
+        ] : n.kind !== 'approval_pending' && React.createElement("button", { "aria-label": "Dismiss",
+          onClick: e => { e.stopPropagation(); clearNotif(n.id); },
+          style: { background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer',
+                   fontSize: 10, padding: '0 2px', lineHeight: 1 }, title: "Dismiss" }, "\u2715"))));
+  });
   const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n));_notifPost('/api/notifications/read',id)};
   useEffect(()=>{const pull=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>{const items=(d.items||[]).filter(n=>!dismissedNotifIds.current.has(n.id));setNotifs(prev=>{const readMap=new Map(prev.map(n=>[n.id,n.read]));return items.map(n=>({...n,read:readMap.has(n.id)?readMap.get(n.id):!!n.read}))})}).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
@@ -22449,7 +22535,7 @@ function App(){
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
   const wsMap={career:<CareerWS/>,knowledge:<KnowledgeWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,media:window.MediaWS?with3D('media','media',<window.MediaWS/>):<div style={{color:'#888',fontSize:12,padding:20}}>Media did not load.</div>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',window.FridayMailPanel?<window.FridayMailPanel/>:<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:fridayHeldOn('federation')?<MarketplaceWS/>:null,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
-  const unread=notifs.filter(n=>!n.read).length;
+  const unread=notifs.filter(n=>!n.read&&n.tier!=='fyi').length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
   const bellBadgeCount=runningTaskCount>0?runningTaskCount:unread;
   const sortedBgTasks=[...bgTasks].sort((a,b)=>(b.created||0)-(a.created||0));
@@ -23271,9 +23357,10 @@ function App(){
           </div>;
         })}
       </div>}
+      {notifs.length>0&&notifGroupCards(notifs)}
       {notifs.length===0
         ?<div className="notif-empty">No new notifications</div>
-        :notifs.slice(0,50).map((n,i)=>{
+        :[...notifs].filter(n=>!notifGroupedIds(notifs).has(n.id)).sort((a,b)=>(a.tier==='fyi')-(b.tier==='fyi')).slice(0,50).map((n,i)=>{
           const key=n.id||`n_${i}`;
           const isExpanded=!!notifCardExpanded[`notif_${key}`];
           const hasDetail=!!(n.detail||n.body||(n.message&&n.title&&n.message!==n.title));
@@ -23328,11 +23415,12 @@ function App(){
             style={{padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:12,color:n.read?'rgba(255,255,255,0.72)':'#fff',cursor:clickable?'pointer':'default',transition:'background .15s'}}>
             <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4,fontWeight:n.read?400:500}}>{fridayTM(n.title||n.message||n.text||'Notification')}</div>
+                <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4,fontWeight:n.read?400:500}}>{fridayTM(n.title||n.message||n.text||'Notification')}{n.count>1&&<span className="notif-count" style={{fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.55)',marginLeft:6}}>{'\u00d7'+n.count}</span>}</div>
                 {n.time&&<div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#aaa',marginTop:3}}>{n.time}</div>}
               </div>
               {hasDetail&&<span aria-hidden="true" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>{isExpanded?'▾':'▸'}</span>}
               {!hasDetail&&tgt&&<span aria-hidden="true" title={notifTargetLabel(tgt)} style={{fontSize:12,color:'#00d4ff',marginTop:1}}>{tgt.url&&!tgt.workspace?'↗':'→'}</span>}
+              {n.id&&n.kind&&n.kind!=='approval_pending'&&<button aria-label="Mute this kind" className="notif-mute" onClick={e=>{e.stopPropagation();muteNotifKind(n)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Mute this kind (unmute in Settings > General)">&#x1F515;</button>}
               {n.id&&<button aria-label="Dismiss" onClick={e=>{e.stopPropagation();clearNotif(n.id)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Dismiss">&#x2715;</button>}
             </div>
             {isExpanded&&hasDetail&&<FridayDoc compact text={fridayTM(n.detail||n.body||n.message)} style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)'}}/>}

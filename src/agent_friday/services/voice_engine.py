@@ -677,6 +677,8 @@ _VOICE_SHARED_TOOLS = (
     "hologram_window",
     # Call mode: "I'm on a call", "the call is over", "ask me first on calls".
     "call_mode",
+    # The tray: "what's in my notifications", "clear them", "mute these".
+    "notifications",
 )
 
 

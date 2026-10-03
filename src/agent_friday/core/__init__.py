@@ -2162,6 +2162,9 @@ DEFAULT_SETTINGS = {
     # (source_trust_graph.local_beat_sources). Both empty means no Local beat.
     # The four News routines write on the local model (news_engine.local_news_run).
     "news_local_only": True,
+    # Notification kinds the owner muted ("kind|source"); muted kinds go to the
+    # activity log. Approvals can never be muted (notification_policy).
+    "notification_mutes": [],
     "news_local_area": "",
     "news_local_sources": [],
     "communication_style": "professional",  # professional | casual | technical

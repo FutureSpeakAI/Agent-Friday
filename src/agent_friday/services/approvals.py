@@ -653,6 +653,14 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
         getattr(approval_feed, name)(record)
     except Exception as e:
         _log.warning("approval feed unavailable: %s", e)
+    if name == "card_resolved":
+        # A decided or expired card is no longer waiting in the tray. Only
+        # its own outcome closes it; nothing else dismisses an approval.
+        try:
+            import agent_friday.notifications_engine as _ne
+            _ne.resolve_approval(record.get("approval_id"))
+        except Exception as e:
+            _log.debug("approval notice close failed: %s", e)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -687,8 +695,19 @@ def _notify_pending(record: Dict[str, Any]) -> None:
         import agent_friday.notifications_engine as _ne
     except Exception:
         return
+    meta: Dict[str, Any] = {"approval_id": record.get("approval_id")}
+    try:
+        from agent_friday.services import notification_policy as _pol
+        # Memory proposals arrive as one grouped card in the tray, each one
+        # kept or skipped by its own approval; the card is still an approval.
+        if _pol.is_memory_proposal(record):
+            meta["group"] = _pol.MEMORY_GROUP
+            meta["detail"] = (record.get("action_description") or "")[:300]
+    except Exception:
+        pass
     try:
         _ne.push(
+            meta=meta,
             title=f"Approval needed: {record.get('title')}",
             body=(record.get("description") or record.get("action_description") or "")[:300],
             priority="medium", source="approvals", kind="approval_pending",

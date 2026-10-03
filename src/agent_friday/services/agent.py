@@ -8163,6 +8163,14 @@ try:
 except Exception as _ate:  # never let optional deps break the agent import
     print(f"  [AVATAR] registration skipped: {_ate}")
 
+# The notification tray (notifications): "what's in my notifications", "clear
+# them", "mute these". Shared into voice. See services/notification_tools.py.
+try:
+    from agent_friday.services import notification_tools as _notification_tools
+    _notification_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _nte:  # never let optional deps break the agent import
+    print(f"  [NOTIFICATIONS] registration skipped: {_nte}")
+
 # The hologram window (hologram_window): how much leaning in and out zooms
 # the avatar, the parallax, smoothing and response, and the calibrated
 # sitting distance. Shared into voice. See services/hologram_tools.py.
