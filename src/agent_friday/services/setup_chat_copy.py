@@ -182,8 +182,12 @@ RESEARCH_ASK = (
     "away if I stumble on it: health, sexuality, finances, anything private "
     "about your family, and your home address.\n\n"
     "Pages I read are treated as untrusted text: nothing on them can give me "
-    "instructions. Everything stays on this computer, and nothing is kept "
-    "until you have approved it line by line.")
+    "instructions.\n\n"
+    "What leaves this computer: the searches themselves go to a web search "
+    "service, and the pages are fetched from the sites that host them. If "
+    "you chose the cloud model a moment ago, the text of those pages is sent "
+    "to it to be read; if you kept it on this computer, they are read here. "
+    "Nothing is kept until you have approved it line by line.")
 
 RESEARCH_CHIPS = (("yes", "Yes, look me up"), ("no", "No thanks"))
 
