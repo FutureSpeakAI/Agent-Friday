@@ -1050,6 +1050,59 @@ def dismiss_unverified(line_sha256: str, *, confirmed_by: str) -> dict:
     return {"ok": bool(ok), "quarantined": line_sha256 if ok else None}
 
 
+# ── Starting fresh ───────────────────────────────────────────────────────────
+#
+# The one way out of a suspension that an unauthenticated line holds. The whole
+# ledger is moved aside verbatim (renamed, so byte for byte; never deleted, never
+# re-signed), the quarantine file with it, and a new ledger starts with no
+# grants. Never-send marks that still verify are carried over as their own
+# signed lines, unchanged: starting fresh must not un-deny anything. Called
+# only from the approval hook of a "file_access_reset" card that the owner
+# approved on screen (file_grant_requests.apply_reset).
+
+FRESH_START_TEXT = ("The old permissions file, which has a line no current key "
+                    "signed, is set aside unchanged; you start with no file "
+                    "permissions and grant again. Your never-send marks are kept.")
+
+
+def start_fresh(*, confirmed_by: str) -> dict:
+    if confirmed_by != "owner:ui":
+        return {"ok": False, "error": "starting fresh is approved only on screen"}
+    path = _ledger_path()
+    q = _quarantine_path()
+    stamp = "%s-%s" % (time.strftime("%Y%m%d-%H%M%S"), uuid.uuid4().hex[:6])
+    aside = path.parent / ("file_grants.set-aside-%s.jsonl" % stamp)
+    q_aside = path.parent / ("file_grants.quarantine.set-aside-%s.jsonl" % stamp)
+    kept: list[str] = []
+    with _APPEND_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            try:
+                raw = path.read_text(encoding="utf-8", errors="strict")
+            except Exception:
+                raw = ""
+            lines, events = [], []
+            for raw_line in raw.split("\n"):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                known, ev = _known_key_of(line)
+                if known == "current" or (known == "retired" and (ev or {}).get("event") == "deny"):
+                    lines.append((line, ev))
+                    events.append(ev)
+            _grants, denies = _fold(events)
+            kept = [line for line, ev in lines
+                    if ev.get("event") == "deny" and ev.get("id") in denies]
+            path.replace(aside)
+        if q.exists():
+            q.replace(q_aside)
+        path.write_text(("\n".join(kept) + "\n") if kept else "", encoding="utf-8",
+                        newline="\n")
+    _invalidate_cache()
+    return {"ok": True, "set_aside": aside.name if aside.exists() else None,
+            "kept_denies": len(kept)}
+
+
 # ── What the File access panel shows ─────────────────────────────────────────
 #
 # Rows for every grant the panel can act on, each with a plain status, and the

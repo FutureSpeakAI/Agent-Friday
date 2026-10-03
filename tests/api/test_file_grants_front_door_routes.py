@@ -132,3 +132,19 @@ def test_the_reattest_route_refuses_a_line_no_known_key_signed(client, tmp_path)
     text = ledger.read_text(encoding="utf-8")
     assert "reattested_from" not in text and line in text
     assert fg.status()["suspended"] is True
+
+
+def test_the_start_fresh_route_only_raises_a_card(client, tmp_path):
+    from agent_friday.services import approvals
+    from agent_friday.services import file_grants as fg
+    p = tmp_path / "cv.txt"
+    p.write_text("Senior AI leadership experience.", encoding="utf-8")
+    fg.create_file_grant(str(p))
+    before = fg._ledger_path().read_bytes()
+
+    resp = client.post("/api/privacy/file-grants/start-fresh")
+
+    assert resp.status_code == 200
+    card = approvals.get_approval(resp.get_json()["approval_id"])
+    assert card["status"] == "pending" and card["kind"] == "file_access_reset"
+    assert fg._ledger_path().read_bytes() == before

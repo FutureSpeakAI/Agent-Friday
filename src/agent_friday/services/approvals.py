@@ -103,6 +103,7 @@ DEFAULT_EXPIRES_SECONDS = 86400  # 24h — Q3 default gate expiry
 #: caller, so only the explicit "owner:ui" the page sends counts.
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "file_grant_request": frozenset({"owner:ui"}),
+    "file_access_reset": frozenset({"owner:ui"}),
 }
 
 

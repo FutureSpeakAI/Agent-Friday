@@ -29,6 +29,8 @@ import uuid
 from pathlib import Path
 
 KIND = "file_grant_request"
+#: The "Start file access fresh" card. Approved only on screen, like KIND.
+RESET_KIND = "file_access_reset"
 SUBJECT_TYPE = "file_access"
 HANDLER = "file_grant_batch"
 #: Requests closer together than this belong to one turn and share one card.
@@ -277,6 +279,45 @@ def apply_approved(record: dict) -> dict:
     return {"ok": not failed, "created": created, "failed": failed}
 
 
+def request_fresh_start(*, requested_by: str = "owner") -> dict:
+    """Raise the one card that can start file access fresh. Changes nothing.
+
+    Reached only from the File access panel's route; no model tool, voice,
+    text-message or chat path raises or approves it."""
+    ensure_hook()
+    ap = _approvals()
+    fg = _fg()
+    card = ap.create_approval(
+        kind=RESET_KIND, subject_type=SUBJECT_TYPE,
+        subject_id="reset-%s" % uuid.uuid4().hex[:12],
+        title="Start file access fresh",
+        description=fg.FRESH_START_TEXT,
+        action_description=fg.FRESH_START_TEXT,
+        payload={"handler": RESET_KIND},
+        requested_by=requested_by, action_class="irreversible", force_gate=True)
+    return {"ok": True, "approval_id": card.get("approval_id"),
+            "status": card.get("status")}
+
+
+def apply_reset(record: dict) -> dict:
+    """Start fresh for an approved reset card, approved on screen only."""
+    ap = _approvals()
+    if record.get("kind") != RESET_KIND or record.get("status") != "approved":
+        return {"ok": False}
+    if record.get("decided_by") not in ap.SCREEN_ONLY_KINDS.get(RESET_KIND, frozenset()):
+        return {"ok": False}
+    if not ap.claim_for_execution(record["approval_id"]):
+        return {"ok": False}
+    out = _fg().start_fresh(confirmed_by=record["decided_by"])
+    ap.mark_used(record["approval_id"], "file_grants", out)
+    return out
+
+
+def _on_reset_decision(record: dict) -> None:
+    if record.get("status") == "approved":
+        apply_reset(record)
+
+
 def _on_decision(record: dict) -> None:
     if record.get("status") == "approved":
         apply_approved(record)
@@ -287,6 +328,7 @@ def ensure_hook() -> None:
     if _HOOKED["done"]:
         return
     _approvals().register_decision_hook(KIND, _on_decision)
+    _approvals().register_decision_hook(RESET_KIND, _on_reset_decision)
     _HOOKED["done"] = True
 
 

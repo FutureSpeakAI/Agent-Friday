@@ -50543,6 +50543,9 @@ function FileAccessPanel() {
   const dismiss = id => post('/api/privacy/file-grants/notices/' + encodeURIComponent(id) + '/dismiss')
     .then(({ ok, d }) => { setMsg(ok ? 'Done. Nothing else changed.' : (d && d.message) || 'Could not close that notice.'); load(); })
     .catch(() => setMsg('Could not set it aside.'));
+  const startFresh = () => post('/api/privacy/file-grants/start-fresh')
+    .then(({ ok, d }) => { setMsg(ok ? 'A card is waiting for your approval. Nothing changes until you approve it on screen.' : (d && d.message) || 'Could not start fresh.'); load(); })
+    .catch(() => setMsg('Could not start fresh.'));
   const rows = (data && data.rows) || [];
   const notices = (data && data.notices) || [];
   const st = (data && data.status) || {};
@@ -50556,7 +50559,11 @@ function FileAccessPanel() {
     E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) },
       'Cloud models never see a file’s contents unless you allow that file or folder here. A file is pinned to what it holds when you allow it; a folder lasts up to 30 days. Your never-send list still applies.'),
     st.suspended ? E('div', { role: 'alert', style: { fontSize: 11, color: 'rgba(255,210,140,0.9)', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, padding: '8px 10px', marginBottom: 10, lineHeight: 1.6 } },
-      'Every file permission is paused: a line in the permissions record could not be verified, and it may have been a never-send mark. Permissions stay paused while it is there; nothing on this screen lifts that.') : null,
+      'Every file permission is paused: a line in the permissions record could not be verified, and it may have been a never-send mark. Permissions stay paused while it is there.') : null,
+    st.suspended ? E('div', { className: 'card', 'data-testid': 'file-access-start-fresh', style: { padding: 8, marginBottom: 10, border: '1px solid rgba(245,158,11,0.3)' } },
+      E('div', { style: Object.assign({}, muted, { color: 'rgba(255,255,255,0.7)' }) },
+        'The old permissions file, which has a line no current key signed, is set aside unchanged; you start with no file permissions and grant again. Your never-send marks are kept.'),
+      E('button', { className: 'settings-btn', style: { fontSize: 11, marginTop: 6 }, onClick: startFresh }, 'Start file access fresh')) : null,
     notices.map(n => E('div', { key: n.id, className: 'card', 'data-testid': 'file-access-notice', style: { padding: 8, marginBottom: 6, border: '1px solid rgba(245,158,11,0.3)' } },
       E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } }, n.message),
       n.path ? E('div', { style: Object.assign({}, muted, { overflowWrap: 'anywhere' }) }, typeWord(n.type) + n.path) : null,

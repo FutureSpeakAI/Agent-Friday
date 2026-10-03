@@ -178,6 +178,17 @@ def regrant_file_grant_notice(notice_id):
                     "items": out.get("items")})
 
 
+@control_bp.route('/api/privacy/file-grants/start-fresh', methods=['POST'])
+@login_required
+def start_file_access_fresh():
+    """Raise the "Start file access fresh" approval card. Changes nothing itself:
+    the ledger moves aside only when the owner approves that card on screen."""
+    from agent_friday.services import file_grant_requests as _fgr
+    out = _fgr.request_fresh_start(requested_by="owner")
+    _log_context("file_access_fresh_start_requested", {"approval_id": out.get("approval_id")})
+    return jsonify({"status": "ok", "approval_id": out.get("approval_id")})
+
+
 @control_bp.route('/api/privacy/file-grants/notices/<notice_id>/dismiss', methods=['POST'])
 @login_required
 def dismiss_file_grant_notice(notice_id):
