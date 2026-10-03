@@ -4,7 +4,10 @@ The repository is public. A file that says it was ported, adapted, vendored or c
 another project names that project in `CREDITS.md`, and a project whose licence requires
 its notice (MIT, BSD, Apache) has that notice reproduced in `THIRD_PARTY_LICENSES.md`. The
 marker grammar is the one the source already uses: "ported from X", "adapted from X",
-"vendored (verbatim) from X", "copied from X", "port of X's", "borrowed from X".
+"vendored (verbatim) from X", "copied from X", "borrowed from X", "port of X's". A project
+name reads like one: it has a hyphen (obsidian-wiki, graphrag-workbench), a capital letter
+(Goose, GraphRAG), or is a known lower-case name (podcastfy). A constant, a module path or
+an English word after "from" is not a project.
 """
 from __future__ import annotations
 
@@ -22,36 +25,43 @@ NOTICE = ROOT / "NOTICE"
 SCAN_ROOTS = ("src", "static", "scripts")
 SCAN_SUFFIXES = {".py", ".js", ".ts", ".txt", ".md"}
 
+#: Lower-case project names the grammar would otherwise read as plain words.
+KNOWN_LOWERCASE_PROJECTS = {"podcastfy", "headroom", "goose", "adrian"}
+
+#: Hyphenated English the grammar would otherwise read as a project.
+ENGLISH_COMPOUNDS = {"load-time", "file-grants", "read-only", "run-time", "built-in", "in-memory", "on-disk", "two-speaker", "per-user"}
+
 #: "ported from obsidian-wiki's graph_analysis.py", "vendored verbatim from graphrag-workbench",
 #: "Python port of graphrag-workbench's force-simulation", "adapted from podcastfy".
 MARKER = re.compile(
-    r"\b(?:ported|adapted|vendored|copied|borrowed|derived)\s+(?:verbatim\s+)?from\s+(?:the\s+)?"
-    r"[`'\"]?([A-Za-z][A-Za-z0-9_.-]*(?:-[A-Za-z0-9_.-]+)*)|"
-    r"\bport\s+of\s+[`'\"]?([A-Za-z][A-Za-z0-9_.-]*(?:-[A-Za-z0-9_.-]+)*)",
+    r"\b(?:ported|adapted|vendored|copied|borrowed)\s+(?:verbatim\s+)?from\s+(?:the\s+)?"
+    r"[`'\"]?([A-Za-z][A-Za-z0-9_.-]*)|"
+    r"\bport\s+of\s+[`'\"]?([A-Za-z][A-Za-z0-9_.-]*)",
     re.IGNORECASE,
 )
 
-#: Words the grammar can catch that are not projects ("derived from the passphrase").
-NOT_PROJECTS = {
-    "a", "an", "it", "its", "this", "that", "the", "their", "there", "what", "which", "where",
-    "here", "them", "those", "these", "each", "one", "two", "both", "any", "all", "scratch",
-    "settings", "setting", "description", "frontmatter", "metadata", "wikilinks", "sentinel",
-    "message", "passphrase", "user", "users", "page", "pages", "python", "scripts", "git",
-    "source", "sources", "upstream", "main", "disk", "memory", "mail", "chat", "text",
-}
+
+def looks_like_a_project(name: str) -> bool:
+    n = name.rstrip(".,;:").removesuffix("'s").strip("`'\"")
+    if len(n) < 3:
+        return False
+    if n.lower() in KNOWN_LOWERCASE_PROJECTS:
+        return True
+    if n.isupper() or "_" in n:            # TIER_2, SEVERITY_QUESTION: constants
+        return False
+    if "." in n and n.islower():           # request.host_url: a module path
+        return False
+    if "-" in n:                           # obsidian-wiki, graphrag-workbench
+        return n.lower() not in ENGLISH_COMPOUNDS
+    return n[0].isupper()                  # Goose, GraphRAG, Headroom
 
 
 def _project_names_in(text: str) -> set[str]:
     names = set()
     for m in MARKER.finditer(text):
-        raw = (m.group(1) or m.group(2) or "").rstrip(".,;:")
-        raw = re.sub(r"'s$", "", raw)
-        if not raw or raw.lower() in NOT_PROJECTS or len(raw) < 3:
-            continue
-        # A bare module name is not a project; a project name has a hyphen, a dot or a capital.
-        if raw.islower() and "-" not in raw and "." not in raw:
-            continue
-        names.add(raw)
+        raw = (m.group(1) or m.group(2) or "").rstrip(".,;:").removesuffix("'s").strip("`'\"")
+        if raw and looks_like_a_project(raw):
+            names.add(raw)
     return names
 
 
@@ -88,6 +98,22 @@ def credit_gaps(credits_text: str, markers: dict[Path, set[str]]) -> list[str]:
             if n.lower() not in low:
                 gaps.append(f"{p.relative_to(ROOT).as_posix()}: '{n}' is not credited in CREDITS.md")
     return gaps
+
+
+@pytest.mark.parametrize("phrase,expect", [
+    ("Ported from obsidian-wiki's ``graph_analysis.py`` (MIT).", {"obsidian-wiki"}),
+    ("vendored verbatim from graphrag-workbench under prompts/", {"graphrag-workbench"}),
+    ("Python port of graphrag-workbench's force-simulation design", {"graphrag-workbench"}),
+    ("the two-speaker pattern adapted from podcastfy", {"podcastfy"}),
+    ("copied from Goose's recipe format", {"Goose"}),
+    ("derived from request.host_url", set()),
+    ("copied verbatim from TIER_2 content", set()),
+    ("adapted from SEVERITY_QUESTION", set()),
+    ("ported from the passphrase", set()),
+    ("borrowed from load-time measurements", set()),
+])
+def test_the_grammar_reads_projects_and_ignores_constants(phrase, expect):
+    assert _project_names_in(phrase) == expect
 
 
 def test_the_scanner_sees_the_known_ports():
