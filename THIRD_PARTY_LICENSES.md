@@ -285,6 +285,99 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 | tqdm | 4.67.3 | installed by installer (recommended/memory/judgment) | MPL-2.0 AND MIT | Copyright (c) 2013 noamraph |
 | uritemplate | 4.2.0 | installed by installer (core) | BSD-3-Clause OR Apache-2.0 | Copyright (c) Ian Stapleton Cordasco (from package Author metadata) |
 
+## Code and prompts carried in this repository
+
+Material ported or copied into Friday's own source, as distinct from packages the installer
+installs. Each is MIT; the licence notices are reproduced below as the licence requires.
+
+| Project | What Friday carries | Where | Copyright |
+|---|---|---|---|
+| obsidian-wiki | ported code: graph analysis, structural queries, wikilink and frontmatter parsing, the canonical-path rule | `src/agent_friday/services/knowledge_graph/{graph_analysis,structural_query,wiki_graph,store}.py` | Copyright (c) 2026 Ar9av |
+| Microsoft GraphRAG | the prompt set, copied as text (via graphrag-workbench) | `src/agent_friday/services/knowledge_graph/prompts/*.txt` | Copyright (c) Microsoft Corporation |
+| graphrag-workbench | the artifact contract and the force-layout design, ported to Python | `src/agent_friday/services/knowledge_graph/{store,wiki_graph,layout}.py` | Copyright (c) 2026 Lyon Industries (Christopher Lyon) |
+
+Ideas only, no code or text: SkillOpt (Microsoft, MIT) for `skillopt_engine.py`; podcastfy
+(Apache-2.0) for `services/podcast_engine.py`; Goose (Apache-2.0) and Adrian for the
+patterns listed in CREDITS.md. No notice is required for an idea; the credits are courtesy.
+
+### obsidian-wiki licence
+
+```
+MIT License
+
+Copyright (c) 2026 Ar9av
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Microsoft GraphRAG licence
+
+```
+    MIT License
+
+    Copyright (c) Microsoft Corporation.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE
+```
+
+### graphrag-workbench licence
+
+```
+MIT License
+
+Copyright (c) 2026 Lyon Industries (Christopher Lyon)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Model weights, voices and generated assets
 
 None of these is inside the installer zip. They are fetched from their publishers on the user's machine,
