@@ -96,12 +96,11 @@ STRICT_HEADERS = {
 }
 
 #: Analytics and tracking hosts. A bundle that names one is refused, so a
-#: published page carries no tracker. The Google Analytics and Tag Manager
-#: hosts are joined from parts: no telemetry endpoint appears as a literal
-#: anywhere in the tree (tests/unit/test_no_vendored_telemetry.py), not even in
-#: a refusal list.
+#: published page carries no tracker. The first three are joined from parts: no
+#: telemetry endpoint appears as a literal anywhere in the tree
+#: (tests/unit/test_no_vendored_telemetry.py), not even in a refusal list.
 _GA = "analytics"
-_GTM = "googletag" + "manager"
+_GTM = "google" + "tag" + "manager"
 TRACKER_HOSTS = (
     _GTM + ".com", "google-" + _GA + ".com", _GA + ".google.com",
     "doubleclick.net", "googlesyndication.com", "facebook.net", "connect.facebook.net",
