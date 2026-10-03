@@ -12240,3 +12240,21 @@ def _start_kill_hotkey():
         _log.warning("Kill hotkey listener failed: %s", e)
 
 
+# ── Tools a turn loads on demand ─────────────────────────────────────────────
+# The always-on catalogue has a token ceiling every turn pays
+# (tests/unit/test_latency_budget.py). These tools are reached by name or query
+# through load_tools, and voice resolves them by name like any workspace's own
+# (WORKSPACE_TOOLS); their handlers and rings stay registered, so they run
+# wherever they are named. A name not registered in this build is skipped.
+ON_DEMAND_TOOLS = (
+    "file_access",           # file grants: asks raise the owner's card
+    "notifications",         # the tray: read, clear, mute
+    "local_models_advise",   # Settings > Models: what this PC can run
+    "hand_cursor",           # the hand cursor and big mode, by voice
+    "big_mode",
+    "hologram_window",       # the hologram window's depth, by voice
+)
+WORKSPACE_TOOLS.setdefault("on_demand", []).extend(
+    t for t in CLAUDE_TOOLS if isinstance(t, dict) and t.get("name") in ON_DEMAND_TOOLS)
+CLAUDE_TOOLS[:] = [t for t in CLAUDE_TOOLS
+                   if not (isinstance(t, dict) and t.get("name") in ON_DEMAND_TOOLS)]
