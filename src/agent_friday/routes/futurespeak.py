@@ -231,14 +231,15 @@ def fs_project_edit(name):
 
     cwd = os.path.normpath(str(repo_path))
     tid = str(uuid.uuid4())[:12]
-    VIBE_TERMINALS[tid] = {
-        'id': tid, 'task': task_desc, 'status': 'launching', 'cwd': cwd,
-        'pid': None, 'started': datetime.now().isoformat(), 'stopped': None,
-        'log_file': None, 'project': proj['name'],
-    }
-    threading.Thread(target=_run_claude_terminal, args=(tid, task_desc, cwd), daemon=True).start()
+    # One approval card per task; the session starts only when it is
+    # approved and runs under Friday's gate (services/claude_code_tasks).
+    from agent_friday.services import claude_code_tasks as _cct
+    rec = _cct.request(tid, task_desc, cwd, requested_by="owner",
+                       extra={'project': proj['name']})
     return jsonify({"status": "ok", "terminal_id": tid, "project": proj['name'],
-                    "cwd": cwd, "deploy": bool(data.get('deploy'))})
+                    "cwd": cwd, "deploy": bool(data.get('deploy')),
+                    "approval_id": rec.get("approval_id"), "pending": True,
+                    "message": "Approve the card in Friday to start this edit; nothing runs until then."})
 
 
 @fs_bp.route('/api/futurespeak/scan')

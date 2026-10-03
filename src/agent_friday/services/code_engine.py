@@ -59,6 +59,14 @@ def _run_claude_terminal(terminal_id, task, cwd):
     """
     log_file = VIBE_LOG_DIR / f"{terminal_id}.log"
     try:
+        # Nothing starts without the task's own grant, which only an approved
+        # card mints (services/claude_code_tasks). The session then runs under
+        # Claude Code's ordinary permissions with a per-task hook that asks
+        # Friday's gate about every action; it never skips permissions.
+        from agent_friday.services import claude_code_tasks as _cct
+        ok, why = _cct.launch_allowed(terminal_id)
+        if not ok:
+            raise PermissionError(why)
         # Validate cwd: must be an existing directory under HOME (prevents path
         # injection and escaping the sandbox root).
         cwd_p = Path(cwd or '').expanduser().resolve()
@@ -67,8 +75,9 @@ def _run_claude_terminal(terminal_id, task, cwd):
         # Sanitize the task string: strip characters that could break out of the
         # nested cmd quoting and chain commands (command injection).
         safe_task = re.sub(r'["&|<>^%\r\n`]', ' ', str(task or ''))[:2000].strip()
+        settings_file = _cct.write_session_files(terminal_id)
         inner = (f'title Friday-Vibe-{terminal_id} && cd /d "{cwd_p}" && '
-                f'claude --dangerously-skip-permissions "{safe_task}"')
+                 f'claude --settings "{settings_file}" "{safe_task}"')
         proc = subprocess.Popen(
             ["cmd.exe", "/k", inner], cwd=str(cwd_p),
             creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
@@ -147,7 +156,7 @@ def adopt_or_reap_vibe_terminals() -> dict:
     inference is only sound once every terminal Friday launches is recorded at
     launch. Before then the file is empty because nothing ever wrote it, not
     because nothing is running, and every live window looks like an orphan.
-    Each one is a `claude --dangerously-skip-permissions` session someone may
+    Each one is a Claude Code session someone may
     be part-way through, so the first-run cost of a wrong reap is unrecoverable
     work; the cost of a wrong adopt is a stale row in a list. The asymmetry
     decides it.

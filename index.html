@@ -13996,7 +13996,7 @@ function CareerWS() {
       })
     }).then(() => {
       setEvalUrl('');
-      fridayToast('Evaluation launched');
+      fridayToast('Evaluation queued — approve its card in Friday to start');
     }).catch(() => {});
   };
   const launchScan = () => {
@@ -14009,7 +14009,7 @@ function CareerWS() {
         tasks: ['Run portal scan'],
         cwd: coCwd()
       })
-    }).then(() => fridayToast('Scan launched')).catch(() => {});
+    }).then(() => fridayToast('Scan queued — approve its card in Friday to start')).catch(() => {});
   };
   const saveCoPath = () => {
     fetch('/api/career-ops/path', {
@@ -18955,7 +18955,7 @@ function FSProjectCard({
       });
       const d = await r.json();
       if (d.status === 'ok') {
-        onToast((deploy ? 'Deploy' : 'Quick Edit') + ' launched for ' + p.name + ' — track in Code workspace');
+        onToast((deploy ? 'Deploy' : 'Quick Edit') + ' queued for ' + p.name + ' — approve its card in Friday to start');
         setInstr('');
         setEditing(false);
         setDeploy(false);
@@ -19322,7 +19322,7 @@ function FSStudio() {
           cwd: '~\\Projects'
         })
       });
-      showToast('Scaffold launched in Claude Code — watch the Code workspace');
+      showToast('Scaffold queued — approve its card in Friday to start');
       setWDesc('');
       setWizard(false);
     } catch (e) {
@@ -19681,7 +19681,7 @@ function FuturespeakWS() {
           cwd: cwd || '~\\Projects'
         })
       });
-      showToast('Claude Code launched');
+      showToast('Claude Code queued — approve its card in Friday to start');
     } catch (e) {
       showToast('Launch failed');
     }
@@ -23442,7 +23442,7 @@ function StudioWS() {
         tasks: ['Run friday daily creation'],
         cwd: '~\\Projects\\friday-desktop'
       })
-    }).then(r => r.json()).then(d => fridayToast(d && d.status === 'ok' ? 'Daily creation agent launched — watch the Code workspace for progress.' : 'Could not launch: ' + (d && d.message || 'unknown error'))).catch(() => fridayToast('Could not launch the daily creation agent.', { error: true }));
+    }).then(r => r.json()).then(d => fridayToast(d && d.status === 'ok' ? 'Daily creation agent queued — approve its card in Friday to start it.' : 'Could not launch: ' + (d && d.message || 'unknown error'))).catch(() => fridayToast('Could not launch the daily creation agent.', { error: true }));
   };
   const openCreation = async f => {
     setSelected(f);

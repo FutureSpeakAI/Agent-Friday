@@ -2819,8 +2819,8 @@ function CareerWS(){
   ]).then(()=>setLoading(false))},[]);
   const loadReport=name=>{fetch('/api/career-ops/report/'+name).then(r=>r.json()).then(d=>{setReportContent(d.content||'');setView('report')}).catch(()=>{})};
   const coCwd=()=>(coStatus&&coStatus.path)||'~\\Projects\\career-ops';
-  const launchEval=()=>{if(!evalUrl.trim())return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Evaluate this job: '+evalUrl],cwd:coCwd()})}).then(()=>{setEvalUrl('');fridayToast('Evaluation launched')}).catch(()=>{})};
-  const launchScan=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run portal scan'],cwd:coCwd()})}).then(()=>fridayToast('Scan launched')).catch(()=>{})};
+  const launchEval=()=>{if(!evalUrl.trim())return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Evaluate this job: '+evalUrl],cwd:coCwd()})}).then(()=>{setEvalUrl('');fridayToast('Evaluation queued — approve its card in Friday to start')}).catch(()=>{})};
+  const launchScan=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run portal scan'],cwd:coCwd()})}).then(()=>fridayToast('Scan queued — approve its card in Friday to start')).catch(()=>{})};
   const saveCoPath=()=>{fetch('/api/career-ops/path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:coPath})}).then(r=>r.json()).then(d=>{if(d.error){fridayToast(d.error);return}setCoStatus(d);fridayToast('Career-ops folder saved')}).catch(()=>{})};
   const engineScan=()=>{fetch('/api/pipeline/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).then(()=>fetch('/api/pipeline/jobs')).then(r=>r.json()).then(d=>{setEngineJobs(d.jobs||[]);fridayToast('Scan finished')}).catch(()=>{})};
   const engineApply=id=>{fetch('/api/pipeline/jobs/'+id+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).then(d=>fridayToast(d.status==='prepared'?('Prepared. ' + fridayName() + ' does not submit applications: submit it yourself on the employer’s site.'):'Not prepared: '+((d.quality_gates_failed||[]).join(', ')||d.error||d.status))).catch(()=>{})};
@@ -6150,7 +6150,7 @@ function FSProjectCard({p,onToast,onChanged}){
     if(!instr.trim())return;setBusy(true);
     try{const r=await fetch('/api/futurespeak/project/'+encodeURIComponent(p.name)+'/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task:instr,deploy})});
       const d=await r.json();
-      if(d.status==='ok'){onToast((deploy?'Deploy':'Quick Edit')+' launched for '+p.name+' — track in Code workspace');setInstr('');setEditing(false);setDeploy(false)}
+      if(d.status==='ok'){onToast((deploy?'Deploy':'Quick Edit')+' queued for '+p.name+' — approve its card in Friday to start');setInstr('');setEditing(false);setDeploy(false)}
       else onToast(d.message||'Launch failed')}
     catch(e){onToast('Launch failed')}
     setBusy(false);
@@ -6235,7 +6235,7 @@ function FSStudio(){
   const scaffold=async()=>{
     if(!wDesc.trim())return;setWBusy(true);
     try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Scaffold a new web project: '+wDesc+'. Create a clean modern site, initialize a git repo, create a GitHub repo, push it, then print deploy instructions.'],cwd:'~\\Projects'})});
-      showToast('Scaffold launched in Claude Code — watch the Code workspace');setWDesc('');setWizard(false)}
+      showToast('Scaffold queued — approve its card in Friday to start');setWDesc('');setWizard(false)}
     catch(e){showToast('Launch failed')}
     setWBusy(false);
   };
@@ -6313,7 +6313,7 @@ function FuturespeakWS(){
     try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company:opp.name,angle:'proposal',channel:'email',context:`Opportunity: ${opp.name}. Status: ${opp.status}. Value: $${opp.value_usd}. Next: ${opp.next_action}. ${opp.notes||''}`})});
       const d=await r.json();setDraft(d.draft||'')}catch(e){setDraft('[Error] '+e.message)}setDrafting(null)};
   const copyText=async(text,label)=>{try{await navigator.clipboard.writeText(text);showToast((label||'Text')+' copied')}catch(e){showToast('Copy failed')}};
-  const launchVibeCode=async(task,cwd)=>{try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],cwd:cwd||'~\\Projects'})});showToast('Claude Code launched')}catch(e){showToast('Launch failed')}};
+  const launchVibeCode=async(task,cwd)=>{try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],cwd:cwd||'~\\Projects'})});showToast('Claude Code queued — approve its card in Friday to start')}catch(e){showToast('Launch failed')}};
   const draftBlog=()=>{fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'FutureSpeak.AI — Post Draft',/* brand: plain (a working title the drafting model reads) */type:'post',channel:'linkedin',notes:'Brand post from Creative Studio.',tags:['futurespeak','brand']})}).then(()=>showToast('Idea captured in Content pipeline')).catch(()=>showToast('Failed'))};
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading FutureSpeak workspace...</div>;
 
@@ -7114,7 +7114,7 @@ function StudioWS(){
   // prompts post straight to /api/create/<type> via StudioPromptBar; this
   // launcher (the old mis-wired "Create Now" button) is the only Studio
   // control that touches the terminal launcher, and it says so before it runs.
-  const runDailyAgent=()=>{if(!confirm(("Launch " + fridayName() + "'s autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar.")))return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(r=>r.json()).then(d=>fridayToast(d&&d.status==='ok'?'Daily creation agent launched — watch the Code workspace for progress.':'Could not launch: '+((d&&d.message)||'unknown error'))).catch(()=>fridayToast('Could not launch the daily creation agent.'))};
+  const runDailyAgent=()=>{if(!confirm(("Launch " + fridayName() + "'s autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar.")))return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(r=>r.json()).then(d=>fridayToast(d&&d.status==='ok'?'Daily creation agent queued — approve its card in Friday to start it.':'Could not launch: '+((d&&d.message)||'unknown error'))).catch(()=>fridayToast('Could not launch the daily creation agent.'))};
   const openCreation=async f=>{setSelected(f);const ext=(f.name||'').split('.').pop().toLowerCase();if(ext==='md'){try{const r=await fetch('/api/creations/'+f.name);setPreview(await r.text())}catch(e){setPreview('')}}else{setPreview('')}};
   // Deep-link: a notification's "Open Document" button navigates here with
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
