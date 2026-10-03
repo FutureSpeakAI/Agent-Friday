@@ -8451,17 +8451,26 @@ def _tool_codebase_undo(inp):
 
 def _tool_codebase_read(inp):
     from agent_friday.services import codebases as _cb
+    from agent_friday.services import credential_paths as _cred
     inp = inp or {}
     rec = _codebase_in_scope(inp)
     if rec is None:
         return "codebase_read: this chat has no codebase."
+    rel = str(inp.get("path") or "")
     try:
-        content = _cb.read(rec["id"], str(inp.get("path") or ""))
+        p = _cb.path_of(rec["id"], rel)
     except ValueError as e:
         return f"codebase_read refused: {e}."
+    # A codebase may be a folder the user pointed at, so it can hold key
+    # material. This tool opens a file the way read_file does: a key file is
+    # refused, and a key pasted inside an ordinary one is withheld from the
+    # whole text before it is capped (services/credential_paths).
+    if _cred.check(p):
+        return _cred.refusal(p)
+    content = _cb.read(rec["id"], rel)
     if content is None:
         return {"status": "missing", "path": inp.get("path")}
-    return {"status": "ok", "path": inp.get("path"), "content": content[:60000]}
+    return {"status": "ok", "path": inp.get("path"), "content": _redacted_once(p, content)[:60000]}
 
 
 CLAUDE_TOOLS.append({

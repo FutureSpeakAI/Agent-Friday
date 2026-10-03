@@ -433,9 +433,16 @@ def files(cid: str) -> list:
     return out
 
 
+def path_of(cid: str, rel: str) -> Path:
+    """The absolute path a codebase-relative `rel` names, resolved as `read`
+    resolves it: a path outside the working tree (`..`, an absolute path, `.git`,
+    `.friday`, a link that leaves it) raises ValueError. A caller that must judge
+    the file itself (the credential deny-list) judges this path."""
+    return _check_rel(repo_path(cid), rel)
+
+
 def read(cid: str, rel: str) -> Optional[str]:
-    repo = repo_path(cid)
-    p = _check_rel(repo, rel)
+    p = path_of(cid, rel)
     if not p.is_file():
         return None
     return p.read_text(encoding="utf-8", errors="replace")
