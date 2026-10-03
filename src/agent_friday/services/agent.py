@@ -6621,6 +6621,19 @@ TOOL_RINGS: dict[str, int] = {
     "correct_wiki":         1,
     "learn_skill":          1,
     # Ring 2 — NETWORK (external calls; requires authenticated session)
+    # switch_model rewrites which model answers chat, and can move the
+    # conversation from a local seat to a cloud one: the ring the unknown-tool
+    # default already gave it, now declared rather than inherited.
+    "switch_model":         2,
+    # Voice-only tools (voice_engine._VOICE_LIVE_TOOLS) that run through
+    # _execute_tool under their own names. Each is declared at the ring the
+    # unknown-tool default already gave it: check_email and the article deep
+    # dive reach the network, ask_friday runs a whole agent turn, and the
+    # source-trust lookup is held at the same ring until it is reviewed down.
+    "check_email":          2,
+    "get_article_deep_dive": 2,
+    "get_source_trust":     2,
+    "ask_friday":           2,
     "search_web":           2,
     "search_news":          2,   # fetches the live RSS/Brave feed (network)
     "browse_web":           2,
