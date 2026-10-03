@@ -46,7 +46,20 @@ def test_clutter_is_dropped_and_the_story_kept():
     text = page.text
     for gone in ("Sports", "Share this", "Advertisement", "Related:", "Teaser", "Copyright"):
         assert gone not in text, gone
-    assert page.dropped >= 4
+    assert page.dropped == 3            # share bar, advertisement, related rail (the rest is outside the story)
+
+
+def test_a_cms_dressing_the_story_in_tag_classes_still_keeps_it():
+    """WordPress puts "tag-politics" on the <article> and "has-sidebar" on
+    its wrapper: words of page furniture that are not furniture."""
+    paras = "".join("<p>Paragraph %d of the story, with enough words to be a paragraph.</p>" % i
+                    for i in range(6))
+    html = ('<html><body><div class="site-content has-sidebar"><article class="post tag-politics '
+            'category-news">%s<div class="share-tools"><p>Share this story with your friends</p></div>'
+            '</article></div></body></html>' % paras)
+    page = pr.read_html(html)
+    assert [b["text"][:11] for b in page.blocks] == ["Paragraph %d" % i for i in range(6)]
+    assert page.dropped == 1
 
 
 def test_short_wire_paragraphs_headline_and_byline_survive():
@@ -154,6 +167,8 @@ def test_an_aggregators_item_is_named_from_the_publishers_page(monkeypatch, tmp_
     monkeypatch.setattr(pr, "_meta_path", lambda: tmp_path / "page_meta.json")
     story = {"outlet": "news.google.com", "url": "https://news.google.com/rss/articles/abc",
              "title": "Council passes budget", "text": "Council passes budget"}
+    assert q.relayed_outlet(story) == ""
+    pr.remember_meta([story["url"]], {"publisher": "Google News"})      # the aggregator's own page
     assert q.relayed_outlet(story) == ""
     pr.remember_meta([story["url"]], {"publisher": "Example News"})
     assert q.relayed_outlet(story) == "Example News"

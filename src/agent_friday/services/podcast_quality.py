@@ -213,7 +213,8 @@ def relayed_outlet(story: dict) -> str:
     # The publisher's own page, when it was read, names itself.
     from agent_friday.services import page_reader
     pub = (page_reader.known_meta(story.get("url") or "").get("publisher") or "").strip()
-    if pub and re.sub(r"[^a-z0-9]", "", pub.lower()) != re.sub(r"[^a-z0-9]", "", _site_name(dom)):
+    # ("Google News" on a page Google served is the aggregator, not the outlet.)
+    if pub and _site_name(dom) not in re.sub(r"[^a-z0-9]", "", pub.lower()):
         return pub
     return ""
 

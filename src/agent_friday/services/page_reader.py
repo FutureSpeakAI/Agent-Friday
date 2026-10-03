@@ -219,36 +219,26 @@ def _attrs(el) -> str:
 
 
 def _furniture(el, root) -> bool:
-    """Whether the element, or an ancestor up to the page body, is page
-    furniture: nav, aside, footer, a promo rail, a share bar. A header inside
-    the story (headline, byline) is the story."""
-    node = el
+    """Whether the element sits in page furniture: nav, aside or footer
+    anywhere above it; between it and the story's container, a promo rail, a
+    share bar, a teaser card (an <article> of its own) or a site header.
+    Class names count only inside the container: a CMS dresses the story's
+    own wrapper in classes like "tag-politics" or "has-sidebar"."""
+    node, inside = el, True
     while node is not None and getattr(node, "name", None) not in (None, "[document]", "body", "html"):
         if node.name in ("nav", "aside", "footer"):
             return True
-        if node.name == "header" and not _inside(node, root):
-            return True
-        if node is not el and node.name == "article" and node is not root:
-            # A teaser card for another story.
-            return True
-        a = _attrs(node)
-        if a.strip() and _CLUTTER_RE.search(a) and not _BYLINE_RE.search(a):
-            return True
         if node is root:
-            # Above the story's container, only real furniture counts.
-            root = None
-        node = node.parent
-    return False
-
-
-def _inside(node, root) -> bool:
-    if root is None:
-        return False
-    p = node
-    while p is not None:
-        if p is root:
+            inside = False
+        elif inside:
+            if node is not el and node.name == "article":
+                return True
+            a = _attrs(node)
+            if a.strip() and _CLUTTER_RE.search(a) and not _BYLINE_RE.search(a):
+                return True
+        elif node.name == "header":
             return True
-        p = p.parent
+        node = node.parent
     return False
 
 
