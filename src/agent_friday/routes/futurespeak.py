@@ -29,9 +29,6 @@ import agent_friday.core as core
 from agent_friday.core import (
     VIBE_TERMINALS,
 )  # noqa: E501
-from agent_friday.services.code_engine import (
-    _run_claude_terminal,
-)  # noqa: E501
 from agent_friday.services.futurespeak import (
     FS_ASSETS_DIR,
     FS_LEGAL_FILE,

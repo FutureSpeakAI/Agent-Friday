@@ -208,6 +208,14 @@ def adopt_or_reap_vibe_terminals() -> dict:
             except Exception:
                 pass
 
+    # A task still waiting on its approval card has no window yet; it is
+    # not an orphan. Its entry (and the token its session will need) comes
+    # across the restart so the card's decision still starts it.
+    for tid, saved in persisted.items():
+        if tid not in live and isinstance(saved, dict) \
+                and saved.get("status") == "awaiting_approval":
+            VIBE_TERMINALS[tid] = dict(saved)
+
     # Writes the versioned file. This is what ends grace, so it must happen
     # even when nothing was found -- otherwise every boot is a first boot.
     core._persist_vibe_terminals()

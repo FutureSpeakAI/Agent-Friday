@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import secrets
 import sys
 import threading
@@ -176,12 +177,53 @@ def write_session_files(task_id: str) -> Path:
 
 # ── 3. Every action asks ─────────────────────────────────────────────────────
 
+_LOOPBACK_URL = re.compile(r"https?://(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)(:\d+)?(/|$)", re.I)
+
+
+def _in_friday_state(path: str) -> bool:
+    """A path inside Friday's own data folder: the session's task file and
+    settings, the vault, approvals, grants. The session never touches them."""
+    if not path:
+        return False
+    try:
+        from agent_friday.paths import friday_home
+        p = Path(path).expanduser().resolve()
+        home = Path(friday_home()).resolve()
+        return p == home or home in p.parents
+    except Exception:
+        return True
+
+
 def _own_refusal(tool_name: str, tool_input: dict) -> Optional[str]:
-    """Friday's own hard refusals, before the grant is even consulted."""
+    """Friday's own hard refusals, before the grant is even consulted.
+
+    They hold whatever the grant says: the session cannot rewrite its own
+    guard (the task file, the settings file, anything under Friday's data
+    folder), cannot reach Friday's loopback-trusted API by command or by
+    URL, and cannot read key material.
+    """
     try:
         from agent_friday.services import credential_paths as _cred
     except Exception:
         _cred = None
+    tool_input = tool_input or {}
+    for key in ("url", "command", "file_path", "path", "notebook_path", "pattern"):
+        val = str(tool_input.get(key) or "")
+        if val and _LOOPBACK_URL.search(val):
+            return ("this call addresses Friday's own local API, which trusts this "
+                    "machine as the owner; Friday does not run it for a session")
+    try:
+        from agent_friday.paths import friday_home
+        home_str = str(Path(friday_home()).resolve())
+        for key in ("command", "file_path", "path", "notebook_path", "url"):
+            val = str(tool_input.get(key) or "")
+            if val and (home_str.lower() in val.replace("/", "\\").lower()
+                        or ".friday" in val.lower()):
+                return ("refused: this touches Friday's own data folder (its state, "
+                        "its approvals, this session's own gate); nothing there is "
+                        "the session's to read or change")
+    except Exception:
+        return "Friday could not resolve its data folder, so this call did not run"
     if tool_name in ("Bash", "PowerShell"):
         cmd = str((tool_input or {}).get("command") or "")
         try:
@@ -204,6 +246,10 @@ def _own_refusal(tool_name: str, tool_input: dict) -> Optional[str]:
                 return f"refused: {why}"
     path = str((tool_input or {}).get("file_path") or (tool_input or {}).get("path")
                or (tool_input or {}).get("notebook_path") or "")
+    if path and _in_friday_state(path):
+        return ("refused: this touches Friday's own data folder (its state, its "
+                "approvals, this session's own gate); nothing there is the session's "
+                "to read or change")
     if path and _cred is not None:
         try:
             if _cred.check(Path(path).expanduser()):
@@ -216,14 +262,16 @@ def _own_refusal(tool_name: str, tool_input: dict) -> Optional[str]:
 def _renewal(task_id: str, entry: dict) -> None:
     """A used-up grant raises one renewal card (not one per refused call)."""
     from agent_friday.services import approvals as _ap
-    n = int(entry.get('renewals') or 0) + 1
+    n = int(entry.get('renewals') or 0)
+    if n:
+        # The card raised last time is still the one to answer while it is
+        # pending; a decided one (approved and used up again, or denied)
+        # earns the next number.
+        last = _ap.find_for_subject(SUBJECT_TYPE, f"{task_id}:renew:{n}", KIND)
+        if last is not None and last.get("status") == "pending":
+            return
+    n += 1
     subject = f"{task_id}:renew:{n}"
-    pending = _ap.find_for_subject(SUBJECT_TYPE, subject, KIND)
-    if pending is not None and pending.get("status") == "pending":
-        return
-    if pending is not None:
-        n += 1
-        subject = f"{task_id}:renew:{n}"
     entry['renewals'] = n
     core._persist_vibe_terminals()
     folder = Path(entry.get('cwd') or '').name

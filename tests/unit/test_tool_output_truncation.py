@@ -117,10 +117,29 @@ class TestKeep:
         (old / "a.txt").write_text("x", encoding="utf-8")
         assert to.prune(0) == 0 and old.exists()
 
-    def test_a_self_windowed_reader_does_not_spill_to_disk(self, tmp_path, monkeypatch):
+    def test_a_self_windowed_reader_is_neither_spilled_nor_cut_again(self, tmp_path, monkeypatch):
         monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
-        to.clip_result("read_file", _lines(3000), max_lines=100)
+        page, info = to.window_lines(_lines(400, width=60), offset=101, limit=102)
+        result = page + to.page_note(info)
+        assert to.clip_result("read_file", result, max_lines=100) == result
+        assert "Continue with read_file offset=203" in result
         assert not to.output_dir().exists()
+
+    def test_a_page_plus_its_note_stays_under_the_executor_ceiling(self):
+        page, info = to.window_lines(_lines(5000, width=200), offset=1)
+        assert len(page + to.page_note(info)) <= to.MAX_CHARS
+
+    def test_off_the_record_nothing_is_saved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+        from agent_friday.services import off_record as off
+        monkeypatch.setattr(off, "active", lambda settings=None: True)
+        out = to.clip_result("run_command", _lines(3000), max_lines=100)
+        assert "Full output saved" not in out and not to.output_dir().exists()
+
+    def test_one_huge_line_keeps_both_ends(self):
+        text = "A" * 20000 + "MIDDLE" + "Z" * 20000
+        out, cut = to.truncate("browse_web", text, max_chars=4000)
+        assert cut and out.startswith("AAAA") and out.rstrip().endswith("ZZZZ")
 
 
 def test_describe_limits_quotes_the_real_constants():

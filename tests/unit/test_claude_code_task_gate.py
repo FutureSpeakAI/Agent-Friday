@@ -202,6 +202,50 @@ def test_a_used_up_grant_denies_and_raises_one_renewal_card(home):
     assert cct.gate("t9", tok, "Read", {"file_path": "a.py"})["decision"] == "allow"
 
 
+def test_the_session_cannot_rewrite_its_own_guard_or_reach_fridays_api_by_url(home):
+    from agent_friday.governance import action_gate as gate
+    from agent_friday.services import claude_code_tasks as cct
+    tok = _granted(home, "t11")
+    task_file = str(cct.task_dir("t11") / "task.json")
+    for tool, inp in [
+        ("Write", {"file_path": task_file, "content": "{}"}),
+        ("Edit", {"file_path": str(cct.task_dir("t11") / "settings.json"), "old_string": "a", "new_string": "b"}),
+        ("Read", {"file_path": str(home / "governance" / "grants.json")}),
+        ("Bash", {"command": f'echo x > "{task_file}"'}),
+        ("WebFetch", {"url": "http://127.0.0.1:3000/api/settings"}),
+        ("WebFetch", {"url": "http://localhost:3000/api/approvals"}),
+        ("Bash", {"command": "curl http://[::1]:3000/api/x"}),
+    ]:
+        out = cct.gate("t11", tok, tool, inp)
+        assert out["decision"] == "deny", (tool, inp, out)
+    g = next(g for g in gate.list_grants() if g["scope"] == cct.scope("t11"))
+    assert g["uses_left"] == cct.GRANT_USES, "a refusal must not spend the grant"
+    assert cct.gate("t11", tok, "Read", {"file_path": str(home.parent / "proj" / "a.py")})["decision"] == "allow"
+
+
+def test_a_task_waiting_on_its_card_survives_a_restart(home, monkeypatch):
+    from agent_friday.services import code_engine as ce
+    import agent_friday.core as core
+    saved = {"id": "t12", "task": "later", "status": "awaiting_approval", "cwd": str(home),
+             "token": "tok", "approval_id": "ap_1"}
+    monkeypatch.setattr(core, "_read_vibe_state", lambda: {"version": 2, "terminals": {"t12": saved}})
+    monkeypatch.setattr(ce, "_vibe_terminal_processes", lambda: {})
+    monkeypatch.setattr(ce, "_code_log", lambda *a, **k: None, raising=False)
+    core.VIBE_TERMINALS.clear()
+    ce.adopt_or_reap_vibe_terminals()
+    assert core.VIBE_TERMINALS.get("t12", {}).get("status") == "awaiting_approval"
+    assert core.VIBE_TERMINALS["t12"]["token"] == "tok"
+
+
+def test_the_decision_hook_is_registered_when_the_routes_load():
+    from agent_friday.services import approvals as ap
+    from agent_friday.services import claude_code_tasks as cct
+    import agent_friday.routes.code  # noqa: F401  (imports claude_code_tasks at module level)
+    assert cct._on_decision in ap._HOOKS.get(cct.KIND, [])
+    src = (SRC / "routes" / "code.py").read_text(encoding="utf-8")
+    assert re.search(r"^from agent_friday\.services import claude_code_tasks", src, re.M)
+
+
 def test_the_claws_check_holds_the_gate(home, monkeypatch):
     from agent_friday.governance import action_gate as gate
     from agent_friday.services import claude_code_tasks as cct

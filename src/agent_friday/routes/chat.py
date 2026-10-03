@@ -1533,6 +1533,11 @@ def chat():
             cloud the tail follows the head in the system prompt, below
             `prompt_cache.VOLATILE_MARKER`, and the policy is sealed last.
             """
+            # Start from the user's own text: a previous local prep may have
+            # wrapped it, and the cloud scrub below must see (and keep) the
+            # scrubbed form, so the restore happens first and only here.
+            if _last_user_msg is not None:
+                _last_user_msg['content'] = _last_user_text
             vc = _get_vault_control() if _vault_local_only() else None
             sp, src = _build_context_prompt(
                 message, workspace, workspace_context, vision_description,
@@ -1609,8 +1614,6 @@ def chat():
                     + strip_authority_overrides(tail, source="/api/chat turn context").strip()
                     + "\n[END OF CONTEXT]\n\n" + _last_user_text)
                 return seal_system_prompt(head, "/api/chat prompt"), src, lookup
-            if _last_user_msg is not None:
-                _last_user_msg['content'] = _last_user_text
             return seal_system_prompt(head + tail, "/api/chat prompt"), src, lookup
 
         system_prompt, sources, pii_lookup = _prep_for(_provider)

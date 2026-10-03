@@ -32,6 +32,7 @@ from agent_friday.core import (
     VIBE_TERMINALS,
     _POPEN_FLAGS,
 )  # noqa: E501
+from agent_friday.services import claude_code_tasks as _cct  # registers the card's decision hook
 from agent_friday.services.code_engine import (
     CODE_PLANS_DIR,
     CODE_PROCESSES,
@@ -48,7 +49,6 @@ from agent_friday.services.code_engine import (
     _projects_root,
     _repo_path,
     _repo_tree,
-    _run_claude_terminal,
     _safe_project_path,
     adopt_or_reap_vibe_terminals,
 )  # noqa: E501
@@ -91,7 +91,6 @@ def vibe_code_launch():
     is kept for older callers and is always empty, because a launch is never
     the result of this request alone.
     """
-    from agent_friday.services import claude_code_tasks as _cct
     data = request.get_json(silent=True) or {}
     tasks = data.get('tasks', [])
     cwd = os.path.normpath(os.path.expanduser(data.get('cwd', str(HOME / 'Projects'))))
@@ -117,7 +116,6 @@ def vibe_code_gate():
     """One tool call from a Friday-launched Claude Code session asks whether
     it may run. Answered from the task's grant through the action gate; the
     per-task token is the credential and only loopback may ask."""
-    from agent_friday.services import claude_code_tasks as _cct
     if request.remote_addr not in ("127.0.0.1", "::1", "localhost"):
         return jsonify({"decision": "deny", "reason": "the gate answers this machine only"}), 403
     data = request.get_json(silent=True) or {}

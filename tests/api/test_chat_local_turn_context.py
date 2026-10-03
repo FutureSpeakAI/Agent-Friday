@@ -94,3 +94,27 @@ def test_the_cloud_keeps_the_tail_in_the_system_prompt_with_the_policy_last(
     assert "== PERSONA ==" in head and "skill for tell me about cats" in tail
     assert system.rstrip().endswith(ACTION_PERMISSION_POLICY)
     assert not seen[0]["messages"][-1]["content"].startswith("[CONTEXT FOR THIS TURN")
+
+
+def test_a_guarded_cloud_turn_keeps_the_newest_user_message_scrubbed(
+        client, monkeypatch, wired):
+    """The restore of the user's own text happens before the cloud scrub,
+    never after it: a scrubbed newest turn must reach the cloud scrubbed."""
+    from agent_friday import core as _core
+    wired["model_routing"].update({"unrestricted_cloud": False,
+                                   "cloud_consent": {"answered": True, "choice": "cloud_guarded"}})
+    monkeypatch.setattr(_core, "_load_privacy_watchlist", lambda: ["Private appointment"])
+    monkeypatch.setattr(_core, "_owner_emails", lambda: [])
+    _route(monkeypatch, "cloud")
+    seen = []
+
+    def dispatch(messages, **kwargs):
+        seen.append(copy.deepcopy({"messages": messages, **kwargs}))
+        return "ok", []
+    monkeypatch.setattr(chat, "_call_claude_agent", dispatch)
+    r = client.post("/api/chat", json={"message": "Discuss Private appointment with sender@example.test"})
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    assert len(seen) == 1
+    last = seen[0]["messages"][-1]["content"]
+    assert "sender@example.test" not in last and "Private appointment" not in last, last
+    assert seen[0]["pii_lookup"]

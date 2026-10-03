@@ -107,11 +107,14 @@ def truncate(tool: str, text: str, *, max_chars: int = MAX_CHARS,
     half_chars = max(1, (max_chars - 120) // 2)
     head_lines = _head(lines, half_chars, max(1, max_lines // 2))
     tail_lines = _tail(lines, half_chars, max(1, max_lines // 2))
-    # Never let the two windows overlap.
-    if len(head_lines) + len(tail_lines) >= total_lines:
+    # Never let the two windows overlap: by line when there are lines to
+    # share, by character when the whole text is one long line.
+    if total_lines > 1 and len(head_lines) + len(tail_lines) >= total_lines:
         tail_lines = lines[len(head_lines):]
     head = "\n".join(head_lines)
     tail = "\n".join(tail_lines)
+    if total_lines == 1 and len(head) + len(tail) >= total_chars:
+        tail = text[len(head):]
     cut_chars = max(0, total_chars - len(head) - len(tail))
     cut_lines = max(0, total_lines - len(head_lines) - len(tail_lines))
     marker = (f"\n[... {_fmt(cut_chars)} chars / {_fmt(cut_lines)} lines cut from the middle "
@@ -144,8 +147,13 @@ def _tail(lines, max_chars, max_lines):
     return out
 
 
+#: A page leaves room for its own note, so page plus note stays under the
+#: executor's ceiling and is never cut a second time.
+PAGE_CHARS = MAX_CHARS - 512
+
+
 def window_lines(text: str, offset: int = 1, limit: Optional[int] = None, *,
-                 max_chars: int = MAX_CHARS, max_lines: int = MAX_LINES) -> Tuple[str, dict]:
+                 max_chars: int = PAGE_CHARS, max_lines: int = MAX_LINES) -> Tuple[str, dict]:
     """A page of ``text`` for a reader that takes offset/limit.
 
     offset is 1-based. Returns (page, info) where info has first, last, total,
@@ -188,7 +196,16 @@ _SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 def save_full(tool: str, text: str) -> Optional[str]:
-    """Write the full text to the tool-output folder; return its path or None."""
+    """Write the full text to the tool-output folder; return its path or None.
+
+    Off the record nothing about the conversation reaches disk, so the cut
+    result then names no file."""
+    try:
+        from agent_friday.services import off_record as _off
+        if _off.skip("tool_output"):
+            return None
+    except Exception:
+        pass
     try:
         day = datetime.now().strftime("%Y-%m-%d")
         d = output_dir() / day
@@ -255,11 +272,13 @@ def clip_result(tool: str, result: str, *, max_chars: int = MAX_CHARS,
     """The executor's entry point: cut, say what was cut, keep the full text."""
     if not isinstance(result, str):
         return result
-    if style_for(tool) == NONE:
+    if style_for(tool) == NONE or tool in SELF_WINDOWED:
+        # A self-windowed reader already returned one page with its own
+        # note; cutting it again would relabel the page with wrong lines.
         return result
     if len(result) <= max_chars and result.count("\n") < max_lines:
         return result
-    saved = None if tool in SELF_WINDOWED else save_full(tool, result)
+    saved = save_full(tool, result)
     maybe_prune()
     out, _ = truncate(tool, result, max_chars=max_chars, max_lines=max_lines, saved_path=saved)
     return out
