@@ -34,7 +34,8 @@ def store(monkeypatch):
 
 def test_the_tool_is_declared_once_and_shared_into_voice():
     from agent_friday.services import agent, voice_engine
-    names = [t["name"] for t in agent.CLAUDE_TOOLS]
+    # Declared once: always-on, or on demand (agent.ON_DEMAND_TOOLS).
+    names = [t["name"] for t in agent.CLAUDE_TOOLS + agent.WORKSPACE_TOOLS.get("on_demand", [])]
     assert names.count("hologram_window") == 1
     assert "hologram_window" in agent.CLAUDE_TOOL_HANDLERS
     assert agent.TOOL_RINGS.get("hologram_window") == 1
