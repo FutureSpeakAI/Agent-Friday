@@ -17158,7 +17158,69 @@ function TrackingPanel({
     onClick: () => commit({
       click_method: o.k
     })
-  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
+  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Snap and big mode'), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Snap to targets",
+    value: cfg.snap !== false,
+    onChange: () => commit({
+      snap: cfg.snap === false
+    }),
+    desc: "The cursor locks onto the nearest button, card, link or orb within reach and holds it until you move well away, so neighbours never flicker. The locked target is ringed; a pinch hits it, not where your fingers drift."
+  }), cfg.snap !== false ? sl('snap_radius', 'Snap reach', 'How close the cursor must come to a target to lock on. It lets go at 1.6 times this distance.', 16, 96, 2, v => Math.round(v) + ' px') : null, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Two-hand zoom",
+    value: !!cfg.two_hand_zoom,
+    onChange: () => commit({
+      two_hand_zoom: !cfg.two_hand_zoom
+    }),
+    desc: "Pinch with both hands and move them apart to zoom the galaxy, the 3D views and images. Tracking a second hand costs CPU; off unless you use it. Takes effect the next time hand tracking starts."
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--st-label)',
+      margin: '10px 0 4px',
+      fontWeight: 500
+    }
+  }, "Big mode"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 6,
+      lineHeight: 1.6
+    }
+  }, "Large targets, fewer things per screen, and the primary actions as big cards, for driving Friday by hand. Automatic turns it on with hand tracking and off with it. Anything that sends, deletes or spends needs a held pinch or a spoken yes while it is on; approval cards are unchanged."), /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Big mode",
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginBottom: 10
+    }
+  }, [{
+    k: 'auto',
+    l: 'With hand tracking'
+  }, {
+    k: 'on',
+    l: 'Always'
+  }, {
+    k: 'off',
+    l: 'Never'
+  }].map(o => /*#__PURE__*/React.createElement("button", {
+    key: o.k,
+    type: "button",
+    role: "radio",
+    "aria-checked": (s && s.big_mode || 'auto') === o.k,
+    className: `settings-btn ${(s && s.big_mode || 'auto') === o.k ? 'active' : ''}`,
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      if (typeof window !== 'undefined' && window.FridayHandCursor) window.FridayHandCursor.setBigMode(o.k);
+      save({
+        big_mode: o.k
+      });
+    }
+  }, o.l))), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11.5,
       color: 'var(--st-dim)',
