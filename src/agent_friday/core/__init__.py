@@ -2744,6 +2744,16 @@ DEFAULT_SETTINGS = {
         "enabled": True,
         "min_tokens_to_compress": 1000,  # skip compression below this payload size
     },
+    # ── Display reserve (services/hardware_profile.display_reserve_floor_mib) ──
+    # "adaptive": the desktop is granted its measured idle VRAM draw plus
+    # 512 MiB, never under 1 GiB on Windows, once the Arbiter has taken an idle
+    # baseline; unmeasured machines keep the fixed 2,560 MiB. "fixed" pins the
+    # old constant everywhere. The breach handler is unchanged in both modes.
+    "display_reserve_mode": "adaptive",
+    # When the brain's seat answers /health, send its canonical prompt head as
+    # a one-token request so the first real turn after a restart reads only
+    # itself (services/seat_warm). False leaves the first turn to pay the read.
+    "seat_prefix_warm": True,
     # ── Model Routing (Ollama local inference) ──
     # mode: cloud_only (default, no change), smart, local_preferred, local_only
     "model_routing": {
