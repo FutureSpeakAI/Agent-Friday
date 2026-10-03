@@ -44,7 +44,7 @@ def _with_federation(monkeypatch, on):
 
 def test_default_settings_hold_the_federation_off():
     from agent_friday.core import DEFAULT_SETTINGS
-    assert DEFAULT_SETTINGS["held_features"] == {"federation": False}
+    assert DEFAULT_SETTINGS["held_features"] == {"federation": False, "trust_agents": False}
 
 
 def test_reader_is_off_by_default_and_on_only_when_set():
@@ -269,3 +269,19 @@ def test_ui_both_files_gate_the_same_surfaces():
             "fridaySetHeldFeatures(")}
     a, b = gates(INDEX), gates(APP)
     assert a == b and all(a.values()), (a, b)
+
+
+@UI_FILES
+def test_the_finance_wallet_is_held_with_the_economy(path):
+    """The Finance workspace drew the economy wallet whatever the switch said."""
+    html = path.read_text(encoding="utf-8")
+    for line in html.splitlines():
+        if "'quickref'" in line.replace('"', "'") and "'overview'" in line.replace('"', "'"):
+            assert "'wallet'" not in line.split("]")[0], \
+                "the wallet view is listed unconditionally in the Finance tabs"
+            assert "fridayHeldOn('federation')" in line
+    for m in re.finditer(r"view\s*===\s*'wallet'", html):
+        before = html[max(0, m.start() - 60):m.start()]
+        assert "fridayHeldOn('federation')" in before, \
+            "the Finance wallet panel renders without the held-features check"
+

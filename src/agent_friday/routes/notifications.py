@@ -42,15 +42,25 @@ def get_notifications():
     """Return queued + computed notifications, newest first."""
     queued = _notif_engine.list_notifications(limit=80) if _notif_engine else []
     derived = _compute_derived_notifications()
+    if _notif_engine:
+        # A computed card the owner dismissed stays dismissed, like any other.
+        derived = [dict(n, job=n.get('id'), group='job:' + str(n.get('id')))
+                   for n in derived]
+        derived = _notif_engine.visible(derived)
     # Normalize legacy keys: queued items already have id/title/body/priority/etc
     items = queued + derived
-    unread = sum(1 for n in items if not n.get('read') and not n.get('dismissed'))
+    # The badge: unread cards that need the owner; FYI rolls into the digest.
+    unread = sum(1 for n in items if not n.get('read') and not n.get('dismissed')
+                 and n.get('tier', 'needs_you') != 'fyi')
     return jsonify({
         "status": "ok",
         "items": items,
         "notifications": items,  # legacy alias
         "count": len(items),
         "unread": unread,
+        # The same cards grouped by job, then kind, then source; memory
+        # proposals are one group to keep or skip item by item.
+        "groups": _notif_engine.groups(limit=80) if _notif_engine else [],
     })
 
 
@@ -74,7 +84,48 @@ def dismiss_notification():
     if not _notif_engine or not nid:
         return jsonify({"status": "noop"})
     ok = _notif_engine.dismiss(str(nid))
+    if not ok and str(nid).startswith('derived-'):
+        # A computed card is not stored; its dismissal is, keyed by its id.
+        card = next((n for n in _compute_derived_notifications()
+                     if n.get('id') == str(nid)), None)
+        if card is not None:
+            ok = _notif_engine.dismiss_job(dict(card, job=card.get('id')))
     return jsonify({"status": "ok" if ok else "not_found", "id": nid})
+
+
+@notif_bp.route('/api/notifications/clear-group', methods=['POST'])
+def clear_notification_group():
+    """Clear one group of cards. A pending approval in it stays."""
+    data = request.get_json(silent=True) or {}
+    group = str(data.get('group') or '')
+    if not _notif_engine or not group:
+        return jsonify({"status": "error", "message": "group is required"}), 400
+    return jsonify({"status": "ok", "cleared": _notif_engine.dismiss_group(group)})
+
+
+@notif_bp.route('/api/notifications/mute', methods=['POST'])
+def mute_notification_kind():
+    """Mute (or with {"unmute": true} unmute) a kind of notification. An
+    approval cannot be muted. Reversible in Settings > Notifications."""
+    data = request.get_json(silent=True) or {}
+    kind, source = str(data.get('kind') or ''), str(data.get('source') or '')
+    if not _notif_engine or not kind:
+        return jsonify({"status": "error", "message": "kind is required"}), 400
+    from agent_friday.services import notification_policy as _pol
+    if _pol.is_approval(kind) and not data.get('unmute'):
+        return jsonify({"status": "refused",
+                        "message": "Approvals always reach you and cannot be muted."})
+    mutes = (_notif_engine.unmute(kind, source) if data.get('unmute')
+             else _notif_engine.mute(kind, source))
+    return jsonify({"status": "ok", "mutes": mutes})
+
+
+@notif_bp.route('/api/notifications/clear-all', methods=['POST'])
+def clear_all_notifications():
+    """Clear the tray; pending approvals stay."""
+    if not _notif_engine:
+        return jsonify({"status": "noop"})
+    return jsonify({"status": "ok", "cleared": _notif_engine.dismiss_all()})
 
 
 @notif_bp.route('/api/notifications/push', methods=['POST'])

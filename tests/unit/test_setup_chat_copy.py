@@ -45,6 +45,17 @@ def test_the_research_promise_says_it_is_seed_only_and_reviewed():
     assert "untrusted" in text and "approved it line by line" in text
 
 
+def test_the_research_promise_says_what_leaves_this_computer():
+    """Transparency: the searches always go out, and page text goes to the
+    cloud model when that reader was chosen. The copy never claims that
+    everything stays on this computer."""
+    text = copy.RESEARCH_ASK.lower()
+    assert "everything stays on this computer" not in text
+    assert "web search service" in text
+    assert "cloud model" in text and "sent" in text
+    assert "read here" in text
+
+
 def test_the_connect_copy_never_asks_for_a_password_in_chat():
     assert "never ask for a password here" in copy.CONNECT
 

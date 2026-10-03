@@ -127,7 +127,7 @@ Skills are portable. They can be imported from a folder, a `.zip`, a legacy `.ya
 
 ## SkillOpt Engine
 
-The SkillOpt engine (`skillopt_engine.py`) tracks skill performance over time and evolves skills through an optimization loop inspired by Andrej Karpathy's SkillOpt work.
+The SkillOpt engine (`skillopt_engine.py`) tracks skill performance over time and evolves skills through an optimization loop inspired by Microsoft's SkillOpt (github.com/microsoft/SkillOpt).
 
 ### Architecture
 
@@ -189,7 +189,7 @@ If improvement is < 0.5%, the candidate is accepted as a marginal pass (within n
 
 ## Auto-Research Loop
 
-Inspired by Andrej Karpathy's work on self-improving AI systems.
+Inspired by Microsoft's SkillOpt research on self-improving skills (github.com/microsoft/SkillOpt, MIT).
 
 ### Trigger Conditions
 

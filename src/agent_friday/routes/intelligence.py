@@ -584,9 +584,32 @@ def local_models_catalog(profile: dict, sizes: dict) -> dict:
             "summary": _verdict_summary(v),
         }
 
-    text = [row(m["id"], "text", _pretty_model(m["id"]),
-               m["id"] in sizes, download_gib=m.get("gib"))
-           for m in mp.BRAIN_MODELS]
+    # The shortlist first: models Friday can download itself (a GGUF by URL,
+    # verified by sha256, served by the engine the record names). Bonsai 2 is
+    # Friday's standard and leads the list; it is labelled, never pre-ticked.
+    text = []
+    try:
+        from agent_friday.services import model_shortlist as sl
+        from agent_friday.services import model_store as ms
+        store_ids = set(ms.available().keys())
+        for m in sl.entries():
+            f = sl.file_entry(m["id"]) or {}
+            r = row(m["id"], "text", m.get("label"), m["id"] in store_ids,
+                    download_gib=round((f.get("bytes") or 0) / 2 ** 30, 2),
+                    licence=m.get("licence"))
+            r.update({"fetch": "download", "friday_standard": bool(m.get("friday_standard")),
+                      "publisher": m.get("publisher"), "runtime": m.get("runtime"),
+                      "packings": [{"packing": x.get("packing"),
+                                    "gib": round((x.get("bytes") or 0) / 2 ** 30, 2),
+                                    "default": bool(x.get("default"))}
+                                   for x in m.get("files") or []],
+                      "generation_note": m.get("generation_note")})
+            text.append(r)
+    except Exception:
+        pass
+    text += [row(m["id"], "text", _pretty_model(m["id"]),
+                m["id"] in sizes, download_gib=m.get("gib"))
+            for m in mp.BRAIN_MODELS]
 
     image = [row(mid, "image", spec.get("label") or spec.get("short"),
                 li.is_installed(mid), licence=spec.get("licence"))

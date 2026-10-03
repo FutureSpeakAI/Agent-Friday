@@ -3,11 +3,13 @@
     GET    /api/podcasts                   episodes, newest first (?routine, ?run_id, ?limit)
     POST   /api/podcasts                   {sources, title, length, mode, instructions, voice}
     GET    /api/podcasts/for-run           ?routine=&run_id= -> that run's episode or null
+    POST   /api/podcasts/listen            {routine, run_id} -> that run's episode, queued to be spoken now (local voice)
     GET    /api/podcasts/voices            installed local voices and the podcast settings
     POST   /api/podcasts/now-playing       {episode_id, t, playing} from the desktop player
     GET    /api/podcasts/<id>              one episode: chapters, cited lines, sources, check
     GET    /api/podcasts/<id>/audio        the audio (range requests supported)
     GET    /api/podcasts/<id>/captions.vtt timed captions
+    GET    /api/podcasts/<id>/transcript.txt the transcript, checks and linked sources
     GET    /api/podcasts/<id>/charts/<f>   a data-mode chart (SVG)
     POST   /api/podcasts/<id>/cancel
     POST   /api/podcasts/<id>/retry        a failed episode, from the stage it failed at
@@ -89,11 +91,39 @@ def podcasts_for_run():
     return jsonify({"status": "ok", "episode": pe.summary(ep) if ep else None})
 
 
+@podcasts_bp.route('/api/podcasts/listen', methods=['POST'])
+def podcasts_listen():
+    """A News run's episode to listen to now, spoken on this computer."""
+    data = request.get_json(silent=True) or {}
+    try:
+        ep = pe.listen(str(data.get("routine") or ""), str(data.get("run_id") or ""))
+    except Exception as e:
+        return api_error(e, "Couldn't start the episode", status=400)
+    return jsonify(public_result({"status": "ok", "episode": pe.summary(ep)}, "Couldn't start the episode"))
+
+
 @podcasts_bp.route('/api/podcasts/voices', methods=['GET'])
 def podcasts_voices():
     from agent_friday.services import podcast_render
     return jsonify({"status": "ok", "installed": podcast_render.installed_voices(),
                     "settings": pe.settings()})
+
+
+@podcasts_bp.route('/api/podcasts/formats', methods=['GET'])
+def podcasts_formats():
+    """Who is on each show (solo or two hosts), with the recommended format."""
+    return jsonify({"status": "ok", "formats": pe.formats()})
+
+
+@podcasts_bp.route('/api/podcasts/formats', methods=['PUT'])
+def podcasts_set_format():
+    data = request.get_json(silent=True) or {}
+    try:
+        routine = str(data.get("routine") or "")
+        pe.set_format("" if routine == "any" else routine, str(data.get("format") or ""))
+    except pe.PodcastRefused as e:
+        return api_error(e, "Couldn't change the show's format", status=400)
+    return jsonify({"status": "ok", "formats": pe.formats()})
 
 
 @podcasts_bp.route('/api/podcasts/now-playing', methods=['POST'])
@@ -144,7 +174,18 @@ def podcasts_audio(eid):
 
 @podcasts_bp.route('/api/podcasts/<eid>/captions.vtt', methods=['GET'])
 def podcasts_captions(eid):
-    return _file(eid, "captions.vtt", "text/vtt")
+    return _file(eid, "captions.vtt", "text/vtt; charset=utf-8")
+
+
+@podcasts_bp.route('/api/podcasts/<eid>/transcript.txt', methods=['GET'])
+def podcasts_transcript(eid):
+    """The transcript with its checks and linked sources, as a UTF-8 text file."""
+    from flask import Response
+    ep = pe.load(eid)
+    if not ep or not ep.get("lines"):
+        return jsonify({"status": "error", "message": "No transcript yet."}), 404
+    return Response(pe.transcript_bytes(ep), mimetype="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="%s-transcript.txt"' % eid})
 
 
 @podcasts_bp.route('/api/podcasts/<eid>/charts/<name>', methods=['GET'])
