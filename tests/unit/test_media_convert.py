@@ -103,8 +103,11 @@ def test_every_cell_is_offered_only_with_its_backend_and_the_menu_reads_the_same
     assert caps["by_group"]["audio"]["transcript"]["available"] is False and "recogniser" in caps["by_group"]["audio"]["transcript"]["reason"]
     r = mi.turn_into(home["by"]["friday-audio-note.wav"]["id"], "transcript")
     assert r["status"] == "unavailable" and "recogniser" in r["message"]
-    # the page builds the menu from by_group and names what is missing
-    assert "const caps = (window.__mediaTurns && window.__mediaTurns.by_group && window.__mediaTurns.by_group[turnGroup(c.kind)]) || {};" in JS
+    # the page builds the menu from by_group and names what is missing; turnGroup
+    # takes the card as well as its kind, because turn_capabilities has a
+    # "document" group beside "text" for the one kind "doc"
+    assert "const caps = (window.__mediaTurns && window.__mediaTurns.by_group && window.__mediaTurns.by_group[turnGroup(c.kind, c)]) || {};" in JS
+    assert "const allTurns = TURN_INTO[turnGroup(c.kind, c)] || [];" in JS, "the menu and the map are read through the same group"
     assert "'data-missing-turns'" in JS
     for word in ("['transcript', 'a transcript'", "['captions', 'captions'", "['wavevideo', 'a video'", "['soundtrack', 'the sound track'", "['still', 'a still'", "['narration', 'narration'", "['deckvideo', 'a narrated video'", "['ocr', 'the words in it'"):
         assert word in JS, word + " is in the menu"

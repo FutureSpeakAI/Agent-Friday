@@ -112,7 +112,8 @@ def test_every_card_shows_a_preview_and_its_details_and_the_provenance_renders()
 
 
 def test_the_quick_look_opens_on_space_and_walks_with_the_arrows():
-    assert "function QuickLook({ c, cards, setSel, onClose, onOpen })" in JS
+    # q is the words that were searched: the quick look starts the player where they were said
+    assert "function QuickLook({ c, cards, setSel, onClose, onOpen, q })" in JS
     assert "if (e.key === ' ' && selCard) { e.preventDefault(); setQl(true); return; }" in JS
     assert "e.key === 'ArrowRight' && i < ids.length - 1" in JS and "e.key === 'ArrowLeft' && i > 0" in JS
     assert "sandbox: ''" in JS, "a page opens in a sandboxed frame"
