@@ -152,7 +152,55 @@ def list_file_grants():
         "denies": _fg.list_denies(),
         "pending_reapproval": _fg.list_pending_reapproval(),
         "status": _fg.status(),
+        # What Settings > Privacy > File access lists: every grant with a plain
+        # status, plus quarantined and unverified lines (which grant nothing),
+        # and the open "re-grant it?" questions.
+        "rows": _fg.access_rows(),
+        "notices": _fg.notices(),
     })
+
+
+@control_bp.route('/api/privacy/file-grants/notices/<notice_id>/regrant', methods=['POST'])
+@login_required
+def regrant_file_grant_notice(notice_id):
+    """Offer an old permission again as a NEW approval card. Grants nothing.
+
+    The old line is never re-signed. The card is the normal file-access card:
+    approving it on screen creates a fresh grant and sets the old line aside."""
+    from agent_friday.services import file_grant_requests as _fgr
+    out = _fgr.regrant_notice(notice_id, requested_by="owner")
+    if not out.get("ok"):
+        return jsonify({"status": "error",
+                        "message": out.get("error") or "That cannot be re-granted."}), 400
+    _log_context("file_grant_regrant_requested",
+                 {"notice": notice_id, "approval_id": out.get("approval_id")})
+    return jsonify({"status": "ok", "approval_id": out.get("approval_id"),
+                    "items": out.get("items")})
+
+
+@control_bp.route('/api/privacy/file-grants/start-fresh', methods=['POST'])
+@login_required
+def start_file_access_fresh():
+    """Raise the "Start file access fresh" approval card. Changes nothing itself:
+    the ledger moves aside only when the owner approves that card on screen."""
+    from agent_friday.services import file_grant_requests as _fgr
+    out = _fgr.request_fresh_start(requested_by="owner")
+    _log_context("file_access_fresh_start_requested", {"approval_id": out.get("approval_id")})
+    return jsonify({"status": "ok", "approval_id": out.get("approval_id")})
+
+
+@control_bp.route('/api/privacy/file-grants/notices/<notice_id>/dismiss', methods=['POST'])
+@login_required
+def dismiss_file_grant_notice(notice_id):
+    """Close a notice without re-granting. It moves no line, re-signs nothing
+    and lifts no suspension: it only stops the question being asked."""
+    from agent_friday.services import file_grants as _fg
+    out = _fg.resolve_notice(notice_id, "dismissed", confirmed_by="owner:ui")
+    if not out.get("ok"):
+        return jsonify({"status": "error",
+                        "message": out.get("error") or "That notice is not open."}), 400
+    _log_context("file_grant_notice_dismissed", {"notice": notice_id})
+    return jsonify({"status": "ok", "notice": out})
 
 
 @control_bp.route('/api/privacy/file-grants/scan', methods=['GET'])
@@ -248,7 +296,9 @@ def reattest_file_grant():
 
     Never automatic: a line is re-signed only when the user names himself as the
     confirmer. The original is quarantined verbatim rather than rewritten, so a
-    tampered line can never be laundered into a valid one.
+    tampered line can never be laundered into a valid one. Only a line that a
+    retired signing key vouches for is re-signed; a line that matches no key
+    this ledger has used is refused (400), because what it says is unknown.
     """
     from agent_friday.services import file_grants as _fg
     data = request.get_json(silent=True) or {}
@@ -272,7 +322,9 @@ def dismiss_file_grant():
     """Quarantine an unverified line WITHOUT re-signing it.
 
     For a line the user does not recognise or no longer wants. The grant does not
-    come back; the line is kept for inspection.
+    come back; the line is kept for inspection. Unless a known key vouches that
+    the line was a grant, grants stay suspended after it moves: it may have been
+    a deny.
     """
     from agent_friday.services import file_grants as _fg
     data = request.get_json(silent=True) or {}

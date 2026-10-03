@@ -686,6 +686,10 @@ _VOICE_SHARED_TOOLS = (
     "call_mode",
     # The tray: "what's in my notifications", "clear them", "mute these".
     "notifications",
+    # File access: "what files can the cloud see?", "let it read my CV",
+    # "take that away", "re-grant the old one". Asking raises the same card
+    # the panel's approvals use; the yes is a click on screen, never a word.
+    "file_access",
 )
 
 

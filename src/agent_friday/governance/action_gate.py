@@ -233,6 +233,10 @@ INTERNAL_TOOLS = frozenset({
     "hologram_window",
     # Standing back for a call: the owner's own machine and own setting.
     "call_mode",
+    # File permissions: lists them, removes one (only ever narrowing what
+    # leaves), or raises an approval card. It creates no grant: that happens
+    # only when the owner approves the card on screen.
+    "file_access",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
     # find_free_slots reads free/busy only. release_holds deletes nothing but

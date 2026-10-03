@@ -94,6 +94,18 @@ TERMINAL_STATUSES = ("auto_approved", "approved", "denied", "expired", "blocked"
 
 DEFAULT_EXPIRES_SECONDS = 86400  # 24h — Q3 default gate expiry
 
+#: Card kinds that only the owner's click on screen may APPROVE, mapped to the
+#: `decided_by` values that click carries. Any other surface (voice, a text
+#: message, a chat reply, Friday herself) may still decline one; its approve is
+#: refused and the card stays pending. A file-access card is one: a spoken
+#: "yes" must never be what lets a file's contents reach a cloud model. The
+#: bare "owner" label is NOT a click: it is the default of every in-process
+#: caller, so only the explicit "owner:ui" the page sends counts.
+SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
+    "file_grant_request": frozenset({"owner:ui"}),
+    "file_access_reset": frozenset({"owner:ui"}),
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Q3 POLICY TABLE
@@ -605,6 +617,9 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if rec is None:
             return None, False
         if rec.get("status") != "pending":
+            return dict(rec), False
+        screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
+        if decision == "approve" and screen_only is not None and decided_by not in screen_only:
             return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()

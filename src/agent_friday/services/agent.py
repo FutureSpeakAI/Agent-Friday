@@ -8264,6 +8264,16 @@ try:
 except Exception as _cte:  # never let optional deps break the agent import
     print(f"  [CALL] registration skipped: {_cte}")
 
+# File access (file_access): list, ask for, remove and re-grant file
+# permissions. Asking raises one approval card; the grant itself is created only
+# when the owner approves that card on screen. Shared into voice. See
+# services/file_grant_requests.py.
+try:
+    from agent_friday.services import file_grant_requests as _file_grant_requests
+    _file_grant_requests.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _fge:  # never let optional deps break the agent import
+    print(f"  [FILE ACCESS] registration skipped: {_fge}")
+
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
 # hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.
