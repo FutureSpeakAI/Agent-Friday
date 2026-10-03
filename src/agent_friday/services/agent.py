@@ -1003,6 +1003,12 @@ def _tool_read_file(inp):
     # stays withheld. Registration must happen on the exact string that will
     # actually reach the gate, which is only known after the scrub hook runs.
     _log_context("file_read", {"path": str(p), "bytes": len(text)})
+    # Key material pasted inside an otherwise ordinary file never reaches the
+    # model, and it is withheld from the WHOLE text before it is paged: a page
+    # that starts or ends inside a key block (or a one-line window the model
+    # asks for by offset) would otherwise show a fragment no redactor can
+    # recognise on its own. Offsets therefore count lines of the withheld text.
+    text = _cred.redact_secrets(text)
     # One page per call, and a partial page says where the next one starts.
     # The ceiling here is the executor's, so a file read is never cut twice.
     page, info = _tool_output.window_lines(text, offset=(inp or {}).get("offset") or 1,
@@ -1010,7 +1016,7 @@ def _tool_read_file(inp):
     out = page + _tool_output.page_note(info)
     if result.truncated:
         out += "\n...[extraction truncated to the first pages of this document]"
-    # Key material pasted inside an otherwise ordinary file never reaches the model.
+    # And once more on what goes out (the page note and the truncation line).
     return _cred.redact_secrets(out)
 
 
