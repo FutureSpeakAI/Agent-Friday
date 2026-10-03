@@ -66,7 +66,12 @@ def _titles(q, **kw):
 
 def test_titles_and_prompts_are_searchable_at_once(home):
     assert mi._FTS is True, "sqlite here has FTS5"
-    assert _titles("ferry") == ["The ferry story"] or "The ferry story" in _titles("ferry")
+    # Until the preview pass has read a file, its card carries the title its
+    # filename gives it; the first heading and the page's <title> arrive with
+    # the pass (the next test), as test_media_index and test_media_organize
+    # also hold.
+    found = mi.query(view="all", q="ferry")["cards"]
+    assert sorted((c["kind"], c["title"]) for c in found) == [("article", "Ferry"), ("page", "Ferry")], "the article is found by its words, the page by its title"
     assert _titles("blue hour") == ["Harbour"], "the prompt is searched"
     assert _titles("cov") == [], "a slide's words are not known until the preview pass has read them"
 
