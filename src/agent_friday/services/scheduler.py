@@ -161,6 +161,14 @@ def _resolve_local_seat():
     Anthropic. `describe_dispatch` verifies against the server itself, so a
     name only comes back when something is genuinely answering to it.
     """
+    # A seat started outside the Arbiter is adopted and published before the
+    # question is asked, so a local-only job never waits for a seat that answers.
+    # First, so no other import failing below can skip it.
+    try:
+        from agent_friday.services import residency_arbiter as _ra
+        _ra.adopt_live_seats()
+    except Exception:
+        pass
     try:
         from agent_friday.services import local_seats
         from agent_friday.services.local_call import describe_dispatch
