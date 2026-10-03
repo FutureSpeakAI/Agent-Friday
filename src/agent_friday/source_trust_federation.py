@@ -228,11 +228,24 @@ _OBS_TYPE_MAP = {
 
 
 def _apply_to_graph(attestation, friday_dir=None):
+    """Fold a verified peer observation into local scores -- only once the
+    agent kind is enabled and the peer is an attested agent entity. Until
+    then the observation goes to the quarantine lane at weight zero: an
+    attestation verifies against the key it declares itself, so any key
+    holder who could reach the import would otherwise move the owner's
+    source trust (trust/agents.py)."""
     from agent_friday.source_trust_graph import get_source_trust_graph
     obs = attestation.get("observation") or {}
     otype = obs.get("type", "")
     dim, signal = _OBS_TYPE_MAP.get(otype, (None, None))
     if dim is None:
+        return
+    try:
+        from agent_friday.trust import agents as _agents
+        if not _agents.enabled() or _agents.read(str(attestation.get("agent_id") or "")) is None:
+            _agents.quarantine(attestation)
+            return
+    except Exception:
         return
     g = get_source_trust_graph(friday_dir=friday_dir)
     g.observe(

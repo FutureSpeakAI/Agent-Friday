@@ -17,6 +17,9 @@ from __future__ import annotations
 from flask import jsonify, request
 
 FEDERATION = "federation"
+#: The trust graph's agent kind: held behind FEDERATION and this second
+#: switch, so Federation coming back does not by itself start scoring agents.
+TRUST_AGENTS = "trust_agents"
 NOT_ENABLED_MESSAGE = "Not enabled in this release."
 
 # Route prefixes the federation switch holds, and the exact paths inside them

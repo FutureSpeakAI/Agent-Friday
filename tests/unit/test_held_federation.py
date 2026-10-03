@@ -44,7 +44,7 @@ def _with_federation(monkeypatch, on):
 
 def test_default_settings_hold_the_federation_off():
     from agent_friday.core import DEFAULT_SETTINGS
-    assert DEFAULT_SETTINGS["held_features"] == {"federation": False}
+    assert DEFAULT_SETTINGS["held_features"] == {"federation": False, "trust_agents": False}
 
 
 def test_reader_is_off_by_default_and_on_only_when_set():
