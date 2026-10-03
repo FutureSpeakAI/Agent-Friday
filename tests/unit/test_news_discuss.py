@@ -158,3 +158,19 @@ def test_discuss_is_a_voice_tool():
     assert "discuss_story" in voice_engine._VOICE_SHARED_TOOLS
     assert nd.TOOLS[0]["name"] == "discuss_story" and nd.RINGS["discuss_story"] == 1
     assert set(nd.TOOLS[0]["input_schema"]["properties"]["mode"]["enum"]) == set(nd.MODES)
+
+
+def test_the_news_tools_travel_with_news_not_the_always_on_catalogue():
+    """The always-on catalogue has a latency budget (test_latency_budget).
+    discuss_story and media_diet_note are News's own: sent with a turn in News
+    or loaded by name, and runnable anywhere they are named (voice included)."""
+    from agent_friday.services import agent, voice_engine
+    always_on = {t["name"] for t in agent.CLAUDE_TOOLS if isinstance(t, dict)}
+    news = {t["name"] for t in agent.WORKSPACE_TOOLS.get("news", [])}
+    for n in ("discuss_story", "media_diet_note"):
+        assert n not in always_on, n + " is in the always-on catalogue"
+        assert n in news, n + " is not one of News's own tools"
+        assert n in agent.CLAUDE_TOOL_HANDLERS and n in agent.TOOL_RINGS, n + " must run wherever it is named"
+        assert n in {t["name"] for t in agent.tools_for_workspace("news")}
+        assert n in voice_engine._VOICE_SHARED_TOOLS
+

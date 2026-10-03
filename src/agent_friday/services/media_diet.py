@@ -270,10 +270,15 @@ HANDLERS = {"media_diet_note": tool_media_diet_note}
 RINGS = {"media_diet_note": 1}
 
 
-def register(claude_tools, handlers, rings):
-    known = {t["name"] for t in claude_tools}
+def register(claude_tools, handlers, rings, workspace_tools=None):
+    """Handlers and rings are always registered, so the tool runs wherever it
+    is named (voice and the loader resolve it by name). Its schema is News's
+    own when a workspace registry is given: it travels with a turn in News or
+    on request, outside the always-on catalogue and its latency budget."""
+    target = workspace_tools.setdefault("news", []) if workspace_tools is not None else claude_tools
+    known = {t["name"] for t in target}
     for t in TOOLS:
         if t["name"] not in known:
-            claude_tools.append(t)
+            target.append(t)
     handlers.update(HANDLERS)
     rings.update(RINGS)
