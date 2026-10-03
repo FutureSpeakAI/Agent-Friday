@@ -77,12 +77,26 @@ def test_every_tool_appears_in_the_index(tools):
     assert listed == {t["name"] for t in tools}
 
 
-def test_the_loader_description_names_every_tool(tools):
-    """The index IS the loader's description - the model cannot ask for what
-    it was never told about."""
+def test_the_loader_description_is_the_same_whatever_is_registered(tools):
+    """A description that listed every tool grew with each connector and
+    changed whenever one connected, rewriting the opening of every prompt.
+    The description is a constant; the tools are found by query or name."""
     d = TC.loader_spec(tools)["description"]
+    assert d == TC.loader_spec([])["description"] == TC.LOADER_DESCRIPTION
     for t in tools:
-        assert t["name"] in d
+        assert t["name"] not in d
+    props = TC.loader_spec(tools)["input_schema"]["properties"]
+    assert "query" in props and "names" in props
+
+
+def test_a_query_finds_the_tool_the_description_describes(tools):
+    tools = tools + [_tool("draft_email", "Compose an email to send to someone."),
+                     _tool("query_calendar", "Today's and tomorrow's calendar events.")]
+    new, msg = TC.expand(tools, [], TC.opening_set(tools), query="send an email")
+    assert [t["name"] for t in new][:1] == ["draft_email"]
+    assert 'Loaded for "send an email"' in msg and "draft_email" in msg
+    new, msg = TC.expand(tools, [], [], query="qzxv nothing")
+    assert new == [] and "Nothing matched" in msg
 
 
 # ── asking for things ───────────────────────────────────────────────────────

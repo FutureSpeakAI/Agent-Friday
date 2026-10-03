@@ -31,6 +31,7 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 | annotated-doc | 0.0.4 | installed by installer (recommended/memory/judgment) | MIT | Copyright (c) 2025 Sebastián Ramírez |
 | annotated-types | 0.7.0 | installed by installer (core/recommended/memory) | MIT | Copyright (c) 2022 the contributors |
 | anthropic | 0.104.1 | installed by installer (core) | MIT | Copyright 2023 Anthropic, PBC. |
+| pi (earendil-works/pi) — ideas and small algorithms only: the tool-search ranking in `services/tool_catalogue.py`, the per-tool truncation rules in `services/tool_output.py` and the argument repair-then-validate order in `services/tool_args.py`; no pi code is vendored or installed | source read 2026-10-02 | adapted into the application source | MIT | Copyright (c) 2025 Mario Zechner |
 | anyio | 4.13.0 | installed by installer (core/recommended/memory/judgment) | MIT | Copyright (c) 2018 Alex Grönholm |
 | ast-grep-cli | 0.42.3 | installed by installer (recommended) | MIT | Copyright (c) 2022 Herrington Darkholme |
 | attrs | 26.1.0 | installed by installer (recommended/memory) | MIT | Copyright (c) 2015 Hynek Schlawack and the attrs contributors |

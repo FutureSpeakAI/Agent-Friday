@@ -763,8 +763,8 @@ def _voice_tool_surface_note():
     """The authoritative list of tools the LIVE VOICE session actually has.
 
     The voice system prompt is assembled from ``_get_friday_system_prompt()`` --
-    the TEXT-CHAT prompt -- whose "== AVAILABLE TOOLS ==" section advertises the
-    full text toolbox (read_file, write_file, run_command, browse_web,
+    the TEXT-CHAT prompt -- whose generated "== TOOLS ==" section advertises the
+    text toolbox (read_file, write_file, run_command, browse_web,
     search_email, draft_email, open_path, learn_skill, query_trust_graph,
     get_briefing, the OS-control ring ...). The Live API is handed only
     ``_VOICE_LIVE_TOOLS``. Every tool named in the prompt but absent from that
@@ -797,7 +797,7 @@ def _voice_tool_surface_note():
         )
     return (
         header +
-        "This is a LIVE VOICE session. The tool list in the '== AVAILABLE TOOLS =='\n"
+        "This is a LIVE VOICE session. The tool list in the '== TOOLS =='\n"
         "section above describes the TEXT CHAT surface and does NOT apply here.\n"
         "In voice you can call EXACTLY these " + str(len(names)) +
         " tools, and nothing else:\n"

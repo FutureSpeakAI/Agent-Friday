@@ -36,7 +36,9 @@ schema in full; see `enabled()` for why defaulting on is safe.
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 
 #: The tool the model calls to get real schemas.
 LOADER_NAME = "load_tools"
@@ -104,32 +106,44 @@ def index(tools: list) -> list:
     return out
 
 
-def loader_spec(tools: list) -> dict:
-    """The one tool that is always present: fetch schemas by name.
+LOADER_DESCRIPTION = (
+    "Find and load tools. Friday has many tools; only the few described in "
+    "full here are loaded. Give `query` (a few words about what you need, such "
+    "as \"send an email\", \"calendar\", \"github pull request\", \"play a song\") "
+    "to load the best matches, or `names` when you already know them. Their "
+    "schemas arrive before your next turn; then call them normally. Searching "
+    "is cheap: do it whenever the task needs something not already loaded, and "
+    "never say a tool does not exist without searching first."
+)
 
-    The catalogue lives in this tool's own description, so it costs nothing
-    extra on the wire - the model has to be told the tool exists anyway.
+
+def loader_spec(tools: list) -> dict:
+    """The one tool that is always present: find and load schemas.
+
+    Its description never lists the tools. A list grows with every connector
+    and changes whenever one connects, which rewrites the opening of every
+    prompt and empties the local seat's prompt cache. The description is a
+    constant; what is loadable is found by `query` (a ranked search over
+    every tool's name, description and parameters) or asked for by `names`.
+    `tools` is accepted for the callers that pass it; the spec does not
+    depend on it.
     """
-    lines = ["%s — %s" % (r["name"], r["summary"]) if r["summary"] else r["name"]
-             for r in index(tools)]
     return {
         "name": LOADER_NAME,
-        "description": (
-            "Load the full schemas for tools you want to use. Friday has many "
-            "tools; only a few are described in full above. Call this with the "
-            "names you need and their schemas arrive before your next turn, "
-            "then call them normally.\n\nAvailable tools:\n" + "\n".join(lines)
-        ),
+        "description": LOADER_DESCRIPTION,
         "input_schema": {
             "type": "object",
             "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What you need to do, in a few words. Loads the best-matching tools.",
+                },
                 "names": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Tool names to load, exactly as listed.",
+                    "description": "Exact tool names to load, when you know them.",
                 },
             },
-            "required": ["names"],
         },
     }
 
@@ -180,8 +194,72 @@ def opening_set(tools: list, pilot=None) -> list:
     return opening + [loader_spec(tools)]
 
 
-def expand(all_tools: list, names, already: list) -> tuple:
-    """Schemas for `names`, minus anything already sent.
+# ── Finding tools by query ───────────────────────────────────────────────────
+#
+# A small BM25 ranker over each tool's name (and the name with underscores
+# turned into spaces), its description and its parameter names and
+# descriptions. Adapted from pi's tool_search extension (earendil-works/pi,
+# MIT, Copyright (c) 2025 Mario Zechner; see THIRD_PARTY_LICENSES.md), which
+# ranks hidden tools the same way and returns 8 by default.
+
+SEARCH_RESULTS = 8
+_K1, _B = 1.2, 0.75
+_TOKEN = re.compile(r"[a-z0-9]+")
+
+
+def _tokens(text: str) -> list:
+    return _TOKEN.findall(str(text or "").lower())
+
+
+def _search_text(tool: dict) -> str:
+    fn = tool.get("function") or tool
+    name = str(fn.get("name") or "")
+    parts = [name, name.replace("_", " "), str(fn.get("description") or "")]
+    schema = fn.get("input_schema") or fn.get("parameters") or {}
+    for pname, spec in (schema.get("properties") or {}).items():
+        parts.append(str(pname).replace("_", " "))
+        if isinstance(spec, dict):
+            parts.append(str(spec.get("description") or ""))
+    return " ".join(parts)
+
+
+def search(tools: list, query: str, k: int = SEARCH_RESULTS) -> list:
+    """The `k` tools that best match `query`, best first; [] when none match."""
+    terms = _tokens(query)
+    if not terms or not tools:
+        return []
+    docs = [(t, _tokens(_search_text(t))) for t in tools if _name_of(t)]
+    if not docs:
+        return []
+    n = len(docs)
+    avg = sum(len(d) for _, d in docs) / n
+    df = {}
+    for _, d in docs:
+        for term in set(d):
+            df[term] = df.get(term, 0) + 1
+    scored = []
+    for tool, d in docs:
+        if not d:
+            continue
+        counts = {}
+        for term in d:
+            counts[term] = counts.get(term, 0) + 1
+        score = 0.0
+        for term in terms:
+            tf = counts.get(term)
+            if not tf:
+                continue
+            idf = math.log(1.0 + (n - df[term] + 0.5) / (df[term] + 0.5))
+            score += idf * (tf * (_K1 + 1)) / (tf + _K1 * (1 - _B + _B * len(d) / avg))
+        if score > 0:
+            scored.append((score, tool))
+    scored.sort(key=lambda x: -x[0])
+    return [t for _, t in scored[:max(1, int(k))]]
+
+
+def expand(all_tools: list, names, already: list, query: str = "",
+           k: int = SEARCH_RESULTS) -> tuple:
+    """Schemas for `names`, or the best matches for `query`, minus anything sent.
 
     Returns `(new_tools, message)`. The message is what the model reads, and it
     names what it did NOT get as well as what it did - a loader that silently
@@ -200,6 +278,7 @@ def expand(all_tools: list, names, already: list) -> tuple:
     except Exception:
         pass
     wanted = [str(n).strip() for n in (names or []) if str(n).strip()]
+    query = str(query or "").strip()
 
     new, dup, missing = [], [], []
     for n in wanted:
@@ -211,25 +290,85 @@ def expand(all_tools: list, names, already: list) -> tuple:
         else:
             missing.append(n)
 
+    found_by_query = []
+    if query:
+        pool = [t for t in by_name.values() if _name_of(t) != LOADER_NAME]
+        for t in search(pool, query, k=k):
+            n = _name_of(t)
+            if n in have:
+                continue
+            new.append(t)
+            found_by_query.append(t)
+            have.add(n)
+
     bits = []
-    if new:
+    if found_by_query:
+        bits.append("Loaded for \"%s\": %s. Their schemas are available now — call "
+                    "them directly." % (query, "; ".join(
+                        "%s — %s" % (_name_of(t), _summary_of(t)) if _summary_of(t)
+                        else _name_of(t) for t in found_by_query)))
+    elif query and not wanted:
+        bits.append("Nothing matched \"%s\". Try different words for what you need, "
+                    "or give exact names." % query)
+    named = [t for t in new if t not in found_by_query]
+    if named:
         bits.append("Loaded: %s. Their schemas are available now — call them "
-                    "directly." % ", ".join(_name_of(t) for t in new))
+                    "directly." % ", ".join(_name_of(t) for t in named))
     if dup:
         bits.append("Already loaded: %s." % ", ".join(dup))
     if missing:
         close = []
         for m in missing:
-            hit = [k for k in by_name if m.lower() in k.lower()
-                   or k.lower() in m.lower()]
+            hit = [k2 for k2 in by_name if m.lower() in k2.lower()
+                   or k2.lower() in m.lower()]
+            if not hit:
+                hit = [_name_of(t) for t in search(list(by_name.values()), m, k=3)]
             if hit:
                 close.append("%s (did you mean %s?)" % (m, ", ".join(hit[:3])))
             else:
                 close.append(m)
         bits.append("No such tool: %s." % "; ".join(close))
     if not bits:
-        bits.append("No tool names were given.")
+        bits.append("No tool names or query were given.")
     return new, " ".join(bits)
+
+
+# ── The prompt's own tool text, generated from the registry ──────────────────
+
+def prompt_block(tools: list, resident_names=None) -> str:
+    """The "tools you have" text of the system prompt, written from the tools.
+
+    One line per resident tool, taken from the tool's own description, plus
+    the loader and a fixed sentence about everything else. Nothing here is
+    typed by hand, so it cannot drift from the schemas the model is sent; and
+    it is byte-identical turn to turn, so the prompt prefix stays cacheable.
+    """
+    keep = tuple(resident_names) if resident_names is not None else ALWAYS_RESIDENT
+    by_name = {_name_of(t): t for t in (tools or [])}
+    lines = []
+    for n in keep:
+        t = by_name.get(n)
+        if t is None:
+            continue
+        s = _summary_of(t, limit=140)
+        lines.append("  • %s — %s" % (n, s) if s else "  • %s" % n)
+    lines.append("  • %s — Find and load any other tool, by `query` (what you need, in a few "
+                 "words) or by `names`; the schemas arrive before your next turn." % LOADER_NAME)
+    try:
+        from agent_friday.services.tool_output import describe_limits
+        limits = describe_limits()
+    except Exception:
+        limits = ""
+    rest = ("Everything else Friday can do — email and calendar, files and the desktop, "
+            "the wiki and knowledge graph, media, connectors, computer control — is one "
+            "%s call away. When a task needs something not loaded, search for it first; "
+            "never say a tool does not exist without searching." % LOADER_NAME)
+    if not enabled():
+        rest = ("Every tool is loaded in full this turn; the lines above are the ones "
+                "almost every turn reaches for.")
+    return ("== TOOLS ==\n"
+            "Act by calling a tool; only its returned result is real. Loaded from the start:\n"
+            + "\n".join(lines) + "\n" + rest + (" " + limits if limits else "") + "\n")
 
 
 def savings(tools: list, opening=None) -> dict:
