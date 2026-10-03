@@ -12015,6 +12015,16 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                                 "visually verified \u2014 say so rather than "
                                 "claiming it looks right]")
             tool_trace.append({"name": tname, "input": targs, "result": clip(result, 2000)})
+            # A local seat re-reads every result on every later round inside a
+            # small window, so it gets the result without formatting
+            # boilerplate; the data is unchanged and the trace keeps the
+            # original. A cloud seat gets the result exactly as returned.
+            if _compact_seat == "local":
+                try:
+                    from agent_friday.services.tool_result_compact import compact as _compact_result
+                    result = _compact_result(result)
+                except Exception:
+                    pass
             convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
 
     # Reached only when a tool loop really did spend its whole budget: a
