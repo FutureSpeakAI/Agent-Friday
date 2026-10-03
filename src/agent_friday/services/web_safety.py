@@ -173,7 +173,8 @@ def assert_safe(url: str) -> None:
         raise UnsafeURLError(f"refusing to fetch {url!r}: {why}")
 
 
-def safe_get(url: str, *, timeout: float = 15, headers: dict | None = None):
+def safe_get(url: str, *, timeout: float = 15, headers: dict | None = None,
+             stream: bool = False):
     """`requests.get` for a URL that came from untrusted content (a feed, a web
     page, model output), with `check_url` applied to the URL and to every
     redirect hop. Returns the final `requests.Response`; raises
@@ -188,7 +189,7 @@ def safe_get(url: str, *, timeout: float = 15, headers: dict | None = None):
     assert_safe(current)
     for _hop in range(MAX_REDIRECT_HOPS + 1):
         resp = requests.get(current, timeout=timeout, headers=headers or {},
-                            allow_redirects=False)
+                            allow_redirects=False, stream=stream)
         if resp.status_code not in (301, 302, 303, 307, 308):
             return resp
         loc = resp.headers.get("location") or ""
