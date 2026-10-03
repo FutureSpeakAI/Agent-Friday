@@ -8144,7 +8144,7 @@ except Exception as _mte:  # never let optional deps break the agent import
 # this computer. See services/podcast_tools.py.
 try:
     from agent_friday.services import podcast_tools as _podcast_tools
-    _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+    _podcast_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
     from agent_friday.services import media_diet as _media_diet
     _media_diet.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS, workspace_tools=WORKSPACE_TOOLS)
     from agent_friday.services import news_discuss as _news_discuss

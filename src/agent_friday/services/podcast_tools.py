@@ -363,10 +363,19 @@ HANDLERS = {
 }
 
 
-def register(claude_tools, handlers, rings):
+#: Tools whose schemas are News's own (agent.WORKSPACE_TOOLS["news"]): sent
+#: with a turn in News or loaded by name, outside the always-on catalogue and
+#: its latency budget. Their handlers and rings are registered like the rest,
+#: so voice and the loader run them wherever they are named.
+NEWS_ONLY = ("podcast_format",)
+
+
+def register(claude_tools, handlers, rings, workspace_tools=None):
     known = {t["name"] for t in claude_tools}
+    news = workspace_tools.setdefault("news", []) if workspace_tools is not None else None
     for t in TOOLS:
-        if t["name"] not in known:
-            claude_tools.append(t)
+        target = news if (news is not None and t["name"] in NEWS_ONLY) else claude_tools
+        if t["name"] not in known and t["name"] not in {x["name"] for x in target}:
+            target.append(t)
     handlers.update(HANDLERS)
     rings.update(RINGS)

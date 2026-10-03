@@ -215,6 +215,15 @@ def test_the_format_tool_is_voice_callable_and_governed():
     assert podcast_tools.RINGS["podcast_format"] == 1
 
 
+def test_the_format_tool_travels_with_news_not_the_always_on_catalogue():
+    """The always-on catalogue has a latency budget (test_latency_budget); the
+    format setting is News's own, and still runs wherever it is named."""
+    from agent_friday.services import agent
+    assert "podcast_format" not in {t["name"] for t in agent.CLAUDE_TOOLS if isinstance(t, dict)}
+    assert "podcast_format" in {t["name"] for t in agent.WORKSPACE_TOOLS.get("news", [])}
+    assert "podcast_format" in agent.CLAUDE_TOOL_HANDLERS and "podcast_format" in agent.TOOL_RINGS
+
+
 def test_a_two_host_episode_keeps_both_hosts(home, monkeypatch, speaker):
     pe.create([{"kind": "text", "text": "x", "title": "Notes"}])
     ep = pe.list_episodes()[0]
