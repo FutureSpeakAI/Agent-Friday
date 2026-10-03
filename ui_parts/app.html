@@ -15970,9 +15970,9 @@ function TtsEngineRows({s,save,mc}){
         {[['af_heart','Heart \u2014 US English (female)'],['af_bella','Bella \u2014 US English (female)'],['af_nicole','Nicole \u2014 US English (female)'],['am_michael','Michael \u2014 US English (male)'],['am_puck','Puck \u2014 US English (male)'],['bf_emma','Emma \u2014 UK English (female)'],['bm_george','George \u2014 UK English (male)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
       </select>
     </StRow>}
-    {sel==='kokoro'&&<StRow label="Allow Kokoro on CPU" desc={("Off by design. Kokoro synthesizes at roughly realtime on CPU, which is too slow to hold a conversation, so " + fridayName() + " refuses instead of quietly being slow. Turning this on accepts that trade.")}>
+    {sel==='kokoro'&&<StRow label="Allow Kokoro on CPU" desc={("On by default. When the graphics card is busy, " + fridayName() + " keeps her Kokoro voice on the processor, which is slower, and says so. Off means Piper speaks instead whenever the card is busy.")}>
       <button className={`settings-btn ${s.local_voice_kokoro_allow_cpu?'active':''}`} style={{fontSize:12,padding:'7px 14px'}}
-        onClick={()=>save({local_voice_kokoro_allow_cpu:!s.local_voice_kokoro_allow_cpu})}>{s.local_voice_kokoro_allow_cpu?'Allowed (slow)':'Refused (default)'}</button>
+        onClick={()=>save({local_voice_kokoro_allow_cpu:!s.local_voice_kokoro_allow_cpu})}>{s.local_voice_kokoro_allow_cpu?'Allowed (default)':'Off (Piper speaks)'}</button>
     </StRow>}
     <StRow label="Serving now" desc="What is actually loaded, read from the running engine \u2014 not what is selected above.">
       <div style={{fontSize:12,lineHeight:1.5}}>

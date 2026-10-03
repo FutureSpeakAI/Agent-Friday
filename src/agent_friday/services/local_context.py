@@ -226,7 +226,7 @@ def local_answer(question: str, seat: Optional[str] = None) -> tuple:
         seat, _note = pick_local_seat()
     if not seat:
         return "", None
-    system, meta = _build_voice_system_prompt(settings)
+    system, meta = _build_voice_system_prompt(settings, seat=seat)
     user = _voice_user_message(RELAY_NOTE + question, settings, volatile=meta.get("volatile"))
     text, _trace = _generate_agent(
         [{"role": "user", "content": user}], system=system, model=seat, max_tokens=600,

@@ -58,6 +58,18 @@ PLAYBACK_BYTES_PER_S = PLAYBACK_RATE * 2
 #: Refractory period between talk-over barges (the Live bridge's value).
 BARGE_COOLDOWN_S = 1.5
 
+# The first-token deadline (same ethos as the cloud path's 5 s slow-warn and
+# 20 s hard limit). Spoken lines are fixed text, never an exception string.
+#: Said once when the mind has not produced a word by the filler deadline.
+FILLER_LINE = "Hang on."
+#: Said when the mind has produced nothing by the abort deadline; the
+#: generation is cancelled and the receipt records ``deadline_hit``.
+DEADLINE_LINE = ("That's taking my local mind too long, so I've stopped it. "
+                 "Ask me again, or switch me to cloud voice.")
+#: Said when the mind fails outright (a dead or refused seat).
+MIND_FAILED_LINE = ("My local voice brain didn't answer that. Give me a second, "
+                    "or switch me to cloud voice.")
+
 STATES = ("idle", "proving", "ready", "refused", "listening", "hearing",
           "thinking", "acting", "speaking")
 
@@ -226,7 +238,9 @@ class VoiceSession:
                  gpu_queue=None, session_id=None, chunk_s: float = 2.0,
                  rejoin_s: float = 8.0, clock=time.monotonic,
                  barge_detector=None, rms=None,
-                 barge_cooldown_s: float = BARGE_COOLDOWN_S):
+                 barge_cooldown_s: float = BARGE_COOLDOWN_S,
+                 first_token_filler_s: float | None = None,
+                 first_token_abort_s: float | None = None):
         self.send = send
         self.ear = ear
         self.mouth = mouth
@@ -277,6 +291,10 @@ class VoiceSession:
         # playback gate on `interrupted`, so a later frame of the turn would
         # play.
         self._audio_lock = threading.Lock()
+        # First-token deadline: a filler line, then an honest abort. None or
+        # 0 turns each off.
+        self.first_token_filler_s = float(first_token_filler_s or 0) or None
+        self.first_token_abort_s = float(first_token_abort_s or 0) or None
 
     # ── frames ───────────────────────────────────────────────────────────
 
@@ -478,6 +496,7 @@ class VoiceSession:
                 t["aborted"] = True
                 t["barge"] = source
                 t["cancel"].set()
+                t["mind_cancel"].set()
             self.send({"type": "interrupted"})
         # The client flushes its player on `interrupted`; the window closes
         # with it and reopens on the next turn's first audio.
@@ -510,6 +529,38 @@ class VoiceSession:
         with turn["cv"]:
             turn["cv"].wait_for(lambda: done() or turn["cancel"].is_set())
 
+    def _await_mind(self, turn: dict, streamed: dict, receipt) -> None:
+        """Block until the mind returns, a barge lands, or the first-token
+        deadline aborts the turn.
+
+        Until the first token: at ``first_token_filler_s`` one filler line is
+        spoken (so the owner hears she is working), and at
+        ``first_token_abort_s`` the generation is cancelled (``mind_cancel``,
+        which closes the seat's stream) and ``deadline_hit`` becomes "abort".
+        Once a token has arrived the turn waits for the mind without a limit:
+        a reply that is speaking is not stuck.
+        """
+        filler_s, abort_s = self.first_token_filler_s, self.first_token_abort_s
+        with turn["cv"]:
+            while not (turn["mind_done"] or turn["cancel"].is_set()):
+                if streamed["first"] or not (filler_s or abort_s):
+                    turn["cv"].wait(timeout=0.5)
+                    continue
+                elapsed = self._clock() - turn["t0"]
+                if abort_s and elapsed >= abort_s:
+                    turn["deadline_hit"] = "abort"
+                    turn["mind_cancel"].set()
+                    break
+                if filler_s and elapsed >= filler_s and turn["deadline_hit"] is None:
+                    turn["deadline_hit"] = "filler"
+                    self._enqueue_clause(turn, FILLER_LINE, receipt)
+                nxt = [t for t in (filler_s if turn["deadline_hit"] is None else None,
+                                   abort_s) if t]
+                wait = (min(nxt) - elapsed) if nxt else 0.5
+                turn["cv"].wait(timeout=max(0.02, min(wait, 0.5)))
+        if receipt is not None and turn["deadline_hit"]:
+            receipt.set(deadline_hit=turn["deadline_hit"])
+
     def _clause_done(self, turn: dict) -> None:
         with turn["cv"]:
             turn["pending"] -= 1
@@ -522,6 +573,9 @@ class VoiceSession:
         with self._turn_lock:
             self._turn_seq += 1
             turn = {"id": f"{self.session_id}-{self._turn_seq}", "cancel": threading.Event(),
+                    # Stops the MIND only (the first-token deadline); `cancel`
+                    # (a barge) stops the mind and the mouth.
+                    "mind_cancel": threading.Event(), "deadline_hit": None,
                     "aborted": False, "barge": "", "clauses": 0, "first_clause_ms": None,
                     "first_audio_ms": None, "t0": self._clock(), "spoken": [],
                     "audio_bytes": 0, "fallback_used": False,
@@ -545,7 +599,7 @@ class VoiceSession:
             streamed = {"chars": 0, "first": False}
 
             def on_delta(piece: str):
-                if turn["cancel"].is_set():
+                if turn["cancel"].is_set() or turn["mind_cancel"].is_set():
                     return
                 if not streamed["first"]:
                     streamed["first"] = True
@@ -563,7 +617,8 @@ class VoiceSession:
 
             def think():
                 try:
-                    mind["reply"] = self.generate(user_text, on_delta, turn["cancel"]) or ""
+                    mind["reply"] = self.generate(user_text, on_delta,
+                                                  turn["mind_cancel"]) or ""
                 except Exception as e:
                     mind["error"] = e
                 finally:
@@ -574,13 +629,20 @@ class VoiceSession:
             threading.Thread(target=think, daemon=True,
                              name=f"voice-mind-{turn['id']}").start()
             # A barge does not wait for the mind: the turn ends here and the
-            # mind, already told to stop, finishes on its own thread.
-            self._await(turn, lambda: turn["mind_done"])
+            # mind, already told to stop, finishes on its own thread. Neither
+            # does a missed first-token deadline.
+            self._await_mind(turn, streamed, receipt)
             reply = ""
-            if not turn["cancel"].is_set():
+            if not turn["cancel"].is_set() and turn["deadline_hit"] == "abort":
+                reply = DEADLINE_LINE
+                log.warning("voice turn %s: no first token in %.0f s; stopped",
+                            turn["id"], self.first_token_abort_s or 0)
+                self._enqueue_clause(turn, DEADLINE_LINE, receipt)
+            elif not turn["cancel"].is_set():
                 if mind["error"] is not None:
                     e = mind["error"]
-                    mind["reply"] = f"Sorry, I hit an error thinking that through: {e}"
+                    # The owner hears a plain sentence, never an exception.
+                    mind["reply"] = MIND_FAILED_LINE
                     log.error("brain call failed: %s: %s", type(e).__name__, e)
                     if receipt is not None:
                         receipt.set(brain_failed=True)
@@ -627,6 +689,7 @@ class VoiceSession:
             rec = {"type": "turn_receipt", "turn_id": turn["id"],
                    "barge": turn["barge"] or None,
                    "prefill_tokens": prefill, "clauses": turn["clauses"],
+                   "deadline_hit": turn["deadline_hit"],
                    "first_clause_ms": turn["first_clause_ms"],
                    "first_audio_ms": turn["first_audio_ms"],
                    "audio_bytes_out": turn["audio_bytes"],
@@ -757,6 +820,7 @@ class VoiceSession:
         t = self._current_turn
         if t is not None:
             t["cancel"].set()
+            t["mind_cancel"].set()
             self._wake(t)
         if self.turn_log:
             try:

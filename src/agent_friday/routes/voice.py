@@ -433,6 +433,17 @@ def _compose_final_voice_error(attempt_errors, key_source):
 _VOICE_REPLY_TOKENS_DEFAULT = 300
 
 
+def _num_setting(settings, key, default) -> float:
+    """A non-negative number from settings; a bad value reads as `default`.
+    0 is honoured (it means "off" for every key that uses this)."""
+    try:
+        v = (settings or {}).get(key, default)
+        v = float(default if v is None else v)
+        return v if v >= 0 else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def _voice_reply_cap(settings=None) -> int:
     """How many tokens a single spoken turn may generate.
 
@@ -1222,15 +1233,81 @@ def _local_brain_ready() -> bool:
     and a name it will not give is the honest answer that local voice cannot
     run right now.
     """
+    return _local_brain_state()["ready"]
+
+
+def _local_brain_state() -> dict:
+    """``{"ready", "seat", "why"}`` for the local brain seat.
+
+    A NAME IS NOT A SEAT. ``local_seats.resolve`` returns the configured
+    default when the inventory is empty (right for routing, which must not
+    rewrite the owner's choice on a blip), so "resolved" alone said ready
+    while the seat was parked for build hours, crashed or unreachable. Ready
+    means the resolved seat has a live endpoint in ``local_seats.serving()``.
+    ``why`` says parked (build hours) and missing apart, because they need
+    different things from the owner: waiting, or starting a model.
+    """
+    seat = None
     try:
         from agent_friday.services import local_seats as _seats
         # "brain" is the ROLE token _ROLE_TO_CAPABILITY maps to the
         # "reasoning" capability -- passing "reasoning" itself isn't a
         # valid role, so _configured() returned None immediately and this
         # never consulted the user's actual orchestrator model.
-        return bool(_seats.resolve("brain"))
+        seat = _seats.resolve("brain")
+        if seat and seat in (_seats.serving() or {}):
+            return {"ready": True, "seat": seat, "why": ""}
     except Exception:
-        return False
+        pass
+    parked = False
+    try:
+        from agent_friday.services import build_hours
+        parked = bool(build_hours.is_active())
+    except Exception:
+        parked = False
+    if not seat:
+        why = "no local model is set up to answer"
+    elif parked:
+        why = (f"{seat} is parked for build hours ({_build_hours_end()}); "
+               f"local voice can answer once it is back")
+    else:
+        why = f"{seat} is not running right now"
+    return {"ready": False, "seat": seat, "why": why}
+
+
+def _build_hours_end() -> str:
+    try:
+        from agent_friday.services import build_hours
+        w = build_hours.window()
+        if w:
+            return "until %s" % w[1].strftime("%H:%M")
+    except Exception:
+        pass
+    return "until the window ends"
+
+
+def _served_by(ear, mouth, seat) -> dict:
+    """The serving identities a local session states (``served_by`` frame).
+
+    Read from the running engines' own ``describe()``, never from settings,
+    so the line names what is actually answering: ``mouth`` is
+    ``"kokoro@cpu"`` when the card refused Kokoro, and ``degraded`` says why.
+    """
+    def _d(eng):
+        try:
+            return eng.describe() or {}
+        except Exception:
+            return {}
+    e, m = _d(ear), _d(mouth)
+    return {
+        "ear": f"{e.get('engine') or '?'}@{e.get('device') or '?'}",
+        "ear_model": e.get("model"),
+        "mind": f"{seat}@local" if seat else "none",
+        "brain": f"{seat}@local" if seat else "none",
+        "mouth": f"{m.get('engine') or '?'}@{m.get('device') or '?'}",
+        "voice": m.get("voice"),
+        "degraded": m.get("degraded") or "",
+    }
 
 
 #: Tool names that put the user's OWN context in reach of the voice model.
@@ -1413,6 +1490,7 @@ def _resolve_voice_engine(settings=None):
         cloud_ok = False
     tier = "cpu"
     eng = None
+    _brain_state = {"ready": None, "seat": None, "why": ""}
     try:
         eng = get_local_voice_engine()
         local_ok = eng.available()
@@ -1423,11 +1501,13 @@ def _resolve_voice_engine(settings=None):
         # to think with. Local voice needs ASR *and* a resident brain *and* TTS;
         # anything less is not a local voice session, it is a microphone.
         models_ready = eng.models_ready() if local_ok else False
-        if models_ready and not _local_brain_ready():
-            models_ready = False
-            _log.warning("local voice: ASR and TTS are ready but no local brain "
-                         "seat is resident — refusing the local engine rather "
-                         "than starting a session that cannot answer")
+        if models_ready:
+            _brain_state = _local_brain_state()
+            if not _brain_state["ready"]:
+                models_ready = False
+                _log.warning("local voice: ASR and TTS are ready but %s — refusing "
+                             "the local engine rather than starting a session "
+                             "that cannot answer", _brain_state["why"])
     except Exception:
         local_ok = False
         models_ready = False
@@ -1446,6 +1526,9 @@ def _resolve_voice_engine(settings=None):
             return {"engine": "local", "ws_url": "/ws/voice-local",
                     "label": label, "tier": tier,
                     "models_ready": models_ready,
+                    # Parked (build hours) and missing say different things.
+                    "brain_ready": _brain_state["ready"],
+                    "brain_why": _brain_state["why"],
                     "context_reach": _voice_context_reach("local")}
         if engine == "gemini":
             return {"engine": "gemini", "ws_url": "/ws/live",
@@ -1528,7 +1611,7 @@ def _resolve_voice_engine(settings=None):
         "cloud provider in Settings if you would rather use one.")}
 
 
-def _build_voice_system_prompt(settings=None, description=None):
+def _build_voice_system_prompt(settings=None, description=None, seat=None):
     """The LOCAL voice system prompt, assembled prefix-stable (clean-sheet §4.4).
 
     Order: (1) the manifest's self-description — changes only when a proof
@@ -1543,12 +1626,18 @@ def _build_voice_system_prompt(settings=None, description=None):
     served, not a stand-in.
     """
     settings = settings if settings is not None else (_load_settings() or {})
-    try:
-        from agent_friday.routing.model_router import provider_family
-        _brain_family = provider_family(settings.get("orchestrator_model"))
-    except Exception:
-        _brain_family = None
-    _is_local_brain = _brain_family == "local"
+    # WHO ANSWERS IS THE SEAT, NOT THE ORCHESTRATOR SETTING. A local voice
+    # turn is pinned to the local seat (session_ctx pin_to_seat), so its
+    # provider is that seat's. Reading `orchestrator_model` (a cloud id on
+    # most machines) labelled a local turn "cloud", and the vault's
+    # zero-trust check then judged an on-device model as a cloud one.
+    if seat is None:
+        try:
+            from agent_friday.services import local_seats as _seats
+            seat = _seats.resolve("brain")
+        except Exception:
+            seat = None
+    _is_local_brain = bool(seat)
     _prov = "local" if _is_local_brain else "cloud"
     _vault_control = None if _is_local_brain else (
         _get_vault_control() if _vault_local_only() else None)
@@ -1633,7 +1722,7 @@ def _build_voice_system_prompt(settings=None, description=None):
         volatile.replace(ACTION_PERMISSION_POLICY, ""), source="voice volatile context")
     return (seal_system_prompt(voice_prefix + full_ctx, "local voice prompt"),
             {"is_local_brain": _is_local_brain, "provider": _prov,
-             "volatile": volatile})
+             "seat": seat, "volatile": volatile})
 
 
 def _voice_user_message(user_text, settings=None, volatile=None):
@@ -1685,7 +1774,8 @@ def _warm_seat_prefix() -> dict:
                 system=system_prompt, model=_brain, max_tokens=1,
                 temperature=settings.get("temperature"),
                 session_ctx={"authenticated": True, "provider": _pmeta["provider"],
-                             "is_voice": True, "prefix_warm": True},
+                             "is_voice": True, "prefix_warm": True,
+                             "pin_to_seat": True},
                 workspace=settings.get("active_workspace") or "",
             )
         finally:
@@ -2354,8 +2444,11 @@ if sock is not None:
         try:
             _send({"type": "status", "text": "starting local voice"})
             ear = _vw.held("ear") or _vw.build_ear(_sel["ear"], progress=_prog)
+            # The mouth degrades (GPU -> CPU Kokoro -> Piper) and never raises
+            # GpuRefused: a session is not refused for where its voice runs.
             mouth = _vw.held("mouth") or _vw.build_mouth(_sel["mouth"], progress=_prog)
         except _vw.GpuRefused as _ge:
+            # Only the ear can land here (its `required` policy).
             from agent_friday.services import reasoning_trace as _rt_v
             _rt_v.set_reason("local voice refused by the GPU: " + str(_ge.message))
             _send({"type": "error", "error": _ge.code, "detail": _ge.message})
@@ -2400,15 +2493,18 @@ if sock is not None:
 
         # ── Mind: the agentic pipeline on the resident seat, streamed, under
         # the prefix-stable prompt (§4.4). ──
-        system_prompt, _pmeta = _build_voice_system_prompt(settings)
-        _prov = _pmeta["provider"]
         _brain = None
         try:
             from agent_friday.services import local_seats as _seats
             _brain = _seats.resolve("brain")
         except Exception:
             pass
+        system_prompt, _pmeta = _build_voice_system_prompt(settings, seat=_brain)
+        _prov = _pmeta["provider"]
         _timings = {}
+        # What is serving, stated once at open (and again by later frames
+        # when something degrades). The owner always sees which model answers.
+        _send({"type": "served_by", **_served_by(ear, mouth, _brain)})
 
         def _generate(user_text, on_delta, cancel):
             from agent_friday.services.model_router import TIMINGS_SINK, TURN_CANCEL
@@ -2437,6 +2533,9 @@ if sock is not None:
                                      "provider": _prov,
                                      "is_voice": True,
                                      "surface": "voice-local",
+                                     # The local mind or an honest failure,
+                                     # never a cloud leg answering for it.
+                                     "pin_to_seat": True,
                                      "owner_text": str(user_text or "")[:4000]},
                         workspace=settings.get("active_workspace") or "",
                         on_text_delta=on_delta,
@@ -2471,7 +2570,13 @@ if sock is not None:
                             contract=_msnap.get("contract") or {},
                             gpu_queue=_vw.gpu_queue(), session_id=_vsession,
                             barge_detector=_local_talk_over_detector(settings),
-                            rms=_quick_rms)
+                            rms=_quick_rms,
+                            # First-token deadline: a filler line, then an
+                            # honest abort at the voice tool hard limit.
+                            first_token_filler_s=_num_setting(
+                                settings, "voice_first_token_filler_s", 6),
+                            first_token_abort_s=_num_setting(
+                                settings, "voice_tool_hard_limit_s", 20))
         sess.conversation_id = _open_cid[0]
         _sub = lambda snap: _send({"type": "manifest", **snap})  # noqa: E731
         _manifest.subscribe(_sub)

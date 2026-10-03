@@ -17,7 +17,7 @@ from agent_friday.services.model_catalog import _tts_engines
 @pytest.mark.parametrize("key, default", [
     ("local_voice_tts_engine", "piper"),
     ("local_voice_kokoro_voice", "af_heart"),
-    ("local_voice_kokoro_allow_cpu", False),
+    ("local_voice_kokoro_allow_cpu", True),
     # clean-sheet §8.1 B: per-stage GPU policy + idle unload
     ("voice_ear_gpu", "if_free"),
     ("voice_mouth_gpu", "if_free"),
@@ -173,7 +173,8 @@ def test_gpu_policy_enums_reject_out_of_range_values(payload):
 
 def test_gpu_policy_is_read_and_enforced_by_the_manifest(monkeypatch):
     """The dead-settings rule: the control ships with the code that reads it.
-    `voice_mouth_gpu: required` must REFUSE a CPU mouth, not merely persist."""
+    `voice_mouth_gpu: required` must be read: a CPU mouth under it is proven
+    with the reason stated (a session is never refused for its mouth)."""
     from agent_friday.services import voice_manifest as vm
     monkeypatch.setattr(vm, "_settings", lambda: {"local_voice_tts_engine": "piper",
                                                    "voice_mouth_gpu": "required",
@@ -187,4 +188,6 @@ def test_gpu_policy_is_read_and_enforced_by_the_manifest(monkeypatch):
                         lambda sel, text, prog: (b"\x00\x01" * 24000,
                                                  {"engine": "piper", "device": "cpu"}))
     m.prove("mouth")
-    assert m.snapshot_stage("mouth")["proof"]["code"] == "local_voice_gpu_refused"
+    st = m.snapshot_stage("mouth")
+    assert st["proof"]["state"] == "proven"
+    assert "required the GPU" in st["reason"]

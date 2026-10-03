@@ -558,6 +558,9 @@ class EarEngine:
 class MouthEngine:
     name = "?"
     device = "?"
+    #: Why this engine is serving instead of the selected one ("" when it is
+    #: the selection). Set by build_mouth; shown in the session's status.
+    degraded = ""
 
     def synthesize_stream(self, text: str, cancel: threading.Event | None = None):
         raise NotImplementedError
@@ -636,7 +639,8 @@ class PiperMouth(MouthEngine):
             yield pcm[off:off + step]
 
     def describe(self) -> dict:
-        return {"engine": "piper", "device": "cpu", "model": self.voice, "voice": self.voice}
+        return {"engine": "piper", "device": "cpu", "model": self.voice, "voice": self.voice,
+                "degraded": self.degraded}
 
 
 class KokoroCpuMouth(MouthEngine):
@@ -662,7 +666,7 @@ class KokoroCpuMouth(MouthEngine):
 
     def describe(self) -> dict:
         return {"engine": "kokoro", "device": self.device, "model": "kokoro-82M",
-                "voice": self.voice}
+                "voice": self.voice, "degraded": self.degraded}
 
 
 class WorkerMouth(MouthEngine):
@@ -679,6 +683,7 @@ class WorkerMouth(MouthEngine):
         d = self.worker.describe()
         d["engine"] = self.name
         d.setdefault("model", "kokoro-82M")
+        d["degraded"] = self.degraded
         return d
 
     def close(self) -> None:
@@ -794,12 +799,21 @@ def build_ear(selection: dict, progress=None) -> EarEngine:
 
 
 def build_mouth(selection: dict, progress=None) -> MouthEngine:
-    """The mouth for `selection`. Kokoro on the GPU when leased; Kokoro on the
-    CPU only by the explicit opt-in; Piper is the floor."""
-    policy = str(selection.get("device_policy") or "if_free")
+    """The mouth for `selection`. Kokoro on the GPU when leased, else Kokoro
+    on the CPU (unless the owner turned that off), else Piper as the floor.
+
+    The mouth NEVER refuses a session: under every GPU policy, `required`
+    included, a refused or crashed GPU worker degrades to the next engine and
+    says so (a notice, and ``degraded`` on the returned engine). A voice that
+    cannot get the card still speaks; a session refused for its mouth cannot
+    speak at all, which is the worse failure. Raises only when no engine at
+    all can load.
+    """
+    policy = str(selection.get("device_policy") or "preferred")
     engine = str(selection.get("engine") or "piper")
     voice = str(selection.get("voice") or ("af_heart" if engine == "kokoro" else "en_US-amy-medium"))
     cur = held("mouth")
+    degraded = ""
     if engine == "kokoro":
         if policy != "never":
             if isinstance(cur, WorkerMouth) and getattr(cur, "voice", None) == voice:
@@ -810,39 +824,46 @@ def build_mouth(selection: dict, progress=None) -> MouthEngine:
                 w.start(progress=progress)
                 eng = WorkerMouth(w)
                 eng.voice = voice
+                eng.degraded = ""
                 _hold("mouth", eng)
                 return eng
             except GpuRefused as e:
-                if policy == "required":
-                    raise
+                degraded = e.message
                 _notice(e.code, e.message)
             except Exception as e:  # noqa: BLE001
-                if policy == "required":
-                    raise GpuRefused("voice_worker_died",
-                                     f"Friday's voice engine could not start on the "
-                                     f"GPU ({type(e).__name__}: {str(e)[:120]}).")
-                _notice("voice_worker_died",
-                        f"Friday's voice engine crashed on the GPU "
-                        f"({type(e).__name__}); using the CPU.")
+                degraded = (f"Friday's voice engine crashed on the GPU "
+                            f"({type(e).__name__}); using the CPU.")
+                _notice("voice_worker_died", degraded)
         try:
             from agent_friday.core import _load_settings
-            allow_cpu = bool((_load_settings() or {}).get("local_voice_kokoro_allow_cpu"))
+            allow_cpu = bool((_load_settings() or {}).get("local_voice_kokoro_allow_cpu", True))
         except Exception:
-            allow_cpu = False
+            allow_cpu = True
         if allow_cpu:
             if isinstance(cur, KokoroCpuMouth) and cur.voice == voice:
+                cur.degraded = degraded
                 return cur
-            eng = KokoroCpuMouth(voice)
-            eng.load(progress=progress)
-            _hold("mouth", eng)
-            return eng
-        # Kokoro refused off the GPU and CPU is not opted in: Piper is the
-        # floor, and the manifest says "you chose kokoro; serving piper".
+            try:
+                eng = KokoroCpuMouth(voice)
+                eng.load(progress=progress)
+                eng.degraded = degraded
+                _hold("mouth", eng)
+                return eng
+            except Exception as e:  # noqa: BLE001
+                degraded = (f"Kokoro could not load on the CPU "
+                            f"({type(e).__name__}); Piper is speaking.")
+                _notice("local_voice_mouth_degraded", degraded)
+        elif not degraded:
+            degraded = "Kokoro on the CPU is turned off; Piper is speaking."
+        # Kokoro is not available here: Piper is the floor, and the manifest
+        # says "you chose kokoro; serving piper".
     piper_voice = voice if engine == "piper" else "en_US-amy-medium"
     if isinstance(cur, PiperMouth) and cur.voice == piper_voice:
+        cur.degraded = degraded
         return cur
     eng = PiperMouth(piper_voice)
     eng.load(progress=progress)
+    eng.degraded = degraded
     _hold("mouth", eng)
     return eng
 

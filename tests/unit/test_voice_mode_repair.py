@@ -115,7 +115,7 @@ def test_effective_tts_kokoro_refuses_without_cuda_and_says_so(eng, monkeypatch)
     e2 = eng.effective_tts({"local_voice_tts_engine": "kokoro",
                             "local_voice_kokoro_allow_cpu": True})
     assert e2["engine"] == "kokoro" and e2["device"] == "cpu"
-    assert "realtime" in e2["reason"]
+    assert "more slowly" in e2["reason"]
 
 
 def test_effective_tts_kokoro_not_importable_refuses(eng, monkeypatch):

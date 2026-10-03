@@ -444,6 +444,17 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     except Exception:
         pass
 
+    # A TURN PINNED TO ITS SEAT RUNS THERE OR FAILS. The local voice path
+    # promises the owner a local mind; a dead or busy seat must surface as an
+    # honest failure the session can speak, never as a cloud model quietly
+    # answering a "local" turn (the resilience ladder above would do exactly
+    # that). `model` is the seat; nothing else is tried.
+    _pinned = bool((session_ctx or {}).get("pin_to_seat"))
+    if _pinned:
+        if not model:
+            raise RuntimeError("this turn is pinned to a local seat and none is named")
+        attempts = [('local', _via_ollama, model)]
+
     errors = []
     for name, fn, use_model in attempts:
         # A turn its caller cancelled (a voice barge-in) is over. The next leg
@@ -480,6 +491,10 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             attribution.note_fallback(errors[-1])
         except Exception:
             pass
+    if _pinned:
+        _pilot_outcome(session_ctx, "error")
+        raise RuntimeError("the local seat %s could not answer (%s); nothing else was "
+                           "tried" % (model, "; ".join(errors[-1:]) or "no reply"))
     if vault_access:
         _pilot_outcome(session_ctx, "error")
         # Refuse rather than raise: the caller surfaces this as the reply, and

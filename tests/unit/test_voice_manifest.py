@@ -161,15 +161,16 @@ def test_effective_differs_from_selected_is_explained(manifest, monkeypatch):
     assert st["reason"] == "you chose kokoro; serving piper"
 
 
-def test_gpu_required_refuses_a_cpu_engine(monkeypatch, clock):
+def test_gpu_required_mouth_on_the_cpu_is_proven_with_its_reason(monkeypatch, clock):
+    """A mouth is never refused for where it runs (local voice spec P0)."""
     monkeypatch.setattr(vm, "_settings", lambda: {"local_voice_tts_engine": "kokoro",
                                                    "voice_mouth_gpu": "required"})
     m = vm.VoiceManifest(clock=lambda: clock["now"])
     _good_runners(monkeypatch, mouth_device="cpu")
     m.prove("mouth")
     st = m.snapshot_stage("mouth")
-    assert st["proof"]["state"] == "refused"
-    assert st["proof"]["code"] == "local_voice_gpu_refused"
+    assert st["proof"]["state"] == "proven"
+    assert "required the GPU" in st["reason"]
 
 
 # ── §3.3: the contract ───────────────────────────────────────────────────────

@@ -1334,8 +1334,8 @@ _VOICE_ENUMS = {
     "voice_engine": ("local", "local-gpu", "gemini", "auto"),
     "local_voice_tts_engine": ("piper", "kokoro"),
     # Clean-sheet §8.1: per-stage GPU policy, read by voice_manifest.
-    "voice_ear_gpu": ("never", "if_free", "required"),
-    "voice_mouth_gpu": ("never", "if_free", "required"),
+    "voice_ear_gpu": ("never", "preferred", "if_free", "required"),
+    "voice_mouth_gpu": ("never", "preferred", "if_free", "required"),
     # Not a voice key, but the same rule: an unknown value would silently
     # resolve to automatic, which is not what was written.
     "call_mode": ("automatic", "ask", "off"),

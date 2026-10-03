@@ -2198,6 +2198,9 @@ DEFAULT_SETTINGS = {
     # to the background. It subtracts no capability: the work continues and
     # reports back. 0 means no limit, which risks a silent conversation.
     "voice_tool_hard_limit_s": 20,
+    # Local voice: seconds without a first word before Friday says "Hang on."
+    # (the turn is stopped honestly at voice_tool_hard_limit_s). 0 = off.
+    "voice_first_token_filler_s": 6,
     # In "room" mode a spoken approval counts only when it names Friday
     # ("Friday, send it"), because voices are not told apart until Household
     # Identity lands. This is the ONE voice limit left ON by default, and it is
@@ -2253,7 +2256,7 @@ DEFAULT_SETTINGS = {
     # reverts on the next read (docs/decisions/2026-09-04-five-dead-settings.md).
     "local_voice_tts_engine": "piper",
     "local_voice_kokoro_voice": "af_heart",   # Kokoro voice id, used when engine=kokoro
-    "local_voice_kokoro_allow_cpu": False,    # let Kokoro run on CPU (slow; off by design)
+    "local_voice_kokoro_allow_cpu": True,     # Kokoro may run on the CPU when the card is busy (slower; the session says so) rather than Piper speaking
     # Tier-2 (NeMo GPU) models — used only when voice_engine resolves to the GPU
     # tier. Override the ASR id to a sibling (e.g. the English-only streaming
     # model) if desired; the TTS pair (FastPitch+HiFi-GAN) is fixed for v1.

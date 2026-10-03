@@ -584,7 +584,7 @@ def _tool_ask_friday(inp):
     if not seat:
         return ("Friday's local model is not loaded right now, so the user's "
                 "context cannot be reached from this session. Say so plainly.")
-    system, _meta = _build_voice_system_prompt(settings)
+    system, _meta = _build_voice_system_prompt(settings, seat=seat)
     # The relay note and the volatile context ride in the USER turn: the
     # seat's template re-prefills the whole prompt on any system-message
     # change, so the system text stays the one the

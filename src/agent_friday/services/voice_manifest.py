@@ -49,9 +49,13 @@ PROOF_LINE = "Friday is ready to speak with you right now."
 PROOF_WAV = Path(__file__).resolve().parent.parent / "resources" / "voice_proof.wav"
 PROOF_WORDS = ("friday", "time", "right", "now")
 
-#: GPU policy per stage (§8.1 B). ``required`` refuses rather than falling to
-#: the CPU; ``never`` keeps the card for the seat; ``if_free`` is the default.
-GPU_POLICIES = ("never", "if_free", "required")
+#: GPU policy per stage (§8.1 B). ``preferred`` (the default) uses the card
+#: when it fits and the CPU otherwise, and says which; ``if_free`` is its older
+#: name and behaves the same; ``never`` keeps the card for the seat;
+#: ``required`` refuses a CPU EAR, but a MOUTH under ``required`` degrades to
+#: the CPU with the reason shown: a session is never refused for its mouth.
+GPU_POLICIES = ("never", "preferred", "if_free", "required")
+_GPU_IF_IT_FITS = ("preferred", "if_free")
 
 
 def _now() -> float:
@@ -553,7 +557,7 @@ class VoiceManifest:
                                "GPU policy is 'required' for the ear and no GPU "
                                "engine is admitted in this phase.",
                                {"label": "Set GPU to 'if free'", "kind": "settings"})
-        if sel.get("device_policy") == "if_free" and effective.get("device") != "cuda":
+        if sel.get("device_policy") in _GPU_IF_IT_FITS and effective.get("device") != "cuda":
             reason = "you chose GPU if free; serving on the CPU"
         self._prove_ok("ear", effective, ms,
                        f"{len(pcm) / 2 / 16000:.1f} s of audio → {text!r}", reason)
@@ -570,16 +574,18 @@ class VoiceManifest:
                                f"The mouth returned {seconds:.2f} s of audio for a "
                                f"nine-word line; that is not speech.",
                                {"label": "Prove again", "kind": "retry"})
-        reason = ""
-        if sel.get("device_policy") == "required" and effective.get("device") != "cuda":
-            raise ProofRefused("local_voice_gpu_refused",
-                               "GPU policy is 'required' for the voice and it is "
-                               "serving on the CPU.",
-                               {"label": "Set GPU to 'if free'", "kind": "settings"})
+        # The mouth is never refused for where it runs: a voice on the CPU
+        # still speaks, and the reason says what was asked and what serves.
         if effective.get("engine") != sel.get("engine"):
             reason = f"you chose {sel.get('engine')}; serving {effective.get('engine')}"
-        elif sel.get("device_policy") == "if_free" and effective.get("device") != "cuda":
+        elif sel.get("device_policy") == "required" and effective.get("device") != "cuda":
+            reason = "you required the GPU and it was refused; serving on the CPU"
+        elif sel.get("device_policy") in _GPU_IF_IT_FITS and effective.get("device") != "cuda":
             reason = "you chose GPU if free; serving on the CPU"
+        else:
+            reason = ""
+        if effective.get("degraded"):
+            reason = (reason + " — " if reason else "") + str(effective["degraded"])
         self._prove_ok("mouth", effective, ms,
                        f"{seconds:.1f} s of audio from a {len(PROOF_LINE.split())}-word line",
                        reason)
