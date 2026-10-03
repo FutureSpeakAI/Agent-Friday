@@ -9,9 +9,14 @@ thread and the process grows without bound. Every in-process embedding call
 pruner, conversation memory) runs through run() instead, which executes it on
 a single thread that lives as long as the process: the teams are made once.
 
-The worker is a daemon and is started on first use, so importing this module
-costs nothing. A call made from the worker itself runs inline, so a job that
-reaches another routed call does not wait on itself.
+The worker is started on first use, so importing this module costs nothing.
+It is an executor thread, joined at interpreter exit, not a daemon. A call made
+from the worker itself runs inline, so a job that reaches another routed call
+does not wait on itself.
+
+Calls share one queue, so a caller that must answer in bounded time passes
+``_timeout``: past it the caller gets TimeoutError (and the job is dropped if
+it has not started), instead of waiting behind someone else's bulk encode.
 """
 from __future__ import annotations
 
@@ -54,15 +59,21 @@ def on_worker() -> bool:
     return _worker_ident is not None and threading.get_ident() == _worker_ident
 
 
-def run(fn, *args, **kwargs):
+def run(fn, *args, _timeout: float | None = None, **kwargs):
     """Run ``fn(*args, **kwargs)`` on the inference thread and return its result.
 
-    Blocks the caller until it finishes; its exception is re-raised in the
+    Blocks the caller until it finishes, or raises TimeoutError after
+    ``_timeout`` seconds when one is given; its exception is re-raised in the
     caller. Calls are served one at a time, in arrival order.
     """
     if on_worker():
         return _job(fn, args, kwargs)
-    return _get_executor().submit(_job, fn, args, kwargs).result()
+    fut = _get_executor().submit(_job, fn, args, kwargs)
+    try:
+        return fut.result(timeout=_timeout)
+    except TimeoutError:
+        fut.cancel()
+        raise
 
 
 def routed(cls):

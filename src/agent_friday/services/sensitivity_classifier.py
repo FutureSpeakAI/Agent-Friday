@@ -633,6 +633,11 @@ def _presidio_tier(text: str) -> int:
     return 0
 
 
+#: Longest a classification waits for the shared inference thread before
+#: it reports the semantic layer unavailable (which fails closed).
+EMBEDDING_TIMEOUT_S = 10.0
+
+
 def _embedding_tier(text: str) -> tuple[int, float]:
     """Layer 3: semantic similarity to sensitive exemplars.
 
@@ -645,8 +650,12 @@ def _embedding_tier(text: str) -> tuple[int, float]:
         import numpy as _np
         # On the inference thread: a model run on each caller's thread leaves
         # a native worker team behind per thread (services/inference_executor.py).
+        # Bounded: the inference thread is shared, and a classification that
+        # cannot finish in time is "unavailable" (-1), which holds the message
+        # as PRIVATE; it never waits forever and never passes it unclassified.
         from agent_friday.services.inference_executor import run as _infer
-        embed = _infer(embedder.encode, [text[:512]], normalize_embeddings=True)[0]
+        embed = _infer(embedder.encode, [text[:512]], normalize_embeddings=True,
+                       _timeout=EMBEDDING_TIMEOUT_S)[0]
         sims = (_EXEMPLAR_EMBEDS @ embed).tolist()
         max_sim = float(max(sims))
         if max_sim >= 0.65:

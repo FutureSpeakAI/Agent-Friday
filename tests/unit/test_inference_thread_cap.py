@@ -270,3 +270,53 @@ def test_executor_limits_the_pools_before_running_inference(monkeypatch):
                         lambda: seen.append(threading.get_ident()))
     worker = ie.run(threading.get_ident)
     assert seen and seen[-1] == worker
+
+
+def test_a_busy_inference_thread_makes_the_privacy_layer_unavailable_not_late(monkeypatch):
+    """The inference thread is shared. A classification stuck behind someone
+    else's bulk encode reports the semantic layer unavailable (-1, held as
+    PRIVATE) within its bound; it neither waits out the queue nor passes."""
+    import time
+    from agent_friday.services import inference_executor as ie
+    from agent_friday.services import sensitivity_classifier as sc
+
+    class _Model:
+        def encode(self, texts, normalize_embeddings=True):
+            return np.ones((len(texts), 4), dtype="float32") / 2.0
+
+    monkeypatch.setattr(sc, "_load_embedder", lambda: _Model())
+    monkeypatch.setattr(sc, "_EXEMPLAR_EMBEDS", np.ones((1, 4), dtype="float32") / 2.0)
+    monkeypatch.setattr(sc, "EMBEDDING_TIMEOUT_S", 0.2)
+    started = threading.Event()
+
+    def _bulk():
+        started.set()
+        time.sleep(1.5)
+    hog = threading.Thread(target=ie.run, args=(_bulk,), daemon=True)
+    hog.start()
+    assert started.wait(5)
+    t0 = time.monotonic()
+    tier, _ = sc._embedding_tier("a message to classify")
+    waited = time.monotonic() - t0
+    hog.join(5)
+    assert tier == -1, "a classification that cannot run in time is unavailable"
+    assert waited < 1.0, f"the classifier waited {waited:.2f}s behind another job"
+
+
+def test_run_raises_timeout_and_drops_a_job_that_never_started():
+    import time
+    from agent_friday.services import inference_executor as ie
+    started = threading.Event()
+
+    def _bulk():
+        started.set()
+        time.sleep(0.8)
+    hog = threading.Thread(target=ie.run, args=(_bulk,), daemon=True)
+    hog.start()
+    assert started.wait(5)
+    ran = []
+    with pytest.raises(TimeoutError):
+        ie.run(ran.append, 1, _timeout=0.1)
+    hog.join(5)
+    ie.run(lambda: None)              # the queue drains past the dropped job
+    assert ran == [], "a job dropped on timeout must not run later"
