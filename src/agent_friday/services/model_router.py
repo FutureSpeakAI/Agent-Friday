@@ -1135,6 +1135,20 @@ def announce_tool(name, args=None):
 #: prefix-cache acceptance, and it is measured, not assumed.
 TIMINGS_SINK = _contextvars.ContextVar("friday_timings_sink", default=None)
 
+#: The running turn's cancel flag (a `threading.Event`), same mechanism as
+#: DELTA_SINK. The local voice path sets it to the turn's barge event. Once it
+#: is set the transport stops reading the seat's stream and closes it (the
+#: closed connection is what makes llama-server stop generating), and the
+#: agent loops start no further round and act on nothing from the cut round.
+#: Unset, as it is for every other caller, it changes nothing.
+TURN_CANCEL = _contextvars.ContextVar("friday_turn_cancel", default=None)
+
+
+def turn_cancelled() -> bool:
+    """Has the caller cancelled the turn running in this context?"""
+    ev = TURN_CANCEL.get()
+    return bool(ev is not None and ev.is_set())
+
 AUTO_ROUTER_MODEL = "openrouter/auto"
 
 #: The cost-priority knob, in OpenRouter's own vocabulary. Their default is
@@ -1266,7 +1280,12 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
             getattr(resp, "encoding", "")).lower() in ("iso-8859-1", "latin-1", "latin_1"):
         resp.encoding = "utf-8"
 
+    _cancel = TURN_CANCEL.get()
+    cancelled = False
     for raw in resp.iter_lines(decode_unicode=True):
+        if _cancel is not None and _cancel.is_set():
+            cancelled = True
+            break
         if not raw:
             continue
         # OpenRouter sends ": OPENROUTER PROCESSING" keepalive comments while
@@ -1323,6 +1342,16 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
                     slot["function"]["name"] = fn["name"]
                 if fn.get("arguments"):
                     slot["function"]["arguments"] += fn["arguments"]
+
+    if cancelled:
+        try:
+            resp.close()
+        except Exception:
+            pass
+        # A tool call the stream was cut in the middle of is not a call the
+        # model made; the words before the cut are all this round said.
+        tool_calls = {}
+        finish_reason = "cancelled"
 
     message = {"role": "assistant", "content": "".join(content_parts)}
     if reasoning_parts:

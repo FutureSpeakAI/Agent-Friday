@@ -312,6 +312,39 @@ def _quick_rms(pcm):
     return int((total / max(1, count)) ** 0.5)
 
 
+#: The interruption modes that turn talk-over off on the local path
+#: (Settings → Voice → Interrupting Friday: "Esc only"). Escape stops Friday
+#: in every mode.
+_NO_TALK_OVER_MODES = ("no-barge", "no_barge", "nobarge", "speaker-safe",
+                       "speaker_safe", "none", "off")
+
+
+def _local_talk_over_detector(settings):
+    """The local voice path's talk-over detector, or None when the owner chose
+    no interruption.
+
+    The local path has no model-side barge-in, so the echo-aware detector the
+    Live bridge uses is the only one: the same grace window
+    (``voice_barge_grace_ms``) and its own sustain
+    (``voice_local_barge_sustain_ms``), sized to two of the ~85 ms mic frames
+    the client sends on the local engine. Live's ``voice_barge_sustain_ms``
+    is sized to its ~171 ms frames and never applies here.
+    """
+    settings = settings or {}
+    mode = str(settings.get("voice_interruption_mode") or "auto").strip().lower()
+    if mode in _NO_TALK_OVER_MODES:
+        return None
+    try:
+        grace_ms = int(settings.get("voice_barge_grace_ms") or 800)
+    except (TypeError, ValueError):
+        grace_ms = 800
+    try:
+        sustain_ms = int(settings.get("voice_local_barge_sustain_ms") or 170)
+    except (TypeError, ValueError):
+        sustain_ms = 170
+    return LiveBargeDetector(grace_ms=grace_ms, sustain_ms=sustain_ms)
+
+
 def _duration_to_seconds(v):
     """Best-effort parse of a Live API duration ('5s', timedelta, number) → float seconds."""
     try:
@@ -2198,9 +2231,11 @@ if sock is not None:
         signals are reused unchanged:
 
           browser → server:  {type:'audio', data:<b64 PCM16@16k>} | {type:'text'} | {type:'end'}
+                             | {type:'barge'} (Escape) | {type:'speaking', on} (playback)
           server → browser:  {type:'status'} {type:'input_transcript'} {type:'text'}
                              {type:'audio', data:<b64 PCM16@24k>} {type:'turn_end'}
                              {type:'voice_turn_done',user_text,agent_text} {type:'error'}
+                             {type:'interrupted'} (Escape, or the user talking over her)
 
         The brain is the EXISTING agentic pipeline (`_generate_agent`) — the same
         code path a typed chat turn uses — so tools, vault gating, and provider
@@ -2376,9 +2411,14 @@ if sock is not None:
         _timings = {}
 
         def _generate(user_text, on_delta, cancel):
-            from agent_friday.services.model_router import TIMINGS_SINK
+            from agent_friday.services.model_router import TIMINGS_SINK, TURN_CANCEL
             _timings.clear()
-            _tok = TIMINGS_SINK.set(lambda t: _timings.update(t or {}))
+            # A barged turn's timings arrive late and belong to no receipt.
+            _tok = TIMINGS_SINK.set(
+                lambda t: None if cancel.is_set() else _timings.update(t or {}))
+            # A barge sets `cancel`: the seat's stream is closed and the agent
+            # loop starts no further round and runs no tool from the cut round.
+            _ctok = TURN_CANCEL.set(cancel)
             # A local voice turn is Friday's own: her presence label.
             from agent_friday.services import presence as _presence
             try:
@@ -2402,6 +2442,7 @@ if sock is not None:
                         on_text_delta=on_delta,
                     )
             finally:
+                TURN_CANCEL.reset(_ctok)
                 TIMINGS_SINK.reset(_tok)
             return reply
 
@@ -2428,7 +2469,9 @@ if sock is not None:
                             vad=vad, generate=_generate, hooks=hooks,
                             manifest_snapshot=_msnap,
                             contract=_msnap.get("contract") or {},
-                            gpu_queue=_vw.gpu_queue(), session_id=_vsession)
+                            gpu_queue=_vw.gpu_queue(), session_id=_vsession,
+                            barge_detector=_local_talk_over_detector(settings),
+                            rms=_quick_rms)
         sess.conversation_id = _open_cid[0]
         _sub = lambda snap: _send({"type": "manifest", **snap})  # noqa: E731
         _manifest.subscribe(_sub)
