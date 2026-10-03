@@ -217,6 +217,12 @@ by the owner; the owner may overrule any of them (§12 has the reasoning):
   - That is defensible for the owner's own repos. It is not defensible as
     anything a shared codebase can reach (`workspace-ecosystem.md` Phase 3
     says the same).
+  - ***Corrected 2026-10-02:*** the launcher now runs inside the checkpoint.
+    `/api/vibe-code/launch` raises one approval card per task and starts
+    nothing; approval mints a scoped grant and the session runs under
+    Claude Code's ordinary permissions with a per-task hook that asks
+    Friday's gate about every action (`services/claude_code_tasks.py`).
+    The dangerous flag is gone from every launch path.
 - **The existing "ClaudeCodeAdapter" is neither Claude Code nor the Agent
   SDK.** It runs Friday's own loop and regex-scrapes file paths
   (`services/worker_adapters/claude_code_adapter.py:1-7`, `:25`). **VERIFIED.**

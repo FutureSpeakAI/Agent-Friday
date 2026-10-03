@@ -633,3 +633,35 @@ def _handle_federation_message(msg_type: str, payload: dict, sender_pubkey: str)
         return {"applied": [], "count": 0}
 
     return {"msg_type": msg_type, "status": "received"}
+
+
+# ── Trust graph: the agent kind (schema only, held) ──────────────────────────
+#
+# On this blueprint so the federation switch answers 404 not_enabled for them
+# while it is off; and behind the second switch (held_features.trust_agents)
+# inside the trust package, so Federation coming back does not by itself
+# start creating or scoring agents.
+
+@federation_bp.route("/api/federation/agents", methods=["GET"])
+@login_required
+def trust_agents_list():
+    from agent_friday.trust import agents as _agents
+    try:
+        return jsonify({"ok": True, "agents": _agents.list_agents()})
+    except _agents.NotEnabled as e:
+        return jsonify(e.body()), 404
+
+
+@federation_bp.route("/api/federation/agents", methods=["POST"])
+@login_required
+def trust_agents_create():
+    from agent_friday.trust import agents as _agents
+    data = request.get_json(silent=True) or {}
+    try:
+        rec = _agents.create(str(data.get("agent_id") or ""), str(data.get("owner_person_id") or ""),
+                             display_name=str(data.get("display_name") or ""))
+        return jsonify({"ok": True, "agent": rec})
+    except _agents.NotEnabled as e:
+        return jsonify(e.body()), 404
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400

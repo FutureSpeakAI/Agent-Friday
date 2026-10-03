@@ -303,45 +303,12 @@ def _flow_trust_graph(content, metadata):
     if not person_name:
         return {'destination': 'trust_graph', 'ok': False, 'error': 'No person_name in metadata'}
 
-    trust_file = FRIDAY_DIR / "trust_graph.json"
+    # Through the canonical people store, never the legacy mirror: a write
+    # to the mirror alone was erased by the next PeopleGraph.save().
     try:
-        tdata = {}
-        if trust_file.exists():
-            tdata = json.loads(trust_file.read_text(encoding='utf-8'))
-        if 'people' not in tdata:
-            tdata['people'] = {}
-
-        key = person_name.lower().replace(' ', '_').replace('-', '_')
-
-        if key not in tdata['people']:
-            # Auto-create entry
-            tdata['people'][key] = {
-                "name": person_name,
-                "aliases": [],
-                "entity_type": "human",
-                "scores": {"overall": 0.5, "reliability": 0.5, "information_quality": 0.5,
-                           "emotional_trust": 0.5, "timeliness": 0.5, "domain_expertise": 0.5},
-                "evidence": [],
-                "domains": [],
-                "last_interaction": datetime.now().isoformat(),
-                "created": datetime.now().isoformat()
-            }
-
-        person = tdata['people'][key]
-        if 'intelligence' not in person:
-            person['intelligence'] = []
-        person['intelligence'].append({
-            "content": content[:2000],
-            "timestamp": datetime.now().isoformat(),
-            "source": "data_flow"
-        })
-        # Keep last 20 intel entries
-        person['intelligence'] = person['intelligence'][-20:]
-        person['last_interaction'] = datetime.now().isoformat()
-
-        tdata['people'][key] = person
-        trust_file.write_text(json.dumps(tdata, indent=2), encoding='utf-8')
-        return {'destination': 'trust_graph', 'ok': True, 'person': key}
+        from agent_friday.trust.people import record_intelligence
+        out = record_intelligence(person_name, content, friday_dir=FRIDAY_DIR)
+        return {'destination': 'trust_graph', **out}
     except Exception as e:
         return {'destination': 'trust_graph', 'ok': False, 'error': str(e)}
 

@@ -658,7 +658,8 @@ _VOICE_SHARED_TOOLS = (
     # too, declared in _VOICE_LIVE_TOOLS with the manners a spoken reply needs;
     # a name has one declaration, so they are not borrowed from the registry.
     # Podcasts, by voice: make one ("from my notes on X"), play and steer it,
-    # and "what's the source for that?". make_podcast only queues, so it
+    # "what's the source for that?", and "make the briefing two hosts"
+    # (podcast_format). make_podcast only queues, so it
     # answers inside the bridge's limit; private episodes are described to a
     # cloud voice only through podcast_tools._private_summary.
     "make_podcast",
@@ -668,6 +669,12 @@ _VOICE_SHARED_TOOLS = (
     "media_turn",
     "podcast_play",
     "podcast_source",
+    "podcast_format",
+    # A media preference heard in conversation becomes a proposal card.
+    "media_diet_note",
+    # Discuss a story, evidence first (compare, primary source, background,
+    # claim check, follow, local angle, make a podcast or notes).
+    "discuss_story",
     # Friday's own look: "evolve now", "undo that look", "go back to last
     # month's look", "turn evolution off", "what changed?". The same tool the
     # screen uses, so what she says is what the history shows.
@@ -2259,7 +2266,9 @@ def _build_live_context() -> str:
                 except Exception:
                     score = 0.0
                 items.append((name, score, role))
-            items.sort(key=lambda x: x[1], reverse=True)
+            # By name, not by score: an order by score is a rank, and a rank
+            # of people is a judgement that stays home.
+            items.sort(key=lambda x: str(x[0]).lower())
             top = items[:8]
             if top:
                 lines = [f"- {n}" + (f" ({r})" if r else '') for n, _s, r in top]
